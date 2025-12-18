@@ -1,0 +1,18 @@
+{
+  "segmentation": {
+    "fps": 60,
+    "min_peak_distance_seconds": 20,
+    "expected_segments": 22,
+    "expected_interval_seconds": 30.7
+  },
+  "calibration": {
+    "ruler_length_mm": 9
+  },
+  "reach_detection": {
+    "velocity_threshold": 5,
+    "min_reach_duration_frames": 3
+  },
+  "scoring": {
+    "success_distance_mm": 2
+  }
+}

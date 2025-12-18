@@ -1,0 +1,16 @@
+name: aspa2-napari-viewer
+display_name: ASPA2 Segment Viewer
+visibility: public
+categories:
+  - Visualization
+  - Annotation
+
+contributions:
+  commands:
+    - id: aspa2-napari-viewer.segment_viewer
+      title: ASPA2 Segment Viewer
+      python_name: tools.napari_viewer._widget:SegmentViewerWidget
+
+  widgets:
+    - command: aspa2-napari-viewer.segment_viewer
+      display_name: ASPA2 Segment Viewer

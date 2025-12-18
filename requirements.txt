@@ -1,0 +1,12 @@
+# ASPA2 Requirements
+# Install with: pip install -r requirements.txt
+
+# Core (required)
+numpy
+pandas
+scipy
+opencv-python
+tables  # for reading .h5 files (pytables)
+
+# Viewer (optional but recommended)
+napari[all]

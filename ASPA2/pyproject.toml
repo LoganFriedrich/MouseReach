@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aspa2"
+version = "0.1.0"
+description = "Automated Skilled Pellet Assessment - video analysis pipeline"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Logan Friedrich"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "opencv-python",
+    "tables",  # for reading .h5 files
+]
+
+[project.optional-dependencies]
+napari = [
+    "napari>=0.4.17",
+    "qtpy",
+]
+dev = [
+    "pytest",
+    "pytest-qt",
+]
+all = [
+    "aspa2[napari]",
+]
+
+[project.entry-points."napari.manifest"]
+aspa2-napari-viewer = "tools.napari_viewer:napari.yaml"
+
+[tool.setuptools]
+packages = ["aspa2_core", "scripts", "tools", "tools.napari_viewer"]
