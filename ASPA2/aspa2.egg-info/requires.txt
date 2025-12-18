@@ -1,0 +1,16 @@
+numpy
+pandas
+scipy
+opencv-python
+tables
+
+[all]
+aspa2[napari]
+
+[dev]
+pytest
+pytest-qt
+
+[napari]
+napari>=0.4.17
+qtpy

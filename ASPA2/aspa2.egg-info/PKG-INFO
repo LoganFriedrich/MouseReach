@@ -1,0 +1,123 @@
+Metadata-Version: 2.4
+Name: aspa2
+Version: 0.1.0
+Summary: Automated Skilled Pellet Assessment - video analysis pipeline
+Author: Logan Friedrich
+License: MIT
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Image Processing
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scipy
+Requires-Dist: opencv-python
+Requires-Dist: tables
+Provides-Extra: napari
+Requires-Dist: napari>=0.4.17; extra == "napari"
+Requires-Dist: qtpy; extra == "napari"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-qt; extra == "dev"
+Provides-Extra: all
+Requires-Dist: aspa2[napari]; extra == "all"
+
+# ASPA2 - Automated Skilled Pellet Assessment
+
+Video analysis pipeline for mouse reaching behavior using DeepLabCut tracking data.
+
+## Installation
+
+```bash
+cd ASPA2
+pip install -e .
+
+# With napari viewer support:
+pip install -e ".[napari]"
+```
+
+## Quick Start
+
+### 1. Segment Videos
+
+Batch process DLC files to find segment boundaries:
+
+```bash
+python scripts/1_segment.py              # Interactive - opens file dialog
+python scripts/1_segment.py /path/to/dir  # Batch process directory
+```
+
+This creates `*_segments.json` files next to each DLC file.
+
+### 2. Verify Segments (Optional)
+
+Open napari to visually verify segment boundaries:
+
+1. Open napari
+2. **Plugins → ASPA2 Segment Viewer**
+3. Select video file (DLC/segments auto-detected)
+4. Scrub through to verify boundaries
+
+### 3. Run Full Pipeline
+
+```bash
+python scripts/0_run_pipeline.py
+```
+
+## Project Structure
+
+```
+ASPA2/
+├── aspa2_core/          # Core library - all algorithms
+│   ├── segmenter.py     # Video segmentation
+│   ├── dlc_utils.py     # DLC file loading
+│   ├── calibration.py   # Ruler detection
+│   ├── reach_detector.py # Reach event detection
+│   └── scorer.py        # Reach scoring
+│
+├── scripts/             # Pipeline scripts
+│   ├── 0_run_pipeline.py
+│   ├── 1_segment.py
+│   ├── 2_calibrate.py
+│   └── ...
+│
+├── tools/               # GUI tools
+│   └── napari_viewer/   # Segment verification
+│
+├── config/              # Configuration files
+└── tests/               # Unit tests
+```
+
+## Algorithm Overview
+
+### Segmentation
+
+Videos contain 22 segments:
+- `garbage_pre`: Before first pellet
+- `pellet_1` through `pellet_20`: Active reaching periods (~30s each)
+- `garbage_post`: After last pellet
+
+The segmenter:
+1. Detects motion peaks in smoothed SABL (scoring area) position
+2. Finds consistent interval between peaks (~30.7 seconds)
+3. Fits 21-boundary grid to the motion pattern
+4. Reports confidence based on segment duration consistency
+
+## Development
+
+Check project structure:
+```bash
+python aspa2_structure.py check
+```
+
+Run tests:
+```bash
+pytest tests/
+```

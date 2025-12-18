@@ -1,0 +1,2 @@
+[napari.manifest]
+aspa2-napari-viewer = tools.napari_viewer:napari.yaml
