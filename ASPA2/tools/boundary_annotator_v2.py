@@ -18,6 +18,13 @@ import numpy as np
 from pathlib import Path
 from typing import List, Optional
 import json
+import sys
+
+# Add parent paths so we can import aspa2_core
+_script_dir = Path(__file__).parent
+_aspa2_root = _script_dir.parent
+if str(_aspa2_root) not in sys.path:
+    sys.path.insert(0, str(_aspa2_root))
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -106,9 +113,9 @@ class BoundaryAnnotatorWidget(QWidget):
         # Frame jump buttons
         jump_layout = QHBoxLayout()
         
-        self.back_1000_btn = QPushButton("<<< -1000")
-        self.back_1000_btn.clicked.connect(lambda: self._jump_frames(-1000))
-        jump_layout.addWidget(self.back_1000_btn)
+        self.back_30s_btn = QPushButton("<<< -30s")
+        self.back_30s_btn.clicked.connect(lambda: self._jump_seconds(-30))
+        jump_layout.addWidget(self.back_30s_btn)
         
         self.back_100_btn = QPushButton("<< -100")
         self.back_100_btn.clicked.connect(lambda: self._jump_frames(-100))
@@ -126,9 +133,9 @@ class BoundaryAnnotatorWidget(QWidget):
         self.fwd_100_btn.clicked.connect(lambda: self._jump_frames(100))
         jump_layout.addWidget(self.fwd_100_btn)
         
-        self.fwd_1000_btn = QPushButton("+1000 >>>")
-        self.fwd_1000_btn.clicked.connect(lambda: self._jump_frames(1000))
-        jump_layout.addWidget(self.fwd_1000_btn)
+        self.fwd_30s_btn = QPushButton("+30s >>>")
+        self.fwd_30s_btn.clicked.connect(lambda: self._jump_seconds(30))
+        jump_layout.addWidget(self.fwd_30s_btn)
         
         nav_layout.addLayout(jump_layout)
         
@@ -346,21 +353,49 @@ class BoundaryAnnotatorWidget(QWidget):
         self.dlc_df = df
     
     def _add_points_layer(self):
-        """Add all DLC tracking points as napari points layer."""
+        """Add all DLC tracking points as napari points layer with distinct colors."""
         if self.dlc_df is None:
             return
         
         # Find all bodyparts
-        bodyparts = set()
+        bodyparts = []
         for col in self.dlc_df.columns:
             if col.endswith('_x'):
-                bodyparts.add(col[:-2])  # Remove '_x'
+                bodyparts.append(col[:-2])  # Remove '_x'
+        bodyparts = sorted(set(bodyparts))
         
         if not bodyparts:
             return
         
-        # Collect all points
+        # Assign distinct colors to each bodypart
+        # Using a colormap that's easy to distinguish
+        colors_base = [
+            [1, 0, 0],      # red
+            [0, 1, 0],      # green
+            [0, 0, 1],      # blue
+            [1, 1, 0],      # yellow
+            [1, 0, 1],      # magenta
+            [0, 1, 1],      # cyan
+            [1, 0.5, 0],    # orange
+            [0.5, 0, 1],    # purple
+            [0, 1, 0.5],    # spring green
+            [1, 0, 0.5],    # pink
+            [0.5, 1, 0],    # lime
+            [0, 0.5, 1],    # sky blue
+            [1, 0.5, 0.5],  # salmon
+            [0.5, 1, 0.5],  # light green
+            [0.5, 0.5, 1],  # light blue
+            [1, 1, 0.5],    # light yellow
+            [1, 0.5, 1],    # light magenta
+        ]
+        
+        bp_colors = {}
+        for i, bp in enumerate(bodyparts):
+            bp_colors[bp] = colors_base[i % len(colors_base)]
+        
+        # Collect all points with their colors
         points_data = []
+        point_colors = []
         
         for frame_idx in range(len(self.dlc_df)):
             for bp in bodyparts:
@@ -375,6 +410,7 @@ class BoundaryAnnotatorWidget(QWidget):
                     
                     if likelihood > 0.5 and not np.isnan(x) and not np.isnan(y):
                         points_data.append([frame_idx, y, x])  # napari uses [t, y, x]
+                        point_colors.append(bp_colors[bp] + [0.15])  # Add alpha
         
         if points_data:
             if self.points_layer is not None:
@@ -383,26 +419,64 @@ class BoundaryAnnotatorWidget(QWidget):
             self.points_layer = self.viewer.add_points(
                 np.array(points_data),
                 name='DLC Points',
-                size=5,
-                face_color=[0, 1, 1, 0.1],  # cyan with 0.1 opacity
-                border_color=[0, 0, 1, 0.1],  # blue with 0.1 opacity
+                size=6,
+                face_color=np.array(point_colors),
             )
+            
+            # Print legend
+            print("\nDLC Point Colors:")
+            for bp, color in bp_colors.items():
+                r, g, b = [int(c * 255) for c in color]
+                print(f"  {bp}: RGB({r}, {g}, {b})")
     
     def _load_algorithm_boundaries(self):
-        """Load algorithm-computed boundaries or create evenly spaced defaults."""
-        # Try to find segments file
+        """Load algorithm-computed boundaries using robust segmenter."""
+        # Try the new robust segmenter first
+        try:
+            from aspa2_core.segmenter_robust import segment_video_robust, print_diagnostics
+            
+            boundaries, diag = segment_video_robust(self.dlc_path)
+            self.boundaries = boundaries
+            
+            # Print diagnostics to console
+            print_diagnostics(diag)
+            
+            confidence = np.mean(diag.boundary_confidences)
+            n_anomalies = len(diag.anomalies)
+            
+            status = f"Robust segmenter: {diag.n_primary_candidates} detections, conf={confidence:.2f}"
+            if n_anomalies > 0:
+                status += f", {n_anomalies} anomalies"
+            self.status_label.setText(status)
+            
+            # Show anomalies as warnings
+            if diag.anomalies:
+                from napari.utils.notifications import show_warning
+                for a in diag.anomalies[:3]:  # Show first 3
+                    show_warning(a)
+            
+            return
+            
+        except ImportError:
+            pass  # Fall through to legacy methods
+        except Exception as e:
+            print(f"Robust segmenter failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Fallback: try to find existing segments file
         seg_files = list(self.video_path.parent.glob(f"{self.video_path.stem}*_segments.json"))
         
         if seg_files:
             with open(seg_files[0]) as f:
                 data = json.load(f)
             self.boundaries = data.get('boundaries', [])
-            self.status_label.setText(f"Loaded algorithm boundaries from {seg_files[0].name}")
+            self.status_label.setText(f"Loaded from {seg_files[0].name}")
         else:
-            # Create evenly spaced defaults
+            # Last resort: evenly spaced defaults
             interval = self.n_frames / 22
             self.boundaries = [int((i + 1) * interval) for i in range(21)]
-            self.status_label.setText("No segments file found - using evenly spaced defaults")
+            self.status_label.setText("Using evenly spaced defaults")
         
         # Ensure we have exactly 21
         while len(self.boundaries) < 21:
@@ -433,6 +507,11 @@ class BoundaryAnnotatorWidget(QWidget):
         current = self.viewer.dims.current_step[0]
         new_frame = max(0, min(self.n_frames - 1, current + delta))
         self.viewer.dims.set_current_step(0, new_frame)
+    
+    def _jump_seconds(self, seconds: float):
+        """Jump forward/backward by seconds."""
+        delta_frames = int(seconds * self.fps)
+        self._jump_frames(delta_frames)
     
     def _goto_frame(self, frame: int):
         """Jump to specific frame."""
