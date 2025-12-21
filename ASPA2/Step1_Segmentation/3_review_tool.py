@@ -113,9 +113,9 @@ class BoundaryAnnotatorWidget(QWidget):
         # Frame jump buttons
         jump_layout = QHBoxLayout()
         
-        self.back_30s_btn = QPushButton("<<< -30s")
-        self.back_30s_btn.clicked.connect(lambda: self._jump_seconds(-30))
-        jump_layout.addWidget(self.back_30s_btn)
+        self.back_seg_btn = QPushButton("<<< -1 seg")
+        self.back_seg_btn.clicked.connect(lambda: self._jump_frames(-1837))
+        jump_layout.addWidget(self.back_seg_btn)
         
         self.back_100_btn = QPushButton("<< -100")
         self.back_100_btn.clicked.connect(lambda: self._jump_frames(-100))
@@ -133,9 +133,9 @@ class BoundaryAnnotatorWidget(QWidget):
         self.fwd_100_btn.clicked.connect(lambda: self._jump_frames(100))
         jump_layout.addWidget(self.fwd_100_btn)
         
-        self.fwd_30s_btn = QPushButton("+30s >>>")
-        self.fwd_30s_btn.clicked.connect(lambda: self._jump_seconds(30))
-        jump_layout.addWidget(self.fwd_30s_btn)
+        self.fwd_seg_btn = QPushButton("+1 seg >>>")
+        self.fwd_seg_btn.clicked.connect(lambda: self._jump_frames(1837))
+        jump_layout.addWidget(self.fwd_seg_btn)
         
         nav_layout.addLayout(jump_layout)
         
@@ -276,15 +276,30 @@ class BoundaryAnnotatorWidget(QWidget):
             # Load video
             cap = cv2.VideoCapture(str(self.video_path))
             
+            if not cap.isOpened():
+                raise RuntimeError(f"Could not open video: {self.video_path}")
+            
             self.n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
             
             frames = []
+            bad_frames = 0
             for i in range(self.n_frames):
                 ret, frame = cap.read()
-                if not ret:
-                    break
-                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                if not ret or frame is None:
+                    bad_frames += 1
+                    # Use previous frame or black frame
+                    if frames:
+                        frames.append(frames[-1].copy())
+                    continue
+                
+                try:
+                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                except cv2.error as e:
+                    bad_frames += 1
+                    if frames:
+                        frames.append(frames[-1].copy())
+                    continue
                 
                 if i % 500 == 0:
                     self.progress.setValue(int(80 * i / self.n_frames))
@@ -292,6 +307,14 @@ class BoundaryAnnotatorWidget(QWidget):
                     QApplication.processEvents()
             
             cap.release()
+            
+            if bad_frames > 0:
+                print(f"Warning: {bad_frames} bad frames encountered")
+            
+            if len(frames) == 0:
+                raise RuntimeError("No valid frames could be read from video")
+            
+            self.n_frames = len(frames)
             self.progress.setValue(85)
             
             # Add video to viewer
@@ -430,55 +453,95 @@ class BoundaryAnnotatorWidget(QWidget):
                 print(f"  {bp}: RGB({r}, {g}, {b})")
     
     def _load_algorithm_boundaries(self):
-        """Load algorithm-computed boundaries using robust segmenter."""
-        # Try the new robust segmenter first
+        """Load pre-computed boundaries or run robust segmenter."""
+        
+        # Get current segmenter version
+        try:
+            from aspa2_core.segmenter_robust import SEGMENTER_VERSION
+            current_version = SEGMENTER_VERSION
+        except ImportError:
+            current_version = None
+        
+        # First, try to find pre-computed segments_v2.json (from robust segmenter)
+        seg_v2_files = list(self.video_path.parent.glob(f"{self.video_path.stem}*_segments_v2.json"))
+        
+        if seg_v2_files:
+            with open(seg_v2_files[0]) as f:
+                data = json.load(f)
+            
+            file_version = data.get('segmenter_version', '1.0.0')
+            
+            # Check if outdated
+            if current_version and file_version != current_version:
+                from napari.utils.notifications import show_warning
+                show_warning(f"Segments file is outdated (v{file_version} vs v{current_version}). Consider re-running batch_segment.py")
+                self.status_label.setText(f"⚠ OUTDATED v{file_version} - {seg_v2_files[0].name}")
+            else:
+                conf = data.get('overall_confidence', 0)
+                anomalies = data.get('anomalies', [])
+                status = f"Loaded {seg_v2_files[0].name} (v{file_version}, conf={conf:.2f})"
+                if anomalies:
+                    status += f", {len(anomalies)} anomalies"
+                self.status_label.setText(status)
+                
+                if anomalies:
+                    from napari.utils.notifications import show_warning
+                    for a in anomalies[:3]:
+                        show_warning(a)
+            
+            self.boundaries = data.get('boundaries', [])
+            self._update_bounds_list()
+            return
+        
+        # No pre-computed file - try running robust segmenter
         try:
             from aspa2_core.segmenter_robust import segment_video_robust, print_diagnostics
             
+            print(f"\nNo pre-computed segments found, running robust segmenter...")
             boundaries, diag = segment_video_robust(self.dlc_path)
             self.boundaries = boundaries
             
-            # Print diagnostics to console
             print_diagnostics(diag)
             
             confidence = np.mean(diag.boundary_confidences)
             n_anomalies = len(diag.anomalies)
             
-            status = f"Robust segmenter: {diag.n_primary_candidates} detections, conf={confidence:.2f}"
+            status = f"Computed: {diag.n_primary_candidates} detections, conf={confidence:.2f}"
             if n_anomalies > 0:
                 status += f", {n_anomalies} anomalies"
             self.status_label.setText(status)
             
-            # Show anomalies as warnings
             if diag.anomalies:
                 from napari.utils.notifications import show_warning
-                for a in diag.anomalies[:3]:  # Show first 3
+                for a in diag.anomalies[:3]:
                     show_warning(a)
             
+            self._update_bounds_list()
             return
             
         except ImportError:
-            pass  # Fall through to legacy methods
+            pass
         except Exception as e:
             print(f"Robust segmenter failed: {e}")
             import traceback
             traceback.print_exc()
         
-        # Fallback: try to find existing segments file
+        # Fallback: try old segments file
         seg_files = list(self.video_path.parent.glob(f"{self.video_path.stem}*_segments.json"))
         
         if seg_files:
             with open(seg_files[0]) as f:
                 data = json.load(f)
             self.boundaries = data.get('boundaries', [])
-            self.status_label.setText(f"Loaded from {seg_files[0].name}")
+            self.status_label.setText(f"⚠ OLD FORMAT - {seg_files[0].name}")
+            from napari.utils.notifications import show_warning
+            show_warning("Using old segments format. Run batch_segment.py to upgrade.")
         else:
-            # Last resort: evenly spaced defaults
+            # Last resort: evenly spaced
             interval = self.n_frames / 22
             self.boundaries = [int((i + 1) * interval) for i in range(21)]
             self.status_label.setText("Using evenly spaced defaults")
         
-        # Ensure we have exactly 21
         while len(self.boundaries) < 21:
             self.boundaries.append(self.n_frames - 100)
         self.boundaries = self.boundaries[:21]

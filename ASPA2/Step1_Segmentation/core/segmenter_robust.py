@@ -22,8 +22,8 @@ import json
 import hashlib
 
 # Version tracking - bump this when algorithm changes significantly
-SEGMENTER_VERSION = "2.0.0"
-SEGMENTER_ALGORITHM = "sabl_centered_crossing"
+SEGMENTER_VERSION = "2.1.0"
+SEGMENTER_ALGORITHM = "sabl_centered_crossing_v2"
 
 
 @dataclass
@@ -152,7 +152,8 @@ def assess_sa_quality(df: pd.DataFrame) -> Dict[str, float]:
 
 def find_centered_crossings(sabl_rel: np.ndarray, velocity: np.ndarray,
                             center_range: Tuple[float, float] = (-5, 10),
-                            vel_threshold: float = 1.2) -> List[BoundaryCandidate]:
+                            vel_threshold: float = 1.2,
+                            min_gap: int = 30) -> List[BoundaryCandidate]:
     """
     Primary method: Find frames where SABL is centered with significant velocity.
     
@@ -161,6 +162,7 @@ def find_centered_crossings(sabl_rel: np.ndarray, velocity: np.ndarray,
         velocity: Smoothed velocity signal
         center_range: Position range to consider "centered"
         vel_threshold: Minimum velocity to consider movement
+        min_gap: Minimum frames between events (lowered to catch rapid-fire boundaries)
     
     Returns:
         List of boundary candidates
@@ -174,12 +176,12 @@ def find_centered_crossings(sabl_rel: np.ndarray, velocity: np.ndarray,
         return []
     
     # Group consecutive frames into events
+    # Use small gap (min_gap frames) to separate rapid-fire boundaries
     events = []
-    event_start = candidate_frames[0]
     event_frames = [candidate_frames[0]]
     
     for i in range(1, len(candidate_frames)):
-        if candidate_frames[i] - candidate_frames[i-1] > 60:  # Gap > 1 second
+        if candidate_frames[i] - candidate_frames[i-1] > min_gap:
             # End current event
             events.append(event_frames)
             event_frames = []
@@ -281,22 +283,31 @@ def validate_with_other_sa_points(df: pd.DataFrame, box_center: float,
 
 def fit_grid_to_candidates(candidates: List[BoundaryCandidate], 
                            total_frames: int,
-                           expected_interval: float = 1839) -> List[int]:
+                           expected_interval: float = 1839,
+                           velocity: np.ndarray = None,
+                           sabl_rel: np.ndarray = None) -> Tuple[List[int], List[str]]:
     """
-    Given detected candidates, fit a 21-boundary grid.
-    Handles cases where we have too few or too many candidates.
+    Given detected candidates, select exactly 21 boundaries.
     
-    Key insight: First boundary is typically around frame 100-200.
-    If first candidate is much later, we probably missed B1.
+    Returns:
+        boundaries: List of 21 boundary frames
+        anomalies: List of detected anomalies
     """
+    anomalies = []
+    
     if len(candidates) == 0:
         # Complete fallback: evenly spaced
         interval = total_frames / 22
-        return [int((i + 1) * interval) for i in range(21)]
+        anomalies.append("No candidates found - using evenly spaced fallback")
+        return [int((i + 1) * interval) for i in range(21)], anomalies
     
     # Sort by frame
     candidates = sorted(candidates, key=lambda c: c.frame)
     frames = [c.frame for c in candidates]
+    
+    # BEST CASE: Exactly 21 candidates - use them directly!
+    if len(frames) == 21:
+        return frames, anomalies
     
     # Calculate actual interval from consecutive candidates
     if len(frames) >= 2:
@@ -311,38 +322,74 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
     else:
         actual_interval = expected_interval
     
-    # KEY FIX: Check if first candidate is likely B1 or a later boundary
-    # B1 should be around frame 100-600 for most videos
-    # If first candidate is much later, we probably missed B1
     first_candidate = frames[0]
     
-    # How many intervals back from first candidate to reach frame ~150?
-    intervals_to_start = round((first_candidate - 150) / actual_interval)
+    # Check if we should project backward to find B1
+    should_project_backward = False
     
-    if intervals_to_start > 0:
-        # First candidate is NOT B1 - project backward
-        estimated_b1 = first_candidate - intervals_to_start * actual_interval
-        # Clamp to reasonable range (50-600 frames typically)
-        estimated_b1 = max(50, min(600, int(estimated_b1)))
+    if velocity is not None and sabl_rel is not None and first_candidate > 500:
+        early_region = slice(0, first_candidate - 100)
+        if first_candidate > 100:
+            centered_early = (sabl_rel[early_region] > -5) & (sabl_rel[early_region] < 10)
+            moving_early = velocity[early_region] > 1.0
+            early_crossing_events = np.sum(centered_early & moving_early)
+            
+            if early_crossing_events > 30:
+                should_project_backward = True
+                anomalies.append(f"Detected crossing events before first candidate")
+    
+    if should_project_backward:
+        intervals_to_start = round((first_candidate - 150) / actual_interval)
+        if intervals_to_start > 0:
+            estimated_b1 = first_candidate - intervals_to_start * actual_interval
+            estimated_b1 = max(50, min(600, int(estimated_b1)))
+            anomalies.append(f"Estimated B1 at frame {estimated_b1} (first detection at {first_candidate})")
+        else:
+            estimated_b1 = first_candidate
     else:
-        # First candidate is likely B1
         estimated_b1 = first_candidate
+        if first_candidate > 1000:
+            anomalies.append(f"Late-start video: B1 at frame {first_candidate}")
     
-    # Build grid starting from estimated B1
+    # If we have close to 21 (19-23), try to use candidates directly
+    if 19 <= len(frames) <= 23:
+        if len(frames) > 21:
+            # Too many - remove lowest confidence, keeping relative order
+            sorted_by_conf = sorted(enumerate(candidates), key=lambda x: x[1].confidence)
+            to_remove = set(i for i, _ in sorted_by_conf[:len(frames)-21])
+            frames = [f for i, f in enumerate(frames) if i not in to_remove]
+            anomalies.append(f"Removed {len(to_remove)} low-confidence candidates")
+        elif len(frames) < 21:
+            # Too few - fill gaps with interpolated boundaries
+            missing = 21 - len(frames)
+            # Find largest gaps
+            intervals = np.diff(frames)
+            gap_indices = np.argsort(intervals)[::-1][:missing]
+            
+            new_frames = list(frames)
+            for gap_idx in sorted(gap_indices, reverse=True):
+                gap_start = frames[gap_idx]
+                gap_end = frames[gap_idx + 1]
+                interp_frame = (gap_start + gap_end) // 2
+                new_frames.insert(gap_idx + 1, interp_frame)
+                anomalies.append(f"Interpolated boundary at frame {interp_frame}")
+            frames = new_frames[:21]
+        
+        return frames, anomalies
+    
+    # Fallback: build grid starting from estimated B1
     boundaries = []
     for i in range(21):
         expected_frame = estimated_b1 + i * actual_interval
         expected_frame = max(0, min(total_frames - 1, int(expected_frame)))
         
-        # Check if we have a candidate near this expected position
         nearby = [f for f in frames if abs(f - expected_frame) < actual_interval * 0.2]
         if nearby:
-            # Use the closest candidate
             boundaries.append(min(nearby, key=lambda f: abs(f - expected_frame)))
         else:
             boundaries.append(expected_frame)
     
-    return boundaries
+    return boundaries, anomalies
 
 
 def detect_anomalies(boundaries: List[int], fps: float = 60.0) -> List[str]:
@@ -398,6 +445,8 @@ def segment_video_robust(dlc_path: Path, fps: float = 60.0) -> Tuple[List[int], 
     
     candidates = []
     anomalies = []
+    velocity = None  # Will be set if primary method succeeds
+    sabl_rel = None  # Will be set if primary method succeeds
     
     # Primary method: SABL centered crossing
     if sabl is not None and box_center is not None and ref_quality != 'bad':
@@ -407,12 +456,13 @@ def segment_video_robust(dlc_path: Path, fps: float = 60.0) -> Tuple[List[int], 
         # Try with standard threshold first
         primary_candidates = find_centered_crossings(sabl_rel, velocity)
         
-        # If too few, try with lower velocity threshold
-        if len(primary_candidates) < 15:
-            primary_candidates = find_centered_crossings(
+        # If fewer than 21, try with lower velocity threshold to catch slow B1
+        if len(primary_candidates) < 21:
+            lower_threshold_candidates = find_centered_crossings(
                 sabl_rel, velocity, vel_threshold=0.8
             )
-            if len(primary_candidates) > len(candidates):
+            if len(lower_threshold_candidates) > len(primary_candidates):
+                primary_candidates = lower_threshold_candidates
                 anomalies.append("Used lower velocity threshold (0.8)")
         
         # Validate each candidate with other SA points
@@ -442,7 +492,10 @@ def segment_video_robust(dlc_path: Path, fps: float = 60.0) -> Tuple[List[int], 
         n_fallback = 0
     
     # Fit 21-boundary grid to candidates
-    boundaries = fit_grid_to_candidates(candidates, total_frames)
+    boundaries, grid_anomalies = fit_grid_to_candidates(
+        candidates, total_frames, velocity=velocity, sabl_rel=sabl_rel
+    )
+    anomalies.extend(grid_anomalies)
     
     # Detect anomalies in final boundaries
     boundary_anomalies = detect_anomalies(boundaries, fps)
@@ -498,44 +551,58 @@ def segment_video_robust(dlc_path: Path, fps: float = 60.0) -> Tuple[List[int], 
 def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostics, 
                       output_path: Path):
     """Save segmentation results and diagnostics."""
+    # Convert numpy types to native Python for JSON serialization
+    def to_native(obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, list):
+            return [to_native(x) for x in obj]
+        elif isinstance(obj, dict):
+            return {k: to_native(v) for k, v in obj.items()}
+        return obj
+    
     data = {
         # Version tracking
         'segmenter_version': SEGMENTER_VERSION,
         'segmenter_algorithm': SEGMENTER_ALGORITHM,
         
         'video_name': diagnostics.video_name,
-        'total_frames': diagnostics.total_frames,
-        'fps': diagnostics.fps,
-        'boundaries': boundaries,
+        'total_frames': to_native(diagnostics.total_frames),
+        'fps': to_native(diagnostics.fps),
+        'boundaries': to_native(boundaries),
         
         # Quality info
         'reference_quality': diagnostics.reference_quality,
         'sa_coverage': {
-            'SABL': diagnostics.sabl_coverage,
-            'SABR': diagnostics.sabr_coverage,
-            'SATL': diagnostics.satl_coverage,
-            'SATR': diagnostics.satr_coverage,
+            'SABL': to_native(diagnostics.sabl_coverage),
+            'SABR': to_native(diagnostics.sabr_coverage),
+            'SATL': to_native(diagnostics.satl_coverage),
+            'SATR': to_native(diagnostics.satr_coverage),
         },
         
         # Detection info
         'detection': {
-            'n_primary': diagnostics.n_primary_candidates,
-            'n_fallback': diagnostics.n_fallback_candidates,
+            'n_primary': to_native(diagnostics.n_primary_candidates),
+            'n_fallback': to_native(diagnostics.n_fallback_candidates),
             'methods': diagnostics.boundary_methods,
-            'confidences': diagnostics.boundary_confidences,
+            'confidences': to_native(diagnostics.boundary_confidences),
         },
         
         # Interval stats
         'intervals': {
-            'mean_frames': diagnostics.interval_mean,
-            'std_frames': diagnostics.interval_std,
-            'cv': diagnostics.interval_cv,
-            'mean_seconds': diagnostics.interval_mean / diagnostics.fps,
+            'mean_frames': to_native(diagnostics.interval_mean),
+            'std_frames': to_native(diagnostics.interval_std),
+            'cv': to_native(diagnostics.interval_cv),
+            'mean_seconds': to_native(diagnostics.interval_mean / diagnostics.fps),
         },
         
         # Issues
         'anomalies': diagnostics.anomalies,
-        'overall_confidence': np.mean(diagnostics.boundary_confidences),
+        'overall_confidence': to_native(np.mean(diagnostics.boundary_confidences)),
     }
     
     with open(output_path, 'w') as f:

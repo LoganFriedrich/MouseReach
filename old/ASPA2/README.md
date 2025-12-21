@@ -1,0 +1,92 @@
+# ASPA2 - Automated Skilled Pellet Assessment
+
+Video analysis pipeline for mouse reaching behavior using DeepLabCut tracking data.
+
+## Installation
+
+```bash
+cd ASPA2
+pip install -e .
+
+# With napari viewer support:
+pip install -e ".[napari]"
+```
+
+## Quick Start
+
+### 1. Segment Videos
+
+Batch process DLC files to find segment boundaries:
+
+```bash
+python scripts/1_segment.py              # Interactive - opens file dialog
+python scripts/1_segment.py /path/to/dir  # Batch process directory
+```
+
+This creates `*_segments.json` files next to each DLC file.
+
+### 2. Verify Segments (Optional)
+
+Open napari to visually verify segment boundaries:
+
+1. Open napari
+2. **Plugins → ASPA2 Segment Viewer**
+3. Select video file (DLC/segments auto-detected)
+4. Scrub through to verify boundaries
+
+### 3. Run Full Pipeline
+
+```bash
+python scripts/0_run_pipeline.py
+```
+
+## Project Structure
+
+```
+ASPA2/
+├── aspa2_core/          # Core library - all algorithms
+│   ├── segmenter.py     # Video segmentation
+│   ├── dlc_utils.py     # DLC file loading
+│   ├── calibration.py   # Ruler detection
+│   ├── reach_detector.py # Reach event detection
+│   └── scorer.py        # Reach scoring
+│
+├── scripts/             # Pipeline scripts
+│   ├── 0_run_pipeline.py
+│   ├── 1_segment.py
+│   ├── 2_calibrate.py
+│   └── ...
+│
+├── tools/               # GUI tools
+│   └── napari_viewer/   # Segment verification
+│
+├── config/              # Configuration files
+└── tests/               # Unit tests
+```
+
+## Algorithm Overview
+
+### Segmentation
+
+Videos contain 22 segments:
+- `garbage_pre`: Before first pellet
+- `pellet_1` through `pellet_20`: Active reaching periods (~30s each)
+- `garbage_post`: After last pellet
+
+The segmenter:
+1. Detects motion peaks in smoothed SABL (scoring area) position
+2. Finds consistent interval between peaks (~30.7 seconds)
+3. Fits 21-boundary grid to the motion pattern
+4. Reports confidence based on segment duration consistency
+
+## Development
+
+Check project structure:
+```bash
+python aspa2_structure.py check
+```
+
+Run tests:
+```bash
+pytest tests/
+```

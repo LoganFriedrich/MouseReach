@@ -12,12 +12,16 @@ aspa2_core/dlc_utils.py
 aspa2_core/reach_detector.py
 aspa2_core/scorer.py
 aspa2_core/segmenter.py
+aspa2_core/segmenter_robust.py
 scripts/0_run_pipeline.py
 scripts/1_segment.py
 scripts/2_calibrate.py
 scripts/3_reaches.py
 scripts/4_score.py
 scripts/5_compile.py
+scripts/util_batch_segment.py
 tests/test_segmenter.py
+tools/boundary_annotator.py
+tools/boundary_annotator_v2.py
 tools/napari_viewer/__init__.py
 tools/napari_viewer/_widget.py
