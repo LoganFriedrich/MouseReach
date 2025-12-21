@@ -1,0 +1,965 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1425</width>
+    <height>808</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Blackmore Lab - ASPA</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QWidget" name="verticalLayoutWidget_7">
+    <property name="geometry">
+     <rect>
+      <x>40</x>
+      <y>10</y>
+      <width>1341</width>
+      <height>731</height>
+     </rect>
+    </property>
+    <layout class="QVBoxLayout" name="vLytMainWin">
+     <item>
+      <widget class="QTabWidget" name="tabWidget">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <widget class="QWidget" name="tabFrames">
+        <attribute name="title">
+         <string>Frame Viewer</string>
+        </attribute>
+        <widget class="QWidget" name="verticalLayoutWidget">
+         <property name="geometry">
+          <rect>
+           <x>20</x>
+           <y>10</y>
+           <width>1301</width>
+           <height>661</height>
+          </rect>
+         </property>
+         <layout class="QVBoxLayout" name="vLytFrameViewer" stretch="3,8">
+          <item>
+           <layout class="QVBoxLayout" name="vLytRightHandY"/>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="hLytAnalysis" stretch="40,60">
+            <item>
+             <layout class="QVBoxLayout" name="vLytVideo">
+              <item>
+               <widget class="QFrame" name="frameMPLVideoPlayer">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Raised</enum>
+                </property>
+                <widget class="QWidget" name="verticalLayoutWidget_6">
+                 <property name="geometry">
+                  <rect>
+                   <x>160</x>
+                   <y>80</y>
+                   <width>160</width>
+                   <height>80</height>
+                  </rect>
+                 </property>
+                 <layout class="QVBoxLayout" name="vLytMPLVideo"/>
+                </widget>
+               </widget>
+              </item>
+              <item>
+               <widget class="QFrame" name="frameVideoPlayer">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Raised</enum>
+                </property>
+                <widget class="QWidget" name="layoutWidget">
+                 <property name="geometry">
+                  <rect>
+                   <x>130</x>
+                   <y>20</y>
+                   <width>231</width>
+                   <height>201</height>
+                  </rect>
+                 </property>
+                 <layout class="QVBoxLayout" name="vLytVideoPlayer" stretch="9,1,3">
+                  <item>
+                   <layout class="QVBoxLayout" name="vLytFrameView">
+                    <item>
+                     <widget class="QLabel" name="lblFrameView">
+                      <property name="sizePolicy">
+                       <sizepolicy hsizetype="MinimumExpanding" vsizetype="Expanding">
+                        <horstretch>1</horstretch>
+                        <verstretch>1</verstretch>
+                       </sizepolicy>
+                      </property>
+                      <property name="text">
+                       <string/>
+                      </property>
+                      <property name="scaledContents">
+                       <bool>false</bool>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout" name="hLytVideoControls">
+                    <item>
+                     <layout class="QVBoxLayout" name="verticalLayout_4">
+                      <item>
+                       <widget class="QSlider" name="sldrFrames">
+                        <property name="orientation">
+                         <enum>Qt::Horizontal</enum>
+                        </property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </item>
+                    <item>
+                     <widget class="QPushButton" name="btnNavL">
+                      <property name="text">
+                       <string>&lt;</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QPushButton" name="btnNavR">
+                      <property name="text">
+                       <string>&gt;</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QPushButton" name="btnPlay">
+                      <property name="text">
+                       <string/>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout" name="hLytThumbnails"/>
+                  </item>
+                 </layout>
+                </widget>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QVBoxLayout" name="vLytFrameInfo" stretch="1,15">
+              <item>
+               <layout class="QHBoxLayout" name="hLytControls" stretch="15,0,0,0,0,0,0,0,1,0,1,1,1,0">
+                <item>
+                 <spacer name="horizontalSpacer">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>40</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYTh_3">
+                  <item>
+                   <spacer name="verticalSpacer_8">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblVideo">
+                    <property name="text">
+                     <string>Video</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QComboBox" name="cmbVideoList"/>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytPlaySwipes">
+                  <item>
+                   <spacer name="verticalSpacer_11">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QCheckBox" name="chkMarkFrames">
+                    <property name="text">
+                     <string>Mark Frames</string>
+                    </property>
+                    <property name="checked">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QCheckBox" name="chkSwipes">
+                    <property name="text">
+                     <string>Play swipes</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYConf_6">
+                  <item>
+                   <spacer name="verticalSpacer_25">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblPelletPosTh">
+                    <property name="toolTip">
+                     <string>Min frames in a swipe sequence</string>
+                    </property>
+                    <property name="text">
+                     <string>Pellet pos thr</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbPelletPosTh">
+                    <property name="toolTip">
+                     <string>Min frames in a swipe sequence</string>
+                    </property>
+                    <property name="minimum">
+                     <number>1</number>
+                    </property>
+                    <property name="value">
+                     <number>8</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYConf_2">
+                  <item>
+                   <spacer name="verticalSpacer_12">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblMinFrames">
+                    <property name="toolTip">
+                     <string>Min frames in a swipe sequence</string>
+                    </property>
+                    <property name="text">
+                     <string>Min Frames</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbMinFrames">
+                    <property name="toolTip">
+                     <string>Min frames in a swipe sequence</string>
+                    </property>
+                    <property name="minimum">
+                     <number>2</number>
+                    </property>
+                    <property name="value">
+                     <number>2</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYConf_5">
+                  <item>
+                   <spacer name="verticalSpacer_24">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblMinFramesStd">
+                    <property name="toolTip">
+                     <string>Min frames in a swipe sequence</string>
+                    </property>
+                    <property name="text">
+                     <string>Std Frames</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbMinFramesStd">
+                    <property name="toolTip">
+                     <string>Min frames for motion std deviation calculation</string>
+                    </property>
+                    <property name="minimum">
+                     <number>2</number>
+                    </property>
+                    <property name="value">
+                     <number>10</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYConf_4">
+                  <item>
+                   <spacer name="verticalSpacer_23">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblStdMotion">
+                    <property name="toolTip">
+                     <string>Std. deviation value to check motion</string>
+                    </property>
+                    <property name="text">
+                     <string>Std. Motion</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QDoubleSpinBox" name="dspbStdMotion">
+                    <property name="toolTip">
+                     <string>Std. deviation to check for motion in swipe seq.</string>
+                    </property>
+                    <property name="value">
+                     <double>0.100000000000000</double>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYConf_3">
+                  <item>
+                   <spacer name="verticalSpacer_22">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblAdjacentThreshold">
+                    <property name="toolTip">
+                     <string>Acceptable gap between consecutive frame indices in a swipe sequence</string>
+                    </property>
+                    <property name="text">
+                     <string>Adjacent thr</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbAdjacent">
+                    <property name="toolTip">
+                     <string>Acceptable gap between consecutive frame indices in a swipe sequence</string>
+                    </property>
+                    <property name="value">
+                     <number>3</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYConf">
+                  <item>
+                   <spacer name="verticalSpacer_7">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblRYConf">
+                    <property name="text">
+                     <string>RH Conf</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QDoubleSpinBox" name="dspbRHConf">
+                    <property name="maximum">
+                     <double>1.000000000000000</double>
+                    </property>
+                    <property name="singleStep">
+                     <double>0.050000000000000</double>
+                    </property>
+                    <property name="value">
+                     <double>0.700000000000000</double>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytRYTh">
+                  <item>
+                   <spacer name="verticalSpacer_6">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblSwipeThreshold">
+                    <property name="text">
+                     <string>Swipe threshold</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbSwipeThreshold">
+                    <property name="maximum">
+                     <number>1000</number>
+                    </property>
+                    <property name="singleStep">
+                     <number>5</number>
+                    </property>
+                    <property name="value">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytSwipeInterval">
+                  <item>
+                   <spacer name="verticalSpacer_10">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblSwipeInterval">
+                    <property name="text">
+                     <string>Swipe interval</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbSwipeInterval">
+                    <property name="maximum">
+                     <number>500</number>
+                    </property>
+                    <property name="singleStep">
+                     <number>5</number>
+                    </property>
+                    <property name="value">
+                     <number>12</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytFrameStart">
+                  <item>
+                   <spacer name="verticalSpacer_2">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblFrameStart">
+                    <property name="text">
+                     <string>Frame start</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbFrameStart">
+                    <property name="maximum">
+                     <number>40000</number>
+                    </property>
+                    <property name="singleStep">
+                     <number>1000</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytFrameEnd">
+                  <item>
+                   <spacer name="verticalSpacer">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="lblFrameEnd">
+                    <property name="text">
+                     <string>Frame End</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QSpinBox" name="spbFrameEnd">
+                    <property name="maximum">
+                     <number>100000</number>
+                    </property>
+                    <property name="singleStep">
+                     <number>1000</number>
+                    </property>
+                    <property name="value">
+                     <number>38000</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="vLytDetectSwipes">
+                  <item>
+                   <spacer name="verticalSpacer_3">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="btnDetectSwipes">
+                    <property name="text">
+                     <string>Detect swipes</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <widget class="QTabWidget" name="tabFrameInfoWidget">
+                <property name="currentIndex">
+                 <number>2</number>
+                </property>
+                <widget class="QWidget" name="tabFrameInfo">
+                 <attribute name="title">
+                  <string>Deep Lab Cut Results</string>
+                 </attribute>
+                 <widget class="QWidget" name="verticalLayoutWidget_5">
+                  <property name="geometry">
+                   <rect>
+                    <x>40</x>
+                    <y>20</y>
+                    <width>541</width>
+                    <height>271</height>
+                   </rect>
+                  </property>
+                  <layout class="QVBoxLayout" name="vLytDLCTable">
+                   <item>
+                    <widget class="QTableWidget" name="tblFrameInfo"/>
+                   </item>
+                  </layout>
+                 </widget>
+                </widget>
+                <widget class="QWidget" name="tabSwipeInfo">
+                 <attribute name="title">
+                  <string>Swipe Analysis</string>
+                 </attribute>
+                 <widget class="QWidget" name="verticalLayoutWidget_4">
+                  <property name="geometry">
+                   <rect>
+                    <x>60</x>
+                    <y>70</y>
+                    <width>591</width>
+                    <height>221</height>
+                   </rect>
+                  </property>
+                  <layout class="QVBoxLayout" name="vLytSwipeInfo" stretch="1,100">
+                   <item>
+                    <layout class="QHBoxLayout" name="hLytSwipeInfoControls" stretch="3,0,7">
+                     <item>
+                      <layout class="QVBoxLayout" name="vLytReachOutcome">
+                       <item>
+                        <spacer name="verticalSpacer_9">
+                         <property name="orientation">
+                          <enum>Qt::Vertical</enum>
+                         </property>
+                         <property name="sizeHint" stdset="0">
+                          <size>
+                           <width>20</width>
+                           <height>40</height>
+                          </size>
+                         </property>
+                        </spacer>
+                       </item>
+                       <item>
+                        <widget class="QLabel" name="lblReachOutcome">
+                         <property name="text">
+                          <string>Reach outcome</string>
+                         </property>
+                        </widget>
+                       </item>
+                       <item>
+                        <widget class="QLineEdit" name="reachOutcomeFilter"/>
+                       </item>
+                      </layout>
+                     </item>
+                     <item>
+                      <widget class="QPushButton" name="btnSave">
+                       <property name="text">
+                        <string>Save</string>
+                       </property>
+                      </widget>
+                     </item>
+                     <item>
+                      <spacer name="horizontalSpacer_2">
+                       <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                       </property>
+                       <property name="sizeHint" stdset="0">
+                        <size>
+                         <width>40</width>
+                         <height>20</height>
+                        </size>
+                       </property>
+                      </spacer>
+                     </item>
+                    </layout>
+                   </item>
+                   <item>
+                    <widget class="QTableWidget" name="tblSwipeInfo">
+                     <property name="sizeAdjustPolicy">
+                      <enum>QAbstractScrollArea::AdjustToContents</enum>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </widget>
+                <widget class="QWidget" name="tabStats">
+                 <attribute name="title">
+                  <string>Statistics</string>
+                 </attribute>
+                 <widget class="QWidget" name="verticalLayoutWidget_3">
+                  <property name="geometry">
+                   <rect>
+                    <x>30</x>
+                    <y>20</y>
+                    <width>702</width>
+                    <height>361</height>
+                   </rect>
+                  </property>
+                  <layout class="QVBoxLayout" name="vLytStats" stretch="1,100">
+                   <item>
+                    <layout class="QHBoxLayout" name="hLytSummaryFilters">
+                     <item>
+                      <layout class="QVBoxLayout" name="vLytRYTh_9">
+                       <item>
+                        <spacer name="verticalSpacer_19">
+                         <property name="orientation">
+                          <enum>Qt::Vertical</enum>
+                         </property>
+                         <property name="sizeHint" stdset="0">
+                          <size>
+                           <width>20</width>
+                           <height>40</height>
+                          </size>
+                         </property>
+                        </spacer>
+                       </item>
+                       <item>
+                        <widget class="QRadioButton" name="rbHuman">
+                         <property name="text">
+                          <string>Human recorded</string>
+                         </property>
+                        </widget>
+                       </item>
+                       <item>
+                        <widget class="QRadioButton" name="rbAI">
+                         <property name="text">
+                          <string>AI / DeepLabCut</string>
+                         </property>
+                        </widget>
+                       </item>
+                      </layout>
+                     </item>
+                    </layout>
+                   </item>
+                   <item>
+                    <widget class="QTabWidget" name="tabStats_2">
+                     <property name="currentIndex">
+                      <number>1</number>
+                     </property>
+                     <widget class="QWidget" name="tabSummaryTable">
+                      <attribute name="title">
+                       <string>Table</string>
+                      </attribute>
+                      <widget class="QWidget" name="verticalLayoutWidget_9">
+                       <property name="geometry">
+                        <rect>
+                         <x>20</x>
+                         <y>30</y>
+                         <width>621</width>
+                         <height>181</height>
+                        </rect>
+                       </property>
+                       <layout class="QVBoxLayout" name="vLytSummaryTable">
+                        <item>
+                         <widget class="QTableWidget" name="tblSummary"/>
+                        </item>
+                       </layout>
+                      </widget>
+                     </widget>
+                     <widget class="QWidget" name="tabPlots">
+                      <attribute name="title">
+                       <string>Plots</string>
+                      </attribute>
+                      <widget class="QWidget" name="verticalLayoutWidget_2">
+                       <property name="geometry">
+                        <rect>
+                         <x>50</x>
+                         <y>20</y>
+                         <width>561</width>
+                         <height>201</height>
+                        </rect>
+                       </property>
+                       <layout class="QVBoxLayout" name="vLytPlots" stretch="1,100">
+                        <item>
+                         <layout class="QHBoxLayout" name="hLytPlotControls" stretch="1,0,0,100">
+                          <item>
+                           <layout class="QVBoxLayout" name="vLytSwipeFeature">
+                            <item>
+                             <spacer name="verticalSpacer_18">
+                              <property name="orientation">
+                               <enum>Qt::Vertical</enum>
+                              </property>
+                              <property name="sizeHint" stdset="0">
+                               <size>
+                                <width>20</width>
+                                <height>40</height>
+                               </size>
+                              </property>
+                             </spacer>
+                            </item>
+                            <item>
+                             <widget class="QLabel" name="lblSwipeFeature">
+                              <property name="text">
+                               <string>Swipe feature</string>
+                              </property>
+                             </widget>
+                            </item>
+                            <item>
+                             <widget class="QComboBox" name="cmbSwipeFeature"/>
+                            </item>
+                           </layout>
+                          </item>
+                          <item>
+                           <layout class="QVBoxLayout" name="vLytPlotType">
+                            <item>
+                             <spacer name="verticalSpacer_20">
+                              <property name="orientation">
+                               <enum>Qt::Vertical</enum>
+                              </property>
+                              <property name="sizeHint" stdset="0">
+                               <size>
+                                <width>20</width>
+                                <height>40</height>
+                               </size>
+                              </property>
+                             </spacer>
+                            </item>
+                            <item>
+                             <widget class="QLabel" name="lblPlotType">
+                              <property name="text">
+                               <string>Plot type</string>
+                              </property>
+                             </widget>
+                            </item>
+                            <item>
+                             <widget class="QComboBox" name="cmbPlotType"/>
+                            </item>
+                           </layout>
+                          </item>
+                          <item>
+                           <layout class="QVBoxLayout" name="vLytPlotType_2">
+                            <item>
+                             <spacer name="verticalSpacer_21">
+                              <property name="orientation">
+                               <enum>Qt::Vertical</enum>
+                              </property>
+                              <property name="sizeHint" stdset="0">
+                               <size>
+                                <width>20</width>
+                                <height>40</height>
+                               </size>
+                              </property>
+                             </spacer>
+                            </item>
+                            <item>
+                             <widget class="QLabel" name="lblPlotGroup">
+                              <property name="text">
+                               <string>Plot Group</string>
+                              </property>
+                             </widget>
+                            </item>
+                            <item>
+                             <widget class="QComboBox" name="cmbPlotGroup"/>
+                            </item>
+                           </layout>
+                          </item>
+                          <item>
+                           <spacer name="horizontalSpacer_3">
+                            <property name="orientation">
+                             <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="sizeHint" stdset="0">
+                             <size>
+                              <width>40</width>
+                              <height>20</height>
+                             </size>
+                            </property>
+                           </spacer>
+                          </item>
+                         </layout>
+                        </item>
+                        <item>
+                         <layout class="QVBoxLayout" name="vLytPlot"/>
+                        </item>
+                       </layout>
+                      </widget>
+                     </widget>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </widget>
+               </widget>
+              </item>
+             </layout>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1425</width>
+     <height>21</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
