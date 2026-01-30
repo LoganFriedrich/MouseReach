@@ -83,6 +83,13 @@ def main():
         print(f"Saved {len(paths)} figures:")
         for p in paths:
             print(f"  {p.name}")
+
+        # Open the summary dashboard and the output folder
+        import os
+        dashboard = output_dir / "summary_dashboard.png"
+        if dashboard.exists():
+            os.startfile(str(dashboard))
+        os.startfile(str(output_dir))
     else:
         print("\nPlot generation skipped (--no-plots)")
 
