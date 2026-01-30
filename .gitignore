@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+env/
+venv/
+.venv/
+*.egg
+
+# Data files (users provide their own - must train custom DLC model)
+*.mp4
+*.avi
+*.mkv
+*.h5
+*.pickle
+
+# Sample/test data
+dev_SampleData/
+
+# Pipeline data folders
+DLC_Queue/
+Processing/
+Failed/
+Seg_*/
+Reach_*/
+Outcome_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude context (private)
+.claude/
+
+# Logs
+*.log
+
+# Local config
+.env
+.env.local
+
+# Backup files
+*.bak
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local conda/environment folders (kept locally, not in repo)
+ASPA2_env/
+conda_envs/
+
+# Old local folders
+Automated single pellet apparatus/
+old/
+util_Tools/
+
+# Windows shortcuts
+*.lnk
+
+# Local data/output files
+*.json
+*.zip
+*.csv
+*.xlsx

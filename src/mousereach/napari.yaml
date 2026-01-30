@@ -1,0 +1,87 @@
+name: mousereach
+display_name: "MouseReach - Mouse Reaching Behavior Analysis"
+visibility: public
+categories: []
+contributions:
+  commands:
+    # Dashboard - Pipeline Overview
+    - id: mousereach.dashboard_widget
+      python_name: mousereach.dashboard.widget:PipelineDashboard
+      title: "Pipeline Dashboard"
+
+    # Step 0 - Video Prep
+    - id: mousereach.video_prep_widget
+      python_name: mousereach.video_prep.widget:VideoPrepWidget
+      title: "Step 0 - Crop Videos"
+
+    # Step 1 - DLC
+    - id: mousereach.dlc_widget
+      python_name: mousereach.dlc.widget:DLCWidget
+      title: "Step 1 - DLC Analysis"
+
+    # Step 2 - Unified Pipeline (replaces 2a, 3a, 4a)
+    - id: mousereach.pipeline_widget
+      python_name: mousereach.pipeline.batch_widget:UnifiedPipelineWidget
+      title: "Step 2 - Run Pipeline"
+
+    # Review widgets
+    - id: mousereach.unified_review_widget
+      python_name: mousereach.review.unified_widget:UnifiedReviewWidget
+      title: "Review Tool (Tabbed)"
+    - id: mousereach.ground_truth_widget
+      python_name: mousereach.review.ground_truth_widget:GroundTruthWidget
+      title: "Ground Truth Tool"
+    - id: mousereach.segmentation_review_widget
+      python_name: mousereach.segmentation.review_widget:BoundaryReviewWidget
+      title: "Step 2b - Review Boundaries"
+    - id: mousereach.outcomes_review_widget
+      python_name: mousereach.outcomes.review_widget:PelletOutcomeAnnotatorWidget
+      title: "Step 3b - Review Outcomes"
+    - id: mousereach.reach_review_widget
+      python_name: mousereach.reach.review_widget:ReachAnnotatorWidget
+      title: "Step 4b - Review Reaches"
+
+    # Step 4 - Grasp Kinematics / View Features
+    - id: mousereach.kinematics_widget
+      python_name: mousereach.kinematics.widget:DataViewerWidget
+      title: "Step 4 - View Features"
+
+    # Performance Tracking
+    - id: mousereach.performance_widget
+      python_name: mousereach.performance.feedback_dashboard:PerformanceViewerWidget
+      title: "Algorithm Performance & Feedback"
+
+  widgets:
+    - command: mousereach.dashboard_widget
+      display_name: "Pipeline Dashboard"
+      autogenerate: false
+    - command: mousereach.video_prep_widget
+      display_name: "Step 0 - Crop Videos"
+      autogenerate: false
+    - command: mousereach.dlc_widget
+      display_name: "Step 1 - DLC Analysis"
+      autogenerate: false
+    - command: mousereach.pipeline_widget
+      display_name: "Step 2 - Run Pipeline"
+      autogenerate: false
+    - command: mousereach.unified_review_widget
+      display_name: "Review Tool (Tabbed)"
+      autogenerate: false
+    - command: mousereach.ground_truth_widget
+      display_name: "Ground Truth Tool"
+      autogenerate: false
+    - command: mousereach.segmentation_review_widget
+      display_name: "Step 2b - Review Boundaries"
+      autogenerate: false
+    - command: mousereach.outcomes_review_widget
+      display_name: "Step 3b - Review Outcomes"
+      autogenerate: false
+    - command: mousereach.reach_review_widget
+      display_name: "Step 4b - Review Reaches"
+      autogenerate: false
+    - command: mousereach.kinematics_widget
+      display_name: "Step 4 - View Features"
+      autogenerate: false
+    - command: mousereach.performance_widget
+      display_name: "Algorithm Performance & Feedback"
+      autogenerate: false

@@ -1,0 +1,171 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mousereach"
+version = "2.3.0"
+description = "MouseReach Pipeline - Mouse Reaching Behavior Analysis"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Logan Friedrich"}]
+requires-python = ">=3.9,<3.11"
+dependencies = [
+    # Core ML/DL dependencies
+    "tensorflow>=2.10",
+    "deeplabcut",
+    # NOTE: deeplabcut[gui] requires wxpython which needs Visual Studio to build
+    # We use napari for GUI instead, so wxpython is not needed
+
+    # GUI and visualization
+    "napari[all]>=0.4.17",
+    "qtpy>=2.0",
+
+    # Data processing (numpy pinned for TensorFlow/DeepLabCut compatibility)
+    "numpy==1.26.4",
+    "pandas>=1.3",
+    "opencv-python>=4.5",
+    "h5py>=3.0",
+    "scipy>=1.7",
+    "tables>=3.6",
+
+    # Utilities
+    "openpyxl>=3.0",
+    "tqdm",
+
+    # TensorFlow compatibility fixes
+    "protobuf>=3.9.2",
+    "tensorpack",  # Required by DLC for training/GUI
+    "tf-slim",     # Required by DLC for training
+
+    # Analysis dashboard
+    "streamlit>=1.20",
+    "scikit-learn>=1.0",
+    "seaborn>=0.12",
+    "matplotlib>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-qt",
+]
+sync = [
+    "watchdog>=3.0",
+    "sqlalchemy>=2.0",
+]
+
+[project.scripts]
+# Main launcher
+mousereach = "mousereach.launcher:main"
+MouseReach = "mousereach.launcher:main"
+
+# Configuration and setup
+mousereach-setup = "mousereach.setup.wizard:cli_main"
+mousereach-fix-powershell = "mousereach.setup.fix_powershell:main"
+
+# Pipeline Index (fast startup)
+mousereach-index-rebuild = "mousereach.index.scanner:cli_rebuild"
+mousereach-index-status = "mousereach.index.scanner:cli_status"
+mousereach-index-refresh = "mousereach.index.scanner:cli_refresh"
+
+# Step 0 - Video Prep
+mousereach-crop = "mousereach.video_prep.cli:main_crop"
+mousereach-convert = "mousereach.video_prep.cli:main_convert"
+mousereach-prep = "mousereach.video_prep.cli:main_prep"
+mousereach-compress = "mousereach.video_prep.compress:main"
+
+# Step 1 - DLC
+mousereach-dlc-batch = "mousereach.dlc.cli:main_batch"
+mousereach-dlc-quality = "mousereach.dlc.cli:main_quality"
+
+# Step 2 - Segmentation
+mousereach-segment = "mousereach.segmentation.cli:main_batch"
+mousereach-triage = "mousereach.segmentation.cli:main_triage"
+mousereach-advance = "mousereach.segmentation.cli:main_advance"
+mousereach-segment-review = "mousereach.segmentation.cli:main_review"
+mousereach-review = "mousereach.segmentation.cli:main_review"  # Deprecated: use mousereach-segment-review
+mousereach-reject-tray = "mousereach.segmentation.core.triage:cli_reject_unsupported"
+
+# Step 3 - Reach Detection
+mousereach-detect-reaches = "mousereach.reach.cli:main_batch"
+mousereach-triage-reaches = "mousereach.reach.cli:main_triage"
+mousereach-advance-reaches = "mousereach.reach.cli:main_advance"
+mousereach-review-reaches = "mousereach.reach.cli:main_review"
+
+# Step 4 - Pellet Outcomes
+mousereach-detect-outcomes = "mousereach.outcomes.cli:main_batch"
+mousereach-triage-outcomes = "mousereach.outcomes.cli:main_triage"
+mousereach-advance-outcomes = "mousereach.outcomes.cli:main_advance"
+mousereach-review-pellet-outcomes = "mousereach.outcomes.cli:main_review"
+mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated: use mousereach-review-pellet-outcomes
+
+# Review Tool (saves corrections to algo files) and GT Tool (creates unified GT file)
+mousereach-review-tool = "mousereach.review.ground_truth_widget:main_review"
+mousereach-unified-review = "mousereach.review.ground_truth_widget:main"
+mousereach-gt = "mousereach.review.ground_truth_widget:main"  # Short alias for GT tool
+mousereach-migrate-gt = "mousereach.review.unified_gt:cli_migrate"
+
+# Step 5 - Grasp Kinematics
+mousereach-grasp-analyze = "mousereach.kinematics.cli:main_batch"
+mousereach-grasp-triage = "mousereach.kinematics.cli:main_triage"
+mousereach-grasp-review = "mousereach.kinematics.cli:main_review"
+
+# Step 6 - Export
+mousereach-export = "mousereach.export.cli:main_export"
+mousereach-summary = "mousereach.export.cli:main_summary"
+
+# Archive - Move validated videos to NAS
+mousereach-archive = "mousereach.archive.cli:main"
+
+# Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture
+mousereach-migrate = "mousereach.migrate_to_processing:main"
+
+# Algorithm Evaluation
+mousereach-eval = "mousereach.eval.cli:main"
+mousereach-eval-direct = "mousereach.eval.run_direct:main"
+mousereach-eval-report = "mousereach.eval.report_cli:main"
+mousereach-algo-vs-human = "mousereach.eval.algo_vs_human:main"
+
+# Export Utilities
+mousereach-quick-summary = "mousereach.export.quick_summary:main"
+mousereach-features-csv = "mousereach.export.features_csv:main"
+
+# Kinematic Analysis Utilities
+mousereach-reach-export = "mousereach.kinematics.analysis.reach_export:main"
+mousereach-real-kinematics = "mousereach.kinematics.analysis.real_kinematics:main"
+
+# Performance Tracking
+mousereach-perf = "mousereach.performance.cli:main_view"
+mousereach-perf-eval = "mousereach.performance.cli:main_eval"
+mousereach-perf-report = "mousereach.performance.cli:main_report"
+
+# Algorithm Documentation
+mousereach-docs = "mousereach.docs.cli:main"
+
+# Analysis Dashboard
+mousereach-analyze = "mousereach.analysis.cli:main"
+mousereach-build-database = "mousereach.analysis.cli:main_build_database"
+
+# Data Explorer (pre-computed statistics database)
+mousereach-build-explorer = "mousereach.analysis.explorer_cli:main_build"
+mousereach-explore = "mousereach.analysis.explorer_cli:main_explore"
+
+# Database Sync - Automatic sync to central connectome database
+mousereach-sync = "mousereach.sync.cli:main_sync"
+mousereach-sync-watch = "mousereach.sync.cli:main_watch"
+mousereach-sync-status = "mousereach.sync.cli:main_status"
+
+[project.entry-points."napari.manifest"]
+mousereach = "mousereach:napari.yaml"
+
+[project.urls]
+"Homepage" = "https://github.com/LoganFriedrich/MouseReach"
+"Repository" = "https://github.com/LoganFriedrich/MouseReach"
+"Bug Tracker" = "https://github.com/LoganFriedrich/MouseReach/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["napari.yaml"]
