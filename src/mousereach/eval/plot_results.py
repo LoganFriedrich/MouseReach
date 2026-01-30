@@ -286,13 +286,13 @@ def plot_summary_dashboard(results: CorpusResults, output_dir: Path) -> Path:
     ax = axes[0, 0]
     metrics = {}
     if results.seg_results:
-        metrics["Seg\nRecall"] = np.mean([r.recall * 100 for r in results.seg_results])
+        metrics["Segmentation\nBoundary Recall"] = np.mean([r.recall * 100 for r in results.seg_results])
     if results.reach_results:
         metrics["Reach\nPrecision"] = np.mean([r.precision * 100 for r in results.reach_results])
         metrics["Reach\nRecall"] = np.mean([r.recall * 100 for r in results.reach_results])
-        metrics["Reach\nF1"] = np.mean([r.f1 * 100 for r in results.reach_results])
+        metrics["Reach\nF1 Score"] = np.mean([r.f1 * 100 for r in results.reach_results])
     if results.outcome_results:
-        metrics["Outcome\nAccuracy"] = np.mean([r.accuracy * 100 for r in results.outcome_results])
+        metrics["Outcome\nClassification Acc."] = np.mean([r.accuracy * 100 for r in results.outcome_results])
 
     if metrics:
         colors_list = [C_PRIMARY, C_GREEN, C_AMBER, C_PURPLE, C_RED]
@@ -350,13 +350,15 @@ def plot_summary_dashboard(results: CorpusResults, output_dir: Path) -> Path:
         ax.set_yticks(range(n))
         ax.set_xticklabels(short_labels, rotation=45, ha="right", fontsize=8)
         ax.set_yticklabels(short_labels, fontsize=8)
+        ax.set_xlabel("Algorithm Prediction")
+        ax.set_ylabel("Ground Truth")
         for i in range(n):
             for j in range(n):
                 if matrix[i, j] > 0:
                     tc = "white" if norm[i, j] > 0.5 else "black"
                     ax.text(j, i, str(matrix[i, j]), ha="center", va="center",
                             fontsize=10, fontweight="bold", color=tc)
-    ax.set_title("Confusion Matrix")
+    ax.set_title("Outcome Confusion Matrix")
 
     n_seg = len(results.seg_results)
     n_reach = len(results.reach_results)
