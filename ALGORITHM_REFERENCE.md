@@ -245,6 +245,7 @@ All spatial measurements use ruler units (1 ruler = SABL-to-SABR distance = 9mm)
 
 ---
 
+<!-- AUTO-GENERATED PERFORMANCE SECTION START -->
 ## Current Performance
 
 Evaluated 2026-01-30 against 19 ground truth videos with human-verified annotations. Run `python -m mousereach.eval.report_cli` to regenerate these numbers and produce plots.
@@ -358,6 +359,7 @@ The secondary pattern is `untouched` being called `displaced_sa` (4 instances). 
 | Reach end frame 1-frame early bias | Medium | All | Systematic bias in kinematic measurements |
 | retrieved → displaced_sa misclassification | Medium | 3 of 19 | Wrong outcome for 6/40 retrieval events |
 | untouched → displaced_sa (tray wobble) | Low | 3 of 19 | 4 false displacement events |
+<!-- AUTO-GENERATED PERFORMANCE SECTION END -->
 
 ---
 

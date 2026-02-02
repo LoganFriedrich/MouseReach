@@ -125,6 +125,7 @@ mousereach-migrate = "mousereach.migrate_to_processing:main"
 mousereach-eval = "mousereach.eval.cli:main"
 mousereach-eval-direct = "mousereach.eval.run_direct:main"
 mousereach-eval-report = "mousereach.eval.report_cli:main"
+mousereach-update-algo-ref = "mousereach.eval.update_algorithm_reference:main"
 mousereach-algo-vs-human = "mousereach.eval.algo_vs_human:main"
 
 # Export Utilities

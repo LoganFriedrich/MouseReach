@@ -232,12 +232,53 @@ Benefits of network drive setup:
 
 - [ ] Changed `config.py`? → Update root `AGENTS.md` ripple effects table
 - [ ] Changed `pyproject.toml` scripts? → Update this file
-- [ ] Changed `core/*.py` algorithm? → Update the module's `AGENTS.md`
+- [ ] Changed `core/*.py` algorithm? → **Update `ALGORITHM_REFERENCE.md`** (see below) + module's `AGENTS.md`
 - [ ] Changed JSON output format? → Update relevant module `AGENTS.md`
 - [ ] Added/renamed widget? → Update `napari.yaml` + module `AGENTS.md`
 - [ ] Changed environment variables? → Update this file + root `AGENTS.md`
 
 **See:** Root `AGENTS.md` for full ripple effects mapping
+
+---
+
+## ALGORITHM_REFERENCE.md Maintenance
+
+**`ALGORITHM_REFERENCE.md`** is the PI-facing document that explains exactly how each algorithm works, with detailed parameters, thresholds, and evidence of why the current approach is best.
+
+### CRITICAL: Update When Algorithms Change
+
+**Any time you modify algorithm logic in these files, you MUST update the corresponding section in `ALGORITHM_REFERENCE.md`:**
+
+| Algorithm File | Doc Section to Update |
+|----------------|----------------------|
+| `src/mousereach/segmentation/core/segmenter_robust.py` | Section 1: Segmentation |
+| `src/mousereach/reach/core/reach_detector.py` | Section 2: Reach Detection |
+| `src/mousereach/outcomes/core/pellet_outcome.py` | Section 3: Outcome Classification |
+| `src/mousereach/config.py` (thresholds/geometry) | All sections that reference changed values |
+
+**What to update:**
+- Algorithm description (if logic changed)
+- Parameters/thresholds (if values changed)
+- Version number (bump it in the doc header)
+- Algorithm Evolution section (add a new row explaining what changed and why)
+
+### Performance Section Auto-Updates
+
+The "Current Performance" section between `<!-- AUTO-GENERATED PERFORMANCE SECTION START -->` and `<!-- AUTO-GENERATED PERFORMANCE SECTION END -->` markers is auto-generated. To refresh it after re-running evaluation:
+
+```bash
+python -m mousereach.eval.update_algorithm_reference
+```
+
+This regenerates per-video tables, timing accuracy, confusion matrix, and weakness summary from live eval data.
+
+### Full Eval Report with Plots
+
+```bash
+python -m mousereach.eval.report_cli
+```
+
+Generates 7 matplotlib figures + text summary. Auto-opens the dashboard.
 
 ---
 
