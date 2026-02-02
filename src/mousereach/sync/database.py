@@ -3,7 +3,7 @@
 Database Syncer for MouseReach Pipeline
 
 Syncs _features.json (Step 5) outputs to the central connectome database
-at Y:/2_Connectome/Unified_Data/connectome.db as flattened per-reach records.
+at Y:/2_Connectome/MouseDB/connectome.db as flattened per-reach records.
 
 Each reach becomes one row in the reach_data table with:
 - Session context (subject, date, tray type, run number)
@@ -38,7 +38,7 @@ except ImportError:
 
 
 # Central database location
-DB_PATH = Path("Y:/2_Connectome/Unified_Data/connectome.db")
+DB_PATH = Path("Y:/2_Connectome/MouseDB/connectome.db")
 
 # Only sync features files (Step 5 output with joined reach+outcome data)
 FEATURES_SUFFIX = "_features.json"

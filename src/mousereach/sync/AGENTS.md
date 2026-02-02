@@ -19,9 +19,9 @@ Database synchronization module that syncs `_features.json` files (Step 5 output
 ### Working In This Directory
 - The `reach_data` table has ~60 columns: session identity, reach identity, outcome linkage, kinematic features, segment context, metadata
 - Video name parsing extracts session_date, tray_type, run_number from `YYYYMMDD_CNTxxxx_TypeRun` format
-- Subject ID conversion: `CNT0115` → `CNT_01_15` (matches unified_data schema)
+- Subject ID conversion: `CNT0115` → `CNT_01_15` (matches mousedb schema)
 - Sync is atomic per video: DELETE all rows for video_name, then INSERT new rows in a transaction
-- The database lives at `PROCESSING_ROOT/../Unified_Data/connectome.db` (shared with unified_data package)
+- The database lives at `PROCESSING_ROOT/../MouseDB/connectome.db` (shared with mousedb package)
 - Only `_features.json` is synced (not `_reaches.json` or `_pellet_outcomes.json` separately)
 - 5 feature columns are always NULL (not yet implemented): `tracking_quality_score`, `apex_distance_to_pellet_mm`, `lateral_deviation_mm`, `grasp_aperture_max_mm`, `grasp_aperture_at_contact_mm`
 
