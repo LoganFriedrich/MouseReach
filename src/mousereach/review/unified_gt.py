@@ -5,12 +5,18 @@ Unified Ground Truth File Handler
 Single unified GT file format that combines segmentation, reaches, and outcomes.
 
 Features:
-- Split verification for reaches (start_verified, end_verified independent)
-- Per-item verification tracking with timestamps
+- Split determination for reaches (start_determined, end_determined independent)
+- Per-item determination tracking with timestamps
+- Component-level exhaustive flags
 - Completion status computation
 - Migration from old separate GT files
+- Backward compatibility with v1 schema (auto-maps verified -> determined)
 
 File pattern: *_unified_ground_truth.json
+
+Schema versions:
+- 1.0: Original format with verified/corrected/original_*/source fields
+- 2.0: Simplified to determined/determined_by/determined_at + component exhaustive flags
 """
 
 import json
@@ -22,77 +28,59 @@ from dataclasses import dataclass, field, asdict
 
 
 # Schema version for forward compatibility
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 
 
 @dataclass
 class BoundaryGT:
     """Ground truth for a single segment boundary."""
-    index: int
-    frame: int
-    verified: bool = False
-    verified_by: Optional[str] = None
-    verified_at: Optional[str] = None
-    corrected: bool = False
-    original_frame: Optional[int] = None
-    source: str = "algorithm"  # "algorithm" = from algo output, "human_added" = manually added
+    index: int = 0
+    frame: int = 0
+    determined: bool = False
+    determined_by: Optional[str] = None
+    determined_at: Optional[str] = None
     comment: Optional[str] = None  # Free-form notes about this boundary
 
 
 @dataclass
 class ReachGT:
-    """Ground truth for a single reach with split start/end verification."""
-    # Required fields first
-    reach_id: int
-    segment_num: int
-    start_frame: int
-    end_frame: int
-    # Optional fields with defaults
-    # Start boundary verification
-    start_verified: bool = False
-    start_verified_by: Optional[str] = None
-    start_verified_at: Optional[str] = None
-    start_corrected: bool = False
-    original_start_frame: Optional[int] = None
+    """Ground truth for a single reach with split start/end determination."""
+    reach_id: int = 0
+    segment_num: int = 0
+    start_frame: int = 0
+    # Start boundary determination
+    start_determined: bool = False
+    start_determined_by: Optional[str] = None
+    start_determined_at: Optional[str] = None
+    end_frame: int = 0
+    # End boundary determination
+    end_determined: bool = False
+    end_determined_by: Optional[str] = None
+    end_determined_at: Optional[str] = None
     # Apex (informational)
     apex_frame: Optional[int] = None
-    # End boundary verification
-    end_verified: bool = False
-    end_verified_by: Optional[str] = None
-    end_verified_at: Optional[str] = None
-    end_corrected: bool = False
-    original_end_frame: Optional[int] = None
     # Metadata
-    source: str = "algorithm"  # "algorithm" or "human_added"
     exclude_from_analysis: bool = False
     exclude_reason: Optional[str] = None
     comment: Optional[str] = None  # Free-form notes about this reach
 
     @property
-    def fully_verified(self) -> bool:
-        """A reach is fully verified when both start AND end are verified."""
-        return self.start_verified and self.end_verified
+    def fully_determined(self) -> bool:
+        """A reach is fully determined when both start AND end are determined."""
+        return self.start_determined and self.end_determined
 
 
 @dataclass
 class OutcomeGT:
     """Ground truth for a single segment outcome."""
-    segment_num: int
-    outcome: str  # "retrieved", "displaced_sa", "displaced_outside", "untouched", etc.
-    verified: bool = False
-    verified_by: Optional[str] = None
-    verified_at: Optional[str] = None
-    corrected: bool = False
-    original_outcome: Optional[str] = None
-    # Key frames
+    segment_num: int = 0
+    outcome: str = "unknown"  # "retrieved", "displaced_sa", "displaced_outside", "untouched", etc.
     interaction_frame: Optional[int] = None
     outcome_known_frame: Optional[int] = None
     causal_reach_id: Optional[int] = None
-    # Algorithm metadata
-    confidence: float = 0.0
-    flagged: bool = False
-    flag_reason: Optional[str] = None
-    source: str = "algorithm"  # "algorithm" = from algo output, "human_added" = manually added
+    determined: bool = False
+    determined_by: Optional[str] = None
+    determined_at: Optional[str] = None
     comment: Optional[str] = None  # Free-form notes about this outcome
 
 
@@ -106,7 +94,7 @@ class Flag:
 
 @dataclass
 class CompletionStatus:
-    """Tracks completion of all verification tasks."""
+    """Tracks completion of all determination tasks."""
     segments_complete: bool = False
     reaches_complete: bool = False
     outcomes_complete: bool = False
@@ -114,11 +102,11 @@ class CompletionStatus:
     flags: List[Flag] = field(default_factory=list)
 
     # Counts for progress display
-    boundaries_verified: int = 0
+    boundaries_determined: int = 0
     boundaries_total: int = 0
-    reaches_verified: int = 0  # Fully verified (both start AND end)
+    reaches_determined: int = 0  # Fully determined (both start AND end)
     reaches_total: int = 0
-    outcomes_verified: int = 0
+    outcomes_determined: int = 0
     outcomes_total: int = 0
 
 
@@ -138,14 +126,23 @@ class UnifiedGroundTruth:
 
     # Segmentation data
     boundaries: List[BoundaryGT] = field(default_factory=list)
+    segmentation_exhaustive: bool = False
+    segmentation_exhaustive_determined_by: Optional[str] = None
+    segmentation_exhaustive_determined_at: Optional[str] = None
     anomalies: List[str] = field(default_factory=list)
     anomaly_annotations: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     # Reach data
     reaches: List[ReachGT] = field(default_factory=list)
+    reaches_exhaustive: bool = False
+    reaches_exhaustive_determined_by: Optional[str] = None
+    reaches_exhaustive_determined_at: Optional[str] = None
 
     # Outcome data
     outcomes: List[OutcomeGT] = field(default_factory=list)
+    outcomes_exhaustive: bool = False
+    outcomes_exhaustive_determined_by: Optional[str] = None
+    outcomes_exhaustive_determined_at: Optional[str] = None
 
     def update_completion_status(self) -> CompletionStatus:
         """Recompute completion status from current data."""
@@ -153,25 +150,28 @@ class UnifiedGroundTruth:
 
         # Boundaries
         status.boundaries_total = len(self.boundaries)
-        status.boundaries_verified = sum(1 for b in self.boundaries if b.verified)
+        status.boundaries_determined = sum(1 for b in self.boundaries if b.determined)
         status.segments_complete = (
-            status.boundaries_verified == status.boundaries_total
+            self.segmentation_exhaustive
+            and status.boundaries_determined == status.boundaries_total
             and status.boundaries_total > 0
         )
 
-        # Reaches - must have BOTH start and end verified
+        # Reaches - must have BOTH start and end determined
         status.reaches_total = len(self.reaches)
-        status.reaches_verified = sum(1 for r in self.reaches if r.fully_verified)
+        status.reaches_determined = sum(1 for r in self.reaches if r.fully_determined)
         status.reaches_complete = (
-            status.reaches_verified == status.reaches_total
+            self.reaches_exhaustive
+            and status.reaches_determined == status.reaches_total
             and status.reaches_total > 0
         )
 
         # Outcomes
         status.outcomes_total = len(self.outcomes)
-        status.outcomes_verified = sum(1 for o in self.outcomes if o.verified)
+        status.outcomes_determined = sum(1 for o in self.outcomes if o.determined)
         status.outcomes_complete = (
-            status.outcomes_verified == status.outcomes_total
+            self.outcomes_exhaustive
+            and status.outcomes_determined == status.outcomes_total
             and status.outcomes_total > 0
         )
 
@@ -185,32 +185,29 @@ class UnifiedGroundTruth:
         # Build flags list
         status.flags = []
 
-        # Unverified boundaries
+        # Undetermined boundaries
         for b in self.boundaries:
-            if not b.verified:
-                status.flags.append(Flag("boundary", b.index, "unverified"))
+            if not b.determined:
+                status.flags.append(Flag("boundary", b.index, "undetermined"))
 
-        # Partially or unverified reaches
+        # Partially or undetermined reaches
         for r in self.reaches:
-            if not r.start_verified:
-                status.flags.append(Flag("reach", r.reach_id, "start unverified"))
-            if not r.end_verified:
-                status.flags.append(Flag("reach", r.reach_id, "end unverified"))
+            if not r.start_determined:
+                status.flags.append(Flag("reach", r.reach_id, "start undetermined"))
+            if not r.end_determined:
+                status.flags.append(Flag("reach", r.reach_id, "end undetermined"))
 
-        # Unverified outcomes
+        # Undetermined outcomes
         for o in self.outcomes:
-            if not o.verified:
-                reason = "unverified"
-                if o.flagged:
-                    reason = f"flagged: {o.flag_reason or 'needs review'}"
-                status.flags.append(Flag("outcome", o.segment_num, reason))
+            if not o.determined:
+                status.flags.append(Flag("outcome", o.segment_num, "undetermined"))
 
         self.completion_status = status
         return status
 
 
 def get_username() -> str:
-    """Get current username for verification tracking."""
+    """Get current username for determination tracking."""
     return os.environ.get("USERNAME", os.environ.get("USER", "unknown"))
 
 
@@ -273,75 +270,97 @@ def save_unified_gt(gt: UnifiedGroundTruth, video_path: Path) -> Path:
 
 
 def _dict_to_unified_gt(data: Dict) -> UnifiedGroundTruth:
-    """Convert dict from JSON to UnifiedGroundTruth dataclass."""
+    """Convert dict from JSON to UnifiedGroundTruth dataclass.
+
+    Supports both v1 (verified/corrected) and v2 (determined) schemas.
+    If schema_version is "1.0" or fields use old names, auto-maps to v2.
+    """
+    seg_section = data.get("segmentation", {})
+    reaches_section = data.get("reaches", {})
+    outcomes_section = data.get("outcomes", {})
+
     gt = UnifiedGroundTruth(
         video_name=data.get("video_name", ""),
-        type=data.get("type", "unified_ground_truth"),
-        schema_version=data.get("schema_version", "1.0"),
+        type=data.get("type", "ground_truth"),
+        schema_version=SCHEMA_VERSION,  # Always upgrade to current version
         created_by=data.get("created_by", ""),
         created_at=data.get("created_at", ""),
         last_modified_at=data.get("last_modified_at", ""),
         last_modified_by=data.get("last_modified_by", ""),
-        anomalies=data.get("segmentation", {}).get("anomalies", []),
-        anomaly_annotations=data.get("segmentation", {}).get("anomaly_annotations", {}),
+        anomalies=seg_section.get("anomalies", []),
+        anomaly_annotations=seg_section.get("anomaly_annotations", {}),
+        # Component-level exhaustive flags
+        segmentation_exhaustive=seg_section.get("exhaustive", False),
+        segmentation_exhaustive_determined_by=seg_section.get("exhaustive_determined_by"),
+        segmentation_exhaustive_determined_at=seg_section.get("exhaustive_determined_at"),
+        reaches_exhaustive=reaches_section.get("exhaustive", False),
+        reaches_exhaustive_determined_by=reaches_section.get("exhaustive_determined_by"),
+        reaches_exhaustive_determined_at=reaches_section.get("exhaustive_determined_at"),
+        outcomes_exhaustive=outcomes_section.get("exhaustive", False),
+        outcomes_exhaustive_determined_by=outcomes_section.get("exhaustive_determined_by"),
+        outcomes_exhaustive_determined_at=outcomes_section.get("exhaustive_determined_at"),
     )
 
     # Parse boundaries
-    for b_data in data.get("segmentation", {}).get("boundaries", []):
+    for b_data in seg_section.get("boundaries", []):
+        # v1 compat: map verified -> determined
+        determined = b_data.get("determined", b_data.get("verified", False))
+        determined_by = b_data.get("determined_by", b_data.get("verified_by"))
+        determined_at = b_data.get("determined_at", b_data.get("verified_at"))
         gt.boundaries.append(BoundaryGT(
             index=b_data.get("index", 0),
             frame=b_data.get("frame", 0),
-            verified=b_data.get("verified", False),
-            verified_by=b_data.get("verified_by"),
-            verified_at=b_data.get("verified_at"),
-            corrected=b_data.get("corrected", False),
-            original_frame=b_data.get("original_frame"),
-            source=b_data.get("source", "algorithm"),
+            determined=determined,
+            determined_by=determined_by,
+            determined_at=determined_at,
+            comment=b_data.get("comment"),
         ))
 
     # Parse reaches
-    for r_data in data.get("reaches", {}).get("reaches", []):
+    for r_data in reaches_section.get("reaches", []):
+        # v1 compat: map start_verified -> start_determined, etc.
+        start_determined = r_data.get("start_determined", r_data.get("start_verified", False))
+        start_determined_by = r_data.get("start_determined_by", r_data.get("start_verified_by"))
+        start_determined_at = r_data.get("start_determined_at", r_data.get("start_verified_at"))
+        end_determined = r_data.get("end_determined", r_data.get("end_verified", False))
+        end_determined_by = r_data.get("end_determined_by", r_data.get("end_verified_by"))
+        end_determined_at = r_data.get("end_determined_at", r_data.get("end_verified_at"))
         gt.reaches.append(ReachGT(
             reach_id=r_data.get("reach_id", 0),
             segment_num=r_data.get("segment_num", 0),
             start_frame=r_data.get("start_frame", 0),
-            start_verified=r_data.get("start_verified", False),
-            start_verified_by=r_data.get("start_verified_by"),
-            start_verified_at=r_data.get("start_verified_at"),
-            start_corrected=r_data.get("start_corrected", False),
-            original_start_frame=r_data.get("original_start_frame"),
-            apex_frame=r_data.get("apex_frame"),
+            start_determined=start_determined,
+            start_determined_by=start_determined_by,
+            start_determined_at=start_determined_at,
             end_frame=r_data.get("end_frame", 0),
-            end_verified=r_data.get("end_verified", False),
-            end_verified_by=r_data.get("end_verified_by"),
-            end_verified_at=r_data.get("end_verified_at"),
-            end_corrected=r_data.get("end_corrected", False),
-            original_end_frame=r_data.get("original_end_frame"),
-            source=r_data.get("source", "algorithm"),
+            end_determined=end_determined,
+            end_determined_by=end_determined_by,
+            end_determined_at=end_determined_at,
+            apex_frame=r_data.get("apex_frame"),
             exclude_from_analysis=r_data.get("exclude_from_analysis", False),
             exclude_reason=r_data.get("exclude_reason"),
+            comment=r_data.get("comment"),
         ))
 
     # Sort reaches by segment then start_frame for consistent display order
     gt.reaches.sort(key=lambda r: (r.segment_num, r.start_frame))
 
     # Parse outcomes
-    for o_data in data.get("outcomes", {}).get("segments", []):
+    for o_data in outcomes_section.get("segments", []):
+        # v1 compat: map verified -> determined
+        determined = o_data.get("determined", o_data.get("verified", False))
+        determined_by = o_data.get("determined_by", o_data.get("verified_by"))
+        determined_at = o_data.get("determined_at", o_data.get("verified_at"))
         gt.outcomes.append(OutcomeGT(
             segment_num=o_data.get("segment_num", 0),
-            outcome=o_data.get("outcome", ""),
-            verified=o_data.get("verified", False),
-            verified_by=o_data.get("verified_by"),
-            verified_at=o_data.get("verified_at"),
-            corrected=o_data.get("corrected", False),
-            original_outcome=o_data.get("original_outcome"),
+            outcome=o_data.get("outcome", "unknown"),
             interaction_frame=o_data.get("interaction_frame"),
             outcome_known_frame=o_data.get("outcome_known_frame"),
             causal_reach_id=o_data.get("causal_reach_id"),
-            confidence=o_data.get("confidence", 0.0),
-            flagged=o_data.get("flagged", False),
-            flag_reason=o_data.get("flag_reason"),
-            source=o_data.get("source", "algorithm"),
+            determined=determined,
+            determined_by=determined_by,
+            determined_at=determined_at,
+            comment=o_data.get("comment"),
         ))
 
     # Update completion status
@@ -351,93 +370,73 @@ def _dict_to_unified_gt(data: Dict) -> UnifiedGroundTruth:
 
 
 def _unified_gt_to_dict(gt: UnifiedGroundTruth) -> Dict:
-    """Convert UnifiedGroundTruth to dict for JSON serialization."""
+    """Convert UnifiedGroundTruth to dict for JSON serialization (v2 schema)."""
     return {
         "video_name": gt.video_name,
         "type": gt.type,
         "schema_version": gt.schema_version,
-        "created_by": gt.created_by,
         "created_at": gt.created_at,
+        "created_by": gt.created_by,
         "last_modified_at": gt.last_modified_at,
         "last_modified_by": gt.last_modified_by,
-        "completion_status": {
-            "segments_complete": gt.completion_status.segments_complete,
-            "reaches_complete": gt.completion_status.reaches_complete,
-            "outcomes_complete": gt.completion_status.outcomes_complete,
-            "all_complete": gt.completion_status.all_complete,
-            "boundaries_verified": gt.completion_status.boundaries_verified,
-            "boundaries_total": gt.completion_status.boundaries_total,
-            "reaches_verified": gt.completion_status.reaches_verified,
-            "reaches_total": gt.completion_status.reaches_total,
-            "outcomes_verified": gt.completion_status.outcomes_verified,
-            "outcomes_total": gt.completion_status.outcomes_total,
-            "flags": [
-                {"type": f.type, "id": f.id, "reason": f.reason}
-                for f in gt.completion_status.flags
-            ],
-        },
         "segmentation": {
+            "exhaustive": gt.segmentation_exhaustive,
+            "exhaustive_determined_by": gt.segmentation_exhaustive_determined_by,
+            "exhaustive_determined_at": gt.segmentation_exhaustive_determined_at,
             "n_boundaries": len(gt.boundaries),
             "boundaries": [
                 {
                     "index": b.index,
                     "frame": b.frame,
-                    "verified": b.verified,
-                    "verified_by": b.verified_by,
-                    "verified_at": b.verified_at,
-                    "corrected": b.corrected,
-                    "original_frame": b.original_frame,
-                    "source": b.source,
+                    "determined": b.determined,
+                    "determined_by": b.determined_by,
+                    "determined_at": b.determined_at,
+                    "comment": b.comment,
                 }
                 for b in gt.boundaries
             ],
-            "anomalies": gt.anomalies,
-            "anomaly_annotations": gt.anomaly_annotations,
         },
         "reaches": {
+            "exhaustive": gt.reaches_exhaustive,
+            "exhaustive_determined_by": gt.reaches_exhaustive_determined_by,
+            "exhaustive_determined_at": gt.reaches_exhaustive_determined_at,
             "total_reaches": len(gt.reaches),
             "reaches": [
                 {
                     "reach_id": r.reach_id,
                     "segment_num": r.segment_num,
                     "start_frame": r.start_frame,
-                    "start_verified": r.start_verified,
-                    "start_verified_by": r.start_verified_by,
-                    "start_verified_at": r.start_verified_at,
-                    "start_corrected": r.start_corrected,
-                    "original_start_frame": r.original_start_frame,
-                    "apex_frame": r.apex_frame,
+                    "start_determined": r.start_determined,
+                    "start_determined_by": r.start_determined_by,
+                    "start_determined_at": r.start_determined_at,
                     "end_frame": r.end_frame,
-                    "end_verified": r.end_verified,
-                    "end_verified_by": r.end_verified_by,
-                    "end_verified_at": r.end_verified_at,
-                    "end_corrected": r.end_corrected,
-                    "original_end_frame": r.original_end_frame,
-                    "source": r.source,
+                    "end_determined": r.end_determined,
+                    "end_determined_by": r.end_determined_by,
+                    "end_determined_at": r.end_determined_at,
+                    "apex_frame": r.apex_frame,
                     "exclude_from_analysis": r.exclude_from_analysis,
                     "exclude_reason": r.exclude_reason,
+                    "comment": r.comment,
                 }
                 for r in gt.reaches
             ],
         },
         "outcomes": {
+            "exhaustive": gt.outcomes_exhaustive,
+            "exhaustive_determined_by": gt.outcomes_exhaustive_determined_by,
+            "exhaustive_determined_at": gt.outcomes_exhaustive_determined_at,
             "n_segments": len(gt.outcomes),
             "segments": [
                 {
                     "segment_num": o.segment_num,
                     "outcome": o.outcome,
-                    "verified": o.verified,
-                    "verified_by": o.verified_by,
-                    "verified_at": o.verified_at,
-                    "corrected": o.corrected,
-                    "original_outcome": o.original_outcome,
                     "interaction_frame": o.interaction_frame,
                     "outcome_known_frame": o.outcome_known_frame,
                     "causal_reach_id": o.causal_reach_id,
-                    "confidence": o.confidence,
-                    "flagged": o.flagged,
-                    "flag_reason": o.flag_reason,
-                    "source": o.source,
+                    "determined": o.determined,
+                    "determined_by": o.determined_by,
+                    "determined_at": o.determined_at,
+                    "comment": o.comment,
                 }
                 for o in gt.outcomes
             ],
@@ -515,7 +514,7 @@ def migrate_from_old_formats(video_path: Path) -> Optional[UnifiedGroundTruth]:
     if reach_gt:
         _migrate_reach_gt(gt, reach_gt)
     else:
-        # No reach GT - load from algorithm output (unverified)
+        # No reach GT - load from algorithm output (undetermined)
         _load_reaches_from_algo(gt, parent, video_stem)
 
     # Migrate outcomes
@@ -530,7 +529,7 @@ def migrate_from_old_formats(video_path: Path) -> Optional[UnifiedGroundTruth]:
 
 
 def _migrate_seg_gt(gt: UnifiedGroundTruth, seg_data: Dict):
-    """Migrate old segmentation GT format to unified."""
+    """Migrate old segmentation GT format to v2 unified."""
     boundaries = seg_data.get("boundaries", [])
     boundaries_meta = seg_data.get("boundaries_with_meta", [])
 
@@ -540,19 +539,17 @@ def _migrate_seg_gt(gt: UnifiedGroundTruth, seg_data: Dict):
             gt.boundaries.append(BoundaryGT(
                 index=b_meta.get("index", len(gt.boundaries)),
                 frame=b_meta.get("frame", 0),
-                verified=b_meta.get("human_verified", False),
-                verified_by=b_meta.get("verified_by"),
-                verified_at=b_meta.get("verified_at"),
-                corrected=b_meta.get("human_corrected", False),
-                original_frame=b_meta.get("original_frame"),
+                determined=b_meta.get("human_verified", False),
+                determined_by=b_meta.get("verified_by"),
+                determined_at=b_meta.get("verified_at"),
             ))
     else:
-        # Just frame numbers - assume all verified if GT file exists
+        # Just frame numbers - assume all determined if GT file exists
         for i, frame in enumerate(boundaries):
             gt.boundaries.append(BoundaryGT(
                 index=i,
                 frame=frame,
-                verified=True,  # Assume verified since it's in GT file
+                determined=True,  # Assume determined since it's in GT file
             ))
 
     gt.anomalies = seg_data.get("anomalies", [])
@@ -560,55 +557,42 @@ def _migrate_seg_gt(gt: UnifiedGroundTruth, seg_data: Dict):
 
 
 def _migrate_reach_gt(gt: UnifiedGroundTruth, reach_data: Dict):
-    """Migrate old reach GT format to unified with split verification."""
+    """Migrate old reach GT format to v2 unified with split determination."""
     for seg in reach_data.get("segments", []):
         for r in seg.get("reaches", []):
             # Old format has human_verified per-reach, not split
-            # We'll mark both start and end as verified if the reach was verified
-            old_verified = r.get("human_verified", False)
+            # We'll mark both start and end as determined if the reach was verified
+            old_determined = r.get("human_verified", False)
 
             gt.reaches.append(ReachGT(
                 reach_id=r.get("reach_id", 0),
                 segment_num=seg.get("segment_num", 0),
                 start_frame=r.get("start_frame", 0),
-                start_verified=old_verified,
-                start_verified_by=r.get("verified_by"),
-                start_verified_at=r.get("verified_at"),
-                start_corrected=r.get("human_corrected", False),
-                original_start_frame=r.get("original_start"),
+                start_determined=old_determined,
+                start_determined_by=r.get("verified_by"),
+                start_determined_at=r.get("verified_at"),
                 apex_frame=r.get("apex_frame"),
                 end_frame=r.get("end_frame", 0),
-                end_verified=old_verified,
-                end_verified_by=r.get("verified_by"),
-                end_verified_at=r.get("verified_at"),
-                end_corrected=r.get("human_corrected", False),
-                original_end_frame=r.get("original_end"),
-                source=r.get("source", "algorithm"),
+                end_determined=old_determined,
+                end_determined_by=r.get("verified_by"),
+                end_determined_at=r.get("verified_at"),
                 exclude_from_analysis=r.get("exclude_from_analysis", False),
                 exclude_reason=r.get("exclude_reason"),
             ))
 
 
 def _migrate_outcome_gt(gt: UnifiedGroundTruth, outcome_data: Dict):
-    """Migrate old outcome GT format to unified."""
+    """Migrate old outcome GT format to v2 unified."""
     for seg in outcome_data.get("segments", []):
         gt.outcomes.append(OutcomeGT(
             segment_num=seg.get("segment_num", 0),
-            outcome=seg.get("outcome", ""),
-            verified=seg.get("human_verified", False),
-            verified_by=seg.get("verified_by"),
-            verified_at=seg.get("verified_at"),
-            corrected=seg.get("human_corrected", False) or (
-                seg.get("original_outcome") is not None
-                and seg.get("original_outcome") != seg.get("outcome")
-            ),
-            original_outcome=seg.get("original_outcome"),
+            outcome=seg.get("outcome", "unknown"),
             interaction_frame=seg.get("interaction_frame"),
             outcome_known_frame=seg.get("outcome_known_frame"),
             causal_reach_id=seg.get("causal_reach_id"),
-            confidence=seg.get("confidence", 0.0),
-            flagged=seg.get("flagged_for_review", False),
-            flag_reason=seg.get("flag_reason"),
+            determined=seg.get("human_verified", False),
+            determined_by=seg.get("verified_by"),
+            determined_at=seg.get("verified_at"),
         ))
 
 
@@ -626,7 +610,7 @@ def create_from_algorithm_output(video_path: Path) -> Optional[UnifiedGroundTrut
     - *_reaches.json
     - *_pellet_outcomes.json
 
-    All items start unverified.
+    All items start undetermined.
     """
     video_stem = video_path.stem.replace("_preview", "")
     if "DLC" in video_stem:
@@ -660,10 +644,7 @@ def create_from_algorithm_output(video_path: Path) -> Optional[UnifiedGroundTrut
                 gt.outcomes.append(OutcomeGT(
                     segment_num=seg_num,
                     outcome="",  # Empty = no data yet
-                    verified=False,
-                    original_outcome=None,
-                    confidence=0.0,
-                    source="placeholder",  # Indicates no algorithm data
+                    determined=False,
                 ))
 
         # Sort outcomes by segment number
@@ -693,8 +674,7 @@ def _load_segments_from_algo(gt: UnifiedGroundTruth, parent: Path, video_stem: s
                     gt.boundaries.append(BoundaryGT(
                         index=i,
                         frame=frame,
-                        verified=False,
-                        original_frame=frame,
+                        determined=False,
                     ))
 
                 gt.anomalies = data.get("anomalies", [])
@@ -725,13 +705,10 @@ def _load_reaches_from_algo(gt: UnifiedGroundTruth, parent: Path, video_stem: st
                             reach_id=r.get("reach_id", 0),
                             segment_num=seg.get("segment_num", 0),
                             start_frame=r.get("start_frame", 0),
-                            start_verified=False,
-                            original_start_frame=r.get("start_frame"),
+                            start_determined=False,
                             apex_frame=r.get("apex_frame"),
                             end_frame=r.get("end_frame", 0),
-                            end_verified=False,
-                            original_end_frame=r.get("end_frame"),
-                            source="algorithm",
+                            end_determined=False,
                         ))
 
                 return True
@@ -757,14 +734,10 @@ def _load_outcomes_from_algo(gt: UnifiedGroundTruth, parent: Path, video_stem: s
                 for seg in data.get("segments", []):
                     gt.outcomes.append(OutcomeGT(
                         segment_num=seg.get("segment_num", 0),
-                        outcome=seg.get("outcome", ""),
-                        verified=False,
-                        original_outcome=seg.get("outcome"),
+                        outcome=seg.get("outcome", "unknown"),
                         interaction_frame=seg.get("interaction_frame"),
                         outcome_known_frame=seg.get("outcome_known_frame"),
-                        confidence=seg.get("confidence", 0.0),
-                        flagged=seg.get("flagged_for_review", False),
-                        flag_reason=seg.get("flag_reason"),
+                        determined=False,
                     ))
 
                 return True
@@ -964,14 +937,14 @@ def cli_migrate():
 
 def load_or_create_unified_gt(video_path: Path) -> UnifiedGroundTruth:
     """
-    Load algorithm outputs, then overlay any existing GT corrections/verifications.
+    Load algorithm outputs, then overlay any existing GT determinations.
 
     The review tool reviews ALGORITHM OUTPUTS, not GT files.
     GT is the OUTPUT of the review process.
 
     Flow:
     1. ALWAYS load algorithm outputs first (segments, reaches, outcomes)
-    2. If unified GT exists, overlay verification status and corrections
+    2. If unified GT exists, overlay determination status and corrections
     3. If old GT files exist, overlay their corrections
     4. Return combined result
     """
@@ -992,10 +965,10 @@ def load_or_create_unified_gt(video_path: Path) -> UnifiedGroundTruth:
         # Return empty GT
         return UnifiedGroundTruth(video_name=video_stem)
 
-    # Step 2: If unified GT exists, overlay verification status
+    # Step 2: If unified GT exists, overlay determination status
     existing_gt = load_unified_gt(video_path)
     if existing_gt is not None:
-        _overlay_gt_verifications(gt, existing_gt)
+        _overlay_gt_determinations(gt, existing_gt)
         return gt
 
     # Step 3: If old GT files exist, overlay their corrections
@@ -1004,76 +977,85 @@ def load_or_create_unified_gt(video_path: Path) -> UnifiedGroundTruth:
     return gt
 
 
-def _overlay_gt_verifications(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGroundTruth):
-    """Overlay verification status from saved GT onto algorithm GT."""
-    # Boundaries: match by index and apply verification
+def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGroundTruth):
+    """Overlay determination status from saved GT onto algorithm GT."""
+    # Copy exhaustive flags from saved GT
+    algo_gt.segmentation_exhaustive = saved_gt.segmentation_exhaustive
+    algo_gt.segmentation_exhaustive_determined_by = saved_gt.segmentation_exhaustive_determined_by
+    algo_gt.segmentation_exhaustive_determined_at = saved_gt.segmentation_exhaustive_determined_at
+    algo_gt.reaches_exhaustive = saved_gt.reaches_exhaustive
+    algo_gt.reaches_exhaustive_determined_by = saved_gt.reaches_exhaustive_determined_by
+    algo_gt.reaches_exhaustive_determined_at = saved_gt.reaches_exhaustive_determined_at
+    algo_gt.outcomes_exhaustive = saved_gt.outcomes_exhaustive
+    algo_gt.outcomes_exhaustive_determined_by = saved_gt.outcomes_exhaustive_determined_by
+    algo_gt.outcomes_exhaustive_determined_at = saved_gt.outcomes_exhaustive_determined_at
+
+    # Boundaries: match by index and apply determination status
     saved_bounds = {b.index: b for b in saved_gt.boundaries}
     for b in algo_gt.boundaries:
         if b.index in saved_bounds:
             sb = saved_bounds[b.index]
-            b.verified = sb.verified
-            b.verified_by = sb.verified_by
-            b.verified_at = sb.verified_at
-            if sb.corrected:
+            b.determined = sb.determined
+            b.determined_by = sb.determined_by
+            b.determined_at = sb.determined_at
+            # If saved GT has a different frame, use the determined value
+            if sb.determined and sb.frame != b.frame:
                 b.frame = sb.frame
-                b.corrected = True
-                b.original_frame = sb.original_frame
+            b.comment = sb.comment
 
-    # Reaches: match by reach_id and apply verification
+    # Reaches: match by reach_id and apply determination status
     saved_reaches = {r.reach_id: r for r in saved_gt.reaches}
     for r in algo_gt.reaches:
         if r.reach_id in saved_reaches:
             sr = saved_reaches[r.reach_id]
-            r.start_verified = sr.start_verified
-            r.start_verified_by = sr.start_verified_by
-            r.start_verified_at = sr.start_verified_at
-            r.end_verified = sr.end_verified
-            r.end_verified_by = sr.end_verified_by
-            r.end_verified_at = sr.end_verified_at
-            if sr.start_corrected:
+            r.start_determined = sr.start_determined
+            r.start_determined_by = sr.start_determined_by
+            r.start_determined_at = sr.start_determined_at
+            r.end_determined = sr.end_determined
+            r.end_determined_by = sr.end_determined_by
+            r.end_determined_at = sr.end_determined_at
+            # If determined, use the saved frame values
+            if sr.start_determined:
                 r.start_frame = sr.start_frame
-                r.start_corrected = True
-                r.original_start_frame = sr.original_start_frame
-            if sr.end_corrected:
+            if sr.end_determined:
                 r.end_frame = sr.end_frame
-                r.end_corrected = True
-                r.original_end_frame = sr.original_end_frame
             r.exclude_from_analysis = sr.exclude_from_analysis
             r.exclude_reason = sr.exclude_reason
+            r.comment = sr.comment
 
-    # Also add any human-added reaches from saved GT
+    # Also add any reaches from saved GT not in algorithm output
     algo_reach_ids = {r.reach_id for r in algo_gt.reaches}
     for sr in saved_gt.reaches:
-        if sr.reach_id not in algo_reach_ids and sr.source == "human_added":
+        if sr.reach_id not in algo_reach_ids:
             algo_gt.reaches.append(sr)
 
     # Sort reaches by segment then start_frame for consistent display order
     algo_gt.reaches.sort(key=lambda r: (r.segment_num, r.start_frame))
 
-    # Outcomes: match by segment_num and apply verification
+    # Outcomes: match by segment_num and apply determination status
     saved_outcomes = {o.segment_num: o for o in saved_gt.outcomes}
     for o in algo_gt.outcomes:
         if o.segment_num in saved_outcomes:
             so = saved_outcomes[o.segment_num]
-            o.verified = so.verified
-            o.verified_by = so.verified_by
-            o.verified_at = so.verified_at
-            if so.corrected:
+            o.determined = so.determined
+            o.determined_by = so.determined_by
+            o.determined_at = so.determined_at
+            # If determined, use the saved outcome value
+            if so.determined:
                 o.outcome = so.outcome
-                o.corrected = True
-                o.original_outcome = so.original_outcome
             if so.interaction_frame is not None:
                 o.interaction_frame = so.interaction_frame
             if so.outcome_known_frame is not None:
                 o.outcome_known_frame = so.outcome_known_frame
             if so.causal_reach_id is not None:
                 o.causal_reach_id = so.causal_reach_id
+            o.comment = so.comment
 
     algo_gt.update_completion_status()
 
 
 def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
-    """Overlay corrections from old separate GT files."""
+    """Overlay corrections from old separate GT files, mapping to v2 fields."""
     video_stem = video_path.stem.replace("_preview", "")
     if "DLC" in video_stem:
         video_stem = video_stem.split("DLC")[0].rstrip("_")
@@ -1086,16 +1068,14 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
             with open(seg_gt_path) as f:
                 seg_data = json.load(f)
             gt_boundaries = seg_data.get("boundaries", [])
-            # Mark boundaries as verified if they match GT
+            # Mark boundaries as determined if they exist in old GT
             for i, b in enumerate(gt.boundaries):
                 if i < len(gt_boundaries):
                     if b.frame != gt_boundaries[i]:
-                        b.original_frame = b.frame
                         b.frame = gt_boundaries[i]
-                        b.corrected = True
-                    b.verified = True
-                    b.verified_by = seg_data.get("created_by", "unknown")
-                    b.verified_at = seg_data.get("created_at")
+                    b.determined = True
+                    b.determined_by = seg_data.get("created_by", "unknown")
+                    b.determined_at = seg_data.get("created_at")
         except Exception:
             pass
 
@@ -1114,15 +1094,11 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
                         if r.reach_id == reach_id:
                             if r_gt.get("human_corrected"):
                                 if r_gt.get("start_frame") != r.start_frame:
-                                    r.original_start_frame = r.start_frame
                                     r.start_frame = r_gt.get("start_frame")
-                                    r.start_corrected = True
                                 if r_gt.get("end_frame") != r.end_frame:
-                                    r.original_end_frame = r.end_frame
                                     r.end_frame = r_gt.get("end_frame")
-                                    r.end_corrected = True
-                            r.start_verified = True
-                            r.end_verified = True
+                            r.start_determined = True
+                            r.end_determined = True
                             r.exclude_from_analysis = r_gt.get("exclude_from_analysis", False)
                             r.exclude_reason = r_gt.get("exclude_reason")
                             break
@@ -1145,12 +1121,10 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
                         if o.segment_num == seg_num:
                             gt_outcome = seg_gt.get("outcome")
                             if gt_outcome and gt_outcome != o.outcome:
-                                o.original_outcome = o.outcome
                                 o.outcome = gt_outcome
-                                o.corrected = True
-                            o.verified = True
-                            o.verified_by = outcome_data.get("created_by", "unknown")
-                            o.verified_at = outcome_data.get("created_at")
+                            o.determined = True
+                            o.determined_by = outcome_data.get("created_by", "unknown")
+                            o.determined_at = outcome_data.get("created_at")
                             if seg_gt.get("interaction_frame") is not None:
                                 o.interaction_frame = seg_gt.get("interaction_frame")
                             if seg_gt.get("outcome_known_frame") is not None:

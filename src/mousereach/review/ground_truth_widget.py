@@ -463,9 +463,21 @@ class GroundTruthWidget(QWidget):
         section.setLayout(layout)
 
         # Progress label
-        self.boundaries_progress = QLabel("0/0 verified")
+        self.boundaries_progress = QLabel("0/0 determined")
         self.boundaries_progress.setStyleSheet("color: #888;")
         layout.addWidget(self.boundaries_progress)
+
+        # Exhaustive status row
+        exhaustive_row = QHBoxLayout()
+        self.boundaries_exhaustive_label = QLabel("Not marked exhaustive")
+        self.boundaries_exhaustive_label.setStyleSheet("color: #888; font-style: italic;")
+        exhaustive_row.addWidget(self.boundaries_exhaustive_label)
+        exhaustive_row.addStretch()
+        self.boundaries_exhaustive_btn = QPushButton("Mark Exhaustive")
+        self.boundaries_exhaustive_btn.setMaximumWidth(140)
+        self.boundaries_exhaustive_btn.clicked.connect(lambda: self._toggle_exhaustive("segmentation"))
+        exhaustive_row.addWidget(self.boundaries_exhaustive_btn)
+        layout.addLayout(exhaustive_row)
 
         # Boundaries list container
         self.boundaries_container = QVBoxLayout()
@@ -486,9 +498,21 @@ class GroundTruthWidget(QWidget):
         section.setLayout(layout)
 
         # Progress label
-        self.reaches_progress = QLabel("0/0 fully verified")
+        self.reaches_progress = QLabel("0/0 fully determined")
         self.reaches_progress.setStyleSheet("color: #888;")
         layout.addWidget(self.reaches_progress)
+
+        # Exhaustive status row
+        exhaustive_row = QHBoxLayout()
+        self.reaches_exhaustive_label = QLabel("Not marked exhaustive")
+        self.reaches_exhaustive_label.setStyleSheet("color: #888; font-style: italic;")
+        exhaustive_row.addWidget(self.reaches_exhaustive_label)
+        exhaustive_row.addStretch()
+        self.reaches_exhaustive_btn = QPushButton("Mark Exhaustive")
+        self.reaches_exhaustive_btn.setMaximumWidth(140)
+        self.reaches_exhaustive_btn.clicked.connect(lambda: self._toggle_exhaustive("reaches"))
+        exhaustive_row.addWidget(self.reaches_exhaustive_btn)
+        layout.addLayout(exhaustive_row)
 
         # Reaches list container
         self.reaches_container = QVBoxLayout()
@@ -518,9 +542,21 @@ class GroundTruthWidget(QWidget):
         section.setLayout(layout)
 
         # Progress label
-        self.outcomes_progress = QLabel("0/0 verified")
+        self.outcomes_progress = QLabel("0/0 determined")
         self.outcomes_progress.setStyleSheet("color: #888;")
         layout.addWidget(self.outcomes_progress)
+
+        # Exhaustive status row
+        exhaustive_row = QHBoxLayout()
+        self.outcomes_exhaustive_label = QLabel("Not marked exhaustive")
+        self.outcomes_exhaustive_label.setStyleSheet("color: #888; font-style: italic;")
+        exhaustive_row.addWidget(self.outcomes_exhaustive_label)
+        exhaustive_row.addStretch()
+        self.outcomes_exhaustive_btn = QPushButton("Mark Exhaustive")
+        self.outcomes_exhaustive_btn.setMaximumWidth(140)
+        self.outcomes_exhaustive_btn.clicked.connect(lambda: self._toggle_exhaustive("outcomes"))
+        exhaustive_row.addWidget(self.outcomes_exhaustive_btn)
+        layout.addLayout(exhaustive_row)
 
         # Outcomes list container
         self.outcomes_container = QVBoxLayout()
@@ -773,9 +809,9 @@ class GroundTruthWidget(QWidget):
 
             status = self.gt.completion_status
             self.status_label.setText(
-                f"Progress: {status.boundaries_verified}/{status.boundaries_total} boundaries, "
-                f"{status.reaches_verified}/{status.reaches_total} reaches, "
-                f"{status.outcomes_verified}/{status.outcomes_total} outcomes"
+                f"Progress: {status.boundaries_determined}/{status.boundaries_total} boundaries, "
+                f"{status.reaches_determined}/{status.reaches_total} reaches, "
+                f"{status.outcomes_determined}/{status.outcomes_total} outcomes"
             )
 
         except Exception as e:
@@ -963,6 +999,7 @@ class GroundTruthWidget(QWidget):
         self._refresh_boundaries_list()
         self._refresh_reaches_list()
         self._refresh_outcomes_list()
+        self._refresh_exhaustive_status()
 
     def _refresh_boundaries_list(self):
         """Refresh the boundaries list."""
@@ -975,21 +1012,21 @@ class GroundTruthWidget(QWidget):
         if not self.gt:
             return
 
-        show_unverified_only = self.boundaries_filter.isChecked()
-        verified_count = 0
+        show_undetermined_only = self.boundaries_filter.isChecked()
+        determined_count = 0
         total = len(self.gt.boundaries)
 
         for b in self.gt.boundaries:
-            if b.verified:
-                verified_count += 1
-                if show_unverified_only:
+            if b.determined:
+                determined_count += 1
+                if show_undetermined_only:
                     continue
 
             row = self._create_boundary_row(b)
             self.boundaries_container.addWidget(row)
 
-        self.boundaries_progress.setText(f"{verified_count}/{total} verified")
-        color = "#4a9" if verified_count == total else "#f80" if verified_count > 0 else "#888"
+        self.boundaries_progress.setText(f"{determined_count}/{total} determined")
+        color = "#4a9" if determined_count == total else "#f80" if determined_count > 0 else "#888"
         self.boundaries_progress.setStyleSheet(f"color: {color};")
 
     def _create_boundary_row(self, boundary: BoundaryGT) -> QWidget:
@@ -1009,12 +1046,10 @@ class GroundTruthWidget(QWidget):
         idx_label.setFixedWidth(35)
         layout.addWidget(idx_label)
 
-        # Frame value (show original if corrected)
-        if boundary.corrected and boundary.original_frame is not None:
-            frame_label = QLabel(f"Frame {boundary.frame} (algo: {boundary.original_frame})")
+        # Frame value (green if determined)
+        frame_label = QLabel(f"Frame {boundary.frame}")
+        if boundary.determined:
             frame_label.setStyleSheet("color: #4a9;")
-        else:
-            frame_label = QLabel(f"Frame {boundary.frame}")
         layout.addWidget(frame_label)
 
         layout.addStretch()
@@ -1045,8 +1080,8 @@ class GroundTruthWidget(QWidget):
         comment_btn.clicked.connect(lambda _, b=boundary: self._edit_boundary_comment(b))
         layout.addWidget(comment_btn)
 
-        # Style: green if changed from algo
-        if boundary.corrected:
+        # Style: green if determined
+        if boundary.determined:
             row.setStyleSheet("QFrame { background-color: #1a3010; }")
 
         return row
@@ -1061,8 +1096,8 @@ class GroundTruthWidget(QWidget):
         if not self.gt:
             return
 
-        show_unverified_only = self.reaches_filter.isChecked()
-        verified_count = 0
+        show_undetermined_only = self.reaches_filter.isChecked()
+        determined_count = 0
         total = len(self.gt.reaches)
 
         # Group reaches by segment
@@ -1081,22 +1116,22 @@ class GroundTruthWidget(QWidget):
 
             if not segment_reaches:
                 # Show placeholder for segments with no reaches
-                if not show_unverified_only:
+                if not show_undetermined_only:
                     empty_label = QLabel(f"Seg {seg_num}: No reaches detected")
                     empty_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
                     self.reaches_container.addWidget(empty_label)
             else:
                 for r in segment_reaches:
-                    if r.fully_verified:
-                        verified_count += 1
-                        if show_unverified_only:
+                    if r.fully_determined:
+                        determined_count += 1
+                        if show_undetermined_only:
                             continue
 
                     row = self._create_reach_row(r)
                     self.reaches_container.addWidget(row)
 
-        self.reaches_progress.setText(f"{verified_count}/{total} fully verified")
-        color = "#4a9" if verified_count == total else "#f80" if verified_count > 0 else "#888"
+        self.reaches_progress.setText(f"{determined_count}/{total} fully determined")
+        color = "#4a9" if determined_count == total else "#f80" if determined_count > 0 else "#888"
         self.reaches_progress.setStyleSheet(f"color: {color};")
 
     def _create_reach_row(self, reach: ReachGT) -> QWidget:
@@ -1153,11 +1188,9 @@ class GroundTruthWidget(QWidget):
 
         # Start row: frame + Jump + Set
         start_row = QHBoxLayout()
-        if reach.start_corrected and reach.original_start_frame is not None:
-            start_label = QLabel(f"  Start: {reach.start_frame} (algo: {reach.original_start_frame})")
+        start_label = QLabel(f"  Start: {reach.start_frame}")
+        if reach.start_determined:
             start_label.setStyleSheet("color: #4a9;")
-        else:
-            start_label = QLabel(f"  Start: {reach.start_frame}")
         start_label.setMinimumWidth(150)
         start_row.addWidget(start_label)
 
@@ -1178,11 +1211,9 @@ class GroundTruthWidget(QWidget):
 
         # End row: frame + Jump + Set
         end_row = QHBoxLayout()
-        if reach.end_corrected and reach.original_end_frame is not None:
-            end_label = QLabel(f"  End: {reach.end_frame} (algo: {reach.original_end_frame})")
+        end_label = QLabel(f"  End: {reach.end_frame}")
+        if reach.end_determined:
             end_label.setStyleSheet("color: #4a9;")
-        else:
-            end_label = QLabel(f"  End: {reach.end_frame}")
         end_label.setMinimumWidth(150)
         end_row.addWidget(end_label)
 
@@ -1218,10 +1249,10 @@ class GroundTruthWidget(QWidget):
             comment_row.addWidget(comment_label)
             main_layout.addLayout(comment_row)
 
-        # Style: green if either start or end has been set as GT
+        # Style: green if either start or end has been determined
         if reach.exclude_from_analysis:
             row.setStyleSheet("QFrame { background-color: #2a2010; }")
-        elif reach.start_corrected or reach.end_corrected:
+        elif reach.start_determined or reach.end_determined:
             row.setStyleSheet("QFrame { background-color: #1a3010; }")
 
         return row
@@ -1229,13 +1260,10 @@ class GroundTruthWidget(QWidget):
     def _set_boundary_frame(self, boundary: BoundaryGT):
         """Set current frame as this boundary. This IS ground truth - no verification needed."""
         current = int(self.viewer.dims.current_step[0])
-        if not boundary.corrected:
-            boundary.original_frame = boundary.frame
         boundary.frame = current
-        boundary.corrected = True
-        boundary.verified = True  # Setting = GT
-        boundary.verified_by = get_username()
-        boundary.verified_at = get_timestamp()
+        boundary.determined = True
+        boundary.determined_by = get_username()
+        boundary.determined_at = get_timestamp()
         self._refresh_boundaries_list()
         self._update_status()
         show_info(f"Boundary {boundary.index + 1} set to frame {current}")
@@ -1243,13 +1271,10 @@ class GroundTruthWidget(QWidget):
     def _set_reach_start(self, reach: ReachGT):
         """Set current frame as reach start. This IS ground truth."""
         current = int(self.viewer.dims.current_step[0])
-        if not reach.start_corrected:
-            reach.original_start_frame = reach.start_frame
         reach.start_frame = current
-        reach.start_corrected = True
-        reach.start_verified = True  # Setting = GT
-        reach.start_verified_by = get_username()
-        reach.start_verified_at = get_timestamp()
+        reach.start_determined = True
+        reach.start_determined_by = get_username()
+        reach.start_determined_at = get_timestamp()
         # Re-sort to maintain temporal order after start frame change
         self.gt.reaches.sort(key=lambda r: r.start_frame)
         self._refresh_reaches_list()
@@ -1259,28 +1284,25 @@ class GroundTruthWidget(QWidget):
     def _set_reach_end(self, reach: ReachGT):
         """Set current frame as reach end. This IS ground truth."""
         current = int(self.viewer.dims.current_step[0])
-        if not reach.end_corrected:
-            reach.original_end_frame = reach.end_frame
         reach.end_frame = current
-        reach.end_corrected = True
-        reach.end_verified = True  # Setting = GT
-        reach.end_verified_by = get_username()
-        reach.end_verified_at = get_timestamp()
+        reach.end_determined = True
+        reach.end_determined_by = get_username()
+        reach.end_determined_at = get_timestamp()
         self._refresh_reaches_list()
         self._update_status()
         show_info(f"Reach #{reach.reach_id} end set to frame {current}")
 
     def _accept_reach(self, reach: ReachGT):
-        """Accept reach as-is (verify both start and end at once)."""
-        reach.start_verified = True
-        reach.start_verified_by = get_username()
-        reach.start_verified_at = get_timestamp()
-        reach.end_verified = True
-        reach.end_verified_by = get_username()
-        reach.end_verified_at = get_timestamp()
+        """Accept reach as-is (determine both start and end at once)."""
+        reach.start_determined = True
+        reach.start_determined_by = get_username()
+        reach.start_determined_at = get_timestamp()
+        reach.end_determined = True
+        reach.end_determined_by = get_username()
+        reach.end_determined_at = get_timestamp()
         self._refresh_reaches_list()
         self._update_status()
-        show_info(f"Reach #{reach.reach_id} accepted (both start and end verified)")
+        show_info(f"Reach #{reach.reach_id} accepted (both start and end determined)")
 
     def _refresh_outcomes_list(self):
         """Refresh the outcomes list."""
@@ -1292,21 +1314,21 @@ class GroundTruthWidget(QWidget):
         if not self.gt:
             return
 
-        show_unverified_only = self.outcomes_filter.isChecked()
-        verified_count = 0
+        show_undetermined_only = self.outcomes_filter.isChecked()
+        determined_count = 0
         total = len(self.gt.outcomes)
 
         for o in self.gt.outcomes:
-            if o.verified:
-                verified_count += 1
-                if show_unverified_only:
+            if o.determined:
+                determined_count += 1
+                if show_undetermined_only:
                     continue
 
             row = self._create_outcome_row(o)
             self.outcomes_container.addWidget(row)
 
-        self.outcomes_progress.setText(f"{verified_count}/{total} verified")
-        color = "#4a9" if verified_count == total else "#f80" if verified_count > 0 else "#888"
+        self.outcomes_progress.setText(f"{determined_count}/{total} determined")
+        color = "#4a9" if determined_count == total else "#f80" if determined_count > 0 else "#888"
         self.outcomes_progress.setStyleSheet(f"color: {color};")
 
     def _create_outcome_row(self, outcome: OutcomeGT) -> QWidget:
@@ -1323,7 +1345,7 @@ class GroundTruthWidget(QWidget):
         row.setLayout(main_layout)
 
         # Check if this is a placeholder (no algorithm data)
-        is_placeholder = outcome.source == "placeholder"
+        is_placeholder = not outcome.determined and not outcome.outcome
 
         # Row 1: Segment info + outcome selector
         header_row = QHBoxLayout()
@@ -1347,34 +1369,21 @@ class GroundTruthWidget(QWidget):
         outcome_combo.setMaximumWidth(130)
         header_row.addWidget(outcome_combo)
 
-        # Show original if changed
-        if outcome.corrected and outcome.original_outcome:
-            orig_label = QLabel(f"(algo: {outcome.original_outcome})")
-            orig_label.setStyleSheet("color: #4a9;")
-            header_row.addWidget(orig_label)
+        # Show determined indicator
+        if outcome.determined:
+            det_label = QLabel("(determined)")
+            det_label.setStyleSheet("color: #4a9;")
+            header_row.addWidget(det_label)
         elif is_placeholder:
             # No algorithm data
             no_data_label = QLabel("(set values below)")
             no_data_label.setStyleSheet("color: #f80;")
             header_row.addWidget(no_data_label)
         else:
-            # Confidence from algorithm
-            conf_label = QLabel(f"(conf: {outcome.confidence:.2f})")
-            conf_label.setStyleSheet("color: #888;")
-            header_row.addWidget(conf_label)
+            undetermined_label = QLabel("(undetermined)")
+            undetermined_label.setStyleSheet("color: #888;")
+            header_row.addWidget(undetermined_label)
 
-        # Flag toggle button
-        if outcome.flagged:
-            flag_btn = QPushButton("⚠ Flagged")
-            flag_btn.setStyleSheet("background-color: #f80; color: white;")
-            flag_btn.setToolTip(f"Flagged: {outcome.flag_reason or 'No reason'} - Click to unflag")
-        else:
-            flag_btn = QPushButton("Flag")
-            flag_btn.setStyleSheet("")
-            flag_btn.setToolTip("Flag this outcome for review")
-        flag_btn.setMaximumWidth(65)
-        flag_btn.clicked.connect(lambda _, o=outcome: self._toggle_outcome_flag(o))
-        header_row.addWidget(flag_btn)
 
         # Comment button
         if outcome.comment:
@@ -1452,24 +1461,19 @@ class GroundTruthWidget(QWidget):
             comment_row.addWidget(comment_label)
             main_layout.addLayout(comment_row)
 
-        # Style: green if changed from algo, orange if flagged
-        if outcome.corrected:
+        # Style: green if determined
+        if outcome.determined:
             row.setStyleSheet("QFrame { background-color: #1a3010; }")
-        elif outcome.flagged:
-            row.setStyleSheet("QFrame { background-color: #3a2010; }")
 
         return row
 
     def _set_outcome_type(self, outcome: OutcomeGT, new_type: str):
         """Change the outcome type. Setting this IS the ground truth."""
         if outcome.outcome != new_type:
-            if not outcome.corrected:
-                outcome.original_outcome = outcome.outcome
             outcome.outcome = new_type
-            outcome.corrected = True
-            outcome.verified = True  # Setting = GT
-            outcome.verified_by = get_username()
-            outcome.verified_at = get_timestamp()
+            outcome.determined = True
+            outcome.determined_by = get_username()
+            outcome.determined_at = get_timestamp()
             self._refresh_outcomes_list()
             self._update_status()
 
@@ -1477,9 +1481,9 @@ class GroundTruthWidget(QWidget):
         """Set current frame as interaction frame. This IS the ground truth."""
         current = int(self.viewer.dims.current_step[0])
         outcome.interaction_frame = current
-        outcome.verified = True  # Setting any frame = GT
-        outcome.verified_by = get_username()
-        outcome.verified_at = get_timestamp()
+        outcome.determined = True
+        outcome.determined_by = get_username()
+        outcome.determined_at = get_timestamp()
         self._refresh_outcomes_list()
         self._update_status()
         show_info(f"Seg {outcome.segment_num} interaction frame set to {current}")
@@ -1488,9 +1492,9 @@ class GroundTruthWidget(QWidget):
         """Set current frame as outcome known frame. This IS the ground truth."""
         current = int(self.viewer.dims.current_step[0])
         outcome.outcome_known_frame = current
-        outcome.verified = True  # Setting any frame = GT
-        outcome.verified_by = get_username()
-        outcome.verified_at = get_timestamp()
+        outcome.determined = True
+        outcome.determined_by = get_username()
+        outcome.determined_at = get_timestamp()
         self._refresh_outcomes_list()
         self._update_status()
         show_info(f"Seg {outcome.segment_num} outcome known frame set to {current}")
@@ -1499,45 +1503,45 @@ class GroundTruthWidget(QWidget):
     # Verification Actions
     # =========================================================================
 
-    def _verify_boundary(self, boundary: BoundaryGT):
-        """Mark a boundary as verified."""
-        boundary.verified = True
-        boundary.verified_by = get_username()
-        boundary.verified_at = get_timestamp()
+    def _determine_boundary(self, boundary: BoundaryGT):
+        """Mark a boundary as determined."""
+        boundary.determined = True
+        boundary.determined_by = get_username()
+        boundary.determined_at = get_timestamp()
         self._refresh_boundaries_list()
         self._update_status()
-        show_info(f"Boundary {boundary.index + 1} verified")
+        show_info(f"Boundary {boundary.index + 1} determined")
 
-    def _verify_reach_start(self, reach: ReachGT):
-        """Mark reach start as verified."""
-        reach.start_verified = True
-        reach.start_verified_by = get_username()
-        reach.start_verified_at = get_timestamp()
+    def _determine_reach_start(self, reach: ReachGT):
+        """Mark reach start as determined."""
+        reach.start_determined = True
+        reach.start_determined_by = get_username()
+        reach.start_determined_at = get_timestamp()
         self._refresh_reaches_list()
         self._update_status()
-        show_info(f"Reach #{reach.reach_id} start verified")
+        show_info(f"Reach #{reach.reach_id} start determined")
 
-    def _verify_reach_end(self, reach: ReachGT):
-        """Mark reach end as verified."""
-        if not reach.start_verified:
-            show_warning("Must verify start first")
+    def _determine_reach_end(self, reach: ReachGT):
+        """Mark reach end as determined."""
+        if not reach.start_determined:
+            show_warning("Must determine start first")
             return
 
-        reach.end_verified = True
-        reach.end_verified_by = get_username()
-        reach.end_verified_at = get_timestamp()
+        reach.end_determined = True
+        reach.end_determined_by = get_username()
+        reach.end_determined_at = get_timestamp()
         self._refresh_reaches_list()
         self._update_status()
-        show_info(f"Reach #{reach.reach_id} fully verified")
+        show_info(f"Reach #{reach.reach_id} fully determined")
 
-    def _verify_outcome(self, outcome: OutcomeGT):
-        """Mark an outcome as verified."""
-        outcome.verified = True
-        outcome.verified_by = get_username()
-        outcome.verified_at = get_timestamp()
+    def _determine_outcome(self, outcome: OutcomeGT):
+        """Mark an outcome as determined."""
+        outcome.determined = True
+        outcome.determined_by = get_username()
+        outcome.determined_at = get_timestamp()
         self._refresh_outcomes_list()
         self._update_status()
-        show_info(f"Segment {outcome.segment_num} outcome verified")
+        show_info(f"Segment {outcome.segment_num} outcome determined")
 
     def _add_reach(self):
         """Add a new reach at current frame."""
@@ -1558,12 +1562,19 @@ class GroundTruthWidget(QWidget):
         # Generate new reach ID
         new_id = max((r.reach_id for r in self.gt.reaches), default=0) + 1
 
+        username = get_username()
+        timestamp = get_timestamp()
         new_reach = ReachGT(
             reach_id=new_id,
             segment_num=segment_num,
             start_frame=current_frame,
             end_frame=current_frame + 30,  # Default 30 frames duration
-            source="human_added",
+            start_determined=True,
+            start_determined_by=username,
+            start_determined_at=timestamp,
+            end_determined=True,
+            end_determined_by=username,
+            end_determined_at=timestamp,
         )
 
         self.gt.reaches.append(new_reach)
@@ -1619,29 +1630,107 @@ class GroundTruthWidget(QWidget):
         self._refresh_reaches_list()
 
     def _toggle_outcome_flag(self, outcome: OutcomeGT):
-        """Toggle flag status for an outcome."""
+        """Flag toggling removed in v2 - flagging belongs in algorithm output files."""
+        pass
+
+    def _toggle_exhaustive(self, component: str):
+        """Toggle exhaustive status for a component (segmentation, reaches, outcomes)."""
         if not self.gt:
             return
 
-        if outcome.flagged:
-            # Currently flagged, unflag it
-            outcome.flagged = False
-            outcome.flag_reason = None
-            show_info(f"Segment {outcome.segment_num} outcome unflagged")
+        # Get current state
+        if component == "segmentation":
+            currently_exhaustive = self.gt.segmentation_exhaustive
+        elif component == "reaches":
+            currently_exhaustive = self.gt.reaches_exhaustive
+        elif component == "outcomes":
+            currently_exhaustive = self.gt.outcomes_exhaustive
         else:
-            # Prompt for flag reason
-            from qtpy.QtWidgets import QInputDialog
-            reason, ok = QInputDialog.getText(
-                self, "Flag Outcome",
-                f"Reason for flagging segment {outcome.segment_num} outcome:",
-                text="Needs review"
-            )
-            if ok:
-                outcome.flagged = True
-                outcome.flag_reason = reason or "No reason given"
-                show_info(f"Segment {outcome.segment_num} outcome flagged: {outcome.flag_reason}")
+            return
 
-        self._refresh_outcomes_list()
+        if currently_exhaustive:
+            # Removing exhaustive - simple confirmation
+            reply = QMessageBox.question(
+                self, "Remove Exhaustive",
+                f"Remove exhaustive declaration for {component}?\n\n"
+                f"This means the {component} list may be incomplete.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+            if component == "segmentation":
+                self.gt.segmentation_exhaustive = False
+                self.gt.segmentation_exhaustive_determined_by = None
+                self.gt.segmentation_exhaustive_determined_at = None
+            elif component == "reaches":
+                self.gt.reaches_exhaustive = False
+                self.gt.reaches_exhaustive_determined_by = None
+                self.gt.reaches_exhaustive_determined_at = None
+            elif component == "outcomes":
+                self.gt.outcomes_exhaustive = False
+                self.gt.outcomes_exhaustive_determined_by = None
+                self.gt.outcomes_exhaustive_determined_at = None
+            show_info(f"{component.capitalize()} no longer marked exhaustive")
+        else:
+            # Setting exhaustive - strong confirmation
+            reply = QMessageBox.warning(
+                self, "Mark Exhaustive",
+                f"Mark {component} as EXHAUSTIVE?\n\n"
+                f"This declares: 'I have determined ALL {component} in this video. "
+                f"There are no others besides what is listed here.'\n\n"
+                f"This enables full precision + recall evaluation against algorithms.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+            username = get_username()
+            timestamp = get_timestamp()
+            if component == "segmentation":
+                self.gt.segmentation_exhaustive = True
+                self.gt.segmentation_exhaustive_determined_by = username
+                self.gt.segmentation_exhaustive_determined_at = timestamp
+            elif component == "reaches":
+                self.gt.reaches_exhaustive = True
+                self.gt.reaches_exhaustive_determined_by = username
+                self.gt.reaches_exhaustive_determined_at = timestamp
+            elif component == "outcomes":
+                self.gt.outcomes_exhaustive = True
+                self.gt.outcomes_exhaustive_determined_by = username
+                self.gt.outcomes_exhaustive_determined_at = timestamp
+            show_info(f"{component.capitalize()} marked exhaustive by {username}")
+
+        self._refresh_exhaustive_status()
+
+    def _refresh_exhaustive_status(self):
+        """Update exhaustive status labels and buttons for all components."""
+        if not self.gt:
+            return
+
+        for component, label, btn in [
+            ("segmentation", self.boundaries_exhaustive_label, self.boundaries_exhaustive_btn),
+            ("reaches", self.reaches_exhaustive_label, self.reaches_exhaustive_btn),
+            ("outcomes", self.outcomes_exhaustive_label, self.outcomes_exhaustive_btn),
+        ]:
+            if component == "segmentation":
+                is_exhaustive = self.gt.segmentation_exhaustive
+                determined_by = self.gt.segmentation_exhaustive_determined_by
+            elif component == "reaches":
+                is_exhaustive = self.gt.reaches_exhaustive
+                determined_by = self.gt.reaches_exhaustive_determined_by
+            else:
+                is_exhaustive = self.gt.outcomes_exhaustive
+                determined_by = self.gt.outcomes_exhaustive_determined_by
+
+            if is_exhaustive:
+                label.setText(f"EXHAUSTIVE (by {determined_by or 'unknown'})")
+                label.setStyleSheet("color: #4a9; font-weight: bold;")
+                btn.setText("Remove Exhaustive")
+                btn.setStyleSheet("background-color: #4a9; color: white;")
+            else:
+                label.setText("Not marked exhaustive")
+                label.setStyleSheet("color: #888; font-style: italic;")
+                btn.setText("Mark Exhaustive")
+                btn.setStyleSheet("")
 
     def _edit_reach_comment(self, reach: ReachGT):
         """Edit comment for a reach."""
@@ -1712,9 +1801,9 @@ class GroundTruthWidget(QWidget):
         status = self.gt.completion_status
 
         self.status_label.setText(
-            f"Progress: {status.boundaries_verified}/{status.boundaries_total} boundaries, "
-            f"{status.reaches_verified}/{status.reaches_total} reaches, "
-            f"{status.outcomes_verified}/{status.outcomes_total} outcomes"
+            f"Progress: {status.boundaries_determined}/{status.boundaries_total} boundaries, "
+            f"{status.reaches_determined}/{status.reaches_total} reaches, "
+            f"{status.outcomes_determined}/{status.outcomes_total} outcomes"
         )
 
     # =========================================================================
@@ -1752,22 +1841,22 @@ class GroundTruthWidget(QWidget):
             anomaly_annotations=self.gt.anomaly_annotations,
         )
 
-        # Filter boundaries: keep if human interacted (verified, corrected, or manually added)
+        # Filter boundaries: keep if human determined the value
         filtered_gt.boundaries = [
             b for b in self.gt.boundaries
-            if b.verified or b.corrected or b.source == "human_added"
+            if b.determined
         ]
 
-        # Filter reaches: keep if human interacted with start OR end (or manually added)
+        # Filter reaches: keep if human determined start OR end
         filtered_gt.reaches = [
             r for r in self.gt.reaches
-            if r.start_verified or r.end_verified or r.start_corrected or r.end_corrected or r.source == "human_added"
+            if r.start_determined or r.end_determined
         ]
 
-        # Filter outcomes: keep if human interacted (verified, corrected, or manually added)
+        # Filter outcomes: keep if human determined the value
         filtered_gt.outcomes = [
             o for o in self.gt.outcomes
-            if o.verified or o.corrected or o.source == "human_added"
+            if o.determined
         ]
 
         # Save the filtered GT
@@ -1814,24 +1903,25 @@ class GroundTruthWidget(QWidget):
                 boundary_corrections = {}
                 changes = []
                 for i, b in enumerate(self.gt.boundaries):
-                    orig = original_boundaries[i] if i < len(original_boundaries) else None
-                    if b.corrected:
+                    orig_frame = original_boundaries[i] if i < len(original_boundaries) else None
+                    was_corrected = orig_frame is not None and b.frame != orig_frame
+                    if was_corrected:
                         boundary_corrections[str(i)] = {
                             "human_corrected": True,
-                            "original_frame": b.original_frame,
+                            "original_frame": orig_frame,
                             "corrected_by": username,
                             "corrected_at": timestamp
                         }
                         changes.append({
                             "index": i,
-                            "original": b.original_frame,
+                            "original": orig_frame,
                             "corrected": b.frame,
-                            "delta": b.frame - (b.original_frame or 0)
+                            "delta": b.frame - orig_frame
                         })
                     else:
                         boundary_corrections[str(i)] = {
                             "human_corrected": False,
-                            "original_frame": None,
+                            "original_frame": orig_frame,
                             "corrected_by": None,
                             "corrected_at": None
                         }
@@ -1863,21 +1953,28 @@ class GroundTruthWidget(QWidget):
                 with open(reaches_path, 'r') as f:
                     reach_data = json.load(f)
 
-                # Update reaches from GT data
+                # Build lookup of original algo reaches for correction detection
+                algo_reaches_by_id = {}
+                for seg in reach_data.get("segments", []):
+                    for ar in seg.get("reaches", []):
+                        algo_reaches_by_id[ar.get("reach_id")] = ar
+
                 updated_reaches = []
                 for r in self.gt.reaches:
+                    algo_r = algo_reaches_by_id.get(r.reach_id, {})
+                    start_corrected = algo_r.get("start_frame") is not None and r.start_frame != algo_r.get("start_frame")
+                    end_corrected = algo_r.get("end_frame") is not None and r.end_frame != algo_r.get("end_frame")
                     reach_dict = {
                         "reach_id": r.reach_id,
                         "segment_num": r.segment_num,
                         "start_frame": r.start_frame,
                         "end_frame": r.end_frame,
-                        "human_corrected": r.start_corrected or r.end_corrected,
-                        "source": r.source,
+                        "human_corrected": start_corrected or end_corrected,
                     }
-                    if r.start_corrected:
-                        reach_dict["original_start_frame"] = r.original_start_frame
-                    if r.end_corrected:
-                        reach_dict["original_end_frame"] = r.original_end_frame
+                    if start_corrected:
+                        reach_dict["original_start_frame"] = algo_r.get("start_frame")
+                    if end_corrected:
+                        reach_dict["original_end_frame"] = algo_r.get("end_frame")
                     if r.exclude_from_analysis:
                         reach_dict["exclude_from_analysis"] = True
                         reach_dict["exclude_reason"] = r.exclude_reason
@@ -1903,15 +2000,17 @@ class GroundTruthWidget(QWidget):
 
                 # Update outcomes from GT data
                 for o in self.gt.outcomes:
-                    if o.source == "placeholder":
-                        continue  # Skip placeholders
+                    if not o.determined:
+                        continue  # Skip undetermined outcomes
 
                     # Find matching segment in algo data
                     for seg in outcome_data.get("segments", []):
                         if seg.get("segment_num") == o.segment_num:
-                            if o.corrected:
+                            algo_outcome = seg.get("outcome", "")
+                            was_corrected = algo_outcome and o.outcome != algo_outcome
+                            if was_corrected:
                                 seg["human_corrected"] = True
-                                seg["original_outcome"] = o.original_outcome
+                                seg["original_outcome"] = algo_outcome
                             seg["outcome"] = o.outcome
                             if o.interaction_frame is not None:
                                 seg["interaction_frame"] = o.interaction_frame
