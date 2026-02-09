@@ -9,8 +9,15 @@ from pathlib import Path
 from collections import defaultdict
 import sys
 
-# Target videos with highest FP rates
-WORST_VIDEOS = ["CNT0307_P4", "CNT0311_P2", "CNT0110_P2", "CNT0309_P1", "CNT0413_P2", "CNT0312_P2"]
+# Target videos with highest FP rates (with date prefixes)
+WORST_VIDEOS = [
+    "20251009_CNT0307_P4",
+    "20250806_CNT0311_P2",
+    "20250701_CNT0110_P2",
+    "20251009_CNT0309_P1",
+    "20251031_CNT0413_P2",
+    "20250806_CNT0312_P2"
+]
 
 GT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Processing")
 ALGO_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach\Archive\Pipeline_0_0")
@@ -22,6 +29,7 @@ def load_gt_reaches(video_name):
     """Load fully determined GT reaches from v2 unified GT file."""
     gt_file = GT_DIR / f"{video_name}_unified_ground_truth.json"
     if not gt_file.exists():
+        print(f"    Warning: GT file not found: {gt_file}")
         return []
 
     with open(gt_file, 'r') as f:
@@ -45,6 +53,7 @@ def load_algo_reaches(video_name):
     """Load algorithm reaches from Pipeline_0_0."""
     algo_file = ALGO_DIR / f"{video_name}_reaches.json"
     if not algo_file.exists():
+        print(f"    Warning: Algo file not found: {algo_file}")
         return []
 
     with open(algo_file, 'r') as f:
