@@ -98,7 +98,7 @@ from datetime import datetime
 from .geometry import compute_segment_geometry, get_boxr_reference, load_dlc, load_segments
 
 
-VERSION = "3.5.0"  # v3.5: Data-driven thresholds from GT analysis
+VERSION = "4.2.0"  # v4.2: Tolerance-based disappearance, conservative thresholds, splitter active
 
 
 @dataclass
@@ -189,8 +189,8 @@ class ReachDetector:
     NOSE_ENGAGEMENT_THRESHOLD = 25   # pixels from slit center
     MIN_REACH_DURATION = 4           # frames (increased from 2 based on GT analysis - 42% of FPs were ≤3 frames)
     LOOKAHEAD_FRAMES = 3             # frames to check for sustained hand disappearance
-    DISAPPEAR_THRESHOLD = 2          # hand must be gone for this many consecutive frames
-    GAP_TOLERANCE = 2                # Tolerance for brief tracking dropouts
+    DISAPPEAR_THRESHOLD = 3          # v4.0: consecutive invisible frames before ending reach (was 2)
+    GAP_TOLERANCE = 0                # v4.0: no post-processing merge - handled by tolerance in state machine
 
     # v3.1: End-on-drop detection (not just disappearance)
     HIGH_CONFIDENCE = 0.70           # "Confident" tracking level
@@ -198,6 +198,8 @@ class ReachDetector:
     VALLEY_THRESHOLD = 0.50          # Don't merge if gap has confidence below this
 
     # Splitting parameters (data-driven from GT analysis)
+    # Splits long reaches at DLC confidence dips. Helps existence (+3 matches) at cost
+    # of imprecise split points (~5 frame early-end errors). Net positive.
     SPLIT_THRESHOLD_FRAMES = 25      # 95th percentile of GT reach duration
     CONFIDENCE_HIGH = 0.5            # "High" confidence before drop
     CONFIDENCE_LOW = 0.35            # "Low" confidence in gap
@@ -209,8 +211,10 @@ class ReachDetector:
     # Note: Attempted -10 threshold in v3.6 but recall dropped 10%, reverted
     MIN_EXTENT_THRESHOLD = -15.0     # pixels - filter reaches below this
 
-    # v3.5: Improved end frame detection (GT analysis showed reaches end too late)
-    # End reach when hand returns to within this many pixels of slit center
+    # v4.2: Restored to 5px. 15px caused 99% of early-end errors by splitting
+    # single reaches during normal hand oscillation near the slit. The tolerance-based
+    # disappearance (DISAPPEAR_THRESHOLD=3) handles 89% of real splits; this check
+    # is only a safety net for the rare case where hand retracts without disappearing.
     HAND_RETURN_THRESHOLD = 5.0      # pixels - hand returned to starting position
 
     RH_POINTS = ['RightHand', 'RHLeft', 'RHOut', 'RHRight']
@@ -337,11 +341,13 @@ class ReachDetector:
         # Current position relative to max
         retraction = reach_max_x - hand_x
 
-        # Retracted more than 40% of extension distance?
-        # v3.2: Based on GT analysis, humans end reaches when hand retracts ~40% back
+        # v4.1: Restored to 40%+5px. v4.0 lowered to 25%+3px but overcorrected:
+        # end offset went from +11 (late) to -6 (early). 78.8% of reaches ended
+        # too early. Retraction is a safety net for cases where hand remains visible
+        # but clearly returns - the tolerance-based disappearance handles most ends.
         retraction_threshold = extension * 0.40
 
-        return retraction > retraction_threshold and retraction > 5  # At least 5 pixels
+        return retraction > retraction_threshold and retraction > 5
 
     def _hand_returned_to_start(self, hand_x: float, slit_x: float, reach_max_x: float) -> bool:
         """
@@ -391,6 +397,7 @@ class ReachDetector:
         reach_start = None
         reach_data = []  # [(frame, x, y), ...]
         reach_max_x = 0  # Track max extension for return detection
+        consecutive_invisible = 0  # v4.0: tolerance-based disappearance tracking
 
         reach_num = 0
 
@@ -408,6 +415,7 @@ class ReachDetector:
                     reach_start = frame
                     reach_data = [(frame, hand_x, hand_y)]
                     reach_max_x = hand_x if hand_x else 0
+                    consecutive_invisible = 0
 
             else:
                 # Currently in a reach - check for reach end
@@ -415,35 +423,43 @@ class ReachDetector:
                 end_frame = frame - 1  # Default: end at previous frame
 
                 if not hand_visible:
-                    # Hand disappeared - end reach at previous frame
-                    end_reach = True
-                    end_frame = frame - 1
-
-                elif self._hand_will_disappear(df, frame):
-                    # Hand about to disappear - end reach now
-                    end_reach = True
-                    end_frame = frame
-                    reach_data.append((frame, hand_x, hand_y))
-
-                # v3.2: Check for hand retraction (hand moving back toward slit)
-                # Ground truth showed humans end reaches when hand retracts, not just disappears
-                elif self._detect_hand_retraction(df, frame, reach_max_x, slit_x):
-                    # Hand is retracting significantly - end reach
-                    end_reach = True
-                    end_frame = frame - 1  # End at last frame before retraction
-
-                # v3.5: Check if hand returned to starting position
-                # GT analysis showed 174 reaches needed human correction to end earlier
-                elif self._hand_returned_to_start(hand_x, slit_x, reach_max_x):
-                    # Hand has returned to slit area - end reach
-                    end_reach = True
-                    end_frame = frame - 1
+                    # v4.0: Tolerance-based disappearance detection
+                    # Don't end immediately on single invisible frame (DLC flicker).
+                    # Only end after DISAPPEAR_THRESHOLD consecutive invisible frames.
+                    # This replaces the old immediate-end + merge-postprocessing approach
+                    # which caused cascading merges across DLC flicker cycles.
+                    consecutive_invisible += 1
+                    if consecutive_invisible >= self.DISAPPEAR_THRESHOLD:
+                        # Hand has been gone long enough - this is a real disappearance
+                        end_reach = True
+                        # End at the last frame where hand was actually visible
+                        if reach_data:
+                            end_frame = reach_data[-1][0]
+                        else:
+                            end_frame = frame - consecutive_invisible
+                    # else: stay in reach, don't add invisible frame to data
 
                 else:
-                    # Continue tracking reach
-                    reach_data.append((frame, hand_x, hand_y))
-                    if hand_x and hand_x > reach_max_x:
-                        reach_max_x = hand_x
+                    # Hand IS visible - reset invisible counter
+                    consecutive_invisible = 0
+
+                    # Check end conditions (only when hand is visible)
+
+                    # v4.0: Check for hand retraction (lowered from 40% to 25%)
+                    if self._detect_hand_retraction(df, frame, reach_max_x, slit_x):
+                        end_reach = True
+                        end_frame = frame - 1  # End at last frame before retraction
+
+                    # v4.0: Check if hand returned to starting position (15px, was 5px)
+                    elif self._hand_returned_to_start(hand_x, slit_x, reach_max_x):
+                        end_reach = True
+                        end_frame = frame - 1
+
+                    else:
+                        # Continue tracking reach
+                        reach_data.append((frame, hand_x, hand_y))
+                        if hand_x and hand_x > reach_max_x:
+                            reach_max_x = hand_x
 
                 if end_reach and reach_data:
                     # Finalize the reach
@@ -487,6 +503,7 @@ class ReachDetector:
                     reach_start = None
                     reach_data = []
                     reach_max_x = 0
+                    consecutive_invisible = 0
 
                     # Check if this frame starts a new reach (hand still visible)
                     if hand_visible and nose_engaged:
