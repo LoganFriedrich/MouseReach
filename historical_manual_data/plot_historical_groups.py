@@ -50,6 +50,9 @@ TRAY_OFFSETS_2 = [(7, 27), (31, 51)]
 WINDOW_LABELS = ['Last 3', 'Post\nInjury 1', 'Post\nInjury 2-4', 'Rehab\nPillar']
 WINDOW_KEYS = ['final_3', 'immediate_post', '2_4_post', 'last_2']
 
+# Learner criterion: exclude animals with Final 3 avg eaten% <= this threshold
+LEARNER_EATEN_THRESHOLD = 5.0
+
 # Bracket drawing order (shortest span first, for clean stacking)
 BRACKET_ORDER = [
     (0, 1),  # Final 3 vs Post Injury 1 (Dunnett test 1, span=1)
@@ -237,8 +240,25 @@ def get_time_windows(test_types_sorted, test_meta):
 
 def get_animal_window_values(data, windows):
     """Compute per-animal averages for each time window.
-    Only includes animals present in ALL non-empty windows (for paired tests).
+    Only includes animals that:
+      1. Are present in ALL non-empty windows (for paired tests)
+      2. Meet the learner criterion (Final 3 avg eaten% > LEARNER_EATEN_THRESHOLD)
+    Returns (result_dict, n_excluded) where n_excluded is the learner filter count.
     """
+    # First compute Final 3 eaten% per animal to apply learner criterion
+    learners = set()
+    non_learners = set()
+    final3_tts = windows.get('final_3', [])
+    for animal, tests in data.items():
+        if final3_tts:
+            e_vals = [tests[tt]['eaten'] for tt in final3_tts if tt in tests]
+            if e_vals and np.mean(e_vals) > LEARNER_EATEN_THRESHOLD:
+                learners.add(animal)
+            else:
+                non_learners.add(animal)
+        else:
+            learners.add(animal)  # No training data = can't filter
+
     animals_per_window = {}
     for wkey in WINDOW_KEYS:
         tt_list = windows[wkey]
@@ -246,8 +266,8 @@ def get_animal_window_values(data, windows):
             animals_per_window[wkey] = set()
             continue
         animals_with_data = set()
-        for animal, tests in data.items():
-            if any(tt in tests for tt in tt_list):
+        for animal in learners:
+            if animal in data and any(tt in data[animal] for tt in tt_list):
                 animals_with_data.add(animal)
         animals_per_window[wkey] = animals_with_data
 
@@ -282,7 +302,7 @@ def get_animal_window_values(data, windows):
             'animals': animal_ids,
         }
 
-    return result
+    return result, len(non_learners)
 
 
 def plot_group(group_name, injury_type, window_data, windows, output_dir):
@@ -291,7 +311,7 @@ def plot_group(group_name, injury_type, window_data, windows, output_dir):
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 11))
     fig.suptitle(
-        f'Behavior Performance: Manual Scoring\n({group_name} - {injury_type}, N={n_animals} mice)',
+        f'Behavior Performance: Manual Scoring\n({group_name} - {injury_type}, N={n_animals} learners, eaten >{LEARNER_EATEN_THRESHOLD}% at training)',
         fontsize=16, fontweight='bold'
     )
 
@@ -512,6 +532,7 @@ def main():
     print("  Style: Matching fig5_behavior_layout4.png (CNT reference)")
     print("  Stats: Dunnett's test (post-injury controls vs pre/rehab)")
     print("  Last 2: Last 2 Pillar days in continuous rehab block")
+    print(f"  Learner criterion: Final 3 avg eaten% > {LEARNER_EATEN_THRESHOLD}%")
     print("  Data: Raw pellet scores from '1 - ENTER DATA HERE' tabs")
     print("=" * 70)
 
@@ -526,9 +547,11 @@ def main():
         print(f"\n--- {group_name} ({injury_type}) ---")
         data, test_types, test_meta = read_group_data(filepath)
         windows = get_time_windows(test_types, test_meta)
-        window_data = get_animal_window_values(data, windows)
+        window_data, n_excluded = get_animal_window_values(data, windows)
 
-        print(f"  Animals (paired): {len(window_data['final_3']['animals'])}")
+        n_included = len(window_data['final_3']['animals'])
+        print(f"  Total animals: {len(data)}, Learners: {len(data) - n_excluded}, Non-learners excluded: {n_excluded}")
+        print(f"  Animals (paired + learner): {n_included}")
         print(f"  Windows:")
         for wk in WINDOW_KEYS:
             tts = windows[wk]

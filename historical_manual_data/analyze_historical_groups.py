@@ -6,7 +6,9 @@ for all old injury groups (non-CNT, non-ENCR) across four time windows:
   - Final 3: Last 3 training days before injury
   - Immediate Post: 1 Week Post-Injury test(s)
   - 2-4 Post: Weeks 2-4 Post-Injury
-  - Last 2 Days: Last 2 test types in dataset
+  - Last 2 Days: Last 2 Pillar tray days in continuous rehab block
+
+Learner criterion: Final 3 avg eaten% > 5% (excludes non-learners).
 """
 
 import os
@@ -41,6 +43,9 @@ TRAY_OFFSETS_2 = [
     (7, 27),    # Tray 1: pellets at cols 7-26
     (31, 51),   # Tray 2: pellets at cols 31-50
 ]
+
+# Learner criterion: exclude animals with Final 3 avg eaten% <= this threshold
+LEARNER_EATEN_THRESHOLD = 5.0
 
 
 def score_tray(pellet_values):
@@ -225,11 +230,25 @@ def read_group_data(filepath, group_name):
     return data, sorted(all_test_types), test_meta
 
 
-def compute_window_stats(data, test_types_in_window):
+def get_learners(data, final3_tts):
+    """Return set of animals that meet the learner criterion (Final 3 eaten% > threshold)."""
+    learners = set()
+    for animal, tests in data.items():
+        if final3_tts:
+            e_vals = [tests[tt]['eaten_pct'] for tt in final3_tts if tt in tests]
+            if e_vals and np.mean(e_vals) > LEARNER_EATEN_THRESHOLD:
+                learners.add(animal)
+        else:
+            learners.add(animal)
+    return learners
+
+
+def compute_window_stats(data, test_types_in_window, learners=None):
     """Compute mean +/- SEM across animals for a time window.
 
     For each animal: average across all test days in the window.
     Then compute mean and SEM across animals.
+    If learners is provided, only includes animals in that set.
     """
     if not test_types_in_window:
         return None, None, None, None, 0
@@ -238,6 +257,8 @@ def compute_window_stats(data, test_types_in_window):
     animal_contacted = []
 
     for animal, tests in data.items():
+        if learners is not None and animal not in learners:
+            continue
         eaten_vals = []
         contacted_vals = []
         for tt in test_types_in_window:
@@ -264,6 +285,7 @@ def compute_window_stats(data, test_types_in_window):
 def main():
     print("=" * 110)
     print("HISTORICAL BEHAVIORAL DATA ANALYSIS - Manual Pellet Scores")
+    print(f"  Learner criterion: Final 3 avg eaten% > {LEARNER_EATEN_THRESHOLD}%")
     print("=" * 110)
 
     all_results = []
@@ -279,8 +301,10 @@ def main():
 
         data, test_types, test_meta = read_group_data(filepath, group_name)
         windows = get_time_windows(test_types, test_meta)
+        learners = get_learners(data, windows['final_3'])
+        n_excluded = len(data) - len(learners)
 
-        print(f"  Animals: {len(data)}")
+        print(f"  Animals: {len(data)} total, {len(learners)} learners, {n_excluded} excluded")
         print(f"  Test types: {len(test_types)}")
         print(f"  Time window mapping:")
         for wname, ttypes in windows.items():
@@ -293,7 +317,7 @@ def main():
             ('last_2', 'Last 2 Days'),
         ]:
             eaten_mean, eaten_sem, contacted_mean, contacted_sem, n = compute_window_stats(
-                data, windows[window_name]
+                data, windows[window_name], learners=learners
             )
             all_results.append({
                 'group': group_name,
