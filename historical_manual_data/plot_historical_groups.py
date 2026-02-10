@@ -9,7 +9,10 @@ Creates per-group figures:
 Data is read directly from each group's "1 - ENTER DATA HERE" sheet,
 computing Eaten% and Contacted% from raw pellet scores (0/1/2).
 
-Stats: Dunnett's test (post-injury windows as controls vs pre-injury and rehab).
+Stats: GEE (Generalized Estimating Equations) with binomial family,
+exchangeable correlation structure, and animal as clustering variable.
+Post-hoc: pairwise contrasts with Holm correction.
+Fallback: chi-square / Fisher's exact when GEE can't converge (complete separation).
 Last 2: Uses last 2 Pillar tray days in continuous rehab (before any >5-day gap).
 """
 
@@ -18,11 +21,16 @@ matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import openpyxl
 import os
 import re
+import warnings
 from collections import defaultdict
 from scipy import stats
+from statsmodels.genmod.generalized_estimating_equations import GEE
+from statsmodels.genmod.families import Binomial
+from statsmodels.genmod.cov_struct import Exchangeable
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'figures')
@@ -55,10 +63,10 @@ LEARNER_EATEN_THRESHOLD = 5.0
 
 # Bracket drawing order (shortest span first, for clean stacking)
 BRACKET_ORDER = [
-    (0, 1),  # Final 3 vs Post Injury 1 (Dunnett test 1, span=1)
-    (2, 3),  # Post Injury 2-4 vs Rehab Pillar (Dunnett test 2, span=1)
-    (0, 2),  # Final 3 vs Post Injury 2-4 (Dunnett test 2, span=2)
-    (1, 3),  # Post Injury 1 vs Rehab Pillar (Dunnett test 1, span=2)
+    (0, 1),  # Final 3 vs Post Injury 1 (span=1)
+    (2, 3),  # Post Injury 2-4 vs Rehab Pillar (span=1)
+    (0, 2),  # Final 3 vs Post Injury 2-4 (span=2)
+    (1, 3),  # Post Injury 1 vs Rehab Pillar (span=2)
 ]
 
 
@@ -84,35 +92,6 @@ def add_stat_bracket(ax, x1, x2, y, h, p_val, show_pval=False):
     ax.text((x1+x2)/2, y+h, text, ha='center', va='bottom', fontsize=10, fontweight='bold')
 
 
-def run_dunnett_tests(data_by_phase):
-    """Run Dunnett's tests with post-injury windows as controls.
-
-    Test 1: Control = Immediate Post (idx 1), vs Final 3 (idx 0) and Rehab Pillar (idx 3)
-    Test 2: Control = 2-4 Post (idx 2), vs Final 3 (idx 0) and Rehab Pillar (idx 3)
-
-    Returns dict: {(bar_i, bar_j): p_value}
-    """
-    results = {}
-    final3 = data_by_phase[0]
-    imm_post = data_by_phase[1]
-    post_2_4 = data_by_phase[2]
-    rehab = data_by_phase[3]
-
-    # Test 1: control = immediate_post
-    if len(imm_post) > 1 and len(final3) > 1 and len(rehab) > 1:
-        res = stats.dunnett(final3, rehab, control=imm_post)
-        results[(0, 1)] = res.pvalue[0]  # Final 3 vs Immediate Post
-        results[(1, 3)] = res.pvalue[1]  # Rehab Pillar vs Immediate Post
-
-    # Test 2: control = 2_4_post
-    if len(post_2_4) > 1 and len(final3) > 1 and len(rehab) > 1:
-        res2 = stats.dunnett(final3, rehab, control=post_2_4)
-        results[(0, 2)] = res2.pvalue[0]  # Final 3 vs 2-4 Post
-        results[(2, 3)] = res2.pvalue[1]  # Rehab Pillar vs 2-4 Post
-
-    return results
-
-
 def is_valid_tray(pellet_values):
     for v in pellet_values:
         if v is not None and v != 'N/A' and isinstance(v, (int, float)):
@@ -120,18 +99,15 @@ def is_valid_tray(pellet_values):
     return False
 
 
-def score_tray(pellet_values):
-    valid = [v for v in pellet_values if v is not None and v != 'N/A' and isinstance(v, (int, float))]
-    if not valid:
-        return None, None
-    n = len(valid)
-    eaten = sum(1 for v in valid if v >= 2) / n * 100
-    contacted = sum(1 for v in valid if v >= 1) / n * 100
-    return eaten, contacted
-
-
 def read_group_data(filepath):
-    """Read raw pellet data and return per-animal per-test-type metrics + test metadata."""
+    """Read raw pellet data from Excel.
+
+    Returns:
+        data: {animal: {test_type: {eaten: float%, contacted: float%}}} - animal-level averages
+        sorted test types list
+        test_meta: {test_type: {date, tray}}
+        pellet_records: list of (animal, test_type, eaten_01, contacted_01) - one per pellet
+    """
     wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
     ws = wb['1 - ENTER DATA HERE']
 
@@ -139,8 +115,9 @@ def read_group_data(filepath):
     tray_offsets = TRAY_OFFSETS_4 if len(headers) > 80 else TRAY_OFFSETS_2
 
     data = defaultdict(dict)
+    pellet_records = []
     all_test_types = set()
-    test_meta = {}  # tt -> {date, tray}
+    test_meta = {}
 
     for row in ws.iter_rows(min_row=2, values_only=True):
         vals = list(row)
@@ -161,10 +138,21 @@ def read_group_data(filepath):
             pellets = vals[start:end]
             if not is_valid_tray(pellets):
                 continue
-            e, c = score_tray(pellets)
-            if e is not None:
-                tray_eaten.append(e)
-                tray_contacted.append(c)
+
+            valid_in_tray = []
+            for v in pellets:
+                if v is not None and v != 'N/A' and isinstance(v, (int, float)):
+                    valid_in_tray.append(v)
+                    pellet_records.append((
+                        animal, test_type,
+                        1 if v >= 2 else 0,   # eaten binary
+                        1 if v >= 1 else 0,   # contacted binary
+                    ))
+
+            if valid_in_tray:
+                n_p = len(valid_in_tray)
+                tray_eaten.append(sum(1 for v in valid_in_tray if v >= 2) / n_p * 100)
+                tray_contacted.append(sum(1 for v in valid_in_tray if v >= 1) / n_p * 100)
 
         if tray_eaten:
             data[animal][test_type] = {
@@ -173,7 +161,7 @@ def read_group_data(filepath):
             }
 
     wb.close()
-    return data, sorted(all_test_types), test_meta
+    return data, sorted(all_test_types), test_meta, pellet_records
 
 
 def get_time_windows(test_types_sorted, test_meta):
@@ -238,45 +226,25 @@ def get_time_windows(test_types_sorted, test_meta):
     return windows
 
 
-def get_animal_window_values(data, windows):
-    """Compute per-animal averages for each time window.
-    Only includes animals that:
-      1. Are present in ALL non-empty windows (for paired tests)
-      2. Meet the learner criterion (Final 3 avg eaten% > LEARNER_EATEN_THRESHOLD)
-    Returns (result_dict, n_excluded) where n_excluded is the learner filter count.
-    """
-    # First compute Final 3 eaten% per animal to apply learner criterion
+def get_learners(data, final3_tts):
+    """Return set of animals meeting learner criterion (Final 3 avg eaten% > threshold)."""
     learners = set()
-    non_learners = set()
-    final3_tts = windows.get('final_3', [])
     for animal, tests in data.items():
         if final3_tts:
             e_vals = [tests[tt]['eaten'] for tt in final3_tts if tt in tests]
             if e_vals and np.mean(e_vals) > LEARNER_EATEN_THRESHOLD:
                 learners.add(animal)
-            else:
-                non_learners.add(animal)
         else:
-            learners.add(animal)  # No training data = can't filter
+            learners.add(animal)
+    return learners
 
-    animals_per_window = {}
-    for wkey in WINDOW_KEYS:
-        tt_list = windows[wkey]
-        if not tt_list:
-            animals_per_window[wkey] = set()
-            continue
-        animals_with_data = set()
-        for animal in learners:
-            if animal in data and any(tt in data[animal] for tt in tt_list):
-                animals_with_data.add(animal)
-        animals_per_window[wkey] = animals_with_data
 
-    non_empty_windows = [k for k in WINDOW_KEYS if windows[k]]
-    if non_empty_windows:
-        paired_animals = set.intersection(*(animals_per_window[k] for k in non_empty_windows))
-    else:
-        paired_animals = set()
+def get_animal_window_values(data, windows, learners):
+    """Compute per-animal averages for each time window (no pairing requirement).
 
+    Each window independently includes all learners with data in that window.
+    Returns dict: {window_key: {eaten: array, contacted: array, animals: list}}
+    """
     result = {}
     for wkey in WINDOW_KEYS:
         tt_list = windows[wkey]
@@ -285,7 +253,9 @@ def get_animal_window_values(data, windows):
             continue
 
         eaten_vals, contacted_vals, animal_ids = [], [], []
-        for animal in sorted(paired_animals):
+        for animal in sorted(learners):
+            if animal not in data:
+                continue
             e_vals, c_vals = [], []
             for tt in tt_list:
                 if tt in data[animal]:
@@ -302,16 +272,222 @@ def get_animal_window_values(data, windows):
             'animals': animal_ids,
         }
 
-    return result, len(non_learners)
+    return result
 
 
-def plot_group(group_name, injury_type, window_data, windows, output_dir):
-    """Create 2x2 bar panel figure with Dunnett's test."""
-    n_animals = len(window_data['final_3']['animals']) if window_data['final_3']['animals'] else 0
+def build_pellet_dataframe(pellet_records, windows, learners):
+    """Build pandas DataFrame from pellet records for GEE analysis.
 
+    Each row is one pellet observation with columns:
+        animal, window (int 0-3), eaten (0/1), contacted (0/1), animal_code (int)
+    Filtered to learner animals and test types within defined windows.
+    """
+    tt_to_window = {}
+    for wk_idx, wk in enumerate(WINDOW_KEYS):
+        for tt in windows[wk]:
+            tt_to_window[tt] = wk_idx
+
+    rows = []
+    for animal, test_type, eaten, contacted in pellet_records:
+        if animal not in learners:
+            continue
+        if test_type not in tt_to_window:
+            continue
+        rows.append({
+            'animal': animal,
+            'window': tt_to_window[test_type],
+            'eaten': eaten,
+            'contacted': contacted,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    animal_codes = {a: i for i, a in enumerate(sorted(df['animal'].unique()))}
+    df['animal_code'] = df['animal'].map(animal_codes)
+    return df
+
+
+def _holm_correct(pvals):
+    """Apply Holm-Bonferroni correction to a dict of p-values."""
+    if not pvals:
+        return pvals
+    sorted_pairs = sorted(pvals.keys(), key=lambda k: pvals[k])
+    m = len(sorted_pairs)
+    corrected = {}
+    for rank, pair in enumerate(sorted_pairs):
+        corrected[pair] = min(1.0, pvals[pair] * (m - rank))
+    # Enforce monotonicity
+    prev_p = 0
+    for pair in sorted_pairs:
+        corrected[pair] = max(corrected[pair], prev_p)
+        prev_p = corrected[pair]
+    return corrected
+
+
+def _chi_square_fallback(df, metric, comparisons, n_per_window):
+    """Fallback to chi-square/Fisher's exact when GEE can't converge."""
+    raw_pvals = {}
+    for (i, j) in comparisons:
+        di = df[df['window'] == i]
+        dj = df[df['window'] == j]
+        if len(di) == 0 or len(dj) == 0:
+            continue
+        a = int(di[metric].sum())
+        b = len(di) - a
+        c = int(dj[metric].sum())
+        d_val = len(dj) - c
+        table = np.array([[a, b], [c, d_val]])
+        if table.min() < 5:
+            _, p = stats.fisher_exact(table)
+        else:
+            _, p, _, _ = stats.chi2_contingency(table, correction=True)
+        raw_pvals[(i, j)] = p
+
+    raw_pvals = _holm_correct(raw_pvals)
+
+    # Omnibus: chi-square on full contingency table across available windows
+    available = [w for w in range(4) if n_per_window.get(w, 0) > 0]
+    if len(available) >= 2:
+        table_rows = []
+        for w in available:
+            subset = df[df['window'] == w]
+            table_rows.append([int(subset[metric].sum()), len(subset) - int(subset[metric].sum())])
+        table = np.array(table_rows)
+        if table.sum() > 0:
+            _, omnibus_p, _, _ = stats.chi2_contingency(table)
+        else:
+            omnibus_p = 1.0
+    else:
+        omnibus_p = 1.0
+
+    return raw_pvals, omnibus_p, n_per_window, 'chi-sq/Fisher'
+
+
+def run_gee_posthoc(df, metric):
+    """Run GEE (binomial, exchangeable, animal cluster) + pairwise contrasts with Holm.
+
+    Returns (pval_dict, omnibus_p, n_pellets_per_window, method_label)
+    """
+    comparisons = [(0, 1), (0, 2), (1, 3), (2, 3)]
+
+    n_per_window = {}
+    if not df.empty:
+        for w in range(4):
+            n_per_window[w] = int((df['window'] == w).sum())
+    else:
+        n_per_window = {w: 0 for w in range(4)}
+
+    if df.empty or df['window'].nunique() < 2:
+        return {}, 1.0, n_per_window, 'N/A'
+
+    available_windows = sorted([w for w in range(4) if n_per_window.get(w, 0) > 0])
+    if len(available_windows) < 2:
+        return {}, 1.0, n_per_window, 'N/A'
+
+    df_gee = df[df['window'].isin(available_windows)].copy()
+
+    if df_gee['animal_code'].nunique() < 2:
+        return _chi_square_fallback(df, metric, comparisons, n_per_window)
+
+    # Check for complete separation in any window
+    for w in available_windows:
+        subset = df_gee[df_gee['window'] == w][metric]
+        if len(subset) > 0 and (subset.sum() == 0 or subset.sum() == len(subset)):
+            return _chi_square_fallback(df, metric, comparisons, n_per_window)
+
+    try:
+        ref_window = available_windows[0]  # 0 (final_3) if present
+        df_gee = df_gee.sort_values('animal_code').reset_index(drop=True)
+
+        formula = f'{metric} ~ C(window, Treatment({ref_window}))'
+        model = GEE.from_formula(
+            formula,
+            groups='animal_code',
+            data=df_gee,
+            family=Binomial(),
+            cov_struct=Exchangeable(),
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            result = model.fit(maxiter=100)
+
+        # Omnibus Wald test for all window effects
+        param_names = list(result.params.index)
+        window_params = [p for p in param_names if 'C(window' in p]
+
+        if len(window_params) >= 1:
+            idx = [param_names.index(p) for p in window_params]
+            beta_w = result.params.values[idx]
+            vcov_w = result.cov_params().values[np.ix_(idx, idx)]
+            try:
+                wald_stat = float(beta_w @ np.linalg.inv(vcov_w) @ beta_w)
+                omnibus_p = float(1 - stats.chi2.cdf(wald_stat, len(window_params)))
+            except np.linalg.LinAlgError:
+                omnibus_p = 1.0
+        else:
+            omnibus_p = 1.0
+
+        # Pairwise contrasts
+        params = result.params.values
+        vcov = result.cov_params().values
+
+        raw_pvals = {}
+        for (i, j) in comparisons:
+            if i not in available_windows or j not in available_windows:
+                continue
+
+            L = np.zeros(len(params))
+
+            if i == ref_window:
+                j_names = [p for p in param_names if f'T.{j}]' in p]
+                if not j_names:
+                    continue
+                L[param_names.index(j_names[0])] = 1.0
+            elif j == ref_window:
+                i_names = [p for p in param_names if f'T.{i}]' in p]
+                if not i_names:
+                    continue
+                L[param_names.index(i_names[0])] = -1.0
+            else:
+                i_names = [p for p in param_names if f'T.{i}]' in p]
+                j_names = [p for p in param_names if f'T.{j}]' in p]
+                if not i_names or not j_names:
+                    continue
+                L[param_names.index(j_names[0])] = 1.0
+                L[param_names.index(i_names[0])] = -1.0
+
+            est = float(L @ params)
+            var_est = float(L @ vcov @ L)
+            if var_est <= 0:
+                continue
+            z = est / np.sqrt(var_est)
+            p = float(2 * (1 - stats.norm.cdf(abs(z))))
+            raw_pvals[(i, j)] = p
+
+        raw_pvals = _holm_correct(raw_pvals)
+
+        return raw_pvals, omnibus_p, n_per_window, 'GEE'
+
+    except Exception as e:
+        print(f"    GEE failed ({e}), falling back to chi-square")
+        return _chi_square_fallback(df, metric, comparisons, n_per_window)
+
+
+def plot_group(group_name, injury_type, window_data, pellet_df, n_learners, output_dir):
+    """Create 2x2 bar panel figure with GEE post-hoc tests.
+
+    Bars/scatter = animal-level means and SEM (visual).
+    Stats = GEE on pellet-level binary outcomes with animal clustering.
+    """
     fig, axes = plt.subplots(2, 2, figsize=(14, 11))
+
     fig.suptitle(
-        f'Behavior Performance: Manual Scoring\n({group_name} - {injury_type}, N={n_animals} learners, eaten >{LEARNER_EATEN_THRESHOLD}% at training)',
+        f'Behavior Performance: Manual Scoring\n'
+        f'({group_name} - {injury_type}, N={n_learners} learners, '
+        f'eaten >{LEARNER_EATEN_THRESHOLD}% at training)',
         fontsize=16, fontweight='bold'
     )
 
@@ -321,8 +497,8 @@ def plot_group(group_name, injury_type, window_data, windows, output_dir):
     ]):
         data_by_phase = [window_data[wk][metric_key] for wk in WINDOW_KEYS]
 
-        # Run Dunnett's tests (post-injury windows as controls)
-        dunnett_pvals = run_dunnett_tests(data_by_phase)
+        # GEE on pellet-level data
+        posthoc_pvals, omnibus_p, n_pellets, method = run_gee_posthoc(pellet_df, metric_key)
 
         for row, show_pval in enumerate([False, True]):
             ax = axes[row, col]
@@ -342,7 +518,7 @@ def plot_group(group_name, injury_type, window_data, windows, output_dir):
                     ax.scatter(x[i] + jitter, d, color=COLORS['point'],
                               s=40, zorder=5, alpha=0.6, edgecolor='white', linewidth=0.5)
 
-            # Statistical brackets with Dunnett's p-values
+            # Statistical brackets
             all_vals = [v for d in data_by_phase for v in d]
             data_ceil = max(all_vals) if all_vals else 1
             data_ceil = max(data_ceil, 5)
@@ -353,11 +529,18 @@ def plot_group(group_name, injury_type, window_data, windows, output_dir):
 
             bracket_idx = 0
             for (i, j) in BRACKET_ORDER:
-                if (i, j) in dunnett_pvals:
+                if (i, j) in posthoc_pvals:
                     y_pos = first_bracket_y + bracket_idx * bracket_step
                     add_stat_bracket(ax, x[i], x[j], y_pos, bracket_h,
-                                    dunnett_pvals[(i, j)], show_pval=show_pval)
+                                    posthoc_pvals[(i, j)], show_pval=show_pval)
                     bracket_idx += 1
+
+            # N labels on x-axis (pellet counts + animal counts)
+            xlabels = []
+            for i, wl in enumerate(WINDOW_LABELS):
+                n_p = n_pellets.get(i, 0)
+                n_a = len(data_by_phase[i])
+                xlabels.append(f'{wl}\n({n_a} mice, {n_p} pel.)')
 
             if bracket_idx > 0:
                 top_bracket = first_bracket_y + bracket_idx * bracket_step
@@ -366,11 +549,15 @@ def plot_group(group_name, injury_type, window_data, windows, output_dir):
                 ax.set_ylim(0, data_ceil * 1.2)
 
             ax.set_xticks(x)
-            ax.set_xticklabels(WINDOW_LABELS, fontsize=10)
+            ax.set_xticklabels(xlabels, fontsize=8)
             ax.set_ylabel(ylabel, fontsize=12)
 
-            title_suffix = "(Dunnett's p-values)" if show_pval else "(asterisks, Dunnett's test)"
-            ax.set_title(f'{metric_name} {title_suffix}', fontsize=11, fontweight='bold')
+            omnibus_str = f'p={omnibus_p:.4f}' if omnibus_p >= 0.0001 else 'p<0.0001'
+            if show_pval:
+                title_suffix = f"({method} p-values + Holm | omnibus {omnibus_str})"
+            else:
+                title_suffix = f"(asterisks, {method} + Holm | omnibus {omnibus_str})"
+            ax.set_title(f'{metric_name} {title_suffix}', fontsize=10, fontweight='bold')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
 
@@ -383,16 +570,26 @@ def plot_group(group_name, injury_type, window_data, windows, output_dir):
 
 def plot_recovery(group_name, injury_type, window_data, output_dir):
     """Per-animal paired recovery plot: Final 3 vs Rehab Pillar for each subject."""
-    pre_eaten = window_data['final_3']['eaten']
-    post_eaten = window_data['last_2']['eaten']
-    pre_contacted = window_data['final_3']['contacted']
-    post_contacted = window_data['last_2']['contacted']
-    animals = window_data['final_3']['animals']
+    # Find animals present in BOTH final_3 and last_2 (pairing for this plot only)
+    f3_animals = window_data['final_3']['animals']
+    l2_animals = window_data['last_2']['animals']
+    f3_set = set(f3_animals)
+    l2_set = set(l2_animals)
+    paired_animals = sorted(f3_set & l2_set)
 
-    if len(pre_eaten) < 2:
+    if len(paired_animals) < 2:
         return
 
-    n = len(animals)
+    # Build paired arrays
+    f3_idx = {a: i for i, a in enumerate(f3_animals)}
+    l2_idx = {a: i for i, a in enumerate(l2_animals)}
+
+    pre_eaten = np.array([window_data['final_3']['eaten'][f3_idx[a]] for a in paired_animals])
+    post_eaten = np.array([window_data['last_2']['eaten'][l2_idx[a]] for a in paired_animals])
+    pre_contacted = np.array([window_data['final_3']['contacted'][f3_idx[a]] for a in paired_animals])
+    post_contacted = np.array([window_data['last_2']['contacted'][l2_idx[a]] for a in paired_animals])
+
+    n = len(paired_animals)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
     fig.suptitle(
@@ -407,26 +604,22 @@ def plot_recovery(group_name, injury_type, window_data, output_dir):
     ]):
         ax = axes[col]
 
-        # Paired lines for each animal
         for i in range(n):
-            # Color by recovery direction
             if post[i] > pre[i] * 0.8:
-                color = '#2ca02c'  # green = recovered
+                color = '#2ca02c'   # green = recovered
                 alpha = 0.7
             elif post[i] > 0:
-                color = '#ff7f0e'  # orange = partial
+                color = '#ff7f0e'   # orange = partial
                 alpha = 0.6
             else:
-                color = '#d62728'  # red = no recovery
+                color = '#d62728'   # red = no recovery
                 alpha = 0.5
             ax.plot([0, 1], [pre[i], post[i]], 'o-', color=color, alpha=alpha,
                     markersize=6, linewidth=1.5, zorder=3)
 
-        # Mean line
         ax.plot([0, 1], [np.mean(pre), np.mean(post)], 's-', color='black',
                 markersize=10, linewidth=3, zorder=5, label='Group Mean')
 
-        # Stats
         t_stat, p_val = stats.ttest_rel(pre, post)
         diff = post - pre
         mean_diff = np.mean(diff)
@@ -437,7 +630,6 @@ def plot_recovery(group_name, injury_type, window_data, output_dir):
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_xlim(-0.3, 1.3)
 
-        # Count recovery categories
         recovered = np.sum(post > pre * 0.8)
         partial = np.sum((post > 0) & (post <= pre * 0.8))
         none = np.sum(post == 0)
@@ -455,7 +647,6 @@ def plot_recovery(group_name, injury_type, window_data, output_dir):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-        # Legend
         from matplotlib.lines import Line2D
         legend_elements = [
             Line2D([0], [0], color='#2ca02c', marker='o', label='Recovered (>80% of pre)'),
@@ -530,7 +721,8 @@ def main():
     print("=" * 70)
     print("GENERATING HISTORICAL BEHAVIOR PLOTS")
     print("  Style: Matching fig5_behavior_layout4.png (CNT reference)")
-    print("  Stats: Dunnett's test (post-injury controls vs pre/rehab)")
+    print("  Stats: GEE (binomial, exchangeable, animal cluster) + Holm")
+    print("         Fallback: chi-sq/Fisher when GEE can't converge")
     print("  Last 2: Last 2 Pillar days in continuous rehab block")
     print(f"  Learner criterion: Final 3 avg eaten% > {LEARNER_EATEN_THRESHOLD}%")
     print("  Data: Raw pellet scores from '1 - ENTER DATA HERE' tabs")
@@ -545,20 +737,26 @@ def main():
             continue
 
         print(f"\n--- {group_name} ({injury_type}) ---")
-        data, test_types, test_meta = read_group_data(filepath)
+        data, test_types, test_meta, pellet_records = read_group_data(filepath)
         windows = get_time_windows(test_types, test_meta)
-        window_data, n_excluded = get_animal_window_values(data, windows)
+        learners = get_learners(data, windows['final_3'])
+        n_excluded = len(data) - len(learners)
 
-        n_included = len(window_data['final_3']['animals'])
-        print(f"  Total animals: {len(data)}, Learners: {len(data) - n_excluded}, Non-learners excluded: {n_excluded}")
-        print(f"  Animals (paired + learner): {n_included}")
+        window_data = get_animal_window_values(data, windows, learners)
+        pellet_df = build_pellet_dataframe(pellet_records, windows, learners)
+
+        print(f"  Total animals: {len(data)}, Learners: {len(learners)}, "
+              f"Non-learners excluded: {n_excluded}")
+        print(f"  Total pellet observations: {len(pellet_df)}")
         print(f"  Windows:")
-        for wk in WINDOW_KEYS:
+        for wk_idx, wk in enumerate(WINDOW_KEYS):
             tts = windows[wk]
-            n = len(window_data[wk]['eaten'])
-            print(f"    {wk:20s}: n={n:2d} | {', '.join(tts)}")
+            n_animals = len(window_data[wk]['animals'])
+            n_pellets = int((pellet_df['window'] == wk_idx).sum()) if not pellet_df.empty else 0
+            print(f"    {wk:20s}: {n_animals:2d} animals, {n_pellets:5d} pellets | "
+                  f"{', '.join(tts)}")
 
-        plot_group(group_name, injury_type, window_data, windows, OUTPUT_DIR)
+        plot_group(group_name, injury_type, window_data, pellet_df, len(learners), OUTPUT_DIR)
         plot_recovery(group_name, injury_type, window_data, OUTPUT_DIR)
 
         all_group_data[group_name] = {
