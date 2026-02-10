@@ -89,8 +89,11 @@ def classify_test_type(test_type_name, all_test_types_sorted, first_post_idx):
     return None
 
 
-def get_time_windows(test_types_sorted):
-    """Given sorted test types, determine which belong to each time window."""
+def get_time_windows(test_types_sorted, test_meta):
+    """Given sorted test types and metadata, determine which belong to each time window.
+
+    Last 2: Uses last 2 Pillar tray days in continuous rehab block (before any >5-day gap).
+    """
     windows = {
         'final_3': [],
         'immediate_post': [],
@@ -124,8 +127,39 @@ def get_time_windows(test_types_sorted):
                 if 2 <= week_num <= 4:
                     windows['2_4_post'].append(tt)
 
-    # Last 2 days: last 2 test types overall
-    windows['last_2'] = test_types_sorted[-2:]
+    # Last 2: find last 2 Pillar days in continuous rehab (no gap > 5 days)
+    rehab_tts = [tt for tt in test_types_sorted if 'rehab' in tt.lower()]
+
+    if not rehab_tts:
+        windows['last_2'] = test_types_sorted[-2:]
+        return windows
+
+    # Split rehab into continuous blocks (gap > 5 days = new block)
+    blocks = [[rehab_tts[0]]]
+    for i in range(1, len(rehab_tts)):
+        prev_d = test_meta.get(rehab_tts[i-1], {}).get('date')
+        curr_d = test_meta.get(rehab_tts[i], {}).get('date')
+        if prev_d and curr_d:
+            try:
+                gap = (curr_d - prev_d).days
+            except (TypeError, AttributeError):
+                gap = 1
+            if 5 < gap < 100:  # Real breaks; ignore date-entry errors
+                blocks.append([rehab_tts[i]])
+                continue
+        blocks[-1].append(rehab_tts[i])
+
+    # Use the first (main) rehab block - find last 2 Pillar days in it
+    main_block = blocks[0]
+    pillar_in_main = [tt for tt in main_block
+                      if test_meta.get(tt, {}).get('tray', '').lower().startswith('p')]
+
+    if len(pillar_in_main) >= 2:
+        windows['last_2'] = pillar_in_main[-2:]
+    elif len(pillar_in_main) == 1:
+        windows['last_2'] = pillar_in_main
+    else:
+        windows['last_2'] = main_block[-2:] if len(main_block) >= 2 else main_block
 
     return windows
 
@@ -133,7 +167,10 @@ def get_time_windows(test_types_sorted):
 def read_group_data(filepath, group_name):
     """Read all data from a group's ENTER DATA HERE sheet.
 
-    Returns dict: {animal_id: {test_type: {'eaten_pct': float, 'contacted_pct': float}}}
+    Returns:
+        data: {animal_id: {test_type: {'eaten_pct': float, 'contacted_pct': float}}}
+        sorted test types list
+        test_meta: {test_type: {'date': datetime, 'tray': str}}
     """
     wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
     ws = wb['1 - ENTER DATA HERE']
@@ -150,6 +187,7 @@ def read_group_data(filepath, group_name):
     # Read all data rows
     data = defaultdict(lambda: defaultdict(list))  # animal -> test_type -> list of (eaten%, contacted%)
     all_test_types = set()
+    test_meta = {}
 
     for row in ws.iter_rows(min_row=2, values_only=True):
         vals = list(row)
@@ -159,6 +197,9 @@ def read_group_data(filepath, group_name):
         test_type = str(vals[1])
         animal = vals[5]
         all_test_types.add(test_type)
+
+        if test_type not in test_meta:
+            test_meta[test_type] = {'date': vals[0], 'tray': str(vals[2])}
 
         # Compute metrics from raw pellet scores across valid trays
         tray_eaten = []
@@ -181,7 +222,7 @@ def read_group_data(filepath, group_name):
             data[animal][test_type] = {'eaten_pct': avg_eaten, 'contacted_pct': avg_contacted}
 
     wb.close()
-    return data, sorted(all_test_types)
+    return data, sorted(all_test_types), test_meta
 
 
 def compute_window_stats(data, test_types_in_window):
@@ -236,8 +277,8 @@ def main():
         print(f"\n{'-' * 110}")
         print(f"Processing {group_name} ({injury_type}): {filename}")
 
-        data, test_types = read_group_data(filepath, group_name)
-        windows = get_time_windows(test_types)
+        data, test_types, test_meta = read_group_data(filepath, group_name)
+        windows = get_time_windows(test_types, test_meta)
 
         print(f"  Animals: {len(data)}")
         print(f"  Test types: {len(test_types)}")

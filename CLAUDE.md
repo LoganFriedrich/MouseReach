@@ -7,6 +7,16 @@
 
 ---
 
+## CRITICAL: The Cardinal Rule of Behavioral Algorithms
+
+**Every frame boundary error corrupts kinematic data.** Reach detection, segmentation, and all temporal boundary algorithms exist to define the windows over which kinematics are computed (velocity, acceleration, trajectory shape, peak extension). When a boundary is wrong - even by a few frames - kinematics are computed over frames that are NOT part of the behavior being studied. Those frames are noise that contaminates means, blurs distributions, and can create differential measurement artifacts between experimental groups.
+
+**There is no such thing as "good enough" frame boundary accuracy.** The goal is always convergence toward what a human would call, on every reach, on every frame. Every mismatch between algorithm and human is a bug to understand and fix. Never describe accuracy as "good" or "excellent" - always report the remaining error rate and what needs to be done to reduce it.
+
+This applies to: reach start frames, reach end frames, reach splitting, segmentation boundaries, and any temporal boundary that defines a kinematic analysis window.
+
+---
+
 ## IMPORTANT: When to Reinstall
 
 **STOP before suggesting `pip install`** - Think critically about whether it's actually needed.

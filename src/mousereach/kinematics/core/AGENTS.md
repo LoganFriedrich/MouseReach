@@ -13,6 +13,10 @@ Core feature extraction algorithms for computing kinematic and behavioral featur
 
 ## For AI Agents
 
+### CRITICAL: Frame Boundary Accuracy IS Data Quality
+
+**Kinematics are only as good as the reach boundaries they're computed over.** If a reach start or end frame is wrong by even a few frames, every kinematic measure extracted from that reach (velocity, acceleration, trajectory shape, peak extension, duration) is contaminated with non-behavioral frames. This noise blurs distributions and can create differential measurement artifacts between experimental groups. There is no "good enough" boundary accuracy - every mismatch vs human ground truth corrupts the kinematic data. Never describe boundary accuracy as "good" - report the error rate and what needs to be done to fix it.
+
 ### Working In This Directory
 - `FeatureExtractor` is the main entry point - takes validated reach detection + outcome classification + DLC tracking data as input
 - Feature extraction operates on reaches that have been linked to pellet outcomes (causal reach identification)

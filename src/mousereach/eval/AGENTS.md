@@ -21,6 +21,10 @@ None
 
 ## For AI Agents
 
+### CRITICAL: Frame Boundary Accuracy IS Data Quality
+
+**Every frame boundary error corrupts downstream kinematic data.** When reporting evaluation results, never describe accuracy as "good" or "excellent." Always report the remaining error rate and what needs to be done to reduce it. 88% accuracy means 12% of kinematic data is contaminated with non-behavioral frames. The goal is always convergence toward exact human agreement on every reach, every frame. Every mismatch is a bug to understand and fix, not a tolerable margin.
+
 ### Working In This Directory
 - **Ground truth files** must follow naming convention: `*_ground_truth.json` for the GT pattern to match
 - **Tolerance parameter** controls frame-level matching strictness (default: 5 for seg, 10 for reach, 15 for outcome)

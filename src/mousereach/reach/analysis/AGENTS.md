@@ -24,6 +24,10 @@ Ground truth analysis, algorithm evaluation, and rule derivation utilities. Scri
 
 ## For AI Agents
 
+### CRITICAL: Frame Boundary Accuracy IS Data Quality
+
+**Every frame boundary error corrupts downstream kinematic data.** Reach boundaries define the windows over which kinematics are computed. Wrong boundaries = computing kinematics over non-behavioral frames = noise that contaminates scientific results. When reporting evaluation results, never describe accuracy as "good" - report the error rate and what needs to be fixed. The goal is always exact convergence with human judgment on every reach, every frame.
+
 ### Algorithm Evaluation Workflow
 
 **1. Generate Ground Truth (Manual):**

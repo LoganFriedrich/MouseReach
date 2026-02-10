@@ -17,6 +17,10 @@ Core reach detection algorithms and processing logic. Contains the main ReachDet
 
 ## For AI Agents
 
+### CRITICAL: Frame Boundary Accuracy IS Data Quality
+
+**Every frame boundary error corrupts downstream kinematic data.** Reach boundaries define the windows over which kinematics (velocity, acceleration, trajectory, peak extension) are computed. Wrong boundaries = computing kinematics over non-behavioral frames = noise that contaminates means, blurs distributions, and can create differential artifacts between experimental groups. There is no "good enough" - every mismatch vs human ground truth is a bug. Never describe accuracy as "good" - report error rate and next fix.
+
 ### Algorithm Details
 
 **ReachDetector State Machine (reach_detector.py):**
