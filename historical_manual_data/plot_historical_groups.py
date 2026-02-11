@@ -33,7 +33,13 @@ from statsmodels.genmod.families import Binomial
 from statsmodels.genmod.cov_struct import Exchangeable
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'figures')
+
+# Output to MouseDB/figures for finalized data products
+# Derive project root by walking up from script location
+_connectome_root = SCRIPT_DIR
+while os.path.basename(_connectome_root) != '2_Connectome' and os.path.dirname(_connectome_root) != _connectome_root:
+    _connectome_root = os.path.dirname(_connectome_root)
+OUTPUT_DIR = os.path.join(_connectome_root, 'MouseDB', 'figures', 'behavior_historical_manual')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 COLORS = {
@@ -485,7 +491,7 @@ def plot_group(group_name, injury_type, window_data, pellet_df, n_learners, outp
     fig, axes = plt.subplots(2, 2, figsize=(14, 11))
 
     fig.suptitle(
-        f'Behavior Performance: Manual Scoring\n'
+        f'Behavior Performance (Manually Scored)\n'
         f'({group_name} - {injury_type}, N={n_learners} learners, '
         f'eaten >{LEARNER_EATEN_THRESHOLD}% at training)',
         fontsize=16, fontweight='bold'
@@ -569,92 +575,167 @@ def plot_group(group_name, injury_type, window_data, pellet_df, n_learners, outp
 
 
 def plot_recovery(group_name, injury_type, window_data, output_dir):
-    """Per-animal paired recovery plot: Final 3 vs Rehab Pillar for each subject."""
-    # Find animals present in BOTH final_3 and last_2 (pairing for this plot only)
-    f3_animals = window_data['final_3']['animals']
-    l2_animals = window_data['last_2']['animals']
-    f3_set = set(f3_animals)
-    l2_set = set(l2_animals)
-    paired_animals = sorted(f3_set & l2_set)
+    """Per-animal 4-point recovery plot: all windows for each subject.
+
+    Shows individual animal trajectories across all 4 timepoints.
+    Animals need pre + rehab at minimum; 1Wk and 2-4Wk shown when available.
+    Recovery classification uses per-animal nadir (worst post-injury point).
+    """
+    from matplotlib.lines import Line2D
+
+    f3 = window_data['final_3']
+    ip = window_data['immediate_post']
+    p24 = window_data['2_4_post']
+    l2 = window_data['last_2']
+
+    f3_idx = {a: i for i, a in enumerate(f3['animals'])}
+    ip_idx = {a: i for i, a in enumerate(ip['animals'])}
+    p24_idx = {a: i for i, a in enumerate(p24['animals'])}
+    l2_idx = {a: i for i, a in enumerate(l2['animals'])}
+
+    # Need at least pre + rehab
+    paired_animals = sorted(set(f3['animals']) & set(l2['animals']))
+    has_ip = set(ip['animals'])
+    has_24 = set(p24['animals'])
 
     if len(paired_animals) < 2:
         return
 
-    # Build paired arrays
-    f3_idx = {a: i for i, a in enumerate(f3_animals)}
-    l2_idx = {a: i for i, a in enumerate(l2_animals)}
-
-    pre_eaten = np.array([window_data['final_3']['eaten'][f3_idx[a]] for a in paired_animals])
-    post_eaten = np.array([window_data['last_2']['eaten'][l2_idx[a]] for a in paired_animals])
-    pre_contacted = np.array([window_data['final_3']['contacted'][f3_idx[a]] for a in paired_animals])
-    post_contacted = np.array([window_data['last_2']['contacted'][l2_idx[a]] for a in paired_animals])
-
     n = len(paired_animals)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 7))
     fig.suptitle(
-        f'Per-Animal Recovery: {group_name} - {injury_type} (N={n})\n'
-        f'Paired t-test | Pre-Injury (Final 3) vs Rehab Pillar (Last 2)',
+        f'Per-Animal Recovery (Manually Scored): {group_name} - {injury_type} (N={n})\n'
+        f'Full Trajectory: Pre-Injury through Rehab',
         fontsize=13, fontweight='bold'
     )
 
-    for col, (pre, post, metric_name, ylabel) in enumerate([
-        (pre_eaten, post_eaten, 'Retrieved', '% Pellets Retrieved'),
-        (pre_contacted, post_contacted, 'Contacted', '% Pellets Contacted'),
+    for col, (metric_key, metric_name, ylabel) in enumerate([
+        ('eaten', 'Retrieved', '% Pellets Retrieved'),
+        ('contacted', 'Contacted', '% Pellets Contacted'),
     ]):
         ax = axes[col]
+        mean_vals = {0: [], 1: [], 2: [], 3: []}
 
-        for i in range(n):
-            if post[i] > pre[i] * 0.8:
-                color = '#2ca02c'   # green = recovered
-                alpha = 0.7
-            elif post[i] > 0:
-                color = '#ff7f0e'   # orange = partial
-                alpha = 0.6
+        for animal in paired_animals:
+            pre = f3[metric_key][f3_idx[animal]]
+            rehab = l2[metric_key][l2_idx[animal]]
+            post_1wk = ip[metric_key][ip_idx[animal]] if animal in has_ip else None
+            post_24wk = p24[metric_key][p24_idx[animal]] if animal in has_24 else None
+
+            # Per-animal nadir
+            post_vals = [v for v in [post_1wk, post_24wk] if v is not None]
+            nadir = min(post_vals) if post_vals else None
+
+            # Classify by recovery relative to nadir
+            if nadir is not None:
+                if rehab > pre * 0.8:
+                    color = '#2ca02c'; alpha = 0.7
+                elif rehab > nadir:
+                    color = '#ff7f0e'; alpha = 0.6
+                else:
+                    color = '#d62728'; alpha = 0.5
             else:
-                color = '#d62728'   # red = no recovery
-                alpha = 0.5
-            ax.plot([0, 1], [pre[i], post[i]], 'o-', color=color, alpha=alpha,
-                    markersize=6, linewidth=1.5, zorder=3)
+                color = '#888888'; alpha = 0.5
 
-        ax.plot([0, 1], [np.mean(pre), np.mean(post)], 's-', color='black',
-                markersize=10, linewidth=3, zorder=5, label='Group Mean')
+            # Build trajectory points
+            xs, ys = [0], [pre]
+            mean_vals[0].append(pre)
+            if post_1wk is not None:
+                xs.append(1); ys.append(post_1wk)
+                mean_vals[1].append(post_1wk)
+            if post_24wk is not None:
+                xs.append(2); ys.append(post_24wk)
+                mean_vals[2].append(post_24wk)
+            xs.append(3); ys.append(rehab)
+            mean_vals[3].append(rehab)
 
-        t_stat, p_val = stats.ttest_rel(pre, post)
-        diff = post - pre
+            # If missing middle points, use dashed line for gap
+            if post_1wk is not None and post_24wk is not None:
+                ax.plot(xs, ys, 'o-', color=color, alpha=alpha,
+                        markersize=5, linewidth=1.2, zorder=3)
+            elif post_1wk is not None and post_24wk is None:
+                ax.plot([0, 1], [pre, post_1wk], 'o-', color=color, alpha=alpha,
+                        markersize=5, linewidth=1.2, zorder=3)
+                ax.plot([1, 3], [post_1wk, rehab], 'o--', color=color, alpha=alpha * 0.7,
+                        markersize=5, linewidth=0.8, zorder=3)
+            elif post_1wk is None and post_24wk is not None:
+                ax.plot([0, 2], [pre, post_24wk], 'o--', color=color, alpha=alpha * 0.7,
+                        markersize=5, linewidth=0.8, zorder=3)
+                ax.plot([2, 3], [post_24wk, rehab], 'o-', color=color, alpha=alpha,
+                        markersize=5, linewidth=1.2, zorder=3)
+            else:
+                ax.plot([0, 3], [pre, rehab], 'o--', color=color, alpha=alpha * 0.5,
+                        markersize=5, linewidth=0.8, zorder=3)
+
+        # Group mean trajectory
+        mean_x, mean_y = [], []
+        for xi in [0, 1, 2, 3]:
+            if mean_vals[xi]:
+                mean_x.append(xi)
+                mean_y.append(np.mean(mean_vals[xi]))
+        ax.plot(mean_x, mean_y, 's-', color='black',
+                markersize=10, linewidth=3, zorder=5)
+
+        # Stats: paired t-test pre vs rehab
+        pre_arr = np.array(mean_vals[0])
+        rehab_arr = np.array(mean_vals[3])
+        t_stat, p_val = stats.ttest_rel(pre_arr, rehab_arr)
+        diff = rehab_arr - pre_arr
         mean_diff = np.mean(diff)
         sem_diff = stats.sem(diff)
 
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(['Pre-Injury\n(Final 3)', 'Rehab Pillar\n(Last 2)'], fontsize=11)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_xlim(-0.3, 1.3)
+        # Count recovery categories using nadir
+        n_recovered = 0
+        n_improved = 0
+        n_none = 0
+        for animal in paired_animals:
+            pre = f3[metric_key][f3_idx[animal]]
+            rehab = l2[metric_key][l2_idx[animal]]
+            post_1wk = ip[metric_key][ip_idx[animal]] if animal in has_ip else None
+            post_24wk = p24[metric_key][p24_idx[animal]] if animal in has_24 else None
+            post_vals = [v for v in [post_1wk, post_24wk] if v is not None]
+            nadir = min(post_vals) if post_vals else rehab
 
-        recovered = np.sum(post > pre * 0.8)
-        partial = np.sum((post > 0) & (post <= pre * 0.8))
-        none = np.sum(post == 0)
+            if rehab > pre * 0.8:
+                n_recovered += 1
+            elif rehab > nadir:
+                n_improved += 1
+            else:
+                n_none += 1
 
-        stats_text = (f'p = {p_val:.4f}\n'
-                     f'Mean diff = {mean_diff:.1f} +/- {sem_diff:.1f}\n'
-                     f'Recovered: {recovered}/{n}\n'
-                     f'Partial: {partial}/{n}\n'
-                     f'None: {none}/{n}')
+        stats_text = (
+            f'Pre vs Rehab: p={p_val:.4f}\n'
+            f'Mean diff: {mean_diff:+.1f} +/- {sem_diff:.1f}\n'
+            f'Recovered (>80% pre): {n_recovered}/{n}\n'
+            f'Improved from nadir: {n_improved}/{n}\n'
+            f'No improvement: {n_none}/{n}'
+        )
         ax.text(0.5, 0.97, stats_text, transform=ax.transAxes, fontsize=9,
                 verticalalignment='top', horizontalalignment='center',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                family='monospace')
 
+        ax.set_xticks([0, 1, 2, 3])
+        ax.set_xticklabels(['Pre-Injury\n(Final 3)', '1 Wk\nPost-Injury',
+                            '2-4 Wk\nPost-Injury', 'Rehab\n(Last 2)'], fontsize=9)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_xlim(-0.3, 3.3)
         ax.set_title(f'{metric_name}', fontsize=12, fontweight='bold')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-        from matplotlib.lines import Line2D
+        n_with_all = sum(1 for a in paired_animals if a in has_ip and a in has_24)
         legend_elements = [
             Line2D([0], [0], color='#2ca02c', marker='o', label='Recovered (>80% of pre)'),
-            Line2D([0], [0], color='#ff7f0e', marker='o', label='Partial (>0%)'),
-            Line2D([0], [0], color='#d62728', marker='o', label='No recovery (0%)'),
+            Line2D([0], [0], color='#ff7f0e', marker='o', label='Improved from nadir'),
+            Line2D([0], [0], color='#d62728', marker='o', label='No improvement'),
             Line2D([0], [0], color='black', marker='s', linewidth=3, label='Group Mean'),
         ]
-        ax.legend(handles=legend_elements, loc='lower left', fontsize=8)
+        if n_with_all < n:
+            legend_elements.append(
+                Line2D([0], [0], color='gray', linestyle='--', label='Missing timepoint'))
+        ax.legend(handles=legend_elements, loc='upper right', fontsize=7)
 
     plt.tight_layout()
     out_path = os.path.join(output_dir, f'recovery_{group_name}.png')
@@ -663,13 +744,572 @@ def plot_recovery(group_name, injury_type, window_data, output_dir):
     print(f"  Saved: {out_path}")
 
 
+def plot_trajectory_waterfall(group_name, injury_type, window_data, output_dir):
+    """Four-point trajectory + recovery waterfall revealing bimodal recovery.
+
+    Left column: Pre -> 1Wk Post -> 2-4Wk Post -> Rehab individual trajectories
+    Right column: Waterfall of recovery deltas (Rehab - 2-4 Post, sorted), showing
+                  how non-responders mask the recovery of responders.
+    """
+    from matplotlib.lines import Line2D
+
+    f3 = window_data['final_3']
+    ip = window_data['immediate_post']
+    p24 = window_data['2_4_post']
+    l2 = window_data['last_2']
+
+    f3_idx = {a: i for i, a in enumerate(f3['animals'])}
+    ip_idx = {a: i for i, a in enumerate(ip['animals'])}
+    p24_idx = {a: i for i, a in enumerate(p24['animals'])}
+    l2_idx = {a: i for i, a in enumerate(l2['animals'])}
+
+    # For trajectory: need at least pre + post + rehab; 2-4 post optional (dashed gap)
+    core_animals = set(f3['animals']) & set(ip['animals']) & set(l2['animals'])
+    has_24 = set(p24['animals'])
+    traj_animals = sorted(core_animals)
+
+    # For waterfall: compare rehab vs per-animal nadir (worst post-injury point)
+    # Include any animal with at least one post-injury timepoint + rehab
+    wf_animals_set = set(l2['animals']) & (set(ip['animals']) | set(p24['animals']))
+    wf_animals = sorted(wf_animals_set)
+
+    if len(traj_animals) < 2 and len(wf_animals) < 2:
+        return
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle(
+        f'Recovery Analysis (Manually Scored): {group_name} - {injury_type}\n'
+        f'Full Trajectory: Pre-Injury through Rehab',
+        fontsize=14, fontweight='bold'
+    )
+
+    for row, (metric_key, metric_name, ylabel) in enumerate([
+        ('eaten', 'Retrieved', '% Pellets Retrieved'),
+        ('contacted', 'Contacted', '% Pellets Contacted'),
+    ]):
+        # === LEFT: Four-point trajectory ===
+        ax_traj = axes[row, 0]
+
+        if traj_animals:
+            # Collect means for group trajectory
+            mean_vals = {0: [], 1: [], 2: [], 3: []}
+
+            for animal in traj_animals:
+                pre = f3[metric_key][f3_idx[animal]]
+                post = ip[metric_key][ip_idx[animal]]
+                rehab = l2[metric_key][l2_idx[animal]]
+
+                # Classify by final recovery outcome
+                delta_rehab = rehab - post
+                if rehab > pre * 0.8:
+                    color = '#2ca02c'; alpha = 0.7
+                elif delta_rehab > 0:
+                    color = '#ff7f0e'; alpha = 0.6
+                else:
+                    color = '#d62728'; alpha = 0.5
+
+                if animal in has_24:
+                    p24_val = p24[metric_key][p24_idx[animal]]
+                    # Full 4-point trajectory
+                    ax_traj.plot([0, 1, 2, 3], [pre, post, p24_val, rehab], 'o-',
+                                color=color, alpha=alpha, markersize=5, linewidth=1.2, zorder=3)
+                    mean_vals[2].append(p24_val)
+                else:
+                    # Missing 2-4 post: solid pre→post, dashed post→rehab
+                    ax_traj.plot([0, 1], [pre, post], 'o-',
+                                color=color, alpha=alpha, markersize=5, linewidth=1.2, zorder=3)
+                    ax_traj.plot([1, 3], [post, rehab], 'o--',
+                                color=color, alpha=alpha * 0.7, markersize=5, linewidth=0.8, zorder=3)
+
+                mean_vals[0].append(pre)
+                mean_vals[1].append(post)
+                mean_vals[3].append(rehab)
+
+            # Group mean trajectory
+            mean_x = []
+            mean_y = []
+            for xi in [0, 1, 2, 3]:
+                if mean_vals[xi]:
+                    mean_x.append(xi)
+                    mean_y.append(np.mean(mean_vals[xi]))
+            ax_traj.plot(mean_x, mean_y, 's-',
+                        color='black', markersize=10, linewidth=3, zorder=5)
+
+        ax_traj.set_xticks([0, 1, 2, 3])
+        ax_traj.set_xticklabels(['Pre-Injury\n(Final 3)', '1 Wk\nPost-Injury',
+                                  '2-4 Wk\nPost-Injury', 'Rehab\n(Last 2)'], fontsize=9)
+        ax_traj.set_ylabel(ylabel, fontsize=11)
+        n_with_24 = sum(1 for a in traj_animals if a in has_24)
+        n_label = f'N={len(traj_animals)}'
+        if n_with_24 < len(traj_animals):
+            n_label += f' ({n_with_24} with 2-4wk)'
+        ax_traj.set_title(f'{metric_name}: Individual Trajectories ({n_label})',
+                         fontsize=11, fontweight='bold')
+        ax_traj.spines['top'].set_visible(False)
+        ax_traj.spines['right'].set_visible(False)
+        ax_traj.set_xlim(-0.3, 3.3)
+
+        traj_legend = [
+            Line2D([0], [0], color='#2ca02c', marker='o', label='Recovered (>80% of pre)'),
+            Line2D([0], [0], color='#ff7f0e', marker='o', label='Improved from post'),
+            Line2D([0], [0], color='#d62728', marker='o', label='No improvement'),
+            Line2D([0], [0], color='black', marker='s', linewidth=3, label='Group Mean'),
+            Line2D([0], [0], color='gray', linestyle='--', label='Missing 2-4 wk'),
+        ]
+        ax_traj.legend(handles=traj_legend, loc='upper right', fontsize=7)
+
+        # === RIGHT: Waterfall of recovery deltas ===
+        ax_wf = axes[row, 1]
+
+        # Per-animal nadir: worst of available post-injury timepoints
+        deltas = []
+        for animal in wf_animals:
+            rehab_val = l2[metric_key][l2_idx[animal]]
+            post_vals = []
+            if animal in ip_idx:
+                post_vals.append(ip[metric_key][ip_idx[animal]])
+            if animal in p24_idx:
+                post_vals.append(p24[metric_key][p24_idx[animal]])
+            if not post_vals:
+                continue
+            nadir = min(post_vals)
+            deltas.append(rehab_val - nadir)
+
+        if not deltas:
+            ax_wf.text(0.5, 0.5, 'Insufficient data', transform=ax_wf.transAxes,
+                      ha='center', va='center', fontsize=12, color='gray')
+            continue
+
+        # Sort descending (most recovery first)
+        sorted_idx = np.argsort(deltas)[::-1]
+        sorted_deltas = [deltas[i] for i in sorted_idx]
+        bar_colors = ['#2ca02c' if d > 0 else '#d62728' if d < 0 else '#888888'
+                      for d in sorted_deltas]
+
+        x_pos = np.arange(len(sorted_deltas))
+        ax_wf.bar(x_pos, sorted_deltas, color=bar_colors, alpha=0.8,
+                  edgecolor='black', linewidth=0.5)
+        ax_wf.axhline(y=0, color='black', linewidth=1, linestyle='-')
+
+        # Summary stats
+        n_total = len(sorted_deltas)
+        n_improved = sum(1 for d in sorted_deltas if d > 0)
+        n_declined = sum(1 for d in sorted_deltas if d < 0)
+        n_same = sum(1 for d in sorted_deltas if d == 0)
+        mean_all = np.mean(sorted_deltas)
+
+        # Responder-only stats
+        pos_deltas = [d for d in sorted_deltas if d > 0]
+        mean_responders = np.mean(pos_deltas) if pos_deltas else 0
+
+        # Wilcoxon signed-rank on all deltas (is recovery significant overall?)
+        p_str_all = 'N/A'
+        if n_total >= 5:
+            try:
+                non_zero = [d for d in sorted_deltas if d != 0]
+                if len(non_zero) >= 5:
+                    _, wil_p = stats.wilcoxon(non_zero)
+                    p_str_all = f'p={wil_p:.4f}' if wil_p >= 0.0001 else 'p<0.0001'
+            except Exception:
+                pass
+
+        stats_text = (
+            f'All animals (N={n_total}):\n'
+            f'  Improved: {n_improved}  |  Declined: {n_declined}  |  Same: {n_same}\n'
+            f'  Mean delta: {mean_all:+.1f}%  |  Wilcoxon {p_str_all}\n'
+            f'Responders only (N={len(pos_deltas)}):\n'
+            f'  Mean recovery: +{mean_responders:.1f}%'
+        )
+        ax_wf.text(0.98, 0.98, stats_text, transform=ax_wf.transAxes, fontsize=8,
+                  verticalalignment='top', horizontalalignment='right',
+                  bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                  family='monospace')
+
+        ax_wf.set_xlabel('Animals (sorted by recovery)', fontsize=10)
+        ax_wf.set_ylabel(f'Change in {ylabel}\n(Rehab - Nadir)', fontsize=10)
+        ax_wf.set_title(f'{metric_name}: Recovery Waterfall (from nadir)', fontsize=11, fontweight='bold')
+        ax_wf.spines['top'].set_visible(False)
+        ax_wf.spines['right'].set_visible(False)
+        ax_wf.set_xticks([])
+
+    plt.tight_layout()
+    out_path = os.path.join(output_dir, f'trajectory_{group_name}.png')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    print(f"  Saved: {out_path}")
+
+
+def plot_mega_cohort(all_group_data, output_dir):
+    """Normalized mega-cohort analysis: all groups on common baseline.
+
+    Each animal's values are expressed as % of their own pre-injury (Final 3) baseline.
+    This allows pooling across groups with different raw performance levels.
+
+    Figure 1 (mega_cohort_trajectory): 4-point normalized trajectories
+      - Top-left: All animals pooled, individual lines + grand mean
+      - Top-right: Waterfall of recovery (Rehab - nadir), using per-animal min post-injury
+      - Bottom-left: Group mean trajectories overlaid, colored by injury type
+      - Bottom-right: Violin/box of normalized rehab by injury type
+
+    Figure 2 (mega_cohort_raw): Same layout but with raw % values (not normalized)
+    """
+    from matplotlib.lines import Line2D
+
+    # Injury type color map
+    injury_colors = {
+        'Early Study': '#9467bd',
+        'Transection': '#d62728',
+        'Contusion 50kd': '#2ca02c',
+        'Contusion 60kd': '#ff7f0e',
+        'Contusion 70kd': '#e377c2',
+        'Pyramidotomy': '#1f77b4',
+    }
+
+    # Collect per-animal 4-point data across all groups
+    # Each record: (group, injury_type, animal_id, pre, post_1wk, post_24wk, rehab)
+    records = []
+    for group_name, gd in all_group_data.items():
+        wd = gd['window_data']
+        injury_type = gd['injury_type']
+
+        f3 = wd['final_3']
+        ip = wd['immediate_post']
+        p24 = wd['2_4_post']
+        l2 = wd['last_2']
+
+        f3_idx = {a: i for i, a in enumerate(f3['animals'])}
+        ip_idx = {a: i for i, a in enumerate(ip['animals'])}
+        p24_idx = {a: i for i, a in enumerate(p24['animals'])}
+        l2_idx = {a: i for i, a in enumerate(l2['animals'])}
+
+        # Need at least pre + one post-injury + rehab
+        for animal in f3['animals']:
+            if animal not in l2_idx:
+                continue
+            pre = f3['eaten'][f3_idx[animal]]
+            rehab = l2['eaten'][l2_idx[animal]]
+            post_1wk = ip['eaten'][ip_idx[animal]] if animal in ip_idx else None
+            post_24wk = p24['eaten'][p24_idx[animal]] if animal in p24_idx else None
+
+            pre_c = f3['contacted'][f3_idx[animal]]
+            rehab_c = l2['contacted'][l2_idx[animal]]
+            post_1wk_c = ip['contacted'][ip_idx[animal]] if animal in ip_idx else None
+            post_24wk_c = p24['contacted'][p24_idx[animal]] if animal in p24_idx else None
+
+            if post_1wk is None and post_24wk is None:
+                continue
+
+            records.append({
+                'group': group_name, 'injury': injury_type, 'animal': animal,
+                'pre': pre, 'post_1wk': post_1wk, 'post_24wk': post_24wk, 'rehab': rehab,
+                'pre_c': pre_c, 'post_1wk_c': post_1wk_c, 'post_24wk_c': post_24wk_c, 'rehab_c': rehab_c,
+            })
+
+    if not records:
+        return
+
+    # For each metric (eaten, contacted), generate the mega-cohort figure
+    for metric_suffix, metric_label, ylabel_raw, ylabel_norm in [
+        ('', 'Retrieved', '% Pellets Retrieved', '% of Pre-Injury Baseline'),
+        ('_c', 'Contacted', '% Pellets Contacted', '% of Pre-Injury Baseline'),
+    ]:
+        pre_key = 'pre' + metric_suffix
+        p1_key = 'post_1wk' + metric_suffix
+        p24_key = 'post_24wk' + metric_suffix
+        rehab_key = 'rehab' + metric_suffix
+
+        fig, axes = plt.subplots(2, 2, figsize=(18, 14))
+        fig.suptitle(
+            f'Mega-Cohort Analysis (Manually Scored): {metric_label} — All Historical Groups\n'
+            f'Normalized to Pre-Injury Baseline (N={len(records)} animals across {len(all_group_data)} groups)',
+            fontsize=14, fontweight='bold'
+        )
+
+        # === Compute normalized values ===
+        norm_records = []
+        for r in records:
+            pre_val = r[pre_key]
+            if pre_val <= 0:
+                continue  # Can't normalize if baseline is 0
+            norm = {
+                'group': r['group'], 'injury': r['injury'], 'animal': r['animal'],
+                'pre_raw': pre_val,
+                'pre': 100.0,  # normalized baseline
+            }
+
+            # Normalize each timepoint
+            for tkey, nkey in [(p1_key, 'post_1wk'), (p24_key, 'post_24wk'), (rehab_key, 'rehab')]:
+                raw_val = r[tkey]
+                if raw_val is not None:
+                    norm[nkey] = (raw_val / pre_val) * 100
+                    norm[nkey + '_raw'] = raw_val
+                else:
+                    norm[nkey] = None
+                    norm[nkey + '_raw'] = None
+
+            # Per-animal nadir: min of available post-injury timepoints
+            post_vals = [norm[k] for k in ['post_1wk', 'post_24wk'] if norm[k] is not None]
+            norm['nadir'] = min(post_vals) if post_vals else None
+            norm['nadir_raw'] = min(
+                [r[k] for k in [p1_key, p24_key] if r[k] is not None]
+            ) if post_vals else None
+
+            norm_records.append(norm)
+
+        if not norm_records:
+            plt.close()
+            continue
+
+        # === TOP LEFT: All animals pooled — normalized trajectories ===
+        ax = axes[0, 0]
+        mean_vals = {0: [], 1: [], 2: [], 3: []}
+
+        for nr in norm_records:
+            xs, ys = [0], [nr['pre']]
+            mean_vals[0].append(nr['pre'])
+            if nr['post_1wk'] is not None:
+                xs.append(1); ys.append(nr['post_1wk'])
+                mean_vals[1].append(nr['post_1wk'])
+            if nr['post_24wk'] is not None:
+                xs.append(2); ys.append(nr['post_24wk'])
+                mean_vals[2].append(nr['post_24wk'])
+            if nr['rehab'] is not None:
+                xs.append(3); ys.append(nr['rehab'])
+                mean_vals[3].append(nr['rehab'])
+
+            # Color by recovery outcome
+            if nr['rehab'] is not None and nr['rehab'] > 80:
+                color = '#2ca02c'; alpha = 0.25
+            elif nr['rehab'] is not None and nr['nadir'] is not None and nr['rehab'] > nr['nadir']:
+                color = '#ff7f0e'; alpha = 0.2
+            else:
+                color = '#d62728'; alpha = 0.2
+            ax.plot(xs, ys, 'o-', color=color, alpha=alpha, markersize=3, linewidth=0.8, zorder=2)
+
+        # Grand mean
+        gmean_x, gmean_y = [], []
+        for xi in [0, 1, 2, 3]:
+            if mean_vals[xi]:
+                gmean_x.append(xi)
+                gmean_y.append(np.mean(mean_vals[xi]))
+        ax.plot(gmean_x, gmean_y, 's-', color='black', markersize=12, linewidth=3.5, zorder=5)
+
+        # SEM shading
+        for xi in gmean_x:
+            if len(mean_vals[xi]) > 1:
+                sem = stats.sem(mean_vals[xi])
+                m = np.mean(mean_vals[xi])
+                ax.fill_between([xi - 0.1, xi + 0.1], m - sem, m + sem,
+                               color='black', alpha=0.15, zorder=4)
+
+        ax.axhline(y=100, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+        ax.set_xticks([0, 1, 2, 3])
+        ax.set_xticklabels(['Pre-Injury\n(Final 3)', '1 Wk\nPost-Injury',
+                            '2-4 Wk\nPost-Injury', 'Rehab\n(Last 2)'], fontsize=9)
+        ax.set_ylabel(ylabel_norm, fontsize=11)
+        ax.set_title(f'All Animals Pooled (N={len(norm_records)})', fontsize=12, fontweight='bold')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.set_xlim(-0.3, 3.3)
+
+        legend_items = [
+            Line2D([0], [0], color='#2ca02c', marker='o', alpha=0.5, label='Recovered (>80% of pre)'),
+            Line2D([0], [0], color='#ff7f0e', marker='o', alpha=0.5, label='Improved from nadir'),
+            Line2D([0], [0], color='#d62728', marker='o', alpha=0.5, label='No improvement'),
+            Line2D([0], [0], color='black', marker='s', linewidth=3, label='Grand Mean'),
+        ]
+        ax.legend(handles=legend_items, loc='upper right', fontsize=7)
+
+        # === TOP RIGHT: Recovery waterfall (Rehab - Nadir, normalized) ===
+        ax = axes[0, 1]
+
+        deltas = []
+        delta_injuries = []
+        for nr in norm_records:
+            if nr['nadir'] is not None and nr['rehab'] is not None:
+                deltas.append(nr['rehab'] - nr['nadir'])
+                delta_injuries.append(nr['injury'])
+
+        if deltas:
+            sorted_idx = np.argsort(deltas)[::-1]
+            sorted_deltas = [deltas[i] for i in sorted_idx]
+            sorted_injuries = [delta_injuries[i] for i in sorted_idx]
+            bar_colors = [injury_colors.get(inj, '#888888') for inj in sorted_injuries]
+
+            x_pos = np.arange(len(sorted_deltas))
+            ax.bar(x_pos, sorted_deltas, color=bar_colors, alpha=0.8,
+                   edgecolor='none', linewidth=0)
+            ax.axhline(y=0, color='black', linewidth=1)
+
+            n_total = len(sorted_deltas)
+            n_improved = sum(1 for d in sorted_deltas if d > 0)
+            n_declined = sum(1 for d in sorted_deltas if d < 0)
+            mean_all = np.mean(sorted_deltas)
+
+            pos_deltas = [d for d in sorted_deltas if d > 0]
+            mean_resp = np.mean(pos_deltas) if pos_deltas else 0
+
+            p_str = 'N/A'
+            try:
+                non_zero = [d for d in sorted_deltas if d != 0]
+                if len(non_zero) >= 5:
+                    _, wil_p = stats.wilcoxon(non_zero)
+                    p_str = f'p={wil_p:.4f}' if wil_p >= 0.0001 else 'p<0.0001'
+            except Exception:
+                pass
+
+            stats_text = (
+                f'N={n_total} animals\n'
+                f'Improved: {n_improved} | Declined: {n_declined}\n'
+                f'Mean: {mean_all:+.1f}% of baseline\n'
+                f'Wilcoxon: {p_str}\n'
+                f'Responders (N={len(pos_deltas)}): +{mean_resp:.1f}%'
+            )
+            ax.text(0.98, 0.98, stats_text, transform=ax.transAxes, fontsize=8,
+                    va='top', ha='right', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                    family='monospace')
+
+            # Legend for injury type colors
+            seen = []
+            inj_legend = []
+            for inj in sorted_injuries:
+                if inj not in seen:
+                    seen.append(inj)
+                    inj_legend.append(Line2D([0], [0], color=injury_colors.get(inj, '#888888'),
+                                            marker='s', linestyle='', markersize=8, label=inj))
+            ax.legend(handles=inj_legend, loc='lower right', fontsize=7, title='Injury Type',
+                     title_fontsize=8)
+
+        ax.set_xlabel('Animals (sorted by recovery)', fontsize=10)
+        ax.set_ylabel(f'Recovery from Nadir\n(% of pre-injury baseline)', fontsize=10)
+        ax.set_title('Recovery Waterfall: Rehab - Nadir (Normalized)', fontsize=12, fontweight='bold')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.set_xticks([])
+
+        # === BOTTOM LEFT: Group mean trajectories by injury type ===
+        ax = axes[1, 0]
+
+        injury_groups = {}
+        for nr in norm_records:
+            inj = nr['injury']
+            if inj not in injury_groups:
+                injury_groups[inj] = []
+            injury_groups[inj].append(nr)
+
+        for injury_type, inj_records in injury_groups.items():
+            color = injury_colors.get(injury_type, '#888888')
+
+            # Individual traces (very transparent)
+            for nr in inj_records:
+                xs, ys = [0], [nr['pre']]
+                if nr['post_1wk'] is not None:
+                    xs.append(1); ys.append(nr['post_1wk'])
+                if nr['post_24wk'] is not None:
+                    xs.append(2); ys.append(nr['post_24wk'])
+                if nr['rehab'] is not None:
+                    xs.append(3); ys.append(nr['rehab'])
+                ax.plot(xs, ys, '-', color=color, alpha=0.1, linewidth=0.5, zorder=2)
+
+            # Group mean
+            gm = {0: [], 1: [], 2: [], 3: []}
+            for nr in inj_records:
+                gm[0].append(nr['pre'])
+                if nr['post_1wk'] is not None: gm[1].append(nr['post_1wk'])
+                if nr['post_24wk'] is not None: gm[2].append(nr['post_24wk'])
+                if nr['rehab'] is not None: gm[3].append(nr['rehab'])
+
+            mx, my = [], []
+            for xi in [0, 1, 2, 3]:
+                if gm[xi]:
+                    mx.append(xi)
+                    my.append(np.mean(gm[xi]))
+            ax.plot(mx, my, 'o-', color=color, markersize=8, linewidth=2.5, zorder=5,
+                    label=f'{injury_type} (N={len(inj_records)})')
+
+            # SEM bars
+            for xi in mx:
+                if len(gm[xi]) > 1:
+                    sem = stats.sem(gm[xi])
+                    m = np.mean(gm[xi])
+                    ax.errorbar(xi, m, yerr=sem, color=color, capsize=4, linewidth=1.5, zorder=4)
+
+        ax.axhline(y=100, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+        ax.set_xticks([0, 1, 2, 3])
+        ax.set_xticklabels(['Pre-Injury\n(Final 3)', '1 Wk\nPost-Injury',
+                            '2-4 Wk\nPost-Injury', 'Rehab\n(Last 2)'], fontsize=9)
+        ax.set_ylabel(ylabel_norm, fontsize=11)
+        ax.set_title('Group Mean Trajectories by Injury Type', fontsize=12, fontweight='bold')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.legend(loc='upper right', fontsize=8)
+        ax.set_xlim(-0.3, 3.3)
+
+        # === BOTTOM RIGHT: Box/violin of normalized rehab by injury type ===
+        ax = axes[1, 1]
+
+        injury_types_sorted = sorted(injury_groups.keys(),
+                                     key=lambda k: np.mean([nr['rehab'] for nr in injury_groups[k]
+                                                           if nr['rehab'] is not None]))
+        box_data = []
+        box_labels = []
+        box_colors_list = []
+        for inj in injury_types_sorted:
+            vals = [nr['rehab'] for nr in injury_groups[inj] if nr['rehab'] is not None]
+            if vals:
+                box_data.append(vals)
+                box_labels.append(f'{inj}\n(N={len(vals)})')
+                box_colors_list.append(injury_colors.get(inj, '#888888'))
+
+        if box_data:
+            bp = ax.boxplot(box_data, patch_artist=True, widths=0.6,
+                           medianprops=dict(color='black', linewidth=2))
+            for patch, color in zip(bp['boxes'], box_colors_list):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.6)
+
+            # Overlay individual points
+            np.random.seed(42)
+            for i, vals in enumerate(box_data):
+                jitter = np.random.uniform(-0.15, 0.15, len(vals))
+                ax.scatter(np.full(len(vals), i + 1) + jitter, vals,
+                          color=box_colors_list[i], s=25, zorder=5, alpha=0.7,
+                          edgecolor='white', linewidth=0.3)
+
+            ax.set_xticklabels(box_labels, fontsize=8)
+            ax.axhline(y=100, color='gray', linestyle='--', linewidth=1, alpha=0.5,
+                       label='Pre-injury baseline')
+
+            # Kruskal-Wallis across injury types
+            if len(box_data) >= 2:
+                try:
+                    kw_stat, kw_p = stats.kruskal(*box_data)
+                    kw_str = f'Kruskal-Wallis: H={kw_stat:.1f}, p={kw_p:.4f}' if kw_p >= 0.0001 else f'Kruskal-Wallis: H={kw_stat:.1f}, p<0.0001'
+                    ax.set_xlabel(kw_str, fontsize=9)
+                except Exception:
+                    pass
+
+        ax.set_ylabel(ylabel_norm, fontsize=11)
+        ax.set_title(f'Post-Rehab Recovery by Injury Type', fontsize=12, fontweight='bold')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.legend(loc='upper left', fontsize=8)
+
+        plt.tight_layout()
+        suffix = 'eaten' if metric_suffix == '' else 'contacted'
+        out_path = os.path.join(output_dir, f'mega_cohort_{suffix}.png')
+        plt.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        print(f"  Saved: {out_path}")
+
+
 def plot_combined_overview(all_group_data, output_dir):
     """Create a combined overview: all groups side by side per window."""
     group_names = list(all_group_data.keys())
     n_groups = len(group_names)
 
     fig, axes = plt.subplots(2, 2, figsize=(max(14, n_groups * 2.5), 11))
-    fig.suptitle('Behavior Performance: All Historical Groups\nManual Scoring Comparison',
+    fig.suptitle('Behavior Performance (Manually Scored): All Historical Groups',
                  fontsize=16, fontweight='bold')
 
     group_colors = plt.cm.Set2(np.linspace(0, 1, n_groups))
@@ -758,6 +1398,7 @@ def main():
 
         plot_group(group_name, injury_type, window_data, pellet_df, len(learners), OUTPUT_DIR)
         plot_recovery(group_name, injury_type, window_data, OUTPUT_DIR)
+        plot_trajectory_waterfall(group_name, injury_type, window_data, OUTPUT_DIR)
 
         all_group_data[group_name] = {
             'injury_type': injury_type,
@@ -767,6 +1408,9 @@ def main():
 
     print(f"\n--- Combined Overview ---")
     plot_combined_overview(all_group_data, OUTPUT_DIR)
+
+    print(f"\n--- Mega-Cohort Analysis ---")
+    plot_mega_cohort(all_group_data, OUTPUT_DIR)
 
     print(f"\nAll figures saved to: {OUTPUT_DIR}")
 

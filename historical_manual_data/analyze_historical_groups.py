@@ -19,6 +19,12 @@ from collections import defaultdict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Output to MouseDB for finalized data products
+_connectome_root = SCRIPT_DIR
+while os.path.basename(_connectome_root) != '2_Connectome' and os.path.dirname(_connectome_root) != _connectome_root:
+    _connectome_root = os.path.dirname(_connectome_root)
+MOUSEDB_DIR = os.path.join(_connectome_root, 'MouseDB')
+
 # Group files and their descriptive injury types
 GROUP_FILES = {
     'ABS3': ('ABS3.xlsx', 'Early Study'),
@@ -348,7 +354,8 @@ def main():
         print(f"{r['group']:6s} {r['injury_type']:15s} {r['window']:16s} {eaten_str:22s} {contacted_str:26s} {r['n_animals']:4d}")
 
     # Save to CSV
-    csv_path = os.path.join(SCRIPT_DIR, 'historical_group_analysis.csv')
+    csv_path = os.path.join(MOUSEDB_DIR, 'exports', 'historical_group_analysis.csv')
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     with open(csv_path, 'w') as f:
         f.write('Group,Injury_Type,Window,Eaten_Mean,Eaten_SEM,Contacted_Mean,Contacted_SEM,N_Animals,Test_Types_Used\n')
         for r in all_results:
