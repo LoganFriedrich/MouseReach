@@ -96,9 +96,10 @@ import json
 from datetime import datetime
 
 from .geometry import compute_segment_geometry, get_boxr_reference, load_dlc, load_segments
+from .boundary_refiner import split_reach_boundaries
 
 
-VERSION = "4.2.0"  # v4.2: Tolerance-based disappearance, conservative thresholds, splitter active
+VERSION = "5.0.0"  # v5.0: Multi-signal splitter + retraction look-ahead confirmation
 
 
 @dataclass
@@ -216,6 +217,14 @@ class ReachDetector:
     # disappearance (DISAPPEAR_THRESHOLD=3) handles 89% of real splits; this check
     # is only a safety net for the rare case where hand retracts without disappearing.
     HAND_RETURN_THRESHOLD = 5.0      # pixels - hand returned to starting position
+
+    # v5.0: Look-ahead confirmation for retraction/return-to-start
+    # 98.8% of 683 early-end cases had hand visible at EVERY frame between algo_end
+    # and gt_end. Root cause: retraction/return checks fire on single-frame DLC
+    # bodypart switches (the 4 hand points swap which is "best", causing apparent
+    # 10-25px position jumps). Fix: require retraction to be sustained over
+    # RETRACTION_CONFIRM consecutive additional frames before ending the reach.
+    RETRACTION_CONFIRM = 2           # frames of sustained retraction needed to confirm end
 
     RH_POINTS = ['RightHand', 'RHLeft', 'RHOut', 'RHRight']
 
@@ -345,9 +354,60 @@ class ReachDetector:
         # end offset went from +11 (late) to -6 (early). 78.8% of reaches ended
         # too early. Retraction is a safety net for cases where hand remains visible
         # but clearly returns - the tolerance-based disappearance handles most ends.
-        retraction_threshold = extension * 0.40
+        # v5.0: Raised from 40% to 50% - combined with look-ahead confirmation,
+        # the higher threshold prevents false retraction triggers from hand oscillation
+        # during reaching (hand wobbles 40-50% during extension but isn't truly retracting).
+        retraction_threshold = extension * 0.50
 
         return retraction > retraction_threshold and retraction > 5
+
+    def _confirm_retraction(
+        self,
+        df: pd.DataFrame,
+        frame: int,
+        reach_max_x: float,
+        slit_x: float
+    ) -> bool:
+        """
+        v5.0: Look-ahead confirmation for retraction/return-to-start.
+
+        When retraction fires at frame X, check the next RETRACTION_CONFIRM frames.
+        Return True only if retraction or return-to-start is sustained across ALL
+        confirmation frames. This prevents false ends from single-frame DLC bodypart
+        switching (the 4 hand points swap which has highest confidence, causing
+        apparent 10-25px position jumps that look like retraction).
+        """
+        for offset in range(1, self.RETRACTION_CONFIRM + 1):
+            future_frame = frame + offset
+            if future_frame >= len(df):
+                return True  # End of data - confirm the end
+
+            future_row = df.iloc[future_frame]
+            if not self._any_hand_visible(future_row):
+                continue  # Invisible frame doesn't contradict retraction
+
+            future_x, _, valid = self._get_best_hand_position(future_row)
+            if not valid or future_x is None:
+                continue  # Can't check position
+
+            # Check if hand has re-extended (retraction reversed)
+            extension = reach_max_x - slit_x
+            if extension < 5:
+                continue  # Not enough extension to judge
+
+            retraction = reach_max_x - future_x
+            retraction_threshold = extension * 0.50
+
+            # Also check return-to-start
+            hand_offset = future_x - slit_x
+            returned = hand_offset < self.HAND_RETURN_THRESHOLD
+
+            # If hand is NEITHER retracted NOR returned at this future frame,
+            # the original trigger was a transient - cancel the end
+            if not (retraction > retraction_threshold and retraction > 5) and not returned:
+                return False  # Hand re-extended - cancel the end
+
+        return True  # Retraction sustained through all confirmation frames
 
     def _hand_returned_to_start(self, hand_x: float, slit_x: float, reach_max_x: float) -> bool:
         """
@@ -445,17 +505,24 @@ class ReachDetector:
 
                     # Check end conditions (only when hand is visible)
 
-                    # v4.0: Check for hand retraction (lowered from 40% to 25%)
+                    # v4.0: Check for hand retraction
+                    # v5.0: Added look-ahead confirmation - require sustained retraction
+                    # over RETRACTION_CONFIRM additional frames before committing to end.
+                    # This prevents 683 early-end cases caused by single-frame DLC
+                    # bodypart switching between the 4 hand tracking points.
                     if self._detect_hand_retraction(df, frame, reach_max_x, slit_x):
-                        end_reach = True
-                        end_frame = frame - 1  # End at last frame before retraction
+                        if self._confirm_retraction(df, frame, reach_max_x, slit_x):
+                            end_reach = True
+                            end_frame = frame - 1  # End at last frame before retraction
 
-                    # v4.0: Check if hand returned to starting position (15px, was 5px)
+                    # v4.0: Check if hand returned to starting position
+                    # v5.0: Also requires look-ahead confirmation
                     elif self._hand_returned_to_start(hand_x, slit_x, reach_max_x):
-                        end_reach = True
-                        end_frame = frame - 1
+                        if self._confirm_retraction(df, frame, reach_max_x, slit_x):
+                            end_reach = True
+                            end_frame = frame - 1
 
-                    else:
+                    if not end_reach:
                         # Continue tracking reach
                         reach_data.append((frame, hand_x, hand_y))
                         if hand_x and hand_x > reach_max_x:
@@ -563,25 +630,64 @@ class ReachDetector:
         if len(reaches) > 1 and self.GAP_TOLERANCE > 0:
             reaches = self._merge_close_reaches(reaches, boxr_x, ruler_pixels)
 
-        # Post-processing: split any long reaches that contain internal boundaries
+        # Post-processing: split long reaches using multi-signal approach (v5.0)
+        # Uses hand position + velocity + confidence to place split boundaries
+        # precisely, replacing the old confidence-only splitter that was ~5 frames
+        # early on 643/2608 GT reaches (24.7% of all errors).
         split_reaches = []
         for reach in reaches:
-            split_results = self._split_long_reach(reach, df, boxr_x, ruler_pixels)
-            split_reaches.extend(split_results)
+            sub_boundaries = split_reach_boundaries(
+                reach.start_frame, reach.end_frame, df, slit_x,
+                self.RH_POINTS, self.SPLIT_THRESHOLD_FRAMES,
+                self.CONFIDENCE_HIGH, self.CONFIDENCE_LOW,
+                self.MIN_REACH_DURATION,
+            )
+            if len(sub_boundaries) == 1 and sub_boundaries[0] == (reach.start_frame, reach.end_frame):
+                # No split needed - keep original reach
+                split_reaches.append(reach)
+            else:
+                # Create sub-reaches from split boundaries
+                for sub_start, sub_end in sub_boundaries:
+                    sub_duration = sub_end - sub_start + 1
+                    if sub_duration < self.MIN_REACH_DURATION:
+                        continue
 
-        # Reassign IDs after splitting (using global_reach_id for unique IDs)
-        # First, determine if any splitting actually occurred
-        if len(split_reaches) != len(reaches):
-            # Splitting occurred - need to reassign all IDs
-            for i, reach in enumerate(split_reaches):
-                reach.reach_num = i + 1
-                reach.reach_id = self.global_reach_id + i + 1
-            # Update global counter
-            self.global_reach_id += len(split_reaches)
-        else:
-            # No splitting - just renumber
-            for i, reach in enumerate(split_reaches):
-                reach.reach_num = i + 1
+                    # Find apex (max X extension)
+                    max_x = 0
+                    apex_frame = sub_start
+                    for f in range(sub_start, min(sub_end + 1, len(df))):
+                        hand_x, _, _ = self._get_best_hand_position(df.iloc[f])
+                        if hand_x is not None and hand_x > max_x:
+                            max_x = hand_x
+                            apex_frame = f
+
+                    extent_pixels = max_x - boxr_x if max_x else 0
+                    extent_ruler = extent_pixels / ruler_pixels if ruler_pixels > 0 else 0
+
+                    # Filter by minimum extent
+                    if extent_pixels < self.MIN_EXTENT_THRESHOLD:
+                        continue
+
+                    conf = self._compute_reach_confidence(df, sub_start, sub_end)
+
+                    self.global_reach_id += 1
+                    split_reaches.append(Reach(
+                        reach_id=self.global_reach_id,
+                        reach_num=0,  # Renumbered below
+                        start_frame=sub_start,
+                        apex_frame=apex_frame,
+                        end_frame=sub_end,
+                        duration_frames=sub_duration,
+                        max_extent_pixels=round(extent_pixels, 1),
+                        max_extent_ruler=round(extent_ruler, 3),
+                        confidence=conf['confidence'],
+                        start_confidence=conf['start_confidence'],
+                        end_confidence=conf['end_confidence'],
+                    ))
+
+        # Renumber reaches sequentially within segment
+        for i, reach in enumerate(split_reaches):
+            reach.reach_num = i + 1
 
         return split_reaches
 
@@ -630,118 +736,10 @@ class ReachDetector:
             'end_confidence': round(end_conf, 3)
         }
 
-    def _find_split_points(self, df: pd.DataFrame, start: int, end: int) -> List[int]:
-        """
-        Find points within a reach where it should be split.
-
-        Split when: confidence drops from HIGH to LOW then rises to HIGH again.
-        This indicates a reach boundary (paw retracts, then extends again).
-        """
-        split_points = []
-
-        # State machine to find drop-then-rise patterns
-        in_drop = False
-        drop_start = None
-
-        for frame in range(start + 1, end):
-            if frame >= len(df) - 1:
-                break
-
-            prev_l = self._get_best_hand_likelihood(df.iloc[frame - 1])
-            curr_l = self._get_best_hand_likelihood(df.iloc[frame])
-            next_l = self._get_best_hand_likelihood(df.iloc[frame + 1])
-
-            if not in_drop:
-                # Looking for start of drop: high -> low
-                if prev_l >= self.CONFIDENCE_HIGH and curr_l < self.CONFIDENCE_LOW:
-                    in_drop = True
-                    drop_start = frame - 1  # Last high frame
-            else:
-                # In a drop, looking for rise: low -> high
-                if curr_l >= self.CONFIDENCE_HIGH and prev_l < self.CONFIDENCE_LOW:
-                    # Found boundary: split here
-                    # The split point is where confidence rises again
-                    split_points.append(frame)
-                    in_drop = False
-                elif curr_l >= self.CONFIDENCE_HIGH:
-                    # Confidence rose but not from low - end drop detection
-                    in_drop = False
-
-        return split_points
-
-    def _split_long_reach(
-        self,
-        reach: Reach,
-        df: pd.DataFrame,
-        boxr_x: float,
-        ruler_pixels: float
-    ) -> List[Reach]:
-        """
-        Split a long reach if it contains internal boundaries.
-
-        Returns list of reaches (either 1 if no split needed, or multiple).
-        """
-        if reach.duration_frames <= self.SPLIT_THRESHOLD_FRAMES:
-            return [reach]
-
-        split_points = self._find_split_points(df, reach.start_frame, reach.end_frame)
-
-        if not split_points:
-            return [reach]
-
-        # Create sub-reaches at split points
-        sub_reaches = []
-        boundaries = [reach.start_frame] + split_points + [reach.end_frame + 1]
-
-        for i in range(len(boundaries) - 1):
-            sub_start = boundaries[i]
-            sub_end = boundaries[i + 1] - 1  # -1 because end is inclusive
-
-            # Find where confidence drops at the end of this sub-reach
-            # (the split point is where the NEW reach starts, so back up 1)
-            if i < len(boundaries) - 2:
-                # Not the last sub-reach - find the actual end (before confidence drop)
-                actual_end = sub_end
-                for f in range(sub_end, sub_start, -1):
-                    if self._get_best_hand_likelihood(df.iloc[f]) >= self.CONFIDENCE_HIGH:
-                        actual_end = f
-                        break
-                sub_end = actual_end
-
-            duration = sub_end - sub_start + 1
-            if duration < self.MIN_REACH_DURATION:
-                continue
-
-            # Find apex
-            max_x = 0
-            apex_frame = sub_start
-            for f in range(sub_start, sub_end + 1):
-                hand_x, _, _ = self._get_best_hand_position(df.iloc[f])
-                if hand_x is not None and hand_x > max_x:
-                    max_x = hand_x
-                    apex_frame = f
-
-            extent_pixels = max_x - boxr_x if max_x else 0
-            extent_ruler = extent_pixels / ruler_pixels if ruler_pixels > 0 else 0
-
-            # Compute boundary confidence (v3.3)
-            conf = self._compute_reach_confidence(df, sub_start, sub_end)
-
-            sub_reaches.append(Reach(
-                reach_id=0,  # Will be reassigned
-                reach_num=0,  # Will be reassigned
-                start_frame=sub_start,
-                apex_frame=apex_frame,
-                end_frame=sub_end,
-                duration_frames=duration,
-                max_extent_pixels=round(extent_pixels, 1),
-                max_extent_ruler=round(extent_ruler, 3),
-                confidence=conf['confidence'],
-                start_confidence=conf['start_confidence'],
-                end_confidence=conf['end_confidence']
-            ))
-
-        return sub_reaches if sub_reaches else [reach]
+    # NOTE: _find_split_points and _split_long_reach were removed in v5.0.
+    # Split logic now lives in boundary_refiner.split_reach_boundaries()
+    # which uses position + velocity + confidence (not just confidence).
+    # Old code archived at: Archive/code_snapshots/reach_detector_v4.2_*.py
 
     def _merge_close_reaches(
         self,
