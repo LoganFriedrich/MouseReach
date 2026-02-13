@@ -1,5 +1,5 @@
 """
-UCSF Collaboration Data Analysis — Algorithmic (DLC) + Manual Scoring
+UCSF Collaboration Data Analysis — Algorithmic (ASPA) + Manual Scoring
 
 Analyzes session-level behavioral data from the Automated Single Pellet apparatus
 with dual scoring: DeepLabCut algorithmic (Video_*) and operator manual (Manual_*).
@@ -13,9 +13,9 @@ Time windows (mapped from Test_Type_Grouped_1):
   - 2-4 Post: 3_2wk/3wk/4wk_Post-injury
   - Post-Rehab: 5_Post-rehab_Test_1/2
 
-Metrics:
-  - Manual: pellet counts out of 20 per tray → % per day
-  - Video (DLC): reach outcome counts per tray (can exceed 20)
+Metrics (per-tray scoring, then averaged across trays):
+  - Manual: pellet counts per tray / 20 → avg across trays = daily %
+  - Video (ASPA): reach events per tray, clipped at 20 / 20 → avg across trays
   - Both: Retrieved (eaten) and Contacted (displaced + retrieved)
 
 Figures produced:
@@ -23,7 +23,7 @@ Figures produced:
   2. Per-group recovery trajectories (4-point, nadir-based classification)
   3. Per-group trajectory + waterfall (nadir-based)
   4. Mega-cohort normalized analysis
-  5. Scoring method comparison (Manual vs DLC head-to-head)
+  5. Scoring method comparison (Manual vs ASPA head-to-head)
 """
 
 import matplotlib
@@ -109,38 +109,35 @@ def load_and_prepare_data():
 
 
 def aggregate_daily(df):
-    """Aggregate tray-level data to per-animal per-test-day.
+    """Return per-tray observations with percentages computed out of 20.
 
-    Manual scores: sum pellets across trays, divide by total pellets (n_trays × 20)
-    Video scores: sum reach outcomes across trays, then cap at total pellets for % calc
+    Each tray is an independent observation (internal repeat). Downstream functions
+    average across trays per animal per time window. This preserves tray-level
+    variation and treats each tray as a genuine measurement.
+
+    Manual scores: pellet counts per tray / 20 (already pellet-denominated)
+    Video (ASPA) scores: reach event counts per tray, clipped at 20, / 20
+        (ASPA counts are reach-event-based. Clipping at 20 per tray converts to
+        pellet-equivalent % since each tray has exactly 20 pellets.)
     """
-    grouped = df.groupby(
-        ['SubjectID', 'Group', 'Injury_type', 'Injury_display',
-         'Test_Type', 'Test_Type_Grouped_1', 'Test_Type_Grouped_2', 'Test_Type_Grouped_3']
-    ).agg(
-        n_trays=('Tray_ID', 'count'),
-        manual_contacted=('Manual_Contacted', 'sum'),
-        manual_retrieved=('Manual_Retrieved', 'sum'),
-        video_contacted=('Video_Contacted', lambda x: x.dropna().sum()),
-        video_retrieved=('Video_Retrieved', lambda x: x.dropna().sum()),
-        total_swipes=('Total_Swipes_AI', lambda x: x.dropna().sum()),
-        attention=('Attention_AI', 'mean'),
-    ).reset_index()
+    work = df.copy()
 
-    # Total pellets available per day = n_trays × 20
-    grouped['total_pellets'] = grouped['n_trays'] * 20
+    # Compute per-tray percentages (each tray has 20 pellets)
+    work['manual_contacted_pct'] = (work['Manual_Contacted'] / 20 * 100).clip(0, 100)
+    work['manual_retrieved_pct'] = (work['Manual_Retrieved'] / 20 * 100).clip(0, 100)
 
-    # Manual percentages (pellet-based, max 100%)
-    grouped['manual_contacted_pct'] = (grouped['manual_contacted'] / grouped['total_pellets'] * 100).clip(0, 100)
-    grouped['manual_retrieved_pct'] = (grouped['manual_retrieved'] / grouped['total_pellets'] * 100).clip(0, 100)
+    # Video: clip reach counts at 20 per tray before computing %, since only 20 pellets exist
+    work['Video_Contacted_num'] = pd.to_numeric(work['Video_Contacted'], errors='coerce')
+    work['Video_Retrieved_num'] = pd.to_numeric(work['Video_Retrieved'], errors='coerce')
+    work['video_contacted_pct'] = (work['Video_Contacted_num'].clip(upper=20) / 20 * 100).clip(0, 100)
+    work['video_retrieved_pct'] = (work['Video_Retrieved_num'].clip(upper=20) / 20 * 100).clip(0, 100)
 
-    # Video percentages: cap reach counts at total pellets, then compute %
-    # (A reach count > 20 means multiple reaches contacted same pellet;
-    #  capping gives pellet-equivalent %)
-    grouped['video_contacted_pct'] = (grouped['video_contacted'].clip(upper=grouped['total_pellets']) / grouped['total_pellets'] * 100)
-    grouped['video_retrieved_pct'] = (grouped['video_retrieved'].clip(upper=grouped['total_pellets']) / grouped['total_pellets'] * 100)
+    # Coerce other numeric columns
+    work['total_swipes'] = pd.to_numeric(work['Total_Swipes_AI'], errors='coerce')
+    work['attention'] = pd.to_numeric(work['Attention_AI'], errors='coerce')
+    work['n_trays'] = 1  # Each row is one tray
 
-    return grouped
+    return work
 
 
 def assign_windows(daily):
@@ -169,9 +166,13 @@ def get_learners(daily):
 def compute_window_data(daily, group, learners, scoring='manual'):
     """Compute per-animal window averages for a group.
 
+    Input is tray-level data (one row per tray). For each animal in each window,
+    averages across all tray observations (trays × test days).
+
     Returns dict of window_name -> {
         'animals': [list], 'eaten': [list], 'contacted': [list],
-        'n': int, 'eaten_mean': float, 'eaten_sem': float, ...
+        'n': int (animals), 'n_trays': int (total tray observations),
+        'eaten_mean': float, 'eaten_sem': float, ...
     }
     """
     sub = daily[(daily['Group'] == group) &
@@ -187,12 +188,13 @@ def compute_window_data(daily, group, learners, scoring='manual'):
         if wsub.empty:
             window_data[wname] = {
                 'animals': [], 'eaten': [], 'contacted': [],
-                'n': 0, 'eaten_mean': None, 'eaten_sem': None,
+                'n': 0, 'n_trays': 0,
+                'eaten_mean': None, 'eaten_sem': None,
                 'contacted_mean': None, 'contacted_sem': None,
             }
             continue
 
-        # Per-animal averages across test days in window
+        # Per-animal averages across all tray observations in window
         animal_avgs = wsub.groupby('SubjectID').agg(
             eaten=(eaten_col, 'mean'),
             contacted=(contacted_col, 'mean'),
@@ -203,11 +205,15 @@ def compute_window_data(daily, group, learners, scoring='manual'):
         contacted_vals = list(animal_avgs['contacted'])
         n = len(animals)
 
+        # Tray-level count (internal repeats)
+        n_trays_total = wsub[eaten_col].notna().sum()
+
         window_data[wname] = {
             'animals': animals,
             'eaten': eaten_vals,
             'contacted': contacted_vals,
             'n': n,
+            'n_trays': int(n_trays_total),
             'eaten_mean': np.mean(eaten_vals),
             'eaten_sem': stats.sem(eaten_vals) if n > 1 else 0,
             'contacted_mean': np.mean(contacted_vals),
@@ -219,14 +225,17 @@ def compute_window_data(daily, group, learners, scoring='manual'):
 
 def plot_group_behavior(group, injury_display, window_data_manual, window_data_video,
                         n_learners, output_dir):
-    """2-row bar panel: top=Manual scoring, bottom=Video (DLC) scoring.
+    """Box plot panel: Manual vs ASPA side-by-side for each time window.
 
-    Each row has 2 panels: Retrieved and Contacted across 4 windows.
+    Two panels: Retrieved (left) and Contacted (right).
+    Y-axis in pellets out of 20 (per-tray scale).
+    Axis is trimmed to show the main distribution; points beyond the visible
+    range are noted but not displayed.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     fig.suptitle(
         f'Behavior Performance: {group} - {injury_display} (N={n_learners} learners)\n'
-        f'Top: Manually Scored  |  Bottom: Algorithmically Scored (DLC)',
+        f'Manual (operator) vs Algorithmic (ASPA) Scoring',
         fontsize=14, fontweight='bold'
     )
 
@@ -234,51 +243,108 @@ def plot_group_behavior(group, injury_display, window_data_manual, window_data_v
                      '2-4 Wk\nPost-Injury', 'Post-Rehab\n(Last 2)']
     window_keys = ['final_3', 'immediate_post', '2_4_post', 'last_2']
 
-    for row, (wd, scoring_label) in enumerate([
-        (window_data_manual, 'Manually Scored'),
-        (window_data_video, 'Algorithmically Scored (DLC)'),
+    manual_color = '#5B8DB8'   # Steel blue for manual
+    aspa_color = '#E8873D'     # Warm orange for ASPA
+    box_width = 0.3
+    pct_to_pellets = 20.0 / 100.0  # Convert % to pellets out of 20
+
+    for col, (metric_key, metric_name) in enumerate([
+        ('eaten', 'Retrieved'),
+        ('contacted', 'Contacted'),
     ]):
-        for col, (metric_key, metric_name, ylabel) in enumerate([
-            ('eaten', 'Retrieved', '% Pellets Retrieved'),
-            ('contacted', 'Contacted', '% Pellets Contacted'),
-        ]):
-            ax = axes[row, col]
-            means = []
-            sems = []
-            ns = []
+        ax = axes[col]
 
-            for wk in window_keys:
-                w = wd[wk]
-                m = w[f'{metric_key}_mean']
-                s = w[f'{metric_key}_sem']
-                means.append(m if m is not None else 0)
-                sems.append(s if s is not None else 0)
-                ns.append(w['n'])
+        # Collect all data for box plots
+        all_box_data = []    # list of (position, values_in_pellets, color, label)
+        all_ns = []
+        rng = np.random.default_rng(42)
 
-            x = np.arange(len(window_keys))
-            bars = ax.bar(x, means, yerr=sems, capsize=5,
-                         color='#7f7f7f', edgecolor='black', linewidth=0.5, alpha=0.7)
+        for i, wk in enumerate(window_keys):
+            wm = window_data_manual[wk]
+            wv = window_data_video[wk]
+            vals_m = [v * pct_to_pellets for v in wm[metric_key]] if wm[metric_key] else []
+            vals_v = [v * pct_to_pellets for v in wv[metric_key]] if wv[metric_key] else []
+            all_box_data.append((i - 0.18, vals_m, manual_color, 'Manual' if i == 0 else None))
+            all_box_data.append((i + 0.18, vals_v, aspa_color, 'ASPA' if i == 0 else None))
+            all_ns.append(wm['n'])
 
-            # Overlay individual animal points
-            for i, wk in enumerate(window_keys):
-                w = wd[wk]
-                vals = w[metric_key]
-                if vals:
-                    jitter = np.random.default_rng(42).uniform(-0.15, 0.15, len(vals))
-                    ax.scatter(np.full(len(vals), i) + jitter, vals,
-                              color='#1f1f1f', s=20, alpha=0.5, zorder=5, edgecolor='none')
+        # Determine smart y-axis limit: show up to the 95th percentile of all data
+        # with a minimum ceiling of 5 pellets and a maximum of 20
+        all_vals = []
+        for _, vals, _, _ in all_box_data:
+            all_vals.extend([v for v in vals if np.isfinite(v)])
+        if all_vals:
+            p95 = np.percentile(all_vals, 95) if len(all_vals) >= 5 else max(all_vals)
+            # Round up to next nice number (multiple of 2 or 5)
+            y_max_raw = max(p95 * 1.15, 5)
+            if y_max_raw <= 10:
+                y_max = np.ceil(y_max_raw / 2) * 2
+            else:
+                y_max = min(np.ceil(y_max_raw / 5) * 5, 21)
+        else:
+            y_max = 20
 
-            # N labels
-            for i, n in enumerate(ns):
-                ax.text(i, -3, f'N={n}', ha='center', fontsize=8, color='gray')
+        # Draw box plots and individual points
+        n_omitted_total = 0
+        for pos, vals, color, label in all_box_data:
+            vals = [v for v in vals if np.isfinite(v)]
+            if not vals:
+                # Annotate missing ASPA data so viewers know it's absent, not zero
+                if color == aspa_color:
+                    ax.text(pos, 0.5, 'No\nvideo', ha='center', va='bottom',
+                            fontsize=6.5, color='#999999', fontstyle='italic')
+                continue
+            bp = ax.boxplot([vals], positions=[pos], widths=box_width,
+                           patch_artist=True, manage_ticks=False,
+                           showfliers=False,  # We'll handle outliers manually
+                           medianprops=dict(color='black', linewidth=1.5),
+                           whiskerprops=dict(color='gray', linewidth=1),
+                           capprops=dict(color='gray', linewidth=1))
+            bp['boxes'][0].set_facecolor(color)
+            bp['boxes'][0].set_alpha(0.6)
+            bp['boxes'][0].set_edgecolor('black')
+            bp['boxes'][0].set_linewidth(0.5)
 
-            ax.set_xticks(x)
-            ax.set_xticklabels(window_labels, fontsize=9)
-            ax.set_ylabel(ylabel, fontsize=11)
-            ax.set_title(f'{scoring_label}: {metric_name}', fontsize=11, fontweight='bold')
-            ax.set_ylim(bottom=-5)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
+            # Overlay individual points (only those within visible range)
+            visible = [v for v in vals if v <= y_max]
+            omitted = len(vals) - len(visible)
+            n_omitted_total += omitted
+
+            if visible:
+                jitter = rng.uniform(-box_width/3, box_width/3, len(visible))
+                darker = '#1a3d5c' if color == manual_color else '#7a3d0e'
+                ax.scatter(np.full(len(visible), pos) + jitter, visible,
+                          color=darker, s=20, alpha=0.5, zorder=5, edgecolor='none')
+
+            # Show omitted count with upward arrow if any points exceed y_max
+            if omitted > 0:
+                ax.annotate(f'{omitted}', xy=(pos, y_max - 0.3),
+                           fontsize=7, ha='center', va='top', color='red', fontweight='bold')
+
+            # Add to legend
+            if label:
+                ax.bar(0, 0, color=color, alpha=0.6, edgecolor='black',
+                       linewidth=0.5, label=label)
+
+        # N labels below
+        for i, n in enumerate(all_ns):
+            ax.text(i, -0.8, f'N={n}', ha='center', fontsize=8, color='gray')
+
+        ax.set_xticks(range(len(window_keys)))
+        ax.set_xticklabels(window_labels, fontsize=9)
+        ax.set_ylabel(f'Pellets {metric_name} (out of 20)', fontsize=11)
+        ax.set_title(f'{metric_name}', fontsize=12, fontweight='bold')
+        ax.set_ylim(-1.2, y_max)
+        ax.set_xlim(-0.6, len(window_keys) - 0.4)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.legend(fontsize=10, loc='upper right')
+
+        # Note if any points were omitted for scaling
+        if n_omitted_total > 0:
+            ax.text(0.01, 0.99, f'{n_omitted_total} point(s) above y={y_max:.0f} omitted for scaling',
+                    transform=ax.transAxes, fontsize=7, va='top', ha='left',
+                    color='red', fontstyle='italic')
 
     plt.tight_layout()
     out = os.path.join(output_dir, f'behavior_{group}.png')
@@ -612,7 +678,7 @@ def plot_trajectory_waterfall(group, injury_display, window_data, scoring_label,
 
 
 def plot_scoring_comparison(daily, learners, output_dir):
-    """Head-to-head comparison of Manual vs Video (DLC) scoring methods.
+    """Head-to-head comparison of Manual vs Video (ASPA) scoring methods.
 
     Panel layout:
       Top-left: Scatter Manual vs Video contacted (per-session)
@@ -627,7 +693,7 @@ def plot_scoring_comparison(daily, learners, output_dir):
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 14))
     fig.suptitle(
-        'Scoring Method Comparison: Manual vs Algorithmic (DLC)\n'
+        'Scoring Method Comparison: Manual vs Algorithmic (ASPA)\n'
         f'Pillar Trays Only, Learners Only (N={sub["SubjectID"].nunique()} animals)',
         fontsize=14, fontweight='bold'
     )
@@ -643,7 +709,7 @@ def plot_scoring_comparison(daily, learners, output_dir):
     r = sub['manual_contacted_pct'].corr(sub['video_contacted_pct'])
     ax.plot([0, 100], [0, 100], 'k--', linewidth=1, alpha=0.5)
     ax.set_xlabel('Manual Contacted %', fontsize=11)
-    ax.set_ylabel('DLC Contacted %', fontsize=11)
+    ax.set_ylabel('ASPA Contacted %', fontsize=11)
     ax.set_title(f'Contacted: r={r:.3f}', fontsize=12, fontweight='bold')
     ax.legend(fontsize=7, loc='upper left')
     ax.set_xlim(-5, 105)
@@ -660,7 +726,7 @@ def plot_scoring_comparison(daily, learners, output_dir):
     r = sub['manual_retrieved_pct'].corr(sub['video_retrieved_pct'])
     ax.plot([0, 100], [0, 100], 'k--', linewidth=1, alpha=0.5)
     ax.set_xlabel('Manual Retrieved %', fontsize=11)
-    ax.set_ylabel('DLC Retrieved %', fontsize=11)
+    ax.set_ylabel('ASPA Retrieved %', fontsize=11)
     ax.set_title(f'Retrieved: r={r:.3f}', fontsize=12, fontweight='bold')
     ax.legend(fontsize=7, loc='upper left')
     ax.set_xlim(-5, 105)
@@ -685,8 +751,8 @@ def plot_scoring_comparison(daily, learners, output_dir):
     ax.axhline(md - 1.96*sd, color='red', linewidth=1, linestyle='--',
               label=f'-1.96 SD: {md-1.96*sd:+.1f}%')
     ax.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
-    ax.set_xlabel('Mean of Manual & DLC Contacted %', fontsize=11)
-    ax.set_ylabel('DLC - Manual (Contacted %)', fontsize=11)
+    ax.set_xlabel('Mean of Manual & ASPA Contacted %', fontsize=11)
+    ax.set_ylabel('ASPA - Manual (Contacted %)', fontsize=11)
     ax.set_title('Bland-Altman: Contacted', fontsize=12, fontweight='bold')
     ax.legend(fontsize=8, loc='upper right')
     ax.spines['top'].set_visible(False)
@@ -727,7 +793,7 @@ def plot_scoring_comparison(daily, learners, output_dir):
     ax.set_xticks(x_base)
     ax.set_xticklabels(window_labels, fontsize=9)
     ax.set_ylabel('Contacted %', fontsize=11)
-    ax.set_title('Group Means: Solid=Manual, Hatched=DLC', fontsize=12, fontweight='bold')
+    ax.set_title('Group Means: Solid=Manual, Hatched=ASPA', fontsize=12, fontweight='bold')
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
 
@@ -1010,7 +1076,7 @@ def plot_mega_cohort(all_group_data, scoring, scoring_label, output_dir):
 def main():
     print("=" * 100)
     print("UCSF COLLABORATION DATA ANALYSIS")
-    print("  Dual Scoring: Manual (operator) + Algorithmic (DLC)")
+    print("  Dual Scoring: Manual (operator) + Algorithmic (ASPA)")
     print(f"  Learner criterion: Final 3 avg manual retrieved > {LEARNER_THRESHOLD}%")
     print(f"  Data source: {DATA_PATH}")
     print("=" * 100)
@@ -1062,7 +1128,7 @@ def main():
 
         for scoring, wd, label, sfx in [
             ('manual', wd_manual, 'Manually Scored', '_manual'),
-            ('video', wd_video, 'Algorithmically Scored (DLC)', '_dlc'),
+            ('video', wd_video, 'Algorithmically Scored (ASPA)', '_dlc'),
         ]:
             plot_recovery(group, injury, wd, label, OUTPUT_DIR, suffix=sfx)
             plot_trajectory_waterfall(group, injury, wd, label, OUTPUT_DIR, suffix=sfx)
@@ -1079,7 +1145,7 @@ def main():
     plot_scoring_comparison(daily, learners, OUTPUT_DIR)
 
     # Mega-cohort for both scoring methods
-    for scoring, label in [('manual', 'Manually Scored'), ('video', 'Algorithmically Scored (DLC)')]:
+    for scoring, label in [('manual', 'Manually Scored'), ('video', 'Algorithmically Scored (ASPA)')]:
         print(f"\n--- Mega-Cohort: {label} ---")
         plot_mega_cohort(all_group_data, scoring, label, OUTPUT_DIR)
 
@@ -1101,7 +1167,8 @@ def main():
                     'Eaten_SEM': f"{w['eaten_sem']:.2f}" if w['eaten_sem'] is not None else '',
                     'Contacted_Mean': f"{w['contacted_mean']:.2f}" if w['contacted_mean'] is not None else '',
                     'Contacted_SEM': f"{w['contacted_sem']:.2f}" if w['contacted_sem'] is not None else '',
-                    'N': w['n'],
+                    'N_animals': w['n'],
+                    'N_trays': w['n_trays'],
                 })
 
     results_df = pd.DataFrame(results)
@@ -1111,27 +1178,44 @@ def main():
     print(f"  Saved: {csv_path}")
 
     # Print summary
-    print(f"\n{'='*100}")
-    print("SUMMARY: MANUAL SCORING")
-    print(f"{'Group':6s} {'Injury':15s} {'Window':16s} {'Eaten % (M+/-SEM)':22s} {'Contacted % (M+/-SEM)':26s} {'N':4s}")
-    print(f"{'-'*6} {'-'*15} {'-'*16} {'-'*22} {'-'*26} {'-'*4}")
-    for r in results:
-        if r['Scoring'] == 'manual' and r['Eaten_Mean']:
-            print(f"{r['Group']:6s} {r['Injury']:15s} {r['Window']:16s} "
-                  f"{float(r['Eaten_Mean']):5.1f} +/- {float(r['Eaten_SEM']):4.1f}      "
-                  f"{float(r['Contacted_Mean']):5.1f} +/- {float(r['Contacted_SEM']):4.1f}       "
-                  f"{r['N']:4d}")
+    for scoring_name, scoring_key in [('MANUAL', 'manual'), ('ASPA ALGORITHMIC', 'video')]:
+        print(f"\n{'='*110}")
+        print(f"SUMMARY: {scoring_name} SCORING (per-tray observations)")
+        print(f"{'Group':6s} {'Injury':15s} {'Window':16s} {'Eaten % (M+/-SEM)':22s} {'Contacted % (M+/-SEM)':26s} {'N_anim':7s} {'N_tray':7s}")
+        print(f"{'-'*6} {'-'*15} {'-'*16} {'-'*22} {'-'*26} {'-'*7} {'-'*7}")
+        for r in results:
+            if r['Scoring'] == scoring_key and r['Eaten_Mean']:
+                print(f"{r['Group']:6s} {r['Injury']:15s} {r['Window']:16s} "
+                      f"{float(r['Eaten_Mean']):5.1f} +/- {float(r['Eaten_SEM']):4.1f}      "
+                      f"{float(r['Contacted_Mean']):5.1f} +/- {float(r['Contacted_SEM']):4.1f}       "
+                      f"{r['N_animals']:4d}    {r['N_trays']:4d}")
 
-    print(f"\n{'='*100}")
-    print("SUMMARY: DLC ALGORITHMIC SCORING")
-    print(f"{'Group':6s} {'Injury':15s} {'Window':16s} {'Eaten % (M+/-SEM)':22s} {'Contacted % (M+/-SEM)':26s} {'N':4s}")
-    print(f"{'-'*6} {'-'*15} {'-'*16} {'-'*22} {'-'*26} {'-'*4}")
-    for r in results:
-        if r['Scoring'] == 'video' and r['Eaten_Mean']:
-            print(f"{r['Group']:6s} {r['Injury']:15s} {r['Window']:16s} "
-                  f"{float(r['Eaten_Mean']):5.1f} +/- {float(r['Eaten_SEM']):4.1f}      "
-                  f"{float(r['Contacted_Mean']):5.1f} +/- {float(r['Contacted_SEM']):4.1f}       "
-                  f"{r['N']:4d}")
+    # Effect size summary: Cohen's d for Pre-Injury vs Post-Rehab
+    print(f"\n{'='*110}")
+    print("EFFECT SIZES: Pre-Injury (Final 3) vs Post-Rehab (Last 2)")
+    print(f"{'Group':6s} {'Injury':15s} {'Scoring':8s} {'Metric':11s} {'d':>7s} {'Pre':>8s} {'Post':>8s} {'N':>4s}")
+    print(f"{'-'*6} {'-'*15} {'-'*8} {'-'*11} {'-'*7} {'-'*8} {'-'*8} {'-'*4}")
+    for group, gd in all_group_data.items():
+        for scoring_key, scoring_label in [('manual', 'Manual'), ('video', 'ASPA')]:
+            wd = gd[f'window_data_{scoring_key}']
+            f3 = wd['final_3']
+            l2 = wd['last_2']
+            if f3['n'] < 2 or l2['n'] < 2:
+                continue
+            # Match animals present in both windows
+            f3_idx = {a: i for i, a in enumerate(f3['animals'])}
+            l2_idx = {a: i for i, a in enumerate(l2['animals'])}
+            paired = sorted(set(f3['animals']) & set(l2['animals']))
+            if len(paired) < 2:
+                continue
+            for metric_key, metric_label in [('eaten', 'Retrieved'), ('contacted', 'Contacted')]:
+                pre_vals = np.array([f3[metric_key][f3_idx[a]] for a in paired])
+                post_vals = np.array([l2[metric_key][l2_idx[a]] for a in paired])
+                diff = post_vals - pre_vals
+                # Cohen's d for paired samples
+                d = np.mean(diff) / np.std(diff, ddof=1) if np.std(diff, ddof=1) > 0 else 0
+                print(f"{group:6s} {gd['injury_display']:15s} {scoring_label:8s} {metric_label:11s} "
+                      f"{d:+7.2f} {np.mean(pre_vals):7.1f}% {np.mean(post_vals):7.1f}% {len(paired):4d}")
 
     print(f"\nAll figures saved to: {OUTPUT_DIR}")
 

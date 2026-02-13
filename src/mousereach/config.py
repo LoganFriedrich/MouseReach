@@ -557,5 +557,74 @@ def print_config():
     print()
 
 
+# =============================================================================
+# WATCHER CONFIGURATION
+# =============================================================================
+
+class WatcherConfig:
+    """Configuration for the automated watcher pipeline.
+
+    Loaded from the 'watcher' section of ~/.mousereach/config.json.
+    All fields have sensible defaults — the watcher works out of the box
+    after running mousereach-setup with watcher configuration.
+    """
+
+    def __init__(self, config_dict: dict = None):
+        cfg = config_dict or {}
+        self.enabled: bool = cfg.get('enabled', False)
+        self.poll_interval_seconds: int = cfg.get('poll_interval_seconds', 30)
+        self.stability_wait_seconds: int = cfg.get('stability_wait_seconds', 60)
+        self.dlc_config_path: Optional[Path] = (
+            Path(cfg['dlc_config_path']) if cfg.get('dlc_config_path') else None
+        )
+        self.dlc_gpu_device: int = cfg.get('dlc_gpu_device', 0)
+        self.auto_archive_approved: bool = cfg.get('auto_archive_approved', False)
+        self.quarantine_dir: Optional[Path] = (
+            Path(cfg['quarantine_dir']) if cfg.get('quarantine_dir') else None
+        )
+        self.log_dir: Optional[Path] = (
+            Path(cfg['log_dir']) if cfg.get('log_dir') else None
+        )
+        self.max_retries: int = cfg.get('max_retries', 3)
+
+    @classmethod
+    def load(cls) -> 'WatcherConfig':
+        """Load watcher config from ~/.mousereach/config.json."""
+        config = _load_config()
+        return cls(config.get('watcher', {}))
+
+    def to_dict(self) -> dict:
+        """Serialize to dict for saving to config.json."""
+        d = {
+            'enabled': self.enabled,
+            'poll_interval_seconds': self.poll_interval_seconds,
+            'stability_wait_seconds': self.stability_wait_seconds,
+            'dlc_gpu_device': self.dlc_gpu_device,
+            'auto_archive_approved': self.auto_archive_approved,
+            'max_retries': self.max_retries,
+        }
+        if self.dlc_config_path:
+            d['dlc_config_path'] = str(self.dlc_config_path)
+        if self.quarantine_dir:
+            d['quarantine_dir'] = str(self.quarantine_dir)
+        if self.log_dir:
+            d['log_dir'] = str(self.log_dir)
+        return d
+
+    def get_quarantine_dir(self) -> Path:
+        """Get quarantine directory, defaulting to NAS_ROOT/Quarantine."""
+        if self.quarantine_dir:
+            return self.quarantine_dir
+        if Paths.NAS_ROOT:
+            return Paths.NAS_ROOT / "Quarantine"
+        return require_processing_root() / "Quarantine"
+
+    def get_log_dir(self) -> Path:
+        """Get log directory, defaulting to PROCESSING_ROOT/watcher_logs."""
+        if self.log_dir:
+            return self.log_dir
+        return require_processing_root() / "watcher_logs"
+
+
 if __name__ == "__main__":
     print_config()

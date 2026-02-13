@@ -97,9 +97,10 @@ from datetime import datetime
 
 from .geometry import compute_segment_geometry, get_boxr_reference, load_dlc, load_segments
 from .boundary_refiner import split_reach_boundaries
+from .boundary_polisher import BoundaryPolisher
 
 
-VERSION = "5.0.0"  # v5.0: Multi-signal splitter + retraction look-ahead confirmation
+VERSION = "5.3.0"  # v5.3: Retrained polisher (window=20, max_correction=30, 300 trees)
 
 
 @dataclass
@@ -188,6 +189,11 @@ class ReachDetector:
     HAND_LIKELIHOOD_THRESHOLD = 0.5  # Match display threshold in review widget
     CONFIDENT_START_THRESHOLD = 0.5  # Same as HAND_LIKELIHOOD_THRESHOLD
     NOSE_ENGAGEMENT_THRESHOLD = 25   # pixels from slit center
+    # v5.0: Require hand visible for START_CONFIRM consecutive frames before
+    # starting a reach. 83 of 179 early-start errors were single/few-frame
+    # noise where hand likelihood briefly crossed 0.5 then dropped. Genuine
+    # reach starts have the hand visible continuously.
+    START_CONFIRM = 2                # consecutive visible frames to confirm start
     MIN_REACH_DURATION = 4           # frames (increased from 2 based on GT analysis - 42% of FPs were ≤3 frames)
     LOOKAHEAD_FRAMES = 3             # frames to check for sustained hand disappearance
     DISAPPEAR_THRESHOLD = 3          # v4.0: consecutive invisible frames before ending reach (was 2)
@@ -225,11 +231,17 @@ class ReachDetector:
     # 10-25px position jumps). Fix: require retraction to be sustained over
     # RETRACTION_CONFIRM consecutive additional frames before ending the reach.
     RETRACTION_CONFIRM = 2           # frames of sustained retraction needed to confirm end
+    BP_SWITCH_GRACE = 3              # v5.1: skip retraction checks for N frames after BP switch
 
     RH_POINTS = ['RightHand', 'RHLeft', 'RHOut', 'RHRight']
 
-    def __init__(self):
+    def __init__(self, model_dir=None):
         self.global_reach_id = 0
+        # v5.2: Initialize ML boundary polisher (gracefully handles missing models)
+        try:
+            self._polisher = BoundaryPolisher(model_dir=model_dir)
+        except Exception:
+            self._polisher = None
 
     def _get_slit_center(self, df: pd.DataFrame, seg_start: int, seg_end: int) -> Tuple[float, float]:
         """Get stable slit center from segment median of BOXL and BOXR."""
@@ -296,6 +308,27 @@ class ReachDetector:
 
         return best_x, best_y, best_l > 0
 
+    def _get_mean_hand_x(self, row) -> Optional[float]:
+        """
+        v5.1: Get mean X position of ALL visible hand points.
+
+        Using the mean of all visible points (instead of only the best single
+        point) dampens position jumps from DLC bodypart switching. When one of
+        the 4 hand points suddenly becomes "best" and its X differs by 10-20px,
+        the mean of 2-3 visible points barely changes — preventing false
+        retraction triggers from the artifact persisting for several frames
+        after the decision tree caught the initial switch.
+        """
+        xs = []
+        for p in self.RH_POINTS:
+            if row.get(f'{p}_likelihood', 0) >= self.HAND_LIKELIHOOD_THRESHOLD:
+                x = row.get(f'{p}_x', np.nan)
+                if not np.isnan(x):
+                    xs.append(x)
+        if xs:
+            return np.mean(xs)
+        return None
+
     def _hand_will_disappear(self, df: pd.DataFrame, frame: int) -> bool:
         """
         Check if hand will disappear (sustained) in the next few frames.
@@ -350,10 +383,6 @@ class ReachDetector:
         # Current position relative to max
         retraction = reach_max_x - hand_x
 
-        # v4.1: Restored to 40%+5px. v4.0 lowered to 25%+3px but overcorrected:
-        # end offset went from +11 (late) to -6 (early). 78.8% of reaches ended
-        # too early. Retraction is a safety net for cases where hand remains visible
-        # but clearly returns - the tolerance-based disappearance handles most ends.
         # v5.0: Raised from 40% to 50% - combined with look-ahead confirmation,
         # the higher threshold prevents false retraction triggers from hand oscillation
         # during reaching (hand wobbles 40-50% during extension but isn't truly retracting).
@@ -361,26 +390,120 @@ class ReachDetector:
 
         return retraction > retraction_threshold and retraction > 5
 
-    def _confirm_retraction(
+    def _get_best_hand_bp(self, row) -> Optional[str]:
+        """Get the name of the most confident hand bodypart."""
+        best_bp = None
+        best_l = 0
+        for p in self.RH_POINTS:
+            l = row.get(f'{p}_likelihood', 0)
+            if l >= self.HAND_LIKELIHOOD_THRESHOLD and l > best_l:
+                best_l = l
+                best_bp = p
+        return best_bp
+
+    def _get_hand_x_spread(self, row) -> float:
+        """Get the X-position spread among visible hand points."""
+        xs = []
+        for p in self.RH_POINTS:
+            if row.get(f'{p}_likelihood', 0) >= self.HAND_LIKELIHOOD_THRESHOLD:
+                x = row.get(f'{p}_x', np.nan)
+                if not np.isnan(x):
+                    xs.append(x)
+        if len(xs) >= 2:
+            return max(xs) - min(xs)
+        return 0.0
+
+    def _check_multi_point_retraction(self, df: pd.DataFrame, frame: int) -> Tuple[int, bool]:
+        """
+        Check if ALL visible hand points agree on retraction direction.
+        Returns (n_visible, all_agree_retract).
+        """
+        if frame < 1 or frame >= len(df):
+            return 0, True
+
+        prev_row = df.iloc[frame - 1]
+        curr_row = df.iloc[frame]
+        n_visible = 0
+        all_retracted = True
+
+        for p in self.RH_POINTS:
+            prev_l = prev_row.get(f'{p}_likelihood', 0)
+            curr_l = curr_row.get(f'{p}_likelihood', 0)
+            if prev_l >= self.HAND_LIKELIHOOD_THRESHOLD and curr_l >= self.HAND_LIKELIHOOD_THRESHOLD:
+                n_visible += 1
+                prev_x = prev_row.get(f'{p}_x', np.nan)
+                curr_x = curr_row.get(f'{p}_x', np.nan)
+                if not np.isnan(prev_x) and not np.isnan(curr_x):
+                    if curr_x >= prev_x:  # This point didn't retract
+                        all_retracted = False
+
+        return n_visible, all_retracted
+
+    def _evaluate_end_candidate(
         self,
         df: pd.DataFrame,
         frame: int,
         reach_max_x: float,
         slit_x: float
-    ) -> bool:
+    ) -> Tuple[bool, bool]:
         """
-        v5.0: Look-ahead confirmation for retraction/return-to-start.
+        v5.0: Multi-signal decision tree for reach end candidates.
 
-        When retraction fires at frame X, check the next RETRACTION_CONFIRM frames.
-        Return True only if retraction or return-to-start is sustained across ALL
-        confirmation frames. This prevents false ends from single-frame DLC bodypart
-        switching (the 4 hand points swap which has highest confidence, causing
-        apparent 10-25px position jumps that look like retraction).
+        Called when retraction or return-to-start fires at frame X.
+        Evaluates three independent signals to distinguish real retraction
+        from DLC bodypart switching artifacts:
+
+        1. Bodypart identity switch: Did the "best" hand point change?
+           49% of early-end errors are caused by DLC switching which of the
+           4 hand points (RightHand, RHLeft, RHOut, RHRight) has highest
+           confidence. The position jumps 10-20px but the hand didn't move.
+
+        2. Multi-point disagreement: Do all visible points agree the hand
+           retracted? If some points moved left but others didn't, the
+           "retraction" is noise from a single point, not real movement.
+
+        3. Look-ahead confirmation: Does retraction sustain over the next
+           RETRACTION_CONFIRM frames? Transient artifacts resolve in 1-2
+           frames.
+
+        Returns (should_end, bp_switched):
+          - should_end: True to END the reach, False to CONTINUE
+          - bp_switched: True if a bodypart switch was detected at this frame
         """
+        prev_frame = frame - 1
+        bp_switched = False
+
+        # ─── Node 1: Bodypart identity switch ───
+        if 0 <= prev_frame < len(df):
+            prev_bp = self._get_best_hand_bp(df.iloc[prev_frame])
+            curr_bp = self._get_best_hand_bp(df.iloc[frame])
+
+            if (prev_bp is not None and curr_bp is not None
+                    and prev_bp != curr_bp):
+                bp_switched = True
+                # Best bodypart changed — check if this is a tracking artifact
+                x_spread = self._get_hand_x_spread(df.iloc[frame])
+                if x_spread > 10:
+                    # Large spread (>10px) + BP switch = artifact
+                    # The "retraction" is just a different point on the hand
+                    # becoming most confident, not the hand actually moving
+                    return False, bp_switched  # CONTINUE
+
+        # ─── Node 2: Multi-point disagreement ───
+        n_visible, all_retracted = self._check_multi_point_retraction(df, frame)
+        if n_visible >= 2 and not all_retracted:
+            # Multiple hand points visible, but NOT all moved leftward.
+            # If the hand truly retracted, all points would agree.
+            # Disagreement means a single point jumped (DLC noise).
+            return False, bp_switched  # CONTINUE
+
+        # ─── Node 3: Look-ahead confirmation ───
+        # If we reach here, the retraction looks real (same BP, or all points
+        # agree). Verify it's sustained over RETRACTION_CONFIRM frames.
         for offset in range(1, self.RETRACTION_CONFIRM + 1):
             future_frame = frame + offset
             if future_frame >= len(df):
-                return True  # End of data - confirm the end
+                return True, bp_switched  # End of data — confirm
 
             future_row = df.iloc[future_frame]
             if not self._any_hand_visible(future_row):
@@ -388,26 +511,22 @@ class ReachDetector:
 
             future_x, _, valid = self._get_best_hand_position(future_row)
             if not valid or future_x is None:
-                continue  # Can't check position
+                continue
 
-            # Check if hand has re-extended (retraction reversed)
             extension = reach_max_x - slit_x
             if extension < 5:
-                continue  # Not enough extension to judge
+                continue
 
             retraction = reach_max_x - future_x
             retraction_threshold = extension * 0.50
 
-            # Also check return-to-start
             hand_offset = future_x - slit_x
             returned = hand_offset < self.HAND_RETURN_THRESHOLD
 
-            # If hand is NEITHER retracted NOR returned at this future frame,
-            # the original trigger was a transient - cancel the end
             if not (retraction > retraction_threshold and retraction > 5) and not returned:
-                return False  # Hand re-extended - cancel the end
+                return False, bp_switched  # Hand re-extended — cancel
 
-        return True  # Retraction sustained through all confirmation frames
+        return True, bp_switched  # All checks passed — END the reach
 
     def _hand_returned_to_start(self, hand_x: float, slit_x: float, reach_max_x: float) -> bool:
         """
@@ -458,6 +577,9 @@ class ReachDetector:
         reach_data = []  # [(frame, x, y), ...]
         reach_max_x = 0  # Track max extension for return detection
         consecutive_invisible = 0  # v4.0: tolerance-based disappearance tracking
+        consecutive_start_visible = 0  # v5.0: consecutive visible frames for start confirmation
+        pending_start_frame = None     # v5.0: first frame of candidate start
+        bp_switch_grace = 0  # v5.1: remaining frames to skip retraction after BP switch
 
         reach_num = 0
 
@@ -469,13 +591,31 @@ class ReachDetector:
 
             if not in_reach:
                 # Not currently in a reach - check for reach start
+                # v5.0: Require START_CONFIRM consecutive frames with hand visible
+                # and nose engaged before committing to start. Filters single-frame
+                # DLC noise where likelihood briefly crosses 0.5.
                 if nose_engaged and hand_visible:
-                    # REACH START: hand appeared while nose engaged
-                    in_reach = True
-                    reach_start = frame
-                    reach_data = [(frame, hand_x, hand_y)]
-                    reach_max_x = hand_x if hand_x else 0
-                    consecutive_invisible = 0
+                    consecutive_start_visible += 1
+                    if pending_start_frame is None:
+                        pending_start_frame = frame
+                    if consecutive_start_visible >= self.START_CONFIRM:
+                        # REACH START confirmed: hand visible for enough frames
+                        in_reach = True
+                        reach_start = pending_start_frame  # Start at first visible frame
+                        # Build reach_data from the confirmation window
+                        reach_data = []
+                        reach_max_x = 0
+                        for f in range(pending_start_frame, frame + 1):
+                            hx, hy, _ = self._get_best_hand_position(df.iloc[f])
+                            reach_data.append((f, hx, hy))
+                            if hx and hx > reach_max_x:
+                                reach_max_x = hx
+                        consecutive_invisible = 0
+                        consecutive_start_visible = 0
+                        pending_start_frame = None
+                else:
+                    consecutive_start_visible = 0
+                    pending_start_frame = None
 
             else:
                 # Currently in a reach - check for reach end
@@ -504,23 +644,39 @@ class ReachDetector:
                     consecutive_invisible = 0
 
                     # Check end conditions (only when hand is visible)
+                    # v5.1: Decrement grace period counter
+                    if bp_switch_grace > 0:
+                        bp_switch_grace -= 1
 
                     # v4.0: Check for hand retraction
-                    # v5.0: Added look-ahead confirmation - require sustained retraction
-                    # over RETRACTION_CONFIRM additional frames before committing to end.
-                    # This prevents 683 early-end cases caused by single-frame DLC
-                    # bodypart switching between the 4 hand tracking points.
-                    if self._detect_hand_retraction(df, frame, reach_max_x, slit_x):
-                        if self._confirm_retraction(df, frame, reach_max_x, slit_x):
+                    # v5.0: Added look-ahead confirmation via decision tree
+                    # v5.1: Skip retraction/return checks during BP switch grace period
+                    if bp_switch_grace == 0 and self._detect_hand_retraction(df, frame, reach_max_x, slit_x):
+                        should_end, bp_switched = self._evaluate_end_candidate(df, frame, reach_max_x, slit_x)
+                        if should_end:
                             end_reach = True
                             end_frame = frame - 1  # End at last frame before retraction
+                        elif bp_switched:
+                            # v5.1: BP switch detected — enter grace period AND
+                            # correct reach_max_x. The grace period skips retraction
+                            # checks for BP_SWITCH_GRACE frames while DLC stabilizes.
+                            # The max correction prevents the inflated max from
+                            # causing false retraction triggers after the grace period.
+                            bp_switch_grace = self.BP_SWITCH_GRACE
+                            if hand_x is not None and hand_x < reach_max_x:
+                                reach_max_x = hand_x
 
                     # v4.0: Check if hand returned to starting position
-                    # v5.0: Also requires look-ahead confirmation
-                    elif self._hand_returned_to_start(hand_x, slit_x, reach_max_x):
-                        if self._confirm_retraction(df, frame, reach_max_x, slit_x):
+                    # v5.0: Also requires decision tree approval
+                    elif bp_switch_grace == 0 and self._hand_returned_to_start(hand_x, slit_x, reach_max_x):
+                        should_end, bp_switched = self._evaluate_end_candidate(df, frame, reach_max_x, slit_x)
+                        if should_end:
                             end_reach = True
                             end_frame = frame - 1
+                        elif bp_switched:
+                            bp_switch_grace = self.BP_SWITCH_GRACE
+                            if hand_x is not None and hand_x < reach_max_x:
+                                reach_max_x = hand_x
 
                     if not end_reach:
                         # Continue tracking reach
@@ -571,13 +727,22 @@ class ReachDetector:
                     reach_data = []
                     reach_max_x = 0
                     consecutive_invisible = 0
+                    consecutive_start_visible = 0
+                    pending_start_frame = None
+                    bp_switch_grace = 0
 
                     # Check if this frame starts a new reach (hand still visible)
+                    # v5.0: Still requires START_CONFIRM, so just seed the counter
                     if hand_visible and nose_engaged:
-                        in_reach = True
-                        reach_start = frame
-                        reach_data = [(frame, hand_x, hand_y)]
-                        reach_max_x = hand_x if hand_x else 0
+                        consecutive_start_visible = 1
+                        pending_start_frame = frame
+                        if self.START_CONFIRM <= 1:
+                            in_reach = True
+                            reach_start = frame
+                            reach_data = [(frame, hand_x, hand_y)]
+                            reach_max_x = hand_x if hand_x else 0
+                            consecutive_start_visible = 0
+                            pending_start_frame = None
 
         # Handle reach that extends to end of segment
         if in_reach and reach_data:
@@ -684,6 +849,12 @@ class ReachDetector:
                         start_confidence=conf['start_confidence'],
                         end_confidence=conf['end_confidence'],
                     ))
+
+        # v5.2: Apply ML boundary polishing
+        # Uses trained XGBoost models to correct boundary placement.
+        # Conservative: only corrects boundaries where classifier is confident.
+        if self._polisher is not None and self._polisher.loaded:
+            split_reaches = self._polisher.polish_reaches(split_reaches, df, slit_x)
 
         # Renumber reaches sequentially within segment
         for i, reach in enumerate(split_reaches):

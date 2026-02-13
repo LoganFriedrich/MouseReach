@@ -1,0 +1,752 @@
+================================================================================
+GROUP L (CONTUSION 50kD) DEEP DIVE ANALYSIS
+================================================================================
+
+Total Pillar trays in dataset: 3226
+Groups in dataset: ['D', 'G', 'H', 'K', 'L', 'M']
+
+Group L Pillar trays: 256
+
+================================================================================
+1. GROUP L OVERVIEW
+================================================================================
+
+Subjects in Group L: 8
+  L01: 32 trays
+  L02: 32 trays
+  L08: 32 trays
+  L09: 32 trays
+  L10: 32 trays
+  L11: 32 trays
+  L12: 32 trays
+  L13: 32 trays
+
+--------------------------------------------------------------------------------
+Test_Type distribution in Group L:
+Test_Type
+01 - Train 1                 32
+02 - Train 2                 32
+03 - Train 3                 32
+04 - Train 4                 16
+05 - Train 5                 16
+06 - Train 6                 16
+07 - Train 7                 16
+08 - Train 8                 16
+09 - 1 Week Post-Injury 1    16
+10 - 2 Week Post-Injury 1    16
+11 - 3 Week Post-Injury 1    16
+20 - Rehab 9                 16
+21 - Rehab 10                16
+Name: count, dtype: int64
+
+--------------------------------------------------------------------------------
+Test_Type_Grouped_1 distribution in Group L:
+Test_Type_Grouped_1
+1_Initial_Train_1      32
+1_Initial_Train_2      32
+1_Initial_Train_3      32
+1_Train_4              16
+1_Train_5              16
+2_Pre-injury_1         16
+2_Pre-injury_2         16
+2_Pre-injury_3         16
+3_1wk_Post-injury      16
+3_2wk_Post-injury      16
+3_3wk_Post-injury      16
+5_Post-rehab_Test_1    16
+5_Post-rehab_Test_2    16
+Name: count, dtype: int64
+
+================================================================================
+2. PER-ANIMAL DETAILED BREAKDOWN
+================================================================================
+
+================================================================================
+SUBJECT: L01
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=65, Retrieved=17, Displaced=48
+    Video:   Contacted=68, Retrieved=10, Displaced=58
+    Diff:    Contacted=+3, Retrieved=-7, Displaced=+10
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=66, Retrieved=22, Displaced=44
+    Video:   Contacted=65, Retrieved=22, Displaced=43
+    Diff:    Contacted=-1, Retrieved=+0, Displaced=-1
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=75, Retrieved=30, Displaced=45
+    Video:   Contacted=73, Retrieved=27, Displaced=46
+    Diff:    Contacted=-2, Retrieved=-3, Displaced=+1
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=39, Retrieved=11, Displaced=28
+    Video:   Contacted=39, Retrieved=11, Displaced=28
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=40, Retrieved=10, Displaced=30
+    Video:   Contacted=37, Retrieved=7, Displaced=30
+    Diff:    Contacted=-3, Retrieved=-3, Displaced=+0
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=32, Retrieved=6, Displaced=26
+    Video:   Contacted=32, Retrieved=6, Displaced=26
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=38, Retrieved=10, Displaced=28
+    Video:   Contacted=36, Retrieved=8, Displaced=28
+    Diff:    Contacted=-2, Retrieved=-2, Displaced=+0
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=39, Retrieved=6, Displaced=33
+    Video:   Contacted=40, Retrieved=6, Displaced=34
+    Diff:    Contacted=+1, Retrieved=+0, Displaced=+1
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L02
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=7, Retrieved=0, Displaced=7
+    Video:   Contacted=9, Retrieved=3, Displaced=6
+    Diff:    Contacted=+2, Retrieved=+3, Displaced=-1
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=42, Retrieved=16, Displaced=26
+    Video:   Contacted=38, Retrieved=32, Displaced=6
+    Diff:    Contacted=-4, Retrieved=+16, Displaced=-20
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=59, Retrieved=18, Displaced=41
+    Video:   Contacted=61, Retrieved=42, Displaced=19
+    Diff:    Contacted=+2, Retrieved=+24, Displaced=-22
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=38, Retrieved=17, Displaced=21
+    Video:   Contacted=21, Retrieved=17, Displaced=4
+    Diff:    Contacted=-17, Retrieved=+0, Displaced=-17
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=40, Retrieved=14, Displaced=26
+    Video:   Contacted=17, Retrieved=14, Displaced=3
+    Diff:    Contacted=-23, Retrieved=+0, Displaced=-23
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=40, Retrieved=13, Displaced=27
+    Video:   Contacted=37, Retrieved=24, Displaced=13
+    Diff:    Contacted=-3, Retrieved=+11, Displaced=-14
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=39, Retrieved=7, Displaced=32
+    Video:   Contacted=34, Retrieved=25, Displaced=9
+    Diff:    Contacted=-5, Retrieved=+18, Displaced=-23
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=40, Retrieved=14, Displaced=26
+    Video:   Contacted=33, Retrieved=24, Displaced=9
+    Diff:    Contacted=-7, Retrieved=+10, Displaced=-17
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=1, Retrieved=1, Displaced=0
+    Diff:    Contacted=+1, Retrieved=+1, Displaced=+0
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=3, Retrieved=2, Displaced=1
+    Diff:    Contacted=+3, Retrieved=+2, Displaced=+1
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L08
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=13, Retrieved=2, Displaced=11
+    Video:   Contacted=18, Retrieved=2, Displaced=16
+    Diff:    Contacted=+5, Retrieved=+0, Displaced=+5
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=62, Retrieved=22, Displaced=40
+    Video:   Contacted=68, Retrieved=24, Displaced=44
+    Diff:    Contacted=+6, Retrieved=+2, Displaced=+4
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=80, Retrieved=27, Displaced=53
+    Video:   Contacted=80, Retrieved=28, Displaced=52
+    Diff:    Contacted=+0, Retrieved=+1, Displaced=-1
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=40, Retrieved=11, Displaced=29
+    Video:   Contacted=40, Retrieved=10, Displaced=30
+    Diff:    Contacted=+0, Retrieved=-1, Displaced=+1
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=39, Retrieved=5, Displaced=34
+    Video:   Contacted=43, Retrieved=7, Displaced=36
+    Diff:    Contacted=+4, Retrieved=+2, Displaced=+2
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=40, Retrieved=8, Displaced=32
+    Video:   Contacted=39, Retrieved=7, Displaced=32
+    Diff:    Contacted=-1, Retrieved=-1, Displaced=+0
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=40, Retrieved=4, Displaced=36
+    Video:   Contacted=41, Retrieved=7, Displaced=34
+    Diff:    Contacted=+1, Retrieved=+3, Displaced=-2
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=40, Retrieved=10, Displaced=30
+    Video:   Contacted=39, Retrieved=11, Displaced=28
+    Diff:    Contacted=-1, Retrieved=+1, Displaced=-2
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=14, Retrieved=1, Displaced=13
+    Video:   Contacted=16, Retrieved=0, Displaced=16
+    Diff:    Contacted=+2, Retrieved=-1, Displaced=+3
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=4, Retrieved=0, Displaced=4
+    Video:   Contacted=4, Retrieved=1, Displaced=3
+    Diff:    Contacted=+0, Retrieved=+1, Displaced=-1
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=10, Retrieved=2, Displaced=8
+    Video:   Contacted=10, Retrieved=2, Displaced=8
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=20, Retrieved=3, Displaced=17
+    Video:   Contacted=19, Retrieved=3, Displaced=16
+    Diff:    Contacted=-1, Retrieved=+0, Displaced=-1
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=34, Retrieved=4, Displaced=30
+    Video:   Contacted=34, Retrieved=3, Displaced=31
+    Diff:    Contacted=+0, Retrieved=-1, Displaced=+1
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L09
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=23, Retrieved=5, Displaced=18
+    Video:   Contacted=24, Retrieved=5, Displaced=19
+    Diff:    Contacted=+1, Retrieved=+0, Displaced=+1
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=72, Retrieved=21, Displaced=51
+    Video:   Contacted=71, Retrieved=18, Displaced=53
+    Diff:    Contacted=-1, Retrieved=-3, Displaced=+2
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=65, Retrieved=9, Displaced=56
+    Video:   Contacted=62, Retrieved=8, Displaced=54
+    Diff:    Contacted=-3, Retrieved=-1, Displaced=-2
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=40, Retrieved=5, Displaced=35
+    Video:   Contacted=40, Retrieved=5, Displaced=35
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=31, Retrieved=6, Displaced=25
+    Video:   Contacted=30, Retrieved=6, Displaced=24
+    Diff:    Contacted=-1, Retrieved=+0, Displaced=-1
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=37, Retrieved=10, Displaced=27
+    Video:   Contacted=36, Retrieved=11, Displaced=25
+    Diff:    Contacted=-1, Retrieved=+1, Displaced=-2
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=40, Retrieved=13, Displaced=27
+    Video:   Contacted=39, Retrieved=7, Displaced=32
+    Diff:    Contacted=-1, Retrieved=-6, Displaced=+5
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=40, Retrieved=12, Displaced=28
+    Video:   Contacted=39, Retrieved=10, Displaced=29
+    Diff:    Contacted=-1, Retrieved=-2, Displaced=+1
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=35, Retrieved=16, Displaced=19
+    Video:   Contacted=37, Retrieved=14, Displaced=23
+    Diff:    Contacted=+2, Retrieved=-2, Displaced=+4
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=40, Retrieved=12, Displaced=28
+    Video:   Contacted=41, Retrieved=10, Displaced=31
+    Diff:    Contacted=+1, Retrieved=-2, Displaced=+3
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=33, Retrieved=4, Displaced=29
+    Video:   Contacted=32, Retrieved=4, Displaced=28
+    Diff:    Contacted=-1, Retrieved=+0, Displaced=-1
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=3, Retrieved=0, Displaced=3
+    Video:   Contacted=3, Retrieved=0, Displaced=3
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=2, Retrieved=0, Displaced=2
+    Video:   Contacted=3, Retrieved=0, Displaced=3
+    Diff:    Contacted=+1, Retrieved=+0, Displaced=+1
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L10
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:144: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  pre_manual = pre_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Manual_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:145: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  pre_video = pre_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Video_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:161: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  post_manual = post_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Manual_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:162: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  post_video = post_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Video_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:144: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  pre_manual = pre_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Manual_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:145: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  pre_video = pre_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Video_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:161: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  post_manual = post_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Manual_Retrieved'], errors='coerce').fillna(0).sum())
+Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py:162: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  post_video = post_data.groupby('Test_Type').apply(lambda x: pd.to_numeric(x['Video_Retrieved'], errors='coerce').fillna(0).sum())
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=11, Retrieved=3, Displaced=8
+    Video:   Contacted=14, Retrieved=7, Displaced=7
+    Diff:    Contacted=+3, Retrieved=+4, Displaced=-1
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=2, Retrieved=0, Displaced=2
+    Video:   Contacted=2, Retrieved=1, Displaced=1
+    Diff:    Contacted=+0, Retrieved=+1, Displaced=-1
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=14, Retrieved=3, Displaced=11
+    Video:   Contacted=14, Retrieved=6, Displaced=8
+    Diff:    Contacted=+0, Retrieved=+3, Displaced=-3
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=34, Retrieved=14, Displaced=20
+    Video:   Contacted=34, Retrieved=23, Displaced=11
+    Diff:    Contacted=+0, Retrieved=+9, Displaced=-9
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=38, Retrieved=14, Displaced=24
+    Video:   Contacted=35, Retrieved=23, Displaced=12
+    Diff:    Contacted=-3, Retrieved=+9, Displaced=-12
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=32, Retrieved=5, Displaced=27
+    Video:   Contacted=29, Retrieved=20, Displaced=9
+    Diff:    Contacted=-3, Retrieved=+15, Displaced=-18
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=36, Retrieved=8, Displaced=28
+    Video:   Contacted=38, Retrieved=26, Displaced=12
+    Diff:    Contacted=+2, Retrieved=+18, Displaced=-16
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=40, Retrieved=22, Displaced=18
+    Video:   Contacted=51, Retrieved=38, Displaced=13
+    Diff:    Contacted=+11, Retrieved=+16, Displaced=-5
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=36, Retrieved=2, Displaced=34
+    Video:   Contacted=36, Retrieved=15, Displaced=21
+    Diff:    Contacted=+0, Retrieved=+13, Displaced=-13
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=35, Retrieved=4, Displaced=31
+    Video:   Contacted=39, Retrieved=24, Displaced=15
+    Diff:    Contacted=+4, Retrieved=+20, Displaced=-16
+    *** LARGE DISCREPANCY detected!
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L11
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=2, Retrieved=0, Displaced=2
+    Video:   Contacted=2, Retrieved=0, Displaced=2
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=2, Retrieved=0, Displaced=2
+    Video:   Contacted=1, Retrieved=0, Displaced=1
+    Diff:    Contacted=-1, Retrieved=+0, Displaced=-1
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=8, Retrieved=3, Displaced=5
+    Video:   Contacted=10, Retrieved=3, Displaced=7
+    Diff:    Contacted=+2, Retrieved=+0, Displaced=+2
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=20, Retrieved=8, Displaced=12
+    Video:   Contacted=27, Retrieved=10, Displaced=17
+    Diff:    Contacted=+7, Retrieved=+2, Displaced=+5
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=29, Retrieved=5, Displaced=24
+    Video:   Contacted=29, Retrieved=5, Displaced=24
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=11, Retrieved=1, Displaced=10
+    Video:   Contacted=11, Retrieved=0, Displaced=11
+    Diff:    Contacted=+0, Retrieved=-1, Displaced=+1
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=0, Retrieved=0, Displaced=0
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L12
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=13, Retrieved=1, Displaced=12
+    Video:   Contacted=15, Retrieved=8, Displaced=7
+    Diff:    Contacted=+2, Retrieved=+7, Displaced=-5
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=67, Retrieved=24, Displaced=43
+    Video:   Contacted=60, Retrieved=33, Displaced=27
+    Diff:    Contacted=-7, Retrieved=+9, Displaced=-16
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=77, Retrieved=27, Displaced=50
+    Video:   Contacted=50, Retrieved=26, Displaced=24
+    Diff:    Contacted=-27, Retrieved=-1, Displaced=-26
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=40, Retrieved=13, Displaced=27
+    Video:   Contacted=24, Retrieved=13, Displaced=11
+    Diff:    Contacted=-16, Retrieved=+0, Displaced=-16
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=40, Retrieved=8, Displaced=32
+    Video:   Contacted=36, Retrieved=13, Displaced=23
+    Diff:    Contacted=-4, Retrieved=+5, Displaced=-9
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=36, Retrieved=12, Displaced=24
+    Video:   Contacted=20, Retrieved=6, Displaced=14
+    Diff:    Contacted=-16, Retrieved=-6, Displaced=-10
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=1, Retrieved=0, Displaced=1
+    Video:   Contacted=1, Retrieved=0, Displaced=1
+    Diff:    Contacted=+0, Retrieved=+0, Displaced=+0
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=40, Retrieved=16, Displaced=24
+    Video:   Contacted=39, Retrieved=17, Displaced=22
+    Diff:    Contacted=-1, Retrieved=+1, Displaced=-2
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=34, Retrieved=10, Displaced=24
+    Video:   Contacted=39, Retrieved=22, Displaced=17
+    Diff:    Contacted=+5, Retrieved=+12, Displaced=-7
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=32, Retrieved=7, Displaced=25
+    Video:   Contacted=33, Retrieved=11, Displaced=22
+    Diff:    Contacted=+1, Retrieved=+4, Displaced=-3
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=29, Retrieved=10, Displaced=19
+    Video:   Contacted=29, Retrieved=14, Displaced=15
+    Diff:    Contacted=+0, Retrieved=+4, Displaced=-4
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=40, Retrieved=7, Displaced=33
+    Video:   Contacted=42, Retrieved=12, Displaced=30
+    Diff:    Contacted=+2, Retrieved=+5, Displaced=-3
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=20, Retrieved=6, Displaced=14
+    Video:   Contacted=8, Retrieved=3, Displaced=5
+    Diff:    Contacted=-12, Retrieved=-3, Displaced=-9
+    *** LARGE DISCREPANCY detected!
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+SUBJECT: L13
+================================================================================
+Total trays: 32
+Test days present: ['01 - Train 1', '02 - Train 2', '03 - Train 3', '04 - Train 4', '05 - Train 5', '06 - Train 6', '07 - Train 7', '08 - Train 8', '09 - 1 Week Post-Injury 1', '10 - 2 Week Post-Injury 1', '11 - 3 Week Post-Injury 1', '20 - Rehab 9', '21 - Rehab 10']
+
+Per Test Day Scores:
+--------------------------------------------------------------------------------
+
+  Test Day: 01 - Train 1 (4 trays)
+    Manual:  Contacted=26, Retrieved=5, Displaced=21
+    Video:   Contacted=26, Retrieved=20, Displaced=6
+    Diff:    Contacted=+0, Retrieved=+15, Displaced=-15
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 02 - Train 2 (4 trays)
+    Manual:  Contacted=15, Retrieved=3, Displaced=12
+    Video:   Contacted=15, Retrieved=11, Displaced=4
+    Diff:    Contacted=+0, Retrieved=+8, Displaced=-8
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 03 - Train 3 (4 trays)
+    Manual:  Contacted=61, Retrieved=9, Displaced=52
+    Video:   Contacted=62, Retrieved=40, Displaced=22
+    Diff:    Contacted=+1, Retrieved=+31, Displaced=-30
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 04 - Train 4 (2 trays)
+    Manual:  Contacted=7, Retrieved=0, Displaced=7
+    Video:   Contacted=7, Retrieved=4, Displaced=3
+    Diff:    Contacted=+0, Retrieved=+4, Displaced=-4
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 05 - Train 5 (2 trays)
+    Manual:  Contacted=21, Retrieved=10, Displaced=11
+    Video:   Contacted=21, Retrieved=18, Displaced=3
+    Diff:    Contacted=+0, Retrieved=+8, Displaced=-8
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 06 - Train 6 (2 trays)
+    Manual:  Contacted=17, Retrieved=2, Displaced=15
+    Video:   Contacted=17, Retrieved=13, Displaced=4
+    Diff:    Contacted=+0, Retrieved=+11, Displaced=-11
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 07 - Train 7 (2 trays)
+    Manual:  Contacted=36, Retrieved=11, Displaced=25
+    Video:   Contacted=38, Retrieved=29, Displaced=9
+    Diff:    Contacted=+2, Retrieved=+18, Displaced=-16
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 08 - Train 8 (2 trays)
+    Manual:  Contacted=38, Retrieved=10, Displaced=28
+    Video:   Contacted=39, Retrieved=31, Displaced=8
+    Diff:    Contacted=+1, Retrieved=+21, Displaced=-20
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 09 - 1 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=24, Retrieved=0, Displaced=24
+    Video:   Contacted=27, Retrieved=11, Displaced=16
+    Diff:    Contacted=+3, Retrieved=+11, Displaced=-8
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 10 - 2 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=1, Retrieved=0, Displaced=1
+    Video:   Contacted=0, Retrieved=0, Displaced=0
+    Diff:    Contacted=-1, Retrieved=+0, Displaced=-1
+
+  Test Day: 11 - 3 Week Post-Injury 1 (2 trays)
+    Manual:  Contacted=3, Retrieved=0, Displaced=3
+    Video:   Contacted=3, Retrieved=3, Displaced=0
+    Diff:    Contacted=+0, Retrieved=+3, Displaced=-3
+
+  Test Day: 20 - Rehab 9 (2 trays)
+    Manual:  Contacted=40, Retrieved=9, Displaced=31
+    Video:   Contacted=39, Retrieved=31, Displaced=8
+    Diff:    Contacted=-1, Retrieved=+22, Displaced=-23
+    *** LARGE DISCREPANCY detected!
+
+  Test Day: 21 - Rehab 10 (2 trays)
+    Manual:  Contacted=32, Retrieved=7, Displaced=25
+    Video:   Contacted=33, Retrieved=26, Displaced=7
+    Diff:    Contacted=+1, Retrieved=+19, Displaced=-18
+    *** LARGE DISCREPANCY detected!
+
+  Within-Animal Variance:
+--------------------------------------------------------------------------------
+
+================================================================================
+3. GROUP L ANOMALY DETECTION
+================================================================================
+
+Checking for unusual patterns...
+
+L02:
+Traceback (most recent call last):
+  File "Y:\2_Connectome\Behavior\MouseReach\ucsf_collab_data\temp_group_L_analysis.py", line 203, in <module>
+    print(f"  \u26a0 {anom}")
+  File "Y:\2_Connectome\envs\mousereach\lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 2: character maps to <undefined>

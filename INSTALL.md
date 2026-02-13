@@ -350,55 +350,53 @@ napari  # Once Napari loads, click on plugins in toolbar. Should see: Plugins â†
 
 ## Part 6: Configure Pipeline Paths
 
-MouseReach now uses configurable paths via environment variables. On first use, run the setup wizard:
+### Step 1: Set Your Machine Role
+
+Each PC in the lab plays a specific role. Setting the role tells the setup
+wizard what defaults to use:
+
+```bash
+# See available roles
+mousereach-setup --list-roles
+
+# Set this PC's role (pick one)
+mousereach-setup --set-role "NAS / DLC PC"        # Direct-attached NAS + GPU
+mousereach-setup --set-role "GPU Filming PC"       # Filming/cropping workstation
+mousereach-setup --set-role "Processing Server"    # Reach detection + kinematics
+```
+
+This saves a small file (`~/.mousereach/machine_role.json`) that the wizard
+reads on this machine. If you skip this step, the wizard will try to auto-detect
+based on drive patterns, or prompt manually.
+
+### Step 2: Run the Setup Wizard
 
 ```bash
 mousereach-setup
 ```
 
-### Build Pipeline Index (Important for Fast Startup!)
+The wizard prompts for:
+1. **Data Repository** - Root of your long-term storage (NAS mount)
+2. **Processing Root** (REQUIRED) - Parent folder for DLC_Queue, Processing, Failed
+3. **Watcher** (optional) - Automated pipeline for the NAS/DLC PC
 
-After configuration, build the pipeline index to enable fast startup:
+If you set a machine role, defaults are pre-filled â€” just hit Enter through.
+
+Configuration is saved to `~/.mousereach/config.json`.
+
+### Step 3: Build Pipeline Index (Important for Fast Startup!)
 
 ```bash
 mousereach-index-rebuild
 ```
 
-This creates `pipeline_index.json` in your PROCESSING_ROOT folder. Without this index, the dashboard and batch widgets will scan folders on every startup (slow on network drives).
-
-This will prompt you for:
-1. **Pipeline Processing Root** (REQUIRED) - Location of working folders like DLC_Queue, Processing, etc.
-2. **NAS/Archive Drive** (optional) - Location of raw videos and final outputs
-
-Configuration is saved as environment variables that persist across sessions (Windows) or terminal sessions (Linux/Mac).
+This creates `pipeline_index.json` in your PROCESSING_ROOT folder. Without this
+index, the dashboard and batch widgets will scan folders on every startup (slow
+on network drives).
 
 ### Verify Configuration
 
 ```bash
-# Show current configuration
-mousereach-setup --show
-
-# Environment variables set:
-echo %MouseReach_NAS_DRIVE%          # Windows
-echo %MouseReach_PROCESSING_ROOT%    # Windows
-echo $MouseReach_NAS_DRIVE           # Linux/Mac
-echo $MouseReach_PROCESSING_ROOT     # Linux/Mac
-```
-
-### Using Custom Paths
-
-If you need to use different paths:
-
-```bash
-# Windows - set environment variables
-setx MouseReach_NAS_DRIVE "D:/MyNAS"
-setx MouseReach_PROCESSING_ROOT "E:/MyPipeline"
-
-# Linux/Mac - set and export
-export MouseReach_NAS_DRIVE="/mnt/nas"
-export MouseReach_PROCESSING_ROOT="/data/mousereach_pipeline"
-
-# Then run mousereach-setup to verify
 mousereach-setup --show
 ```
 

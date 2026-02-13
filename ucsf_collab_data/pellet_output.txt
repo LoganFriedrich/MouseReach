@@ -1,0 +1,5 @@
+Pellet Likelihood Ceiling Analysis
+================================================================================
+
+Processing Group K: 100 files (0 flagged)
+  Progress: 50/100 files...

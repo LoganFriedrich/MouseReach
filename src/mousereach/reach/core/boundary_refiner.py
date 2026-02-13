@@ -257,6 +257,112 @@ def _find_precise_boundary(
     return signals[center_idx].frame, signals[candidate.rise_idx].frame
 
 
+def _find_position_returns(
+    signals: List[FrameSignal],
+    slit_x: float,
+    min_extension: float = 10.0,
+    return_fraction: float = 0.50,
+    min_re_extend: float = 10.0,
+) -> List[SplitCandidate]:
+    """Find position return patterns (extend → retract → re-extend).
+
+    v5.1: Detects merged reaches that don't have confidence dips.
+    The hand stays visible but clearly returns toward the slit and then
+    extends again — indicating two separate reaches.
+
+    A position return is detected when:
+    1. Hand extends past slit by at least min_extension pixels
+    2. Hand retracts by at least return_fraction of the extension
+    3. Hand then re-extends by at least min_re_extend pixels
+
+    The split point is at the position minimum (hand closest to slit).
+    """
+    candidates = []
+
+    # Find running max hand_x (tracks peak extension)
+    running_max = slit_x
+    running_max_idx = 0
+
+    i = 0
+    while i < len(signals):
+        s = signals[i]
+        if s.hand_x is None:
+            i += 1
+            continue
+
+        # Update running max
+        if s.hand_x > running_max:
+            running_max = s.hand_x
+            running_max_idx = i
+
+        # Check if hand has retracted significantly from running max
+        extension = running_max - slit_x
+        if extension < min_extension:
+            i += 1
+            continue
+
+        retraction = running_max - s.hand_x
+        if retraction < extension * return_fraction:
+            i += 1
+            continue
+
+        # Hand has retracted — find the minimum position
+        min_x = s.hand_x
+        min_x_idx = i
+
+        j = i + 1
+        while j < len(signals):
+            sj = signals[j]
+            if sj.hand_x is None:
+                j += 1
+                continue
+            if sj.hand_x < min_x:
+                min_x = sj.hand_x
+                min_x_idx = j
+            elif sj.hand_x > min_x + min_re_extend:
+                # Hand re-extended — this is a valid position return
+                break
+            j += 1
+        else:
+            # Didn't re-extend sufficiently — not a valid split
+            i += 1
+            continue
+
+        # Valid position return found: peak at running_max_idx, trough at min_x_idx
+        # Check for velocity reversal in the region
+        has_vel_rev = False
+        saw_negative = False
+        for k in range(running_max_idx, min(j + 1, len(signals))):
+            v = signals[k].velocity_x
+            if v is not None:
+                if v < -0.5:
+                    saw_negative = True
+                elif v > 0.5 and saw_negative:
+                    has_vel_rev = True
+                    break
+
+        candidates.append(SplitCandidate(
+            drop_idx=running_max_idx,
+            rise_idx=j,
+            drop_frame=signals[running_max_idx].frame,
+            rise_frame=signals[j].frame,
+            min_conf=min(signals[k].likelihood for k in range(running_max_idx, min(j + 1, len(signals)))),
+            min_x_idx=min_x_idx,
+            min_x_frame=signals[min_x_idx].frame,
+            min_hand_x=min_x,
+            pre_max_x=running_max,
+            has_velocity_reversal=has_vel_rev,
+            score=0.0,
+        ))
+
+        # Reset: start tracking from the re-extension point
+        running_max = signals[j].hand_x if signals[j].hand_x else slit_x
+        running_max_idx = j
+        i = j + 1
+
+    return candidates
+
+
 def split_reach_boundaries(
     start: int,
     end: int,
@@ -299,19 +405,40 @@ def split_reach_boundaries(
     if len(signals) < 2:
         return [(start, end)]
 
-    # Step 2: Find candidate split regions from confidence dips
-    candidates = _find_confidence_dips(signals, conf_high, conf_low)
-    if not candidates:
-        return [(start, end)]
+    # Step 2: Find candidate split regions from BOTH confidence dips AND position returns
+    conf_candidates = _find_confidence_dips(signals, conf_high, conf_low)
+    pos_candidates = _find_position_returns(signals, slit_x)
 
-    # Step 3: Score each candidate
-    for c in candidates:
+    # Score confidence-dip candidates
+    for c in conf_candidates:
         c.score = _score_candidate(c, slit_x)
 
-    # Step 4: Filter to candidates that pass the threshold
-    good_candidates = [c for c in candidates if c.score >= min_split_score]
+    # Score position-return candidates (they already have strong position signal)
+    for c in pos_candidates:
+        c.score = _score_candidate(c, slit_x)
+
+    # Merge candidates, deduplicate overlapping regions
+    all_candidates = conf_candidates + pos_candidates
+    if not all_candidates:
+        return [(start, end)]
+
+    # Step 3: Filter to candidates that pass the threshold
+    good_candidates = [c for c in all_candidates if c.score >= min_split_score]
     if not good_candidates:
         return [(start, end)]
+
+    # Deduplicate: if two candidates overlap (split frames within 5 of each other),
+    # keep the one with the higher score
+    good_candidates.sort(key=lambda c: c.min_x_frame)
+    deduped = [good_candidates[0]]
+    for c in good_candidates[1:]:
+        if abs(c.min_x_frame - deduped[-1].min_x_frame) < 5:
+            # Overlap — keep higher score
+            if c.score > deduped[-1].score:
+                deduped[-1] = c
+        else:
+            deduped.append(c)
+    good_candidates = deduped
 
     # Sort by frame order
     good_candidates.sort(key=lambda c: c.drop_frame)

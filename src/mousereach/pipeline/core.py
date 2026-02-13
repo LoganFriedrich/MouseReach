@@ -388,17 +388,21 @@ class UnifiedPipelineProcessor:
         self,
         base_dir: Path,
         progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
-        specific_files: Optional[List[Path]] = None
+        specific_files: Optional[List[Path]] = None,
+        skip_outcomes: bool = False
     ):
         """
         Args:
             base_dir: Pipeline root (PROCESSING_ROOT)
             progress_callback: Called with (stage_name, current, total, message)
             specific_files: If provided, only process these files (for targeted reprocessing)
+            skip_outcomes: If True, skip pellet outcome detection (for E/F tray types
+                          where pellet/tray DLC points are unreliable)
         """
         self.base_dir = Path(base_dir)
         self.progress_callback = progress_callback or (lambda *args: None)
         self.specific_files = specific_files
+        self.skip_outcomes = skip_outcomes
 
         # Unified architecture: everything stays in Processing/
         # Status is tracked via validation_status field in JSON files, not folder location
@@ -555,25 +559,26 @@ class UnifiedPipelineProcessor:
                 results.outcome_failed += 1
                 return
 
-            # Run outcome detection
-            self.progress_callback('outcomes', 1, 2, f"Detecting outcomes for {video_id}...")
-            outcome_detector = PelletOutcomeDetector()
-            outcomes = outcome_detector.detect(dlc_path, seg_path)
-            outcome_path = source_dir / f"{video_id}_pellet_outcomes.json"
-            PelletOutcomeDetector.save_results(outcomes, outcome_path)
-            results.outcome_processed += 1
+            # Run outcome detection (skip for E/F trays where pellet/tray points are unreliable)
+            if not self.skip_outcomes:
+                self.progress_callback('outcomes', 1, 2, f"Detecting outcomes for {video_id}...")
+                outcome_detector = PelletOutcomeDetector()
+                outcomes = outcome_detector.detect(dlc_path, seg_path)
+                outcome_path = source_dir / f"{video_id}_pellet_outcomes.json"
+                PelletOutcomeDetector.save_results(outcomes, outcome_path)
+                results.outcome_processed += 1
 
-            # Count segments needing review (considering GT coverage)
-            # Raw algo output is preserved - GT checked separately
-            gt_outcome_path = source_dir / f"{video_id}_outcome_ground_truth.json"
-            gt_covered = count_gt_covered_outcome_segments(outcome_path, gt_outcome_path)
-            outcome_needs_review = self._count_unresolved_outcome_segments(
-                outcome_path, gt_outcome_path
-            )
-            if outcome_needs_review > 0:
-                results.outcome_needs_review += 1
-            else:
-                results.outcome_completed += 1
+                # Count segments needing review (considering GT coverage)
+                # Raw algo output is preserved - GT checked separately
+                gt_outcome_path = source_dir / f"{video_id}_outcome_ground_truth.json"
+                gt_covered = count_gt_covered_outcome_segments(outcome_path, gt_outcome_path)
+                outcome_needs_review = self._count_unresolved_outcome_segments(
+                    outcome_path, gt_outcome_path
+                )
+                if outcome_needs_review > 0:
+                    results.outcome_needs_review += 1
+                else:
+                    results.outcome_completed += 1
 
             # Run reach detection in same folder
             self.progress_callback('reaches', 2, 2, f"Detecting reaches for {video_id}...")

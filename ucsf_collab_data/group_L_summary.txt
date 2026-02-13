@@ -1,0 +1,118 @@
+================================================================================
+GROUP L (CONTUSION 50kD) DEEP DIVE SUMMARY - KEY FINDINGS
+================================================================================
+
+Based on analysis run on 2025-02-11
+
+MAJOR ISSUES DETECTED:
+
+1. MASSIVE MANUAL-VIDEO DISCREPANCIES IN GROUP L (52.4% overall difference)
+   - This is 2.5x worse than Group K (70kD): 20.5%
+   - This is 1.8x worse than Group M (60kD): 29.1%
+   - Group L has the WORST manual-video agreement of all contusion groups
+
+2. SPECIFIC ANIMALS WITH SEVERE SCORING PROBLEMS:
+
+   L13: +259.1% discrepancy (Video counts 3.6x MORE retrieved than manual!)
+      - Affected across ALL test days
+      - Manual: 56 total retrieved
+      - Video: 201 total retrieved (145 more!)
+
+   L10: +144.0% discrepancy (Video counts 2.4x MORE retrieved than manual!)
+      - Manual: 77 total retrieved
+      - Video: 188 total retrieved (111 more!)
+      - WEIRD: This animal shows HIGHER post-injury than pre-injury for both manual AND video
+      - Post-injury manual: 11.7, Pre-injury manual: 10.3
+      - Post-injury video: 28.0, Pre-injury video: 17.3
+      - This animal may have actually IMPROVED after injury (not expected for contusion)
+
+   L02: +85.9% discrepancy (Video counts 1.9x MORE retrieved than manual!)
+      - Manual: 81 total retrieved
+      - Video: 151 total retrieved (70 more!)
+
+   L12: +26.2% discrepancy
+      - Also shows video HIGHER post-injury than pre-injury
+      - Post-injury video: 15.7, Pre-injury video: 7.7
+
+3. PATTERN: Video OVER-COUNTING "Retrieved" vs Manual
+   - In problematic animals, Video consistently counts MORE retrieved pellets
+   - But Video counts FEWER displaced pellets
+   - This suggests DLC may be misclassifying "displaced" as "retrieved"
+   - The sum should be constant (every contacted should be either retrieved or displaced)
+   - But in these animals the pattern is: Video Retrieved goes UP, Video Displaced goes DOWN
+
+4. GROUP L SHOWS UNUSUAL "RECOVERY" PATTERN:
+   - Pre-injury Manual Retrieved: 70.33
+   - Post-injury Manual Retrieved: 32.67
+   - Recovery ratio: 46.4% (much HIGHER than expected!)
+
+   Compare to:
+   - Group K (70kD): 1.1% recovery (expected severe deficit)
+   - Group M (60kD): 18.4% recovery
+
+   This suggests:
+   a) Group L may have had a MUCH MILDER injury than expected for 50kD, OR
+   b) The pre-injury baseline is artificially LOW (training issues?), OR
+   c) Scoring errors are inflating post-injury scores
+
+5. GROUP L HAS LOWER PRE-INJURY BASELINE:
+   - Group K (70kD): 109.67 manual retrieved
+   - Group L (50kD): 70.33 manual retrieved
+   - Group M (60kD): 129.33 manual retrieved
+
+   Group L animals never learned the task as well as other groups.
+   This could explain the "better recovery" - they had less to lose.
+
+6. ANIMALS SHOWING ZERO PERFORMANCE POST-INJURY:
+   - L01: 0 retrieved all post-injury days (complete deficit as expected)
+   - L02: 0 retrieved post-injury (but video shows 1-2?)
+   - L11: 1 retrieved at 1wk, then 0 (severe deficit)
+
+================================================================================
+CONCLUSION: WHAT'S WEIRD ABOUT GROUP L?
+================================================================================
+
+1. WORST MANUAL-VIDEO AGREEMENT OF ALL GROUPS (52.4% difference)
+   - Suggests scoring quality issues specific to this group
+   - May be scorer-dependent or video quality issue
+
+2. FOUR ANIMALS (L02, L10, L12, L13) SHOW EXTREME VIDEO OVER-COUNTING
+   - These 4 animals account for most of the discrepancy
+   - Pattern is systematic: Video retrieves UP, Video displaced DOWN
+   - Suggests DLC is misclassifying displaced as retrieved in these animals
+
+3. GROUP L SHOWS "TOO GOOD" RECOVERY (46.4% vs expected ~0-20%)
+   - This could be real (milder injury) or artifact (scoring errors)
+   - Need to investigate: Was the injury actually delivered at 50kD?
+   - Or is DLC inflating post-injury scores?
+
+4. GROUP L HAD LOWER PRE-INJURY BASELINE (70 vs 109-129 in other groups)
+   - May reflect poor training, lower motivation, or different cohort
+   - Makes recovery calculations less meaningful
+
+================================================================================
+RECOMMENDATIONS:
+================================================================================
+
+1. REVIEW VIDEOS for L02, L10, L12, L13
+   - Focus on "Retrieved" vs "Displaced" calls
+   - Check if DLC is systematically misclassifying these animals
+   - May need to retrain DLC model or adjust thresholds
+
+2. VERIFY INJURY for Group L
+   - Check injury device calibration logs
+   - Confirm 50kD was actually delivered
+   - Group L recovery pattern suggests injury may have been milder than intended
+
+3. RE-SCORE manually (blind) for flagged animals
+   - Have second scorer review L02, L10, L12, L13
+   - Use as validation set for DLC corrections
+
+4. INVESTIGATE why Group L pre-injury baseline was low
+   - Were these animals less motivated?
+   - Training protocol differences?
+   - Cohort effect?
+
+5. CONSIDER EXCLUDING L02, L10, L12, L13 from final analysis
+   - Until scoring discrepancies are resolved
+   - Current data quality is too poor for reliable conclusions

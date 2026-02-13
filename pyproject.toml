@@ -157,6 +157,13 @@ mousereach-sync = "mousereach.sync.cli:main_sync"
 mousereach-sync-watch = "mousereach.sync.cli:main_watch"
 mousereach-sync-status = "mousereach.sync.cli:main_status"
 
+# Watcher - Automated pipeline orchestration
+mousereach-watch = "mousereach.watcher.cli:main_watch"
+mousereach-watch-status = "mousereach.watcher.cli:main_status"
+mousereach-watch-reprocess = "mousereach.watcher.cli:main_reprocess"
+mousereach-watch-quarantine = "mousereach.watcher.cli:main_quarantine"
+mousereach-watch-info = "mousereach.watcher.cli:main_info"
+
 [project.entry-points."napari.manifest"]
 mousereach = "mousereach:napari.yaml"
 
@@ -164,6 +171,7 @@ mousereach = "mousereach:napari.yaml"
 "Homepage" = "https://github.com/LoganFriedrich/MouseReach"
 "Repository" = "https://github.com/LoganFriedrich/MouseReach"
 "Bug Tracker" = "https://github.com/LoganFriedrich/MouseReach/issues"
+"DeepLabCut" = "https://github.com/DeepLabCut/DeepLabCut"
 
 [tool.setuptools.packages.find]
 where = ["src"]

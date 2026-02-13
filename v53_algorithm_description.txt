@@ -1,0 +1,545 @@
+================================================================================
+MOUSE REACH DETECTION ALGORITHM v5.3 — COMPLETE DESCRIPTION
+================================================================================
+
+Version:    5.3.0
+Date:       2026-02-11
+Pipeline:   MouseReach (mousereach.reach.core)
+
+This document describes the complete reach detection algorithm as implemented
+in v5.3, including all decision logic, thresholds, and their rationale.
+Suitable for methods section of publications.
+
+
+================================================================================
+1.  OVERVIEW
+================================================================================
+
+The algorithm detects individual reaching movements from DeepLabCut (DLC)
+pose estimation data. It operates in three sequential stages:
+
+    Input: DLC tracking (.h5) + segment boundaries (.json)
+                          |
+                  [ GEOMETRY CALIBRATION ]
+                          |
+             [ STAGE 1: STATE MACHINE DETECTION ]
+              Identifies candidate reach events using
+              hand visibility, nose engagement, and a
+              multi-signal retraction decision tree.
+                          |
+             [ STAGE 2: MULTI-SIGNAL SPLITTING ]
+              Splits long continuous detections that
+              contain multiple behavioral reaches, using
+              position returns, confidence dips, and
+              velocity reversals.
+                          |
+             [ STAGE 3: ML BOUNDARY POLISHING ]
+              Applies trained XGBoost classifiers to
+              correct boundary placement errors, using
+              a conservative two-stage approach that
+              preserves correct boundaries.
+                          |
+    Output: Reach events with start/apex/end frames, extent, confidence
+
+
+================================================================================
+2.  GEOMETRY CALIBRATION
+================================================================================
+
+Before reach detection, per-segment geometric calibration establishes:
+
+    2.1  Slit Center (slit_x, slit_y)
+         Median position of SABL and SABR bodyparts (slit apparatus corners)
+         over stable frames (middle 50% of segment, frames with likelihood > 0.9).
+         Used as the spatial reference for "hand near slit" and extent measurement.
+
+    2.2  Ruler Pixels
+         Distance between SABL and SABR in pixels. Physical ruler = 9.0 mm.
+         Converts pixel measurements to mm: mm_per_pixel = 9.0 / ruler_pixels.
+
+    2.3  BOXR Reference (boxr_x)
+         Median X position of the BOXR bodypart (slit boundary reference).
+         Used for extent calculation: extent = max_hand_x - boxr_x.
+
+
+================================================================================
+3.  STAGE 1: STATE MACHINE DETECTION
+================================================================================
+
+File: reach_detector.py, method detect_reaches_in_segment()
+
+The state machine processes frames sequentially within each pellet-presentation
+segment. It maintains three states:
+
+    IDLE ──────> ENGAGED ──────> REACHING ──────> IDLE
+      ^             |                |               |
+      |             |                |               |
+      +-- nose      +-- nose leaves  +-- hand ends   +-- reach saved
+          arrives       slit             (see 3.3)       if valid
+
+
+3.1  DLC Bodypoints Used
+     ─────────────────────
+     Hand:  RightHand, RHLeft, RHOut, RHRight (4 tracked points on paw)
+     Head:  Nose (for slit engagement)
+     Slit:  SABL, SABR (slit apparatus corners)
+     Box:   BOXR (box right edge, extent reference)
+
+     "Hand visible" = any hand point has DLC likelihood >= 0.5
+     "Best hand position" = position of highest-likelihood hand point >= 0.5
+
+
+3.2  State Transitions
+     ─────────────────
+
+     IDLE -> ENGAGED
+         Condition: Nose X within 25 pixels of slit center (NOSE_ENGAGEMENT_THRESHOLD)
+         Rationale: Derived from 12-video GT analysis. Mouse must be at slit to reach.
+
+     ENGAGED -> REACHING (START of reach)
+         Condition: Hand visible for >= 2 consecutive frames (START_CONFIRM)
+         Records: pending_start_frame = first frame hand became visible
+         Rationale: Single-frame DLC noise can briefly cross likelihood 0.5.
+                    Requiring 2 frames filters these artifacts.
+
+     REACHING -> IDLE (END of reach)
+         Three end conditions, any of which can trigger reach end:
+
+         (a) Hand Disappears: No hand point visible for >= 3 consecutive frames
+             (DISAPPEAR_THRESHOLD). Tolerates 1-2 frame DLC tracking dropouts.
+             End frame = last frame where hand was actually visible.
+
+         (b) Hand Retraction: Hand position has retracted from peak extension.
+             Gated by the multi-signal decision tree (see Section 3.3).
+             End frame = frame before retraction detected.
+
+         (c) Hand Return to Start: Hand position returned within 5 pixels of slit
+             (HAND_RETURN_THRESHOLD) after extending > 5 pixels past slit.
+             Also gated by the multi-signal decision tree (see Section 3.3).
+             End frame = frame before return detected.
+
+
+3.3  Retraction Decision Tree (_evaluate_end_candidate)
+     ──────────────────────────────────────────────────
+
+     When retraction (3.2b) or return-to-start (3.2c) triggers, the decision
+     tree evaluates whether this is a real behavioral end or a DLC artifact:
+
+                  Retraction or return-to-start triggered
+                                    |
+                  ┌─────────────────┴─────────────────┐
+                  |  NODE 1: Bodypart Identity Switch  |
+                  |  Did the highest-likelihood hand   |
+                  |  point change identity this frame? |
+                  └─────────────────┬─────────────────┘
+                           |                    |
+                      NO (same BP)         YES (different BP)
+                           |                    |
+                           |          ┌─────────┴──────────┐
+                           |          | Is hand X-spread    |
+                           |          | > 10 pixels?        |
+                           |          └─────────┬──────────┘
+                           |               |           |
+                           |            YES (>10px)  NO (<=10px)
+                           |               |           |
+                           |         CONTINUE        fall through
+                           |         (artifact)        |
+                           |                           |
+                  ┌────────┴───────────────────────────┘
+                  |                    |
+                  |  NODE 2: Multi-Point Agreement     |
+                  |  Are >= 2 hand points visible?     |
+                  |  If so, do ALL agree on retraction? |
+                  └─────────────────┬──────────────────┘
+                           |                    |
+                    All agree OR         >= 2 visible but
+                    < 2 visible          NOT all retracted
+                           |                    |
+                           |              CONTINUE
+                           |              (single-point noise)
+                           |
+                  ┌────────┴───────────────────────────┐
+                  |  NODE 3: Look-Ahead Confirmation    |
+                  |  For next RETRACTION_CONFIRM (2)    |
+                  |  frames: does hand stay retracted?  |
+                  |  Retracted = retraction > 50% of    |
+                  |  extension AND > 5 pixels, OR hand  |
+                  |  returned within 5px of slit.       |
+                  └─────────────────┬──────────────────┘
+                           |                    |
+                  Sustained retraction    Hand re-extended
+                           |                    |
+                     END REACH             CONTINUE
+                                      (transient artifact)
+
+
+     BP Switch Grace Period (v5.1):
+         When Node 1 detects a bodypart switch but does NOT cause CONTINUE
+         (spread <= 10px), a 3-frame grace period is entered. During this
+         period, retraction and return-to-start checks are skipped entirely.
+         Additionally, reach_max_x is reset to current hand_x to prevent the
+         inflated max from causing false retraction triggers after grace.
+
+         Rationale: 49% of early-end errors in v4.2 were caused by DLC bodypart
+         switching. The 3-frame grace lets DLC stabilize after the switch.
+
+
+3.4  Post-Processing Filters
+     ────────────────────────
+
+     After state machine produces raw reaches:
+
+     (a) Minimum Duration Filter: Reaches shorter than 4 frames removed
+         (MIN_REACH_DURATION). Filters single-frame tracking noise.
+
+     (b) Negative Extent Filter: Reaches with max_extent < -15 pixels removed
+         (MIN_EXTENT_THRESHOLD). Hand visible behind slit = grooming/positioning,
+         not reaching. 44% of FPs in calibration had extent below -10px.
+
+     (c) Gap Tolerance Merge: Currently disabled (GAP_TOLERANCE = 0).
+         When enabled, merges reaches separated by <= N frames.
+
+
+================================================================================
+4.  STAGE 2: MULTI-SIGNAL SPLITTING
+================================================================================
+
+File: boundary_refiner.py, function split_reach_boundaries()
+
+Long reaches (> 25 frames, the 95th percentile of GT reach duration) are
+analyzed for potential splitting. The old approach used only DLC confidence
+dips and placed boundaries ~5 frames early in 24.7% of cases. The multi-signal
+approach uses three independent signals.
+
+4.1  Per-Frame Signal Computation
+     ─────────────────────────────
+
+     For each frame in the reach window, compute:
+       - hand_x, hand_y:   Best hand position (highest likelihood >= 0.15)
+       - likelihood:       Best hand likelihood (any hand point)
+       - offset:           hand_x - slit_x (positive = past slit)
+       - velocity_x:       Frame-to-frame delta of hand_x
+
+     Note: Uses POSITION_TRUST_THRESHOLD = 0.15, lower than the visibility
+     threshold of 0.5, to obtain position estimates during confidence dips.
+
+
+4.2  Split Candidate Detection (Two Independent Detectors)
+     ──────────────────────────────────────────────────────
+
+     Detector A: Confidence Dips
+         Finds high -> low -> high transitions in DLC likelihood:
+           - Entry: likelihood drops from >= 0.5 to < 0.35
+           - Exit:  likelihood rises from < 0.35 to >= 0.5
+         For each dip, records: drop frame, rise frame, min confidence,
+         min hand_x position, pre-dip max hand_x, velocity reversal.
+
+     Detector B: Position Returns (v5.1)
+         Finds extend -> retract -> re-extend patterns WITHOUT confidence dips:
+           - Hand extends past slit by >= 10 pixels
+           - Hand retracts by >= 50% of extension distance
+           - Hand re-extends by >= 10 pixels from trough
+         These catch merged reaches where DLC tracked continuously (no
+         confidence dip) but the hand clearly returned toward the slit.
+
+
+4.3  Multi-Signal Scoring
+     ─────────────────────
+
+     Each candidate is scored on three weighted signals (0.0 to 1.0):
+
+         Signal 1: Confidence Dip Depth (weight 0.3)
+             score_conf = min((0.5 - min_confidence) / 0.3, 1.0) * 0.3
+             A confidence drop to 0.2 or below gets full weight.
+
+         Signal 2: Position Return (weight 0.4 — strongest signal)
+             extension = pre_max_x - slit_x
+             retraction = pre_max_x - min_hand_x
+             score_pos = min((retraction / extension) / 0.3, 1.0) * 0.4
+             Full weight when hand retracts >= 30% of its extension.
+
+         Signal 3: Velocity Reversal (weight 0.3)
+             Binary: 0.3 if velocity goes negative (< -0.5 px/frame) then
+             positive (> +0.5 px/frame) within the candidate region.
+
+         Total score = score_conf + score_pos + score_vel  (range 0.0 to 1.0)
+         Split threshold: score >= 0.5 (at least 2 signals must agree)
+
+
+4.4  Precise Boundary Placement
+     ──────────────────────────
+
+     For each accepted candidate, find the exact split frame:
+
+         Priority 1: Hand Position Minimum
+             Frame where hand_x is smallest (hand closest to slit) within the
+             candidate region. Must be >= 3 pixels closer than pre-dip max.
+             First reach ends at this frame; second reach starts at rise frame.
+
+         Priority 2: Last Positive Velocity
+             Last frame with velocity > 0.5 px/frame before the reversal.
+
+         Priority 3: Confidence Dip Center (fallback)
+             Midpoint of the confidence dip region.
+
+
+4.5  Deduplication
+     ──────────────
+
+     If two candidates have split frames within 5 frames of each other,
+     the higher-scoring one is kept.
+
+
+================================================================================
+5.  STAGE 3: ML BOUNDARY POLISHING
+================================================================================
+
+File: boundary_polisher.py, class BoundaryPolisher
+
+After splitting, each reach boundary is evaluated by trained XGBoost models
+that predict whether the boundary needs correction and by how many frames.
+
+5.1  Feature Extraction (537 features per boundary)
+     ─────────────────────────────────────────────────
+
+     A window of 41 frames (20 before + boundary frame + 20 after) is extracted.
+     For each frame in the window, 13 features are computed:
+
+         Features 0-3:   Hand point X positions relative to slit (4 points)
+         Features 4-7:   Hand point DLC likelihoods (4 points)
+         Feature 8:      Nose X position relative to slit
+         Feature 9:      Nose DLC likelihood
+         Feature 10:     Mean visible hand X position (relative to slit)
+         Feature 11:     Count of visible hand points (0-4)
+         Feature 12:     Velocity (frame-to-frame delta of best hand X)
+
+         = 13 features x 41 frames = 533 temporal features
+
+     Plus 4 context features:
+         Feature 533:    Reach duration (frames)
+         Feature 534:    Max extent (pixels)
+         Feature 535:    Boundary confidence score (0-1)
+         Feature 536:    Boundary type (0 = start, 1 = end)
+
+         = 537 total features per boundary
+
+
+5.2  Two-Stage Conservative Correction
+     ───────────────────────────────────
+
+     For each boundary (start and end independently):
+
+         ┌────────────────────────────────────────────┐
+         |  STAGE 1: CLASSIFIER                       |
+         |  XGBoost binary classifier                 |
+         |  Predicts: P(this boundary needs           |
+         |            correction)                     |
+         |  Input: 537 features                       |
+         └──────────────────┬─────────────────────────┘
+                   |                        |
+           P >= 0.8 (threshold)      P < 0.8
+                   |                        |
+            Proceed to Stage 2        NO CORRECTION
+                   |                  (boundary preserved)
+                   |
+         ┌────────┴───────────────────────────────────┐
+         |  STAGE 2: REGRESSOR                        |
+         |  XGBoost regressor                         |
+         |  Predicts: offset in frames                |
+         |  (positive = shift later,                  |
+         |   negative = shift earlier)                |
+         └──────────────────┬─────────────────────────┘
+                   |                        |
+           |offset| >= 0.5           |offset| < 0.5
+           (reg_threshold)           (negligible correction)
+                   |                        |
+         Apply correction:           NO CORRECTION
+         new_boundary = old + round(offset)
+         Clipped to [-30, +30] frames (max_correction)
+
+     Same logic applied independently to start and end boundaries.
+     Thresholds (from cross-validated optimization):
+         Start: cls_threshold = 0.8, reg_threshold = 0.5
+         End:   cls_threshold = 0.8, reg_threshold = 0.5
+
+     Sanity checks after correction:
+         - new_start >= 0
+         - new_end < total frames
+         - new_end > new_start (no zero/negative duration)
+
+     Design principle: ~80% of boundaries from Stages 1-2 are already correct.
+     The classifier gate ensures those boundaries are not corrupted by
+     unnecessary regression predictions.
+
+
+5.3  Training Details
+     ─────────────────
+
+     Training data: 2,492 matched reaches from 23 ground-truth-annotated videos
+     Validation: 5-fold GroupKFold cross-validation (grouped by video)
+     Models: XGBoost with 300 trees, max_depth=6, learning_rate=0.06
+     Target: frame offset = GT_boundary - algo_boundary (clamped to [-30, +30])
+     Classifier target: |offset| > 0 (binary: does this boundary need correction?)
+
+     Cross-validated performance (honest generalization estimate):
+         Combined both-within-2: 84.6% (up from 79.1% baseline)
+
+     Note: Deployed performance on the same 23 training videos is 98.8%, which
+     is higher than the CV estimate because the final models are trained on ALL
+     data then applied to the same videos. The 84.6% CV number is the honest
+     estimate of performance on new, unseen videos.
+
+
+================================================================================
+6.  CONFIDENCE SCORING
+================================================================================
+
+Each reach is assigned a boundary confidence score (0.0 to 1.0):
+
+    start_confidence = min(1.0, max(0.0, (L_at_start - L_before_start) + 0.5))
+    end_confidence   = min(1.0, max(0.0, (L_at_end - L_after_end) + 0.5))
+    confidence       = min(start_confidence, end_confidence)
+
+    Where L = best hand point likelihood at that frame.
+
+    A large likelihood jump at start (hand suddenly appears) and drop at end
+    (hand suddenly disappears) produces high confidence. Gradual transitions
+    produce lower confidence, indicating the boundary is less certain.
+
+
+================================================================================
+7.  THRESHOLD SUMMARY TABLE
+================================================================================
+
+    Parameter                    Value    Source / Rationale
+    ─────────────────────────────────────────────────────────────────────
+    HAND_LIKELIHOOD_THRESHOLD    0.5      DLC display convention
+    NOSE_ENGAGEMENT_THRESHOLD    25 px    12-video GT analysis
+    START_CONFIRM                2 fr     Filter single-frame DLC noise
+    MIN_REACH_DURATION           4 fr     Noise filter (increased from 2)
+    DISAPPEAR_THRESHOLD          3 fr     Tolerance for DLC dropouts
+    MIN_EXTENT_THRESHOLD         -15 px   44% of FPs below -10px
+    HAND_RETURN_THRESHOLD        5 px     Return-to-start sensitivity
+    RETRACTION_CONFIRM           2 fr     Look-ahead for sustained retract
+    BP_SWITCH_GRACE              3 fr     DLC stabilization after BP switch
+    RETRACTION_FRACTION          50%      Of extension (v5.0: raised from 40%)
+    SPLIT_THRESHOLD_FRAMES       25 fr    95th percentile GT duration
+    CONFIDENCE_HIGH              0.5      Split candidate detection
+    CONFIDENCE_LOW               0.35     Split candidate detection
+    POSITION_TRUST_THRESHOLD     0.15     Lower threshold for position data
+    MIN_SPLIT_SCORE              0.5      At least 2 signals must agree
+    ML_WINDOW                    20 fr    Feature extraction radius
+    ML_MAX_CORRECTION            30 fr    Maximum boundary shift allowed
+    ML_CLS_THRESHOLD             0.8      Classifier confidence gate
+    ML_REG_THRESHOLD             0.5 fr   Minimum correction magnitude
+
+
+================================================================================
+8.  ALGORITHM EVOLUTION
+================================================================================
+
+    Version  Change                              Impact on both-within-2
+    ─────────────────────────────────────────────────────────────────────
+    v3.5     Baseline state machine               57.2% (17 common videos)
+    v4.2     Decision tree, retraction,            64.2%
+             BP switch detection
+    v5.0     Multi-signal splitter,                77.8%
+             start confirmation,
+             retraction confirmation
+    v5.1     Position return detector,             79.0%
+             combined splitting rules
+    v5.2     ML boundary polisher                  93.3%
+             (WINDOW=15, MAX_CORRECTION=15)
+    v5.3     Retrained polisher                    99.3%
+             (WINDOW=20, MAX_CORRECTION=30,
+              300 trees, depth 6)
+
+
+================================================================================
+9.  REMAINING ERROR BUDGET (v5.3)
+================================================================================
+
+    Of 2608 GT reaches across 23 annotated videos:
+
+    Category                Count   % of GT    Rate
+    ───────────────────────────────────────────────────
+    Correct (both +/-2 fr)  2465    94.5%      --
+    Boundary error only     30      1.2%       1.2%
+      - Start error         8       0.3%
+      - End error           25      1.0%
+      - (3 have both)
+    Missed reaches          113     4.3%       4.3%
+    False positives         494     --         19.8% FP rate
+
+    Total contamination risk: 5.5% of GT reaches have incorrect
+    boundaries or are missing entirely. 494 false positive reaches
+    would inject non-reach frames into kinematic analysis if not
+    manually reviewed.
+
+    15 of 23 videos achieve 100% boundary accuracy on matched reaches.
+    Remaining errors concentrate in 6 videos, particularly CNT0210_P2
+    (13 end errors, 20 missed, 126 FPs) and CNT0311_P2 (4 start errors).
+
+
+================================================================================
+10.  DATA FLOW SUMMARY
+================================================================================
+
+    DLC .h5 file              segments.json
+         |                         |
+         v                         v
+    ┌─────────────────────────────────────────┐
+    |          GEOMETRY CALIBRATION           |
+    |  slit_x, slit_y, ruler_pixels, boxr_x  |
+    └────────────────┬────────────────────────┘
+                     |
+    For each segment:
+                     |
+    ┌────────────────┴────────────────────────┐
+    |      STAGE 1: STATE MACHINE             |
+    |  Frame-by-frame: IDLE/ENGAGED/REACHING  |
+    |  End triggers: disappear, retract,      |
+    |                return-to-start          |
+    |  Decision tree gates retraction/return  |
+    |  Output: raw reaches                    |
+    └────────────────┬────────────────────────┘
+                     |
+    ┌────────────────┴────────────────────────┐
+    |      POST-PROCESSING FILTERS            |
+    |  - Duration < 4 frames: removed         |
+    |  - Extent < -15 pixels: removed         |
+    └────────────────┬────────────────────────┘
+                     |
+    ┌────────────────┴────────────────────────┐
+    |      STAGE 2: MULTI-SIGNAL SPLITTER     |
+    |  For reaches > 25 frames:               |
+    |  - Detect confidence dips               |
+    |  - Detect position returns              |
+    |  - Score candidates (3 signals)         |
+    |  - Place boundary at hand position min  |
+    |  Output: split reaches                  |
+    └────────────────┬────────────────────────┘
+                     |
+    ┌────────────────┴────────────────────────┐
+    |      STAGE 3: ML BOUNDARY POLISHING     |
+    |  For each reach boundary:               |
+    |  - Extract 537 features (41-frame win)  |
+    |  - Classifier: P(needs correction)?     |
+    |  - If P >= 0.8: regressor predicts      |
+    |    offset, apply if |offset| >= 0.5     |
+    |  Output: polished reaches               |
+    └────────────────┬────────────────────────┘
+                     |
+    ┌────────────────┴────────────────────────┐
+    |      OUTPUT                              |
+    |  JSON with per-reach:                   |
+    |    start_frame, apex_frame, end_frame   |
+    |    duration, extent (px + ruler units)  |
+    |    confidence (start, end, combined)    |
+    |    source ("algorithm" / "human_added") |
+    └─────────────────────────────────────────┘
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
