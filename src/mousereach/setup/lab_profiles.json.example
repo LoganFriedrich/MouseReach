@@ -1,0 +1,68 @@
+{
+  "_comment": [
+    "Lab-specific machine profiles for mousereach-setup.",
+    "",
+    "To use: copy this file to lab_profiles.json and edit for your lab:",
+    "  cp lab_profiles.json.example lab_profiles.json",
+    "",
+    "Detection priority:",
+    "  1. Local identity file (~/.mousereach/machine_role.json)",
+    "  2. lab_profiles.json drive-pattern auto-detection",
+    "  3. Fully manual - user enters paths interactively",
+    "",
+    "Set a machine's role with:",
+    "  mousereach-setup --set-role \"Watcher PC\"",
+    "",
+    "Match rules:",
+    "  drives_present:  drive letters that must exist",
+    "  drives_local:    drives that must be local/direct-attached (not network)",
+    "  drives_absent:   drives that must NOT exist on this machine"
+  ],
+
+  "profiles": [
+    {
+      "name": "Watcher PC",
+      "description": "PC with direct-attached storage and GPU for DLC inference. Runs the watcher.",
+      "match": {
+        "drives_present": ["D", "A"],
+        "drives_local": ["D"]
+      },
+      "defaults": {
+        "nas_drive": "D:\\",
+        "processing_root": "D:\\! DLC Output",
+        "watcher": {
+          "enabled": true,
+          "dlc_config_path": "CHANGE_ME: path to your DLC config.yaml",
+          "dlc_gpu_device": 0,
+          "poll_interval_seconds": 30,
+          "stability_wait_seconds": 60,
+          "max_retries": 3
+        }
+      }
+    },
+    {
+      "name": "GPU Workstation",
+      "description": "Workstation with GPU, network access to storage",
+      "match": {
+        "drives_present": ["X", "A"],
+        "drives_absent": ["D"]
+      },
+      "defaults": {
+        "nas_drive": "X:\\",
+        "processing_root": "X:\\! DLC Output"
+      }
+    },
+    {
+      "name": "Processing Server",
+      "description": "Server for post-DLC analysis, network access to storage",
+      "match": {
+        "drives_present": ["Y", "X"],
+        "drives_local": ["Y"]
+      },
+      "defaults": {
+        "nas_drive": "X:\\",
+        "processing_root": "X:\\! DLC Output"
+      }
+    }
+  ]
+}
