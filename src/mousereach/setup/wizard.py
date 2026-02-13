@@ -33,8 +33,9 @@ CONFIG_DIR = Path.home() / ".mousereach"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 MACHINE_ROLE_FILE = CONFIG_DIR / "machine_role.json"
 
-# Lab profiles file (ships with the package, editable per-lab)
+# Lab profiles file (lab-specific, gitignored) with shipped template fallback
 LAB_PROFILES_FILE = Path(__file__).parent / "lab_profiles.json"
+LAB_PROFILES_EXAMPLE = Path(__file__).parent / "lab_profiles.json.example"
 
 
 # =============================================================================
@@ -79,11 +80,14 @@ def list_available_roles() -> list:
 # =============================================================================
 
 def _load_lab_profiles() -> list:
-    """Load lab profiles from lab_profiles.json if it exists."""
-    if not LAB_PROFILES_FILE.exists():
+    """Load lab profiles from lab_profiles.json, falling back to .example template."""
+    profiles_path = LAB_PROFILES_FILE
+    if not profiles_path.exists():
+        profiles_path = LAB_PROFILES_EXAMPLE
+    if not profiles_path.exists():
         return []
     try:
-        with open(LAB_PROFILES_FILE, "r") as f:
+        with open(profiles_path, "r") as f:
             data = json.load(f)
         return data.get("profiles", [])
     except Exception:

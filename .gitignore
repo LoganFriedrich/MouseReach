@@ -69,6 +69,7 @@ util_Tools/
 
 # Local data/output files
 *.json
+*.npz
 *.zip
 *.csv
 *.xlsx
