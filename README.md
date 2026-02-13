@@ -96,6 +96,9 @@ Launch with `mousereach` command. Available tabs:
 | Command | Description |
 |---------|-------------|
 | `mousereach-setup` | Interactive setup wizard for paths |
+| `mousereach-setup --set-role NAME` | Declare this PC's role |
+| `mousereach-setup --list-roles` | Show available machine roles |
+| `mousereach-setup --show` | Show current configuration |
 | `mousereach-fix-powershell` | Fix PowerShell execution policy |
 
 ### Pipeline Index (Fast Startup)
@@ -231,6 +234,24 @@ mousereach-summary -i Processing/
 
 ---
 
+## Automated Watcher
+
+The watcher monitors the data repository for new collage videos and runs the
+full pipeline automatically (crop, DLC, segment, reaches, outcomes, archive).
+
+| Command | Description |
+|---------|-------------|
+| `mousereach-watch` | Start the watcher daemon |
+| `mousereach-watch --once` | Process all pending work, then exit |
+| `mousereach-watch --dry-run` | Show what would be processed |
+| `mousereach-watch --status` | Show pipeline status |
+| `mousereach-watch-info` | Diagnose drives and path accessibility |
+
+The watcher runs on the NAS / DLC PC (the machine with direct NAS access and GPU).
+Set up with `mousereach-setup --set-role "NAS / DLC PC"` then `mousereach-setup`.
+
+---
+
 ## Archive
 
 | Command | Description |
@@ -304,12 +325,46 @@ Each processed video produces these files in Processing/:
 
 ## Configuration
 
-MouseReach requires configuration before first use. Run `mousereach-setup` to set:
+MouseReach requires configuration before first use:
 
-| Variable | Purpose | Required? |
-|----------|---------|-----------|
-| `MouseReach_PROCESSING_ROOT` | Pipeline working folders | **Yes** |
-| `MouseReach_NAS_DRIVE` | Archive/NAS location | Optional |
+```bash
+# 1. Declare this PC's role (pre-fills defaults for your lab's setup)
+mousereach-setup --set-role "NAS / DLC PC"
+
+# 2. Run the setup wizard (paths pre-filled, just hit Enter)
+mousereach-setup
+```
+
+### Machine Roles
+
+Each PC in the lab serves a specific role. Setting the role tells the wizard
+what defaults to use for this machine:
+
+| Role | Description | Runs Watcher? |
+|------|-------------|---------------|
+| **NAS / DLC PC** | Direct-attached NAS, GPU, DLC model | Yes |
+| **GPU Filming PC** | Filming/cropping workstation with GPU | No |
+| **Processing Server** | Reach detection + kinematics | No |
+
+```bash
+mousereach-setup --list-roles      # See available roles
+mousereach-setup --set-role NAME   # Set this PC's role
+mousereach-setup --show            # Show current configuration
+```
+
+The role is saved to `~/.mousereach/machine_role.json`. If no role is set,
+the wizard auto-detects based on drive patterns, or prompts manually.
+
+Other labs can edit `lab_profiles.json` (ships with the package) to define
+their own machine roles and defaults.
+
+### Configuration File
+
+| Setting | Purpose | Required? |
+|---------|---------|-----------|
+| `processing_root` | Pipeline working folders (DLC_Queue, Processing, Failed) | **Yes** |
+| `nas_drive` | Data repository / archive location | Optional |
+| `watcher.*` | Automated pipeline settings (DLC config, GPU, polling) | For watcher PC |
 
 Configuration is saved to `~/.mousereach/config.json` and persists across sessions.
 
@@ -353,8 +408,9 @@ mousereach-export --help
 
 ## Acknowledgments
 
-- **[DeepLabCut](https://github.com/DeepLabCut/DeepLabCut)** - Pose estimation (Mathis Lab)
-- **[napari](https://napari.org/)** - Image viewer for review tools
+- **[DeepLabCut](https://github.com/DeepLabCut/DeepLabCut)** - Markerless pose estimation ([Mathis Lab](http://www.mackenziemathislab.org/))
+  > Mathis, A., Mamidanna, P., et al. (2018). DeepLabCut: markerless pose estimation of user-defined body parts with deep learning. *Nature Neuroscience*, 21, 1281-1289.
+- **[napari](https://napari.org/)** - Multi-dimensional image viewer
 - **[Claude](https://anthropic.com/)** - AI-assisted development (Anthropic)
 
 ---
