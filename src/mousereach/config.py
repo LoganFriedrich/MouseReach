@@ -589,6 +589,8 @@ class WatcherConfig:
             Path(cfg['log_dir']) if cfg.get('log_dir') else None
         )
         self.max_retries: int = cfg.get('max_retries', 3)
+        self.mode: str = cfg.get('mode', 'dlc_pc')  # 'dlc_pc' or 'processing_server'
+        self.max_local_pending: int = cfg.get('max_local_pending', 200)
 
     @classmethod
     def load(cls) -> 'WatcherConfig':
@@ -605,6 +607,8 @@ class WatcherConfig:
             'dlc_gpu_device': self.dlc_gpu_device,
             'auto_archive_approved': self.auto_archive_approved,
             'max_retries': self.max_retries,
+            'mode': self.mode,
+            'max_local_pending': self.max_local_pending,
         }
         if self.dlc_config_path:
             d['dlc_config_path'] = str(self.dlc_config_path)

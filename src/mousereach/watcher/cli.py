@@ -106,17 +106,29 @@ def main_watch():
         sys.exit(1)
 
     # Print startup banner
+    # Determine mode label
+    if config.mode == 'processing_server':
+        mode_label = "Processing Server"
+    else:
+        mode_label = "DLC PC"
+
     print("=" * 70)
-    print("MouseReach Watcher - Automated Video Pipeline")
+    print(f"MouseReach Watcher - {mode_label} Mode")
     print("=" * 70)
     print()
     print("Configuration:")
+    print(f"  Mode:            {mode_label}")
     print(f"  Processing Root: {Paths.PROCESSING_ROOT}")
     print(f"  NAS Drive:       {Paths.NAS_DRIVE or '(not configured)'}")
     print(f"  Poll Interval:   {config.poll_interval_seconds}s")
     print(f"  Stability Wait:  {config.stability_wait_seconds}s")
-    print(f"  DLC Config:      {config.dlc_config_path or '(not configured)'}")
-    print(f"  DLC GPU:         {config.dlc_gpu_device}")
+    if config.mode == 'processing_server':
+        print(f"  DLC Staging:     {Paths.DLC_STAGING or '(not configured)'}")
+        print(f"  Processing Dir:  {Paths.PROCESSING or '(not configured)'}")
+        print(f"  Max Local Pending: {config.max_local_pending}")
+    else:
+        print(f"  DLC Config:      {config.dlc_config_path or '(not configured)'}")
+        print(f"  DLC GPU:         {config.dlc_gpu_device}")
     print(f"  Auto Archive:    {'Yes' if config.auto_archive_approved else 'No'}")
     print(f"  Quarantine:      {config.get_quarantine_dir()}")
     print(f"  Logs:            {log_dir}")
@@ -142,17 +154,11 @@ def main_watch():
         print("ONCE MODE - Will process pending items then exit")
         print()
 
-    # Validate prerequisites
+    # Validate prerequisites (mode-aware)
     logger.info("Validating prerequisites...")
     problems = []
 
-    # Check NAS is configured
-    if not Paths.NAS_DRIVE:
-        problems.append("NAS drive not configured")
-    elif not Paths.NAS_DRIVE.exists():
-        problems.append(f"NAS drive does not exist: {Paths.NAS_DRIVE}")
-
-    # Check processing root exists
+    # Check processing root exists (both modes need this)
     try:
         root = require_processing_root()
         if not root.exists():
@@ -160,15 +166,33 @@ def main_watch():
     except Exception as e:
         problems.append(str(e))
 
-    # Check DLC config if configured
-    if config.dlc_config_path and not config.dlc_config_path.exists():
-        problems.append(f"DLC config not found: {config.dlc_config_path}")
+    if config.mode == 'processing_server':
+        # Processing server needs: DLC_STAGING accessible, Processing/ writable
+        if not Paths.DLC_STAGING:
+            problems.append("DLC_STAGING not configured (check NAS drive)")
+        elif not Paths.DLC_STAGING.exists():
+            # Try to create it
+            try:
+                Paths.DLC_STAGING.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                problems.append(f"DLC_STAGING not accessible: {Paths.DLC_STAGING}")
 
-    # Check ffmpeg is on PATH
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        problems.append("ffmpeg not found on PATH")
+        if not Paths.PROCESSING:
+            problems.append("PROCESSING path not configured")
+    else:
+        # DLC PC needs: NAS drive, DLC config, ffmpeg
+        if not Paths.NAS_DRIVE:
+            problems.append("NAS drive not configured")
+        elif not Paths.NAS_DRIVE.exists():
+            problems.append(f"NAS drive does not exist: {Paths.NAS_DRIVE}")
+
+        if config.dlc_config_path and not config.dlc_config_path.exists():
+            problems.append(f"DLC config not found: {config.dlc_config_path}")
+
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            problems.append("ffmpeg not found on PATH")
 
     if problems:
         logger.error("Prerequisite validation failed:")
@@ -188,18 +212,20 @@ def main_watch():
         logger.error(f"Failed to initialize database: {e}")
         sys.exit(1)
 
-    # Import orchestrator (imported here to avoid circular imports)
+    # Import and create mode-aware orchestrator
     try:
-        from mousereach.watcher.orchestrator import WatcherOrchestrator
+        from mousereach.watcher.orchestrator import DLCOrchestrator, ProcessingOrchestrator
     except ImportError as e:
         logger.error(f"Failed to import orchestrator: {e}")
-        logger.error("The watcher orchestrator module is not yet implemented.")
         sys.exit(1)
 
-    # Create orchestrator
     try:
-        orchestrator = WatcherOrchestrator(config, db)
-        logger.info("Orchestrator initialized")
+        if config.mode == 'processing_server':
+            orchestrator = ProcessingOrchestrator(config, db)
+            logger.info("ProcessingOrchestrator initialized")
+        else:
+            orchestrator = DLCOrchestrator(config, db)
+            logger.info("DLCOrchestrator initialized")
     except Exception as e:
         logger.error(f"Failed to initialize orchestrator: {e}")
         sys.exit(1)
