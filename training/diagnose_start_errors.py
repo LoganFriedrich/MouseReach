@@ -271,7 +271,7 @@ def print_example_cases(error_cases: List[Dict], category: str, max_examples: in
 
         # Frame-by-frame for late cases
         if case['offset'] > START_ERROR_THRESHOLD and 'frame_analysis' in case:
-            print(f"  Frame-by-frame (GT start → Algo start):")
+            print(f"  Frame-by-frame (GT start -> Algo start):")
             for frame_info in case['frame_analysis']:
                 print(f"    Frame {frame_info['frame']}: Hand={'Y' if frame_info['hand_visible'] else 'N'}({frame_info['hand_likelihood']:.2f}), "
                       f"Nose={'Y' if frame_info['nose_engaged'] else 'N'}({frame_info['nose_distance']:.1f}px)")
@@ -558,15 +558,15 @@ def main():
         if category == 'NOSE_NOT_ENGAGED' and nose_cases:
             distances = [c['details']['nose_distance_at_gt'] for c in nose_cases]
             threshold_99 = np.percentile(distances, 99)
-            print(f"    → Increase nose threshold from {NOSE_THRESHOLD}px to {threshold_99:.1f}px")
+            print(f"    -> Increase nose threshold from {NOSE_THRESHOLD}px to {threshold_99:.1f}px")
 
         elif category in ['HAND_NOT_VISIBLE', 'HAND_LOW_CONFIDENCE'] and hand_cases:
             likelihoods = [c['details']['hand_likelihood_at_gt'] for c in hand_cases]
             threshold_99 = np.percentile(likelihoods, 1)
-            print(f"    → Lower hand threshold from {HAND_THRESHOLD} to {threshold_99:.3f}")
+            print(f"    -> Lower hand threshold from {HAND_THRESHOLD} to {threshold_99:.3f}")
 
         elif category == 'MERGE_ARTIFACT':
-            print(f"    → Improve retraction confirmation to end reaches earlier")
+            print(f"    -> Improve retraction confirmation to end reaches earlier")
 
     print("\n" + "="*80)
     print("DIAGNOSTIC COMPLETE")

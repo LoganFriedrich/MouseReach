@@ -87,7 +87,7 @@ def main():
                         exact = sum(1 for e in boundary_errors if e == 0)
                         within_1 = sum(1 for e in boundary_errors if abs(e) <= 1)
                         within_2 = sum(1 for e in boundary_errors if abs(e) <= 2)
-                        print(f"  Timing: {exact}/{len(boundary_errors)} exact, {within_1} ±1fr, {within_2} ±2fr")
+                        print(f"  Timing: {exact}/{len(boundary_errors)} exact, {within_1} +/-1fr, {within_2} +/-2fr")
                         avg_err = sum(boundary_errors) / len(boundary_errors)
                         print(f"  Average error: {avg_err:+.1f} frames")
             else:
@@ -250,9 +250,9 @@ def main():
 
                 print(f"    Start frame accuracy:")
                 print(f"      Exact:    {exact_start}/{len(start_errors)} ({exact_start/len(start_errors)*100:.1f}%)")
-                print(f"      ±1 frame: {within_1_start}/{len(start_errors)} ({within_1_start/len(start_errors)*100:.1f}%)")
-                print(f"      ±2 frame: {within_2_start}/{len(start_errors)} ({within_2_start/len(start_errors)*100:.1f}%)")
-                print(f"      ±5 frame: {within_5_start}/{len(start_errors)} ({within_5_start/len(start_errors)*100:.1f}%)")
+                print(f"      +/-1 frame: {within_1_start}/{len(start_errors)} ({within_1_start/len(start_errors)*100:.1f}%)")
+                print(f"      +/-2 frame: {within_2_start}/{len(start_errors)} ({within_2_start/len(start_errors)*100:.1f}%)")
+                print(f"      +/-5 frame: {within_5_start}/{len(start_errors)} ({within_5_start/len(start_errors)*100:.1f}%)")
 
                 # End timing
                 exact_end = sum(1 for e in end_errors if e == 0)
@@ -262,9 +262,9 @@ def main():
 
                 print(f"    End frame accuracy:")
                 print(f"      Exact:    {exact_end}/{len(end_errors)} ({exact_end/len(end_errors)*100:.1f}%)")
-                print(f"      ±1 frame: {within_1_end}/{len(end_errors)} ({within_1_end/len(end_errors)*100:.1f}%)")
-                print(f"      ±2 frame: {within_2_end}/{len(end_errors)} ({within_2_end/len(end_errors)*100:.1f}%)")
-                print(f"      ±5 frame: {within_5_end}/{len(end_errors)} ({within_5_end/len(end_errors)*100:.1f}%)")
+                print(f"      +/-1 frame: {within_1_end}/{len(end_errors)} ({within_1_end/len(end_errors)*100:.1f}%)")
+                print(f"      +/-2 frame: {within_2_end}/{len(end_errors)} ({within_2_end/len(end_errors)*100:.1f}%)")
+                print(f"      +/-5 frame: {within_5_end}/{len(end_errors)} ({within_5_end/len(end_errors)*100:.1f}%)")
 
                 # Average errors
                 avg_start_err = sum(start_errors) / len(start_errors)

@@ -173,15 +173,15 @@ def run_dlc_batch(
                 'video': str(video_path),
                 'status': 'success'
             })
-            print(f"  ✓ Complete")
-            
+            print(f"  [OK] Complete")
+
         except Exception as e:
             results.append({
                 'video': str(video_path),
                 'status': 'failed',
                 'error': str(e)
             })
-            print(f"  ✗ Failed: {e}")
+            print(f"  [FAIL] Failed: {e}")
     
     return results
 

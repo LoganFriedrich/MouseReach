@@ -247,9 +247,9 @@ def print_population_stats(pop: dict):
     print(f"  Failed: {profile.get('n_fail', 0):,}")
 
     print(f"\nKinematics:")
-    print(f"  Extent: {profile.get('extent_mean', 0):.2f} ± {profile.get('extent_std', 0):.2f} mm")
-    print(f"  Duration: {profile.get('duration_mean', 0):.3f} ± {profile.get('duration_std', 0):.3f} sec")
-    print(f"  Velocity: {profile.get('velocity_mean', 0):.2f} ± {profile.get('velocity_std', 0):.2f} px/frame")
+    print(f"  Extent: {profile.get('extent_mean', 0):.2f} +/- {profile.get('extent_std', 0):.2f} mm")
+    print(f"  Duration: {profile.get('duration_mean', 0):.3f} +/- {profile.get('duration_std', 0):.3f} sec")
+    print(f"  Velocity: {profile.get('velocity_mean', 0):.2f} +/- {profile.get('velocity_std', 0):.2f} px/frame")
 
     if comparisons:
         print(f"\nSuccess vs Fail Comparisons:")
@@ -280,12 +280,12 @@ def print_mouse_profile(profile: dict):
     fail = profile.get('fail_profile', {})
 
     print(f"\nSUCCESS PROFILE (n={success.get('n', 0)}):")
-    print(f"  Extent: {success.get('extent_mean', 0):.2f} ± {success.get('extent_std', 0):.2f} mm")
+    print(f"  Extent: {success.get('extent_mean', 0):.2f} +/- {success.get('extent_std', 0):.2f} mm")
     print(f"  Duration: {success.get('duration_mean', 0):.3f} sec")
     print(f"  Velocity: {success.get('velocity_mean', 0):.2f} px/frame")
 
     print(f"\nFAIL PROFILE (n={fail.get('n', 0)}):")
-    print(f"  Extent: {fail.get('extent_mean', 0):.2f} ± {fail.get('extent_std', 0):.2f} mm")
+    print(f"  Extent: {fail.get('extent_mean', 0):.2f} +/- {fail.get('extent_std', 0):.2f} mm")
     print(f"  Duration: {fail.get('duration_mean', 0):.3f} sec")
     print(f"  Velocity: {fail.get('velocity_mean', 0):.2f} px/frame")
 

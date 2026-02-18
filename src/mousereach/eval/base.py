@@ -258,7 +258,7 @@ class BaseEvaluator(ABC):
         if recommendations:
             lines.append("RECOMMENDATIONS:")
             for rec in recommendations:
-                lines.append(f"  • {rec}")
+                lines.append(f"  - {rec}")
             lines.append("")
 
         return "\n".join(lines)

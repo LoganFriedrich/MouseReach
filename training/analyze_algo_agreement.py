@@ -544,7 +544,7 @@ def analyze_outcome_agreement():
         print(f"\nDisagreement patterns (human -> algo):")
         patterns = Counter((d['gt_outcome'], d['algo_outcome']) for d in disagreements)
         for (gt, algo), count in patterns.most_common():
-            print(f"  Human says '{gt}' → Algo says '{algo}': {count} times")
+            print(f"  Human says '{gt}' -> Algo says '{algo}': {count} times")
 
     return agreements, disagreements
 

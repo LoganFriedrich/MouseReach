@@ -174,8 +174,8 @@ def main():
         print(f"\n## FRAME ACCURACY (for {len(matched)} matched reaches)")
         print(f"   Start frame error: mean {np.mean(start_diffs):+.1f}, median {np.median(start_diffs):+.0f}")
         print(f"   End frame error:   mean {np.mean(end_diffs):+.1f}, median {np.median(end_diffs):+.0f}")
-        print(f"   Start within ±2 frames: {sum(1 for d in start_diffs if abs(d) <= 2)}/{len(matched)} ({100*sum(1 for d in start_diffs if abs(d) <= 2)/len(matched):.0f}%)")
-        print(f"   End within ±2 frames:   {sum(1 for d in end_diffs if abs(d) <= 2)}/{len(matched)} ({100*sum(1 for d in end_diffs if abs(d) <= 2)/len(matched):.0f}%)")
+        print(f"   Start within +/-2 frames: {sum(1 for d in start_diffs if abs(d) <= 2)}/{len(matched)} ({100*sum(1 for d in start_diffs if abs(d) <= 2)/len(matched):.0f}%)")
+        print(f"   End within +/-2 frames:   {sum(1 for d in end_diffs if abs(d) <= 2)}/{len(matched)} ({100*sum(1 for d in end_diffs if abs(d) <= 2)/len(matched):.0f}%)")
 
     # Duration stats
     print(f"\n## DURATION STATS")

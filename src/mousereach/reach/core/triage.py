@@ -213,7 +213,7 @@ def triage_results(
 
         counts[category] += 1
         if verbose:
-            print(f"  {video_name} → {category} ({reason})")
+            print(f"  {video_name} -> {category} ({reason})")
     
     if verbose:
         print("-" * 70)

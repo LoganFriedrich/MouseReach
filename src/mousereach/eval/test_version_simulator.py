@@ -177,25 +177,25 @@ if __name__ == "__main__":
     print("="*60)
 
     test_version_filters_defined()
-    print("✓ All version filters defined")
+    print("[OK] All version filters defined")
 
     test_v1_filter()
-    print("✓ v1.0.0 filter works")
+    print("[OK] v1.0.0 filter works")
 
     test_v2_filter()
-    print("✓ v2.0.0 filter works")
+    print("[OK] v2.0.0 filter works")
 
     test_v3_0_filter()
-    print("✓ v3.0.0 filter works")
+    print("[OK] v3.0.0 filter works")
 
     test_v3_3_filter_bug()
-    print("✓ v3.3.0 filter (bug) works as expected")
+    print("[OK] v3.3.0 filter (bug) works as expected")
 
     test_v3_4_filter()
-    print("✓ v3.4.0 filter (current) works")
+    print("[OK] v3.4.0 filter (current) works")
 
     test_bug_impact()
-    print("✓ Bug impact analysis complete")
+    print("[OK] Bug impact analysis complete")
 
     test_extent_distribution()
-    print("\n✓ All tests passed!")
+    print("\n[OK] All tests passed!")

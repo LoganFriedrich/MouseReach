@@ -49,9 +49,9 @@ def main():
         print(f"  Retrieved: {profile['n_success']:,}")
         print(f"  Failed: {profile['n_fail']:,}")
         print(f"\nKinematics:")
-        print(f"  Extent: {profile['extent_mean']:.2f} ± {profile['extent_std']:.2f} mm (median: {profile['extent_median']:.2f})")
-        print(f"  Duration: {profile['duration_mean']:.3f} ± {profile['duration_std']:.3f} sec")
-        print(f"  Velocity: {profile['velocity_mean']:.2f} ± {profile['velocity_std']:.2f} px/frame")
+        print(f"  Extent: {profile['extent_mean']:.2f} +/-{profile['extent_std']:.2f} mm (median: {profile['extent_median']:.2f})")
+        print(f"  Duration: {profile['duration_mean']:.3f} +/-{profile['duration_std']:.3f} sec")
+        print(f"  Velocity: {profile['velocity_mean']:.2f} +/-{profile['velocity_std']:.2f} px/frame")
 
     elif args.mouse:
         row = conn.execute("SELECT * FROM mouse_stats WHERE animal=?", (args.mouse,)).fetchone()
@@ -68,7 +68,7 @@ def main():
         print(f"Cohort: {row['cohort']}")
         print(f"Sessions: {row['n_sessions']}")
         print(f"\nOverall: {profile['n_reaches']} reaches, {profile['success_rate']*100:.1f}% success")
-        print(f"  Extent: {profile['extent_mean']:.2f} ± {profile['extent_std']:.2f} mm")
+        print(f"  Extent: {profile['extent_mean']:.2f} +/-{profile['extent_std']:.2f} mm")
         print(f"  Duration: {profile['duration_mean']:.3f} sec")
         print(f"  Velocity: {profile['velocity_mean']:.2f} px/frame")
 
@@ -82,10 +82,10 @@ def main():
 
         if len(success) > 0 and len(fail) > 0:
             print(f"\nSUCCESS PROFILE (n={len(success)}):")
-            print(f"  Extent: {success['extent_mm'].mean():.2f} ± {success['extent_mm'].std():.2f} mm")
+            print(f"  Extent: {success['extent_mm'].mean():.2f} +/-{success['extent_mm'].std():.2f} mm")
             print(f"  Duration: {success['duration_sec'].mean():.3f} sec")
             print(f"\nFAIL PROFILE (n={len(fail)}):")
-            print(f"  Extent: {fail['extent_mm'].mean():.2f} ± {fail['extent_mm'].std():.2f} mm")
+            print(f"  Extent: {fail['extent_mm'].mean():.2f} +/-{fail['extent_mm'].std():.2f} mm")
             print(f"  Duration: {fail['duration_sec'].mean():.3f} sec")
 
         if learning:

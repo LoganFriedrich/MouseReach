@@ -77,8 +77,8 @@ def analyze_boundary_failures():
 
     print(f"\nCorrection distribution:")
     print(f"  Exact (0 frames): {(df['abs_correction'] == 0).sum()} ({100*(df['abs_correction'] == 0).mean():.1f}%)")
-    print(f"  ±1 frame: {(df['abs_correction'] <= 1).sum()} ({100*(df['abs_correction'] <= 1).mean():.1f}%)")
-    print(f"  ±2 frames: {(df['abs_correction'] <= 2).sum()} ({100*(df['abs_correction'] <= 2).mean():.1f}%)")
+    print(f"  +/-1 frame: {(df['abs_correction'] <= 1).sum()} ({100*(df['abs_correction'] <= 1).mean():.1f}%)")
+    print(f"  +/-2 frames: {(df['abs_correction'] <= 2).sum()} ({100*(df['abs_correction'] <= 2).mean():.1f}%)")
     print(f"  >2 frames: {(df['abs_correction'] > 2).sum()} ({100*(df['abs_correction'] > 2).mean():.1f}%)")
 
     # Direction of correction

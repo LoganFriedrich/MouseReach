@@ -195,8 +195,8 @@ def compare_groups(df, group1, group2):
             stat, p = stats.mannwhitneyu(v1, v2, alternative='two-sided')
 
             print(f"\n{label}:")
-            print(f"  Group {group1}: {v1.mean():.3f} ± {v1.std():.3f} (n={len(v1)})")
-            print(f"  Group {group2}: {v2.mean():.3f} ± {v2.std():.3f} (n={len(v2)})")
+            print(f"  Group {group1}: {v1.mean():.3f} +/- {v1.std():.3f} (n={len(v1)})")
+            print(f"  Group {group2}: {v2.mean():.3f} +/- {v2.std():.3f} (n={len(v2)})")
             print(f"  Mann-Whitney U: {stat:.1f}, p-value: {p:.4f} {'***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'}")
 
 def analyze_flagged_vs_unflagged(df_l):
@@ -228,8 +228,8 @@ def analyze_flagged_vs_unflagged(df_l):
             stat, p = stats.mannwhitneyu(v_flag, v_unflag, alternative='two-sided')
 
             print(f"\n{label}:")
-            print(f"  Flagged:   {v_flag.mean():.3f} ± {v_flag.std():.3f} (n={len(v_flag)})")
-            print(f"  Unflagged: {v_unflag.mean():.3f} ± {v_unflag.std():.3f} (n={len(v_unflag)})")
+            print(f"  Flagged:   {v_flag.mean():.3f} +/- {v_flag.std():.3f} (n={len(v_flag)})")
+            print(f"  Unflagged: {v_unflag.mean():.3f} +/- {v_unflag.std():.3f} (n={len(v_unflag)})")
             print(f"  Mann-Whitney U: {stat:.1f}, p-value: {p:.4f} {'***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'}")
 
 def per_session_flagged_analysis(df_l):

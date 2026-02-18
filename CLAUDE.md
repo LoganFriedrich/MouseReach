@@ -31,6 +31,9 @@ This applies to: reach start frames, reach end frames, reach splitting, segmenta
 
 **If you suggest reinstall, you MUST justify WHY** (e.g., "pyproject.toml was modified to add new CLI command X").
 
+### Terminal Output: ASCII Only
+**NEVER use non-ASCII/Unicode characters in `print()` or `logging` calls.** Windows consoles crash on Unicode symbols (`UnicodeEncodeError`). Use ASCII replacements: `->` not arrows, `[OK]`/`[FAIL]`/`[!]` not check/x/warning symbols, `*` not stars, `+/-` not plus-minus. Qt widget text and matplotlib are fine. See root CLAUDE.md for the full replacement table.
+
 ### DO NOT ATTEMPT PIP INSTALL DURING SESSIONS
 
 **CRITICAL:** `pip install` commands HANG indefinitely on this network drive setup.

@@ -203,7 +203,7 @@ def process_batch(
     )
     
     if verbose and skipped:
-        print(f"⚠ Skipped {len(skipped)} file(s) - not validated:")
+        print(f"[!] Skipped {len(skipped)} file(s) - not validated:")
         for s in skipped:
             print(f"   {s['video_name']}: {s['reason']}")
         print()

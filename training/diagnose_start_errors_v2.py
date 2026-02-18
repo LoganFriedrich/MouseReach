@@ -345,7 +345,7 @@ def main():
                     and c.get('nose_dist_gt') is not None
                     and c['nose_dist_gt'] <= nose_thresh)
         new_within2 = within_2 + fixed
-        print(f"  NOSE_THRESHOLD={nose_thresh}px: +{fixed} late cases fixed → {new_within2}/{total_matched} ({new_within2/total_matched*100:.1f}%)")
+        print(f"  NOSE_THRESHOLD={nose_thresh}px: +{fixed} late cases fixed -> {new_within2}/{total_matched} ({new_within2/total_matched*100:.1f}%)")
 
 
 if __name__ == "__main__":

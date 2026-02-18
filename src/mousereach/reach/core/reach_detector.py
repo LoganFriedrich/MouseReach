@@ -100,7 +100,7 @@ from .boundary_refiner import split_reach_boundaries
 from .boundary_polisher import BoundaryPolisher
 
 
-VERSION = "5.3.0"  # v5.3: Retrained polisher (window=20, max_correction=30, 300 trees)
+VERSION = "5.3.0"  # v5.3: Stable detection with boundary polisher
 
 
 @dataclass
@@ -242,6 +242,12 @@ class ReachDetector:
             self._polisher = BoundaryPolisher(model_dir=model_dir)
         except Exception:
             self._polisher = None
+        # v5.5: Multi-pass spatial refinement (position-based boundary correction)
+        # Disabled: per-pass diagnosis showed none of the 4 passes improve on
+        # the NO_REFINER baseline. DLC position noise (±5-10px around slit center)
+        # is too large for the fine-grained spatial decisions these passes attempt.
+        # Framework preserved in spatial_refiner.py for future experimentation.
+        self._spatial_refiner = None
 
     def _get_slit_center(self, df: pd.DataFrame, seg_start: int, seg_end: int) -> Tuple[float, float]:
         """Get stable slit center from segment median of BOXL and BOXR."""
@@ -855,6 +861,15 @@ class ReachDetector:
         # Conservative: only corrects boundaries where classifier is confident.
         if self._polisher is not None and self._polisher.loaded:
             split_reaches = self._polisher.polish_reaches(split_reaches, df, slit_x)
+
+        # v5.5: Multi-pass spatial refinement
+        # Uses physical constraints (hand position relative to slit) rather than
+        # confidence thresholds. Splits absorbed reaches, trims late ends/early
+        # starts, and removes short false positives where hand never crossed slit.
+        if self._spatial_refiner is not None:
+            split_reaches = self._spatial_refiner.refine(
+                split_reaches, df, slit_x, slit_y, boxr_x, ruler_pixels
+            )
 
         # Renumber reaches sequentially within segment
         for i, reach in enumerate(split_reaches):

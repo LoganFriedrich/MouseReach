@@ -753,7 +753,7 @@ def export_statistics(df_tracking, df_scoring):
 
 def main():
     print("=" * 80)
-    print("DLC TRACKING QUALITY vs ASPA SCORING DISCREPANCY — STATISTICAL REPORT")
+    print("DLC TRACKING QUALITY vs ASPA SCORING DISCREPANCY -- STATISTICAL REPORT")
     print("=" * 80)
 
     # Load data

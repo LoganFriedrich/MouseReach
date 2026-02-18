@@ -46,8 +46,8 @@ class ComparisonResult:
     def __repr__(self):
         sig = "***" if self.p_value < 0.001 else "**" if self.p_value < 0.01 else "*" if self.p_value < 0.05 else ""
         return (
-            f"{self.metric}: {self.group1_name} ({self.group1_mean:.2f}±{self.group1_std:.2f}, n={self.group1_n}) "
-            f"vs {self.group2_name} ({self.group2_mean:.2f}±{self.group2_std:.2f}, n={self.group2_n}) | "
+            f"{self.metric}: {self.group1_name} ({self.group1_mean:.2f}+/-{self.group1_std:.2f}, n={self.group1_n}) "
+            f"vs {self.group2_name} ({self.group2_mean:.2f}+/-{self.group2_std:.2f}, n={self.group2_n}) | "
             f"p={self.p_value:.4f}{sig} | {self.effect_size_name}={self.effect_size:.2f} ({self.effect_interpretation})"
         )
 

@@ -231,9 +231,9 @@ def print_summary_tables(session_df: pd.DataFrame, animal_df: pd.DataFrame):
     print(f"Total animals: {animal_df['animal_id'].nunique()}")
     print(f"Flagged animals: {animal_df[animal_df['is_flagged']]['animal_id'].nunique()}")
 
-    print(f"\nGlobal pellet 95th percentile: {session_df['pellet_95pct'].mean():.3f} ± {session_df['pellet_95pct'].std():.3f}")
-    print(f"Global pillar 95th percentile: {session_df['pillar_95pct'].mean():.3f} ± {session_df['pillar_95pct'].std():.3f}")
-    print(f"Global ceiling gap: {session_df['ceiling_gap'].mean():.3f} ± {session_df['ceiling_gap'].std():.3f}")
+    print(f"\nGlobal pellet 95th percentile: {session_df['pellet_95pct'].mean():.3f} +/- {session_df['pellet_95pct'].std():.3f}")
+    print(f"Global pillar 95th percentile: {session_df['pillar_95pct'].mean():.3f} +/- {session_df['pillar_95pct'].std():.3f}")
+    print(f"Global ceiling gap: {session_df['ceiling_gap'].mean():.3f} +/- {session_df['ceiling_gap'].std():.3f}")
 
     # Per-animal table
     print("\n--- PER-ANIMAL CEILING METRICS (sorted by pellet ceiling quality) ---")
@@ -245,9 +245,9 @@ def print_summary_tables(session_df: pd.DataFrame, animal_df: pd.DataFrame):
         problem_str = "YES" if row['has_tracking_problem'] else "NO"
 
         print(f"{row['animal_id']:<8} {row['group']:<4} {flag_str:<5} {row['n_sessions']:<4.0f} "
-              f"{row['pellet_95pct_mean']:>6.3f} ± {row['pellet_95pct_median']:>5.3f} "
+              f"{row['pellet_95pct_mean']:>6.3f} +/- {row['pellet_95pct_median']:>5.3f} "
               f"{row['pellet_early_95pct_mean']:>6.3f}      "
-              f"{row['pillar_95pct_mean']:>6.3f} ± {row['pillar_95pct_median']:>5.3f} "
+              f"{row['pillar_95pct_mean']:>6.3f} +/- {row['pillar_95pct_median']:>5.3f} "
               f"{row['ceiling_gap_mean']:>6.3f}  {problem_str}")
 
     # Group comparisons
@@ -257,9 +257,9 @@ def print_summary_tables(session_df: pd.DataFrame, animal_df: pd.DataFrame):
         if len(group_data) == 0:
             continue
         print(f"\nGroup {group} (n={len(group_data)} animals):")
-        print(f"  Pellet 95th pct: {group_data['pellet_95pct_mean'].mean():.3f} ± {group_data['pellet_95pct_mean'].std():.3f}")
-        print(f"  Pillar 95th pct: {group_data['pillar_95pct_mean'].mean():.3f} ± {group_data['pillar_95pct_mean'].std():.3f}")
-        print(f"  Ceiling gap:     {group_data['ceiling_gap_mean'].mean():.3f} ± {group_data['ceiling_gap_mean'].std():.3f}")
+        print(f"  Pellet 95th pct: {group_data['pellet_95pct_mean'].mean():.3f} +/- {group_data['pellet_95pct_mean'].std():.3f}")
+        print(f"  Pillar 95th pct: {group_data['pillar_95pct_mean'].mean():.3f} +/- {group_data['pillar_95pct_mean'].std():.3f}")
+        print(f"  Ceiling gap:     {group_data['ceiling_gap_mean'].mean():.3f} +/- {group_data['ceiling_gap_mean'].std():.3f}")
         print(f"  Animals with tracking problem: {group_data['has_tracking_problem'].sum()}/{len(group_data)}")
 
     # Flagged vs unflagged in Group L
@@ -270,14 +270,14 @@ def print_summary_tables(session_df: pd.DataFrame, animal_df: pd.DataFrame):
         unflagged = group_l[~group_l['is_flagged']]
 
         print(f"Flagged (n={len(flagged)}):")
-        print(f"  Pellet 95th pct: {flagged['pellet_95pct_mean'].mean():.3f} ± {flagged['pellet_95pct_mean'].std():.3f}")
-        print(f"  Pillar 95th pct: {flagged['pillar_95pct_mean'].mean():.3f} ± {flagged['pillar_95pct_mean'].std():.3f}")
-        print(f"  Ceiling gap:     {flagged['ceiling_gap_mean'].mean():.3f} ± {flagged['ceiling_gap_mean'].std():.3f}")
+        print(f"  Pellet 95th pct: {flagged['pellet_95pct_mean'].mean():.3f} +/- {flagged['pellet_95pct_mean'].std():.3f}")
+        print(f"  Pillar 95th pct: {flagged['pillar_95pct_mean'].mean():.3f} +/- {flagged['pillar_95pct_mean'].std():.3f}")
+        print(f"  Ceiling gap:     {flagged['ceiling_gap_mean'].mean():.3f} +/- {flagged['ceiling_gap_mean'].std():.3f}")
 
         print(f"\nUnflagged (n={len(unflagged)}):")
-        print(f"  Pellet 95th pct: {unflagged['pellet_95pct_mean'].mean():.3f} ± {unflagged['pellet_95pct_mean'].std():.3f}")
-        print(f"  Pillar 95th pct: {unflagged['pillar_95pct_mean'].mean():.3f} ± {unflagged['pillar_95pct_mean'].std():.3f}")
-        print(f"  Ceiling gap:     {unflagged['ceiling_gap_mean'].mean():.3f} ± {unflagged['ceiling_gap_mean'].std():.3f}")
+        print(f"  Pellet 95th pct: {unflagged['pellet_95pct_mean'].mean():.3f} +/- {unflagged['pellet_95pct_mean'].std():.3f}")
+        print(f"  Pillar 95th pct: {unflagged['pillar_95pct_mean'].mean():.3f} +/- {unflagged['pillar_95pct_mean'].std():.3f}")
+        print(f"  Ceiling gap:     {unflagged['ceiling_gap_mean'].mean():.3f} +/- {unflagged['ceiling_gap_mean'].std():.3f}")
 
         # Statistical test
         if len(flagged) > 0 and len(unflagged) > 0:

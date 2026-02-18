@@ -54,7 +54,7 @@ def evaluate_segmentation(gt_dir: Path, algo_dir: Path, tolerance: int = 5, outp
     print("=" * 60)
     print(f"GT directory:   {gt_dir}")
     print(f"Algo directory: {algo_dir}")
-    print(f"Tolerance:      ±{tolerance} frames")
+    print(f"Tolerance:      +/-{tolerance} frames")
     print()
 
     evaluator = SegmentationEvaluator(gt_dir, algo_dir, tolerance)
@@ -82,7 +82,7 @@ def evaluate_reaches(gt_dir: Path, algo_dir: Path, tolerance: int = 10, output: 
     print("=" * 60)
     print(f"GT directory:   {gt_dir}")
     print(f"Algo directory: {algo_dir}")
-    print(f"Tolerance:      ±{tolerance} frames")
+    print(f"Tolerance:      +/-{tolerance} frames")
     print()
 
     evaluator = ReachEvaluator(gt_dir, algo_dir, tolerance)
@@ -110,7 +110,7 @@ def evaluate_outcomes(gt_dir: Path, algo_dir: Path, tolerance: int = 15, output:
     print("=" * 60)
     print(f"GT directory:   {gt_dir}")
     print(f"Algo directory: {algo_dir}")
-    print(f"Frame tolerance: ±{tolerance} frames (for interaction timing)")
+    print(f"Frame tolerance: +/-{tolerance} frames (for interaction timing)")
     print()
 
     evaluator = OutcomeEvaluator(gt_dir, algo_dir, tolerance)

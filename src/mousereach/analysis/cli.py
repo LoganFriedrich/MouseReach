@@ -153,9 +153,9 @@ Examples:
         if args.check:
             # Just report status
             if is_current:
-                print(f"✓ Database is current: {reason}")
+                print(f"[OK] Database is current: {reason}")
             else:
-                print(f"✗ Database needs rebuild: {reason}")
+                print(f"[!!] Database needs rebuild: {reason}")
             return
 
         if is_current:
