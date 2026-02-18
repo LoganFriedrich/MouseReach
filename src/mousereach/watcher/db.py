@@ -426,6 +426,69 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    def force_state(self, video_id: str, new_state: str, **kwargs):
+        """
+        Set video state directly, bypassing transition validation.
+
+        Used for intake scenarios where videos arrive at an intermediate state
+        (e.g., DLC already completed by another machine).
+
+        Args:
+            video_id: Video identifier
+            new_state: State to set
+            **kwargs: Additional fields to update
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT state FROM videos WHERE video_id = ?",
+                    (video_id,)
+                ).fetchone()
+
+                if not row:
+                    raise ValueError(f"Video {video_id} not found")
+
+                current_state = row['state']
+
+                # Build update (same as update_state but no validation)
+                fields = ['state = ?', 'updated_at = ?']
+                values = [new_state, self._now()]
+
+                # Add timestamp for state-specific fields
+                state_timestamp_map = {
+                    'validated': 'validated_at',
+                    'dlc_running': 'dlc_started_at',
+                    'dlc_complete': 'dlc_completed_at',
+                    'processing': 'processing_started_at',
+                    'processed': 'processing_completed_at',
+                    'archived': 'archived_at',
+                }
+
+                if new_state in state_timestamp_map:
+                    timestamp_field = state_timestamp_map[new_state]
+                    fields.append(f'{timestamp_field} = ?')
+                    values.append(self._now())
+
+                for key, value in kwargs.items():
+                    fields.append(f'{key} = ?')
+                    values.append(value)
+
+                values.append(video_id)
+                conn.execute(
+                    f"UPDATE videos SET {', '.join(fields)} WHERE video_id = ?",
+                    values
+                )
+
+                conn.commit()
+                logger.info(f"Force-set video {video_id}: {current_state} -> {new_state}")
+
+            except Exception as e:
+                logger.error(f"Failed to force-set video {video_id}: {e}")
+                raise
+            finally:
+                conn.close()
+
     def update_collage_state(self, filename: str, new_state: str, **kwargs):
         """
         Update collage state with validation.

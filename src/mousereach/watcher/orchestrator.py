@@ -965,10 +965,18 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # =========================================================================
 
     def _run_pipeline(self, work: dict):
-        """Run segmentation, reach detection, and outcome detection on a video."""
-        from mousereach.segmentation.core.batch import process_single as seg_single
+        """Run segmentation, reach detection, and outcome detection on a video.
+
+        After each step, runs triage to set validation_status in the output JSON.
+        After all steps complete, generates a processing manifest with provenance.
+        """
+        from mousereach.segmentation.core.batch import process_single as seg_single, add_validation_status
+        from mousereach.segmentation.core.triage import classify_segments
         from mousereach.reach.core.batch import process_single as reach_single
+        from mousereach.reach.core.triage import check_anomalies as reach_check_anomalies
         from mousereach.outcomes.core.batch import process_single as outcome_single
+        from mousereach.outcomes.core.triage import check_anomalies as outcome_check_anomalies
+        from mousereach.pipeline.manifest import create_processing_manifest
 
         video_id = work['id']
         video_data = work['data']
@@ -995,12 +1003,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
             seg_duration = time.time() - step_start
 
             if seg_result.get('success', False):
+                # Run triage to set validation_status in JSON
+                seg_json = Path(seg_result['output_file'])
+                if seg_result['status'] == 'good':
+                    add_validation_status(seg_json, 'auto_approved')
+                    seg_triage = 'auto_approved'
+                else:
+                    add_validation_status(seg_json, 'needs_review')
+                    seg_triage = 'needs_review'
+
                 self.db.log_step(
                     video_id, 'segmentation', 'completed',
-                    message=f"status={seg_result.get('status')}, boundaries={seg_result.get('n_boundaries', 0)}",
+                    message=f"status={seg_result.get('status')}, triage={seg_triage}, boundaries={seg_result.get('n_boundaries', 0)}",
                     duration=seg_duration
                 )
-                logger.info(f"Segmentation complete: {video_id} ({seg_duration:.1f}s)")
+                logger.info(f"Segmentation complete: {video_id} triage={seg_triage} ({seg_duration:.1f}s)")
             else:
                 error = seg_result.get('error', 'segmentation failed')
                 self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
@@ -1026,12 +1043,36 @@ class ProcessingOrchestrator(BaseOrchestrator):
             reach_result = reach_single(dlc_path, seg_path)
             reach_duration = time.time() - step_start
 
+            # Run triage to set validation_status in JSON
+            reach_json = Path(reach_result['output_file'])
+            try:
+                with open(reach_json) as f:
+                    reach_data = json.load(f)
+                reach_anomalies = reach_check_anomalies({
+                    'n_segments': reach_data.get('n_segments', 0),
+                    'segments': reach_data.get('segments', []),
+                    'total_reaches': reach_data.get('summary', {}).get('total_reaches', 0),
+                })
+                if reach_anomalies:
+                    reach_data['validation_status'] = 'needs_review'
+                    reach_data['triage_reason'] = '; '.join(reach_anomalies)
+                    reach_triage = 'needs_review'
+                else:
+                    reach_data['validation_status'] = 'auto_approved'
+                    reach_data['triage_reason'] = f"{reach_data.get('summary', {}).get('total_reaches', 0)} reaches OK"
+                    reach_triage = 'auto_approved'
+                with open(reach_json, 'w') as f:
+                    json.dump(reach_data, f, indent=2)
+            except Exception as e:
+                logger.warning(f"Reach triage failed for {video_id}: {e}")
+                reach_triage = 'unknown'
+
             self.db.log_step(
                 video_id, 'reach_detection', 'completed',
-                message=f"reaches={reach_result.get('total_reaches', 0)}",
+                message=f"reaches={reach_result.get('total_reaches', 0)}, triage={reach_triage}",
                 duration=reach_duration
             )
-            logger.info(f"Reach detection complete: {video_id} ({reach_duration:.1f}s)")
+            logger.info(f"Reach detection complete: {video_id} triage={reach_triage} ({reach_duration:.1f}s)")
 
         except Exception as e:
             reach_duration = time.time() - step_start
@@ -1054,12 +1095,36 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 outcome_result = outcome_single(dlc_path, seg_path, reach_path)
                 outcome_duration = time.time() - step_start
 
+                # Run triage to set validation_status in JSON
+                outcome_json = Path(outcome_result['output_file'])
+                try:
+                    with open(outcome_json) as f:
+                        outcome_data = json.load(f)
+                    outcome_anomalies = outcome_check_anomalies({
+                        'n_segments': outcome_data.get('n_segments', 0),
+                        'segments': outcome_data.get('segments', []),
+                        'summary': outcome_data.get('summary', {}),
+                    })
+                    if outcome_anomalies:
+                        outcome_data['validation_status'] = 'needs_review'
+                        outcome_data['triage_reason'] = '; '.join(outcome_anomalies)
+                        outcome_triage = 'needs_review'
+                    else:
+                        outcome_data['validation_status'] = 'auto_approved'
+                        outcome_data['triage_reason'] = 'All outcomes high confidence'
+                        outcome_triage = 'auto_approved'
+                    with open(outcome_json, 'w') as f:
+                        json.dump(outcome_data, f, indent=2)
+                except Exception as e:
+                    logger.warning(f"Outcome triage failed for {video_id}: {e}")
+                    outcome_triage = 'unknown'
+
                 self.db.log_step(
                     video_id, 'outcome_detection', 'completed',
-                    message=f"segments={outcome_result.get('n_segments', 0)}",
+                    message=f"segments={outcome_result.get('n_segments', 0)}, triage={outcome_triage}",
                     duration=outcome_duration
                 )
-                logger.info(f"Outcome detection complete: {video_id} ({outcome_duration:.1f}s)")
+                logger.info(f"Outcome detection complete: {video_id} triage={outcome_triage} ({outcome_duration:.1f}s)")
 
             except Exception as e:
                 outcome_duration = time.time() - step_start
@@ -1069,8 +1134,30 @@ class ProcessingOrchestrator(BaseOrchestrator):
         else:
             logger.info(f"Skipping outcomes for {video_id} (tray type: {tray_type})")
 
-        # --- Pipeline complete ---
+        # --- Pipeline complete — generate provenance manifest ---
         pipeline_duration = time.time() - pipeline_start
+
+        try:
+            step_timestamps = {
+                'pipeline_started_at': datetime.fromtimestamp(pipeline_start).isoformat(),
+                'pipeline_completed_at': datetime.now().isoformat(),
+            }
+            manifest = create_processing_manifest(
+                video_id=video_id,
+                processing_dir=self.processing_dir,
+                dlc_path=dlc_path,
+                step_timestamps=step_timestamps,
+            )
+            logger.info(
+                f"Manifest created: {video_id} "
+                f"(DLC={manifest.get('dlc_model', {}).get('dlc_scorer', '?')}, "
+                f"seg={manifest.get('validation', {}).get('segmentation', {}).get('validation_status', '?')}, "
+                f"reach={manifest.get('validation', {}).get('reach_detection', {}).get('validation_status', '?')}, "
+                f"outcome={manifest.get('validation', {}).get('outcome_detection', {}).get('validation_status', '?')})"
+            )
+        except Exception as e:
+            logger.warning(f"Manifest creation failed for {video_id}: {e}")
+
         self.db.update_state(video_id, 'processed')
         self.db.log_step(
             video_id, 'pipeline', 'completed',
