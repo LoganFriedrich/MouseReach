@@ -11,7 +11,17 @@ import shutil
 from typing import Dict, List, Optional
 
 
-EXPECTED_SEGMENTS = 20
+# v2.5 (2026-02): Recalibrated from empirical data on 27 processed videos.
+#   - Accept 20 or 21 segments (segmenter produces 21 boundaries)
+#   - Confidence threshold lowered to 0.80 (was 0.90). At 0.90 only 22%
+#     of segments pass; at 0.80, 97.6% pass. The detector's 0.85 mode
+#     represents confident classifications that shouldn't trigger review.
+#   - "retrieved" outcomes no longer auto-flag for review. The 68%
+#     accuracy concern is captured in the confidence score itself —
+#     low-confidence retrievals still get flagged via the threshold.
+EXPECTED_SEGMENTS_MIN = 20
+EXPECTED_SEGMENTS_MAX = 21
+OUTCOME_LOW_CONFIDENCE = 0.80
 
 
 def load_gt_data(gt_path: Path) -> Optional[Dict]:
@@ -88,37 +98,41 @@ def check_anomalies(result: Dict, gt_data: Optional[Dict] = None) -> List[str]:
     If gt_data is provided, segments with human_verified=True are considered
     resolved and won't trigger anomalies.
 
-    v2.4: Updated confidence threshold to 0.90 (was 0.70) based on GT analysis.
-    "retrieved" outcomes always flag for review (68% accuracy).
+    v2.5: Recalibrated thresholds from empirical data (27 videos).
+      - Accept 20 or 21 segments (was: exactly 20)
+      - Confidence threshold lowered to 0.80 (was: 0.90). At 0.90 only
+        22% of segments pass; at 0.80, 97.6% pass.
+      - "retrieved" outcomes no longer auto-flag. The confidence score
+        already captures uncertainty — low-confidence retrievals are
+        caught by the threshold, high-confidence ones are fine.
     """
     anomalies = []
 
     if 'error' in result:
         return ['load_error']
 
-    # Check segment count
-    if result['n_segments'] != EXPECTED_SEGMENTS:
+    # Segment count outside expected range
+    n_seg = result['n_segments']
+    if n_seg < EXPECTED_SEGMENTS_MIN or n_seg > EXPECTED_SEGMENTS_MAX:
         # If GT has all segments verified, this is resolved
         verified_count = count_verified_segments(gt_data)
-        if verified_count < result['n_segments']:
-            anomalies.append(f"n_segments={result['n_segments']} (expected {EXPECTED_SEGMENTS})")
+        if verified_count < n_seg:
+            anomalies.append(f"n_segments={n_seg} (expected {EXPECTED_SEGMENTS_MIN}-{EXPECTED_SEGMENTS_MAX})")
 
-    # Check each segment for issues (v2.4: updated thresholds)
+    # Check each segment for issues
     for seg in result.get('segments', []):
         seg_num = seg.get('segment_num')
         if is_segment_verified_in_gt(gt_data, seg_num):
             continue  # Human verified - skip
 
-        outcome = seg.get('outcome', '').lower()
         conf = seg.get('confidence', 0)
-        flagged = seg.get('flagged_for_review', False)
 
-        # Low confidence or flagged - threshold raised to 0.90 (was 0.70)
-        if conf < 0.90 or flagged:
+        # Low confidence — the detector's own flagged_for_review field is
+        # kept as informational metadata but does NOT gate triage. 66% of
+        # segments are flagged (mostly timing precision, not wrong outcomes)
+        # so using it as a gate would send everything to review.
+        if conf < OUTCOME_LOW_CONFIDENCE:
             anomalies.append(f"seg {seg_num}: low confidence ({conf:.2f})")
-        # Retrieved outcomes always need review (68% accuracy)
-        elif outcome == 'retrieved':
-            anomalies.append(f"seg {seg_num}: retrieved (always review)")
 
     return anomalies
 

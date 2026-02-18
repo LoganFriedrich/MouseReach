@@ -12,9 +12,20 @@ from typing import Dict, List, Optional
 
 
 # Anomaly thresholds
-MIN_REACHES_PER_SEGMENT = 3    # Suspiciously low
+#
+# v2.5 (2026-02): Recalibrated from empirical data on 27 processed videos.
+#   - n_segments: The segmenter finds 21 boundaries which the reach detector
+#     reports as 21 segments (one per trial). Accept 20 or 21.
+#   - MIN_REACHES_PER_SEGMENT: Removed. 37% of segments have 0 reaches (the
+#     mouse simply doesn't reach in every trial). This is normal biology, not
+#     an anomaly. Only flag truly excessive counts.
+#   - Reach confidence: Bimodal at 0.50 (algorithm-inferred) and 1.0
+#     (high-certainty). Both are valid detections. Only flag below 0.30
+#     which indicates tracking failure rather than ambiguous reach.
 MAX_REACHES_PER_SEGMENT = 100  # Suspiciously high
-EXPECTED_SEGMENTS = 20
+EXPECTED_SEGMENTS_MIN = 20
+EXPECTED_SEGMENTS_MAX = 21
+REACH_LOW_CONFIDENCE = 0.30  # Below this = tracking failure, not ambiguous reach
 
 
 def load_gt_data(gt_path: Path) -> Optional[Dict]:
@@ -97,17 +108,22 @@ def check_anomalies(result: Dict, gt_data: Optional[Dict] = None) -> List[str]:
     If gt_data is provided, anomalies for segments that are human_verified
     in the GT will be skipped (the human already confirmed the answer).
 
-    v2.4: Added confidence-based anomaly detection.
-    Reaches with confidence < 0.85 are flagged for review.
+    v2.5: Recalibrated thresholds from empirical data (27 videos).
+      - Accept 20 or 21 segments (was: exactly 20)
+      - Removed min-reaches-per-segment check (0 reaches is normal biology)
+      - Lowered reach confidence threshold to 0.30 (was: 0.85)
+        Bimodal distribution at 0.50 and 1.0 — both are valid detections.
+        Only flag < 0.30 which indicates tracking failure.
     """
     anomalies = []
 
     if 'error' in result:
         return ['load_error']
 
-    # Wrong segment count - this is a global issue, can't be resolved per-segment
-    if result['n_segments'] != EXPECTED_SEGMENTS:
-        anomalies.append(f"n_segments={result['n_segments']} (expected {EXPECTED_SEGMENTS})")
+    # Segment count outside expected range
+    n_seg = result['n_segments']
+    if n_seg < EXPECTED_SEGMENTS_MIN or n_seg > EXPECTED_SEGMENTS_MAX:
+        anomalies.append(f"n_segments={n_seg} (expected {EXPECTED_SEGMENTS_MIN}-{EXPECTED_SEGMENTS_MAX})")
 
     # Check each segment for issues
     for s in result['segments']:
@@ -115,17 +131,15 @@ def check_anomalies(result: Dict, gt_data: Optional[Dict] = None) -> List[str]:
         if is_segment_verified_in_gt(gt_data, seg_num):
             continue  # Human verified - skip
 
-        # Reach count anomalies
-        if s['n_reaches'] < MIN_REACHES_PER_SEGMENT:
-            anomalies.append(f"seg {seg_num}: <{MIN_REACHES_PER_SEGMENT} reaches")
-        elif s['n_reaches'] > MAX_REACHES_PER_SEGMENT:
+        # Excessive reach count (>100 is almost certainly a detection error)
+        if s['n_reaches'] > MAX_REACHES_PER_SEGMENT:
             anomalies.append(f"seg {seg_num}: >{MAX_REACHES_PER_SEGMENT} reaches")
 
-        # v2.4: Check reach confidence (threshold 0.85)
+        # Very low confidence reaches (tracking failure, not ambiguous reach)
         for r in s.get('reaches', []):
             conf = r.get('confidence', 0)
-            if conf < 0.85:
-                anomalies.append(f"reach {r.get('reach_id')}: low confidence ({conf:.2f})")
+            if conf < REACH_LOW_CONFIDENCE:
+                anomalies.append(f"reach {r.get('reach_id')}: very low confidence ({conf:.2f})")
 
     return anomalies
 

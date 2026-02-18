@@ -265,12 +265,13 @@ class WatcherStateManager:
                     video_id=video_id,
                     source_path=str(mp4_path),
                     current_path=str(mp4_path),
+                    dlc_output_path=str(h5_path),
                     **metadata
                 )
 
-                # Advance directly to dlc_complete (DLC already done)
-                self.db.update_state(video_id, 'validated')
-                self.db.update_state(
+                # Set directly to dlc_complete — DLC already done by DLC PC.
+                # Bypass normal transition chain (validated→dlc_queued→...→dlc_complete)
+                self.db.force_state(
                     video_id, 'dlc_complete',
                     dlc_output_path=str(h5_path),
                     current_path=str(mp4_path)
