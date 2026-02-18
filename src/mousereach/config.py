@@ -107,6 +107,9 @@ class Paths:
     # These require different algorithms and should be returned to NAS
     UNSUPPORTED_TRAY_RETURN = NAS_ROOT / "Unanalyzed" / "Unsupported_Tray_Type" if NAS_ROOT else None
 
+    # DLC complete staging area (for processing PC to pick up)
+    DLC_STAGING = NAS_ROOT / "DLC_Complete" if NAS_ROOT else None
+
     # Final validated outputs, sorted by experiment (Step 6 destination)
     ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" / "Sort" if NAS_ROOT else None
 
