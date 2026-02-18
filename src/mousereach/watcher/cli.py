@@ -120,6 +120,19 @@ def main_watch():
     print(f"  Auto Archive:    {'Yes' if config.auto_archive_approved else 'No'}")
     print(f"  Quarantine:      {config.get_quarantine_dir()}")
     print(f"  Logs:            {log_dir}")
+
+    # Show priority animal if set
+    priority_file = Paths.PROCESSING_ROOT / "priority_animal.json" if Paths.PROCESSING_ROOT else None
+    if priority_file and priority_file.exists():
+        try:
+            with open(priority_file) as f:
+                priority_data = json.load(f)
+            animal = priority_data.get('animal_id', '?')
+            set_at = priority_data.get('set_at', '')[:10]
+            print(f"  PRIORITY ANIMAL: {animal} (since {set_at})")
+        except Exception:
+            pass
+
     print()
 
     if dry_run:
@@ -292,6 +305,20 @@ def main_status():
     print("MouseReach Watcher Status")
     print("=" * 70)
     print()
+
+    # Show priority animal if set
+    priority_file = db_path.parent / "priority_animal.json"
+    if priority_file.exists():
+        try:
+            with open(priority_file) as f:
+                priority_data = json.load(f)
+            animal = priority_data.get('animal_id', '?')
+            set_at = priority_data.get('set_at', '')[:10]
+            print(f"  ** PRIORITY ANIMAL: {animal} (since {set_at}) **")
+            print(f"     Clear with: mousereach-watch-prioritize --clear")
+            print()
+        except Exception:
+            pass
 
     # Collage summary
     print("Collages:")
@@ -571,6 +598,398 @@ def main_quarantine():
                 print(f"ERROR deleting {f.name}: {e}", file=sys.stderr)
 
         print(f"\nDeleted {len(files)} files from quarantine.")
+
+
+# =============================================================================
+# PRIORITIZE COMMAND
+# =============================================================================
+
+def main_prioritize():
+    """Set, show, or clear the priority animal for the watcher.
+
+    When a priority animal is set, the watcher processes that animal's
+    videos first within each work tier (crop, DLC, pipeline, archive).
+    Other animals' videos still get processed — just after the priority
+    animal's items are handled.
+
+    Usage:
+        mousereach-watch-prioritize                Show current priority
+        mousereach-watch-prioritize CNT0107        Set priority to CNT0107
+        mousereach-watch-prioritize --clear        Remove priority
+    """
+    args = sys.argv[1:]
+    clear = '--clear' in args
+    positional = [a for a in args if not a.startswith('--')]
+
+    from mousereach.config import require_processing_root, AnimalID
+    from datetime import datetime
+
+    priority_file = require_processing_root() / "priority_animal.json"
+
+    # --clear: remove priority
+    if clear:
+        if priority_file.exists():
+            priority_file.unlink()
+            print("Priority cleared. Watcher will resume normal ordering.")
+        else:
+            print("No priority was set.")
+        return
+
+    # No arguments: show current priority
+    if not positional:
+        if priority_file.exists():
+            try:
+                with open(priority_file) as f:
+                    data = json.load(f)
+                print(f"Priority animal: {data['animal_id']}")
+                print(f"Set at:          {data.get('set_at', '?')}")
+            except Exception as e:
+                print(f"Error reading priority file: {e}")
+        else:
+            print("No priority animal set. Watcher uses default ordering.")
+        print()
+        print("Usage:")
+        print("  mousereach-watch-prioritize CNT0107    Set priority")
+        print("  mousereach-watch-prioritize --clear     Clear priority")
+        return
+
+    # Set priority
+    animal_id = positional[0].upper()
+
+    parsed = AnimalID.parse(animal_id)
+    if not parsed.get('valid'):
+        print(f"ERROR: Invalid animal ID '{animal_id}': {parsed.get('error')}", file=sys.stderr)
+        sys.exit(1)
+
+    data = {
+        'animal_id': animal_id,
+        'set_at': datetime.now().isoformat(),
+    }
+    with open(priority_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    print(f"Priority set: {animal_id}")
+    print()
+    print(f"The watcher will now prefer {animal_id}'s videos in all work queues.")
+    print(f"Other videos are still processed, just with lower priority.")
+    print()
+    print(f"Clear with: mousereach-watch-prioritize --clear")
+
+
+# =============================================================================
+# PROCESS-ANIMAL COMMAND
+# =============================================================================
+
+def _resolve_nas_dir(configured_path, subfolder):
+    """Resolve NAS directory, handling the doubled '! DLC Output' config issue."""
+    from mousereach.config import Paths
+    if configured_path and configured_path.exists():
+        return configured_path
+    fallbacks = []
+    if Paths.NAS_DRIVE:
+        fallbacks.append(Paths.NAS_DRIVE / subfolder)
+        fallbacks.append(Paths.NAS_DRIVE.parent / subfolder)
+    for fb in fallbacks:
+        if fb.exists():
+            return fb
+    return None
+
+
+def main_process_animal():
+    """Queue all videos for a specific animal through the pipeline.
+
+    Searches BOTH Single_Animal (pre-cropped) AND Multi-Animal (collages)
+    folders. For collages that haven't been cropped yet, registers them in
+    the watcher DB so the running watcher crops and processes them.
+
+    Usage:
+        mousereach-watch-process-animal CNT0107
+        mousereach-watch-process-animal CNT0107 --dry-run
+        mousereach-watch-process-animal CNT0107 --tray P   # Only pillar trays
+    """
+    args = sys.argv[1:]
+    dry_run = '--dry-run' in args
+    positional = [a for a in args if not a.startswith('--')]
+
+    # Parse tray filter
+    tray_filter = None
+    for i, a in enumerate(sys.argv[1:]):
+        if a == '--tray' and i + 2 < len(sys.argv):
+            tray_filter = sys.argv[i + 2].upper()
+
+    if not positional:
+        print("Usage: mousereach-watch-process-animal <ANIMAL_ID> [--dry-run] [--tray P|E|F]",
+              file=sys.stderr)
+        print()
+        print("Examples:")
+        print("  mousereach-watch-process-animal CNT0107")
+        print("  mousereach-watch-process-animal CNT0107 --dry-run")
+        print("  mousereach-watch-process-animal CNT0107 --tray P")
+        print()
+        print("Searches both Single_Animal and Multi-Animal folders.")
+        print("Singles are copied to DLC_Queue directly.")
+        print("Collages are registered so the watcher crops + processes them.")
+        sys.exit(1)
+
+    animal_id = positional[0]
+
+    # Imports
+    from mousereach.config import (
+        Paths, require_processing_root, get_video_id, AnimalID
+    )
+    from mousereach.watcher.db import WatcherDB
+    from mousereach.watcher.validator import (
+        validate_single_filename, validate_collage_filename
+    )
+    from mousereach.watcher.transfer import safe_copy
+    from mousereach.video_prep.core.cropper import parse_collage_filename
+
+    # Validate animal ID
+    parsed = AnimalID.parse(animal_id)
+    if not parsed.get('valid'):
+        print(f"ERROR: Invalid animal ID '{animal_id}': {parsed.get('error')}", file=sys.stderr)
+        sys.exit(1)
+
+    print("=" * 70)
+    print(f"Process Animal: {animal_id}")
+    print("=" * 70)
+    print()
+
+    # Resolve directories
+    single_dir = _resolve_nas_dir(
+        Paths.SINGLE_ANIMAL_OUTPUT, "Unanalyzed/Single_Animal"
+    )
+    multi_dir = _resolve_nas_dir(
+        Paths.MULTI_ANIMAL_SOURCE, "Unanalyzed/Multi-Animal"
+    )
+
+    if not single_dir and not multi_dir:
+        print("ERROR: No NAS directories found.", file=sys.stderr)
+        print("Run 'mousereach-setup' to configure NAS_DRIVE.", file=sys.stderr)
+        sys.exit(1)
+
+    if single_dir:
+        print(f"Singles:   {single_dir}")
+    if multi_dir:
+        print(f"Collages:  {multi_dir}")
+    if tray_filter:
+        print(f"Tray filter: {tray_filter} only")
+
+    # --- Phase 1: Find pre-cropped singles ---
+    singles = []
+    if single_dir:
+        for f in sorted(single_dir.glob(f"*_{animal_id}_*.mp4")):
+            result = validate_single_filename(f.name)
+            if not result.valid:
+                continue
+            if tray_filter and result.parsed.get('tray_type') != tray_filter:
+                continue
+            singles.append(f)
+
+    single_keys = set()  # date + tray combos we already have as singles
+    for f in singles:
+        result = validate_single_filename(f.name)
+        if result.valid:
+            single_keys.add(f"{result.parsed['date']}_{result.parsed['tray_type']}")
+
+    # --- Phase 2: Find collages containing this animal ---
+    collages = []  # (collage_path, collage_filename)
+    if multi_dir:
+        for collage_path in sorted(multi_dir.iterdir()):
+            if not collage_path.is_file():
+                continue
+            if animal_id not in collage_path.name:
+                continue
+            try:
+                info = parse_collage_filename(collage_path.name)
+            except (ValueError, Exception):
+                continue
+            if animal_id not in info['animal_ids']:
+                continue
+
+            tray_suffix = info['last_part']
+            # Apply tray filter
+            if tray_filter and not tray_suffix.startswith(tray_filter):
+                continue
+
+            # Skip if we already have this as a single
+            key = f"{info['date']}_{tray_suffix[0]}"
+            if key in single_keys:
+                continue
+
+            collages.append(collage_path)
+
+    # --- Show summary ---
+    total = len(singles) + len(collages)
+    if total == 0:
+        print(f"\nNo videos found for {animal_id}")
+        sys.exit(0)
+
+    # Group by date for display
+    date_summary = {}
+    for f in singles:
+        result = validate_single_filename(f.name)
+        if result.valid:
+            d = result.parsed['date']
+            date_summary.setdefault(d, {'singles': 0, 'collages': 0})
+            date_summary[d]['singles'] += 1
+
+    for c in collages:
+        try:
+            info = parse_collage_filename(c.name)
+            d = info['date']
+            date_summary.setdefault(d, {'singles': 0, 'collages': 0})
+            date_summary[d]['collages'] += 1
+        except Exception:
+            pass
+
+    print(f"\nFound {total} videos across {len(date_summary)} session dates "
+          f"({len(singles)} singles + {len(collages)} collages to crop):")
+    for date in sorted(date_summary.keys()):
+        info = date_summary[date]
+        parts = []
+        if info['singles']:
+            parts.append(f"{info['singles']} singles")
+        if info['collages']:
+            parts.append(f"{info['collages']} collages")
+        print(f"  {date}: {', '.join(parts)}")
+
+    if dry_run:
+        print(f"\nDRY RUN - no files will be modified")
+        sys.exit(0)
+
+    # Confirm
+    print()
+    response = input(f"Queue {total} videos for processing? [y/N]: ")
+    if response.lower() != 'y':
+        print("Cancelled.")
+        sys.exit(0)
+
+    # Initialize database
+    db_path = require_processing_root() / "watcher.db"
+    db = WatcherDB(db_path)
+
+    dlc_queue = Paths.DLC_QUEUE
+    if dlc_queue:
+        dlc_queue.mkdir(parents=True, exist_ok=True)
+
+    queued_singles = 0
+    queued_collages = 0
+    skipped = 0
+    errors = 0
+
+    # --- Queue singles: register + copy to DLC_Queue ---
+    print("\nQueuing singles...")
+    for f in singles:
+        video_id = get_video_id(f.name)
+        existing = db.get_video(video_id)
+        if existing:
+            state = existing['state']
+            if state in ('processed', 'archived', 'dlc_complete', 'dlc_running',
+                         'dlc_queued', 'processing'):
+                print(f"  SKIP {video_id} (already {state})")
+                skipped += 1
+                continue
+
+        result = validate_single_filename(f.name)
+        if not result.valid:
+            skipped += 1
+            continue
+
+        # Register if new
+        if not existing:
+            db.register_video(
+                video_id=video_id,
+                source_path=str(f),
+                date=result.parsed['date'],
+                animal_id=result.parsed['animal_id'],
+                experiment=result.parsed['experiment'],
+                cohort=result.parsed['cohort'],
+                subject=result.parsed['subject'],
+                tray_type=result.parsed['tray_type'],
+                current_path=str(f)
+            )
+            db.update_state(video_id, 'validated', current_path=str(f))
+
+        # Copy to DLC_Queue
+        if dlc_queue:
+            dest = dlc_queue / f.name
+            if dest.exists():
+                db.update_state(video_id, 'dlc_queued', current_path=str(dest))
+                queued_singles += 1
+                print(f"  QUEUED {video_id} (already in DLC_Queue)")
+            else:
+                try:
+                    if safe_copy(f, dest, verify=True):
+                        db.update_state(video_id, 'dlc_queued', current_path=str(dest))
+                        db.log_step(video_id, 'process_animal', 'queued',
+                                    message=f"Queued by process-animal for {animal_id}")
+                        queued_singles += 1
+                        print(f"  QUEUED {video_id}")
+                    else:
+                        print(f"  ERROR {video_id} (copy failed)")
+                        errors += 1
+                except Exception as e:
+                    print(f"  ERROR {video_id}: {e}")
+                    errors += 1
+
+    # --- Queue collages: register so watcher crops them ---
+    if collages:
+        print("\nRegistering collages for watcher to crop...")
+        for collage_path in collages:
+            filename = collage_path.name
+            existing = db.get_collage(filename)
+
+            if existing:
+                state = existing['state']
+                if state in ('cropped', 'archived'):
+                    print(f"  SKIP {filename} (already {state})")
+                    skipped += 1
+                    continue
+                # If discovered/validated/failed, leave it - watcher handles it
+                print(f"  EXISTS {filename} ({state})")
+                queued_collages += 1
+                continue
+
+            # Register new collage
+            try:
+                result = validate_collage_filename(filename)
+                db.register_collage(filename=filename, source_path=str(collage_path))
+                if result.valid and result.parsed:
+                    db.update_collage_state(
+                        filename=filename,
+                        new_state='validated',
+                        date=result.parsed['date'],
+                        animal_ids=','.join(result.parsed['animal_ids']),
+                        tray_suffix=f"{result.parsed['tray_type']}{result.parsed['tray_run']}"
+                    )
+                    # Mark as stable immediately (these files aren't being written)
+                    db.update_collage_state(filename, 'stable')
+                queued_collages += 1
+                print(f"  REGISTERED {filename}")
+            except Exception as e:
+                print(f"  ERROR {filename}: {e}")
+                errors += 1
+
+    # Summary
+    print()
+    print("=" * 70)
+    print(f"Summary for {animal_id}:")
+    print(f"  Singles queued for DLC:       {queued_singles}")
+    print(f"  Collages registered to crop:  {queued_collages}")
+    print(f"  Already in pipeline:          {skipped}")
+    print(f"  Errors:                       {errors}")
+    print("=" * 70)
+
+    if queued_singles + queued_collages > 0:
+        print(f"\nThe running watcher will automatically:")
+        if queued_collages > 0:
+            print(f"  1. Crop {queued_collages} collages into singles")
+            print(f"  2. Run DLC on all singles")
+        else:
+            print(f"  1. Run DLC on {queued_singles} singles")
+        print(f"  {'3' if queued_collages else '2'}. Run segmentation + reach detection + outcome detection")
+        print(f"\nMonitor progress: mousereach-watch-status")
 
 
 # =============================================================================
