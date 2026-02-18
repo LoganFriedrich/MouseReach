@@ -131,7 +131,7 @@ def interactive_review(path: Path):
                         s['manually_corrected'] = True
                         data['corrections_made'] = data.get('corrections_made', 0) + 1
                         modified = True
-                        print(f"  Changed segment {seg_num}: {old} → {new_outcome}")
+                        print(f"  Changed segment {seg_num}: {old} -> {new_outcome}")
                         break
                 else:
                     print(f"Segment {seg_num} not found")

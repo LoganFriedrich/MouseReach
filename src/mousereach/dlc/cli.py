@@ -59,7 +59,7 @@ def main_quality():
         print(f"  Frames: {report.total_frames}, Mean likelihood: {report.mean_likelihood:.2f}")
         if report.issues:
             for issue in report.issues:
-                print(f"  ⚠ {issue}")
+                print(f"  [!] {issue}")
         
         if args.output:
             args.output.mkdir(parents=True, exist_ok=True)

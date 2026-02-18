@@ -255,7 +255,7 @@ class WatcherDB:
         valid_next = transitions.get(current_state, [])
         if new_state not in valid_next:
             raise ValueError(
-                f"Invalid {entity_type} state transition: {current_state} → {new_state}. "
+                f"Invalid {entity_type} state transition: {current_state} to {new_state}. "
                 f"Valid transitions from {current_state}: {', '.join(valid_next)}"
             )
 
@@ -418,7 +418,7 @@ class WatcherDB:
                 )
 
                 conn.commit()
-                logger.info(f"Updated video {video_id}: {current_state} → {new_state}")
+                logger.info(f"Updated video {video_id}: {current_state} -> {new_state}")
 
             except Exception as e:
                 logger.error(f"Failed to update video {video_id}: {e}")
@@ -487,7 +487,7 @@ class WatcherDB:
                 )
 
                 conn.commit()
-                logger.info(f"Updated collage {filename}: {current_state} → {new_state}")
+                logger.info(f"Updated collage {filename}: {current_state} -> {new_state}")
 
             except Exception as e:
                 logger.error(f"Failed to update collage {filename}: {e}")
@@ -829,7 +829,7 @@ class WatcherDB:
                     """, (size, self._now(), self._now(), filename))
 
                     conn.commit()
-                    logger.debug(f"Updated size for {filename}: {current_size} → {size}")
+                    logger.debug(f"Updated size for {filename}: {current_size} -> {size}")
 
             except Exception as e:
                 logger.error(f"Failed to update file size for {filename}: {e}")

@@ -833,7 +833,7 @@ def print_diagnostics(diag: SegmentationDiagnostics) -> None:
     if diag.anomalies:
         print(f"\nANOMALIES DETECTED:")
         for a in diag.anomalies:
-            print(f"  ⚠ {a}")
+            print(f"  [!] {a}")
     
     print(f"\nBoundary confidences:")
     low_conf = [(i+1, c) for i, c in enumerate(diag.boundary_confidences) if c < 0.5]

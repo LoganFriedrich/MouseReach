@@ -6,7 +6,7 @@ Provides:
 - Human-verification filtering
 - Version-based comparison
 - Historical trend analysis
-- Timing accuracy breakdowns (exact, ±1fr, ±2fr, etc.)
+- Timing accuracy breakdowns (exact, +/-1fr, +/-2fr, etc.)
 """
 
 import json
@@ -609,15 +609,15 @@ class AggregateEvaluator:
                 lines.append("")
                 lines.append(f"  Start Timing ({metrics.start_timing.n_samples} samples):")
                 lines.append(f"    Exact: {metrics.start_timing.exact:.0%}")
-                lines.append(f"    ±1 frame: {metrics.start_timing.within_1:.0%}")
-                lines.append(f"    ±2 frames: {metrics.start_timing.within_2:.0%}")
+                lines.append(f"    +/-1 frame: {metrics.start_timing.within_1:.0%}")
+                lines.append(f"    +/-2 frames: {metrics.start_timing.within_2:.0%}")
 
             if metrics.end_timing and metrics.end_timing.n_samples > 0:
                 lines.append("")
                 lines.append(f"  End Timing ({metrics.end_timing.n_samples} samples):")
                 lines.append(f"    Exact: {metrics.end_timing.exact:.0%}")
-                lines.append(f"    ±1 frame: {metrics.end_timing.within_1:.0%}")
-                lines.append(f"    ±2 frames: {metrics.end_timing.within_2:.0%}")
+                lines.append(f"    +/-1 frame: {metrics.end_timing.within_1:.0%}")
+                lines.append(f"    +/-2 frames: {metrics.end_timing.within_2:.0%}")
 
             # Error categories
             if metrics.error_categories:

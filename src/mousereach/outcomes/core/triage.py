@@ -195,7 +195,7 @@ def triage_results(input_dir: Path, output_base: Path = None, verbose: bool = Tr
 
         counts[category] += 1
         if verbose:
-            print(f"  {video_name} → {category} ({reason})")
+            print(f"  {video_name} -> {category} ({reason})")
     
     if verbose:
         print("-" * 70)

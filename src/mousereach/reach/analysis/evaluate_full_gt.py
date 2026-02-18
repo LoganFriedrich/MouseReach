@@ -158,8 +158,8 @@ def evaluate(gt_path: Path, det_path: Path, overlap_threshold: float = 0.3):
         print(f"\n## Frame Accuracy (matched)")
         print(f"  Start error: mean={np.mean(start_errors):.1f}, median={np.median(start_errors):.1f}")
         print(f"  End error: mean={np.mean(end_errors):.1f}, median={np.median(end_errors):.1f}")
-        print(f"  Start within ±2: {sum(1 for e in start_errors if abs(e) <= 2)}/{len(matched)} ({100*sum(1 for e in start_errors if abs(e) <= 2)/len(matched):.0f}%)")
-        print(f"  End within ±2: {sum(1 for e in end_errors if abs(e) <= 2)}/{len(matched)} ({100*sum(1 for e in end_errors if abs(e) <= 2)/len(matched):.0f}%)")
+        print(f"  Start within +/-2: {sum(1 for e in start_errors if abs(e) <= 2)}/{len(matched)} ({100*sum(1 for e in start_errors if abs(e) <= 2)/len(matched):.0f}%)")
+        print(f"  End within +/-2: {sum(1 for e in end_errors if abs(e) <= 2)}/{len(matched)} ({100*sum(1 for e in end_errors if abs(e) <= 2)/len(matched):.0f}%)")
         print(f"  Mean IoU: {np.mean(ious):.2f}")
 
     # Analyze false negatives by source

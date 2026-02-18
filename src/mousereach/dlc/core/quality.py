@@ -216,7 +216,7 @@ def check_batch(
         reports.append(report)
         
         if verbose:
-            status = "✓" if report.overall_quality == "good" else "?" if report.overall_quality == "fair" else "✗"
+            status = "[OK]" if report.overall_quality == "good" else "[?]" if report.overall_quality == "fair" else "[!!]"
             print(f"  {status} {report.video_name}: {report.overall_quality.upper()} (likelihood={report.mean_likelihood:.2f})")
         
         if output_dir:
