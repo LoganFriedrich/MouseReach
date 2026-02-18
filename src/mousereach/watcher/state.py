@@ -209,6 +209,95 @@ class WatcherStateManager:
 
         return newly_registered
 
+    def discover_dlc_staged(self, staging_dir: Path) -> List[str]:
+        """
+        Scan DLC staging directory for new DLC-complete video+h5 pairs.
+
+        Used by the Processing Server to discover videos that the DLC PC
+        has staged to the NAS after running DLC inference.
+
+        Args:
+            staging_dir: Directory to scan (Paths.DLC_STAGING)
+
+        Returns:
+            List of newly discovered video_ids
+        """
+        if not staging_dir or not staging_dir.exists():
+            logger.debug(f"Staging directory does not exist: {staging_dir}")
+            return []
+
+        from mousereach.config import get_video_id
+
+        newly_registered = []
+
+        # Scan for DLC h5 files (the definitive output of DLC)
+        for h5_path in staging_dir.glob("*DLC*.h5"):
+            # Extract video_id from DLC filename (e.g. "20250704_CNT0101_P1DLC_..." -> "20250704_CNT0101_P1")
+            video_id = h5_path.stem.split("DLC")[0].rstrip('_')
+
+            # Skip if already in database
+            if self.db.video_exists(video_id):
+                continue
+
+            # Find matching video file
+            mp4_path = staging_dir / f"{video_id}.mp4"
+            if not mp4_path.exists():
+                logger.debug(f"No matching video for DLC output: {h5_path.name}")
+                continue
+
+            # Validate filename
+            result = validate_single_filename(mp4_path.name)
+
+            if result.valid:
+                # Register with parsed metadata, directly at dlc_complete state
+                metadata = {}
+                if result.parsed:
+                    metadata = {
+                        'date': result.parsed['date'],
+                        'animal_id': result.parsed['animal_id'],
+                        'experiment': result.parsed['experiment'],
+                        'cohort': result.parsed['cohort'],
+                        'subject': result.parsed['subject'],
+                        'tray_type': result.parsed['tray_type'],
+                    }
+
+                self.db.register_video(
+                    video_id=video_id,
+                    source_path=str(mp4_path),
+                    current_path=str(mp4_path),
+                    **metadata
+                )
+
+                # Advance directly to dlc_complete (DLC already done)
+                self.db.update_state(video_id, 'validated')
+                self.db.update_state(
+                    video_id, 'dlc_complete',
+                    dlc_output_path=str(h5_path),
+                    current_path=str(mp4_path)
+                )
+
+                newly_registered.append(video_id)
+                logger.info(f"Discovered staged DLC output: {video_id}")
+
+            else:
+                # Invalid filename - quarantine
+                quarantine_dir = self.config.get_quarantine_dir()
+                quarantine_file(
+                    mp4_path,
+                    quarantine_dir,
+                    reason=result.error
+                )
+
+                self.db.register_video(
+                    video_id=video_id,
+                    source_path=str(mp4_path)
+                )
+                self.db.mark_quarantined(video_id, reason=result.error, is_collage=False)
+
+                logger.warning(f"Quarantined staged video: {video_id} - {result.error}")
+
+        return newly_registered
+
     def check_collage_stability(self, filename: str) -> bool:
         """
         Check if a collage file is stable (not actively being written).

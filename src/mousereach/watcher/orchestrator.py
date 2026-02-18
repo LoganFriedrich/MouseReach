@@ -1,16 +1,18 @@
 """
-NAS/DLC PC orchestrator for the MouseReach watcher.
+Role-aware orchestrators for the MouseReach watcher.
 
-This machine's job: scan NAS for collages -> crop -> DLC -> stage back to NAS.
-Pipeline steps (seg/reach/outcomes) are NOT run here — the processing PC
-picks up staged files from the NAS.
+Two machines, two roles:
 
-Flow per collage:
-  1. Copy collage from NAS (D:) to local working dir (A:)
-  2. Crop into single-animal videos
-  3. DLC each single (using local GPU)
-  4. Move video + h5 to NAS staging folder for processing PC
-  5. Next collage
+  DLCOrchestrator (mode="dlc_pc")
+      NAS/DLC PC with GPU.  Scans NAS for collages -> crop -> DLC -> stage
+      video+h5 to NAS DLC_Complete/ folder for the processing server.
+
+  ProcessingOrchestrator (mode="processing_server")
+      Processing server.  Watches DLC_Complete/ -> intake to local Processing/
+      -> segmentation -> reach detection -> outcome detection -> archive to NAS.
+
+Both share a BaseOrchestrator that provides the polling loop, priority animal
+system, DB tracking, and graceful shutdown.
 """
 
 import json
@@ -40,15 +42,19 @@ from mousereach.config import (
 logger = logging.getLogger(__name__)
 
 
-class WatcherOrchestrator:
-    """
-    NAS/DLC PC orchestrator.
+# =============================================================================
+# BASE ORCHESTRATOR
+# =============================================================================
 
-    Processes one collage at a time:
-    - Scans NAS for new collages
-    - Crops to singles
-    - Runs DLC inference on each single
-    - Stages video+h5 back to NAS for the processing PC
+class BaseOrchestrator:
+    """
+    Shared infrastructure for all watcher orchestrator roles.
+
+    Provides:
+    - Polling loop (run, run_once)
+    - Priority animal system
+    - DB tracking and logging
+    - Graceful shutdown
     """
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
@@ -61,42 +67,30 @@ class WatcherOrchestrator:
         self.state = WatcherStateManager(db, config)
         self.file_watcher = FileWatcher(config, self.state)
 
-        # Working directory for temporary crop operations
+        # Working directory for temporary operations
         self.working_dir = require_processing_root() / "watcher_working"
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-        # Staging directory on NAS for processing PC to pick up
-        self.staging_dir = Paths.DLC_STAGING
-        if self.staging_dir:
-            self.staging_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Staging directory: {self.staging_dir}")
-
-        logger.info(f"WatcherOrchestrator initialized on {self.hostname}")
+        logger.info(f"{self.__class__.__name__} initialized on {self.hostname}")
         logger.info(f"Working directory: {self.working_dir}")
+
+    # =========================================================================
+    # MAIN LOOP
+    # =========================================================================
 
     def run(self, shutdown_event: threading.Event):
         """Main orchestrator loop: scan + process in a single thread."""
-        logger.info("WatcherOrchestrator starting main loop")
+        logger.info(f"{self.__class__.__name__} starting main loop")
 
         while not shutdown_event.is_set():
             try:
-                # Phase A: Scan for new files and check stability
-                scan_result = self.file_watcher.scan()
-                if scan_result.new_collages or scan_result.new_singles or scan_result.stable_ready:
-                    logger.info(
-                        f"Scan: {scan_result.new_collages} new collages, "
-                        f"{scan_result.new_singles} new singles, "
-                        f"{scan_result.stable_ready} now stable"
-                    )
+                # Phase A: Scan for new work
+                self._scan_phase()
 
-                # Phase B: Check for DLC completions (h5 files appearing)
-                self._scan_for_dlc_completions()
-
-                # Phase C: Process the highest-priority work item
+                # Phase B: Process the highest-priority work item
                 work = self._get_next_work_item()
 
                 if work is None:
-                    # Nothing to do - sleep and retry
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
 
@@ -108,24 +102,14 @@ class WatcherOrchestrator:
                 time.sleep(5)
 
         self.shutdown()
-        logger.info("WatcherOrchestrator stopped")
+        logger.info(f"{self.__class__.__name__} stopped")
 
     def run_once(self):
         """Run one full cycle: scan + process all pending items, then exit."""
-        logger.info("WatcherOrchestrator running once")
+        logger.info(f"{self.__class__.__name__} running once")
 
-        # Scan for new files
-        scan_result = self.file_watcher.scan()
-        logger.info(
-            f"Scan: {scan_result.new_collages} new collages, "
-            f"{scan_result.new_singles} new singles, "
-            f"{scan_result.stable_ready} now stable"
-        )
+        self._scan_phase()
 
-        # Check for DLC completions
-        self._scan_for_dlc_completions()
-
-        # Process all available work items
         processed = 0
         while True:
             work = self._get_next_work_item()
@@ -136,53 +120,25 @@ class WatcherOrchestrator:
 
         logger.info(f"Run-once complete: processed {processed} items")
 
+    # =========================================================================
+    # ABSTRACT METHODS (subclasses must implement)
+    # =========================================================================
+
+    def _scan_phase(self):
+        """Discover new work. Called once per cycle."""
+        raise NotImplementedError
+
+    def _get_next_work_item(self):
+        """Return next work dict or None."""
+        raise NotImplementedError
+
+    def _dispatch_work(self, work: dict):
+        """Route work to handler."""
+        raise NotImplementedError
+
     def dry_run(self):
-        """Scan without processing. Shows what would be done."""
-        logger.info("WatcherOrchestrator dry run")
-
-        # Scan for new files
-        scan_result = self.file_watcher.scan()
-        print(f"\nScan results:")
-        print(f"  New collages found:   {scan_result.new_collages}")
-        print(f"  New singles found:    {scan_result.new_singles}")
-        print(f"  Collages now stable:  {scan_result.stable_ready}")
-        print(f"  Scan time:            {scan_result.scan_time_ms:.1f}ms")
-
-        # Check for DLC completions
-        dlc_completions = self._scan_for_dlc_completions()
-        print(f"  DLC completions:      {dlc_completions}")
-
-        # Show priority animal if set
-        priority_animal = self._get_priority_animal()
-        if priority_animal:
-            print(f"\n  PRIORITY ANIMAL:      {priority_animal}")
-
-        # Show what work would be done
-        print(f"\nPending work items:")
-        count = 0
-        for state_label, state in [
-            ("Collages to crop", "stable"),
-            ("Videos for DLC", "dlc_queued"),
-            ("Videos to stage to NAS", "dlc_complete"),
-        ]:
-            if state in ("stable",):
-                items = self.db.get_collages_in_state(state)
-            else:
-                items = self.db.get_videos_in_state(state)
-            if items:
-                print(f"  {state_label}: {len(items)}")
-                for item in items[:5]:
-                    name = item.get('filename') or item.get('video_id')
-                    print(f"    - {name}")
-                if len(items) > 5:
-                    print(f"    ... and {len(items) - 5} more")
-                count += len(items)
-
-        if count == 0:
-            print("  (no pending work)")
-
-        print(f"\nStaging directory: {self.staging_dir or '(not configured)'}")
-        print()
+        """Scan without processing. Show what would be done."""
+        raise NotImplementedError
 
     # =========================================================================
     # PRIORITY ANIMAL
@@ -248,15 +204,80 @@ class WatcherOrchestrator:
         return random.choice(pillar if pillar else items)
 
     # =========================================================================
+    # UTILITIES
+    # =========================================================================
+
+    def _get_associated_files(self, directory: Path, video_id: str) -> list:
+        """Get all files associated with a video (mp4, h5, csv, etc.)."""
+        files = []
+        if directory.exists():
+            for file_path in directory.iterdir():
+                if file_path.is_file() and file_path.name.startswith(video_id):
+                    files.append(file_path)
+        return files
+
+    def shutdown(self):
+        """Graceful shutdown."""
+        logger.info(f"{self.__class__.__name__} shutting down gracefully")
+        try:
+            if self.working_dir.exists():
+                for file_path in self.working_dir.iterdir():
+                    if file_path.is_file():
+                        file_path.unlink()
+                        logger.debug(f"Cleaned up: {file_path.name}")
+        except Exception as e:
+            logger.warning(f"Cleanup failed: {e}")
+
+
+# =============================================================================
+# DLC ORCHESTRATOR (NAS / DLC PC)
+# =============================================================================
+
+class DLCOrchestrator(BaseOrchestrator):
+    """
+    NAS/DLC PC orchestrator.
+
+    Processes one collage at a time:
+    - Scans NAS for new collages
+    - Crops to singles
+    - Runs DLC inference on each single
+    - Stages video+h5 back to NAS for the processing PC
+    """
+
+    def __init__(self, config: WatcherConfig, db: WatcherDB):
+        super().__init__(config, db)
+
+        # Staging directory on NAS for processing PC to pick up
+        self.staging_dir = Paths.DLC_STAGING
+        if self.staging_dir:
+            self.staging_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Staging directory: {self.staging_dir}")
+
+    # =========================================================================
+    # SCAN PHASE
+    # =========================================================================
+
+    def _scan_phase(self):
+        """Scan NAS for new collages/singles and check for DLC completions."""
+        # Phase A: Scan for new files and check stability
+        scan_result = self.file_watcher.scan()
+        if scan_result.new_collages or scan_result.new_singles or scan_result.stable_ready:
+            logger.info(
+                f"Scan: {scan_result.new_collages} new collages, "
+                f"{scan_result.new_singles} new singles, "
+                f"{scan_result.stable_ready} now stable"
+            )
+
+        # Phase B: Check for DLC completions (h5 files appearing)
+        self._scan_for_dlc_completions()
+
+    # =========================================================================
     # WORK QUEUE
     # =========================================================================
 
     def _get_next_work_item(self):
         """
-        Get next work item — priority animal first, then Pillar-first, random within tier.
-
-        If a priority animal is set (via mousereach-watch-prioritize),
-        items belonging to that animal are preferred within each tier.
+        Get next work item — priority animal first, then Pillar-first, random.
 
         Priority:
         1. Stage DLC-complete videos to NAS (finish what's done)
@@ -331,6 +352,58 @@ class WatcherOrchestrator:
                 self.db.mark_failed(work_id, error_msg)
 
     # =========================================================================
+    # DRY RUN
+    # =========================================================================
+
+    def dry_run(self):
+        """Scan without processing. Shows what would be done."""
+        logger.info("DLCOrchestrator dry run")
+
+        # Scan for new files
+        scan_result = self.file_watcher.scan()
+        print(f"\nScan results:")
+        print(f"  New collages found:   {scan_result.new_collages}")
+        print(f"  New singles found:    {scan_result.new_singles}")
+        print(f"  Collages now stable:  {scan_result.stable_ready}")
+        print(f"  Scan time:            {scan_result.scan_time_ms:.1f}ms")
+
+        # Check for DLC completions
+        dlc_completions = self._scan_for_dlc_completions()
+        print(f"  DLC completions:      {dlc_completions}")
+
+        # Show priority animal if set
+        priority_animal = self._get_priority_animal()
+        if priority_animal:
+            print(f"\n  PRIORITY ANIMAL:      {priority_animal}")
+
+        # Show what work would be done
+        print(f"\nPending work items:")
+        count = 0
+        for state_label, state in [
+            ("Collages to crop", "stable"),
+            ("Videos for DLC", "dlc_queued"),
+            ("Videos to stage to NAS", "dlc_complete"),
+        ]:
+            if state in ("stable",):
+                items = self.db.get_collages_in_state(state)
+            else:
+                items = self.db.get_videos_in_state(state)
+            if items:
+                print(f"  {state_label}: {len(items)}")
+                for item in items[:5]:
+                    name = item.get('filename') or item.get('video_id')
+                    print(f"    - {name}")
+                if len(items) > 5:
+                    print(f"    ... and {len(items) - 5} more")
+                count += len(items)
+
+        if count == 0:
+            print("  (no pending work)")
+
+        print(f"\nStaging directory: {self.staging_dir or '(not configured)'}")
+        print()
+
+    # =========================================================================
     # DLC COMPLETION SCANNING
     # =========================================================================
 
@@ -341,7 +414,6 @@ class WatcherOrchestrator:
         DLC outputs h5 files to DLC_Queue (same dir as input video).
         This detects them and advances state to dlc_complete.
         """
-        # Check DLC_Queue for h5 outputs (DLC writes output next to input)
         dlc_queue_dir = Paths.DLC_QUEUE
         if not dlc_queue_dir or not dlc_queue_dir.exists():
             return 0
@@ -352,7 +424,6 @@ class WatcherOrchestrator:
             videos = self.db.get_videos_in_state(state)
             for video in videos:
                 video_id = video['video_id']
-                # Look for DLC h5 output in DLC_Queue
                 h5_files = list(dlc_queue_dir.glob(f"{video_id}DLC*.h5"))
                 if h5_files:
                     dlc_path = h5_files[0]
@@ -634,27 +705,431 @@ class WatcherOrchestrator:
             self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e), duration=duration)
             raise
 
+
+# =============================================================================
+# PROCESSING ORCHESTRATOR (Processing Server)
+# =============================================================================
+
+class ProcessingOrchestrator(BaseOrchestrator):
+    """
+    Processing server orchestrator.
+
+    Watches the NAS DLC_Complete/ staging folder for new DLC outputs,
+    copies them to the local Processing/ folder, and runs the full
+    analysis pipeline (segmentation -> reach detection -> outcomes).
+
+    After processing, auto-approved videos are archived to NAS.
+    """
+
+    def __init__(self, config: WatcherConfig, db: WatcherDB):
+        super().__init__(config, db)
+
+        # Where the DLC PC stages completed files on NAS
+        self.staging_dir = Paths.DLC_STAGING
+        if self.staging_dir:
+            logger.info(f"Watching staging directory: {self.staging_dir}")
+        else:
+            logger.warning("DLC_STAGING not configured — no intake possible")
+
+        # Local processing directory
+        self.processing_dir = Paths.PROCESSING
+        if self.processing_dir:
+            self.processing_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Processing directory: {self.processing_dir}")
+
     # =========================================================================
-    # UTILITIES
+    # SCAN PHASE
     # =========================================================================
 
-    def _get_associated_files(self, directory: Path, video_id: str) -> list:
-        """Get all files associated with a video (mp4, h5, csv, etc.)."""
-        files = []
-        if directory.exists():
-            for file_path in directory.iterdir():
-                if file_path.is_file() and file_path.name.startswith(video_id):
-                    files.append(file_path)
-        return files
+    def _scan_phase(self):
+        """Discover new DLC outputs in the staging directory."""
+        if not self.staging_dir:
+            return
 
-    def shutdown(self):
-        """Graceful shutdown."""
-        logger.info("WatcherOrchestrator shutting down gracefully")
+        newly_found = self.state.discover_dlc_staged(self.staging_dir)
+        if newly_found:
+            logger.info(f"Discovered {len(newly_found)} new DLC outputs in staging")
+
+    # =========================================================================
+    # WORK QUEUE
+    # =========================================================================
+
+    def _get_next_work_item(self):
+        """
+        Get next work item for the processing server.
+
+        Priority:
+        1. Intake: DLC-complete videos on NAS → copy to local Processing/
+        2. Pipeline: Videos in Processing/ that need seg/reach/outcomes
+        3. Archive: Processed videos → archive to NAS
+        """
+        priority_animal = self._get_priority_animal()
+
+        # Priority 1: Intake — videos discovered in staging, not yet copied locally
+        videos = self.db.get_videos_in_state('dlc_complete')
+        if videos:
+            # Check disk space cap
+            processing_count = len(self.db.get_videos_in_state('processing'))
+            if processing_count >= self.config.max_local_pending:
+                logger.warning(
+                    f"Local pending limit reached ({processing_count}/{self.config.max_local_pending}). "
+                    "Pausing intake — review or archive pending videos."
+                )
+            else:
+                if priority_animal:
+                    preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
+                    pick = preferred[0] if preferred else videos[0]
+                else:
+                    pick = videos[0]
+                return {
+                    'type': 'intake',
+                    'id': pick['video_id'],
+                    'data': pick
+                }
+
+        # Priority 2: Pipeline — run seg/reach/outcomes on locally staged videos
+        videos = self.db.get_videos_in_state('processing')
+        if videos:
+            pick = self._pick_from_pool(videos, priority_animal, 'animal_id')
+            return {
+                'type': 'pipeline',
+                'id': pick['video_id'],
+                'data': pick
+            }
+
+        # Priority 3: Archive — move processed videos to NAS
+        videos = self.db.get_videos_in_state('processed')
+        if videos:
+            if priority_animal:
+                preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
+                pick = preferred[0] if preferred else videos[0]
+            else:
+                pick = videos[0]
+            return {
+                'type': 'archive',
+                'id': pick['video_id'],
+                'data': pick
+            }
+
+        return None
+
+    # =========================================================================
+    # DISPATCH
+    # =========================================================================
+
+    def _dispatch_work(self, work: dict):
+        """Route work to appropriate handler."""
+        work_type = work['type']
+        work_id = work['id']
+
         try:
-            if self.working_dir.exists():
-                for file_path in self.working_dir.iterdir():
-                    if file_path.is_file():
-                        file_path.unlink()
-                        logger.debug(f"Cleaned up: {file_path.name}")
+            if work_type == 'intake':
+                self._intake_from_staging(work)
+            elif work_type == 'pipeline':
+                self._run_pipeline(work)
+            elif work_type == 'archive':
+                self._archive_to_nas(work)
+            else:
+                logger.warning(f"Unknown work type: {work_type}")
+
         except Exception as e:
-            logger.warning(f"Cleanup failed: {e}")
+            error_msg = f"{work_type} failed: {str(e)}"
+            logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
+            self.db.mark_failed(work_id, error_msg)
+
+    # =========================================================================
+    # DRY RUN
+    # =========================================================================
+
+    def dry_run(self):
+        """Scan without processing. Shows what would be done."""
+        logger.info("ProcessingOrchestrator dry run")
+
+        # Scan staging for new files
+        if self.staging_dir and self.staging_dir.exists():
+            newly_found = self.state.discover_dlc_staged(self.staging_dir)
+            print(f"\nStaging scan:")
+            print(f"  Staging directory:  {self.staging_dir}")
+            print(f"  New DLC outputs:    {len(newly_found)}")
+        else:
+            print(f"\nStaging scan:")
+            print(f"  Staging directory:  {self.staging_dir or '(not configured)'}")
+            print(f"  Status:             NOT ACCESSIBLE")
+            newly_found = []
+
+        # Show priority animal if set
+        priority_animal = self._get_priority_animal()
+        if priority_animal:
+            print(f"\n  PRIORITY ANIMAL:    {priority_animal}")
+
+        # Show pending work
+        print(f"\nPending work items:")
+        count = 0
+        for state_label, state in [
+            ("Videos to intake from NAS", "dlc_complete"),
+            ("Videos to process (seg/reach/outcomes)", "processing"),
+            ("Videos to archive to NAS", "processed"),
+        ]:
+            items = self.db.get_videos_in_state(state)
+            if items:
+                print(f"  {state_label}: {len(items)}")
+                for item in items[:5]:
+                    print(f"    - {item.get('video_id')}")
+                if len(items) > 5:
+                    print(f"    ... and {len(items) - 5} more")
+                count += len(items)
+
+        if count == 0:
+            print("  (no pending work)")
+
+        # Show local disk usage
+        if self.processing_dir and self.processing_dir.exists():
+            local_videos = len(list(self.processing_dir.glob("*DLC*.h5")))
+            print(f"\nLocal Processing/: {local_videos} videos")
+            print(f"  Max local pending: {self.config.max_local_pending}")
+        print()
+
+    # =========================================================================
+    # INTAKE: Copy from NAS staging to local Processing/
+    # =========================================================================
+
+    def _intake_from_staging(self, work: dict):
+        """Copy DLC-complete video+h5 from NAS staging to local Processing/."""
+        video_id = work['id']
+        video_data = work['data']
+
+        if not self.processing_dir:
+            logger.error("PROCESSING path not configured")
+            self.db.mark_failed(video_id, "PROCESSING path not configured")
+            return
+
+        logger.info(f"Intake {video_id} from staging to Processing/")
+
+        self.db.log_step(video_id, 'intake', 'started')
+        start_time = time.time()
+
+        try:
+            # Find all files in staging directory
+            source_dir = Path(video_data.get('current_path', '')).parent
+            if not source_dir.exists():
+                # Try staging dir directly
+                source_dir = self.staging_dir
+
+            all_files = self._get_associated_files(source_dir, video_id)
+            if not all_files:
+                raise FileNotFoundError(f"No files found for {video_id} in {source_dir}")
+
+            self.processing_dir.mkdir(parents=True, exist_ok=True)
+
+            # Copy files to local Processing/
+            copied_files = []
+            for file_path in all_files:
+                dest_path = self.processing_dir / file_path.name
+                if safe_copy(file_path, dest_path, verify=True):
+                    copied_files.append(file_path.name)
+                    logger.debug(f"Copied: {file_path.name}")
+                else:
+                    logger.warning(f"Failed to copy: {file_path.name}")
+
+            if not copied_files:
+                raise IOError(f"Failed to copy any files for {video_id}")
+
+            duration = time.time() - start_time
+
+            # Find local DLC h5 path
+            local_h5 = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+            local_mp4 = self.processing_dir / f"{video_id}.mp4"
+
+            # Advance to processing state
+            self.db.update_state(
+                video_id, 'processing',
+                dlc_output_path=str(local_h5[0]) if local_h5 else video_data.get('dlc_output_path'),
+                current_path=str(local_mp4)
+            )
+            self.db.log_step(
+                video_id, 'intake', 'completed',
+                message=f"Copied {len(copied_files)} files to Processing/",
+                duration=duration
+            )
+
+            logger.info(f"Intake complete: {video_id} ({len(copied_files)} files, {duration:.1f}s)")
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self.db.mark_failed(video_id, str(e))
+            self.db.log_step(video_id, 'intake', 'failed', message=str(e), duration=duration)
+            raise
+
+    # =========================================================================
+    # PIPELINE: Run seg -> reach -> outcomes
+    # =========================================================================
+
+    def _run_pipeline(self, work: dict):
+        """Run segmentation, reach detection, and outcome detection on a video."""
+        from mousereach.segmentation.core.batch import process_single as seg_single
+        from mousereach.reach.core.batch import process_single as reach_single
+        from mousereach.outcomes.core.batch import process_single as outcome_single
+
+        video_id = work['id']
+        video_data = work['data']
+
+        dlc_path = Path(video_data.get('dlc_output_path', ''))
+        if not dlc_path.exists():
+            # Try to find it in Processing/
+            h5_files = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+            if h5_files:
+                dlc_path = h5_files[0]
+            else:
+                self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
+                return
+
+        logger.info(f"Running pipeline on {video_id}")
+        pipeline_start = time.time()
+
+        # --- Step 1: Segmentation ---
+        self.db.log_step(video_id, 'segmentation', 'started')
+        step_start = time.time()
+
+        try:
+            seg_result = seg_single(dlc_path)
+            seg_duration = time.time() - step_start
+
+            if seg_result.get('success', False):
+                self.db.log_step(
+                    video_id, 'segmentation', 'completed',
+                    message=f"status={seg_result.get('status')}, boundaries={seg_result.get('n_boundaries', 0)}",
+                    duration=seg_duration
+                )
+                logger.info(f"Segmentation complete: {video_id} ({seg_duration:.1f}s)")
+            else:
+                error = seg_result.get('error', 'segmentation failed')
+                self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
+                self.db.mark_failed(video_id, f"Segmentation failed: {error}")
+                return
+
+        except Exception as e:
+            seg_duration = time.time() - step_start
+            self.db.log_step(video_id, 'segmentation', 'failed', message=str(e), duration=seg_duration)
+            self.db.mark_failed(video_id, f"Segmentation error: {e}")
+            raise
+
+        # --- Step 2: Reach Detection ---
+        seg_path = self.processing_dir / f"{video_id}_segments.json"
+        if not seg_path.exists():
+            self.db.mark_failed(video_id, "Segments file not created by segmentation")
+            return
+
+        self.db.log_step(video_id, 'reach_detection', 'started')
+        step_start = time.time()
+
+        try:
+            reach_result = reach_single(dlc_path, seg_path)
+            reach_duration = time.time() - step_start
+
+            self.db.log_step(
+                video_id, 'reach_detection', 'completed',
+                message=f"reaches={reach_result.get('total_reaches', 0)}",
+                duration=reach_duration
+            )
+            logger.info(f"Reach detection complete: {video_id} ({reach_duration:.1f}s)")
+
+        except Exception as e:
+            reach_duration = time.time() - step_start
+            self.db.log_step(video_id, 'reach_detection', 'failed', message=str(e), duration=reach_duration)
+            self.db.mark_failed(video_id, f"Reach detection error: {e}")
+            raise
+
+        # --- Step 3: Outcome Detection (skip for E/F trays) ---
+        tray_info = parse_tray_type(f"{video_id}.mp4")
+        tray_type = tray_info.get('tray_type', 'P')
+        skip_outcomes = tray_type in ('E', 'F')
+
+        if not skip_outcomes:
+            reach_path = self.processing_dir / f"{video_id}_reaches.json"
+
+            self.db.log_step(video_id, 'outcome_detection', 'started')
+            step_start = time.time()
+
+            try:
+                outcome_result = outcome_single(dlc_path, seg_path, reach_path)
+                outcome_duration = time.time() - step_start
+
+                self.db.log_step(
+                    video_id, 'outcome_detection', 'completed',
+                    message=f"segments={outcome_result.get('n_segments', 0)}",
+                    duration=outcome_duration
+                )
+                logger.info(f"Outcome detection complete: {video_id} ({outcome_duration:.1f}s)")
+
+            except Exception as e:
+                outcome_duration = time.time() - step_start
+                self.db.log_step(video_id, 'outcome_detection', 'failed', message=str(e), duration=outcome_duration)
+                self.db.mark_failed(video_id, f"Outcome detection error: {e}")
+                raise
+        else:
+            logger.info(f"Skipping outcomes for {video_id} (tray type: {tray_type})")
+
+        # --- Pipeline complete ---
+        pipeline_duration = time.time() - pipeline_start
+        self.db.update_state(video_id, 'processed')
+        self.db.log_step(
+            video_id, 'pipeline', 'completed',
+            message=f"All steps complete ({pipeline_duration:.1f}s total)",
+            duration=pipeline_duration
+        )
+        logger.info(f"Pipeline complete: {video_id} ({pipeline_duration:.1f}s total)")
+
+    # =========================================================================
+    # ARCHIVE: Move processed videos to NAS
+    # =========================================================================
+
+    def _archive_to_nas(self, work: dict):
+        """Archive processed video to NAS and clean up local copy."""
+        from mousereach.archive.core import archive_video
+
+        video_id = work['id']
+
+        logger.info(f"Archiving {video_id} to NAS")
+        self.db.log_step(video_id, 'archive', 'started')
+        start_time = time.time()
+
+        try:
+            result = archive_video(video_id, dry_run=False, verbose=False)
+            duration = time.time() - start_time
+
+            if result.get('success'):
+                self.db.update_state(video_id, 'archived')
+                self.db.log_step(
+                    video_id, 'archive', 'completed',
+                    message=f"Archived {len(result.get('files_moved', []))} files to {result.get('destination')}",
+                    duration=duration
+                )
+                logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
+
+                # Remove from staging on NAS (the DLC PC's copy)
+                if self.staging_dir:
+                    staging_files = self._get_associated_files(self.staging_dir, video_id)
+                    for f in staging_files:
+                        try:
+                            f.unlink()
+                            logger.debug(f"Cleaned staging: {f.name}")
+                        except Exception:
+                            pass
+            else:
+                error = result.get('error', 'archive failed')
+                # Not a fatal error — video stays in processed, will retry
+                self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
+                logger.warning(f"Archive failed for {video_id}: {error} (will retry)")
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
+            logger.error(f"Archive error for {video_id}: {e}")
+            # Don't mark_failed — keep in processed state for retry
+
+
+# =============================================================================
+# BACKWARD COMPATIBILITY
+# =============================================================================
+
+WatcherOrchestrator = DLCOrchestrator
