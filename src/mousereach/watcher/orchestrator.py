@@ -1089,6 +1089,50 @@ class ProcessingOrchestrator(BaseOrchestrator):
         else:
             logger.info(f"Skipping outcomes for {video_id} (tray type: {tray_type})")
 
+        # --- Step 4: Feature Extraction (join reaches + outcomes + DLC kinematics) ---
+        if not skip_outcomes:
+            reach_path = self.processing_dir / f"{video_id}_reaches.json"
+            outcome_path = self.processing_dir / f"{video_id}_pellet_outcomes.json"
+
+            if reach_path.exists() and outcome_path.exists():
+                self.db.log_step(video_id, 'feature_extraction', 'started')
+                step_start = time.time()
+
+                try:
+                    from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+                    extractor = FeatureExtractor()
+                    features = extractor.extract(dlc_path, reach_path, outcome_path)
+
+                    features_path = self.processing_dir / f"{video_id}_features.json"
+                    with open(features_path, 'w') as f:
+                        json.dump(features.to_dict(), f, indent=2)
+
+                    feat_duration = time.time() - step_start
+                    self.db.log_step(
+                        video_id, 'feature_extraction', 'completed',
+                        message=f"segments={features.n_segments}",
+                        duration=feat_duration
+                    )
+                    logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
+
+                    # --- Step 5: Database sync (push features to connectome.db) ---
+                    try:
+                        from mousereach.sync.database import sync_file_to_database
+                        synced = sync_file_to_database(features_path)
+                        if synced:
+                            self.db.log_step(video_id, 'db_sync', 'completed', message="Synced to connectome.db")
+                            logger.info(f"Database sync complete: {video_id}")
+                        else:
+                            logger.debug(f"Database sync skipped for {video_id} (subject not in DB or DB unavailable)")
+                    except Exception as e:
+                        logger.warning(f"Database sync failed for {video_id}: {e}")
+
+                except Exception as e:
+                    feat_duration = time.time() - step_start
+                    self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e), duration=feat_duration)
+                    # Feature extraction failure is non-fatal — video still gets triaged/processed
+                    logger.warning(f"Feature extraction failed for {video_id}: {e}")
+
         # --- Pipeline complete — generate provenance manifest ---
         pipeline_duration = time.time() - pipeline_start
 
