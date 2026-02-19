@@ -78,12 +78,26 @@ class BaseOrchestrator:
     # MAIN LOOP
     # =========================================================================
 
+    def _is_paused(self) -> bool:
+        """Check if the watcher is paused (filming mode sentinel file exists)."""
+        try:
+            pause_file = require_processing_root() / "watcher_paused.flag"
+            return pause_file.exists()
+        except Exception:
+            return False
+
     def run(self, shutdown_event: threading.Event):
         """Main orchestrator loop: scan + process in a single thread."""
         logger.info(f"{self.__class__.__name__} starting main loop")
 
         while not shutdown_event.is_set():
             try:
+                # Check for pause sentinel (filming mode)
+                if self._is_paused():
+                    logger.info("Watcher PAUSED (filming mode) — run 'mousereach-watch-toggle' to resume.")
+                    shutdown_event.wait(timeout=self.config.poll_interval_seconds)
+                    continue
+
                 # Phase A: Scan for new work
                 self._scan_phase()
 
