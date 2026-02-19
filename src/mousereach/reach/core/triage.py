@@ -126,6 +126,9 @@ def check_anomalies(result: Dict, gt_data: Optional[Dict] = None) -> List[str]:
         anomalies.append(f"n_segments={n_seg} (expected {EXPECTED_SEGMENTS_MIN}-{EXPECTED_SEGMENTS_MAX})")
 
     # Check each segment for issues
+    total_reaches = 0
+    very_low_conf_reaches = 0
+
     for s in result['segments']:
         seg_num = s.get('segment_num')
         if is_segment_verified_in_gt(gt_data, seg_num):
@@ -135,11 +138,22 @@ def check_anomalies(result: Dict, gt_data: Optional[Dict] = None) -> List[str]:
         if s['n_reaches'] > MAX_REACHES_PER_SEGMENT:
             anomalies.append(f"seg {seg_num}: >{MAX_REACHES_PER_SEGMENT} reaches")
 
-        # Very low confidence reaches (tracking failure, not ambiguous reach)
+        # Count very-low-confidence reaches for video-level assessment
         for r in s.get('reaches', []):
+            total_reaches += 1
             conf = r.get('confidence', 0)
             if conf < REACH_LOW_CONFIDENCE:
-                anomalies.append(f"reach {r.get('reach_id')}: very low confidence ({conf:.2f})")
+                very_low_conf_reaches += 1
+
+    # Video-level quality check: flag if >20% of reaches have very low
+    # confidence (indicates widespread tracking failure). Individual bad
+    # reaches are expected — the confidence score in the JSON already
+    # marks them so downstream kinematics can filter them.
+    if total_reaches > 0 and very_low_conf_reaches / total_reaches > 0.20:
+        anomalies.append(
+            f"{very_low_conf_reaches}/{total_reaches} reaches "
+            f"({very_low_conf_reaches/total_reaches*100:.0f}%) below {REACH_LOW_CONFIDENCE} confidence"
+        )
 
     return anomalies
 
