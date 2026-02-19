@@ -165,6 +165,7 @@ mousereach-watch-quarantine = "mousereach.watcher.cli:main_quarantine"
 mousereach-watch-prioritize = "mousereach.watcher.cli:main_prioritize"
 mousereach-watch-process-animal = "mousereach.watcher.cli:main_process_animal"
 mousereach-watch-info = "mousereach.watcher.cli:main_info"
+mousereach-watch-toggle = "mousereach.watcher.cli:main_toggle"
 
 [project.entry-points."napari.manifest"]
 mousereach = "mousereach:napari.yaml"

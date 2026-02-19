@@ -1027,3 +1027,60 @@ def main_info():
     from mousereach.watcher.roles import print_machine_info
 
     print_machine_info()
+
+
+# =============================================================================
+# TOGGLE / PAUSE / RESUME COMMANDS
+# =============================================================================
+
+def _get_pause_file():
+    """Return the path to the pause sentinel file."""
+    from mousereach.config import require_processing_root
+    return require_processing_root() / "watcher_paused.flag"
+
+
+def main_toggle():
+    """Toggle the watcher between filming (paused) and processing (active) modes.
+
+    When paused, the running watcher skips all work and waits.
+    When active, normal processing resumes.
+
+    Usage:
+        mousereach-watch-toggle          Toggle current state
+        mousereach-watch-toggle --status  Show current state only
+    """
+    args = sys.argv[1:]
+    status_only = '--status' in args
+
+    try:
+        pause_file = _get_pause_file()
+    except Exception as e:
+        print(f"ERROR: Could not determine processing root: {e}", file=sys.stderr)
+        print("Run 'mousereach-setup' to configure paths.", file=sys.stderr)
+        sys.exit(1)
+
+    currently_paused = pause_file.exists()
+
+    if status_only:
+        if currently_paused:
+            print("Watcher is PAUSED (filming mode).")
+            print("Run 'mousereach-watch-toggle' to resume processing.")
+        else:
+            print("Watcher is ACTIVE (processing mode).")
+            print("Run 'mousereach-watch-toggle' to pause for filming.")
+        return
+
+    if currently_paused:
+        pause_file.unlink()
+        print("=" * 50)
+        print("  Watcher RESUMED — processing mode active")
+        print("  DLC and cropping will run during downtime.")
+        print("=" * 50)
+    else:
+        pause_file.parent.mkdir(parents=True, exist_ok=True)
+        pause_file.write_text("Watcher paused for filming.\n")
+        print("=" * 50)
+        print("  Watcher PAUSED — filming mode active")
+        print("  DLC processing is suspended.")
+        print("  Toggle again when filming is done.")
+        print("=" * 50)
