@@ -286,10 +286,18 @@ def main_watch():
 # =============================================================================
 
 def main_status():
-    """Show current pipeline state."""
+    """Show current pipeline state.
+
+    Usage:
+        mousereach-watch-status              Overall counts
+        mousereach-watch-status --by-animal  Per-animal breakdown with QC
+        mousereach-watch-status --json       JSON output
+        mousereach-watch-status --log N      Show last N log entries
+    """
     # Parse args
     args = sys.argv[1:]
     json_output = '--json' in args
+    by_animal = '--by-animal' in args
     log_limit = 10
 
     # Check for --log N
@@ -374,6 +382,59 @@ def main_status():
     print(f"  Quarantined:  {video_states.get('quarantined', 0)}")
     print(f"  Failed:       {video_states.get('failed', 0)}")
     print()
+
+    # Per-animal breakdown
+    if by_animal:
+        animals = db.get_animal_summary()
+        if animals:
+            # Also scan triage results for QC breakdown
+            try:
+                from mousereach.config import Paths
+                processing_dir = Paths.PROCESSING
+            except Exception:
+                processing_dir = None
+
+            triage_by_animal = {}
+            if processing_dir and processing_dir.exists():
+                for triage_file in processing_dir.glob("*_triage.json"):
+                    try:
+                        with open(triage_file) as f:
+                            td = json.load(f)
+                        vid = td.get('video_id', '')
+                        # Extract animal_id from video_id (YYYYMMDD_CNTxxxx_...)
+                        parts = vid.split('_')
+                        if len(parts) >= 2:
+                            aid = parts[1]  # CNTxxxx
+                            if aid not in triage_by_animal:
+                                triage_by_animal[aid] = {'approved': 0, 'needs_review': 0}
+                            verdict = td.get('verdict', '')
+                            if verdict == 'auto_approved':
+                                triage_by_animal[aid]['approved'] += 1
+                            elif verdict == 'needs_review':
+                                triage_by_animal[aid]['needs_review'] += 1
+                    except Exception:
+                        pass
+
+            # Header
+            print("Per-Animal Pipeline Status:")
+            print(f"  {'Animal':<12} {'Total':>5} {'DLC':>5} {'Proc':>5} {'Done':>5} {'Arch':>5} {'Fail':>5} {'QC OK':>5} {'Review':>6}")
+            print(f"  {'-'*12} {'-'*5} {'-'*5} {'-'*5} {'-'*5} {'-'*5} {'-'*5} {'-'*5} {'-'*6}")
+
+            for a in animals:
+                aid = a['animal_id']
+                s = a['states']
+                dlc = s.get('dlc_complete', 0)
+                proc = s.get('processing', 0)
+                done = s.get('processed', 0)
+                arch = s.get('archived', 0)
+                fail = s.get('failed', 0) + s.get('quarantined', 0)
+                qc = triage_by_animal.get(aid, {})
+                ok = qc.get('approved', 0)
+                rev = qc.get('needs_review', 0)
+
+                print(f"  {aid:<12} {a['total']:>5} {dlc:>5} {proc:>5} {done:>5} {arch:>5} {fail:>5} {ok:>5} {rev:>6}")
+
+            print()
 
     # Recent activity
     if log_limit > 0:

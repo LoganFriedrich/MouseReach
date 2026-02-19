@@ -741,6 +741,42 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    def get_animal_summary(self) -> list:
+        """
+        Get per-animal pipeline summary.
+
+        Returns:
+            List of dicts, one per animal_id, with state counts.
+            Sorted by animal_id.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute("""
+                    SELECT
+                        animal_id,
+                        state,
+                        COUNT(*) as count
+                    FROM videos
+                    WHERE animal_id IS NOT NULL AND animal_id != ''
+                    GROUP BY animal_id, state
+                    ORDER BY animal_id, state
+                """).fetchall()
+
+                # Pivot into per-animal dicts
+                animals = {}
+                for row in rows:
+                    aid = row['animal_id']
+                    if aid not in animals:
+                        animals[aid] = {'animal_id': aid, 'total': 0, 'states': {}}
+                    animals[aid]['states'][row['state']] = row['count']
+                    animals[aid]['total'] += row['count']
+
+                return sorted(animals.values(), key=lambda a: a['animal_id'])
+
+            finally:
+                conn.close()
+
     def mark_quarantined(self, identifier: str, reason: str, is_collage: bool = False):
         """
         Mark video or collage as quarantined.
