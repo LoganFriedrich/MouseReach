@@ -10,6 +10,8 @@ import threading
 import socket
 import logging
 import os
+import time
+import functools
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -44,12 +46,46 @@ VIDEO_TRANSITIONS = {
 }
 
 
+def _retry_network_errors(method):
+    """Retry DB methods on transient network drive errors (readonly, locked, busy)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if not self._is_network_drive:
+            return method(self, *args, **kwargs)
+
+        max_retries = 5
+        base_delay = 0.5
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                return method(self, *args, **kwargs)
+            except sqlite3.OperationalError as e:
+                last_error = e
+                err = str(e).lower()
+                is_transient = any(x in err for x in [
+                    'readonly', 'locked', 'busy', 'disk i/o',
+                ])
+                if is_transient and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"DB retry {attempt + 1}/{max_retries}: {e} "
+                        f"(waiting {delay:.1f}s)"
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+        raise last_error
+    return wrapper
+
+
 class WatcherDB:
     """
     SQLite database for tracking video pipeline state.
 
     Thread-safe with automatic table creation and state validation.
     Detects network drives and uses DELETE journal mode instead of WAL.
+    Retries transient errors on network drives with exponential backoff.
     """
 
     def __init__(self, db_path: Path = None):
@@ -144,6 +180,7 @@ class WatcherDB:
 
         return conn
 
+    @_retry_network_errors
     def _init_db(self):
         """Create tables and indexes if they don't exist."""
         with self._lock:
@@ -246,6 +283,7 @@ class WatcherDB:
         # Run migrations for existing databases
         self._migrate_db()
 
+    @_retry_network_errors
     def _migrate_db(self):
         """Add columns that may not exist in older databases."""
         new_columns = [
@@ -297,6 +335,7 @@ class WatcherDB:
         """Get current timestamp in ISO format."""
         return datetime.now().isoformat()
 
+    @_retry_network_errors
     def register_collage(self, filename: str, source_path: str) -> int:
         """
         Register new collage file.
@@ -335,6 +374,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def register_video(self, video_id: str, source_path: str,
                       collage_id: str = None, **metadata) -> str:
         """
@@ -391,6 +431,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def update_state(self, video_id: str, new_state: str, **kwargs):
         """
         Update video state with validation.
@@ -460,6 +501,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def force_state(self, video_id: str, new_state: str, **kwargs):
         """
         Set video state directly, bypassing transition validation.
@@ -523,6 +565,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def update_collage_state(self, filename: str, new_state: str, **kwargs):
         """
         Update collage state with validation.
@@ -592,6 +635,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_videos_in_state(self, state: str) -> List[dict]:
         """
         Get all videos in given state.
@@ -615,6 +659,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_collages_in_state(self, state: str) -> List[dict]:
         """
         Get all collages in given state.
@@ -638,6 +683,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def log_step(self, video_id: str, step: str, status: str,
                 message: str = None, duration: float = None):
         """
@@ -667,6 +713,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_video(self, video_id: str) -> Optional[dict]:
         """
         Get single video by ID.
@@ -690,6 +737,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_collage(self, filename: str) -> Optional[dict]:
         """
         Get single collage by filename.
@@ -713,6 +761,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_pipeline_summary(self) -> dict:
         """
         Get pipeline summary with counts by state.
@@ -775,6 +824,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_animal_summary(self) -> list:
         """
         Get per-animal pipeline summary.
@@ -825,6 +875,7 @@ class WatcherDB:
         else:
             self.update_state(identifier, 'quarantined', error_message=reason)
 
+    @_retry_network_errors
     def mark_failed(self, video_id: str, error_message: str):
         """
         Mark video as failed with error tracking.
@@ -867,6 +918,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def reset_failed(self, video_id: str, to_state: str = None):
         """
         Reset a failed video to retry from a previous state.
@@ -928,6 +980,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def update_file_size(self, filename: str, size: int):
         """
         Update collage file size for stability tracking.
@@ -970,6 +1023,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def get_recent_log(self, limit: int = 20) -> List[dict]:
         """
         Get recent processing log entries.
@@ -994,6 +1048,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def collage_exists(self, filename: str) -> bool:
         """
         Check if collage is already registered.
@@ -1017,6 +1072,7 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    @_retry_network_errors
     def video_exists(self, video_id: str) -> bool:
         """
         Check if video is already registered.
