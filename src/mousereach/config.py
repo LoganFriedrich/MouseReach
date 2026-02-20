@@ -594,6 +594,7 @@ class WatcherConfig:
         self.max_retries: int = cfg.get('max_retries', 3)
         self.mode: str = cfg.get('mode', 'dlc_pc')  # 'dlc_pc' or 'processing_server'
         self.max_local_pending: int = cfg.get('max_local_pending', 200)
+        self.also_process: bool = cfg.get('also_process', False)  # DLC PCs also run seg/reach/outcomes
 
     @classmethod
     def load(cls) -> 'WatcherConfig':
@@ -612,6 +613,7 @@ class WatcherConfig:
             'max_retries': self.max_retries,
             'mode': self.mode,
             'max_local_pending': self.max_local_pending,
+            'also_process': self.also_process,
         }
         if self.dlc_config_path:
             d['dlc_config_path'] = str(self.dlc_config_path)

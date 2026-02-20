@@ -37,6 +37,9 @@ VIDEO_TRANSITIONS = {
     'processing': ['processed', 'failed'],
     'processed': ['archiving'],
     'archiving': ['archived', 'failed'],
+    'archived': ['outdated', 'crystallized'],  # Version-aware reprocessing
+    'outdated': ['dlc_queued', 'processing', 'failed'],  # Re-enters pipeline
+    'crystallized': [],  # Locked against reprocessing (use force_state to unlock)
     'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed'],  # Retry from any prior state
 }
 
@@ -176,6 +179,11 @@ class WatcherDB:
                         claimed_by TEXT,
                         current_path TEXT,
                         dlc_output_path TEXT,
+                        pipeline_versions_hash TEXT,
+                        crystallized_at TEXT,
+                        crystallized_by TEXT,
+                        crystallized_label TEXT,
+                        reprocess_scope TEXT,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                     )
@@ -232,6 +240,32 @@ class WatcherDB:
             except Exception as e:
                 logger.error(f"Failed to initialize database: {e}")
                 raise
+            finally:
+                conn.close()
+
+        # Run migrations for existing databases
+        self._migrate_db()
+
+    def _migrate_db(self):
+        """Add columns that may not exist in older databases."""
+        new_columns = [
+            ('videos', 'pipeline_versions_hash', 'TEXT'),
+            ('videos', 'crystallized_at', 'TEXT'),
+            ('videos', 'crystallized_by', 'TEXT'),
+            ('videos', 'crystallized_label', 'TEXT'),
+            ('videos', 'reprocess_scope', 'TEXT'),
+        ]
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                for table, column, col_type in new_columns:
+                    try:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                        logger.debug(f"Added column {table}.{column}")
+                    except Exception:
+                        pass  # Column already exists
+                conn.commit()
             finally:
                 conn.close()
 
