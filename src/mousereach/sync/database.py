@@ -38,7 +38,7 @@ except ImportError:
 
 
 # Central database location
-DB_PATH = Path("Y:/LAB_ROOT/MouseDB/connectome.db")
+DB_PATH = Path("Y:/LAB_ROOT/Databases/connectome.db")
 
 # Only sync features files (Step 5 output with joined reach+outcome data)
 FEATURES_SUFFIX = "_features.json"
