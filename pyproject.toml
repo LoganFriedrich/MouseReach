@@ -12,7 +12,9 @@ authors = [{name = "Logan Friedrich"}]
 requires-python = ">=3.9,<3.11"
 dependencies = [
     # Core ML/DL dependencies
-    "tensorflow>=2.10",
+    # TF 2.10.x is the last version with native Windows GPU support.
+    # TF 2.11+ requires WSL2 for GPU on Windows — not viable for lab PCs.
+    "tensorflow>=2.10,<2.11",
     "deeplabcut",
     # NOTE: deeplabcut[gui] requires wxpython which needs Visual Studio to build
     # We use napari for GUI instead, so wxpython is not needed

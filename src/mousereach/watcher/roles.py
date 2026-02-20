@@ -117,7 +117,7 @@ def validate_configured_paths() -> list:
 # =============================================================================
 
 def print_machine_info():
-    """Print diagnostic info about drives and configured path accessibility."""
+    """Print diagnostic info about drives, GPU, and configured path accessibility."""
     drives = get_available_drives()
 
     print("=" * 60)
@@ -135,6 +135,15 @@ def print_machine_info():
             locality = "local" if info["local"] else "network"
             print(f"  {letter}  ({locality})")
     print()
+
+    # Show GPU diagnostics (set up env first so TF/cuDNN paths are available)
+    try:
+        from mousereach.gpu import setup_gpu_env, print_gpu_info
+        setup_gpu_env()
+        print_gpu_info()
+    except Exception as e:
+        print(f"GPU diagnostics failed: {e}")
+        print()
 
     # Show configured path validation
     print("Configured Paths:")

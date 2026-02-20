@@ -180,7 +180,7 @@ def main_watch():
         if not Paths.PROCESSING:
             problems.append("PROCESSING path not configured")
     else:
-        # DLC PC needs: NAS drive, DLC config, ffmpeg
+        # DLC PC needs: NAS drive, DLC config, ffmpeg, GPU
         if not Paths.NAS_DRIVE:
             problems.append("NAS drive not configured")
         elif not Paths.NAS_DRIVE.exists():
@@ -193,6 +193,24 @@ def main_watch():
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             problems.append("ffmpeg not found on PATH")
+
+        # GPU validation — ensure CUDA env is set up and check availability
+        try:
+            from mousereach.gpu import setup_gpu_env, check_gpu
+            setup_gpu_env()
+            gpu_status = check_gpu()
+            if gpu_status.has_any_gpu:
+                gpu_name = gpu_status.nvidia_gpu_name or gpu_status.torch_gpu_name or "unknown"
+                logger.info(f"GPU detected: {gpu_name}")
+            else:
+                problems.append(
+                    "No GPU available for DLC inference. "
+                    "Check NVIDIA driver, CUDA toolkit, and cuDNN installation."
+                )
+            for w in gpu_status.warnings:
+                logger.warning(f"GPU: {w}")
+        except Exception as e:
+            logger.warning(f"GPU check failed: {e}")
 
     if problems:
         logger.error("Prerequisite validation failed:")
