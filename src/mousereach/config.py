@@ -95,7 +95,10 @@ class Paths:
 
     # --- NAS/Archive Paths (derived from MouseReach_NAS_DRIVE) ---
     # These will be None if NAS_DRIVE is not configured
-    NAS_ROOT = NAS_DRIVE / "! DLC Output" if NAS_DRIVE else None
+    # nas_root config override allows pointing at a different folder structure
+    # (e.g. Y:\2_Connectome\Behavior\MouseReach_Pipeline instead of X:\! DLC Output)
+    _nas_root = _config.get("nas_root")
+    NAS_ROOT = Path(_nas_root) if _nas_root else (NAS_DRIVE / "! DLC Output" if NAS_DRIVE else None)
 
     # Raw 8-camera collage videos (ARCHIVE - NEVER DELETE)
     MULTI_ANIMAL_SOURCE = NAS_ROOT / "Unanalyzed" / "Multi-Animal" if NAS_ROOT else None
