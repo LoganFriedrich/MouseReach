@@ -379,6 +379,8 @@ def main_status():
     print(f"  Processing:   {video_states.get('processing', 0)}")
     print(f"  Processed:    {video_states.get('processed', 0)}")
     print(f"  Archived:     {video_states.get('archived', 0)}")
+    print(f"  Outdated:     {video_states.get('outdated', 0)}")
+    print(f"  Crystallized: {video_states.get('crystallized', 0)}")
     print(f"  Quarantined:  {video_states.get('quarantined', 0)}")
     print(f"  Failed:       {video_states.get('failed', 0)}")
     print()
@@ -1141,7 +1143,229 @@ def main_toggle():
         pause_file.parent.mkdir(parents=True, exist_ok=True)
         pause_file.write_text("Watcher paused for filming.\n")
         print("=" * 50)
-        print("  Watcher PAUSED — filming mode active")
+        print("  Watcher PAUSED -- filming mode active")
         print("  DLC processing is suspended.")
         print("  Toggle again when filming is done.")
         print("=" * 50)
+
+
+# =============================================================================
+# VERSION CHECK COMMAND
+# =============================================================================
+
+def main_version_check():
+    """Check version compliance of archived videos.
+
+    Compares each archived video's processing manifest against the current
+    pipeline_versions.json to find outdated videos.
+
+    Usage:
+        mousereach-version-check              Show report only
+        mousereach-version-check --mark       Also mark outdated videos for reprocessing
+        mousereach-version-check --init       Initialize pipeline_versions.json
+    """
+    args = sys.argv[1:]
+    mark = '--mark' in args
+    init = '--init' in args
+
+    from mousereach.config import require_processing_root, Paths
+    from mousereach.watcher.db import WatcherDB
+
+    if init:
+        from mousereach.pipeline.versions import initialize_versions
+        try:
+            data = initialize_versions()
+            print("Initialized pipeline_versions.json:")
+            print(json.dumps(data, indent=2))
+        except Exception as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    # Load database
+    try:
+        db_path = require_processing_root() / "watcher.db"
+        if not db_path.exists():
+            print("ERROR: Watcher database not found. Run 'mousereach-watch' first.", file=sys.stderr)
+            sys.exit(1)
+        db = WatcherDB(db_path)
+    except Exception as e:
+        print(f"ERROR: Failed to load database: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    nas_root = Paths.NAS_ROOT
+    if not nas_root:
+        print("ERROR: NAS_ROOT not configured", file=sys.stderr)
+        sys.exit(1)
+
+    from mousereach.watcher.reprocessor import ReprocessingScanner
+    scanner = ReprocessingScanner(db, nas_root)
+
+    if mark:
+        summary = scanner.scan(mark_outdated=True)
+        print(scanner.get_version_report())
+        if summary['outdated'] > 0:
+            print(f"\n{summary['outdated']} videos marked as 'outdated' in the database.")
+            print("The watcher will automatically reprocess them.")
+    else:
+        print(scanner.get_version_report())
+        outdated = summary = scanner.scan(mark_outdated=False)
+        if summary['outdated'] > 0:
+            print(f"To mark these for reprocessing, run:")
+            print(f"  mousereach-version-check --mark")
+
+
+# =============================================================================
+# CRYSTALLIZE COMMAND
+# =============================================================================
+
+def main_crystallize():
+    """Lock archived videos against reprocessing.
+
+    Usage:
+        mousereach-crystallize --cohort CNT01 --label "PNAS_2026"
+        mousereach-crystallize --videos "vid1,vid2" --label "prelim"
+        mousereach-crystallize --list                 Show crystallized videos
+    """
+    args = sys.argv[1:]
+
+    # Parse arguments
+    cohort = None
+    label = "unnamed_timepoint"
+    video_ids = None
+    list_mode = '--list' in args
+
+    for i, arg in enumerate(args):
+        if arg == '--cohort' and i + 1 < len(args):
+            cohort = args[i + 1]
+        elif arg == '--label' and i + 1 < len(args):
+            label = args[i + 1]
+        elif arg == '--videos' and i + 1 < len(args):
+            video_ids = [v.strip() for v in args[i + 1].split(',')]
+
+    if not list_mode and not cohort and not video_ids:
+        print("Usage: mousereach-crystallize [options]", file=sys.stderr)
+        print()
+        print("Options:")
+        print("  --cohort COHORT   Crystallize all archived videos for cohort")
+        print("  --videos V1,V2    Crystallize specific video IDs")
+        print("  --label LABEL     Human-readable label (e.g. 'PNAS_2026_submission')")
+        print("  --list            Show currently crystallized videos")
+        print()
+        print("Examples:")
+        print("  mousereach-crystallize --cohort CNT01 --label 'PNAS_2026'")
+        print("  mousereach-crystallize --videos '20250624_CNT0115_P2' --label 'test'")
+        print("  mousereach-crystallize --list")
+        sys.exit(1)
+
+    # Load database
+    from mousereach.config import require_processing_root
+    from mousereach.watcher.db import WatcherDB
+
+    try:
+        db_path = require_processing_root() / "watcher.db"
+        if not db_path.exists():
+            print("ERROR: Watcher database not found.", file=sys.stderr)
+            sys.exit(1)
+        db = WatcherDB(db_path)
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if list_mode:
+        crystallized = db.get_videos_in_state('crystallized')
+        if not crystallized:
+            print("No crystallized videos.")
+            return
+
+        print("=" * 70)
+        print("Crystallized Videos")
+        print("=" * 70)
+        print()
+
+        # Group by label
+        by_label = {}
+        for v in crystallized:
+            lbl = v.get('crystallized_label', '(no label)')
+            by_label.setdefault(lbl, []).append(v)
+
+        for lbl, videos in sorted(by_label.items()):
+            print(f"  Label: {lbl}")
+            print(f"  Crystallized by: {videos[0].get('crystallized_by', '?')}")
+            print(f"  Date: {videos[0].get('crystallized_at', '?')[:10]}")
+            print(f"  Videos ({len(videos)}):")
+            for v in videos[:10]:
+                print(f"    - {v['video_id']}")
+            if len(videos) > 10:
+                print(f"    ... and {len(videos) - 10} more")
+            print()
+
+        print(f"Total crystallized: {len(crystallized)}")
+        return
+
+    # Crystallize
+    from mousereach.pipeline.versions import crystallize_videos
+    import getpass
+
+    try:
+        username = getpass.getuser()
+    except Exception:
+        username = None
+
+    count = crystallize_videos(
+        db=db,
+        video_ids=video_ids,
+        cohort=cohort,
+        label=label,
+        crystallized_by=username,
+    )
+
+    print(f"Crystallized {count} videos with label '{label}'.")
+    if count > 0:
+        print("These videos will NOT be reprocessed when tool versions change.")
+        print(f"To unlock: mousereach-uncrystallize --label '{label}'")
+
+
+def main_uncrystallize():
+    """Unlock crystallized videos (allows reprocessing again).
+
+    Usage:
+        mousereach-uncrystallize --label "PNAS_2026"
+        mousereach-uncrystallize --videos "vid1,vid2"
+    """
+    args = sys.argv[1:]
+    label = None
+    video_ids = None
+
+    for i, arg in enumerate(args):
+        if arg == '--label' and i + 1 < len(args):
+            label = args[i + 1]
+        elif arg == '--videos' and i + 1 < len(args):
+            video_ids = [v.strip() for v in args[i + 1].split(',')]
+
+    if not label and not video_ids:
+        print("Usage: mousereach-uncrystallize [options]", file=sys.stderr)
+        print()
+        print("Options:")
+        print("  --label LABEL     Uncrystallize all videos with this label")
+        print("  --videos V1,V2    Uncrystallize specific video IDs")
+        print()
+        print("Examples:")
+        print("  mousereach-uncrystallize --label 'PNAS_2026'")
+        sys.exit(1)
+
+    from mousereach.config import require_processing_root
+    from mousereach.watcher.db import WatcherDB
+    from mousereach.pipeline.versions import uncrystallize_videos
+
+    try:
+        db_path = require_processing_root() / "watcher.db"
+        db = WatcherDB(db_path)
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    count = uncrystallize_videos(db=db, video_ids=video_ids, label=label)
+    print(f"Uncrystallized {count} videos.")
+    if count > 0:
+        print("These videos can now be reprocessed when tool versions change.")

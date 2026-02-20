@@ -300,7 +300,33 @@ class DLCOrchestrator(BaseOrchestrator):
         """
         priority_animal = self._get_priority_animal()
 
-        # Priority 1: Videos with DLC complete — stage to NAS
+        # Priority 1a: Archive locally processed videos (also_process mode)
+        if self.config.also_process:
+            processed = self.db.get_videos_in_state('processed')
+            if processed:
+                if priority_animal:
+                    preferred = [v for v in processed if self._matches_priority(v, priority_animal, 'animal_id')]
+                    pick = preferred[0] if preferred else processed[0]
+                else:
+                    pick = processed[0]
+                return {
+                    'type': 'archive_local',
+                    'id': pick['video_id'],
+                    'data': pick
+                }
+
+        # Priority 1b: Run local pipeline on DLC-complete videos (also_process mode)
+        if self.config.also_process:
+            processing = self.db.get_videos_in_state('processing')
+            if processing:
+                pick = self._pick_from_pool(processing, priority_animal, 'animal_id')
+                return {
+                    'type': 'local_pipeline',
+                    'id': pick['video_id'],
+                    'data': pick
+                }
+
+        # Priority 1c: Videos with DLC complete — stage to NAS or run local pipeline
         videos = self.db.get_videos_in_state('dlc_complete')
         if videos:
             # For staging, prefer priority animal but no randomization (stage ASAP)
@@ -309,6 +335,13 @@ class DLCOrchestrator(BaseOrchestrator):
                 pick = preferred[0] if preferred else videos[0]
             else:
                 pick = videos[0]
+
+            if self.config.also_process:
+                return {
+                    'type': 'local_pipeline',
+                    'id': pick['video_id'],
+                    'data': pick
+                }
             return {
                 'type': 'stage_to_nas',
                 'id': pick['video_id'],
@@ -353,6 +386,10 @@ class DLCOrchestrator(BaseOrchestrator):
                 self._process_single_dlc(work)
             elif work_type == 'stage_to_nas':
                 self._stage_to_nas(work)
+            elif work_type == 'local_pipeline':
+                self._run_local_pipeline(work)
+            elif work_type == 'archive_local':
+                self._archive_locally_processed(work)
             else:
                 logger.warning(f"Unknown work type: {work_type}")
 
@@ -655,6 +692,213 @@ class DLCOrchestrator(BaseOrchestrator):
             raise
 
     # =========================================================================
+    # LOCAL PIPELINE (also_process mode)
+    # =========================================================================
+
+    def _run_local_pipeline(self, work: dict):
+        """Run seg/reach/outcomes locally after DLC, then archive directly.
+
+        When also_process=True, DLC PCs run the full pipeline locally instead
+        of staging to NAS for the processing server. Reuses the same pipeline
+        functions as ProcessingOrchestrator._run_pipeline().
+        """
+        from mousereach.segmentation.core.batch import process_single as seg_single
+        from mousereach.reach.core.batch import process_single as reach_single
+        from mousereach.outcomes.core.batch import process_single as outcome_single
+        from mousereach.pipeline.manifest import create_processing_manifest
+        from mousereach.pipeline.triage import triage_video
+
+        video_id = work['id']
+        video_data = work['data']
+
+        dlc_path = Path(video_data.get('dlc_output_path', ''))
+        if not dlc_path.exists():
+            dlc_queue = Paths.DLC_QUEUE
+            if dlc_queue:
+                h5_files = list(dlc_queue.glob(f"{video_id}DLC*.h5"))
+                if h5_files:
+                    dlc_path = h5_files[0]
+            if not dlc_path.exists():
+                self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
+                return
+
+        processing_dir = dlc_path.parent
+        logger.info(f"Running local pipeline on {video_id} (also_process mode)")
+
+        self.db.update_state(video_id, 'processing')
+        self.db.log_step(video_id, 'local_pipeline', 'started')
+        pipeline_start = time.time()
+
+        try:
+            # Step 1: Segmentation
+            self.db.log_step(video_id, 'segmentation', 'started')
+            step_start = time.time()
+            seg_result = seg_single(dlc_path)
+            seg_duration = time.time() - step_start
+
+            if seg_result.get('success', False):
+                self.db.log_step(video_id, 'segmentation', 'completed',
+                                message=f"boundaries={seg_result.get('n_boundaries', 0)}",
+                                duration=seg_duration)
+                logger.info(f"Segmentation complete: {video_id} ({seg_duration:.1f}s)")
+            else:
+                error = seg_result.get('error', 'segmentation failed')
+                self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
+                self.db.mark_failed(video_id, f"Segmentation failed: {error}")
+                return
+
+            # Step 2: Reach Detection
+            seg_path = processing_dir / f"{video_id}_segments.json"
+            if not seg_path.exists():
+                self.db.mark_failed(video_id, "Segments file not created")
+                return
+
+            self.db.log_step(video_id, 'reach_detection', 'started')
+            step_start = time.time()
+            reach_result = reach_single(dlc_path, seg_path)
+            reach_duration = time.time() - step_start
+            self.db.log_step(video_id, 'reach_detection', 'completed',
+                            message=f"reaches={reach_result.get('total_reaches', 0)}",
+                            duration=reach_duration)
+            logger.info(f"Reach detection complete: {video_id} ({reach_duration:.1f}s)")
+
+            # Step 3: Outcome Detection (skip for E/F trays)
+            tray_info = parse_tray_type(f"{video_id}.mp4")
+            tray_type = tray_info.get('tray_type', 'P')
+            skip_outcomes = tray_type in ('E', 'F')
+
+            if not skip_outcomes:
+                reach_path = processing_dir / f"{video_id}_reaches.json"
+                self.db.log_step(video_id, 'outcome_detection', 'started')
+                step_start = time.time()
+                outcome_result = outcome_single(dlc_path, seg_path, reach_path)
+                outcome_duration = time.time() - step_start
+                self.db.log_step(video_id, 'outcome_detection', 'completed',
+                                message=f"segments={outcome_result.get('n_segments', 0)}",
+                                duration=outcome_duration)
+                logger.info(f"Outcome detection complete: {video_id} ({outcome_duration:.1f}s)")
+
+            # Step 4: Feature Extraction
+            if not skip_outcomes:
+                reach_path = processing_dir / f"{video_id}_reaches.json"
+                outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
+                if reach_path.exists() and outcome_path.exists():
+                    try:
+                        from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+                        extractor = FeatureExtractor()
+                        features = extractor.extract(dlc_path, reach_path, outcome_path)
+                        features_path = processing_dir / f"{video_id}_features.json"
+                        with open(features_path, 'w') as f:
+                            json.dump(features.to_dict(), f, indent=2)
+                        logger.info(f"Feature extraction complete: {video_id}")
+
+                        # Database sync
+                        try:
+                            from mousereach.sync.database import sync_file_to_database
+                            sync_file_to_database(features_path)
+                        except Exception as e:
+                            logger.warning(f"Database sync failed for {video_id}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Feature extraction failed for {video_id}: {e}")
+
+            # Generate provenance manifest
+            pipeline_duration = time.time() - pipeline_start
+            try:
+                step_timestamps = {
+                    'pipeline_started_at': datetime.fromtimestamp(pipeline_start).isoformat(),
+                    'pipeline_completed_at': datetime.now().isoformat(),
+                }
+                create_processing_manifest(
+                    video_id=video_id,
+                    processing_dir=processing_dir,
+                    dlc_path=dlc_path,
+                    step_timestamps=step_timestamps,
+                )
+            except Exception as e:
+                logger.warning(f"Manifest creation failed for {video_id}: {e}")
+
+            # Unified triage
+            try:
+                triage_result = triage_video(
+                    video_id=video_id,
+                    processing_dir=processing_dir,
+                    h5_path=dlc_path,
+                )
+                for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
+                    json_path = processing_dir / f"{video_id}{suffix}"
+                    if json_path.exists():
+                        try:
+                            with open(json_path) as f:
+                                data = json.load(f)
+                            data['validation_status'] = triage_result.verdict
+                            data['triage_reason'] = (
+                                '; '.join(f.description for f in triage_result.flags if f.severity == 'critical')
+                                if triage_result.verdict == 'needs_review'
+                                else 'Unified triage: all checks passed'
+                            )
+                            with open(json_path, 'w') as f:
+                                json.dump(data, f, indent=2)
+                        except Exception:
+                            pass
+                triage_result.save(processing_dir / f"{video_id}_triage.json")
+            except Exception as e:
+                logger.warning(f"Unified triage failed for {video_id}: {e}")
+
+            self.db.update_state(video_id, 'processed')
+            self.db.log_step(video_id, 'local_pipeline', 'completed',
+                            message=f"All steps complete ({pipeline_duration:.1f}s total)",
+                            duration=pipeline_duration)
+            logger.info(f"Local pipeline complete: {video_id} ({pipeline_duration:.1f}s)")
+
+        except Exception as e:
+            pipeline_duration = time.time() - pipeline_start
+            self.db.log_step(video_id, 'local_pipeline', 'failed', message=str(e), duration=pipeline_duration)
+            self.db.mark_failed(video_id, f"Local pipeline error: {e}")
+            raise
+
+    def _archive_locally_processed(self, work: dict):
+        """Archive a locally processed video directly to NAS.
+
+        In also_process mode, results go straight to Analyzed/Sort/ on NAS,
+        skipping the DLC_Complete staging step entirely.
+        """
+        from mousereach.archive.core import archive_video
+
+        video_id = work['id']
+        logger.info(f"Archiving locally processed {video_id} to NAS")
+        self.db.log_step(video_id, 'archive', 'started')
+        start_time = time.time()
+
+        try:
+            result = archive_video(video_id, dry_run=False, verbose=False)
+            duration = time.time() - start_time
+
+            if result.get('success'):
+                self.db.update_state(video_id, 'archived')
+                self.db.log_step(video_id, 'archive', 'completed',
+                                message=f"Archived {len(result.get('files_moved', []))} files",
+                                duration=duration)
+                logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
+
+                # Clean up local DLC_Queue files
+                dlc_queue = Paths.DLC_QUEUE
+                if dlc_queue:
+                    for f in self._get_associated_files(dlc_queue, video_id):
+                        try:
+                            f.unlink()
+                        except Exception:
+                            pass
+            else:
+                error = result.get('error', 'archive failed')
+                self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
+                logger.warning(f"Archive failed for {video_id}: {error}")
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
+            logger.error(f"Archive error for {video_id}: {e}")
+
+    # =========================================================================
     # NAS STAGING
     # =========================================================================
 
@@ -743,13 +987,26 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if self.staging_dir:
             logger.info(f"Watching staging directory: {self.staging_dir}")
         else:
-            logger.warning("DLC_STAGING not configured — no intake possible")
+            logger.warning("DLC_STAGING not configured -- no intake possible")
 
         # Local processing directory
         self.processing_dir = Paths.PROCESSING
         if self.processing_dir:
             self.processing_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Processing directory: {self.processing_dir}")
+
+        # Reprocessing scanner (runs every N poll cycles)
+        self._reprocess_scanner = None
+        self._scan_cycle_count = 0
+        self._reprocess_scan_interval = 10  # Every 10th poll cycle (~5 min at 30s interval)
+
+        if Paths.NAS_ROOT:
+            try:
+                from mousereach.watcher.reprocessor import ReprocessingScanner
+                self._reprocess_scanner = ReprocessingScanner(db, Paths.NAS_ROOT)
+                logger.info("Reprocessing scanner enabled")
+            except Exception as e:
+                logger.warning(f"Reprocessing scanner not available: {e}")
 
     # =========================================================================
     # SCAN PHASE
@@ -760,9 +1017,25 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not self.staging_dir:
             return
 
+        # Clean up stale claims from crashed nodes
+        self._cleanup_stale_claims()
+
         newly_found = self.state.discover_dlc_staged(self.staging_dir)
         if newly_found:
             logger.info(f"Discovered {len(newly_found)} new DLC outputs in staging")
+
+        # Periodic reprocessing scan (every N cycles)
+        self._scan_cycle_count += 1
+        if (self._reprocess_scanner and
+                self._scan_cycle_count % self._reprocess_scan_interval == 0):
+            try:
+                summary = self._reprocess_scanner.scan(mark_outdated=True)
+                if summary.get('outdated', 0) > 0:
+                    logger.info(
+                        f"Reprocessing scan: {summary['outdated']} outdated videos found"
+                    )
+            except Exception as e:
+                logger.warning(f"Reprocessing scan failed: {e}")
 
     # =========================================================================
     # WORK QUEUE
@@ -825,6 +1098,25 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 'data': pick
             }
 
+        # Priority 4: Reprocess outdated videos
+        outdated = self.db.get_videos_in_state('outdated')
+        if outdated:
+            pick = self._pick_from_pool(outdated, priority_animal, 'animal_id')
+            scope = pick.get('reprocess_scope', 'full')
+
+            if scope == 'full':
+                # Needs DLC re-run — can't do it here (no CUDA), stage back to DLC queue
+                self.db.force_state(pick['video_id'], 'dlc_queued')
+                logger.info(f"Outdated {pick['video_id']} queued for full reprocess (DLC changed)")
+                return None  # Let next cycle pick it up via DLC orchestrator
+            else:
+                # post_dlc: re-run seg/reach/outcomes from existing DLC output
+                return {
+                    'type': 'reprocess',
+                    'id': pick['video_id'],
+                    'data': pick
+                }
+
         return None
 
     # =========================================================================
@@ -843,6 +1135,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 self._run_pipeline(work)
             elif work_type == 'archive':
                 self._archive_to_nas(work)
+            elif work_type == 'reprocess':
+                self._reprocess_video(work)
             else:
                 logger.warning(f"Unknown work type: {work_type}")
 
@@ -850,6 +1144,69 @@ class ProcessingOrchestrator(BaseOrchestrator):
             error_msg = f"{work_type} failed: {str(e)}"
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
             self.db.mark_failed(work_id, error_msg)
+
+    # =========================================================================
+    # REPROCESS: Re-run pipeline on outdated archived videos
+    # =========================================================================
+
+    def _reprocess_video(self, work: dict):
+        """Re-run seg/reach/outcomes on an outdated archived video.
+
+        The video's archived files are still on NAS. We copy the DLC h5
+        and video to local Processing/, re-run the pipeline, and re-archive.
+        """
+        video_id = work['id']
+        video_data = work['data']
+
+        logger.info(f"Reprocessing outdated video {video_id} (post-DLC)")
+
+        # Find archived files on NAS
+        archive_dir = Paths.NAS_ROOT / "Analyzed" / "Sort" if Paths.NAS_ROOT else None
+        if not archive_dir or not archive_dir.exists():
+            self.db.mark_failed(video_id, "Archive directory not found for reprocessing")
+            return
+
+        # Search for DLC h5 in archive
+        h5_files = list(archive_dir.rglob(f"{video_id}DLC*.h5"))
+        if not h5_files:
+            self.db.mark_failed(video_id, f"DLC h5 not found in archive for reprocessing")
+            return
+
+        source_h5 = h5_files[0]
+        source_dir = source_h5.parent
+
+        # Copy needed files to local Processing/
+        if not self.processing_dir:
+            self.db.mark_failed(video_id, "PROCESSING path not configured")
+            return
+
+        self.processing_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy DLC h5 and video
+        all_files = [f for f in source_dir.iterdir() if f.stem.startswith(video_id)]
+        for src_file in all_files:
+            dest = self.processing_dir / src_file.name
+            safe_copy(src_file, dest, verify=True)
+
+        # Transition to processing state
+        local_h5 = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+        self.db.force_state(
+            video_id, 'processing',
+            dlc_output_path=str(local_h5[0]) if local_h5 else '',
+            current_path=str(self.processing_dir / f"{video_id}.mp4")
+        )
+
+        # Run the standard pipeline (seg/reach/outcomes)
+        reprocess_work = {
+            'type': 'pipeline',
+            'id': video_id,
+            'data': {
+                'video_id': video_id,
+                'dlc_output_path': str(local_h5[0]) if local_h5 else '',
+                'current_path': str(self.processing_dir / f"{video_id}.mp4"),
+            }
+        }
+        self._run_pipeline(reprocess_work)
 
     # =========================================================================
     # DRY RUN
@@ -904,6 +1261,83 @@ class ProcessingOrchestrator(BaseOrchestrator):
         print()
 
     # =========================================================================
+    # MULTI-NODE CLAIMING
+    # =========================================================================
+
+    def _claim_video(self, video_id: str) -> bool:
+        """Try to claim a video for processing. Returns True if claimed.
+
+        Uses marker files in DLC_Complete/.claims/ to prevent multiple nodes
+        from processing the same video simultaneously.
+        """
+        if not self.staging_dir:
+            return True  # No staging = no contention
+
+        claim_dir = self.staging_dir / ".claims"
+        try:
+            claim_dir.mkdir(exist_ok=True)
+        except Exception:
+            return True  # Can't create claims dir = single-node mode
+
+        claim_file = claim_dir / f"{video_id}.claimed"
+
+        # Check if already claimed by another host
+        if claim_file.exists():
+            try:
+                content = claim_file.read_text().strip()
+                claimer = content.split('\n')[0]
+                if claimer != self.hostname:
+                    logger.debug(f"{video_id} already claimed by {claimer}")
+                    return False
+                # We already claimed it (retry after crash?)
+                return True
+            except Exception:
+                return False
+
+        # Try to claim
+        try:
+            claim_file.write_text(f"{self.hostname}\n{datetime.now().isoformat()}\n")
+            # Verify our claim stuck (race window check on network drives)
+            time.sleep(0.5)
+            content = claim_file.read_text().strip()
+            if content.split('\n')[0] == self.hostname:
+                logger.info(f"Claimed {video_id} for {self.hostname}")
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _release_claim(self, video_id: str):
+        """Release a claim after successful archive."""
+        if not self.staging_dir:
+            return
+        claim_file = self.staging_dir / ".claims" / f"{video_id}.claimed"
+        try:
+            claim_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _cleanup_stale_claims(self):
+        """Remove claim files older than 24 hours (crashed nodes)."""
+        if not self.staging_dir:
+            return
+        claim_dir = self.staging_dir / ".claims"
+        if not claim_dir.exists():
+            return
+
+        stale_threshold = 24 * 3600  # 24 hours
+        now = time.time()
+
+        for claim_file in claim_dir.glob("*.claimed"):
+            try:
+                age = now - claim_file.stat().st_mtime
+                if age > stale_threshold:
+                    claim_file.unlink(missing_ok=True)
+                    logger.info(f"Removed stale claim: {claim_file.stem} (age: {age/3600:.1f}h)")
+            except Exception:
+                pass
+
+    # =========================================================================
     # INTAKE: Copy from NAS staging to local Processing/
     # =========================================================================
 
@@ -915,6 +1349,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not self.processing_dir:
             logger.error("PROCESSING path not configured")
             self.db.mark_failed(video_id, "PROCESSING path not configured")
+            return
+
+        # Multi-node claiming: ensure no other node is processing this video
+        if not self._claim_video(video_id):
+            logger.debug(f"Skipping {video_id} - claimed by another node")
             return
 
         logger.info(f"Intake {video_id} from staging to Processing/")
@@ -1226,6 +1665,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     duration=duration
                 )
                 logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
+
+                # Release multi-node claim
+                self._release_claim(video_id)
 
                 # Remove from staging on NAS (the DLC PC's copy)
                 if self.staging_dir:

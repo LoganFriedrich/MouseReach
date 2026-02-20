@@ -167,6 +167,14 @@ mousereach-watch-process-animal = "mousereach.watcher.cli:main_process_animal"
 mousereach-watch-info = "mousereach.watcher.cli:main_info"
 mousereach-watch-toggle = "mousereach.watcher.cli:main_toggle"
 
+# Version tracking and reprocessing
+mousereach-version-check = "mousereach.watcher.cli:main_version_check"
+mousereach-crystallize = "mousereach.watcher.cli:main_crystallize"
+mousereach-uncrystallize = "mousereach.watcher.cli:main_uncrystallize"
+
+# Backup watcher
+mousereach-backup = "mousereach.watcher.backup:main"
+
 [project.entry-points."napari.manifest"]
 mousereach = "mousereach:napari.yaml"
 

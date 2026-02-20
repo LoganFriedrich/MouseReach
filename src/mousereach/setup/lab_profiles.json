@@ -1,0 +1,127 @@
+{
+  "_comment": [
+    "Lab-specific machine profiles for mousereach-setup.",
+    "",
+    "Detection priority:",
+    "  1. Local identity file (~/.mousereach/machine_role.json) - explicit declaration",
+    "  2. This file (lab_profiles.json) - hostname or drive-pattern auto-detection",
+    "  3. Fully manual - user enters paths interactively",
+    "",
+    "To use a local identity file instead of auto-detection:",
+    "  Create ~/.mousereach/machine_role.json with: {\"role\": \"NAS / DLC PC\"}",
+    "  The role name must match a profile name below.",
+    "",
+    "To customize for your lab:",
+    "  1. Edit the profiles below to match your drive layout",
+    "  2. Or delete this file entirely to use the wizard with no defaults",
+    "",
+    "Match rules:",
+    "  hostname:       match by machine hostname (most reliable)",
+    "  drives_present:  drive letters that must exist (e.g. [\"D\", \"A\"])",
+    "  drives_local:    drives that must be local/direct-attached (not network)",
+    "  drives_absent:   drives that must NOT exist on this machine"
+  ],
+
+  "profiles": [
+    {
+      "name": "NAS / DLC PC",
+      "description": "DLCLabPC: Direct-attached NAS (D:), GPU, DLC model. Runs DLC + full pipeline.",
+      "match": {
+        "hostname": "DSK-MXL1124SBB",
+        "drives_present": ["D", "A", "X", "Y"],
+        "drives_local": ["D"]
+      },
+      "defaults": {
+        "nas_drive": "Y:\\",
+        "nas_root": "Y:\\2_Connectome\\Behavior\\MouseReach_Pipeline",
+        "processing_root": "A:\\MouseReach_Pipeline",
+        "watcher": {
+          "enabled": true,
+          "mode": "dlc_pc",
+          "also_process": true,
+          "dlc_config_path": "A:\\AIs\\MPSA-LF-2025-10-27\\config.yaml",
+          "dlc_gpu_device": 0,
+          "poll_interval_seconds": 30,
+          "stability_wait_seconds": 60,
+          "max_retries": 3
+        }
+      }
+    },
+    {
+      "name": "Vid&DLC1PC",
+      "description": "Behavior room filming + DLC + processing. Toggle pause for filming.",
+      "match": {
+        "hostname": "DSK-MXL1314J9R",
+        "drives_present": ["X", "A"],
+        "drives_absent": ["D"]
+      },
+      "defaults": {
+        "nas_drive": "Y:\\",
+        "nas_root": "Y:\\2_Connectome\\Behavior\\MouseReach_Pipeline",
+        "processing_root": "A:\\MouseReach_Pipeline",
+        "watcher": {
+          "enabled": true,
+          "mode": "dlc_pc",
+          "also_process": true,
+          "dlc_config_path": "A:\\AIs\\MPSA-LF-2025-10-27\\config.yaml",
+          "dlc_gpu_device": 0,
+          "poll_interval_seconds": 30,
+          "stability_wait_seconds": 60,
+          "max_retries": 3
+        }
+      }
+    },
+    {
+      "name": "Vid&DLC2PC",
+      "description": "Behavior room filming + DLC + processing. Toggle pause for filming.",
+      "match": {
+        "hostname": "DSK-MXL1113KTF",
+        "drives_present": ["X", "A"],
+        "drives_absent": ["D"]
+      },
+      "defaults": {
+        "nas_drive": "Y:\\",
+        "nas_root": "Y:\\2_Connectome\\Behavior\\MouseReach_Pipeline",
+        "processing_root": "A:\\MouseReach_Pipeline",
+        "watcher": {
+          "enabled": true,
+          "mode": "dlc_pc",
+          "also_process": true,
+          "dlc_config_path": "A:\\AIs\\MPSA-LF-2025-10-27\\config.yaml",
+          "dlc_gpu_device": 0,
+          "poll_interval_seconds": 30,
+          "stability_wait_seconds": 60,
+          "max_retries": 3
+        }
+      }
+    },
+    {
+      "name": "Processing Server",
+      "description": "Server for MouseReach algorithm (reach detection + kinematics). Y: is canonical NAS/archive. Processes locally on C:. Watches DLC_Complete/ for staged DLC outputs. Also runs backup watcher.",
+      "match": {
+        "drives_present": ["Y", "A", "X", "G"],
+        "drives_local": ["Y"]
+      },
+      "defaults": {
+        "nas_drive": "Y:\\",
+        "nas_root": "Y:\\2_Connectome\\Behavior\\MouseReach_Pipeline",
+        "processing_root": "C:\\2_Connectome\\Behavior\\MouseReach_Pipeline",
+        "watcher": {
+          "enabled": true,
+          "mode": "processing_server",
+          "poll_interval_seconds": 30,
+          "stability_wait_seconds": 30,
+          "max_retries": 3,
+          "max_local_pending": 200
+        },
+        "backup": {
+          "enabled": true,
+          "source_root": "Y:\\2_Connectome",
+          "backup_root": "X:\\2_Connectome_Backup",
+          "poll_interval_seconds": 600,
+          "stability_seconds": 300
+        }
+      }
+    }
+  ]
+}
