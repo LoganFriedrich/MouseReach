@@ -23,8 +23,9 @@ import socket
 import logging
 import threading
 
-# DLC 2.3.x requires Keras 2 APIs — tell TF to use tf-keras
-os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+# Ensure CUDA paths, cuDNN, and TF_USE_LEGACY_KERAS are set for GPU use
+from mousereach.gpu import setup_gpu_env
+setup_gpu_env()
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
