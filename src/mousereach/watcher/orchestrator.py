@@ -867,11 +867,19 @@ class DLCOrchestrator(BaseOrchestrator):
 
         video_id = work['id']
         logger.info(f"Archiving locally processed {video_id} to NAS")
+        self.db.update_state(video_id, 'archiving')
         self.db.log_step(video_id, 'archive', 'started')
         start_time = time.time()
 
         try:
-            result = archive_video(video_id, dry_run=False, verbose=False)
+            dlc_queue = Paths.DLC_QUEUE
+            result = archive_video(
+                video_id,
+                dry_run=False,
+                verbose=False,
+                skip_ready_check=True,
+                source_dir=dlc_queue,
+            )
             duration = time.time() - start_time
 
             if result.get('success'):
@@ -885,7 +893,6 @@ class DLCOrchestrator(BaseOrchestrator):
                 self.db.export_to_central_db(video_id)
 
                 # Clean up local DLC_Queue files
-                dlc_queue = Paths.DLC_QUEUE
                 if dlc_queue:
                     for f in self._get_associated_files(dlc_queue, video_id):
                         try:
