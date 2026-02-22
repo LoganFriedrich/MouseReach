@@ -1095,3 +1095,210 @@ class WatcherDB:
 
             finally:
                 conn.close()
+
+    # =========================================================================
+    # CENTRAL DB EXPORT (cross-node provenance on NAS)
+    # =========================================================================
+
+    def export_to_central_db(self, video_id: str, central_db_path: Path = None):
+        """
+        Export a video's record and processing log to the central DB on NAS.
+
+        Called after successful archive. Creates a unified audit trail across
+        all processing nodes at NAS_ROOT/watcher_central.db.
+
+        Args:
+            video_id: Video identifier to export
+            central_db_path: Path to central DB. If None, uses NAS_ROOT/watcher_central.db
+        """
+        if central_db_path is None:
+            try:
+                from mousereach.config import Paths
+                if Paths.NAS_ROOT is None:
+                    logger.warning("NAS_ROOT not configured, skipping central DB export")
+                    return
+                central_db_path = Paths.NAS_ROOT / "watcher_central.db"
+            except Exception as e:
+                logger.warning(f"Could not resolve NAS_ROOT for central DB: {e}")
+                return
+
+        central_db_path = Path(central_db_path)
+
+        try:
+            # Read local data
+            video_row, log_rows = self._read_video_for_export(video_id)
+            if video_row is None:
+                logger.warning(f"Video {video_id} not found in local DB, skipping export")
+                return
+
+            # Write to central DB
+            self._write_to_central_db(central_db_path, video_row, log_rows)
+            logger.info(
+                f"Exported {video_id} to central DB "
+                f"({len(log_rows)} log entries, machine={self._hostname})"
+            )
+
+        except Exception as e:
+            # Never let central DB export failures break the pipeline
+            logger.warning(f"Central DB export failed for {video_id}: {e}")
+
+    def _read_video_for_export(self, video_id: str):
+        """Read video row and processing log from local DB for export."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                video_row = conn.execute(
+                    "SELECT * FROM videos WHERE video_id = ?",
+                    (video_id,)
+                ).fetchone()
+
+                if not video_row:
+                    return None, []
+
+                log_rows = conn.execute(
+                    "SELECT * FROM processing_log WHERE video_id = ? ORDER BY created_at",
+                    (video_id,)
+                ).fetchall()
+
+                return dict(video_row), [dict(r) for r in log_rows]
+
+            finally:
+                conn.close()
+
+    def _write_to_central_db(self, central_db_path: Path, video_row: dict, log_rows: list):
+        """Write video record and processing log to central DB on NAS."""
+        central_db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Detect if central DB is on network drive
+        is_network = self._detect_network_drive(central_db_path)
+
+        conn = sqlite3.connect(str(central_db_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        if is_network:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+        try:
+            # Create tables if needed (same schema as local + source_machine)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS videos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    video_id TEXT NOT NULL,
+                    source_path TEXT,
+                    collage_id TEXT,
+                    date TEXT,
+                    animal_id TEXT,
+                    experiment TEXT,
+                    cohort TEXT,
+                    subject TEXT,
+                    tray_type TEXT,
+                    tray_position INTEGER,
+                    state TEXT,
+                    discovered_at TEXT,
+                    validated_at TEXT,
+                    crop_started_at TEXT,
+                    crop_completed_at TEXT,
+                    dlc_started_at TEXT,
+                    dlc_completed_at TEXT,
+                    processing_started_at TEXT,
+                    processing_completed_at TEXT,
+                    archived_at TEXT,
+                    error_message TEXT,
+                    error_count INTEGER,
+                    last_error_at TEXT,
+                    claimed_by TEXT,
+                    current_path TEXT,
+                    dlc_output_path TEXT,
+                    pipeline_versions_hash TEXT,
+                    crystallized_at TEXT,
+                    crystallized_by TEXT,
+                    crystallized_label TEXT,
+                    reprocess_scope TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    source_machine TEXT NOT NULL,
+                    exported_at TEXT NOT NULL,
+                    UNIQUE(video_id, source_machine)
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS processing_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    video_id TEXT NOT NULL,
+                    step TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message TEXT,
+                    duration_seconds REAL,
+                    machine TEXT,
+                    created_at TEXT,
+                    source_machine TEXT NOT NULL,
+                    exported_at TEXT NOT NULL
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_central_videos_id
+                ON videos(video_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_central_videos_machine
+                ON videos(source_machine)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_central_log_video
+                ON processing_log(video_id)
+            """)
+
+            now = self._now()
+
+            # Upsert video row (replace if same video_id + source_machine)
+            conn.execute(
+                "DELETE FROM videos WHERE video_id = ? AND source_machine = ?",
+                (video_row['video_id'], self._hostname)
+            )
+
+            # Build insert from video_row
+            columns = [
+                'video_id', 'source_path', 'collage_id', 'date', 'animal_id',
+                'experiment', 'cohort', 'subject', 'tray_type', 'tray_position',
+                'state', 'discovered_at', 'validated_at', 'crop_started_at',
+                'crop_completed_at', 'dlc_started_at', 'dlc_completed_at',
+                'processing_started_at', 'processing_completed_at', 'archived_at',
+                'error_message', 'error_count', 'last_error_at', 'claimed_by',
+                'current_path', 'dlc_output_path', 'pipeline_versions_hash',
+                'crystallized_at', 'crystallized_by', 'crystallized_label',
+                'reprocess_scope', 'created_at', 'updated_at',
+            ]
+            values = [video_row.get(c) for c in columns]
+            columns.extend(['source_machine', 'exported_at'])
+            values.extend([self._hostname, now])
+
+            placeholders = ', '.join(['?'] * len(values))
+            col_list = ', '.join(columns)
+            conn.execute(f"INSERT INTO videos ({col_list}) VALUES ({placeholders})", values)
+
+            # Replace processing log entries for this video + machine
+            conn.execute(
+                "DELETE FROM processing_log WHERE video_id = ? AND source_machine = ?",
+                (video_row['video_id'], self._hostname)
+            )
+
+            for log_row in log_rows:
+                conn.execute("""
+                    INSERT INTO processing_log
+                    (video_id, step, status, message, duration_seconds, machine,
+                     created_at, source_machine, exported_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    log_row['video_id'], log_row['step'], log_row['status'],
+                    log_row.get('message'), log_row.get('duration_seconds'),
+                    log_row.get('machine'), log_row.get('created_at'),
+                    self._hostname, now,
+                ))
+
+            conn.commit()
+
+        finally:
+            conn.close()

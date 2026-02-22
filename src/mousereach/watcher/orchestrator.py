@@ -881,6 +881,9 @@ class DLCOrchestrator(BaseOrchestrator):
                                 duration=duration)
                 logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
 
+                # Export to central DB on NAS for cross-node provenance
+                self.db.export_to_central_db(video_id)
+
                 # Clean up local DLC_Queue files
                 dlc_queue = Paths.DLC_QUEUE
                 if dlc_queue:
@@ -1666,6 +1669,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     duration=duration
                 )
                 logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
+
+                # Export to central DB on NAS for cross-node provenance
+                self.db.export_to_central_db(video_id)
 
                 # Release multi-node claim
                 self._release_claim(video_id)
