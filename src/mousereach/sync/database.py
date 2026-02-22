@@ -78,6 +78,8 @@ ALL_COLUMNS = (
     + ['segment_outcome', 'segment_outcome_confidence', 'segment_outcome_flagged',
        'attention_score', 'pellet_position_idealness']
     + ['source_file', 'extractor_version', 'imported_at']
+    + ['processed_by', 'mousereach_version', 'dlc_scorer', 'segmenter_version',
+       'reach_detector_version', 'outcome_detector_version']
 )
 
 # SQL to create reach_data table
@@ -167,6 +169,14 @@ CREATE TABLE IF NOT EXISTS reach_data (
     source_file TEXT NOT NULL,
     extractor_version TEXT,
     imported_at TEXT NOT NULL,
+
+    -- Provenance (from _processing_manifest.json)
+    processed_by TEXT,
+    mousereach_version TEXT,
+    dlc_scorer TEXT,
+    segmenter_version TEXT,
+    reach_detector_version TEXT,
+    outcome_detector_version TEXT,
 
     -- One row per reach per video
     UNIQUE(video_name, reach_id)
@@ -342,16 +352,90 @@ class DatabaseSyncer:
         return self._engine
 
     def ensure_reach_data_table(self):
-        """Create reach_data table if it doesn't exist."""
+        """Create reach_data table if it doesn't exist, then run migrations."""
         if self._table_ensured:
             return
         try:
             with self.engine.connect() as conn:
                 conn.execute(text(CREATE_REACH_DATA_SQL))
                 conn.commit()
+            self._migrate_reach_data()
             self._table_ensured = True
         except Exception as e:
             raise RuntimeError(f"Failed to create reach_data table: {e}")
+
+    def _migrate_reach_data(self):
+        """Add columns that may not exist in older databases."""
+        new_columns = [
+            ('processed_by', 'TEXT'),
+            ('mousereach_version', 'TEXT'),
+            ('dlc_scorer', 'TEXT'),
+            ('segmenter_version', 'TEXT'),
+            ('reach_detector_version', 'TEXT'),
+            ('outcome_detector_version', 'TEXT'),
+        ]
+        try:
+            with self.engine.connect() as conn:
+                for column, col_type in new_columns:
+                    try:
+                        conn.execute(text(
+                            f"ALTER TABLE reach_data ADD COLUMN {column} {col_type}"
+                        ))
+                    except Exception:
+                        pass  # Column already exists
+                conn.commit()
+        except Exception:
+            pass  # Migration failure shouldn't block sync
+
+    @staticmethod
+    def _load_provenance(processing_dir: Path, video_name: str) -> dict:
+        """
+        Load provenance info from processing manifest.
+
+        Looks for {video_name}_processing_manifest.json in the same directory
+        as the features file.
+
+        Returns:
+            Dict with provenance columns (empty strings for missing values)
+        """
+        defaults = {
+            'processed_by': None,
+            'mousereach_version': None,
+            'dlc_scorer': None,
+            'segmenter_version': None,
+            'reach_detector_version': None,
+            'outcome_detector_version': None,
+        }
+
+        manifest_path = processing_dir / f"{video_name}_processing_manifest.json"
+        if not manifest_path.exists():
+            return defaults
+
+        try:
+            with open(manifest_path, 'r') as f:
+                manifest = json.load(f)
+
+            defaults['processed_by'] = manifest.get('processed_by')
+            defaults['mousereach_version'] = (
+                manifest.get('pipeline_versions', {}).get('mousereach')
+            )
+            defaults['dlc_scorer'] = (
+                manifest.get('dlc_model', {}).get('dlc_scorer')
+            )
+            defaults['segmenter_version'] = (
+                manifest.get('pipeline_versions', {}).get('segmenter')
+            )
+            defaults['reach_detector_version'] = (
+                manifest.get('pipeline_versions', {}).get('reach_detector')
+            )
+            defaults['outcome_detector_version'] = (
+                manifest.get('pipeline_versions', {}).get('outcome_detector')
+            )
+
+            return defaults
+
+        except Exception:
+            return defaults
 
     def check_database(self) -> Tuple[bool, str]:
         """
@@ -442,6 +526,9 @@ class DatabaseSyncer:
             extractor_version = data.get('extractor_version', 'unknown')
             now = datetime.now().isoformat()
 
+            # Load provenance from processing manifest (sibling file)
+            provenance = self._load_provenance(path.parent, video_name)
+
             # Parse session metadata from video name
             meta = parse_video_metadata(video_name)
 
@@ -481,6 +568,9 @@ class DatabaseSyncer:
                     row['source_file'] = path.name
                     row['extractor_version'] = extractor_version
                     row['imported_at'] = now
+
+                    # Provenance
+                    row.update(provenance)
 
                     rows.append(row)
 
@@ -645,7 +735,10 @@ class DatabaseSyncer:
                            flagged_for_review, flag_reason,
                            segment_outcome, segment_outcome_confidence, segment_outcome_flagged,
                            attention_score, pellet_position_idealness,
-                           source_file, extractor_version, imported_at
+                           source_file, extractor_version, imported_at,
+                           processed_by, mousereach_version, dlc_scorer,
+                           segmenter_version, reach_detector_version,
+                           outcome_detector_version
                     FROM reach_data
                     ORDER BY subject_id, session_date, video_name, segment_num, reach_num
                 """))
