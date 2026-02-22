@@ -21,7 +21,7 @@ import shutil
 from pathlib import Path
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
-from mousereach.config import Paths
+from mousereach.config import Paths, AnimalID
 
 
 # =============================================================================
@@ -300,14 +300,17 @@ def sort_to_experiment_folders(
     
     counts = {}
     for f in files:
-        # Extract experiment from filename (e.g., CNT from 20250704_CNT0101_P1.mp4)
-        match = re.search(r'_([A-Z]+)\d{4}', f.name)
-        if match:
-            exp = match.group(1)
+        # Extract animal ID from filename (e.g., CNT0101 from 20250704_CNT0101_P1.mp4)
+        parts = f.stem.split('_')
+        if len(parts) >= 2:
+            animal_id = parts[1].split(',')[0]  # Handle comma-separated multi-animal
+            project, cohort = AnimalID.get_project_and_cohort(animal_id)
+            label = f"{project}/{cohort}"
         else:
-            exp = 'UNKNOWN'
-        
-        dest_dir = dest_base / exp
+            label = 'UNKNOWN'
+            project, cohort = 'UNKNOWN', 'UNKNOWN'
+
+        dest_dir = dest_base / project / cohort
         dest_dir.mkdir(parents=True, exist_ok=True)
         
         try:
@@ -316,9 +319,9 @@ def sort_to_experiment_folders(
             else:
                 shutil.copy2(str(f), str(dest_dir / f.name))
             
-            counts[exp] = counts.get(exp, 0) + 1
+            counts[label] = counts.get(label, 0) + 1
             if verbose:
-                print(f"  {f.name} -> {exp}/")
+                print(f"  {f.name} -> {label}/")
         except Exception as e:
             print(f"  ERROR: {f.name} - {e}")
     

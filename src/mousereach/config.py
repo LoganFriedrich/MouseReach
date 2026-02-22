@@ -113,8 +113,8 @@ class Paths:
     # DLC complete staging area (for processing PC to pick up)
     DLC_STAGING = NAS_ROOT / "DLC_Complete" if NAS_ROOT else None
 
-    # Final validated outputs, sorted by experiment (Step 6 destination)
-    ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" / "Sort" if NAS_ROOT else None
+    # Final validated outputs, organized by project/cohort (Step 6 destination)
+    ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" if NAS_ROOT else None
 
     # --- Processing Pipeline Paths (derived from MouseReach_PROCESSING_ROOT) ---
     # These will be None if PROCESSING_ROOT is not configured
@@ -308,6 +308,53 @@ class AnimalID:
         parsed = AnimalID.parse(animal_id)
         return parsed.get('experiment', 'UNKNOWN')
 
+    # Project mapping: experiment code -> project folder name
+    PROJECT_MAP = {
+        'CNT': 'Connectome',
+        'ENCR': 'Enhancer',
+        # Old ASPA cohorts use single-letter or short prefixes
+        'H': 'ASPA', 'I': 'ASPA', 'J': 'ASPA', 'K': 'ASPA',
+        'L': 'ASPA', 'M': 'ASPA', 'N': 'ASPA',
+        'G': 'ASPA', 'D': 'ASPA', 'F': 'ASPA',
+        'ABS': 'ASPA',
+        'Opt': 'ASPA',
+    }
+
+    @staticmethod
+    def get_project_and_cohort(animal_id: str) -> tuple:
+        """Get (project_folder, cohort_folder) for archive destination.
+
+        Examples:
+            CNT0304 -> ('Connectome', 'CNT03')
+            ENCR0102 -> ('Enhancer', 'ENCR01')
+            H01 -> ('ASPA', 'H')
+            OptG05 -> ('ASPA', 'OptG')
+
+        Returns:
+            (project, cohort) tuple
+        """
+        parsed = AnimalID.parse(animal_id)
+        experiment = parsed.get('experiment', '')
+
+        if not experiment:
+            # Fallback: extract letters manually for short IDs like H01
+            for i, c in enumerate(animal_id):
+                if c.isdigit():
+                    experiment = animal_id[:i]
+                    break
+            if not experiment:
+                return ('UNKNOWN', 'UNKNOWN')
+
+        project = AnimalID.PROJECT_MAP.get(experiment, experiment)
+        cohort_num = parsed.get('cohort', '')
+
+        if parsed.get('valid') and experiment in ('CNT', 'ENCR'):
+            cohort_folder = f"{experiment}{cohort_num}"
+        else:
+            cohort_folder = experiment
+
+        return (project, cohort_folder)
+
 
 # =============================================================================
 # FILENAME CONVENTIONS
@@ -431,9 +478,15 @@ class Geometry:
 # =============================================================================
 
 def get_experiment_output_dir(animal_id: str) -> Path:
-    """Get the final output directory for an experiment."""
-    experiment = AnimalID.get_experiment(animal_id)
-    return Paths.ANALYZED_OUTPUT / experiment
+    """Get the final output directory for a video based on project/cohort.
+
+    Examples:
+        CNT0304 -> Analyzed/Connectome/CNT03/
+        ENCR0102 -> Analyzed/Enhancer/ENCR01/
+        H01 -> Analyzed/ASPA/H/
+    """
+    project, cohort = AnimalID.get_project_and_cohort(animal_id)
+    return Paths.ANALYZED_OUTPUT / project / cohort
 
 
 def parse_tray_type(filename: str) -> dict:

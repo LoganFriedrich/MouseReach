@@ -177,6 +177,15 @@ mousereach-uncrystallize = "mousereach.watcher.cli:main_uncrystallize"
 # Backup watcher
 mousereach-backup = "mousereach.watcher.backup:main"
 
+# Archive migration - One-time Sort/ -> project/cohort restructure
+mousereach-migrate-archive = "mousereach.archive.migrate:main"
+
+# ASPA reprocessing tools
+mousereach-aspa-import = "mousereach.aspa.importer:main"
+mousereach-aspa-feed = "mousereach.aspa.feed:main"
+mousereach-aspa-sync = "mousereach.aspa.sync:main"
+mousereach-aspa-compare = "mousereach.aspa.compare:main"
+
 [project.entry-points."napari.manifest"]
 mousereach = "mousereach:napari.yaml"
 

@@ -4,7 +4,7 @@
 # archive/
 
 ## Purpose
-Post-pipeline archival system: Moves fully validated videos from the `Processing/` working directory to the long-term NAS archive. A video can only be archived when ALL validation stages (segmentation, reach detection, outcome classification) are marked "validated" in the pipeline index. Files are organized by experiment code on the NAS (e.g., `{NAS_DRIVE}/Analyzed/Sort/CNT/`).
+Post-pipeline archival system: Moves fully validated videos from the `Processing/` working directory to the long-term NAS archive. A video can only be archived when ALL validation stages (segmentation, reach detection, outcome classification) are marked "validated" in the pipeline index. Files are organized by project and cohort on the NAS (e.g., `Analyzed/Connectome/CNT03/`, `Analyzed/ASPA/H/`).
 
 ## Key Files
 | File | Description |
@@ -21,7 +21,7 @@ Post-pipeline archival system: Moves fully validated videos from the `Processing
   - `reach_validation == "validated"`
   - `outcome_validation == "validated"`
 - Files moved, not copied (removes from Processing/ after successful move)
-- Destination determined by experiment code extracted from animal ID (e.g., `CNT0101` → `CNT/` folder)
+- Destination determined by project/cohort extracted from animal ID (e.g., `CNT0101` -> `Connectome/CNT01/`)
 - After archiving, video is removed from pipeline index
 - Uses `PipelineIndex` for validation status checks and post-archive cleanup
 
