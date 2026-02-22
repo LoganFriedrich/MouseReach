@@ -595,6 +595,12 @@ class WatcherConfig:
         self.mode: str = cfg.get('mode', 'dlc_pc')  # 'dlc_pc' or 'processing_server'
         self.max_local_pending: int = cfg.get('max_local_pending', 200)
         self.also_process: bool = cfg.get('also_process', False)  # DLC PCs also run seg/reach/outcomes
+        self.db_path: Optional[Path] = (
+            Path(cfg['db_path']) if cfg.get('db_path') else None
+        )  # Local DB path to avoid SQLite-over-SMB issues
+        self.staging_path: Optional[Path] = (
+            Path(cfg['staging_path']) if cfg.get('staging_path') else None
+        )  # Custom staging path for DLC output
 
     @classmethod
     def load(cls) -> 'WatcherConfig':
@@ -621,6 +627,10 @@ class WatcherConfig:
             d['quarantine_dir'] = str(self.quarantine_dir)
         if self.log_dir:
             d['log_dir'] = str(self.log_dir)
+        if self.db_path:
+            d['db_path'] = str(self.db_path)
+        if self.staging_path:
+            d['staging_path'] = str(self.staging_path)
         return d
 
     def get_quarantine_dir(self) -> Path:
