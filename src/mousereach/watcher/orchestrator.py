@@ -268,6 +268,109 @@ class DLCOrchestrator(BaseOrchestrator):
             self.staging_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Staging directory: {self.staging_dir}")
 
+        # --- Cross-PC coordination via connectome.db ---
+        self.coordinator = None
+        try:
+            from mousereach.watcher.coordination import (
+                PipelineCoordinator, restore_db, backup_db
+            )
+            self._backup_db = backup_db
+            self._restore_db = restore_db
+
+            # Quick-restore watcher.db from NAS backup if local is empty
+            nas_root = Paths.NAS_ROOT
+            if nas_root:
+                restore_db(db.db_path, nas_root, self.hostname)
+
+            self.coordinator = PipelineCoordinator()
+            self.coordinator.ensure_tables()
+            stats = self.coordinator.recover_local_db(db, self.hostname)
+            logger.info("Startup recovery from connectome.db complete")
+        except Exception as e:
+            logger.warning(f"Connectome DB recovery skipped: {e}")
+
+        # Scan local DLC_Queue for orphaned files not in DB
+        self._recover_local_dlc_queue()
+
+    # =========================================================================
+    # COORDINATION HELPERS
+    # =========================================================================
+
+    def _sync_to_connectome(self, video_id, state, **kwargs):
+        """Best-effort sync video state to connectome.db after local DB update."""
+        if not self.coordinator:
+            return
+        try:
+            self.coordinator.sync_video_state(video_id, self.hostname, state, **kwargs)
+        except Exception as e:
+            logger.debug(f"Connectome sync failed (non-fatal): {e}")
+
+    def _backup_local_db(self):
+        """Best-effort backup of local watcher.db to NAS."""
+        try:
+            nas_root = Paths.NAS_ROOT
+            if nas_root and hasattr(self, '_backup_db'):
+                self._backup_db(self.db.db_path, nas_root, self.hostname)
+        except Exception as e:
+            logger.debug(f"DB backup failed (non-fatal): {e}")
+
+    def _recover_local_dlc_queue(self):
+        """Scan DLC_Queue for orphaned MP4s not in local DB.
+
+        Infers state from sibling files:
+          - MP4 only -> dlc_queued
+          - MP4 + *DLC*.h5 -> dlc_complete
+          - MP4 + h5 + pipeline JSONs -> processed
+        """
+        dlc_queue = Paths.DLC_QUEUE
+        if not dlc_queue or not dlc_queue.exists():
+            return
+
+        recovered = 0
+        for mp4 in dlc_queue.glob("*.mp4"):
+            video_id = get_video_id(mp4.name)
+            if not video_id:
+                continue
+
+            try:
+                existing = self.db.get_video(video_id)
+            except Exception:
+                existing = None
+
+            if existing is not None:
+                continue  # Already tracked
+
+            # Determine state from sibling files
+            h5_files = list(dlc_queue.glob(f"{video_id}DLC*.h5"))
+            json_files = list(dlc_queue.glob(f"{video_id}_*.json"))
+            has_pipeline = any(
+                f.name.endswith(('_segments.json', '_reaches.json', '_pellet_outcomes.json'))
+                for f in json_files
+            )
+
+            if h5_files and has_pipeline:
+                target_state = 'processed'
+            elif h5_files:
+                target_state = 'dlc_complete'
+            else:
+                target_state = 'dlc_queued'
+
+            try:
+                self.db.register_video(
+                    video_id=video_id,
+                    source_path=str(mp4),
+                    current_path=str(mp4),
+                )
+                if target_state != 'discovered':
+                    self.db.force_state(video_id, target_state)
+                recovered += 1
+                logger.debug(f"Recovered orphan {video_id} as {target_state}")
+            except Exception as e:
+                logger.debug(f"Could not recover orphan {video_id}: {e}")
+
+        if recovered > 0:
+            logger.info(f"Recovered {recovered} orphaned videos from DLC_Queue")
+
     # =========================================================================
     # SCAN PHASE
     # =========================================================================
@@ -394,6 +497,9 @@ class DLCOrchestrator(BaseOrchestrator):
             else:
                 logger.warning(f"Unknown work type: {work_type}")
 
+            # Backup local DB to NAS after each successful work item
+            self._backup_local_db()
+
         except Exception as e:
             error_msg = f"{work_type} failed: {str(e)}"
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
@@ -506,6 +612,15 @@ class DLCOrchestrator(BaseOrchestrator):
 
         logger.info(f"Processing collage: {collage_filename}")
 
+        # Cross-PC dedup: try to claim this collage before cropping
+        if self.coordinator:
+            try:
+                if not self.coordinator.try_claim_collage(collage_filename, self.hostname):
+                    logger.info(f"Collage {collage_filename} claimed by another PC, skipping")
+                    return
+            except Exception as e:
+                logger.debug(f"Collage claim check failed (proceeding anyway): {e}")
+
         self.db.update_collage_state(collage_filename, 'cropping')
         self.db.log_step(collage_filename, 'crop', 'started')
 
@@ -601,6 +716,15 @@ class DLCOrchestrator(BaseOrchestrator):
 
             logger.info(f"Collage cropped: {collage_filename} ({videos_created} singles, {videos_skipped} skipped)")
 
+            # Sync collage completion to connectome.db
+            if self.coordinator:
+                try:
+                    self.coordinator.update_collage_state(
+                        collage_filename, 'cropped', singles_created=videos_created
+                    )
+                except Exception as e:
+                    logger.debug(f"Collage sync failed (non-fatal): {e}")
+
             # Cleanup working directory
             local_collage.unlink(missing_ok=True)
             for result in crop_results:
@@ -682,6 +806,8 @@ class DLCOrchestrator(BaseOrchestrator):
                     duration=duration
                 )
                 logger.info(f"DLC completed for {video_id} ({duration:.1f}s)")
+                self._sync_to_connectome(video_id, 'dlc_complete',
+                                         dlc_completed_at=datetime.now().isoformat())
             else:
                 error_msg = results[0].get('error', 'Unknown DLC error') if results else 'No results'
                 raise RuntimeError(f"DLC failed: {error_msg}")
@@ -850,6 +976,8 @@ class DLCOrchestrator(BaseOrchestrator):
                             message=f"All steps complete ({pipeline_duration:.1f}s total)",
                             duration=pipeline_duration)
             logger.info(f"Local pipeline complete: {video_id} ({pipeline_duration:.1f}s)")
+            self._sync_to_connectome(video_id, 'processed',
+                                     processed_at=datetime.now().isoformat())
 
         except Exception as e:
             pipeline_duration = time.time() - pipeline_start
@@ -888,6 +1016,8 @@ class DLCOrchestrator(BaseOrchestrator):
                                 message=f"Archived {len(result.get('files_moved', []))} files",
                                 duration=duration)
                 logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
+                self._sync_to_connectome(video_id, 'archived',
+                                         staged_at=datetime.now().isoformat())
 
                 # Export to central DB on NAS for cross-node provenance
                 self.db.export_to_central_db(video_id)
@@ -967,6 +1097,9 @@ class DLCOrchestrator(BaseOrchestrator):
             )
 
             logger.info(f"Staged {video_id} to NAS ({len(staged_files)} files, {duration:.1f}s)")
+            self._sync_to_connectome(video_id, 'archived',
+                                     staged_at=datetime.now().isoformat(),
+                                     nas_path=str(self.staging_dir))
 
         except Exception as e:
             duration = time.time() - start_time
