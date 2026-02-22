@@ -223,7 +223,8 @@ def main_watch():
 
     # Create database
     try:
-        db_path = require_processing_root() / "watcher.db"
+        # Use local DB path if configured (avoids SQLite-over-SMB issues)
+        db_path = config.db_path or (require_processing_root() / "watcher.db")
         db = WatcherDB(db_path)
         logger.info(f"Database initialized at {db_path}")
     except Exception as e:

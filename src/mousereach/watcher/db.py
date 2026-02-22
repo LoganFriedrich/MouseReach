@@ -566,6 +566,66 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
+    def force_collage_state(self, filename: str, new_state: str, **kwargs):
+        """
+        Set collage state directly, bypassing transition validation.
+
+        Used by startup recovery to restore collage states from central DB.
+
+        Args:
+            filename: Collage filename
+            new_state: State to set
+            **kwargs: Additional fields to update
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT state FROM collages WHERE filename = ?",
+                    (filename,)
+                ).fetchone()
+
+                if not row:
+                    raise ValueError(f"Collage {filename} not found")
+
+                current_state = row['state']
+
+                fields = ['state = ?', 'updated_at = ?']
+                values = [new_state, self._now()]
+
+                state_timestamp_map = {
+                    'validated': 'validated_at',
+                    'stable': 'stable_since',
+                    'cropping': 'crop_started_at',
+                    'cropped': 'crop_completed_at',
+                    'archived': 'archived_at',
+                }
+
+                if new_state in state_timestamp_map:
+                    timestamp_field = state_timestamp_map[new_state]
+                    fields.append(f'{timestamp_field} = ?')
+                    values.append(self._now())
+
+                for key, value in kwargs.items():
+                    fields.append(f'{key} = ?')
+                    values.append(value)
+
+                values.append(filename)
+                conn.execute(
+                    f"UPDATE collages SET {', '.join(fields)} WHERE filename = ?",
+                    values
+                )
+
+                conn.commit()
+                logger.info(f"Force-set collage {filename}: {current_state} -> {new_state}")
+
+            except Exception as e:
+                logger.error(f"Failed to force-set collage {filename}: {e}")
+                raise
+            finally:
+                conn.close()
+
+    @_retry_network_errors
     def update_collage_state(self, filename: str, new_state: str, **kwargs):
         """
         Update collage state with validation.

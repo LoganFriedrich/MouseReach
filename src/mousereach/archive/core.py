@@ -69,10 +69,11 @@ def check_archive_ready(video_id: str) -> Tuple[bool, Dict[str, str]]:
 
     status = index.get_pipeline_status(video_id)
 
+    accepted = {"validated", "auto_approved"}
     is_ready = (
-        status["seg"] == "validated" and
-        status["reach"] == "validated" and
-        status["outcome"] == "validated"
+        status["seg"] in accepted and
+        status["reach"] in accepted and
+        status["outcome"] in accepted
     )
 
     return is_ready, status
@@ -101,7 +102,9 @@ def get_archive_destination(video_id: str) -> Path:
 def archive_video(
     video_id: str,
     dry_run: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    skip_ready_check: bool = False,
+    source_dir: Path = None,
 ) -> Dict:
     """Archive a video to NAS.
 
@@ -111,6 +114,8 @@ def archive_video(
         video_id: Video identifier
         dry_run: If True, only show what would be done
         verbose: Print progress
+        skip_ready_check: If True, skip validation status check
+        source_dir: If set, discover files from this directory instead of Processing/
 
     Returns:
         Dict with archive results
@@ -126,17 +131,21 @@ def archive_video(
     }
 
     # Check if ready
-    is_ready, status = check_archive_ready(video_id)
+    if not skip_ready_check:
+        is_ready, status = check_archive_ready(video_id)
 
-    if not is_ready:
-        not_validated = [k for k, v in status.items() if v != "validated"]
-        result["error"] = f"Not ready: {', '.join(not_validated)} not validated"
-        if verbose:
-            print(f"Cannot archive {video_id}: {result['error']}")
-        return result
+        if not is_ready:
+            not_validated = [k for k, v in status.items() if v not in ("validated", "auto_approved")]
+            result["error"] = f"Not ready: {', '.join(not_validated)} not validated"
+            if verbose:
+                print(f"Cannot archive {video_id}: {result['error']}")
+            return result
 
     # Get files
-    files = get_video_files(video_id)
+    if source_dir:
+        files = [f for f in source_dir.iterdir() if f.is_file() and f.name.startswith(video_id)]
+    else:
+        files = get_video_files(video_id)
     if not files:
         result["error"] = "No files found in Processing/"
         if verbose:
