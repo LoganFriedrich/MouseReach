@@ -80,23 +80,23 @@ def check_archive_ready(video_id: str) -> Tuple[bool, Dict[str, str]]:
 
 
 def get_archive_destination(video_id: str) -> Path:
-    """Determine archive destination based on experiment code.
+    """Determine archive destination based on project/cohort.
 
     Args:
         video_id: Video identifier (e.g., "20250704_CNT0101_P1")
 
     Returns:
-        Destination folder path (e.g., {NAS_DRIVE}/Analyzed/Sort/CNT/)
+        Destination folder path (e.g., Analyzed/Connectome/CNT01/)
     """
     # Extract animal ID from video_id (format: DATE_ANIMALID_TRAY)
     parts = video_id.split("_")
     if len(parts) >= 2:
         animal_id = parts[1]
-        experiment = AnimalID.get_experiment(animal_id)
+        project, cohort = AnimalID.get_project_and_cohort(animal_id)
     else:
-        experiment = "UNKNOWN"
+        project, cohort = "UNKNOWN", "UNKNOWN"
 
-    return Paths.ANALYZED_OUTPUT / experiment
+    return Paths.ANALYZED_OUTPUT / project / cohort
 
 
 def archive_video(

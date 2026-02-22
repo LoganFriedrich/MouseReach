@@ -988,7 +988,7 @@ class DLCOrchestrator(BaseOrchestrator):
     def _archive_locally_processed(self, work: dict):
         """Archive a locally processed video directly to NAS.
 
-        In also_process mode, results go straight to Analyzed/Sort/ on NAS,
+        In also_process mode, results go straight to Analyzed/{project}/{cohort}/ on NAS,
         skipping the DLC_Complete staging step entirely.
         """
         from mousereach.archive.core import archive_video
@@ -1305,7 +1305,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         logger.info(f"Reprocessing outdated video {video_id} (post-DLC)")
 
         # Find archived files on NAS
-        archive_dir = Paths.NAS_ROOT / "Analyzed" / "Sort" if Paths.NAS_ROOT else None
+        archive_dir = Paths.ANALYZED_OUTPUT if Paths.ANALYZED_OUTPUT else None
         if not archive_dir or not archive_dir.exists():
             self.db.mark_failed(video_id, "Archive directory not found for reprocessing")
             return
