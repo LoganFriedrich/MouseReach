@@ -436,7 +436,7 @@ def run_setup_wizard():
             dirs_to_create.extend([
                 nas_root / "Unanalyzed" / "Multi-Animal",
                 nas_root / "Unanalyzed" / "Single_Animal",
-                nas_root / "Analyzed" / "Sort",
+                nas_root / "Analyzed",
             ])
 
         missing = [d for d in dirs_to_create if not d.exists()]

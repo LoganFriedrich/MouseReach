@@ -32,7 +32,7 @@ class ReprocessingScanner:
         """
         self.db = db
         self.nas_root = Path(nas_root)
-        self.archive_dir = self.nas_root / "Analyzed" / "Sort"
+        self.archive_dir = self.nas_root / "Analyzed"
 
     def scan(self, mark_outdated: bool = True) -> dict:
         """Scan all archived videos, optionally mark outdated ones.
@@ -140,8 +140,8 @@ class ReprocessingScanner:
         if not self.archive_dir.exists():
             return None
 
-        # Try direct glob first (faster than rglob for flat structures)
-        for manifest_path in self.archive_dir.glob(f"*/{video_id}_processing_manifest.json"):
+        # Try direct glob first (project/cohort/manifest)
+        for manifest_path in self.archive_dir.glob(f"*/*/{video_id}_processing_manifest.json"):
             try:
                 with open(manifest_path) as f:
                     return json.load(f)

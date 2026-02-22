@@ -55,7 +55,7 @@ NAS (shared between both):
     │   ├── Multi-Animal/      ← collage videos arrive here (from filming PCs)
     │   └── Single_Animal/     ← pre-cropped single-animal videos
     ├── DLC_Complete/          ← DLC PC stages finished videos here
-    └── Analyzed/Sort/         ← final archived output (organized by experiment)
+    └── Analyzed/{project}/{cohort}/  ← final archived output (e.g. Connectome/CNT03/)
 
 Configuration (in ~/.mousereach/config.json):
     nas_drive:                     root of NAS mount (e.g. "X:\\")
