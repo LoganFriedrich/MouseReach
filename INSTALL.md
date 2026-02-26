@@ -832,12 +832,50 @@ The watcher is now running. It will:
 
 **To stop the watcher:** Press **Ctrl+C** in the terminal window.
 
-**To check status without stopping:** Open a second Anaconda Prompt, activate
-mousereach, and run:
+**To check status without stopping:** Open any terminal and run:
 
 ```
-mousereach-watch --status
+A:\envs\MouseReach\Scripts\mousereach-watch-status.exe
 ```
+
+Or activate the environment first:
+
+```
+conda activate mousereach
+mousereach-watch-status
+```
+
+Additional status options:
+- `mousereach-watch-status --by-animal` — per-animal breakdown with QC
+- `mousereach-watch-status --log 20` — show last 20 processing log entries
+- `mousereach-watch-status --json` — machine-readable JSON output
+
+**To pause for filming:** Double-click the **MouseReach Toggle** shortcut on the
+Desktop, or run `mousereach-watch-toggle` in any terminal. Run it again to resume.
+
+---
+
+### Step 11: Auto-Launch on Login (Optional)
+
+The `deploy/` folder in the MouseReach repo contains portable batch scripts.
+To install:
+
+1. **Startup script:** Copy `deploy/MouseReach-Watcher-Startup.bat` to your
+   Startup folder (`Win+R` → `shell:startup`)
+2. **Toggle shortcut:** Copy `deploy/MouseReach-Toggle.bat` to your Desktop
+
+The scripts auto-detect the MouseReach environment on A:\, Y:\, or C:\ drives.
+
+On login, the startup script automatically:
+1. Waits for the NAS drive (Y:\) to be available
+2. Launches the watcher daemon in its own terminal window
+3. Launches a status monitor that refreshes every 60 seconds
+
+The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
+without opening a terminal.
+
+To disable auto-launch, delete the batch file from the Startup folder
+(`Win+R` → `shell:startup`).
 
 ---
 
@@ -850,7 +888,11 @@ conda activate mousereach
 mousereach-watch
 ```
 
-That's it. Leave the terminal window open and the watcher runs in the background.
+Or just log in — the watcher starts automatically if the startup script is installed.
+
+Useful commands (no environment activation needed):
+- `A:\envs\MouseReach\Scripts\mousereach-watch-status.exe` — check progress
+- `A:\envs\MouseReach\Scripts\mousereach-watch-toggle.exe` — pause/resume
 
 ---
 
