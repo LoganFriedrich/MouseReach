@@ -87,11 +87,13 @@ if not defined REPO_DIR (
 
 echo Repo:    %REPO_DIR%
 
-REM --- Pull latest ---
+REM --- Pull latest master ---
 echo.
-echo Pulling latest changes...
+echo Pulling latest master...
 pushd "%REPO_DIR%"
-git pull
+git fetch origin
+git checkout master
+git pull origin master
 if errorlevel 1 (
     echo.
     echo WARNING: git pull failed. Continuing with current version.
