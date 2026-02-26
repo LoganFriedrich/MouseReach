@@ -48,10 +48,24 @@ echo NAS drive found.
 REM Launch the watcher daemon in its own window
 start "MouseReach Watcher" cmd /k "%WATCH_EXE%"
 
-REM Give the watcher a moment to initialize
+REM Give the watcher a moment to initialize and create the log file
 timeout /t 10 /nobreak >nul
 
-REM Launch a status monitor that refreshes every 60 seconds
-start "MouseReach Status" cmd /k "title MouseReach Status && :loop && cls && "%STATUS_EXE%" && echo. && echo --- Refreshing in 60s (Ctrl+C to stop) --- && timeout /t 60 /nobreak >nul && goto loop"
+REM Find the watcher log file (PROCESSING_ROOT/watcher_logs/watcher.log)
+set "LOG_FILE="
+for %%D in (
+    "A:\MouseReach_Pipeline\watcher_logs\watcher.log"
+    "Y:\MouseReach_Pipeline\watcher_logs\watcher.log"
+    "G:\MouseReach_Pipeline\watcher_logs\watcher.log"
+) do (
+    if exist %%D if not defined LOG_FILE set "LOG_FILE=%%~D"
+)
+
+if defined LOG_FILE (
+    REM Launch a live log tail window
+    start "MouseReach Log" powershell -NoExit -Command "Get-Content '%LOG_FILE%' -Tail 50 -Wait"
+) else (
+    echo WARNING: Could not find watcher.log - skipping log window
+)
 
 exit
