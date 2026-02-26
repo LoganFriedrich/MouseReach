@@ -244,11 +244,31 @@ full pipeline automatically (crop, DLC, segment, reaches, outcomes, archive).
 | `mousereach-watch` | Start the watcher daemon |
 | `mousereach-watch --once` | Process all pending work, then exit |
 | `mousereach-watch --dry-run` | Show what would be processed |
-| `mousereach-watch --status` | Show pipeline status |
+| `mousereach-watch-status` | Show pipeline status (video/collage counts, recent activity) |
+| `mousereach-watch-status --by-animal` | Per-animal breakdown with QC |
+| `mousereach-watch-status --log N` | Show last N processing log entries |
+| `mousereach-watch-toggle` | Pause/resume the watcher (for filming sessions) |
+| `mousereach-watch-toggle --status` | Show whether watcher is paused or active |
 | `mousereach-watch-info` | Diagnose drives and path accessibility |
 
 The watcher runs on the NAS / DLC PC (the machine with direct NAS access and GPU).
 Set up with `mousereach-setup --set-role "NAS / DLC PC"` then `mousereach-setup`.
+
+### Auto-Launch on Login
+
+The `deploy/` folder contains batch scripts that auto-detect the MouseReach
+environment and work on any PC:
+
+1. **Copy startup script** → `Win+R` → `shell:startup` → paste `deploy/MouseReach-Watcher-Startup.bat`
+2. **Copy toggle shortcut** → paste `deploy/MouseReach-Toggle.bat` to Desktop
+
+On login, the startup script will:
+1. Wait for the NAS drive (Y:\) to be available
+2. Launch the watcher daemon in its own terminal window
+3. Launch a status monitor that refreshes every 60 seconds
+
+The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
+(e.g., during filming sessions).
 
 ---
 
