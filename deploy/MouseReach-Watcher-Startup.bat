@@ -45,6 +45,15 @@ if not exist "Y:\2_Connectome" (
 )
 echo NAS drive found.
 
+REM Keep Y: repo on master and up to date
+if exist "Y:\2_Connectome\Behavior\MouseReach\.git" (
+    echo Updating NAS repo (Y:\2_Connectome\Behavior\MouseReach)...
+    pushd "Y:\2_Connectome\Behavior\MouseReach"
+    git checkout master >nul 2>&1
+    git pull >nul 2>&1 && echo   NAS repo updated. || echo   WARNING: NAS repo pull failed (check network/auth)
+    popd
+)
+
 REM Launch the watcher daemon in its own window
 start "MouseReach Watcher" cmd /k "%WATCH_EXE%"
 

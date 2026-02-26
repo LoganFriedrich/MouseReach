@@ -43,6 +43,23 @@ This applies to: reach start frames, reach end frames, reach splitting, segmenta
 
 ---
 
+## Git Workflow
+
+**Y: (NAS) is the canonical copy and must always stay on `master`, always up to date.**
+
+| Location | Branch | Role |
+|----------|--------|------|
+| `Y:\2_Connectome\Behavior\MouseReach` | `master` only | Canonical NAS copy, auto-pulled on startup |
+| `A:\Behavior\MouseReach` (local machines) | Feature branches | Working copies — branch from master, merge back via PR or explicit merge |
+
+**Rules:**
+- **Never commit directly to master on local (A:) drives.** Always create a branch first.
+- **Y: should never have local edits on master.** If you find untracked files there, they should be moved to a branch or removed.
+- **Before deploying**, merge your branch to master and push, then deploy pulls master on each machine.
+- **Resolve conflicts properly** — don't force-push or skip merge conflicts.
+
+---
+
 ## Environment Activation
 
 **Always activate the conda environment before running MouseReach commands:**
