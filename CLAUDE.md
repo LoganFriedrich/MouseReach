@@ -45,16 +45,17 @@ This applies to: reach start frames, reach end frames, reach splitting, segmenta
 
 ## Git Workflow
 
-**Y: (NAS) is the canonical copy and must always stay on `master`, always up to date.**
+**GitHub is the canonical source.** Y: (NAS) keeps a backup clone that stays on `master` and is auto-pulled on startup.
 
 | Location | Branch | Role |
 |----------|--------|------|
-| `Y:\2_Connectome\Behavior\MouseReach` | `master` only | Canonical NAS copy, auto-pulled on startup |
-| `A:\Behavior\MouseReach` (local machines) | Feature branches | Working copies — branch from master, merge back via PR or explicit merge |
+| GitHub (`origin`) | `master` | Canonical source of truth |
+| `Y:\2_Connectome\Behavior\MouseReach` (NAS) | `master` only | Network backup — always mirrors GitHub master |
+| `A:\Behavior\MouseReach` (local drives) | Feature branches | Working copies — branch from master, merge back via PR or explicit merge |
 
 **Rules:**
 - **Never commit directly to master on local (A:) drives.** Always create a branch first.
-- **Y: should never have local edits on master.** If you find untracked files there, they should be moved to a branch or removed.
+- **Y: should never have local edits.** It exists only to mirror master as a NAS backup.
 - **Before deploying**, merge your branch to master and push, then deploy pulls master on each machine.
 - **Resolve conflicts properly** — don't force-push or skip merge conflicts.
 
