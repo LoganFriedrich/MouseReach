@@ -43,21 +43,25 @@ This applies to: reach start frames, reach end frames, reach splitting, segmenta
 
 ---
 
-## Git Workflow
+## Git Workflow (ALL repos on this machine)
 
-**GitHub is the canonical source.** Y: (NAS) keeps a backup clone that stays on `master` and is auto-pulled on startup.
+**This applies to every git repository, not just MouseReach.**
+
+**GitHub is the canonical source of truth.** Y: (NAS) keeps backup clones that mirror `master`. Local drives are working copies.
 
 | Location | Branch | Role |
 |----------|--------|------|
 | GitHub (`origin`) | `master` | Canonical source of truth |
-| `Y:\2_Connectome\Behavior\MouseReach` (NAS) | `master` only | Network backup — always mirrors GitHub master |
-| Local drives (A: or C:, varies by machine) | Feature branches | Working copies — branch from master, merge back via PR or explicit merge |
+| Y: (NAS) | `master` only | Network backup — always mirrors GitHub master, never edited |
+| Local drives (A: or C:, varies by machine) | `<hostname>` branch | Working copies — every machine works on a branch named after its hostname |
 
 **Rules:**
-- **Never commit directly to master on local drives.** Always create a branch first.
-- **Y: should never have local edits.** It exists only to mirror master as a NAS backup.
-- **Before deploying**, merge your branch to master and push, then deploy pulls master on each machine.
-- **Resolve conflicts properly** — don't force-push or skip merge conflicts.
+- **NEVER commit directly to master on local drives.** At session start, verify you are on this machine's branch (named after hostname). If the branch doesn't exist, create it from master.
+- **All work happens on the machine's branch.** Merge to master only when changes are tested and intentional. Conflicts must be resolved properly.
+- **Y: repos should never have local edits.** They exist only to mirror master as a NAS backup.
+- **Before deploying**, merge your branch to master and push. Deploy scripts always checkout and pull master.
+- **Never force-push or skip merge conflicts.**
+- **Push your branch to origin** so other machines/sessions can see in-progress work.
 
 ---
 
