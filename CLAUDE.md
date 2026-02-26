@@ -51,10 +51,10 @@ This applies to: reach start frames, reach end frames, reach splitting, segmenta
 |----------|--------|------|
 | GitHub (`origin`) | `master` | Canonical source of truth |
 | `Y:\2_Connectome\Behavior\MouseReach` (NAS) | `master` only | Network backup — always mirrors GitHub master |
-| `A:\Behavior\MouseReach` (local drives) | Feature branches | Working copies — branch from master, merge back via PR or explicit merge |
+| Local drives (A: or C:, varies by machine) | Feature branches | Working copies — branch from master, merge back via PR or explicit merge |
 
 **Rules:**
-- **Never commit directly to master on local (A:) drives.** Always create a branch first.
+- **Never commit directly to master on local drives.** Always create a branch first.
 - **Y: should never have local edits.** It exists only to mirror master as a NAS backup.
 - **Before deploying**, merge your branch to master and push, then deploy pulls master on each machine.
 - **Resolve conflicts properly** — don't force-push or skip merge conflicts.
