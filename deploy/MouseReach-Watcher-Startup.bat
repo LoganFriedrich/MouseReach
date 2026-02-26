@@ -63,7 +63,7 @@ for %%D in (
 
 if defined LOG_FILE (
     REM Launch a live log tail window
-    start "MouseReach Log" powershell -NoExit -Command "Get-Content '%LOG_FILE%' -Tail 50 -Wait"
+    start "MouseReach Log" powershell -ExecutionPolicy Bypass -NoExit -Command "Get-Content '%LOG_FILE%' -Tail 50 -Wait"
 ) else (
     echo WARNING: Could not find watcher.log - skipping log window
 )
