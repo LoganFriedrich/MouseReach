@@ -265,6 +265,7 @@ class FeatureExtractor:
                 )
 
                 # Set contextual flags
+                reach_features.segment_num = seg_num
                 reach_features.is_first_reach = (i == 0)
                 reach_features.is_last_reach = (i == n_reaches - 1)
                 reach_features.n_reaches_in_segment = n_reaches
@@ -289,6 +290,88 @@ class FeatureExtractor:
             summary=summary,
             extracted_at=extracted_at
         )
+
+    def _build_anchored_trajectory(
+        self,
+        df: pd.DataFrame,
+        start_frame: int,
+        end_frame: int
+    ) -> Tuple[pd.DataFrame, int]:
+        """
+        Build a reach trajectory with synthetic anchor points at slit boundaries.
+
+        Prepends a pre-start anchor (frame before reach start) with paw position
+        estimated as midpoint of (Nose, BOXR), and appends a post-end anchor
+        (frame after reach end) with paw position as midpoint of (Nose, BOXL).
+
+        This closes every reach trajectory back to the slit, making area,
+        trajectory shape, velocity, and smoothness metrics comparable across
+        reaches regardless of where DLC first/last detected the paw.
+
+        Args:
+            df: Full DLC dataframe
+            start_frame: Reach start frame (absolute)
+            end_frame: Reach end frame (absolute)
+
+        Returns:
+            Tuple of (anchored_df, apex_offset) where:
+            - anchored_df has RightHand_x/y overwritten at anchor rows
+            - apex_offset is the number of prepended rows (0 or 1)
+        """
+        reach_df = df.iloc[start_frame:end_frame + 1].copy()
+        anchor_offset = 0
+
+        # --- Pre-start anchor ---
+        pre_frame = start_frame - 1
+        if pre_frame >= 0:
+            pre_row = df.iloc[pre_frame]
+            has_nose = (
+                'Nose_x' in df.columns
+                and not np.isnan(pre_row.get('Nose_x', np.nan))
+            )
+            has_boxr = (
+                'BOXR_x' in df.columns
+                and not np.isnan(pre_row.get('BOXR_x', np.nan))
+            )
+            if has_nose and has_boxr:
+                anchor_x = (pre_row['Nose_x'] + pre_row['BOXR_x']) / 2.0
+                anchor_y = (pre_row['Nose_y'] + pre_row['BOXR_y']) / 2.0
+
+                # Build anchor row: copy the pre_row, override RightHand coords
+                anchor_row = pre_row.copy()
+                anchor_row['RightHand_x'] = anchor_x
+                anchor_row['RightHand_y'] = anchor_y
+                anchor_row['RightHand_likelihood'] = 0.0  # Synthetic
+
+                pre_df = pd.DataFrame([anchor_row])
+                reach_df = pd.concat([pre_df, reach_df], ignore_index=True)
+                anchor_offset = 1
+
+        # --- Post-end anchor ---
+        post_frame = end_frame + 1
+        if post_frame < len(df):
+            post_row = df.iloc[post_frame]
+            has_nose = (
+                'Nose_x' in df.columns
+                and not np.isnan(post_row.get('Nose_x', np.nan))
+            )
+            has_boxl = (
+                'BOXL_x' in df.columns
+                and not np.isnan(post_row.get('BOXL_x', np.nan))
+            )
+            if has_nose and has_boxl:
+                anchor_x = (post_row['Nose_x'] + post_row['BOXL_x']) / 2.0
+                anchor_y = (post_row['Nose_y'] + post_row['BOXL_y']) / 2.0
+
+                anchor_row = post_row.copy()
+                anchor_row['RightHand_x'] = anchor_x
+                anchor_row['RightHand_y'] = anchor_y
+                anchor_row['RightHand_likelihood'] = 0.0  # Synthetic
+
+                post_df = pd.DataFrame([anchor_row])
+                reach_df = pd.concat([reach_df, post_df], ignore_index=True)
+
+        return reach_df, anchor_offset
 
     def _extract_reach_features(
         self,
@@ -336,8 +419,12 @@ class FeatureExtractor:
         # Extract reach trajectory for this reach
         reach_df = df.iloc[start_frame:end_frame+1]
 
-        # Compute velocity features
-        velocity_features = self._compute_velocity_features(reach_df, apex_frame - start_frame if apex_frame else None)
+        # Build anchored trajectory (synthetic slit-boundary points for kinematics)
+        anchored_df, anchor_offset = self._build_anchored_trajectory(df, start_frame, end_frame)
+        anchored_apex_idx = (apex_frame - start_frame + anchor_offset) if apex_frame else None
+
+        # Compute velocity features (using anchored trajectory)
+        velocity_features = self._compute_velocity_features(anchored_df, anchored_apex_idx)
         features.velocity_at_apex_px_per_frame = velocity_features['velocity_at_apex']
         features.peak_velocity_px_per_frame = velocity_features['peak_velocity']
         features.mean_velocity_px_per_frame = velocity_features['mean_velocity']
@@ -347,17 +434,17 @@ class FeatureExtractor:
             px_to_mm = self.RULER_MM / ruler_pixels
             features.velocity_at_apex_mm_per_sec = features.velocity_at_apex_px_per_frame * px_to_mm * self.FRAMERATE
 
-        # Compute trajectory features
-        traj_features = self._compute_trajectory_features(reach_df)
+        # Compute trajectory features (using anchored trajectory)
+        traj_features = self._compute_trajectory_features(anchored_df)
         features.trajectory_straightness = traj_features['straightness']
         features.trajectory_smoothness = traj_features['smoothness']
 
-        # Compute hand orientation features
+        # Compute hand orientation features (original trajectory - no synthetic hand angles)
         orient_features = self._compute_orientation_features(reach_df, apex_frame - start_frame if apex_frame else None)
         features.hand_angle_at_apex_deg = orient_features['angle_at_apex']
         features.hand_rotation_total_deg = orient_features['total_rotation']
 
-        # Compute confidence metrics
+        # Compute confidence metrics (original trajectory - synthetic points have 0 likelihood)
         conf_features = self._compute_confidence_features(reach_df)
         features.mean_likelihood = conf_features['mean_likelihood']
         features.frames_low_confidence = conf_features['frames_low_confidence']
