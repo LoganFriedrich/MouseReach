@@ -51,6 +51,11 @@ contributions:
       python_name: mousereach.performance.feedback_dashboard:PerformanceViewerWidget
       title: "Algorithm Performance & Feedback"
 
+    # DLC Model Comparison (standalone tool)
+    - id: mousereach.dlc_compare_widget
+      python_name: mousereach.dlc_compare.widget:DLCCompareWidget
+      title: "DLC Model Comparison"
+
   widgets:
     - command: mousereach.dashboard_widget
       display_name: "Pipeline Dashboard"
@@ -84,4 +89,7 @@ contributions:
       autogenerate: false
     - command: mousereach.performance_widget
       display_name: "Algorithm Performance & Feedback"
+      autogenerate: false
+    - command: mousereach.dlc_compare_widget
+      display_name: "DLC Model Comparison"
       autogenerate: false

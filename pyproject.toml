@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mousereach"
-version = "2.3.0"
+version = "2.4.0"
 description = "MouseReach Pipeline - Mouse Reaching Behavior Analysis"
 readme = "README.md"
 license = {text = "MIT"}
@@ -80,6 +80,7 @@ mousereach-compress = "mousereach.video_prep.compress:main"
 # Step 1 - DLC
 mousereach-dlc-batch = "mousereach.dlc.cli:main_batch"
 mousereach-dlc-quality = "mousereach.dlc.cli:main_quality"
+mousereach-dlc-compare = "mousereach.dlc_compare.widget:main"
 
 # Step 2 - Segmentation
 mousereach-segment = "mousereach.segmentation.cli:main_batch"
