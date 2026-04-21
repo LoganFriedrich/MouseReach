@@ -393,10 +393,11 @@ class DatabaseSyncer:
         Load provenance info from processing manifest.
 
         Looks for {video_name}_processing_manifest.json in the same directory
-        as the features file.
+        as the features file, then falls back to NAS Processing and Analyzed
+        directories if not found locally.
 
         Returns:
-            Dict with provenance columns (empty strings for missing values)
+            Dict with provenance columns (None for missing values)
         """
         defaults = {
             'processed_by': None,
@@ -407,7 +408,31 @@ class DatabaseSyncer:
             'outcome_detector_version': None,
         }
 
-        manifest_path = processing_dir / f"{video_name}_processing_manifest.json"
+        manifest_name = f"{video_name}_processing_manifest.json"
+
+        # Check co-located manifest first
+        manifest_path = processing_dir / manifest_name
+        if not manifest_path.exists():
+            # Fallback: check NAS Processing and Analyzed directories
+            try:
+                from mousereach.config import Paths as ConfigPaths
+                nas_processing = (ConfigPaths.NAS_ROOT / "Processing"
+                                  if ConfigPaths.NAS_ROOT else None)
+                for fallback_dir in [ConfigPaths.PROCESSING, nas_processing,
+                                     ConfigPaths.ANALYZED_OUTPUT]:
+                    if fallback_dir and fallback_dir != processing_dir and fallback_dir.exists():
+                        # Check flat first, then recursive for Analyzed
+                        candidate = fallback_dir / manifest_name
+                        if candidate.exists():
+                            manifest_path = candidate
+                            break
+                        found = list(fallback_dir.rglob(manifest_name))
+                        if found:
+                            manifest_path = found[0]
+                            break
+            except Exception:
+                pass
+
         if not manifest_path.exists():
             return defaults
 
@@ -471,29 +496,48 @@ class DatabaseSyncer:
 
     def find_syncable_files(self) -> List[Tuple[Path, str]]:
         """
-        Find all _features.json files in Processing that can be synced.
+        Find all _features.json files that can be synced.
+
+        Scans both Processing (active work) and Analyzed (archived results)
+        directories. Processing takes priority if a video exists in both.
 
         Returns:
             List of (path, subject_id) tuples
         """
-        if self.processing_path is None or not self.processing_path.exists():
-            return []
-
-        syncable = []
+        syncable = {}  # video_name -> (path, subject_id) for dedup
         known_subjects = set(self.get_known_subjects())
 
-        for json_file in self.processing_path.glob(f"*{FEATURES_SUFFIX}"):
-            video_name = json_file.stem.replace('_features', '')
-            subject_id = parse_subject_id(video_name)
+        # Build list of (directory, recursive) pairs to scan
+        scan_dirs = []
+        if self.processing_path and self.processing_path.exists():
+            scan_dirs.append((self.processing_path, False))
 
-            if subject_id and subject_id in known_subjects:
-                syncable.append((json_file, subject_id))
+        # Also scan NAS Analyzed directory for archived data
+        try:
+            from mousereach.config import Paths as ConfigPaths
+            if ConfigPaths.ANALYZED_OUTPUT and ConfigPaths.ANALYZED_OUTPUT.exists():
+                scan_dirs.append((ConfigPaths.ANALYZED_OUTPUT, True))
+        except Exception:
+            pass
 
-        return syncable
+        for scan_dir, recursive in scan_dirs:
+            pattern = f"**/*{FEATURES_SUFFIX}" if recursive else f"*{FEATURES_SUFFIX}"
+            for json_file in scan_dir.glob(pattern):
+                video_name = json_file.stem.replace('_features', '')
+
+                # Processing takes priority over Analyzed
+                if video_name in syncable:
+                    continue
+
+                subject_id = parse_subject_id(video_name)
+                if subject_id and subject_id in known_subjects:
+                    syncable[video_name] = (json_file, subject_id)
+
+        return list(syncable.values())
 
     def needs_sync(self, path: Path) -> bool:
         """Check if a file needs to be synced (new or changed)."""
-        key = str(path.relative_to(self.processing_path) if self.processing_path else path)
+        key = path.name  # Use filename as key (unique per video, works for any source dir)
         current_hash = file_hash(path)
 
         if key not in self._sync_state:
@@ -537,6 +581,9 @@ class DatabaseSyncer:
             for segment in data.get('segments', []):
                 # Segment-level context
                 seg_context = {
+                    # Override broken reach-level segment_num (always 0 due to
+                    # feature_extractor bug) with the correct parent-segment value.
+                    'segment_num': segment.get('segment_num'),
                     'segment_outcome': segment.get('outcome'),
                     'segment_outcome_confidence': segment.get('outcome_confidence'),
                     'segment_outcome_flagged': 1 if segment.get('outcome_flagged') else 0,
@@ -601,7 +648,7 @@ class DatabaseSyncer:
                 conn.commit()
 
             # Update sync state
-            key = str(path.relative_to(self.processing_path) if self.processing_path else path)
+            key = path.name  # Use filename as key (unique per video, works for any source dir)
             self._sync_state[key] = file_hash(path)
 
             return len(rows)
