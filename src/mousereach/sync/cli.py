@@ -86,6 +86,28 @@ def main_sync():
         for msg in result.error_messages:
             print(f"  - {msg}")
 
+    # Post-sync hook: refresh phase_group / test_phase, which depend on
+    # cohort timeline analysis and do not get populated by the sync itself.
+    # The GUI handles this via SQLAlchemy events; raw-SQL sync needs this
+    # explicit call. Best-effort: non-zero exit from the backfill should not
+    # mask a successful sync, but we report it.
+    if not args.dry_run and result.synced > 0 and result.errors == 0:
+        print()
+        print("=" * 40)
+        print("Refreshing phase assignments (phase_group / test_phase)...")
+        try:
+            from mousedb.backfill import backfill_phases, print_stats
+        except ImportError:
+            print("[!] mousedb not importable in this env; phase columns may be stale.")
+            print("    Run 'mousedb backfill-phases' in the MouseDB env to refresh.")
+        else:
+            try:
+                stats = backfill_phases()
+                print_stats(stats)
+            except Exception as exc:
+                print(f"[!] Phase backfill failed: {exc}")
+                print("    Run 'mousedb backfill-phases' manually to refresh.")
+
     sys.exit(0 if result.errors == 0 else 1)
 
 
