@@ -99,7 +99,7 @@ import json
 import hashlib
 
 # Version tracking - bump this when algorithm changes significantly
-SEGMENTER_VERSION = "2.1.0"
+SEGMENTER_VERSION = "2.1.1"
 SEGMENTER_ALGORITHM = "sabl_centered_crossing_v2"
 
 
@@ -437,20 +437,31 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
             frames = [f for i, f in enumerate(frames) if i not in to_remove]
             anomalies.append(f"Removed {len(to_remove)} low-confidence candidates")
         elif len(frames) < 21:
-            # Too few - fill gaps with interpolated boundaries
+            # Too few - fill gaps
             missing = 21 - len(frames)
-            # Find largest gaps
-            intervals = np.diff(frames)
-            gap_indices = np.argsort(intervals)[::-1][:missing]
-            
-            new_frames = list(frames)
-            for gap_idx in sorted(gap_indices, reverse=True):
-                gap_start = frames[gap_idx]
-                gap_end = frames[gap_idx + 1]
-                interp_frame = (gap_start + gap_end) // 2
-                new_frames.insert(gap_idx + 1, interp_frame)
-                anomalies.append(f"Interpolated boundary at frame {interp_frame}")
-            frames = new_frames[:21]
+            gap_to_end = total_frames - frames[-1]
+            internal_gaps = np.diff(frames)
+            max_internal_gap = np.max(internal_gaps) if len(internal_gaps) > 0 else 0
+
+            # B21 projection: if the largest gap is at the end of the video
+            # and only 1 boundary is missing, project forward from last candidate
+            # instead of interpolating mid-video (which creates phantom boundaries)
+            if gap_to_end > max_internal_gap * 0.8 and missing == 1:
+                projected = int(frames[-1] + actual_interval)
+                projected = min(projected, total_frames - 1)
+                frames.append(projected)
+                anomalies.append(f"Projected B21 at frame {projected} (B20 + interval)")
+            else:
+                # Find largest internal gaps and interpolate
+                gap_indices = np.argsort(internal_gaps)[::-1][:missing]
+                new_frames = list(frames)
+                for gap_idx in sorted(gap_indices, reverse=True):
+                    gap_start = frames[gap_idx]
+                    gap_end = frames[gap_idx + 1]
+                    interp_frame = (gap_start + gap_end) // 2
+                    new_frames.insert(gap_idx + 1, interp_frame)
+                    anomalies.append(f"Interpolated boundary at frame {interp_frame}")
+                frames = new_frames[:21]
         
         return frames, anomalies
     
