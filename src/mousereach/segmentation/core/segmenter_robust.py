@@ -358,6 +358,52 @@ def validate_with_other_sa_points(df: pd.DataFrame, box_center: float,
     return candidate
 
 
+def _apply_b1_miss_correction(frames: List[int], total_frames: int,
+                              anomalies: List[str]) -> Tuple[List[int], List[str]]:
+    """Structural B1-miss correction (v2.1.2).
+
+    When the primary detector misses the true first pellet presentation but
+    still emits 21 candidates (because it picked up a phantom near the end
+    of the video to round out the count), the returned boundaries are
+    effectively B2-B22 -- every downstream segment is shifted by one index.
+
+    Pattern to detect:
+      - Exactly 21 boundaries in hand
+      - gap_to_start > median_interval * 0.8 (first boundary is about one
+        full presentation interval after video start)
+      - gap_to_end   < median_interval * 0.3 (last boundary is tight to
+        video end, indicating a phantom rather than a real B21)
+      - gap_to_start > gap_to_end * 3        (asymmetry: excludes
+        legitimately late-start/late-end recordings)
+
+    When the pattern holds, drop the last boundary and prepend a B1
+    projected backward from the current first boundary using the median
+    inter-boundary interval.
+
+    Canonical example: 20250716_CNT0213_P3 had boundaries starting at
+    frame 2021 (GT says frame 180). Every segment was shifted by one,
+    causing ~1700-frame interaction-timing errors downstream.
+    """
+    if len(frames) != 21:
+        return frames, anomalies
+    intervals = np.diff(frames)
+    median_interval = float(np.median(intervals))
+    gap_to_start = frames[0]
+    gap_to_end = total_frames - frames[-1]
+    suspicious_start = gap_to_start > median_interval * 0.8
+    tight_end = gap_to_end < median_interval * 0.3
+    asymmetric = gap_to_start > gap_to_end * 3
+    if suspicious_start and tight_end and asymmetric:
+        projected_b1 = max(0, int(frames[0] - median_interval))
+        dropped_end = frames[-1]
+        frames = [projected_b1] + frames[:-1]
+        anomalies.append(
+            f"B1-miss correction: projected B1 at {projected_b1} "
+            f"(was {dropped_end}), dropped phantom end boundary"
+        )
+    return frames, anomalies
+
+
 def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
                            total_frames: int,
                            expected_interval: float = 1839,
@@ -384,6 +430,13 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
     
     # BEST CASE: Exactly 21 candidates - use them directly!
     if len(frames) == 21:
+        # Before returning, apply B1-miss structural correction: when the
+        # primary detector finds 21 candidates but the first is ~1 full
+        # interval later than expected AND the last is suspiciously close
+        # to video end, we almost certainly missed the true B1 and picked
+        # up a phantom at end-of-video to round out the count. Correct by
+        # dropping the phantom end boundary and back-projecting B1.
+        frames, anomalies = _apply_b1_miss_correction(frames, total_frames, anomalies)
         return frames, anomalies
     
     # Calculate actual interval from consecutive candidates
@@ -463,45 +516,9 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
                     anomalies.append(f"Interpolated boundary at frame {interp_frame}")
                 frames = new_frames[:21]
 
-        # Structural B1-miss correction (v2.1.2):
-        # When the primary detector misses the FIRST pellet presentation but
-        # still emits 21 candidates (because it picked up a phantom near the
-        # end of the video to round out the count), the 19-23 branch above
-        # accepts the candidates as-is and we end up with segments shifted
-        # by one position. Symptom: boundaries[0] is suspiciously far from
-        # start-of-video, AND boundaries[-1] is suspiciously close to end
-        # (the phantom sits there). Correct by dropping the phantom end
-        # boundary and prepending a back-projected B1.
-        #
-        # Canonical example: 20250716_CNT0213_P3 had boundaries starting at
-        # frame 2021 instead of the GT's frame 180, causing ~1700-frame
-        # interaction-timing errors on downstream segments.
-        if len(frames) == 21:
-            internal_intervals = np.diff(frames)
-            median_interval = float(np.median(internal_intervals))
-            gap_to_start = frames[0]
-            gap_to_end = total_frames - frames[-1]
-            # Calibrated on the 49-video corpus:
-            # - Normal videos: gap_to_start / median < 0.3 (session starts
-            #   within 5-10 sec of video start; inter-presentation interval
-            #   is ~30 sec so normalized gap is small).
-            # - B1-miss videos: gap_to_start / median ~ 0.8-1.2 (first
-            #   detected boundary is effectively one full presentation
-            #   interval after video start, indicating B1 was missed).
-            # - Late-start / late-end videos: both ratios are high. Not a
-            #   B1 miss, so excluded by the asymmetry check.
-            suspicious_start = gap_to_start > median_interval * 0.8
-            tight_end = gap_to_end < median_interval * 0.3
-            asymmetric = gap_to_start > gap_to_end * 3
-            if suspicious_start and tight_end and asymmetric:
-                projected_b1 = max(0, int(frames[0] - median_interval))
-                dropped_end = frames[-1]
-                frames = [projected_b1] + frames[:-1]
-                anomalies.append(
-                    f"B1-miss correction: projected B1 at {projected_b1} "
-                    f"(was {dropped_end}), dropped phantom end boundary"
-                )
-
+        # Apply B1-miss structural correction in case the 21-candidate path
+        # landed with the wrong first boundary (see _apply_b1_miss_correction).
+        frames, anomalies = _apply_b1_miss_correction(frames, total_frames, anomalies)
         return frames, anomalies
     
     # Fallback: build grid starting from estimated B1
