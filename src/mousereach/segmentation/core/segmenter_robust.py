@@ -99,7 +99,7 @@ import json
 import hashlib
 
 # Version tracking - bump this when algorithm changes significantly
-SEGMENTER_VERSION = "2.1.1"
+SEGMENTER_VERSION = "2.1.2"
 SEGMENTER_ALGORITHM = "sabl_centered_crossing_v2"
 
 
@@ -439,14 +439,26 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
         elif len(frames) < 21:
             # Too few - fill gaps
             missing = 21 - len(frames)
+            gap_to_start = frames[0]
             gap_to_end = total_frames - frames[-1]
             internal_gaps = np.diff(frames)
             max_internal_gap = np.max(internal_gaps) if len(internal_gaps) > 0 else 0
 
+            # B1 projection: if the largest gap is at the START of the video
+            # and only 1 boundary is missing, project backward from first
+            # candidate instead of interpolating mid-video. Symmetric to B21.
+            # Fixes videos where the first pellet presentation was missed by
+            # the primary detector (e.g. 20250716_CNT0213_P3: GT B1 at frame 180,
+            # algo's first candidate at 2021 without this fix).
+            if gap_to_start > max_internal_gap * 0.8 and missing == 1:
+                projected = int(frames[0] - actual_interval)
+                projected = max(0, projected)
+                frames.insert(0, projected)
+                anomalies.append(f"Projected B1 at frame {projected} (B2 - interval)")
             # B21 projection: if the largest gap is at the end of the video
             # and only 1 boundary is missing, project forward from last candidate
             # instead of interpolating mid-video (which creates phantom boundaries)
-            if gap_to_end > max_internal_gap * 0.8 and missing == 1:
+            elif gap_to_end > max_internal_gap * 0.8 and missing == 1:
                 projected = int(frames[-1] + actual_interval)
                 projected = min(projected, total_frames - 1)
                 frames.append(projected)
