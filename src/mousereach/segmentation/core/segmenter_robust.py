@@ -481,9 +481,19 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
             median_interval = float(np.median(internal_intervals))
             gap_to_start = frames[0]
             gap_to_end = total_frames - frames[-1]
-            suspicious_start = gap_to_start > median_interval * 1.5
-            tight_end = gap_to_end < median_interval * 0.5
-            if suspicious_start and tight_end:
+            # Calibrated on the 49-video corpus:
+            # - Normal videos: gap_to_start / median < 0.3 (session starts
+            #   within 5-10 sec of video start; inter-presentation interval
+            #   is ~30 sec so normalized gap is small).
+            # - B1-miss videos: gap_to_start / median ~ 0.8-1.2 (first
+            #   detected boundary is effectively one full presentation
+            #   interval after video start, indicating B1 was missed).
+            # - Late-start / late-end videos: both ratios are high. Not a
+            #   B1 miss, so excluded by the asymmetry check.
+            suspicious_start = gap_to_start > median_interval * 0.8
+            tight_end = gap_to_end < median_interval * 0.3
+            asymmetric = gap_to_start > gap_to_end * 3
+            if suspicious_start and tight_end and asymmetric:
                 projected_b1 = max(0, int(frames[0] - median_interval))
                 dropped_end = frames[-1]
                 frames = [projected_b1] + frames[:-1]
