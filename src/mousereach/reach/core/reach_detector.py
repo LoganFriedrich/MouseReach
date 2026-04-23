@@ -195,12 +195,16 @@ class ReachDetector:
     # starting a reach. 83 of 179 early-start errors were single/few-frame
     # noise where hand likelihood briefly crossed 0.5 then dropped. Genuine
     # reach starts have the hand visible continuously.
-    # v6.0: Raised from 2 to 3 -- new DLC (2026-03-27) tracks hand more
-    # confidently, so brief 2-frame noise blips now cross 0.5 more often.
-    # 3 consecutive frames filters these without affecting real reaches
-    # (which sustain visibility for 10+ frames).
-    START_CONFIRM = 3                # consecutive visible frames to confirm start
-    MIN_REACH_DURATION = 5           # v6.0: raised from 4 -- eliminates 22.8% of phantom reaches with 1.5% recall loss (new DLC validation corpus)
+    # v2.5.1-dev: reverted from 3 back to 2.
+    # Rationale (2026-04-23): scoring against the full 23-video reach-GT
+    # corpus (unified-aware eval harness) shows the v6.0 raise was net
+    # negative under the user's recall-first priority framing:
+    # raised from 2 to 3 reduced FP by ~58 but increased FN by ~71.
+    # v6.0 numbers were measured on a 22-video subset, which under-counted
+    # the real-reach loss from tightening.
+    START_CONFIRM = 2                # consecutive visible frames to confirm start
+    # v2.5.1-dev: reverted from 5 back to 4, same rationale.
+    MIN_REACH_DURATION = 4
     LOOKAHEAD_FRAMES = 3             # frames to check for sustained hand disappearance
     DISAPPEAR_THRESHOLD = 4          # v6.0: raised from 3 -- new DLC has fewer tracking dropouts, so brief 3-frame gaps are more likely real reach continuation; reduces early-end errors (Target 5)
     GAP_TOLERANCE = 0                # v4.0: no post-processing merge - handled by tolerance in state machine
