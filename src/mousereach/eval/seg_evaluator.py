@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .base import BaseEvaluator, EvalResult, ErrorCategory
+from .unified_adapter import load_unified_as_seg_gt, find_unified_gt_files
 
 
 @dataclass
@@ -95,13 +96,22 @@ class SegmentationEvaluator(BaseEvaluator):
         }
 
     def find_gt_files(self) -> List[Path]:
-        """Find GT files, supporting both naming conventions."""
+        """Find GT files, supporting split, bare, and unified naming conventions."""
         if not self.gt_dir or not self.gt_dir.exists():
             return []
 
-        # Try both patterns
+        # Try split patterns first
         files = list(self.gt_dir.glob("*_seg_ground_truth.json"))
-        files.extend(self.gt_dir.glob("*_ground_truth.json"))
+        # Bare _ground_truth.json but exclude unified/reach/outcome files
+        for f in self.gt_dir.glob("*_ground_truth.json"):
+            name = f.name
+            if ("_unified_ground_truth" in name
+                    or "_reach_ground_truth" in name
+                    or "_outcome_ground_truth" in name
+                    or "_outcomes_ground_truth" in name
+                    or "_seg_ground_truth" in name):
+                continue
+            files.append(f)
 
         # Deduplicate (prefer _seg_ground_truth.json)
         seen = set()
@@ -112,16 +122,32 @@ class SegmentationEvaluator(BaseEvaluator):
                 seen.add(video_id)
                 result.append(f)
 
+        # Add unified GT files for videos not already covered by split files
+        unified_map = find_unified_gt_files(self.gt_dir)
+        for video_id, unified_path in unified_map.items():
+            if video_id not in seen:
+                # Check that segmentation section is complete before including
+                gt_data = load_unified_as_seg_gt(unified_path)
+                if gt_data is not None:
+                    seen.add(video_id)
+                    result.append(unified_path)
+
         return sorted(result)
 
     def load_ground_truth(self, video_id: str) -> Optional[Dict]:
-        """Load segmentation ground truth."""
-        # Try both naming conventions
+        """Load segmentation ground truth (split format preferred, unified fallback)."""
+        # Try split naming conventions first
         for pattern in [f"{video_id}_seg_ground_truth.json", f"{video_id}_ground_truth.json"]:
             gt_path = self.gt_dir / pattern
             if gt_path.exists():
                 with open(gt_path) as f:
                     return json.load(f)
+
+        # Fallback to unified GT
+        unified_path = self.gt_dir / f"{video_id}_unified_ground_truth.json"
+        if unified_path.exists():
+            return load_unified_as_seg_gt(unified_path)
+
         return None
 
     def load_algorithm_output(self, video_id: str) -> Optional[Dict]:

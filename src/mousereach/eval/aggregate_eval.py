@@ -20,6 +20,12 @@ from .base import ErrorCategory
 from .seg_evaluator import SegmentationEvaluator, SegEvalResult
 from .reach_evaluator import ReachEvaluator, ReachEvalResult
 from .outcome_evaluator import OutcomeEvaluator, OutcomeEvalResult
+from .unified_adapter import (
+    find_unified_gt_files,
+    load_unified_as_reach_gt,
+    load_unified_as_outcome_gt,
+    load_unified_as_seg_gt,
+)
 
 
 @dataclass
@@ -217,7 +223,7 @@ class AggregateEvaluator:
 
     def find_all_gt_files(self) -> Dict[str, List[Path]]:
         """
-        Find all GT files organized by type.
+        Find all GT files organized by type, including unified GT fallback.
 
         Returns:
             Dict with keys: 'reach', 'outcome', 'segment'
@@ -230,15 +236,36 @@ class AggregateEvaluator:
 
         # Search in Processing folders
         for processing_dir in self.processing_root.glob("*/Processing"):
-            # Reach GT
+            # Split-format files
             gt_files['reach'].extend(processing_dir.glob("*_reach_ground_truth.json"))
 
-            # Outcome GT
             gt_files['outcome'].extend(processing_dir.glob("*_outcome_ground_truth.json"))
             gt_files['outcome'].extend(processing_dir.glob("*_outcomes_ground_truth.json"))
 
-            # Segment GT
             gt_files['segment'].extend(processing_dir.glob("*_seg_ground_truth.json"))
+
+            # Unified GT files -- add for each section if split is absent
+            unified_map = find_unified_gt_files(processing_dir)
+            reach_ids = {p.stem.replace("_reach_ground_truth", "") for p in gt_files['reach']
+                         if p.parent == processing_dir}
+            outcome_ids = set()
+            for p in gt_files['outcome']:
+                if p.parent == processing_dir:
+                    vid = p.stem.replace("_outcome_ground_truth", "").replace("_outcomes_ground_truth", "")
+                    outcome_ids.add(vid)
+            seg_ids = {p.stem.replace("_seg_ground_truth", "") for p in gt_files['segment']
+                       if p.parent == processing_dir}
+
+            for video_id, unified_path in unified_map.items():
+                if video_id not in reach_ids:
+                    if load_unified_as_reach_gt(unified_path) is not None:
+                        gt_files['reach'].append(unified_path)
+                if video_id not in outcome_ids:
+                    if load_unified_as_outcome_gt(unified_path) is not None:
+                        gt_files['outcome'].append(unified_path)
+                if video_id not in seg_ids:
+                    if load_unified_as_seg_gt(unified_path) is not None:
+                        gt_files['segment'].append(unified_path)
 
         return gt_files
 
@@ -329,7 +356,7 @@ class AggregateEvaluator:
 
             # Run reach evaluator
             gt_dir = gt_path.parent
-            video_id = gt_path.stem.replace("_reach_ground_truth", "")
+            video_id = gt_path.stem.replace("_reach_ground_truth", "").replace("_unified_ground_truth", "")
 
             evaluator = ReachEvaluator(gt_dir=gt_dir, algo_dir=gt_dir)
             result = evaluator.compare(video_id)
@@ -399,7 +426,7 @@ class AggregateEvaluator:
 
             # Run outcome evaluator
             gt_dir = gt_path.parent
-            video_id = gt_path.stem.replace("_outcome_ground_truth", "").replace("_outcomes_ground_truth", "")
+            video_id = gt_path.stem.replace("_outcome_ground_truth", "").replace("_outcomes_ground_truth", "").replace("_unified_ground_truth", "")
 
             evaluator = OutcomeEvaluator(gt_dir=gt_dir, algo_dir=gt_dir)
             result = evaluator.compare(video_id)
@@ -450,7 +477,7 @@ class AggregateEvaluator:
 
             # Run segment evaluator
             gt_dir = gt_path.parent
-            video_id = gt_path.stem.replace("_seg_ground_truth", "")
+            video_id = gt_path.stem.replace("_seg_ground_truth", "").replace("_unified_ground_truth", "")
 
             evaluator = SegmentationEvaluator(gt_dir=gt_dir, algo_dir=gt_dir)
             result = evaluator.compare(video_id)

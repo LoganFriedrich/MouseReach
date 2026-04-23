@@ -144,7 +144,8 @@ class BaseEvaluator(ABC):
         # Default: remove common suffixes
         # NOTE: Order matters - longer suffixes must come first
         name = path.stem
-        for suffix in ["_outcomes_ground_truth", "_outcome_ground_truth",
+        for suffix in ["_unified_ground_truth",
+                       "_outcomes_ground_truth", "_outcome_ground_truth",
                        "_reach_ground_truth", "_seg_ground_truth",
                        "_ground_truth", "_segments", "_reaches", "_pellet_outcomes"]:
             if name.endswith(suffix):
