@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .base import BaseEvaluator, EvalResult, ErrorCategory
+from .unified_adapter import load_unified_as_reach_gt, find_unified_gt_files
 
 
 @dataclass
@@ -113,12 +114,44 @@ class ReachEvaluator(BaseEvaluator):
             ),
         }
 
+    def find_gt_files(self) -> List[Path]:
+        """Find reach GT files, including unified GT fallback."""
+        if not self.gt_dir or not self.gt_dir.exists():
+            return []
+
+        # Split-format files
+        files = list(self.gt_dir.glob(self.gt_pattern))
+        seen = set()
+        result = []
+        for f in files:
+            video_id = self.extract_video_id(f)
+            if video_id not in seen:
+                seen.add(video_id)
+                result.append(f)
+
+        # Unified GT files for videos not already covered
+        unified_map = find_unified_gt_files(self.gt_dir)
+        for video_id, unified_path in unified_map.items():
+            if video_id not in seen:
+                gt_data = load_unified_as_reach_gt(unified_path)
+                if gt_data is not None:
+                    seen.add(video_id)
+                    result.append(unified_path)
+
+        return sorted(result)
+
     def load_ground_truth(self, video_id: str) -> Optional[Dict]:
-        """Load reach ground truth."""
+        """Load reach ground truth (split format preferred, unified fallback)."""
         gt_path = self.gt_dir / f"{video_id}_reach_ground_truth.json"
         if gt_path.exists():
             with open(gt_path) as f:
                 return json.load(f)
+
+        # Fallback to unified GT
+        unified_path = self.gt_dir / f"{video_id}_unified_ground_truth.json"
+        if unified_path.exists():
+            return load_unified_as_reach_gt(unified_path)
+
         return None
 
     def load_algorithm_output(self, video_id: str) -> Optional[Dict]:
