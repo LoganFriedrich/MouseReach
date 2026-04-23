@@ -224,13 +224,16 @@ class ReachDetector:
     # v6.0: Raised from -15 to -10px -- new DLC produces cleaner tracking so
     # the old -10px recall concern (10% drop) no longer applies; at -10px we
     # eliminate 25.9% of phantoms with only 1.9% recall loss on new DLC corpus.
-    MIN_EXTENT_THRESHOLD = -10.0     # pixels - filter reaches below this
+    # PERMUTATION TEST: extent gates disabled. Do not merge without deliberation
+    # -- user considers extent a kinematic output feature, not a detection filter.
+    # Original values: MIN_EXTENT_THRESHOLD = -10.0, MIN_EXTENT_RULER_THRESHOLD = -0.30
+    MIN_EXTENT_THRESHOLD = float('-inf')  # pixels - DISABLED for permutation test
 
     # v6.0: Ruler-unit extent filter (complements pixel filter above).
     # New DLC validation corpus shows 25.5% of phantom reaches have
     # extent_ruler < -0.30 (hand far behind slit) vs only 1.5% of real reaches.
     # Pixel threshold alone can't catch these because ruler scale varies by video.
-    MIN_EXTENT_RULER_THRESHOLD = -0.30  # ruler units - filter reaches below this
+    MIN_EXTENT_RULER_THRESHOLD = float('-inf')  # ruler units - DISABLED for permutation test
 
     # v4.2: Restored to 5px. 15px caused 99% of early-end errors by splitting
     # single reaches during normal hand oscillation near the slit. The tolerance-based
