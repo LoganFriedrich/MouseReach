@@ -107,7 +107,7 @@ from .geometry import (
 from mousereach.config import Thresholds
 
 
-VERSION = "2.4.4"  # v2.4.4: Better handling of pellet start/end position for retrieval vs displacement
+VERSION = "3.0.0"  # v3.0: New-DLC recalibration -- improved retrieval detection for displaced-then-eaten pellets
 
 
 @dataclass
@@ -907,12 +907,40 @@ class PelletOutcomeDetector:
                         pellet_visible_at_end = (late_segment_vis > 0.5).mean() > 0.30
 
                         if end_distance < 0.12 and not pellet_visible_at_end and max_disp_dist > 0.8:
-                            # Pellet returned very near pillar AND disappeared after large displacement → likely retrieved
+                            # Pellet returned very near pillar AND disappeared after large displacement -> likely retrieved
                             # v2.4.1: Stricter threshold to reduce false positives
                             outcome = 'retrieved'
                             confidence = 0.80
                             flagged = True
                             flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}), returned to pillar, then disappeared - likely retrieved"
+                        elif not pellet_visible_at_end:
+                            # v3.0: Pellet disappeared at end of segment after displacement.
+                            # New DLC (2026-03-27) tracks pellet more reliably, so disappearance
+                            # is a stronger signal of retrieval than with old DLC. If eating was
+                            # detected or pellet was grabbed by paw, reclassify as retrieved.
+                            # Validation: 6/16 retrieved->displaced_sa errors had vis_end=False.
+                            if eating_detected:
+                                outcome = 'retrieved'
+                                confidence = 0.80
+                                flagged = True
+                                flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then disappeared with eating detected - likely retrieved"
+                            else:
+                                # Check if pellet was grabbed (paw near pellet when it disappeared)
+                                late_grab, late_grab_frame, _ = self.detect_pellet_grab(
+                                    df, seg_start + int((seg_end - seg_start) * 0.3), seg_end
+                                )
+                                if late_grab:
+                                    outcome = 'retrieved'
+                                    confidence = 0.75
+                                    flagged = True
+                                    flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then grabbed by paw at frame {late_grab_frame} - likely retrieved"
+                                else:
+                                    # Pellet disappeared but no eating/grab evidence -- could be
+                                    # tracking loss or pellet knocked out of frame
+                                    outcome = 'displaced_sa'
+                                    confidence = 0.70
+                                    flagged = True
+                                    flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) and disappeared (end_dist: {end_distance:.2f}) - no eating/grab detected"
                         else:
                             outcome = 'displaced_sa'
                             confidence = 0.85
@@ -959,18 +987,25 @@ class PelletOutcomeDetector:
                         spike_paw_near = False
                         spike_touch_frame = None
 
-                        if max_distance > 0.55 and len(pellet_frames) > 0:
+                        # v3.0: Lowered spike gate from 0.55 to 0.45 and proximity
+                        # from 40 to 50px -- new DLC hand positions are tighter to actual
+                        # hand center so the same physical distance registers larger in pixels.
+                        if max_distance > 0.45 and len(pellet_frames) > 0:
                             # Find frame of max distance (spike)
                             spike_idx = int(np.argmax(distance_array))
                             if spike_idx < len(pellet_frames):
                                 spike_frame = pellet_frames[spike_idx]
                                 spike_paw_near, spike_touch_frame = self.check_paw_proximity(
                                     df, pellet_frames, spike_frame,
-                                    lookback_frames=15,  # Tighter window for spike analysis
-                                    proximity_threshold_pixels=40.0  # Stricter threshold
+                                    lookback_frames=15,
+                                    proximity_threshold_pixels=50.0  # v3.0: relaxed from 40 for new DLC
                                 )
 
-                        if spike_paw_near and max_distance > 0.55:
+                        # v3.0: Lowered spike paw proximity threshold from 40 to 50px
+                        # and max_distance gate from 0.55 to 0.45 ruler. New DLC tracks hand
+                        # more tightly, so real reach-pellet interactions register at slightly
+                        # larger distances. Validation: fixes 3 of 8 retrieved->untouched errors.
+                        if spike_paw_near and max_distance > 0.45:
                             # v2.4.2: Check if this is tray wobble (pellet moves WITH SA reference)
                             # If pellet relative movement is LESS than SA movement, it's tray wobble
                             is_tray_wobble = False
@@ -1029,13 +1064,32 @@ class PelletOutcomeDetector:
                                     flag_reason = f"Large spike (max: {max_distance:.2f}) with paw proximity - pellet stayed displaced (end: {end_distance:.2f})"
                                     displacement_start_frame = spike_touch_frame
                         else:
-                            outcome = 'untouched'
-                            confidence = 0.85
+                            # v3.0: Before defaulting to untouched, check if pellet
+                            # ultimately disappeared. With new DLC, pellet disappearance
+                            # is a reliable retrieval signal even without detected paw proximity
+                            # (paw may have been occluded when grab happened).
+                            seg_pellet_conf = df.iloc[seg_start:seg_end]['Pellet_likelihood'].values
+                            late_vis = seg_pellet_conf[-50:] if len(seg_pellet_conf) > 50 else seg_pellet_conf
+                            pellet_gone_at_end = (late_vis > 0.5).mean() < 0.30
 
-                            # STAGE 4: Flag high spikes for review
-                            if max_distance > 0.55:
+                            if pellet_gone_at_end and eating_detected:
+                                outcome = 'retrieved'
+                                confidence = 0.75
                                 flagged = True
-                                flag_reason = f"Momentary spike (max: {max_distance:.2f}) but no sustained displacement"
+                                flag_reason = f"Spike (max: {max_distance:.2f}) without paw proximity but pellet disappeared + eating detected - likely retrieved"
+                            elif pellet_gone_at_end and max_distance > 0.45:
+                                outcome = 'retrieved'
+                                confidence = 0.65
+                                flagged = True
+                                flag_reason = f"Spike (max: {max_distance:.2f}) without paw proximity but pellet disappeared - possible retrieval"
+                            else:
+                                outcome = 'untouched'
+                                confidence = 0.85
+
+                                # STAGE 4: Flag high spikes for review
+                                if max_distance > 0.45:
+                                    flagged = True
+                                    flag_reason = f"Momentary spike (max: {max_distance:.2f}) but no sustained displacement"
 
                 elif end_distance > 0.25:
                     # Pellet ended far from pillar

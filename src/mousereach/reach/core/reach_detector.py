@@ -55,10 +55,12 @@ KEY PARAMETERS
 |-----------|-------|------|-----------|
 | HAND_LIKELIHOOD_THRESHOLD | 0.5 | confidence | Matches display threshold in review widget |
 | NOSE_ENGAGEMENT_THRESHOLD | 25 | pixels | Derived from ground truth analysis |
-| MIN_REACH_DURATION | 4 | frames | Filters tracking noise (v3.5: increased from 2) |
-| MIN_EXTENT_THRESHOLD | -15 | pixels | Filters non-reach hand visibility (v3.5) |
-| DISAPPEAR_THRESHOLD | 2 | frames | Handles brief tracking dropouts |
-| GAP_TOLERANCE | 2 | frames | Merges reaches separated by brief gaps |
+| START_CONFIRM | 3 | frames | v6.0: raised from 2 for new DLC noise profile |
+| MIN_REACH_DURATION | 5 | frames | v6.0: raised from 4 for new DLC noise profile |
+| MIN_EXTENT_THRESHOLD | -10 | pixels | v6.0: raised from -15 for new DLC (less noise headroom needed) |
+| MIN_EXTENT_RULER_THRESHOLD | -0.30 | ruler | v6.0: scale-independent extent filter |
+| DISAPPEAR_THRESHOLD | 4 | frames | v6.0: raised from 3 (new DLC has fewer dropouts) |
+| GAP_TOLERANCE | 0 | frames | v4.0: no post-processing merge |
 
 OUTPUT FORMAT
 =============
@@ -100,7 +102,7 @@ from .boundary_refiner import split_reach_boundaries
 from .boundary_polisher import BoundaryPolisher
 
 
-VERSION = "5.3.0"  # v5.3: Stable detection with boundary polisher
+VERSION = "6.0.0"  # v6.0: New-DLC recalibration (2026-03-27 model)
 
 
 @dataclass
@@ -193,10 +195,14 @@ class ReachDetector:
     # starting a reach. 83 of 179 early-start errors were single/few-frame
     # noise where hand likelihood briefly crossed 0.5 then dropped. Genuine
     # reach starts have the hand visible continuously.
-    START_CONFIRM = 2                # consecutive visible frames to confirm start
-    MIN_REACH_DURATION = 4           # frames (increased from 2 based on GT analysis - 42% of FPs were ≤3 frames)
+    # v6.0: Raised from 2 to 3 -- new DLC (2026-03-27) tracks hand more
+    # confidently, so brief 2-frame noise blips now cross 0.5 more often.
+    # 3 consecutive frames filters these without affecting real reaches
+    # (which sustain visibility for 10+ frames).
+    START_CONFIRM = 3                # consecutive visible frames to confirm start
+    MIN_REACH_DURATION = 5           # v6.0: raised from 4 -- eliminates 22.8% of phantom reaches with 1.5% recall loss (new DLC validation corpus)
     LOOKAHEAD_FRAMES = 3             # frames to check for sustained hand disappearance
-    DISAPPEAR_THRESHOLD = 3          # v4.0: consecutive invisible frames before ending reach (was 2)
+    DISAPPEAR_THRESHOLD = 4          # v6.0: raised from 3 -- new DLC has fewer tracking dropouts, so brief 3-frame gaps are more likely real reach continuation; reduces early-end errors (Target 5)
     GAP_TOLERANCE = 0                # v4.0: no post-processing merge - handled by tolerance in state machine
 
     # v3.1: End-on-drop detection (not just disappearance)
@@ -215,8 +221,16 @@ class ReachDetector:
     # 44% of FPs had extent < -10px (hand visible but behind slit, not reaching)
     # Small negative (-2 to -10px) = valid attempt reaches (keep)
     # Large negative (< -15px) = non-reach hand visibility (filter)
-    # Note: Attempted -10 threshold in v3.6 but recall dropped 10%, reverted
-    MIN_EXTENT_THRESHOLD = -15.0     # pixels - filter reaches below this
+    # v6.0: Raised from -15 to -10px -- new DLC produces cleaner tracking so
+    # the old -10px recall concern (10% drop) no longer applies; at -10px we
+    # eliminate 25.9% of phantoms with only 1.9% recall loss on new DLC corpus.
+    MIN_EXTENT_THRESHOLD = -10.0     # pixels - filter reaches below this
+
+    # v6.0: Ruler-unit extent filter (complements pixel filter above).
+    # New DLC validation corpus shows 25.5% of phantom reaches have
+    # extent_ruler < -0.30 (hand far behind slit) vs only 1.5% of real reaches.
+    # Pixel threshold alone can't catch these because ruler scale varies by video.
+    MIN_EXTENT_RULER_THRESHOLD = -0.30  # ruler units - filter reaches below this
 
     # v4.2: Restored to 5px. 15px caused 99% of early-end errors by splitting
     # single reaches during normal hand oscillation near the slit. The tolerance-based
@@ -787,12 +801,14 @@ class ReachDetector:
                 ))
 
         # v3.5: Refined negative extent filter (data-driven from GT analysis 2026-01)
-        # - Small negative extent (-2 to -15px) = valid attempt reaches (KEEP)
-        # - Large negative extent (< -15px) = non-reach hand visibility (FILTER)
-        # 44% of false positives had extent below -10px - these are typically
-        # hand visibility during grooming/positioning, not actual reach attempts
+        # v6.0: Added ruler-unit filter (MIN_EXTENT_RULER_THRESHOLD) for scale-
+        # independent filtering. Combined with tighter pixel threshold (-10px vs
+        # -15px), this eliminates ~42% of phantom reaches from new DLC corpus
+        # with only ~3% recall loss.
         before_filter = len(reaches)
-        reaches = [r for r in reaches if r.max_extent_pixels >= self.MIN_EXTENT_THRESHOLD]
+        reaches = [r for r in reaches
+                   if r.max_extent_pixels >= self.MIN_EXTENT_THRESHOLD
+                   and r.max_extent_ruler >= self.MIN_EXTENT_RULER_THRESHOLD]
         if len(reaches) < before_filter:
             filtered_count = before_filter - len(reaches)
             # Silently filter - these are non-reach hand movements
@@ -835,8 +851,10 @@ class ReachDetector:
                     extent_pixels = max_x - boxr_x if max_x else 0
                     extent_ruler = extent_pixels / ruler_pixels if ruler_pixels > 0 else 0
 
-                    # Filter by minimum extent
+                    # Filter by minimum extent (pixel and ruler)
                     if extent_pixels < self.MIN_EXTENT_THRESHOLD:
+                        continue
+                    if extent_ruler < self.MIN_EXTENT_RULER_THRESHOLD:
                         continue
 
                     conf = self._compute_reach_confidence(df, sub_start, sub_end)
