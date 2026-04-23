@@ -217,20 +217,22 @@ class ReachDetector:
     CONFIDENCE_HIGH = 0.5            # "High" confidence before drop
     CONFIDENCE_LOW = 0.35            # "Low" confidence in gap
 
-    # v3.5: Negative extent filter (data-driven from GT analysis 2026-01)
-    # 44% of FPs had extent < -10px (hand visible but behind slit, not reaching)
-    # Small negative (-2 to -10px) = valid attempt reaches (keep)
-    # Large negative (< -15px) = non-reach hand visibility (filter)
-    # v6.0: Raised from -15 to -10px -- new DLC produces cleaner tracking so
-    # the old -10px recall concern (10% drop) no longer applies; at -10px we
-    # eliminate 25.9% of phantoms with only 1.9% recall loss on new DLC corpus.
-    MIN_EXTENT_THRESHOLD = -10.0     # pixels - filter reaches below this
-
-    # v6.0: Ruler-unit extent filter (complements pixel filter above).
-    # New DLC validation corpus shows 25.5% of phantom reaches have
-    # extent_ruler < -0.30 (hand far behind slit) vs only 1.5% of real reaches.
-    # Pixel threshold alone can't catch these because ruler scale varies by video.
-    MIN_EXTENT_RULER_THRESHOLD = -0.30  # ruler units - filter reaches below this
+    # v2.5.1-dev: Extent gates DISABLED. Extent is a kinematic OUTPUT feature
+    # describing a completed reach, not a classification feature for deciding
+    # whether a reach occurred. Using it as a filter is self-referential:
+    # it rejects reach candidates based on their own measured extent.
+    # Ground-truth analysis (2026-04-23): 55.9% of real human-annotated reaches
+    # have negative signed extent -- i.e., the hand did not physically cross
+    # BOXR during the reach but the reach was still a real reach. No threshold
+    # on this signed 1-D projection can cleanly separate real from phantom.
+    # The durable fix lives in feature/nose-referenced-reach-metrics (queued):
+    # redefine extent as 2-D Euclidean distance from nose to hand, which is
+    # always non-negative and anatomically meaningful.
+    # On the 23-video unified-GT corpus, disabling these gates moved
+    # FP 351 -> 195 and FN 623 -> 247, a net improvement of both axes under
+    # the recall-first priority framing.
+    MIN_EXTENT_THRESHOLD = float('-inf')       # pixels - DISABLED
+    MIN_EXTENT_RULER_THRESHOLD = float('-inf') # ruler units - DISABLED
 
     # v4.2: Restored to 5px. 15px caused 99% of early-end errors by splitting
     # single reaches during normal hand oscillation near the slit. The tolerance-based
