@@ -99,7 +99,7 @@ import json
 import hashlib
 
 # Version tracking - bump this when algorithm changes significantly
-SEGMENTER_VERSION = "2.1.1"
+SEGMENTER_VERSION = "2.1.2"
 SEGMENTER_ALGORITHM = "sabl_centered_crossing_v2"
 
 
@@ -462,7 +462,36 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
                     new_frames.insert(gap_idx + 1, interp_frame)
                     anomalies.append(f"Interpolated boundary at frame {interp_frame}")
                 frames = new_frames[:21]
-        
+
+        # Structural B1-miss correction (v2.1.2):
+        # When the primary detector misses the FIRST pellet presentation but
+        # still emits 21 candidates (because it picked up a phantom near the
+        # end of the video to round out the count), the 19-23 branch above
+        # accepts the candidates as-is and we end up with segments shifted
+        # by one position. Symptom: boundaries[0] is suspiciously far from
+        # start-of-video, AND boundaries[-1] is suspiciously close to end
+        # (the phantom sits there). Correct by dropping the phantom end
+        # boundary and prepending a back-projected B1.
+        #
+        # Canonical example: 20250716_CNT0213_P3 had boundaries starting at
+        # frame 2021 instead of the GT's frame 180, causing ~1700-frame
+        # interaction-timing errors on downstream segments.
+        if len(frames) == 21:
+            internal_intervals = np.diff(frames)
+            median_interval = float(np.median(internal_intervals))
+            gap_to_start = frames[0]
+            gap_to_end = total_frames - frames[-1]
+            suspicious_start = gap_to_start > median_interval * 1.5
+            tight_end = gap_to_end < median_interval * 0.5
+            if suspicious_start and tight_end:
+                projected_b1 = max(0, int(frames[0] - median_interval))
+                dropped_end = frames[-1]
+                frames = [projected_b1] + frames[:-1]
+                anomalies.append(
+                    f"B1-miss correction: projected B1 at {projected_b1} "
+                    f"(was {dropped_end}), dropped phantom end boundary"
+                )
+
         return frames, anomalies
     
     # Fallback: build grid starting from estimated B1
