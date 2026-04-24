@@ -99,7 +99,7 @@ import json
 import hashlib
 
 # Version tracking - bump this when algorithm changes significantly
-SEGMENTER_VERSION = "2.1.2"
+SEGMENTER_VERSION = "2.1.3"
 SEGMENTER_ALGORITHM = "sabl_centered_crossing_v2"
 
 
@@ -358,49 +358,125 @@ def validate_with_other_sa_points(df: pd.DataFrame, box_center: float,
     return candidate
 
 
-def _apply_b1_miss_correction(frames: List[int], total_frames: int,
-                              anomalies: List[str]) -> Tuple[List[int], List[str]]:
-    """Structural B1-miss correction (v2.1.2).
+def _validate_and_correct_boundaries(
+    frames: List[int],
+    total_frames: int,
+    anomalies: List[str],
+    expected_interval: float = 1839.0,
+) -> Tuple[List[int], List[str]]:
+    """Post-detection validation and correction (v2.1.3).
 
-    When the primary detector misses the true first pellet presentation but
-    still emits 21 candidates (because it picked up a phantom near the end
-    of the video to round out the count), the returned boundaries are
-    effectively B2-B22 -- every downstream segment is shifted by one index.
+    Enforces the physical model of the tray-advance apparatus:
 
-    Pattern to detect:
-      - Exactly 21 boundaries in hand
-      - gap_to_start > median_interval * 0.8 (first boundary is about one
-        full presentation interval after video start)
-      - gap_to_end   < median_interval * 0.3 (last boundary is tight to
-        video end, indicating a phantom rather than a real B21)
-      - gap_to_start > gap_to_end * 3        (asymmetry: excludes
-        legitimately late-start/late-end recordings)
+      - 21 real boundaries separate the 20 pellet-bearing pieces and the
+        two empty flanks of a standard tray.
+      - Inter-boundary intervals cluster around the tray-advance cadence
+        (~30 s * 60 fps ~= 1840 frames). Longer intervals are valid
+        (stuck tray, operator pause between presentations). The signature
+        of a phantom internal boundary is two adjacent intervals whose
+        SUM equals the cadence (the detector wedged a spurious transition
+        inside one real advance window).
+      - A start-of-video gap (frames[0]) much larger than the cadence
+        indicates the real B1 was missed. Likewise a large end-of-video
+        gap indicates B21 was missed.
 
-    When the pattern holds, drop the last boundary and prepend a B1
-    projected backward from the current first boundary using the median
-    inter-boundary interval.
+    Correction proceeds in two idempotent steps:
 
-    Canonical example: 20250716_CNT0213_P3 had boundaries starting at
-    frame 2021 (GT says frame 180). Every segment was shifted by one,
-    causing ~1700-frame interaction-timing errors downstream.
+      1. Remove internal phantom boundaries. Scan adjacent interval pairs;
+         if both are below the cadence and their sum is within +/-20% of
+         the cadence, drop the boundary between them. Iterate until no
+         further phantoms are found.
+
+      2. Project missing endpoints. While fewer than 21 boundaries remain
+         and an endpoint gap exceeds ~1.5x cadence, project that endpoint
+         backward (B1) or forward (B21) using the cadence.
+
+    Canonical case -- 20250716_CNT0213_P3: detector found 21 candidates
+    that included a phantom at frame 12584 (between real 11209 and 13048)
+    and missed the true B1 at frame ~180. Step 1 removes 12584; step 2
+    then sees a large gap_to_start and projects B1. Result matches GT.
     """
-    if len(frames) != 21:
+    if len(frames) < 3:
+        return frames, anomalies
+
+    frames = list(frames)
+
+    # Step 1: iteratively remove internal phantom boundaries.
+    # A phantom is an isolated disturbance -- the detector wedged a
+    # spurious transition inside one real advance window. Signature:
+    #   - Two adjacent intervals that each fall below cadence.
+    #   - Their SUM is within 15% of cadence (they substitute for one
+    #     real interval).
+    #   - The intervals immediately BEFORE and AFTER the disturbed pair
+    #     are each at cadence (within 15%). This bracket check rules
+    #     out legitimately irregular stretches (operator intervention,
+    #     rapid-fire advances) where several consecutive intervals are
+    #     genuinely non-cadence.
+    while True:
+        intervals = np.diff(frames)
+        if len(intervals) < 4:
+            break
+        median_interval = float(np.median(intervals))
+        phantom_idx = None
+        for i in range(1, len(intervals) - 2):
+            a = float(intervals[i])
+            b = float(intervals[i + 1])
+            before = float(intervals[i - 1])
+            after = float(intervals[i + 2])
+            if (a < median_interval * 0.95
+                    and b < median_interval * 0.95
+                    and abs((a + b) - median_interval) < median_interval * 0.15
+                    and abs(before - median_interval) < median_interval * 0.15
+                    and abs(after - median_interval) < median_interval * 0.15):
+                phantom_idx = i + 1
+                break
+        if phantom_idx is None:
+            break
+        dropped = frames.pop(phantom_idx)
+        anomalies.append(
+            f"Removed phantom boundary at frame {dropped} "
+            f"(adjacent intervals sum to ~cadence, bracketed by cadence)"
+        )
+
+    # Step 2: endpoint projection.
+    if len(frames) < 2:
         return frames, anomalies
     intervals = np.diff(frames)
     median_interval = float(np.median(intervals))
-    gap_to_start = frames[0]
-    gap_to_end = total_frames - frames[-1]
-    suspicious_start = gap_to_start > median_interval * 0.8
-    tight_end = gap_to_end < median_interval * 0.3
-    asymmetric = gap_to_start > gap_to_end * 3
-    if suspicious_start and tight_end and asymmetric:
-        projected_b1 = max(0, int(frames[0] - median_interval))
-        dropped_end = frames[-1]
-        frames = [projected_b1] + frames[:-1]
-        anomalies.append(
-            f"B1-miss correction: projected B1 at {projected_b1} "
-            f"(was {dropped_end}), dropped phantom end boundary"
-        )
+    # Guard against pathological medians if the boundary list is very short.
+    if median_interval < 500 or median_interval > 5000:
+        median_interval = expected_interval
+
+    # A missed B1 or B21 produces an endpoint gap at or just above the
+    # cadence (gap = median + small offset). A legitimately late-start
+    # recording has gap_to_start << median. Threshold of 0.9 * median
+    # cleanly separates the two in practice.
+    guard = 0
+    while len(frames) < 21 and guard < 4:
+        guard += 1
+        gap_to_start = frames[0]
+        gap_to_end = total_frames - frames[-1]
+        start_suspicious = gap_to_start > median_interval * 0.9
+        end_suspicious = gap_to_end > median_interval * 0.9
+        if not (start_suspicious or end_suspicious):
+            break
+        if start_suspicious and gap_to_start >= gap_to_end:
+            projected = max(0, int(frames[0] - median_interval))
+            frames.insert(0, projected)
+            anomalies.append(
+                f"Projected missing B1 at frame {projected} "
+                f"(gap_to_start={int(gap_to_start)} >> cadence={int(median_interval)})"
+            )
+        elif end_suspicious:
+            projected = min(total_frames - 1, int(frames[-1] + median_interval))
+            frames.append(projected)
+            anomalies.append(
+                f"Projected missing B21 at frame {projected} "
+                f"(gap_to_end={int(gap_to_end)} >> cadence={int(median_interval)})"
+            )
+        else:
+            break
+
     return frames, anomalies
 
 
@@ -428,15 +504,12 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
     candidates = sorted(candidates, key=lambda c: c.frame)
     frames = [c.frame for c in candidates]
     
-    # BEST CASE: Exactly 21 candidates - use them directly!
+    # BEST CASE: Exactly 21 candidates - use them directly.
+    # Apply the post-validation pass to remove any internal phantom
+    # boundaries and project missing endpoints from the cadence.
     if len(frames) == 21:
-        # Before returning, apply B1-miss structural correction: when the
-        # primary detector finds 21 candidates but the first is ~1 full
-        # interval later than expected AND the last is suspiciously close
-        # to video end, we almost certainly missed the true B1 and picked
-        # up a phantom at end-of-video to round out the count. Correct by
-        # dropping the phantom end boundary and back-projecting B1.
-        frames, anomalies = _apply_b1_miss_correction(frames, total_frames, anomalies)
+        frames, anomalies = _validate_and_correct_boundaries(
+            frames, total_frames, anomalies, expected_interval=expected_interval)
         return frames, anomalies
     
     # Calculate actual interval from consecutive candidates
@@ -516,9 +589,11 @@ def fit_grid_to_candidates(candidates: List[BoundaryCandidate],
                     anomalies.append(f"Interpolated boundary at frame {interp_frame}")
                 frames = new_frames[:21]
 
-        # Apply B1-miss structural correction in case the 21-candidate path
-        # landed with the wrong first boundary (see _apply_b1_miss_correction).
-        frames, anomalies = _apply_b1_miss_correction(frames, total_frames, anomalies)
+        # Final post-validation: remove any internal phantoms the
+        # confidence-drop / gap-interpolation paths may have left in place
+        # and project missing endpoints from the cadence.
+        frames, anomalies = _validate_and_correct_boundaries(
+            frames, total_frames, anomalies, expected_interval=expected_interval)
         return frames, anomalies
     
     # Fallback: build grid starting from estimated B1
