@@ -11,7 +11,8 @@ import shutil
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 
-from .reach_detector import ReachDetector, VideoReaches
+from .reach_detector import VideoReaches
+from .reach_detector_v8 import ReachDetectorV8 as ReachDetector
 
 
 def get_associated_files(input_dir: Path, video_name: str) -> List[Path]:
