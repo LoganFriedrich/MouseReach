@@ -18,7 +18,8 @@ from datetime import datetime
 import json
 import shutil
 
-from .segmenter_robust import segment_video_robust, save_segmentation, SEGMENTER_VERSION
+from .segmenter_robust import save_segmentation
+from .segmenter_multi import segment_video_multi, SEGMENTER_VERSION
 
 
 def find_dlc_files(input_dir: Path) -> List[Path]:
@@ -75,7 +76,7 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
     output_path = output_dir / f"{video_id}_segments.json"
     
     try:
-        boundaries, diag = segment_video_robust(dlc_path)
+        boundaries, diag = segment_video_multi(dlc_path)
         save_segmentation(boundaries, diag, output_path)
         
         # Categorize based on what actually matters:
