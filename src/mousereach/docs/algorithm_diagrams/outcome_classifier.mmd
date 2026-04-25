@@ -1,0 +1,149 @@
+flowchart TB
+    h5["INPUT: DLC h5\nper-frame (x, y, likelihood) for\nPellet, Pillar, SABL, SABR,\nSATL, SATR, RightHand, RHLeft,\nRHOut, RHRight, Nose, BOXR"]
+    seg["INPUT: _segments.json\nboundaries[] (21 frame indices)"]
+    rch["INPUT: _reaches.json\nper-segment reach records\n(start_frame, end_frame, apex_frame, reach_id)"]
+
+    subgraph G["Phase 1 -- Geometry & trajectory extraction"]
+        pillar{"compute_expected_pillar\nMedian SABL/SABR positions\n[T] SA_LIKELIHOOD > 0.8\n[S] PILLAR_PERP_DISTANCE = 0.944 ruler\nReturns: pillar_x, pillar_y, ruler"}
+        traj{"get_pellet_trajectory\nFrame-by-frame pellet distance\nfrom geometric pillar position\n[T] PELLET_LIKELIHOOD > 0.5\n[S] pillar at (0, -0.944) relative\nReturns: start_dist, end_dist,\nmax_dist, distance_array,\nvisibility_pct, pellet_frames"}
+    end
+
+    h5 --> pillar
+    h5 --> traj
+    pillar -- "ruler, pillar position" --> traj
+
+    subgraph F["Phase 2 -- Feature detection (parallel)"]
+        eating{"detect_eating_signature\nNose retreated from slit (X > BOXR+30)\n+ hand near nose\n[T] EATING_DISTANCE < threshold\n[T] min 30 sustained eating frames\nReturns: (detected, eating_frame)"}
+        grab{"detect_pellet_grab\nPellet visible -> visibility drops\nwhile paw near pellet\n[T] before_avg > 0.8\n[T] at_frame < 0.3, after < 0.3\n[T] PAW_PROXIMITY < threshold px\nReturns: (detected, grab_frame,\ndist_from_pillar)"}
+    end
+
+    h5 --> eating
+    h5 --> grab
+
+    subgraph S0["Stage 0 -- Early retrieval (grab path)"]
+        grab_check{"Pellet grab detected?"}
+        grab_far{"start_dist > 0.4?\n[T] 0.4 ruler"}
+        grab_dout["displaced_outside\nconf=0.75, flagged"]
+        grab_ret["retrieved\nconf=0.85, flagged"]
+    end
+
+    grab --> grab_check
+    traj --> grab_check
+    grab_check -- "Yes" --> grab_far
+    grab_far -- "Yes (off pillar)" --> grab_dout
+    grab_far -- "No (on pillar)" --> grab_ret
+    grab_check -- "No" --> S1
+
+    subgraph S1["Stage 1 -- Visibility hypothesis"]
+        vis{"Pellet visible?\nvisibility_pct >= 0.10"}
+        insuf{"end_distance == None?\n(insufficient tracking)"}
+        start_off{"start_dist > 0.30?\n[T] 0.30 ruler"}
+    end
+
+    vis -- "No (disappeared)" --> S1A
+    vis -- "Yes" --> insuf
+    insuf -- "Yes" --> uncertain1["uncertain\nconf=0.40, flagged\nInsufficient data"]
+    insuf -- "No" --> start_off
+    start_off -- "Yes" --> untouched_off["untouched\nconf=0.60, flagged\nPellet started off pillar"]
+    start_off -- "No" --> S2
+
+    subgraph S1A["Stage 1A -- Disappeared pellet classification"]
+        start_far{"start_dist > 0.40?\n[T] 0.40 ruler"}
+        mvdir{"detect_pellet_movement_direction\ntoward_box / toward_sa / unknown"}
+        eat1{"Eating detected?"}
+        box1["retrieved\nconf=0.80, flagged\nMoved toward box"]
+        sa_endchk{"end_dist > 0.30?\n[T] 0.30 ruler"}
+        dsa1["displaced_sa\nconf=0.70, flagged"]
+        ret_default["retrieved\nconf=0.70, flagged\nAssumed"]
+    end
+
+    start_far -- "Yes" --> dout_dis["displaced_outside\nconf=0.75, flagged\nStarted off pillar"]
+    start_far -- "No" --> mvdir
+    mvdir -- "eating detected" --> eat1
+    eat1 -- "Yes" --> ret_eat["retrieved\nconf=0.85"]
+    eat1 -- "No (toward_box)" --> box1
+    mvdir -- "toward_sa" --> sa_endchk
+    sa_endchk -- "Yes" --> dsa1
+    sa_endchk -- "No" --> ret_default
+    mvdir -- "unknown" --> ret_default
+
+    subgraph S2["Stage 2 -- Sustained displacement check"]
+        sust{"detect_sustained_displacement\n[T] threshold = 0.30 ruler\n[T] min_duration = 10 frames\nLookback for occlusion onset\nReturns: (displaced, start_idx,\nmax_dist, onset_idx)"}
+    end
+
+    sust -- "Yes (displaced)" --> S2A
+    sust -- "No displacement" --> S3
+
+    subgraph S2A["Stage 2A -- Displacement refinement"]
+        paw_prox{"check_paw_proximity\n[T] lookback = 30 frames\n[T] proximity = 50 px (v3.0)\nPaw near pellet at displacement?"}
+        end_far{"end_dist > 0.35?\n[T] 0.35 ruler"}
+        wobble_d["untouched\nconf=0.80, flagged\nNo paw + pellet near pillar\n= tray wobble"]
+        after_vis{"Pellet visible after\ndisplacement?\n(conf > 0.5) mean > 0.50\nin post-displacement window"}
+        end_chk{"end_dist < 0.12\nAND pellet gone at end\nAND max_disp > 0.8?\n[T] thresholds"]
+        vis_end{"Pellet visible at end?"}
+        v30_eat{"v3.0: Eating detected\nOR late grab detected?"}
+    end
+
+    paw_prox -- "No paw near" --> end_far
+    end_far -- "Yes (far)" --> dsa_nopaw["displaced_sa\nconf=0.75, flagged"]
+    end_far -- "No (near pillar)" --> wobble_d
+    paw_prox -- "Yes" --> after_vis
+    after_vis -- "Disappeared" --> ret_disp["retrieved\nconf=0.85\nDisplaced then disappeared"]
+    after_vis -- "Stayed visible" --> end_chk
+    end_chk -- "Yes (returned+gone)" --> ret_bounce["retrieved\nconf=0.80, flagged"]
+    end_chk -- "No" --> vis_end
+    vis_end -- "Not visible" --> v30_eat
+    v30_eat -- "Eating/grab" --> ret_eaten["retrieved\nconf=0.75-0.80, flagged\nv3.0: displaced then eaten"]
+    v30_eat -- "Neither" --> dsa_gone["displaced_sa\nconf=0.70, flagged\nDisappeared, no eating"]
+    vis_end -- "Visible" --> dsa_stayed["displaced_sa\nconf=0.85"]
+
+    subgraph S3["Stage 3 -- No sustained displacement"]
+        end3{"end_dist < 0.20?\n[T] 0.20 ruler"}
+        max3{"max_dist < 0.35?\n[T] 0.35 ruler"}
+        spike_gate{"max_dist > 0.45?\n[T] v3.0: 0.45 ruler\n(was 0.55 in v2.4)"}
+        spike_paw{"check_paw_proximity\nat spike frame\n[T] proximity = 50 px (v3.0)\n[T] lookback = 15 frames"}
+        wobble3{"Tray wobble check\npellet_rel_std < SA_std * 0.6?\n[T] 0.6 ratio"}
+        spike_post{"Pellet disappeared\nafter spike?"}
+        spike_end{"end_dist < 0.15?\n[T] 0.15 ruler"}
+        v30_end{"v3.0: Pellet gone at end?\n+ eating or max > 0.45?"}
+        end_far3{"end_dist > 0.25?\n[T] 0.25 ruler"}
+        eat3{"Eating detected?"}
+    end
+
+    end3 -- "Yes (near pillar)" --> max3
+    max3 -- "Yes" --> untouched_clean["untouched\nconf=0.95\nPellet never left"]
+    max3 -- "No (had spikes)" --> spike_gate
+    spike_gate -- "Yes (large spike)" --> spike_paw
+    spike_paw -- "Paw near" --> wobble3
+    wobble3 -- "Yes (wobble)" --> untouched_wobble["untouched\nconf=0.85, flagged"]
+    wobble3 -- "No (real)" --> spike_post
+    spike_post -- "Disappeared" --> ret_spike["retrieved\nconf=0.80, flagged"]
+    spike_post -- "Stayed" --> spike_end
+    spike_end -- "Yes (returned)" --> untouched_ret["untouched\nconf=0.85, flagged"]
+    spike_end -- "No" --> dsa_spike["displaced_sa\nconf=0.75, flagged"]
+    spike_paw -- "No paw" --> v30_end
+    v30_end -- "Gone + evidence" --> ret_v30["retrieved\nconf=0.65-0.75, flagged\nv3.0: no paw but disappeared"]
+    v30_end -- "No" --> untouched_spike["untouched\nconf=0.85"]
+    spike_gate -- "No (small spike)" --> v30_end
+
+    end3 -- "No" --> end_far3
+    end_far3 -- "Yes (> 0.25)" --> eat3
+    eat3 -- "Yes" --> ret_late["retrieved\nconf=0.90"]
+    eat3 -- "No" --> dsa_late["displaced_sa\nconf=0.80, flagged"]
+    end_far3 -- "No (0.20-0.25)" --> uncertain2["uncertain\nconf=0.50, flagged\nAmbiguous zone"]
+
+    subgraph CR["Phase 4 -- Causal reach identification"]
+        cr_need{"outcome in\nretrieved / displaced_sa /\ndisplaced_outside?"}
+        cr_init["Initial interaction_frame =\neating_frame or\ndisplacement_start_frame"]
+        cr_find{"find_causal_reach\n1. Reach window contains\n   interaction_frame?\n2. Closest apex BEFORE\n   interaction_frame?\n3. Fallback: last reach"}
+        cr_apex["Use reach apex_frame\nas final interaction_frame\n(most accurate timing)"]
+    end
+
+    cr_need -- "Yes" --> cr_init --> cr_find --> cr_apex
+    cr_need -- "No (untouched/uncertain)" --> emit
+
+    subgraph emit["Phase 5 -- Emit PelletOutcome"]
+        out["PelletOutcome dataclass:\nsegment_num, outcome,\ninteraction_frame,\ncausal_reach_id, causal_reach_frame,\nconfidence, flagged_for_review,\nflag_reason,\npellet_visible_start/end,\ndistance_from_pillar_start/end"]
+    end
+
+    rch --> cr_find
