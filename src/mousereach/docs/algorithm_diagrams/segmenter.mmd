@@ -1,7 +1,7 @@
 %% MouseReach segmenter decision tree
-%% Algorithm: sabl_centered_crossing_v2
-%% Version: 2.1.3
-%% Last updated: 2026-04-23
+%% Algorithm: multi_proposer_sabl_primary_v1
+%% Version: 2.2.0
+%% Last updated: 2026-04-24
 %%
 %% Legend for threshold annotations:
 %%   [T]  = tunable threshold (current value in label; principled to sweep)
@@ -10,83 +10,102 @@
 %%   [S]  = structural constant (physics of the apparatus)
 %%
 %% Inputs at top, outputs at bottom. Subgraphs correspond to code phases.
+%% v2.1.3 diagram preserved in git history at commit 8e43976.
 
 flowchart TB
     h5["INPUT: DLC h5<br/>per-frame (x, y, likelihood) for<br/>SABL, SABR, SATL, SATR,<br/>BOXL, BOXR, Pellet, Hand, Nose, Pillar"]
 
-    subgraph Q["Phase 1 - Reference &amp; SA coverage quality"]
-        refq{"assess_reference_quality<br/>BOXL, BOXR are supposed to be stationary<br/>[T] std &lt; 5 px  -&gt; good<br/>[T] std &lt; 15 px -&gt; suspect<br/>else            -&gt; bad<br/>box_center = median(BOXL_x, BOXR_x)"}
-        sacov{"assess_sa_quality<br/>coverage[bp] = mean(likelihood &gt; 0.5)<br/>for SABL, SABR, SATL, SATR"}
+    subgraph Q["Phase 1 -- Reference & SA coverage quality (unchanged from v2.1.3)"]
+        refq{"assess_reference_quality<br/>BOXL, BOXR should be stationary<br/>[T] std < 5 px  -> good<br/>[T] std < 15 px -> suspect<br/>else            -> bad<br/>box_center = median(BOXL_x, BOXR_x)"}
+        sacov{"assess_sa_quality<br/>coverage[bp] = mean(likelihood > 0.5)<br/>for SABL, SABR, SATL, SATR"}
     end
 
     h5 --> refq
     h5 --> sacov
 
-    subgraph P["Phase 2 - Primary: SABL centered-crossing"]
-        clean["get_clean_signal(SABL_x):<br/>fill frames with likelihood &lt; 0.5 forward,<br/>then median filter (window=5 frames)"]
-        deriv["sabl_rel = SABL_x - box_center<br/>velocity = smoothed |d SABL_x|<br/>(uniform filter, window=30 frames)"]
-        cross{"find_centered_crossings<br/>centered AND moving?<br/>[T] -5 &lt; sabl_rel &lt; 10 (px rel box_center)<br/>[T] velocity &gt; 1.2 (px/frame)<br/>[T] min_gap = 30 frames between events"}
-        retry{"Found at least 21 candidates?"}
-        retry_lo["Retry with<br/>[T] velocity &gt; 0.8"]
-        score["Per event:<br/>best_frame maximizes -abs(sabl_rel - 2.5) + 2*velocity<br/>[F] center target 2.5 px (just past box center)"]
-        validate["validate_with_other_sa_points:<br/>for SABR, SATL, SATR: is max(velocity) &gt; 1.0<br/>in +/- 30-frame window around candidate?<br/>agreement_rate blends into confidence"]
+    subgraph P2["Phase 2 -- Four SA corner proposers (each runs independently)"]
+        direction TB
+
+        subgraph P2A["SABL proposer (frame source, aligned with GT)"]
+            sabl_clean["get_clean_signal(SABL_x):<br/>fill likelihood < 0.5 forward,<br/>median filter (window=5)"]
+            sabl_deriv["sabl_rel = SABL_x - box_center<br/>velocity = smoothed |d SABL_x|<br/>[T] smooth_window = 30 frames"]
+            sabl_cross{"Pass 1: centered crossings<br/>[T] -5 < rel < 10 (px)<br/>[T] velocity > 0.8 (px/frame)<br/>[T] min_gap = 25 frames<br/>[F] center_target = 2.5 px"}
+            sabl_rescue{"Pass 2: endpoint rescue<br/>(if >= 15 primary candidates)<br/>velocity-only peaks before first /<br/>after last primary candidate<br/>[T] endpoint_vel > 1.4 (px/frame)<br/>catches B1/B21 where position<br/>drifted past centered window"}
+            sabl_clean --> sabl_deriv --> sabl_cross --> sabl_rescue
+        end
+
+        subgraph P2B["SATL proposer (frame source, aligned with GT)"]
+            satl_proc["Same centered-crossing +<br/>endpoint rescue logic as SABL<br/>applied to SATL_x signal"]
+        end
+
+        subgraph P2C["SABR proposer (confirmer only -- ~7f early bias vs GT)"]
+            sabr_proc["Same logic applied to SABR_x<br/>Votes for consensus but<br/>NEVER sets the final frame<br/>[S] ~7f early bias = physical<br/>property of tray corner geometry"]
+        end
+
+        subgraph P2D["SATR proposer (confirmer only -- ~7f early bias vs GT)"]
+            satr_proc["Same logic applied to SATR_x<br/>Votes for consensus but<br/>NEVER sets the final frame<br/>[S] ~7f early bias = physical<br/>property of tray corner geometry"]
+        end
     end
 
-    refq -- "quality != 'bad'" --> clean
-    clean --> deriv
-    deriv --> cross
-    cross --> retry
-    retry -- "No" --> retry_lo
-    retry -- "Yes" --> score
-    retry_lo --> score
-    score --> validate
+    refq -- "quality != 'bad'" --> sabl_clean
+    refq -- "quality != 'bad'" --> satl_proc
+    refq -- "quality != 'bad'" --> sabr_proc
+    refq -- "quality != 'bad'" --> satr_proc
 
-    subgraph F["Phase 2b - Fallback: aggregate motion peaks"]
-        fallb{"Primary yielded fewer than 10 candidates?"}
-        peaks["find_motion_peaks:<br/>scipy find_peaks on velocity signal<br/>[T] distance = 20 s (1200 frames at 60 fps)<br/>[T] prominence = 85th percentile of velocity<br/>applied to first SA with signal; stop at 15+ peaks"]
+    subgraph P25["Phase 2.5 -- Consensus merging"]
+        cluster{"cluster_candidates<br/>Single-linkage clustering<br/>all candidates by frame proximity<br/>[T] merge_window = 30 frames"}
+        merge["merge_cluster (per cluster):<br/>frame = SABL or SATL candidate<br/>(whichever has higher confidence)<br/>SABR/SATR vote only (never set frame)<br/>[S] reason: 7f early bias"]
+        cscore["consensus_score = f(n_proposers, avg_conf)<br/>4 proposers: avg_conf * 1.5<br/>3 proposers: avg_conf * 1.3<br/>2 proposers: avg_conf * 1.1<br/>1 proposer:  avg_conf * 0.9"]
     end
 
-    validate --> fallb
-    refq -- "quality == 'bad'" --> fallb
-    fallb -- "Yes" --> peaks
-    fallb -- "No, use primary" --> fit
-    peaks --> fit
+    sabl_rescue --> cluster
+    satl_proc --> cluster
+    sabr_proc --> cluster
+    satr_proc --> cluster
+    cluster --> merge --> cscore
 
-    subgraph G["Phase 3 - fit_grid_to_candidates"]
-        fit{"How many candidates?"}
-        n0["N = 0<br/>Evenly-spaced 21-point fallback<br/>(every total_frames/22)"]
-        n21["N = 21<br/>Accept candidates as-is<br/>(best case)"]
-        nclose{"19 &lt;= N &lt;= 23?"}
-        drop["N &gt; 21:<br/>drop (N - 21) lowest-confidence candidates"]
-        fill{"N &lt; 21:<br/>gap_to_end &gt; max_internal_gap * 0.8<br/>AND missing == 1?"}
-        projb21_old["B21 projection:<br/>append frames[-1] + actual_interval<br/>(capped at total_frames - 1)"]
-        interp["Interpolate midpoint of largest<br/>(21 - N) internal gaps"]
-        grid["Else (N &lt; 19 or N &gt; 23):<br/>build grid from estimated B1<br/>+ i * actual_interval for i in 0..20<br/>where actual_interval = median of<br/>filtered inter-candidate intervals<br/>(0.5x to 1.5x of expected 1839)"]
+    subgraph P26["Phase 2.6 -- Hybrid mode decision"]
+        hybrid{"SABL alone produced<br/>exactly 21 candidates?<br/>(43/47 videos in corpus)"}
+        sabl_primary["SABL-primary mode:<br/>Use 21 SABL frames as backbone.<br/>For each, find closest merged<br/>candidate within merge_window.<br/>Usually keeps SABL's frame<br/>(consensus refines only)."]
+        full_consensus["Full consensus mode:<br/>(4/47 videos where SABL != 21)<br/>Run select_boundaries on<br/>merged candidates with same<br/>downstream routing as v2.1.3"]
     end
 
-    fit -- "N=0" --> n0
-    fit -- "N=21" --> n21
-    fit -- "19..23" --> nclose
-    fit -- "else" --> grid
-    nclose -- "too many" --> drop
-    nclose -- "too few" --> fill
-    fill -- "Yes" --> projb21_old
-    fill -- "No" --> interp
+    cscore --> hybrid
+    hybrid -- "Yes (SABL == 21)" --> sabl_primary
+    hybrid -- "No (SABL != 21)" --> full_consensus
 
-    subgraph V["Phase 4 - _validate_and_correct_boundaries  (v2.1.3)"]
-        phantom{"Phantom internal-boundary test<br/>For each adjacent interval pair at index (i, i+1):<br/>[T] a &lt; 0.95 * median<br/>[T] b &lt; 0.95 * median<br/>[T] |a+b - median| &lt; 0.15 * median<br/>[T] |before - median| &lt; 0.15 * median   (bracket)<br/>[T] |after  - median| &lt; 0.15 * median   (bracket)"}
-        remove["Drop boundary at index (i+1).<br/>Re-derive intervals and median.<br/>Iterate until no pair passes the test."]
-        endproj{"Endpoint projection<br/>len(frames) &lt; 21 AND<br/>[T] gap_to_start &gt; 0.9 * median<br/>  or gap_to_end   &gt; 0.9 * median ?"}
-        projb1["Project missing B1:<br/>insert max(0, frames[0] - median)"]
-        projb21["Project missing B21:<br/>append min(total_frames-1, frames[-1] + median)"]
+    subgraph P3["Phase 3 -- Boundary selection (inherited from v2.1.3)"]
+        select{"select_boundaries<br/>How many merged candidates?"}
+        s_n0["N = 0: evenly-spaced<br/>[S] 21-point fallback"]
+        s_n21["N = 21: accept as-is"]
+        s_close{"17 <= N <= 25?"}
+        s_drop["N > 21: drop lowest by<br/>(n_proposers, consensus_score)"]
+        s_fill["N < 21: project endpoints<br/>or interpolate largest gaps"]
+        s_grid["Else: build grid from<br/>estimated B1 + i * actual_interval<br/>[T] expected_interval = 1839 frames"]
     end
 
-    n0 --> phantom
-    n21 --> phantom
-    drop --> phantom
-    projb21_old --> phantom
-    interp --> phantom
-    grid --> phantom
+    full_consensus --> select
+    select -- "N=0" --> s_n0
+    select -- "N=21" --> s_n21
+    select -- "near 21" --> s_close
+    select -- "else" --> s_grid
+    s_close -- "too many" --> s_drop
+    s_close -- "too few" --> s_fill
+
+    subgraph P4["Phase 4 -- Validate & correct (inherited from v2.1.3)"]
+        phantom{"Phantom internal-boundary test<br/>Adjacent interval pair (a, b):<br/>[T] a < 0.95 * median<br/>[T] b < 0.95 * median<br/>[T] |a+b - median| < 0.15 * median<br/>[T] |before - median| < 0.15 * median<br/>[T] |after  - median| < 0.15 * median"}
+        remove["Drop boundary. Re-derive<br/>intervals and median. Iterate."]
+        endproj{"Endpoint projection<br/>len(frames) < 21 AND<br/>[T] gap_to_start > 0.9 * median<br/>  or gap_to_end > 0.9 * median?"}
+        projb1["Insert B1:<br/>max(0, frames[0] - median)"]
+        projb21["Append B21:<br/>min(total_frames-1, frames[-1] + median)"]
+    end
+
+    sabl_primary --> phantom
+    s_n0 --> phantom
+    s_n21 --> phantom
+    s_drop --> phantom
+    s_fill --> phantom
+    s_grid --> phantom
     phantom -- "pair matches" --> remove
     remove --> phantom
     phantom -- "no pair matches" --> endproj
@@ -95,10 +114,13 @@ flowchart TB
     projb1 --> endproj
     projb21 --> endproj
 
-    subgraph A["Phase 5 - anomaly detection &amp; emit"]
-        anomd["detect_anomalies:<br/>flag if intervals std / mean (CV)<br/>exceeds thresholds;<br/>flag duplicates, out-of-order;<br/>flag [S] any interval &lt; 300 f (5 s)<br/>or [S] &gt; 1200 f (20 s)"]
-        emit["OUTPUT _segments.json:<br/>boundaries (list of 21 ints)<br/>overall_confidence (0-1)<br/>reference_quality, sa_coverage<br/>per-boundary method &amp; confidence<br/>anomalies list<br/>interval_mean, interval_std, interval_cv<br/>segmenter_version, segmenter_algorithm"]
+    subgraph P5["Phase 5 -- Anomaly detection & emit (inherited from v2.1.3)"]
+        anomd["detect_anomalies:<br/>flag interval CV outliers,<br/>duplicates, out-of-order,<br/>[S] any interval < 300 f (5 s)<br/>[S] any interval > 1200 f (20 s)"]
+        emit["OUTPUT _segments.json:<br/>boundaries (21 ints)<br/>per-boundary method (proposer combo)<br/>per-boundary consensus_score<br/>overall_confidence, reference_quality<br/>sa_coverage, anomalies list<br/>interval_mean/std/cv<br/>segmenter_version = 2.2.0<br/>segmenter_algorithm = multi_proposer_sabl_primary_v1"]
     end
 
     endproj -- "no more projection" --> anomd
     anomd --> emit
+
+    refq -- "quality == 'bad'" --> fallback_evenly
+    fallback_evenly["Bad reference: evenly-spaced<br/>[S] 21-point fallback<br/>(every total_frames / 22)"] --> anomd
