@@ -27,6 +27,8 @@ Failed/
 Seg_*/
 Reach_*/
 Outcome_*/
+# But track the improvement framework source directory (not a data dir)
+!src/mousereach/improvement/reach_detection/
 
 # IDE
 .vscode/
@@ -71,6 +73,8 @@ util_Tools/
 *.json
 # But track config/setup JSON files in the package
 !src/mousereach/setup/*.json
+# But track Obsidian vault template config (Improvement Process framework)
+!src/mousereach/improvement/lib/vault_template/.obsidian/*.json
 *.npz
 *.zip
 *.csv
