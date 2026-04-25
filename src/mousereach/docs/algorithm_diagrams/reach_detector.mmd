@@ -1,0 +1,50 @@
+flowchart TB
+    input["INPUT:<br/>DLC h5 (per-frame x, y, likelihood<br/>for RightHand, RHLeft, RHOut, RHRight,<br/>Nose, BOXL, BOXR)<br/>+<br/>_segments.json (21 boundaries)"]
+
+    subgraph PREP["Preprocessing"]
+        hand_arr["_hand_arrays:<br/>Extract 4 hand keypoint<br/>x, y, likelihood arrays<br/>(4 x n_frames each)"]
+        smooth["_smoothed_hand_center:<br/>Per frame: mean position of<br/>visible keypoints<br/>(likelihood >= 0.5) [T]<br/>Rolling smooth window = 3 [T]"]
+        slit["_slit_center:<br/>slit_x = median(BOXL_x + BOXR_x) / 2<br/>slit_y = median(BOXL_y + BOXR_y) / 2"]
+        nose_eng["_nose_engaged:<br/>Per frame: Nose likelihood >= 0.5 [T]<br/>AND dist(Nose, slit_center) < 25 px [T]"]
+        velocity["Per-frame velocity:<br/>dx = diff(smoothed_hand_x)<br/>dy = diff(smoothed_hand_y)"]
+        shoot_cond["Shoot condition (per frame):<br/>dx < -0.5 [T] AND dy > 0.5 [T]<br/>(down-left motion from reset)<br/>AND not NaN"]
+    end
+
+    input --> hand_arr --> smooth
+    input --> slit
+    slit --> nose_eng
+    input --> nose_eng
+    smooth --> velocity --> shoot_cond
+
+    subgraph P1["Phase 1 -- Visibility Tubes"]
+        vis_check["Per frame: any of 4 hand<br/>keypoints has likelihood >= 0.5 [T]"]
+        vis_runs["_visibility_runs:<br/>Contiguous spans of visible frames<br/>within each segment [seg_start, seg_end)<br/>Gap ends after DISAPPEAR_THRESHOLD<br/>= 1 consecutive invisible frame [T]<br/>(catches ~79% of rapid-fire<br/>GT reach boundaries)"]
+    end
+
+    hand_arr --> vis_check --> vis_runs
+
+    subgraph P2["Phase 2 -- Direction-Reversal Split"]
+        detect_in_run["_detect_reaches_in_run:<br/>Within each visibility run:<br/>First reach starts at run_start"]
+        onset["Shoot onset detection:<br/>Frame f where shoot[f] = True<br/>AND shoot[f-1] = False (rising edge)<br/>AND f > run_start + 2 [T]<br/>AND f - prev_start >= 4 [T]<br/>(MIN_INTER_SHOOT_GAP debounce)"]
+        split["Each onset starts a new reach.<br/>Reach ends at next onset - 1<br/>or at run_end for the last reach"]
+    end
+
+    vis_runs --> detect_in_run
+    shoot_cond --> detect_in_run
+    detect_in_run --> onset --> split
+
+    subgraph FILT["Post-Filters"]
+        min_dur["Minimum duration filter:<br/>Drop reaches with<br/>end - start + 1 < 2 frames [T]<br/>(MIN_REACH_DURATION)"]
+        nose_filt["Nose engagement filter:<br/>Fraction of reach frames where<br/>nose_engaged = True<br/>must be >= 0.3 [T]<br/>(NOSE_ENG_MIN)<br/>Drops non-reach hand-visible events<br/>where mouse is not oriented toward slit"]
+    end
+
+    split --> min_dur --> nose_filt
+    nose_eng --> nose_filt
+
+    subgraph EMIT["Output Assembly"]
+        apex["_find_apex per reach:<br/>Frame with max hand_x across<br/>4 keypoints (likelihood >= 0.5)<br/>Extent = max_x - boxr_x"]
+        assemble["Build VideoReaches:<br/>Per segment: list of Reach objects<br/>(reach_id, start_frame, apex_frame,<br/>end_frame, duration, extent)<br/>Summary: total_reaches,<br/>reaches_per_segment mean/std,<br/>mean_duration, mean_extent"]
+        output["OUTPUT:<br/>_reaches.json<br/>detector_version = 7.1.0<br/>VideoReaches with per-segment<br/>reach lists"]
+    end
+
+    nose_filt --> apex --> assemble --> output
