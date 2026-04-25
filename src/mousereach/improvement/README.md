@@ -1,0 +1,117 @@
+# MouseReach Improvement Process
+
+## What This Is
+
+A framework for tracking algorithm improvements across the MouseReach
+pipeline. Each improvement is captured as a **snapshot** -- a self-contained
+directory with the algorithm's logic diagram, evaluation metrics, and
+metadata -- so that progress is visible, reproducible, and presentable.
+
+## Architecture
+
+```
+src/mousereach/improvement/          <-- CODE (this directory)
+  lib/
+    manifest.py                      Manifest dataclass + JSON serialization
+    snapshot_io.py                    Read/write snapshots, resolve paths
+    palette.py                       Shared colors for figures
+    pptx_export.py                   (stub) PowerPoint export helpers
+    vault_template/                  Starter Obsidian vault copied into new snapshots
+  segmentation/                      Segmentation phase logic
+  reach_detection/                   Reach detection phase logic
+  outcome/                           Outcome classification phase logic
+  features/                          Feature extraction phase logic
+
+MouseReach_Pipeline/Improvement_Snapshots/   <-- DATA (output snapshots)
+  segmentation/
+    seg_v2.1.3_phantom_first_post_validation/
+    seg_v2.2.0_multi_proposer/
+    ...
+  reach_detection/
+  outcome/
+  features/
+```
+
+Code lives here (in the git-tracked tool directory). Snapshot data
+accumulates in `MouseReach_Pipeline/Improvement_Snapshots/` (data-only,
+not in git).
+
+## How to Use
+
+### Create a snapshot programmatically
+
+```python
+from mousereach.improvement.lib.manifest import Manifest
+from mousereach.improvement.lib.snapshot_io import write_snapshot, snapshot_dir
+
+sd = snapshot_dir("segmentation", "seg_v2.3.0_tray_motion_rescue")
+m = Manifest(
+    version_id="v2.3.0",
+    tag="tray_motion_rescue",
+    timestamp="2026-05-01T12:00:00-05:00",
+    code_hash="abc1234",
+    pipeline_versions={"segmenter": "2.3.0", "reach_detector": "7.0.0"},
+    inputs=["47-GT-video corpus"],
+    metrics_summary={"boundaries_at_5f": "980/987"},
+    artifacts=["vault/logic_diagram.md", "figures/logic_diagram.png"],
+    description="Added tray-motion signal as fifth proposer.",
+)
+write_snapshot(sd, m)
+```
+
+### Read back a snapshot
+
+```python
+from mousereach.improvement.lib.snapshot_io import read_snapshot, snapshot_dir
+
+sd = snapshot_dir("segmentation", "seg_v2.1.3_phantom_first_post_validation")
+m = read_snapshot(sd)
+print(m.version_id, m.tag, m.metrics_summary)
+```
+
+### List all snapshots for a phase
+
+```python
+from mousereach.improvement.lib.snapshot_io import list_snapshots
+
+for sd in list_snapshots("segmentation"):
+    print(sd.name)
+```
+
+### View a snapshot in Obsidian
+
+Open `MouseReach_Pipeline/Improvement_Snapshots/<phase>/<snapshot>/vault/`
+as an Obsidian vault. The `.obsidian/` directory is pre-created so Obsidian
+recognizes it immediately. Mermaid diagrams render inline.
+
+## How to Add a New Phase
+
+1. Create `src/mousereach/improvement/<phase_name>/` with `__init__.py`
+   and `README.md` following the pattern of existing phases.
+
+2. Create `MouseReach_Pipeline/Improvement_Snapshots/<phase_name>/` for
+   snapshot accumulation.
+
+3. Document the phase's key metrics, code being diagrammed, and snapshot
+   structure in the README.
+
+## How to Add a New Figure Type
+
+1. Add a rendering function in a new module under the relevant phase
+   directory (e.g. `improvement/segmentation/render_sankey.py`).
+
+2. Import palette colors from `improvement/lib/palette.py`.
+
+3. Output figures to the snapshot's `figures/` directory.
+
+4. Update the snapshot's `manifest.json` artifacts list.
+
+## Annotation Conventions for Diagrams
+
+Every decision node and threshold in a logic diagram must be annotated:
+
+| Tag | Meaning | Example |
+|-----|---------|---------|
+| `[T]` | Tunable threshold -- principled to sweep | velocity > 0.8 px/frame |
+| `[F]` | Feature-definition-limited -- changing it redefines the feature | center_target = 2.5 px |
+| `[S]` | Structural constant -- physics of the apparatus | 20 pellets per tray |
