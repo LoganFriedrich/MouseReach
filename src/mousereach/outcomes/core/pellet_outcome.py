@@ -107,7 +107,20 @@ from .geometry import (
 from mousereach.config import Thresholds
 
 
-VERSION = "3.0.0"  # v3.0: New-DLC recalibration -- improved retrieval detection for displaced-then-eaten pellets
+VERSION = "3.0.2-dev"  # v3.0.2: eating + low-visibility overrides on displaced_sa; v3.0.1: uncertain tie-breaker via pellet visibility
+
+
+def _resolve_uncertain_by_pellet_visibility(traj, interaction_frame):
+    """v3.0.1: Tie-breaker for outcomes upstream-classified as 'uncertain'."""
+    pellet_frames = traj.get('pellet_frames') if isinstance(traj, dict) else None
+    if not pellet_frames:
+        return 'retrieved', 'no pellet detection in segment'
+    if interaction_frame is None:
+        return 'displaced_sa', f'pellet seen at {len(pellet_frames)} frame(s); no interaction_frame to gate'
+    after = [f for f in pellet_frames if f > interaction_frame]
+    if after:
+        return 'displaced_sa', f'pellet seen at {len(after)} frame(s) after interaction'
+    return 'retrieved', 'no pellet detection after interaction'
 
 
 @dataclass
@@ -724,40 +737,26 @@ class PelletOutcomeDetector:
 
             # v2.4.4: If pellet started far from pillar (>0.4), it's displaced_outside not retrieved
             if start_dist and start_dist > 0.4:
+                _cid_d, _cf_d, _ = self.find_causal_reach(segment_reaches, 'displaced_outside', grab_frame)
                 return PelletOutcome(
-                    segment_num=segment_num,
-                    outcome='displaced_outside',
-                    interaction_frame=grab_frame,
-                    outcome_known_frame=None,
-                    pellet_visible_start=traj['visible'],
-                    distance_from_pillar_start=start_dist,
-                    pellet_visible_end=False,
-                    distance_from_pillar_end=end_dist,
-                    causal_reach_id=None,
-                    causal_reach_frame=None,
-                    confidence=0.75,
-                    human_verified=False,
-                    original_outcome=None,
+                    segment_num=segment_num, outcome='displaced_outside',
+                    interaction_frame=grab_frame, outcome_known_frame=None,
+                    pellet_visible_start=traj['visible'], distance_from_pillar_start=start_dist,
+                    pellet_visible_end=False, distance_from_pillar_end=end_dist,
+                    causal_reach_id=_cid_d, causal_reach_frame=_cf_d,
+                    confidence=0.75, human_verified=False, original_outcome=None,
                     flagged_for_review=True,
                     flag_reason=f"Pellet started off pillar ({start_dist:.2f}) and disappeared - likely displaced outside"
                 )
-
             else:
-                # Normal retrieval - pellet was on/near pillar when grabbed
+                _cid_r, _cf_r, _ = self.find_causal_reach(segment_reaches, 'retrieved', grab_frame)
                 return PelletOutcome(
-                    segment_num=segment_num,
-                    outcome='retrieved',
-                    interaction_frame=grab_frame,
-                    outcome_known_frame=None,
-                    pellet_visible_start=traj['visible'],
-                    distance_from_pillar_start=start_dist,
-                    pellet_visible_end=False,
-                    distance_from_pillar_end=end_dist,
-                    causal_reach_id=None,
-                    causal_reach_frame=None,
-                    confidence=0.85,
-                    human_verified=False,
-                    original_outcome=None,
+                    segment_num=segment_num, outcome='retrieved',
+                    interaction_frame=grab_frame, outcome_known_frame=None,
+                    pellet_visible_start=traj['visible'], distance_from_pillar_start=start_dist,
+                    pellet_visible_end=False, distance_from_pillar_end=end_dist,
+                    causal_reach_id=_cid_r, causal_reach_frame=_cf_r,
+                    confidence=0.85, human_verified=False, original_outcome=None,
                     flagged_for_review=True,
                     flag_reason="Pellet grabbed by paw (visibility dropped with paw near) - likely retrieved"
                 )
@@ -1146,22 +1145,37 @@ class PelletOutcomeDetector:
                         flagged = True
                         flag_reason = "Interaction frame from displacement detection (no reach data) - verify timing"
 
+        # v3.0.2: overrides on displaced_sa
+        if outcome == 'displaced_sa':
+            if eating_detected:
+                outcome = 'retrieved'
+                confidence = max(confidence, 0.80)
+                flagged = True
+                flag_reason = f"v3.0.2 override: displaced_sa flipped to retrieved (eating signature at frame {eating_frame})"
+            elif traj.get('visibility_pct', 1.0) < 0.50:
+                outcome = 'retrieved'
+                confidence = max(confidence, 0.70)
+                flagged = True
+                flag_reason = f"v3.0.2 low-visibility override: pellet visibility_pct={traj.get('visibility_pct', 0):.2f} contradicts displaced_sa"
+
+        # v3.0.1: tie-breaker for any 'uncertain' outcomes
+        if outcome == 'uncertain':
+            outcome, _resolution = _resolve_uncertain_by_pellet_visibility(traj, interaction_frame)
+            confidence = max(confidence, 0.55)
+            if not flagged:
+                flagged = True
+                flag_reason = f"Resolved uncertain via pellet-visibility tie-breaker ({_resolution})"
+
         return PelletOutcome(
-            segment_num=segment_num,
-            outcome=outcome,
-            interaction_frame=interaction_frame,
-            outcome_known_frame=None,
+            segment_num=segment_num, outcome=outcome,
+            interaction_frame=interaction_frame, outcome_known_frame=None,
             pellet_visible_start=traj['visible'],
             distance_from_pillar_start=traj.get('start_distance_from_pillar'),
             pellet_visible_end=traj['visible'] and traj['visibility_pct'] > 0.5,
             distance_from_pillar_end=traj.get('end_distance_from_pillar'),
-            causal_reach_id=causal_id,
-            causal_reach_frame=causal_frame,
-            confidence=round(confidence, 2),
-            human_verified=False,
-            original_outcome=None,
-            flagged_for_review=flagged,
-            flag_reason=flag_reason
+            causal_reach_id=causal_id, causal_reach_frame=causal_frame,
+            confidence=round(confidence, 2), human_verified=False,
+            original_outcome=None, flagged_for_review=flagged, flag_reason=flag_reason
         )
     
     def find_causal_reach(
