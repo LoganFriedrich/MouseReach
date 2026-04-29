@@ -290,52 +290,96 @@ class PelletOutcomeDetector:
         df: pd.DataFrame,
         seg_start: int,
         seg_end: int,
-        window: int = 200,
+        window: int = 100,
         rise_threshold: float = 0.30,
     ) -> Dict[str, Any]:
-        """Signal 14b: pillar likelihood step-up across the segment.
+        """Detect pillar-visibility transition across the segment.
 
         When a pellet sits on the pillar, it occludes the pillar tip from
         the camera, producing low Pillar_likelihood. When the pellet leaves
         (retrieved or displaced), the pillar tip becomes visible and
-        Pillar_likelihood jumps to ~1.00 sustained.
+        Pillar_likelihood jumps to ~1.00 sustained. The presence of a
+        low-to-high transition anywhere in the segment is hard evidence
+        that the pellet left the pillar.
 
-        We compare the median pillar_likelihood in the first ``window``
-        frames vs the last ``window`` frames of the segment. If the rise
-        exceeds ``rise_threshold``, Signal 14b has fired -- the pellet has
-        unambiguously left the pillar in this segment, regardless of any
-        threshold-based dismissal heuristics.
+        We scan rolling medians of pillar_likelihood across the segment
+        and look at the minimum and maximum of those medians. The pellet
+        is on the pillar somewhere in the low-median window; visible
+        somewhere in the high-median window. If the difference exceeds
+        ``rise_threshold`` AND the low-median window precedes the
+        high-median window in time, the pellet definitively left the
+        pillar during this segment.
 
-        Calibrated 2026-04-29 from the 47-video corpus:
-          - untouched segments: pre_med=0.07, post_med=0.07, rise=0 (never fires)
-          - retrieved segments: rise>0.3 in 47% of cases
-          - displaced_sa segments: rise>0.3 in 62% of cases
-          - 0% false-positive rate on untouched at threshold 0.30
+        This sliding-min-max approach catches transitions that happen
+        anywhere in the segment, including transitions near the start
+        (pellet on pillar at segment open, reach early, then pillar
+        visible for the remaining 1500+ frames -- a common pattern that
+        a pre/post first-vs-last comparison misses entirely).
 
         Returns a dict with:
           - 'fired': bool
           - 'pre_med', 'post_med', 'rise': floats (None if segment too short)
+          - 'transition_frame': int or None -- absolute frame where the
+            rolling median crosses the midpoint (used to filter
+            label-switch artifacts after the pillar uncovered)
         """
         seg_n = seg_end - seg_start
         if seg_n < window * 2:
-            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None}
+            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None, 'transition_frame': None}
         if 'Pillar_likelihood' not in df.columns:
-            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None}
+            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None, 'transition_frame': None}
         pillar_lk = df['Pillar_likelihood'].iloc[seg_start:seg_end].values
-        pre = pillar_lk[:window]
-        post = pillar_lk[-window:]
-        pre = pre[~np.isnan(pre)]
-        post = post[~np.isnan(post)]
-        if len(pre) == 0 or len(post) == 0:
-            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None}
-        pre_med = float(np.median(pre))
-        post_med = float(np.median(post))
-        rise = post_med - pre_med
+
+        # Rolling median across the segment (centered, with min_periods).
+        # Use pandas rolling for efficiency.
+        s = pd.Series(pillar_lk).rolling(window=window, center=True, min_periods=window // 2).median()
+        roll = s.values
+        valid = ~np.isnan(roll)
+        if not valid.any():
+            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None, 'transition_frame': None}
+
+        # The "low" representative is the minimum rolling median.
+        # The "high" representative is the maximum rolling median.
+        # For a real transition, the low must occur BEFORE the high in time.
+        idx_low = int(np.nanargmin(roll))
+        idx_high = int(np.nanargmax(roll))
+        low_med = float(roll[idx_low])
+        high_med = float(roll[idx_high])
+        rise = high_med - low_med
+
+        # Transition fires only when:
+        #   - low precedes high (forward-in-time rise)
+        #   - magnitude is above threshold
+        #   - AND pillar was actually occluded (low_med < 0.3) somewhere AND
+        #     actually visible (high_med > 0.7) somewhere. Without these
+        #     absolute bounds, brief pillar-lk noise in genuinely untouched
+        #     segments (where pillar stays occluded throughout) can produce
+        #     a false transition firing.
+        fired = (
+            (rise > rise_threshold)
+            and (idx_low < idx_high)
+            and (low_med < 0.3)
+            and (high_med > 0.7)
+        )
+
+        # Estimate the boundary frame: the FIRST point after idx_low
+        # where the rolling median crosses the midpoint between low and
+        # high. This is the frame at which the pillar became visible.
+        transition_frame = None
+        if fired:
+            midpoint = (low_med + high_med) / 2.0
+            # Search forward from idx_low.
+            for i in range(idx_low, len(roll)):
+                if not np.isnan(roll[i]) and roll[i] >= midpoint:
+                    transition_frame = seg_start + i
+                    break
+
         return {
-            'fired': rise > rise_threshold,
-            'pre_med': pre_med,
-            'post_med': post_med,
+            'fired': fired,
+            'pre_med': low_med,
+            'post_med': high_med,
             'rise': rise,
+            'transition_frame': transition_frame,
         }
 
     def compute_expected_pillar(self, df: pd.DataFrame, seg_start: int, seg_end: int) -> Tuple[Optional[float], Optional[float], Optional[float]]:
@@ -1383,19 +1427,51 @@ class PelletOutcomeDetector:
                                 flagged = True
                                 flag_reason = f"Spike (max: {max_distance:.2f}) without paw proximity but pellet disappeared - possible retrieval"
                             else:
-                                # NOTE (2026-04-29): an earlier version of step 2
-                                # added a Signal 14b override here that flipped
-                                # untouched -> retrieved when pillar lk fired.
-                                # Reverted alongside the analogous override above
-                                # for the same reason: Signal 14b alone cannot
-                                # discriminate retrieved from displaced.
-                                outcome = 'untouched'
-                                confidence = 0.85
+                                # If pillar likelihood has transitioned from
+                                # sustained-low to sustained-high across the
+                                # segment, the pellet definitively LEFT the
+                                # pillar -- the algo's "no sustained
+                                # displacement" reading was because end_distance
+                                # was computed from label-switch artifact frames
+                                # (DLC tracking the now-visible pillar tip after
+                                # the pellet was gone). Pellet detections
+                                # co-located with the pillar position after the
+                                # pillar uncovered are artifacts, not the real
+                                # pellet. So this is displacement (not
+                                # untouched), confirmed by the pillar visibility
+                                # change. Whether retrieved or displaced_sa
+                                # depends on whether a sustained off-pillar
+                                # pellet cluster exists.
+                                if pillar_transition['fired']:
+                                    sp_cluster = self.detect_sustained_off_pillar_cluster(
+                                        df, seg_start, seg_end, ruler,
+                                    )
+                                    if sp_cluster['fired']:
+                                        outcome = 'displaced_sa'
+                                        confidence = 0.80
+                                        flagged = True
+                                        flag_reason = (
+                                            f"spike (max: {max_distance:.2f}) + pillar visibility "
+                                            f"transition ({pillar_transition['pre_med']:.2f}->{pillar_transition['post_med']:.2f}) + "
+                                            f"sustained off-pillar pellet cluster ({sp_cluster['n_frames']} frames) -> displaced_sa"
+                                        )
+                                    else:
+                                        outcome = 'displaced_sa'
+                                        confidence = 0.70
+                                        flagged = True
+                                        flag_reason = (
+                                            f"spike (max: {max_distance:.2f}) + pillar visibility "
+                                            f"transition ({pillar_transition['pre_med']:.2f}->{pillar_transition['post_med']:.2f}) + "
+                                            f"no off-pillar pellet cluster (DLC visibility floor or label-switch artifact) -> displaced_sa"
+                                        )
+                                else:
+                                    outcome = 'untouched'
+                                    confidence = 0.85
 
-                                # STAGE 4: Flag high spikes for review
-                                if max_distance > 0.45:
-                                    flagged = True
-                                    flag_reason = f"Momentary spike (max: {max_distance:.2f}) but no sustained displacement"
+                                    # STAGE 4: Flag high spikes for review
+                                    if max_distance > 0.45:
+                                        flagged = True
+                                        flag_reason = f"Momentary spike (max: {max_distance:.2f}) but no sustained displacement"
 
                 elif end_distance > 0.25:
                     # Pellet ended far from pillar
