@@ -1096,8 +1096,30 @@ class PelletOutcomeDetector:
                     # But we didn't detect sustained displacement pattern earlier
                     # This could mean displacement happened very late in segment
 
+                    # v4.0.0 (Signal 24/25): pellet motion requires a reach to
+                    # have caused it. If the reach detector emitted ZERO
+                    # reaches in this segment (no nose-engagement passed
+                    # upstream), no reach physically occurred -- the
+                    # apparent end_distance > 0.25 is ASPA placement variance,
+                    # not a real displacement. Force untouched.
+                    # This catches the 10 untouched-FP cluster identified in
+                    # the v4.0.0 outcome walkthrough (CNT0209_P3 segs
+                    # 5/10/12/13/18/19, CNT0310_P2 seg 10, CNT0401_P4 segs
+                    # 15/19, CNT0209_P4 seg 2). All had 0 paw-at-apparatus
+                    # frames, 0 nose-at-slit frames, 0 algo reaches, and ~36
+                    # px ASPA placement drift.
+                    n_segment_reaches = (
+                        len(segment_reaches.get('reaches', []))
+                        if segment_reaches else 0
+                    )
+                    if n_segment_reaches == 0:
+                        outcome = 'untouched'
+                        confidence = 0.90
+                        flagged = False
+                        flag_reason = None
+
                     # STAGE 3: Check if eating occurred
-                    if eating_detected:
+                    elif eating_detected:
                         outcome = 'retrieved'
                         confidence = 0.90
                     else:
