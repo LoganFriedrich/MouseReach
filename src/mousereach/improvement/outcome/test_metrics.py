@@ -173,15 +173,21 @@ class TestNormalizeAlgoPunted:
     from per-class precision/recall denominators.
     """
 
-    def test_punted_displaced_sa(self):
+    def test_punted_with_no_reach_data_flag(self):
+        # The case-39 tail-knockover pattern: explicit "no reach data" in flag_reason
         seg = {"outcome": "displaced_sa", "causal_reach_id": None,
-               "flagged_for_review": True}
+               "flagged_for_review": True,
+               "flag_reason": "Interaction frame from displacement detection (no reach data) - verify timing"}
         assert _normalize_algo_punted_outcome(seg) == "abnormal_exception"
 
-    def test_punted_retrieved(self):
+    def test_routine_grab_retrieval_NOT_punted(self):
+        # Stage 0 grab path produces cri=None + flagged=True with a
+        # routine flag_reason. This is a real retrieval, NOT abnormal --
+        # should remain "retrieved", not normalize to abnormal_exception.
         seg = {"outcome": "retrieved", "causal_reach_id": None,
-               "flagged_for_review": True}
-        assert _normalize_algo_punted_outcome(seg) == "abnormal_exception"
+               "flagged_for_review": True,
+               "flag_reason": "Pellet grabbed by paw (visibility dropped with paw near) - likely retrieved"}
+        assert _normalize_algo_punted_outcome(seg) == "retrieved"
 
     def test_displaced_sa_with_causal_not_punted(self):
         seg = {"outcome": "displaced_sa", "causal_reach_id": 5,

@@ -68,21 +68,35 @@ NON_EVALUABLE_OUTCOMES = {"abnormal_exception"}
 CAUSAL_REACH_WINDOW = 10  # +/- frames for start-proximity matching
 
 
+# Flag-reason substrings that indicate the algo is explicitly punting on
+# causal-reach attribution (no reach data / abnormal exception territory),
+# NOT just routine "I classified this confidently but didn't attribute a
+# specific reach." Routine retrievals via the Stage 0 grab path return
+# cri=None + flagged=True with flag reasons like "Pellet grabbed by paw"
+# -- those are still real retrievals and should NOT normalize to
+# abnormal_exception. Only the explicit "no reach data" / abnormal-event
+# patterns trigger the normalization.
+_ABNORMAL_EXCEPTION_FLAG_PATTERNS = (
+    "no reach data",       # the case-39 tail-knockover pattern
+    "tail-knockover",      # if explicitly tagged
+    "abnormal_exception",  # if the algo emits this in flag_reason
+)
+
+
 def _normalize_algo_punted_outcome(algo_seg: dict) -> str:
     """Map algo-punted segments to ``abnormal_exception``.
 
-    When the outcome detector emits a non-untouched segment outcome but
-    explicitly assigns NO causal reach (``causal_reach_id=None``) AND
-    flags for review, the algo is saying "I detected motion but cannot
-    attribute it to a reach" -- semantically equivalent to GT's
-    ``abnormal_exception`` label (e.g. tail-knockover, case 39 of the
-    v4.0.0_dev outcome walkthrough).
+    When the outcome detector emits a non-untouched outcome but
+    EXPLICITLY indicates in flag_reason that no reach could be
+    attributed (e.g., the case-39 tail-knockover pattern where flag
+    reason contains "no reach data"), normalize to ``abnormal_exception``
+    so it doesn't deflate per-class metrics.
 
-    Returning ``abnormal_exception`` rather than the raw outcome lets the
-    metrics layer keep the case visible on the Sankey (so it doesn't
-    silently disappear) while excluding it from per-class precision/recall
-    denominators (so algo metrics aren't deflated on cases neither side
-    can reasonably attribute to a normal class).
+    The narrower flag-reason check is critical: cri=None + flagged=True
+    is also produced by routine Stage 0 grab retrievals
+    (`pellet_outcome.py:745-763`), which are real retrievals, not
+    abnormal cases. Discriminating via flag_reason content prevents
+    those from being miscategorized.
 
     See memory: ``algo_punted_equivalence.md`` and
     ``abnormal_exception_category_TODO.md``.
@@ -93,13 +107,17 @@ def _normalize_algo_punted_outcome(algo_seg: dict) -> str:
     # Already in a non-classification state -- leave alone.
     if raw in ("untouched", "unknown", "uncertain", "abnormal_exception"):
         return raw
-    # Non-untouched outcome but no causal-reach attribution and flagged
-    # for review = algo is punting. Normalize to abnormal_exception.
+    # Only normalize when the algo's flag_reason EXPLICITLY indicates
+    # an abnormal-exception pattern. Other flagged cases (routine
+    # retrievals via Stage 0 grab, etc.) are real classifications that
+    # the metrics layer should evaluate as-is.
     if (
         algo_seg.get("causal_reach_id") is None
         and bool(algo_seg.get("flagged_for_review", False))
     ):
-        return "abnormal_exception"
+        flag_reason = (algo_seg.get("flag_reason") or "").lower()
+        if any(p in flag_reason for p in _ABNORMAL_EXCEPTION_FLAG_PATTERNS):
+            return "abnormal_exception"
     return raw
 
 
