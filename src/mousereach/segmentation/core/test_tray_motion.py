@@ -43,46 +43,65 @@ def _make_df(n_frames: int = 1000) -> pd.DataFrame:
 class TestValidateTrayMotion:
 
     def test_real_aspa_cycle_passes(self):
-        """SA excursion >= 30 px AND pillar lk drop >= 0.3 -> valid."""
+        """SA excursion >= 30 px AND pillar lk drop >= 0.3 -> valid.
+
+        Pre/post pillar lk windows are OFFSET from the boundary
+        (default 2x window each side: pre=[F-150,F-50], post=[F+50,F+150])
+        because the boundary frame F is mid-cycle and pillar lk doesn't
+        drop until the new pellet settles.
+        """
         df = _make_df(1000)
-        # Inject a 40 px SABL excursion centered at frame 500 (window 50)
-        # by sweeping pre boundary
+        # Inject a 40 px SABL excursion across the motion window
+        # [F-50, F+50] = [450, 550] for boundary at 500.
         df.loc[470:480, "SABL_x"] = 80.0   # left swing
         df.loc[490:510, "SABL_x"] = 130.0  # right swing
-        # Pillar lk: high pre, low post
-        df.loc[450:499, "Pillar_likelihood"] = 1.0
-        df.loc[500:550, "Pillar_likelihood"] = 0.05
+        # Pillar lk pre window [F-150, F-50] = [350, 450]: high
+        # Pillar lk post window [F+50, F+150] = [550, 650]: low
+        df.loc[350:450, "Pillar_likelihood"] = 1.0
+        df.loc[550:650, "Pillar_likelihood"] = 0.05
         is_valid, reasons = validate_tray_motion(df, 500)
         assert is_valid, f"unexpected reasons: {reasons}"
         assert reasons == []
 
     def test_operator_adjustment_fails(self):
-        """Small SA shift, pillar lk static -> invalid."""
+        """Small SA shift fails on excursion alone.
+
+        v2.2.1: only the excursion test gates validity (pillar lk drop
+        test is hard-disabled after corpus over-rejection findings).
+        Operator adjustments produce only 5-15 px tray shifts, well
+        below the 30 px threshold.
+        """
         df = _make_df(1000)
         df.loc[490:510, "SABL_x"] = 105.0  # 5 px shift, < threshold
-        # Pillar lk stays at 1.0 across boundary -- no drop
         is_valid, reasons = validate_tray_motion(df, 500)
         assert not is_valid
-        # Both tests should fail
         assert any("insufficient_tray_excursion" in r for r in reasons)
-        assert any("pillar_lk_no_drop" in r for r in reasons)
 
-    def test_excursion_only_fails(self):
-        """SA excursion present but pillar lk doesn't drop -> invalid."""
+    def test_excursion_present_no_pillar_drop_passes(self):
+        """SA excursion present and pillar lk static -> valid.
+
+        v2.2.1: pillar lk test is disabled. Excursion alone determines
+        validity. This test was previously named test_excursion_only_fails
+        and inverted -- pillar-only failures no longer invalidate.
+        """
         df = _make_df(1000)
         df.loc[470:480, "SABL_x"] = 60.0
         df.loc[490:510, "SABL_x"] = 140.0
-        # Pillar lk stays at 1.0 -- no drop
+        # Pillar lk stays at 1.0 -- no drop, but test is disabled
         is_valid, reasons = validate_tray_motion(df, 500)
-        assert not is_valid
-        assert any("pillar_lk_no_drop" in r for r in reasons)
+        assert is_valid, f"unexpected reasons: {reasons}"
 
     def test_pillar_drop_only_fails(self):
-        """Pillar lk drops but SA stays static -> invalid."""
+        """Pillar lk drops but SA stays static -> invalid (excursion fails).
+
+        With the pillar test disabled, this case still fails because the
+        excursion test detects no SA motion. The pillar-only signal does
+        not rescue an SA-static boundary.
+        """
         df = _make_df(1000)
         # SA static (no excursion)
-        df.loc[450:499, "Pillar_likelihood"] = 1.0
-        df.loc[500:550, "Pillar_likelihood"] = 0.05
+        df.loc[350:450, "Pillar_likelihood"] = 1.0
+        df.loc[550:650, "Pillar_likelihood"] = 0.05
         is_valid, reasons = validate_tray_motion(df, 500)
         assert not is_valid
         assert any("insufficient_tray_excursion" in r for r in reasons)
@@ -93,18 +112,23 @@ class TestValidateTrayMotion:
         # Only SABR moves
         df.loc[470:480, "SABR_x"] = 60.0
         df.loc[490:510, "SABR_x"] = 140.0
-        df.loc[450:499, "Pillar_likelihood"] = 1.0
-        df.loc[500:550, "Pillar_likelihood"] = 0.05
+        # Pillar lk in offset windows
+        df.loc[350:450, "Pillar_likelihood"] = 1.0
+        df.loc[550:650, "Pillar_likelihood"] = 0.05
         is_valid, reasons = validate_tray_motion(df, 500)
         assert is_valid, f"unexpected reasons: {reasons}"
 
     def test_boundary_at_video_edge(self):
-        """Boundary near frame 0 or end with truncated window still works."""
+        """Boundary near frame 0 or end: truncated window still works.
+
+        With boundary at F=10 the pre window is empty (F-150..F-50 < 0)
+        so the pillar test has no data and silently defaults to pass.
+        Excursion test uses motion window [F-50, F+50] which clips to
+        [0, 60] and still sees the synthetic excursion.
+        """
         df = _make_df(1000)
         df.loc[0:30, "SABL_x"] = 60.0
         df.loc[31:60, "SABL_x"] = 140.0
-        df.loc[0:9, "Pillar_likelihood"] = 1.0
-        df.loc[10:60, "Pillar_likelihood"] = 0.05
         is_valid, reasons = validate_tray_motion(df, 10)
         assert is_valid, f"unexpected reasons: {reasons}"
 
@@ -174,12 +198,14 @@ class TestApplyTrayMotionGate:
 
     def test_all_valid_no_rejections(self):
         df = _make_df(2000)
-        # Two real cycles at frames 500 and 1500
+        # Two real cycles at frames 500 and 1500. Pillar lk windows are
+        # offset (pre=[F-150,F-50], post=[F+50,F+150]) so place the high
+        # and low values accordingly.
         for f in (500, 1500):
             df.loc[f - 30:f - 20, "SABL_x"] = 60.0
             df.loc[f - 10:f + 10, "SABL_x"] = 140.0
-            df.loc[f - 50:f - 1, "Pillar_likelihood"] = 1.0
-            df.loc[f:f + 50, "Pillar_likelihood"] = 0.05
+            df.loc[f - 150:f - 50, "Pillar_likelihood"] = 1.0
+            df.loc[f + 50:f + 150, "Pillar_likelihood"] = 0.05
         boundaries = [500, 1500]
         filtered, rejections = apply_tray_motion_gate(
             df, boundaries, total_frames=2000, expected_interval=1000.0,
@@ -193,8 +219,8 @@ class TestApplyTrayMotionGate:
         for f in (500, 2500):
             df.loc[f - 30:f - 20, "SABL_x"] = 60.0
             df.loc[f - 10:f + 10, "SABL_x"] = 140.0
-            df.loc[f - 50:f - 1, "Pillar_likelihood"] = 1.0
-            df.loc[f:f + 50, "Pillar_likelihood"] = 0.05
+            df.loc[f - 150:f - 50, "Pillar_likelihood"] = 1.0
+            df.loc[f + 50:f + 150, "Pillar_likelihood"] = 0.05
         boundaries = [500, 1500, 2500]
         filtered, rejections = apply_tray_motion_gate(
             df, boundaries, total_frames=3000, expected_interval=1000.0,
