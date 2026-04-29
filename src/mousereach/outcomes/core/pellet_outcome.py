@@ -1505,12 +1505,41 @@ class PelletOutcomeDetector:
                         outcome = 'retrieved'
                         confidence = 0.90
                     else:
-                        outcome = 'displaced_sa'
-                        confidence = 0.80
-
-                        # STAGE 4: Lower confidence because pattern is ambiguous
-                        flagged = True
-                        flag_reason = f"Pellet ended far from pillar ({end_distance:.2f}) but no sustained displacement pattern detected"
+                        # When the algo's "no sustained displacement detected"
+                        # heuristic dismisses a high end_distance to displaced_sa,
+                        # check for the pillar-uncovering+no-off-pillar-cluster
+                        # signature. Per walkthrough cases 4, 11, 15: the high
+                        # end_distance reading is from DLC mistracking at the
+                        # pillar rim or apparatus edge, not a real off-pillar
+                        # pellet. The pellet was actually retrieved.
+                        if pillar_transition['fired']:
+                            far_off_pillar_cluster = self.detect_sustained_off_pillar_cluster(
+                                df, seg_start, seg_end, ruler,
+                            )
+                            if not far_off_pillar_cluster['fired']:
+                                outcome = 'retrieved'
+                                confidence = 0.70
+                                flagged = True
+                                flag_reason = (
+                                    f"end_distance high ({end_distance:.2f}) but no sustained "
+                                    f"off-pillar pellet cluster + pillar visibility transition "
+                                    f"({pillar_transition['pre_med']:.2f}->{pillar_transition['post_med']:.2f}) "
+                                    f"-> retrieved (end-pos likely pillar-rim or edge mistracking)"
+                                )
+                            else:
+                                outcome = 'displaced_sa'
+                                confidence = 0.80
+                                flagged = True
+                                flag_reason = (
+                                    f"end_distance ({end_distance:.2f}) + sustained off-pillar "
+                                    f"cluster ({far_off_pillar_cluster['n_frames']} frames) -> displaced_sa"
+                                )
+                        else:
+                            outcome = 'displaced_sa'
+                            confidence = 0.80
+                            # STAGE 4: Lower confidence because pattern is ambiguous
+                            flagged = True
+                            flag_reason = f"Pellet ended far from pillar ({end_distance:.2f}) but no sustained displacement pattern detected"
 
                 else:
                     # Ambiguous zone: 0.20 - 0.25
