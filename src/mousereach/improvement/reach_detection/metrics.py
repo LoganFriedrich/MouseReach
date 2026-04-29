@@ -566,3 +566,244 @@ def compute_reach_detection_metrics(
     )
 
     return scalars
+
+
+# ---------------------------------------------------------------------------
+# Kinematic completeness metric
+# ---------------------------------------------------------------------------
+
+@dataclass
+class KinematicCompletenessResult:
+    """Per-reach kinematic completeness assessment.
+
+    Attributes
+    ----------
+    gt_index : int
+        Index into the GT reach list.
+    gt_start : int
+        GT reach start frame.
+    gt_end : int
+        GT reach end frame.
+    gt_apex : int or None
+        GT apex frame (None if not annotated).
+    status : str
+        "matched" or "fn".
+    algo_start : int or None
+        Matched algo reach start (None for fn).
+    algo_end : int or None
+        Matched algo reach end (None for fn).
+    coverage : float or None
+        Fraction of GT frames covered by the algo window: (# algo frames
+        overlapping GT frames) / (# GT frames). 1.0 = perfect. None for fn.
+    apex_included : bool or None
+        True if algo window contains the GT apex frame. None for fn or
+        if GT has no apex annotation.
+    anchor_at_start_ok : bool or None
+        True if algo starts at or before (gt_start - anchor_frames),
+        giving room for the pre-start synthetic anchor. None for fn.
+    anchor_at_end_ok : bool or None
+        True if algo ends at or after (gt_end + anchor_frames),
+        giving room for the post-end synthetic anchor. None for fn.
+    """
+    gt_index: int
+    gt_start: int
+    gt_end: int
+    gt_apex: Optional[int]
+    status: str
+    algo_start: Optional[int]
+    algo_end: Optional[int]
+    coverage: Optional[float]
+    apex_included: Optional[bool]
+    anchor_at_start_ok: Optional[bool]
+    anchor_at_end_ok: Optional[bool]
+
+
+@dataclass
+class KinematicCompletenessAggregates:
+    """Aggregate kinematic completeness metrics across a set of reaches.
+
+    Attributes
+    ----------
+    n_total : int
+        Total GT reaches evaluated.
+    n_matched : int
+        GT reaches that had a matching algo reach.
+    n_fn : int
+        GT reaches with no matching algo reach.
+    median_coverage : float or None
+        Median coverage across matched reaches.
+    mean_coverage : float or None
+        Mean coverage across matched reaches.
+    frac_coverage_gte_1 : float or None
+        Fraction of matched reaches with coverage >= 1.0.
+    frac_apex_included : float or None
+        Fraction of matched reaches (with apex annotation) where apex
+        is inside the algo window.
+    frac_anchor_start_ok : float or None
+        Fraction of matched reaches where pre-start anchor is available.
+    frac_anchor_end_ok : float or None
+        Fraction of matched reaches where post-end anchor is available.
+    frac_both_anchors_ok : float or None
+        Fraction of matched reaches where both anchors are available.
+    """
+    n_total: int
+    n_matched: int
+    n_fn: int
+    median_coverage: Optional[float]
+    mean_coverage: Optional[float]
+    frac_coverage_gte_1: Optional[float]
+    frac_apex_included: Optional[float]
+    frac_anchor_start_ok: Optional[float]
+    frac_anchor_end_ok: Optional[float]
+    frac_both_anchors_ok: Optional[float]
+
+
+def compute_kinematic_completeness(
+    gt_reaches: List[Dict[str, Any]],
+    algo_reaches: List[Reach],
+    anchor_frames: int = 2,
+    window: int = 10,
+) -> Tuple[List[KinematicCompletenessResult], KinematicCompletenessAggregates]:
+    """Compute kinematic completeness for GT reaches against algo reaches.
+
+    For each GT reach, find the matched algo reach (using the standard
+    +/-window start matching rule), then measure how well the algo window
+    covers the GT frames needed for kinematic extraction.
+
+    Parameters
+    ----------
+    gt_reaches : list of dict
+        GT reach dicts with keys: start_frame, end_frame, apex_frame (optional),
+        exclude_from_analysis (optional).
+    algo_reaches : list of Reach
+        Algorithm-detected reaches.
+    anchor_frames : int
+        Number of synthetic anchor frames required before start and after end
+        for boundary-anchored trajectory computation (default 2).
+    window : int
+        Maximum start-frame distance for matching (default 10).
+
+    Returns
+    -------
+    (results, aggregates)
+        Per-reach results and aggregate statistics.
+    """
+    # Build Reach objects from GT dicts for matching
+    filtered_gt = [
+        r for r in gt_reaches
+        if not r.get("exclude_from_analysis", False)
+    ]
+    filtered_gt.sort(key=lambda r: r["start_frame"])
+
+    gt_reach_objs = [
+        Reach(
+            start_frame=int(r["start_frame"]),
+            end_frame=int(r["end_frame"]),
+            index=i,
+        )
+        for i, r in enumerate(filtered_gt)
+    ]
+
+    # Run standard matching
+    match_results = match_reaches(algo_reaches, gt_reach_objs, window=window)
+
+    # Build lookup: gt_index -> matched algo reach
+    gt_to_algo: Dict[int, ReachMatchResult] = {}
+    for mr in match_results:
+        if mr.status == "matched" and mr.gt_reach_index is not None:
+            gt_to_algo[mr.gt_reach_index] = mr
+
+    results: List[KinematicCompletenessResult] = []
+
+    for i, gt_dict in enumerate(filtered_gt):
+        gt_start = int(gt_dict["start_frame"])
+        gt_end = int(gt_dict["end_frame"])
+        gt_apex = int(gt_dict["apex_frame"]) if gt_dict.get("apex_frame") is not None else None
+        n_gt_frames = gt_end - gt_start + 1
+
+        if i in gt_to_algo:
+            mr = gt_to_algo[i]
+            algo_s = mr.algo_start
+            algo_e = mr.algo_end
+
+            # Coverage: fraction of GT frames inside algo window
+            overlap_start = max(gt_start, algo_s)
+            overlap_end = min(gt_end, algo_e)
+            n_overlap = max(0, overlap_end - overlap_start + 1)
+            coverage = n_overlap / n_gt_frames if n_gt_frames > 0 else 0.0
+
+            # Apex included
+            apex_ok = None
+            if gt_apex is not None:
+                apex_ok = (algo_s <= gt_apex <= algo_e)
+
+            # Anchor checks
+            anchor_start_ok = (algo_s <= gt_start - anchor_frames)
+            anchor_end_ok = (algo_e >= gt_end + anchor_frames)
+
+            results.append(KinematicCompletenessResult(
+                gt_index=i,
+                gt_start=gt_start,
+                gt_end=gt_end,
+                gt_apex=gt_apex,
+                status="matched",
+                algo_start=algo_s,
+                algo_end=algo_e,
+                coverage=round(coverage, 4),
+                apex_included=apex_ok,
+                anchor_at_start_ok=anchor_start_ok,
+                anchor_at_end_ok=anchor_end_ok,
+            ))
+        else:
+            results.append(KinematicCompletenessResult(
+                gt_index=i,
+                gt_start=gt_start,
+                gt_end=gt_end,
+                gt_apex=gt_apex,
+                status="fn",
+                algo_start=None,
+                algo_end=None,
+                coverage=None,
+                apex_included=None,
+                anchor_at_start_ok=None,
+                anchor_at_end_ok=None,
+            ))
+
+    # Aggregates
+    matched = [r for r in results if r.status == "matched"]
+    n_matched = len(matched)
+    n_fn = len([r for r in results if r.status == "fn"])
+
+    if n_matched > 0:
+        coverages = [r.coverage for r in matched]
+        median_cov = float(np.median(coverages))
+        mean_cov = float(np.mean(coverages))
+        frac_cov_gte_1 = sum(1 for c in coverages if c >= 1.0) / n_matched
+
+        apex_checks = [r.apex_included for r in matched if r.apex_included is not None]
+        frac_apex = sum(apex_checks) / len(apex_checks) if apex_checks else None
+
+        frac_anc_s = sum(1 for r in matched if r.anchor_at_start_ok) / n_matched
+        frac_anc_e = sum(1 for r in matched if r.anchor_at_end_ok) / n_matched
+        frac_both = sum(
+            1 for r in matched
+            if r.anchor_at_start_ok and r.anchor_at_end_ok
+        ) / n_matched
+    else:
+        median_cov = mean_cov = frac_cov_gte_1 = None
+        frac_apex = frac_anc_s = frac_anc_e = frac_both = None
+
+    aggregates = KinematicCompletenessAggregates(
+        n_total=len(results),
+        n_matched=n_matched,
+        n_fn=n_fn,
+        median_coverage=round(median_cov, 4) if median_cov is not None else None,
+        mean_coverage=round(mean_cov, 4) if mean_cov is not None else None,
+        frac_coverage_gte_1=round(frac_cov_gte_1, 4) if frac_cov_gte_1 is not None else None,
+        frac_apex_included=round(frac_apex, 4) if frac_apex is not None else None,
+        frac_anchor_start_ok=round(frac_anc_s, 4) if frac_anc_s is not None else None,
+        frac_anchor_end_ok=round(frac_anc_e, 4) if frac_anc_e is not None else None,
+        frac_both_anchors_ok=round(frac_both, 4) if frac_both is not None else None,
+    )
+
+    return results, aggregates
