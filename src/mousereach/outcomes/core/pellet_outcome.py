@@ -1015,12 +1015,21 @@ class PelletOutcomeDetector:
                                     flagged = True
                                     flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then grabbed by paw at frame {late_grab_frame} - likely retrieved"
                                 else:
-                                    # Pellet disappeared but no eating/grab evidence -- could be
-                                    # tracking loss or pellet knocked out of frame
-                                    outcome = 'displaced_sa'
+                                    # v4.0.0 step 2: per the prior corpus
+                                    # survey (outcome_signals_from_prior_corpus_survey.md),
+                                    # sustained pellet disappearance IS the
+                                    # primary signal for retrieved (median 1135
+                                    # frames for retrieved vs 3 frames for
+                                    # displaced_sa). Eating signature is too
+                                    # noisy to be the discriminator (medians
+                                    # within 0.5f). Therefore: pellet displaced
+                                    # + sustained disappearance at segment end
+                                    # = retrieved, regardless of whether eating/
+                                    # grab was specifically detected.
+                                    outcome = 'retrieved'
                                     confidence = 0.70
                                     flagged = True
-                                    flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) and disappeared (end_dist: {end_distance:.2f}) - no eating/grab detected"
+                                    flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then sustained disappearance (end_dist: {end_distance:.2f}) -> retrieved"
                         else:
                             outcome = 'displaced_sa'
                             confidence = 0.85
