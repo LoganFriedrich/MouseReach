@@ -1197,19 +1197,37 @@ class PelletOutcomeDetector:
                             confidence = 0.85
 
                             # STAGE 4: Additional validation - did pellet return near pillar?
-                            # NOTE (2026-04-29): an earlier version of step 2 added a
-                            # Signal 14b override here that flipped this to retrieved
-                            # when pillar lk transition fired. Reverted: caused 36
-                            # displaced_sa -> retrieved false positives on the corpus
-                            # because Signal 14b alone (pellet left pillar) cannot
-                            # discriminate retrieved (eaten) from displaced (still
-                            # on apparatus, DLC lost it). Need Signal 21 (sustained
-                            # off-pillar cluster) to distinguish; deferred to step 3.
                             if end_distance < 0.15:
-                                # Pellet ended up back on/near pillar after being displaced
-                                # This is unusual but possible (bounced back)
-                                flagged = True
-                                flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) but returned near pillar (end: {end_distance:.2f})"
+                                # v4.0.0 step 4: Signal 14b + Signal 21 NEGATIVE
+                                # local edit. Tighter than the earlier failed
+                                # attempt: only flip to retrieved when pillar lk
+                                # has transitioned high (Signal 14b fired) AND
+                                # there is NO sustained off-pillar pellet cluster
+                                # (Signal 21 negative). Both conditions together
+                                # mean the pellet definitively left the pillar AND
+                                # is not visible elsewhere on the tray -> retrieved.
+                                # Catches case-1 / cases-2/5 walkthrough patterns.
+                                if pillar_transition['fired']:
+                                    off_pillar_cluster = self.detect_sustained_off_pillar_cluster(
+                                        df, seg_start, seg_end, ruler,
+                                    )
+                                    if not off_pillar_cluster['fired']:
+                                        outcome = 'retrieved'
+                                        confidence = 0.80
+                                        flagged = True
+                                        flag_reason = (
+                                            f"displaced (max: {max_disp_dist:.2f}) + pillar lk "
+                                            f"{pillar_transition['pre_med']:.2f}->{pillar_transition['post_med']:.2f} + "
+                                            f"NO off-pillar cluster -> retrieved (end-pos is label-switch artifact)"
+                                        )
+                                    else:
+                                        flagged = True
+                                        flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) but returned near pillar (end: {end_distance:.2f})"
+                                else:
+                                    # Pellet ended up back on/near pillar after being displaced
+                                    # This is unusual but possible (bounced back)
+                                    flagged = True
+                                    flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) but returned near pillar (end: {end_distance:.2f})"
 
                     # Record displacement start frame for interaction timing
                     # Use onset detection (lookback from sustained displacement)
