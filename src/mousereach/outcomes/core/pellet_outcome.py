@@ -107,7 +107,7 @@ from .geometry import (
 from mousereach.config import Thresholds
 
 
-VERSION = "3.0.2-dev"  # v3.0.2: eating + low-visibility overrides on displaced_sa; v3.0.1: uncertain tie-breaker via pellet visibility
+VERSION = "4.0.0-dev"  # v4.0.0: sustained-pellet-disappearance retrieval rule + 4 edge-case catches (paw-contact, near-border, paw-stationary, pellet-with-paw); v3.0.3: removed broken eating-override; v3.0.2: low-vis override; v3.0.1: uncertain tie-breaker
 
 
 def _resolve_uncertain_by_pellet_visibility(traj, interaction_frame):
@@ -127,7 +127,7 @@ def _resolve_uncertain_by_pellet_visibility(traj, interaction_frame):
 class PelletOutcome:
     """Outcome for one pellet (one segment)"""
     segment_num: int
-    
+
     # Outcome classification
     # retrieved | displaced_sa | displaced_outside | untouched | uncertain | no_pellet
     outcome: str
@@ -135,17 +135,24 @@ class PelletOutcome:
     # Timing information (auto-detected, can be corrected by annotator)
     interaction_frame: Optional[int] = None      # First pellet touch: eating frame for retrieved, causal reach for displaced, None if untouched
     outcome_known_frame: Optional[int] = None    # First moment outcome determinable (set manually by annotator)
-    
+
     # Algorithm-computed pellet state (for reference)
     pellet_visible_start: bool = True
     distance_from_pillar_start: Optional[float] = None  # Distance from geometric pillar position (ruler units)
     pellet_visible_end: bool = True
     distance_from_pillar_end: Optional[float] = None  # Distance from geometric pillar position (ruler units)
-    
+
     # Causal reach
     causal_reach_id: Optional[int] = None
     causal_reach_frame: Optional[int] = None
-    
+
+    # v4.0.0+ interpretability: the frame range the algo actually examined
+    # to commit to this outcome. Used by mousereach-gt to load only the
+    # relevant frames for human review.
+    decision_window_start: Optional[int] = None
+    decision_window_end: Optional[int] = None
+    decision_rule: Optional[str] = None  # human-readable name of the rule
+
     # Confidence and review tracking
     confidence: float = 0.0
     human_verified: bool = False
@@ -551,7 +558,344 @@ class PelletOutcomeDetector:
             return True, eating_frames[0]
 
         return False, None
-    
+
+    def detect_sustained_disappearance(
+        self,
+        df: pd.DataFrame,
+        seg_start: int,
+        seg_end: int,
+        ruler: float,
+        min_run: int = 15,
+        lk_threshold: float = 0.3,
+        contact_window: int = 30,
+        contact_min_run: int = 5,
+        paw_stationary_window: int = 20,
+        paw_stationary_radius_px: float = 25.0,
+    ) -> Dict[str, Any]:
+        """
+        v4.0.0 sustained-pellet-disappearance signal.
+
+        Find the first run of >=min_run consecutive frames where
+        Pellet_likelihood < lk_threshold. This is the corpus-survey-validated
+        retrieval signal (1135f median for retrieved vs 3f for displaced_sa).
+
+        For each disappearance event, characterize:
+          - paw_contact_before: was there a sustained run of paw-pellet
+            contact (>= contact_min_run frames within PAW_PROXIMITY_THRESHOLD)
+            in the contact_window frames immediately before the disappearance?
+            (Edge case 1: filter glare/shadow false positives.)
+          - last_pellet_pos: median (x, y) of last 5 high-confidence pellet
+            positions before disappearance.
+          - near_border: was last_pellet_pos within 1 ruler unit of any
+            scoring-area border (BOXL/BOXR x-bounds or estimated box top/bottom)?
+            (Edge case 2: pellet rolled off tray -> displaced_outside.)
+          - paw_stationary_over: did any paw keypoint remain within
+            paw_stationary_radius_px of last_pellet_pos for >=
+            paw_stationary_window consecutive frames during the disappearance?
+            (Edge case 3: pellet covered by stationary paw -> ambiguous.)
+
+        Returns dict with keys: disappear_frame, last_pellet_pos,
+        paw_contact_before, near_border, paw_stationary_over.
+        """
+        seg_df = df.iloc[seg_start:seg_end]
+        n = len(seg_df)
+        out: Dict[str, Any] = {
+            'disappear_frame': None,
+            'last_pellet_pos': None,
+            'paw_contact_before': False,
+            'near_border': False,
+            'paw_stationary_over': False,
+            'run_length': 0,
+        }
+        if n < min_run + 10 or ruler is None or ruler <= 0:
+            return out
+
+        pellet_lk = seg_df['Pellet_likelihood'].values
+
+        # Find first run of >=min_run consecutive low-likelihood frames.
+        # Skip the first OUTCOME_SKIP_START_FRAMES so we don't latch onto
+        # pre-presentation noise.
+        lo = (pellet_lk < lk_threshold).astype(np.int8)
+        run = 0
+        run_start = -1
+        skip = Thresholds.OUTCOME_SKIP_START_FRAMES
+        for i in range(skip, n):
+            if lo[i]:
+                if run == 0:
+                    run_start = i
+                run += 1
+                if run >= min_run:
+                    out['disappear_frame'] = seg_start + run_start
+                    out['run_length'] = run  # may grow if we keep counting
+                    break
+            else:
+                run = 0
+                run_start = -1
+        if out['disappear_frame'] is None:
+            return out
+
+        # Extend run_length to actual end of the disappearance run.
+        idx_local = out['disappear_frame'] - seg_start
+        end_local = idx_local
+        while end_local < n and lo[end_local]:
+            end_local += 1
+        out['run_length'] = end_local - idx_local
+
+        # Last 5 confident pellet positions before the disappearance.
+        # Pellet may have been intermittently low-conf for a long time
+        # before the run-length threshold tripped, so look back the entire
+        # segment up to the disappearance and take the most recent 5
+        # positions with lk >= 0.5. If still none, fall back to lk >= 0.3
+        # (any positive evidence of pellet location).
+        before = seg_df.iloc[:idx_local]
+        good_before = before[before['Pellet_likelihood'] >= 0.5]
+        if len(good_before) < 3:
+            good_before = before[before['Pellet_likelihood'] >= 0.3]
+        if len(good_before) >= 3:
+            tail = good_before.iloc[-5:]
+            lpx = float(np.median(tail['Pellet_x'].values))
+            lpy = float(np.median(tail['Pellet_y'].values))
+            out['last_pellet_pos'] = (lpx, lpy)
+        else:
+            return out  # cannot reliably characterize -- treat as no signal
+
+        lpx, lpy = out['last_pellet_pos']
+        paw_points = ['RightHand', 'RHLeft', 'RHOut', 'RHRight']
+
+        # Edge case 1: paw contact during contact_window before disappearance.
+        contact_run = 0
+        contact_start = max(0, idx_local - contact_window)
+        for j in range(contact_start, idx_local):
+            row = seg_df.iloc[j]
+            min_d = float('inf')
+            for paw in paw_points:
+                lk = row.get(f'{paw}_likelihood', 0)
+                if lk < 0.5:
+                    continue
+                px = row.get(f'{paw}_x', np.nan)
+                py = row.get(f'{paw}_y', np.nan)
+                if np.isnan(px) or np.isnan(py):
+                    continue
+                d = float(np.hypot(px - lpx, py - lpy))
+                if d < min_d:
+                    min_d = d
+            if min_d < Thresholds.PAW_PROXIMITY_THRESHOLD:
+                contact_run += 1
+                if contact_run >= contact_min_run:
+                    out['paw_contact_before'] = True
+                    break
+            else:
+                contact_run = 0
+
+        # Edge case 2: was last_pellet_pos OUTSIDE the scoring area? The
+        # scoring area is the trapezoid SATL-SATR-SABR-SABL. The slit at
+        # BOXR_x is NOT a "border" -- pellets sit naturally near it. The
+        # actual borders are: x outside [SABL_x, SABR_x], or y above the
+        # SA top (away from mouse). We compute these in ruler units so
+        # the threshold scales with camera magnification.
+        sa_x_lo = None; sa_x_hi = None; sa_y_top = None
+        for col, vals in [('SABL_x', None), ('SABR_x', None),
+                          ('SATL_y', None), ('SATR_y', None)]:
+            pass  # placeholder
+        if 'SABL_x' in seg_df.columns:
+            sa_x_lo = float(seg_df['SABL_x'].median())
+        if 'SABR_x' in seg_df.columns:
+            sa_x_hi = float(seg_df['SABR_x'].median())
+        if 'SATL_y' in seg_df.columns and 'SATR_y' in seg_df.columns:
+            sa_y_top = float(min(seg_df['SATL_y'].median(),
+                                 seg_df['SATR_y'].median()))
+        # Margin: 0.3 ruler unit beyond bounds is "outside SA".
+        margin = 0.3 * ruler
+        outside = False
+        if sa_x_lo is not None and lpx < sa_x_lo - margin:
+            outside = True
+        if sa_x_hi is not None and lpx > sa_x_hi + margin:
+            outside = True
+        if sa_y_top is not None and lpy < sa_y_top - margin:
+            outside = True
+        out['near_border'] = bool(outside)
+
+        # Edge case 3: was the paw stationary over last_pellet_pos during
+        # disappearance, AND did it stay (rather than retreat to box/mouth
+        # afterward)?  A paw "covering" a pellet remains there for the rest
+        # of the segment; a paw "grabbing" a pellet quickly retracts toward
+        # the box. We require BOTH: a sustained stationary period AND no
+        # subsequent paw retreat away from last_pellet_pos.
+        stat_run = 0
+        max_stat_end_local = -1
+        end_stat = min(n, idx_local + paw_stationary_window * 3)
+        for j in range(idx_local, end_stat):
+            row = seg_df.iloc[j]
+            paw_near = False
+            for paw in paw_points:
+                lk = row.get(f'{paw}_likelihood', 0)
+                if lk < 0.5:
+                    continue
+                px = row.get(f'{paw}_x', np.nan)
+                py = row.get(f'{paw}_y', np.nan)
+                if np.isnan(px) or np.isnan(py):
+                    continue
+                if np.hypot(px - lpx, py - lpy) < paw_stationary_radius_px:
+                    paw_near = True
+                    break
+            if paw_near:
+                stat_run += 1
+                if stat_run >= paw_stationary_window:
+                    max_stat_end_local = j
+            else:
+                stat_run = 0
+
+        # Did the paw retreat away from last_pellet_pos after the
+        # stationary period? Two valid retreat signatures:
+        #   (a) some paw keypoint visible >2x radius from last_pellet_pos
+        #   (b) ALL paw keypoints become low-confidence for >=10 consecutive
+        #       frames (paw withdrew toward box/mouth, leaving the frame
+        #       or being occluded by body) -- this is the real-world
+        #       signature of a successful grab where the paw withdraws
+        #       quickly into the box.
+        if max_stat_end_local > 0:
+            retreat_window = 60
+            retreated = False
+            paw_lost_run = 0
+            for j in range(max_stat_end_local + 1,
+                           min(n, max_stat_end_local + retreat_window + 1)):
+                row = seg_df.iloc[j]
+                any_paw_visible = False
+                paw_far = False
+                for paw in paw_points:
+                    lk = row.get(f'{paw}_likelihood', 0)
+                    if lk < 0.5:
+                        continue
+                    any_paw_visible = True
+                    px = row.get(f'{paw}_x', np.nan)
+                    py = row.get(f'{paw}_y', np.nan)
+                    if np.isnan(px) or np.isnan(py):
+                        continue
+                    if np.hypot(px - lpx, py - lpy) > paw_stationary_radius_px * 2:
+                        paw_far = True
+                        break
+                if paw_far:
+                    retreated = True
+                    break
+                if not any_paw_visible:
+                    paw_lost_run += 1
+                    if paw_lost_run >= 10:
+                        retreated = True
+                        break
+                else:
+                    paw_lost_run = 0
+            out['paw_stationary_over'] = bool(not retreated)
+        else:
+            out['paw_stationary_over'] = False
+
+        return out
+
+    def detect_pellet_with_paw(
+        self,
+        df: pd.DataFrame,
+        seg_start: int,
+        seg_end: int,
+        ruler: float,
+        min_couple_frames: int = 10,
+        couple_radius_px: float = 25.0,
+        min_paw_travel_px: float = 60.0,
+    ) -> Dict[str, Any]:
+        """
+        v4.0.0 'pellet moving with paw' signal (edge case 4).
+
+        DLC sometimes tracks the pellet ON the paw as it travels from pillar
+        to box; pellet_lk stays high so the disappearance rule never fires.
+        This function detects sustained co-location of pellet with any paw
+        keypoint, AND requires the paw to actually travel (so we don't fire
+        on stationary 'pellet held against pillar').
+
+        Returns dict with keys: with_paw, first_couple_frame, last_couple_frame,
+        paw_travel_px.
+        """
+        seg_df = df.iloc[seg_start:seg_end]
+        n = len(seg_df)
+        out: Dict[str, Any] = {
+            'with_paw': False,
+            'first_couple_frame': None,
+            'last_couple_frame': None,
+            'paw_travel_px': 0.0,
+        }
+        if n < min_couple_frames + 5:
+            return out
+
+        paw_points = ['RightHand', 'RHLeft', 'RHOut', 'RHRight']
+        pellet_lk = seg_df['Pellet_likelihood'].values
+        pellet_x = seg_df['Pellet_x'].values
+        pellet_y = seg_df['Pellet_y'].values
+
+        couple_run = 0
+        run_start = -1
+        best_run_start = -1
+        best_run_end = -1
+        best_run_len = 0
+        for i in range(n):
+            if pellet_lk[i] < 0.5:
+                couple_run = 0
+                run_start = -1
+                continue
+            row = seg_df.iloc[i]
+            paw_near = False
+            for paw in paw_points:
+                lk = row.get(f'{paw}_likelihood', 0)
+                if lk < 0.5:
+                    continue
+                px = row.get(f'{paw}_x', np.nan)
+                py = row.get(f'{paw}_y', np.nan)
+                if np.isnan(px) or np.isnan(py):
+                    continue
+                if np.hypot(px - pellet_x[i], py - pellet_y[i]) < couple_radius_px:
+                    paw_near = True
+                    break
+            if paw_near:
+                if couple_run == 0:
+                    run_start = i
+                couple_run += 1
+                if couple_run > best_run_len:
+                    best_run_len = couple_run
+                    best_run_start = run_start
+                    best_run_end = i
+            else:
+                couple_run = 0
+                run_start = -1
+
+        if best_run_len < min_couple_frames:
+            return out
+
+        # Did the paw actually travel during the couple? Take the median of
+        # all confident paw positions across the run and check spread.
+        run_idx_lo = best_run_start
+        run_idx_hi = best_run_end
+        xs: List[float] = []
+        ys: List[float] = []
+        for i in range(run_idx_lo, run_idx_hi + 1):
+            row = seg_df.iloc[i]
+            for paw in paw_points:
+                lk = row.get(f'{paw}_likelihood', 0)
+                if lk < 0.5:
+                    continue
+                px = row.get(f'{paw}_x', np.nan)
+                py = row.get(f'{paw}_y', np.nan)
+                if np.isnan(px) or np.isnan(py):
+                    continue
+                xs.append(float(px))
+                ys.append(float(py))
+                break
+        if len(xs) < 3:
+            return out
+        travel = float(np.hypot(max(xs) - min(xs), max(ys) - min(ys)))
+        out['paw_travel_px'] = travel
+        if travel >= min_paw_travel_px:
+            out['with_paw'] = True
+            out['first_couple_frame'] = seg_start + best_run_start
+            out['last_couple_frame'] = seg_start + best_run_end
+
+        return out
+
     def check_paw_proximity(
         self,
         df: pd.DataFrame,
@@ -676,6 +1020,31 @@ class PelletOutcomeDetector:
 
         return False, -1, 0.0, -1
 
+    def _compute_decision_window(
+        self,
+        causal_id: Optional[int],
+        segment_reaches: Optional[Dict[str, Any]],
+        seg_start: int,
+        seg_end: int,
+    ) -> Tuple[int, int]:
+        """
+        v4.0.0+: return the frame range the algo examined to commit to
+        the outcome. If a causal reach was committed, the window is the
+        reach window with padding (30f before for paw approach, 60f after
+        for post-grab settling). Otherwise the window is the full segment.
+        """
+        if causal_id is not None and segment_reaches is not None:
+            reaches_list = segment_reaches.get('reaches', []) if isinstance(segment_reaches, dict) else []
+            for r in reaches_list:
+                if r.get('reach_id') == causal_id:
+                    rs = r.get('start_frame')
+                    re_ = r.get('end_frame')
+                    if rs is not None and re_ is not None:
+                        return (max(seg_start, int(rs) - 30),
+                                min(seg_end, int(re_) + 60))
+                    break
+        return (seg_start, seg_end)
+
     def detect_segment_outcome(
         self,
         df: pd.DataFrame,
@@ -702,7 +1071,10 @@ class PelletOutcomeDetector:
                 outcome='uncertain',
                 confidence=0.0,
                 flagged_for_review=True,
-                flag_reason="Could not compute geometry from SABL/SABR"
+                flag_reason="Could not compute geometry from SABL/SABR",
+                decision_window_start=seg_start,
+                decision_window_end=seg_end,
+                decision_rule="ruler_unavailable",
             )
 
         # Get pellet trajectory data
@@ -738,24 +1110,30 @@ class PelletOutcomeDetector:
             # v2.4.4: If pellet started far from pillar (>0.4), it's displaced_outside not retrieved
             if start_dist and start_dist > 0.4:
                 _cid_d, _cf_d, _ = self.find_causal_reach(segment_reaches, 'displaced_outside', grab_frame)
+                _dws_d, _dwe_d = self._compute_decision_window(_cid_d, segment_reaches, seg_start, seg_end)
                 return PelletOutcome(
                     segment_num=segment_num, outcome='displaced_outside',
                     interaction_frame=grab_frame, outcome_known_frame=None,
                     pellet_visible_start=traj['visible'], distance_from_pillar_start=start_dist,
                     pellet_visible_end=False, distance_from_pillar_end=end_dist,
                     causal_reach_id=_cid_d, causal_reach_frame=_cf_d,
+                    decision_window_start=_dws_d, decision_window_end=_dwe_d,
+                    decision_rule="Stage 0 grab: pellet started off pillar -> displaced_outside",
                     confidence=0.75, human_verified=False, original_outcome=None,
                     flagged_for_review=True,
                     flag_reason=f"Pellet started off pillar ({start_dist:.2f}) and disappeared - likely displaced outside"
                 )
             else:
                 _cid_r, _cf_r, _ = self.find_causal_reach(segment_reaches, 'retrieved', grab_frame)
+                _dws_r, _dwe_r = self._compute_decision_window(_cid_r, segment_reaches, seg_start, seg_end)
                 return PelletOutcome(
                     segment_num=segment_num, outcome='retrieved',
                     interaction_frame=grab_frame, outcome_known_frame=None,
                     pellet_visible_start=traj['visible'], distance_from_pillar_start=start_dist,
                     pellet_visible_end=False, distance_from_pillar_end=end_dist,
                     causal_reach_id=_cid_r, causal_reach_frame=_cf_r,
+                    decision_window_start=_dws_r, decision_window_end=_dwe_r,
+                    decision_rule="Stage 0 grab: paw near + pellet visibility drop -> retrieved",
                     confidence=0.85, human_verified=False, original_outcome=None,
                     flagged_for_review=True,
                     flag_reason="Pellet grabbed by paw (visibility dropped with paw near) - likely retrieved"
@@ -1145,18 +1523,55 @@ class PelletOutcomeDetector:
                         flagged = True
                         flag_reason = "Interaction frame from displacement detection (no reach data) - verify timing"
 
-        # v3.0.2: overrides on displaced_sa
-        if outcome == 'displaced_sa':
-            if eating_detected:
+        # v4.0.0: sustained-pellet-disappearance retrieval rule.
+        # Per the 400-segment GT corpus survey, retrieved segments have
+        # 1135f median sustained-disappearance vs 3f for displaced_sa --
+        # this is the strongest signal in the data. Edge cases:
+        #  1. paw_contact_before required: filters DLC glare/shadow FPs
+        #  2. near_border + no paw_stationary -> displaced_outside (rolled away)
+        #  3. paw_stationary_over -> ambiguous (covered, do not auto-retrieve)
+        #  4. pellet-with-paw co-location -> retrieved without disappearance
+        if outcome in ('displaced_sa', 'untouched', 'uncertain'):
+            disappear = self.detect_sustained_disappearance(
+                df, seg_start, seg_end, ruler
+            )
+            if disappear['disappear_frame'] is not None and disappear['paw_contact_before']:
+                if disappear['near_border'] and not disappear['paw_stationary_over']:
+                    outcome = 'displaced_outside'
+                    confidence = max(confidence, 0.70)
+                    flagged = True
+                    flag_reason = f"v4.0.0 disappearance near border (frame {disappear['disappear_frame']}, run {disappear['run_length']}f) -> displaced_outside"
+                elif disappear['paw_stationary_over']:
+                    flagged = True
+                    flag_reason = f"v4.0.0 sustained disappearance under stationary paw (frame {disappear['disappear_frame']}) -- pellet may be covered, flagging for review"
+                else:
+                    outcome = 'retrieved'
+                    confidence = max(confidence, 0.85)
+                    flagged = True
+                    flag_reason = f"v4.0.0 sustained pellet disappearance ({disappear['run_length']}f) starting frame {disappear['disappear_frame']} after paw contact -> retrieved"
+
+        # v4.0.0 edge case 4: pellet-moving-with-paw rule.
+        # DLC sometimes tracks pellet ON the paw -- pellet_lk stays high so
+        # the disappearance rule never fires. If pellet is co-located with
+        # paw for >=10 frames AND paw travels >=60 px during that run, the
+        # pellet was carried.
+        if outcome in ('displaced_sa', 'untouched', 'uncertain'):
+            with_paw = self.detect_pellet_with_paw(df, seg_start, seg_end, ruler)
+            if with_paw['with_paw']:
                 outcome = 'retrieved'
                 confidence = max(confidence, 0.80)
                 flagged = True
-                flag_reason = f"v3.0.2 override: displaced_sa flipped to retrieved (eating signature at frame {eating_frame})"
-            elif traj.get('visibility_pct', 1.0) < 0.50:
+                flag_reason = f"v4.0.0 pellet-with-paw retrieval: co-located {with_paw['first_couple_frame']}-{with_paw['last_couple_frame']} ({with_paw['paw_travel_px']:.0f}px paw travel)"
+
+        # v3.0.3 fallback: low-visibility override on displaced_sa (kept as
+        # a backstop for cases the v4 rule does not catch -- e.g. when paw
+        # contact is too brief to register).
+        if outcome == 'displaced_sa':
+            if traj.get('visibility_pct', 1.0) < 0.50:
                 outcome = 'retrieved'
                 confidence = max(confidence, 0.70)
                 flagged = True
-                flag_reason = f"v3.0.2 low-visibility override: pellet visibility_pct={traj.get('visibility_pct', 0):.2f} contradicts displaced_sa"
+                flag_reason = f"v3.0.3 low-visibility fallback: pellet visibility_pct={traj.get('visibility_pct', 0):.2f} contradicts displaced_sa"
 
         # v3.0.1: tie-breaker for any 'uncertain' outcomes
         if outcome == 'uncertain':
@@ -1166,6 +1581,14 @@ class PelletOutcomeDetector:
                 flagged = True
                 flag_reason = f"Resolved uncertain via pellet-visibility tie-breaker ({_resolution})"
 
+        # v4.0.0: decision_window -- the frame range the algo actually
+        # examined to commit to this outcome. Used by mousereach-gt to
+        # load only the relevant frames for human review.
+        decision_window_start, decision_window_end = self._compute_decision_window(
+            causal_id, segment_reaches, seg_start, seg_end
+        )
+        decision_rule = flag_reason  # falls back to whichever rule last fired
+
         return PelletOutcome(
             segment_num=segment_num, outcome=outcome,
             interaction_frame=interaction_frame, outcome_known_frame=None,
@@ -1174,6 +1597,9 @@ class PelletOutcomeDetector:
             pellet_visible_end=traj['visible'] and traj['visibility_pct'] > 0.5,
             distance_from_pillar_end=traj.get('end_distance_from_pillar'),
             causal_reach_id=causal_id, causal_reach_frame=causal_frame,
+            decision_window_start=decision_window_start,
+            decision_window_end=decision_window_end,
+            decision_rule=decision_rule,
             confidence=round(confidence, 2), human_verified=False,
             original_outcome=None, flagged_for_review=flagged, flag_reason=flag_reason
         )
