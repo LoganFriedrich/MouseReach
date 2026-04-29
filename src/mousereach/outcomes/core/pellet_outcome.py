@@ -178,6 +178,113 @@ class PelletOutcomeDetector:
     def __init__(self):
         pass
     
+    def detect_sustained_off_pillar_cluster(
+        self,
+        df: pd.DataFrame,
+        seg_start: int,
+        seg_end: int,
+        ruler: float,
+        check_start_frame: Optional[int] = None,
+        min_consecutive_frames: int = 10,
+        min_pellet_lk: float = 0.95,
+        min_distance_ruler: float = 0.30,
+        paw_colocation_px: float = 8.0,
+    ) -> Dict[str, Any]:
+        """Signal 21 helper: check for a sustained off-pillar pellet
+        cluster post-reach where the paw is NOT co-located.
+
+        A real off-pillar pellet (displacement) shows up as multiple
+        consecutive frames where pellet_lk is high AND pellet position
+        is well off the pillar AND paw bodyparts are NOT clustered at
+        the same pixel as the pellet. Mistracking artifacts (paw
+        mistracked as pellet) fail the paw-co-location check.
+        Mistracking on the pillar tip (label-switch after retrieval)
+        fails the distance-from-pillar check.
+
+        ``check_start_frame`` (optional): start the search at this
+        absolute frame. Defaults to seg_start.
+
+        Returns a dict with:
+          - 'fired': bool -- a qualifying cluster exists
+          - 'frame': int or None -- earliest qualifying frame
+          - 'n_frames': int -- count of consecutive qualifying frames
+        """
+        if ruler is None or ruler <= 0:
+            return {'fired': False, 'frame': None, 'n_frames': 0}
+        start = check_start_frame if check_start_frame is not None else seg_start
+        start = max(seg_start, start)
+        if start >= seg_end:
+            return {'fired': False, 'frame': None, 'n_frames': 0}
+
+        # Compute pellet position relative to expected pillar per frame.
+        # Reuses the geometry approach from get_pellet_trajectory.
+        sub = df.iloc[start:seg_end]
+        if len(sub) < min_consecutive_frames:
+            return {'fired': False, 'frame': None, 'n_frames': 0}
+        pellet_lk = sub['Pellet_likelihood'].values
+        pellet_x = sub['Pellet_x'].values
+        pellet_y = sub['Pellet_y'].values
+        sabl_x = sub['SABL_x'].values
+        sabl_y = sub['SABL_y'].values
+        sabr_x = sub['SABR_x'].values
+        sabr_y = sub['SABR_y'].values
+        sa_ok = (sub['SABL_likelihood'].values > self.SA_LIKELIHOOD_THRESHOLD) & (
+                 sub['SABR_likelihood'].values > self.SA_LIKELIHOOD_THRESHOLD)
+
+        mid_x = (sabl_x + sabr_x) / 2
+        mid_y = (sabl_y + sabr_y) / 2
+        frame_rulers = np.sqrt((sabr_x - sabl_x) ** 2 + (sabr_y - sabl_y) ** 2)
+        frame_rulers = np.clip(frame_rulers, 1.0, None)
+        rel_x = (pellet_x - mid_x) / frame_rulers
+        rel_y = (pellet_y - mid_y) / frame_rulers
+        pillar_rel_x_expected = 0.0
+        pillar_rel_y_expected = -0.944
+        dist_ru = np.sqrt(
+            (rel_x - pillar_rel_x_expected) ** 2 + (rel_y - pillar_rel_y_expected) ** 2
+        )
+
+        # Paw co-location filter: per frame, find min distance from
+        # pellet to any high-confidence paw bodypart.
+        paw_min_dist = np.full(len(sub), np.inf)
+        for bp in ('RightHand', 'RHLeft', 'RHOut', 'RHRight'):
+            if f'{bp}_x' not in sub.columns:
+                continue
+            bx = sub[f'{bp}_x'].values
+            by = sub[f'{bp}_y'].values
+            blk = sub[f'{bp}_likelihood'].values
+            bp_dist = np.sqrt((pellet_x - bx) ** 2 + (pellet_y - by) ** 2)
+            bp_dist = np.where(blk >= 0.7, bp_dist, np.inf)
+            paw_min_dist = np.minimum(paw_min_dist, bp_dist)
+        not_paw_co = paw_min_dist > paw_colocation_px
+
+        qualifying = (
+            sa_ok
+            & (pellet_lk >= min_pellet_lk)
+            & (dist_ru >= min_distance_ruler)
+            & not_paw_co
+        )
+
+        # Find the longest run of consecutive qualifying frames.
+        best_run = 0
+        run = 0
+        run_start = None
+        best_start = None
+        for i, q in enumerate(qualifying):
+            if q:
+                if run == 0:
+                    run_start = i
+                run += 1
+                if run > best_run:
+                    best_run = run
+                    best_start = run_start
+            else:
+                run = 0
+                run_start = None
+
+        fired = best_run >= min_consecutive_frames
+        frame = (start + best_start) if fired and best_start is not None else None
+        return {'fired': fired, 'frame': frame, 'n_frames': int(best_run)}
+
     def detect_pillar_lk_transition(
         self,
         df: pd.DataFrame,
@@ -802,6 +909,41 @@ class PelletOutcomeDetector:
                 )
 
             else:
+                # v4.0.0 step 3: Signal 21 local check at this dismissal site.
+                # Before defaulting to retrieved, look for a sustained
+                # off-pillar pellet cluster post-grab. If one exists, the
+                # pellet wasn't actually retrieved -- DLC eventually saw
+                # it at an off-pillar resting position. Catches the
+                # displaced->retrieved Stage-0-grab false positives from
+                # the v4.0.0 walkthrough cluster (cases 13, 16, 19, 23,
+                # 26 patterns).
+                cluster_check_start = grab_frame if grab_frame is not None else seg_start
+                off_pillar_cluster = self.detect_sustained_off_pillar_cluster(
+                    df, seg_start, seg_end, ruler,
+                    check_start_frame=cluster_check_start,
+                )
+                if off_pillar_cluster['fired']:
+                    return PelletOutcome(
+                        segment_num=segment_num,
+                        outcome='displaced_sa',
+                        interaction_frame=grab_frame,
+                        outcome_known_frame=None,
+                        pellet_visible_start=traj['visible'],
+                        distance_from_pillar_start=start_dist,
+                        pellet_visible_end=True,
+                        distance_from_pillar_end=end_dist,
+                        causal_reach_id=None,
+                        causal_reach_frame=None,
+                        confidence=0.80,
+                        human_verified=False,
+                        original_outcome=None,
+                        flagged_for_review=True,
+                        flag_reason=(
+                            f"Stage 0 grab + sustained off-pillar cluster "
+                            f"({off_pillar_cluster['n_frames']} frames at frame "
+                            f"{off_pillar_cluster['frame']}) -> displaced_sa, NOT retrieved"
+                        ),
+                    )
                 # Normal retrieval - pellet was on/near pillar when grabbed
                 return PelletOutcome(
                     segment_num=segment_num,
@@ -1015,21 +1157,41 @@ class PelletOutcomeDetector:
                                     flagged = True
                                     flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then grabbed by paw at frame {late_grab_frame} - likely retrieved"
                                 else:
-                                    # v4.0.0 step 2: per the prior corpus
-                                    # survey (outcome_signals_from_prior_corpus_survey.md),
-                                    # sustained pellet disappearance IS the
-                                    # primary signal for retrieved (median 1135
-                                    # frames for retrieved vs 3 frames for
-                                    # displaced_sa). Eating signature is too
-                                    # noisy to be the discriminator (medians
-                                    # within 0.5f). Therefore: pellet displaced
-                                    # + sustained disappearance at segment end
-                                    # = retrieved, regardless of whether eating/
-                                    # grab was specifically detected.
-                                    outcome = 'retrieved'
-                                    confidence = 0.70
-                                    flagged = True
-                                    flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then sustained disappearance (end_dist: {end_distance:.2f}) -> retrieved"
+                                    # v4.0.0 step 3: Signal 21 local check.
+                                    # Before flipping to retrieved on the
+                                    # "displaced + sustained disappearance"
+                                    # default, check for a sustained
+                                    # off-pillar pellet cluster post-reach.
+                                    # If one exists, the pellet wasn't
+                                    # retrieved -- it was displaced and DLC
+                                    # eventually re-found it. This narrows
+                                    # the over-firing FPs the step-2b flip
+                                    # introduced.
+                                    off_pillar_cluster = self.detect_sustained_off_pillar_cluster(
+                                        df, seg_start, seg_end, ruler,
+                                    )
+                                    if off_pillar_cluster['fired']:
+                                        outcome = 'displaced_sa'
+                                        confidence = 0.80
+                                        flagged = True
+                                        flag_reason = (
+                                            f"Pellet displaced (max: {max_disp_dist:.2f}) + "
+                                            f"sustained off-pillar cluster ({off_pillar_cluster['n_frames']} "
+                                            f"frames) -> displaced_sa (not retrieved despite end-of-segment "
+                                            f"disappearance)"
+                                        )
+                                    else:
+                                        # Per outcome_signals_from_prior_corpus_survey:
+                                        # sustained pellet disappearance IS the
+                                        # primary signal for retrieved (median 1135
+                                        # frames for retrieved vs 3 frames for
+                                        # displaced_sa). With NO sustained off-
+                                        # pillar cluster found post-displacement,
+                                        # the pellet is gone -> retrieved.
+                                        outcome = 'retrieved'
+                                        confidence = 0.70
+                                        flagged = True
+                                        flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) then sustained disappearance (end_dist: {end_distance:.2f}), no off-pillar cluster -> retrieved"
                         else:
                             outcome = 'displaced_sa'
                             confidence = 0.85
