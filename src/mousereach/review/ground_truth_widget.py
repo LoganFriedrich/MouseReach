@@ -133,6 +133,10 @@ class GroundTruthWidget(QWidget):
         self.points_layer = None  # DLC points overlay
         self.pillar_shapes_layer = None  # Pillar circle overlay
 
+        # v4.0.0 screenshot defaults (overridden by CLI --screenshot-dir)
+        self.screenshot_dir = None
+        self._screenshot_segment = None
+
         # UI tracking - selected items for keyboard shortcuts
         self._current_boundary_idx = 0
         self._current_reach_idx = 0
@@ -361,6 +365,15 @@ class GroundTruthWidget(QWidget):
         next_hand_btn.setMaximumWidth(35)
         next_hand_btn.setToolTip("Jump to next frame where hand is visible (J)")
         goto_row.addWidget(next_hand_btn)
+
+        # v4.0.0: screenshot button. Captures the napari canvas at the
+        # current frame and opens a Save As dialog rooted at the
+        # screenshot_dir provided by the launcher (or cwd otherwise).
+        # Default filename uses the absolute video frame.
+        screenshot_btn = QPushButton("Screenshot")
+        screenshot_btn.clicked.connect(self._save_screenshot)
+        screenshot_btn.setToolTip("Capture canvas; auto-name with absolute frame")
+        goto_row.addWidget(screenshot_btn)
 
         header_layout.addLayout(goto_row)
 
@@ -617,6 +630,19 @@ class GroundTruthWidget(QWidget):
         self.status_label.setStyleSheet("color: #888;")
         footer_layout.addWidget(self.status_label)
 
+        # v4.0.0: live frame info panel -- updates as you scrub. Content is
+        # context-aware via self.info_panel_mode (set by CLI; defaults to
+        # 'outcome' when launched with --segment + --algo-dir pointing at
+        # pellet outcomes, otherwise 'general').
+        self.info_panel_mode = getattr(self, 'info_panel_mode', 'general')
+        self.frame_info_label = QLabel("")
+        self.frame_info_label.setStyleSheet(
+            "color: #ddd; background-color: #222; padding: 6px; "
+            "font-family: Consolas, 'Courier New', monospace; font-size: 11px;"
+        )
+        self.frame_info_label.setWordWrap(True)
+        footer_layout.addWidget(self.frame_info_label)
+
         parent_layout.addWidget(footer)
 
     # =========================================================================
@@ -725,8 +751,15 @@ class GroundTruthWidget(QWidget):
         if path:
             self._load_video(Path(path))
 
-    def _load_video(self, video_path: Path):
-        """Load video and initialize data."""
+    def _load_video(self, video_path: Path, frame_range: Optional[Tuple[int, int]] = None):
+        """Load video and initialize data.
+
+        If ``frame_range=(start, end)`` is given, only those frames are read
+        from disk and added as the image layer. The image layer is translated
+        so its world coordinates still match absolute frame indices, so all
+        downstream logic that uses absolute frame indices keeps working.
+        DLC points and shapes are filtered to the same window.
+        """
         self.video_path = video_path
         self.video_label.setText(f"Loading: {video_path.name}")
         self.progress.setVisible(True)
@@ -749,23 +782,40 @@ class GroundTruthWidget(QWidget):
             if not cap.isOpened():
                 raise RuntimeError(f"Could not open video: {video_path}")
 
-            self.n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
 
+            # Resolve frame range: clamp to [0, total_frames-1].
+            if frame_range is not None:
+                fr_start = max(0, int(frame_range[0]))
+                fr_end = min(total_frames - 1, int(frame_range[1]))
+                if fr_end < fr_start:
+                    fr_end = fr_start
+            else:
+                fr_start = 0
+                fr_end = total_frames - 1
+            self.frame_offset = fr_start  # world-coord offset of frame 0 in the slice
+            self.frame_window_end = fr_end
+            n_to_read = fr_end - fr_start + 1
+            self.n_frames = total_frames  # absolute total; absolute frame indices remain valid
+
+            # Seek to start frame, then read sequentially.
+            if fr_start > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, fr_start)
+
             frames = []
-            for i in range(self.n_frames):
+            for i in range(n_to_read):
                 ret, frame = cap.read()
                 if not ret:
                     break
                 frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
                 if i % 500 == 0:
-                    self.progress.setValue(int(70 * i / self.n_frames))
+                    self.progress.setValue(int(70 * i / max(n_to_read, 1)))
                     from qtpy.QtWidgets import QApplication
                     QApplication.processEvents()
 
             cap.release()
-            self.n_frames = len(frames)
             self.progress.setValue(75)
 
             # Remove old video layer
@@ -775,11 +825,13 @@ class GroundTruthWidget(QWidget):
                 except:
                     pass
 
-            # Add video to viewer
+            # Add video to viewer with time-axis translate so absolute frame
+            # indices map to world coords.
             self.video_layer = self.viewer.add_image(
                 np.stack(frames),
                 name=video_path.stem,
-                rgb=True
+                rgb=True,
+                translate=(self.frame_offset, 0.0, 0.0),
             )
             self.progress.setValue(85)
 
@@ -803,8 +855,47 @@ class GroundTruthWidget(QWidget):
             self._refresh_all_lists()
             self._enable_nav_controls(True)
 
-            self.goto_spin.setRange(0, self.n_frames - 1)
-            self.video_label.setText(f"Loaded: {video_path.name} ({self.n_frames} frames)")
+            # Constrain navigation to the loaded window when one is set,
+            # so the user cannot scrub into frames that were not loaded.
+            if getattr(self, 'frame_offset', 0) > 0 or self.frame_window_end < self.n_frames - 1:
+                self.goto_spin.setRange(self.frame_offset, self.frame_window_end)
+                # Constrain the napari time-axis dim to the loaded window AND
+                # explicitly position the playhead at the start frame.
+                try:
+                    self.viewer.dims.set_range(0, (self.frame_offset, self.frame_window_end + 1, 1))
+                except Exception:
+                    pass
+                try:
+                    self.viewer.dims.set_point(0, self.frame_offset)
+                except Exception:
+                    try:
+                        cs = list(self.viewer.dims.current_step)
+                        cs[0] = self.frame_offset
+                        self.viewer.dims.current_step = tuple(cs)
+                    except Exception:
+                        pass
+                self.video_label.setText(
+                    f"Loaded: {video_path.name}  "
+                    f"window=[{self.frame_offset}, {self.frame_window_end}]  "
+                    f"({self.frame_window_end - self.frame_offset + 1} frames; "
+                    f"video has {self.n_frames})"
+                )
+            else:
+                self.goto_spin.setRange(0, self.n_frames - 1)
+                self.video_label.setText(f"Loaded: {video_path.name} ({self.n_frames} frames)")
+            # v4.0.0: explicitly refresh per-frame overlays after dims have
+            # been positioned, in case the pillar/info panel were computed
+            # on a stale (pre-translate) current_step.
+            try:
+                self._update_pillar_circle()
+            except Exception:
+                pass
+            try:
+                self._update_frame_info_panel(
+                    self._slider_to_abs(int(self.viewer.dims.current_step[0]))
+                )
+            except Exception:
+                pass
             self.progress.setValue(100)
 
             status = self.gt.completion_status
@@ -869,21 +960,37 @@ class GroundTruthWidget(QWidget):
         ]
         bp_colors = {bp: colors_base[i % len(colors_base)] for i, bp in enumerate(bodyparts)}
 
-        # Collect all points
+        # Collect all points -- restricted to the loaded frame window if set.
         points_data = []
         point_colors = []
+        point_bps = []  # per-point bodypart name, used for text labels
 
-        for frame_idx in range(len(self.dlc_df)):
+        win_start = getattr(self, 'frame_offset', 0)
+        win_end = getattr(self, 'frame_window_end', len(self.dlc_df) - 1)
+
+        for frame_idx in range(win_start, min(win_end + 1, len(self.dlc_df))):
             for bp in bodyparts:
                 x = self.dlc_df.iloc[frame_idx].get(f'{bp}_x', np.nan)
                 y = self.dlc_df.iloc[frame_idx].get(f'{bp}_y', np.nan)
                 likelihood = self.dlc_df.iloc[frame_idx].get(f'{bp}_likelihood', 0)
 
-                if likelihood > 0.5 and not np.isnan(x) and not np.isnan(y):
+                if not np.isnan(x) and not np.isnan(y):
                     # Scale coordinates to match downsampled video
                     scale = getattr(self, 'scale_factor', 1.0)
+                    # v4.0.0+: hard truncation below the algo's likelihood
+                    # threshold (so "visible dot == algo would use it"),
+                    # squared gradient above the threshold so "barely above"
+                    # stays visibly faint and "strongly above" looks solid.
+                    threshold = self._get_lk_threshold(bp)
+                    lk = float(likelihood)
+                    if lk < threshold:
+                        alpha = 0.05
+                    else:
+                        norm = (lk - threshold) / max(1e-6, 1.0 - threshold)
+                        alpha = 0.10 + 0.90 * (norm ** 2)
                     points_data.append([frame_idx, y * scale, x * scale])
-                    point_colors.append(bp_colors[bp] + [0.15])
+                    point_colors.append(bp_colors[bp] + [alpha])
+                    point_bps.append(bp)
 
         if points_data:
             # Remove old layer
@@ -896,8 +1003,11 @@ class GroundTruthWidget(QWidget):
             self.points_layer = self.viewer.add_points(
                 np.array(points_data),
                 name='DLC Points',
-                size=6,
+                size=3,
                 face_color=np.array(point_colors),
+                features={'bp': point_bps},
+                text={'string': '{bp}', 'size': 7, 'color': 'white',
+                      'translation': [0, -7, 0]},
             )
 
     def _add_pillar_shapes_layer(self):
@@ -912,12 +1022,14 @@ class GroundTruthWidget(QWidget):
             except:
                 pass
 
-        # Create empty shapes layer
+        # Create empty shapes layer. v4.0.0: bumped edge_color to bright red
+        # and edge_width to 3 so the pillar is impossible to miss while we
+        # debug visibility issues.
         self.pillar_shapes_layer = self.viewer.add_shapes(
             name='Pillar',
-            edge_color='cyan',
+            edge_color='red',
             face_color=[0, 0, 0, 0],  # Transparent fill
-            edge_width=2,
+            edge_width=3,
         )
 
         # Connect to frame change to update circle (only once)
@@ -932,15 +1044,29 @@ class GroundTruthWidget(QWidget):
         if self.pillar_shapes_layer is None or self.dlc_df is None:
             return
 
-        frame_idx = int(self.viewer.dims.current_step[0])
-        if frame_idx >= len(self.dlc_df):
+        # current_step is the napari slider position (0..N-1 within the
+        # loaded slice). Convert to an absolute video frame so dlc_df
+        # (which holds the entire video's DLC tracking) is indexed
+        # correctly.
+        slider_val = int(self.viewer.dims.current_step[0])
+        frame_idx = self._slider_to_abs(slider_val)
+        if frame_idx < 0 or frame_idx >= len(self.dlc_df):
             return
 
         row = self.dlc_df.iloc[frame_idx]
         scale = getattr(self, 'scale_factor', 1.0)
 
         # Get SA corners (SABL = SA Bottom Left, SABR = SA Bottom Right)
-        # These define the "ruler" - the bottom edge of the staging area
+        # These define the "ruler" - the bottom edge of the staging area.
+        # v4.0.0: also gate on SA likelihood, not just NaN, otherwise low-
+        # confidence (mistracked) SA points produce a pillar at the wrong
+        # location. This is what caused the "pillar slides in" effect at
+        # the first few frames of a loaded segment.
+        sabl_lk = row.get('SABL_likelihood', 0)
+        sabr_lk = row.get('SABR_likelihood', 0)
+        if sabl_lk < 0.5 or sabr_lk < 0.5:
+            self.pillar_shapes_layer.data = []
+            return
         sabl_x = row.get('SABL_x', np.nan) * scale
         sabl_y = row.get('SABL_y', np.nan) * scale
         sabr_x = row.get('SABR_x', np.nan) * scale
@@ -2095,20 +2221,98 @@ class GroundTruthWidget(QWidget):
     # Navigation
     # =========================================================================
 
+    # Per-bodypart likelihood thresholds used by the algorithm. The DLC
+    # point overlay uses these to mirror what each algo actually sees:
+    # below threshold -> nearly invisible (algo would discard); above
+    # threshold -> opacity scales with confidence so the user can tell
+    # "barely above threshold" from "rock-solid."
+    _LK_THRESHOLD_PER_BP = {
+        # SA reference points -- outcome detector requires high lk for
+        # geometry (ruler/pillar). Stricter than other points.
+        'SABL': 0.8, 'SABR': 0.8, 'SATL': 0.8, 'SATR': 0.8,
+        # Box edges (slit) -- treat as SA-like reference geometry.
+        'BOXL': 0.8, 'BOXR': 0.8,
+        # Pellet/Pillar/paw/face all use 0.5 by default (matches outcome
+        # and reach detector defaults).
+    }
+
+    def _get_lk_threshold(self, bp: str) -> float:
+        """v4.0.0+: per-bodypart likelihood threshold used by the overlay
+        to decide whether the algo would consider a point real."""
+        return self._LK_THRESHOLD_PER_BP.get(bp, 0.5)
+
+    def _save_screenshot(self):
+        """v4.0.0: capture the napari canvas at the current frame and save
+        it. Default save path = self.screenshot_dir (set by the launcher
+        from --screenshot-dir or auto-derived). Default filename includes
+        the absolute frame number, the video stem, and the segment number
+        if known. The user can adjust the path via the Save As dialog."""
+        try:
+            from qtpy.QtWidgets import QFileDialog
+            slider_val = int(self.viewer.dims.current_step[0])
+            abs_frame = self._slider_to_abs(slider_val)
+            video_stem = (self.video_path.stem.replace('_preview', '')
+                          if self.video_path is not None else 'video')
+            seg_tag = f"_seg{self._screenshot_segment}" if getattr(self, '_screenshot_segment', None) else ''
+            default_name = f"f{abs_frame}_{video_stem}{seg_tag}.png"
+            default_dir = getattr(self, 'screenshot_dir', None)
+            from pathlib import Path as _P
+            if default_dir is None:
+                default_dir = _P.cwd()
+            else:
+                default_dir = _P(default_dir)
+            default_dir.mkdir(parents=True, exist_ok=True)
+            default_path = str(default_dir / default_name)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save screenshot", default_path,
+                "PNG image (*.png);;All files (*.*)"
+            )
+            if not path:
+                return
+            arr = self.viewer.screenshot(canvas_only=True, flash=False)
+            try:
+                import imageio.v3 as iio
+                iio.imwrite(path, arr)
+            except Exception:
+                # Fallback to imageio v2 API
+                import imageio
+                imageio.imwrite(path, arr)
+            print(f"[mousereach-gt] saved screenshot: {path}")
+        except Exception as e:
+            print(f"[mousereach-gt] screenshot failed: {e}")
+
+    def _abs_to_slider(self, abs_frame: int) -> int:
+        """Convert an absolute video frame to napari's slider position.
+        When a slice is loaded, the slider shows array indices 0..N-1
+        within the slice; absolute frames must be offset down by
+        frame_offset to land on the correct slice index."""
+        return int(abs_frame) - int(getattr(self, 'frame_offset', 0))
+
+    def _slider_to_abs(self, slider_val: int) -> int:
+        """Convert napari's slider position to an absolute video frame."""
+        return int(slider_val) + int(getattr(self, 'frame_offset', 0))
+
+    def _slider_max(self) -> int:
+        """Largest valid slider position for the currently loaded slice."""
+        offset = int(getattr(self, 'frame_offset', 0))
+        end = int(getattr(self, 'frame_window_end', self.n_frames - 1))
+        return max(0, end - offset)
+
     def _jump_frames(self, delta: int):
-        """Jump by delta frames."""
+        """Jump by delta frames (delta is in absolute frames, same as slider since they shift together)."""
         if self.n_frames == 0:
             return
         current = self.viewer.dims.current_step[0]
-        new_frame = max(0, min(self.n_frames - 1, current + delta))
-        self.viewer.dims.set_current_step(0, new_frame)
+        new_slider = max(0, min(self._slider_max(), current + delta))
+        self.viewer.dims.set_current_step(0, new_slider)
 
     def _jump_to_frame(self, frame: int):
-        """Jump to specific frame."""
+        """Jump to a specific ABSOLUTE video frame."""
         if self.n_frames == 0:
             return
-        frame = max(0, min(self.n_frames - 1, frame))
-        self.viewer.dims.set_current_step(0, frame)
+        slider_val = self._abs_to_slider(frame)
+        slider_val = max(0, min(self._slider_max(), slider_val))
+        self.viewer.dims.set_current_step(0, slider_val)
 
     def _goto_frame(self):
         """Go to frame from spinbox."""
@@ -2145,13 +2349,101 @@ class GroundTruthWidget(QWidget):
         if self.n_frames == 0:
             return
 
-        frame_idx = self.viewer.dims.current_step[0]
-        time_sec = frame_idx / self.fps
+        slider_val = self.viewer.dims.current_step[0]
+        abs_frame = self._slider_to_abs(slider_val)
+        time_sec = abs_frame / self.fps
         mins = int(time_sec // 60)
         secs = time_sec % 60
 
-        self.frame_label.setText(f"Frame: {frame_idx} / {self.n_frames}")
+        # Show ABSOLUTE frame in the label so the user is never confused
+        # about whether a frame number is slice-relative or video-absolute.
+        self.frame_label.setText(f"Frame: {abs_frame} / {self.n_frames}")
         self.time_label.setText(f"Time: {mins}:{secs:05.2f}")
+
+        self._update_frame_info_panel(abs_frame)
+
+    def _update_frame_info_panel(self, abs_frame: int):
+        """v4.0.0: live per-frame info panel. Content is mode-dependent.
+
+        Takes an ABSOLUTE video frame index (callers should convert from
+        slider via self._slider_to_abs if needed)."""
+        if not hasattr(self, 'frame_info_label') or self.frame_info_label is None:
+            return
+        if self.dlc_df is None or abs_frame < 0 or abs_frame >= len(self.dlc_df):
+            self.frame_info_label.setText("")
+            return
+        row = self.dlc_df.iloc[abs_frame]
+        mode = getattr(self, 'info_panel_mode', 'general')
+        lines = [f"abs frame: {abs_frame}"]
+
+        def fmt_pt(name):
+            x = row.get(f'{name}_x', float('nan'))
+            y = row.get(f'{name}_y', float('nan'))
+            lk = row.get(f'{name}_likelihood', 0.0)
+            try:
+                if x != x:  # NaN check without numpy
+                    return f"{name}: lk={lk:.2f} (no pos)"
+                return f"{name}: ({x:.0f}, {y:.0f})  lk={lk:.2f}"
+            except Exception:
+                return f"{name}: (err)"
+
+        if mode == 'outcome':
+            lines.append(fmt_pt('Pellet'))
+            lines.append(fmt_pt('Pillar'))
+            # slit_y from BOXL/BOXR
+            try:
+                slit_y = float((row.get('BOXL_y', 0) + row.get('BOXR_y', 0)) / 2)
+                lines.append(f"slit_y: {slit_y:.0f}")
+            except Exception:
+                pass
+            # SA confidences + computed pillar position so the user can
+            # tell if the pillar OVERLAY actually matches the computed
+            # geometric pillar, frame-by-frame.
+            try:
+                sabl_lk = float(row.get('SABL_likelihood', 0))
+                sabr_lk = float(row.get('SABR_likelihood', 0))
+                lines.append(f"SA_lk: BL={sabl_lk:.2f} BR={sabr_lk:.2f}")
+                if sabl_lk >= 0.5 and sabr_lk >= 0.5:
+                    sabl_x = float(row.get('SABL_x', float('nan')))
+                    sabl_y = float(row.get('SABL_y', float('nan')))
+                    sabr_x = float(row.get('SABR_x', float('nan')))
+                    sabr_y = float(row.get('SABR_y', float('nan')))
+                    if all(v == v for v in (sabl_x, sabl_y, sabr_x, sabr_y)):
+                        ruler = ((sabr_x - sabl_x) ** 2 + (sabr_y - sabl_y) ** 2) ** 0.5
+                        mid_x = (sabl_x + sabr_x) / 2
+                        mid_y = (sabl_y + sabr_y) / 2
+                        pillar_x_geom = mid_x
+                        pillar_y_geom = mid_y - 0.944 * ruler
+                        lines.append(
+                            f"pillar(geom): ({pillar_x_geom:.0f}, {pillar_y_geom:.0f}) ruler={ruler:.1f}"
+                        )
+            except Exception:
+                pass
+            # Diagnostic: how many shapes does the pillar layer currently
+            # contain? If geom shows a position but n_shapes == 0, the
+            # update isn't reaching the layer. If n_shapes >= 1 but the
+            # circle still isn't visible, it's a render-side issue.
+            try:
+                n_shapes = (len(self.pillar_shapes_layer.data)
+                            if self.pillar_shapes_layer is not None else -1)
+                visible = (self.pillar_shapes_layer.visible
+                           if self.pillar_shapes_layer is not None else False)
+                lines.append(f"pillar_layer: n={n_shapes}, visible={visible}")
+            except Exception:
+                pass
+        elif mode == 'reach':
+            for p in ('RightHand', 'RHLeft', 'RHOut', 'RHRight'):
+                lines.append(fmt_pt(p))
+            lines.append(fmt_pt('Pellet'))
+        elif mode == 'segmentation':
+            for p in ('SABL', 'SABR', 'SATL', 'SATR'):
+                lines.append(fmt_pt(p))
+        else:
+            lines.append(fmt_pt('Pellet'))
+            lines.append(fmt_pt('Pillar'))
+            for p in ('RightHand', 'RHLeft'):
+                lines.append(fmt_pt(p))
+        self.frame_info_label.setText("    ".join(lines))
 
     def _jump_to_next_hand(self):
         """Jump to next frame where hand is visible (DLC likelihood > 0.5)."""
@@ -2526,12 +2818,183 @@ class GroundTruthWidget(QWidget):
             self._set_speed(16)
 
 
+def _resolve_decision_window(video_path, segment_num, algo_dir):
+    """
+    Look up the v4.0.0+ decision_window for (video, segment) from the
+    pellet_outcomes JSON. Returns (start, end, outcome, rule) or None.
+    """
+    import json as _json
+    if algo_dir is None:
+        # Default: same dir as video.
+        algo_dir = video_path.parent
+    else:
+        algo_dir = Path(algo_dir)
+    video_stem = video_path.stem.replace("_preview", "")
+    outcome_json = algo_dir / f"{video_stem}_pellet_outcomes.json"
+    if not outcome_json.exists():
+        return None
+    try:
+        data = _json.loads(outcome_json.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    for seg in data.get('segments', []):
+        if seg.get('segment_num') == segment_num:
+            ws = seg.get('decision_window_start')
+            we = seg.get('decision_window_end')
+            outc = seg.get('outcome')
+            rule = seg.get('decision_rule') or seg.get('flag_reason')
+            if ws is not None and we is not None:
+                return int(ws), int(we), outc, rule
+            return None
+    return None
+
+
+def _apply_segment_jump(widget, video_path, segment_num, algo_dir):
+    """After video is loaded, jump to decision_window_start for the given segment."""
+    if segment_num is None:
+        return
+    info = _resolve_decision_window(video_path, segment_num, algo_dir)
+    if info is None:
+        print(f"[mousereach-gt] No decision_window found for {video_path.name} seg {segment_num}; jumping to segment start")
+        if widget.gt and widget.gt.boundaries and segment_num <= len(widget.gt.boundaries):
+            target = widget.gt.boundaries[segment_num - 1].frame
+            widget._jump_to_frame(target)
+        return
+    ws, we, outc, rule = info
+    print(f"[mousereach-gt] Segment {segment_num}: algo says '{outc}'")
+    print(f"  decision_window: frames [{ws}, {we}]  ({we - ws + 1} frames)")
+    if rule:
+        print(f"  rule: {rule}")
+    widget._jump_to_frame(ws)
+
+
+def _resolve_screenshot_dir(explicit, algo_dir, video_path, segment_num):
+    """
+    Decide where the Screenshot button saves by default.
+
+    Priority:
+      1. --screenshot-dir flag (explicit), if provided
+      2. Auto-derive from algo_dir's parent Improvement_Snapshots structure
+         when algo-dir + segment + video are all available:
+         <snapshots>/screenshots/case_{video_id}_seg{N}/
+      3. None -> caller falls back to cwd
+    """
+    from pathlib import Path as _P
+    if explicit is not None:
+        return _P(explicit)
+    if algo_dir is None or video_path is None or segment_num is None:
+        return None
+    # Look for an Improvement_Snapshots parent above algo_dir (heuristic);
+    # otherwise fall back to algo_dir/screenshots.
+    algo_dir = _P(algo_dir)
+    candidate_root = None
+    # Walk up looking for "outcome_*" snapshot dir
+    for parent in [algo_dir, *algo_dir.parents]:
+        if parent.name.startswith('outcome_v'):
+            candidate_root = parent
+            break
+    if candidate_root is None:
+        candidate_root = algo_dir
+    video_id = _P(video_path).stem.replace('_preview', '')
+    return candidate_root / 'screenshots' / f'case_{video_id}_seg{segment_num}'
+
+
+def _detect_panel_mode(algo_dir, explicit_mode):
+    """
+    Decide what the live info panel should show. If user passed --mode
+    explicitly, honor it. Otherwise, auto-detect from algo_dir contents.
+    """
+    if explicit_mode:
+        return explicit_mode
+    if algo_dir is None:
+        return 'general'
+    try:
+        algo_dir = Path(algo_dir)
+        if any(algo_dir.glob('*_pellet_outcomes.json')):
+            return 'outcome'
+        if any(algo_dir.glob('*_reaches.json')):
+            return 'reach'
+        if any(algo_dir.glob('*_segments.json')):
+            return 'segmentation'
+    except Exception:
+        pass
+    return 'general'
+
+
+def _resolve_segment_window(video_path, segment_num, algo_dir, pre_pad=0, post_pad=0):
+    """
+    Pre-load helper: return the (start, end) window the GT tool should
+    actually load video frames for, given a segment number. Returns None
+    if no decision_window is available (caller should load full video).
+    Optional pre_pad/post_pad extends the window with extra context frames.
+
+    v4.0.0+ refinement: when the GT interaction frame falls OUTSIDE the
+    algo's decision_window (e.g., algo picked the wrong causal reach),
+    expand the loaded window to include GT's interaction frame plus a
+    margin. This ensures the visible event in GT is always loadable.
+    """
+    info = _resolve_decision_window(video_path, segment_num, algo_dir)
+    if info is None:
+        return None
+    ws, we, _, _ = info
+    final_start = max(0, int(ws) - int(pre_pad))
+    final_end = int(we) + int(post_pad)
+
+    # Hard rule: if GT has an interaction frame for this segment, and it
+    # falls outside the current loaded window, expand the window.
+    try:
+        import json as _json
+        video_id = video_path.stem.replace('_preview', '')
+        # GT files might live in algo_dir or a sibling 'gt' dir; try a few
+        # canonical locations.
+        candidates = []
+        if algo_dir is not None:
+            candidates.append(Path(algo_dir).parent / 'gt' / f'{video_id}_unified_ground_truth.json')
+            candidates.append(Path(algo_dir) / f'{video_id}_unified_ground_truth.json')
+        candidates.append(video_path.parent / f'{video_id}_unified_ground_truth.json')
+        gt_path = next((p for p in candidates if p.exists()), None)
+        if gt_path is not None:
+            gt = _json.loads(gt_path.read_text(encoding='utf-8'))
+            gt_segs = gt.get('outcomes', {}).get('segments', [])
+            gt_seg = next((s for s in gt_segs if s.get('segment_num') == segment_num), None)
+            if gt_seg is not None:
+                ifr = gt_seg.get('interaction_frame')
+                if ifr is not None:
+                    margin = 200  # frames either side of GT interaction
+                    if ifr - margin < final_start:
+                        final_start = max(0, int(ifr) - margin)
+                        print(f'[mousereach-gt] expanding load window backward to GT interaction {ifr}')
+                    if ifr + margin > final_end:
+                        final_end = int(ifr) + margin
+                        print(f'[mousereach-gt] expanding load window forward to GT interaction {ifr}')
+    except Exception:
+        pass
+    return (final_start, final_end)
+
+
 def main():
     """Launch the Ground Truth Tool (default mode)."""
     import argparse
 
     parser = argparse.ArgumentParser(description="MouseReach Ground Truth Tool")
     parser.add_argument('video', nargs='?', type=Path, help="Video file to load")
+    parser.add_argument('--segment', type=int, default=None,
+                        help="Jump to this segment's decision_window after load")
+    parser.add_argument('--frame', type=int, default=None,
+                        help="Jump to this absolute frame after load")
+    parser.add_argument('--algo-dir', type=Path, default=None,
+                        help="Directory containing the *_pellet_outcomes.json "
+                             "to read decision_window from. Defaults to the video's directory.")
+    parser.add_argument('--mode', choices=['outcome', 'reach', 'segmentation', 'general'],
+                        default=None,
+                        help="Info panel mode (auto-detected from --algo-dir if omitted)")
+    parser.add_argument('--screenshot-dir', type=Path, default=None,
+                        help="Default save dir for the Screenshot button. "
+                             "Auto-derived from --algo-dir + --segment if omitted.")
+    parser.add_argument('--pre-pad', type=int, default=0,
+                        help="Extra frames to load BEFORE the decision window (default 0)")
+    parser.add_argument('--post-pad', type=int, default=0,
+                        help="Extra frames to load AFTER the decision window (default 0)")
     args = parser.parse_args()
 
     viewer = napari.Viewer(title="MouseReach Ground Truth Tool")
@@ -2539,7 +3002,23 @@ def main():
     viewer.window.add_dock_widget(widget, name="Ground Truth Tool", area="right")
 
     if args.video:
-        widget._load_video(args.video)
+        # Resolve frame_range so we only LOAD the decision-window frames.
+        frame_range = None
+        if args.segment is not None:
+            frame_range = _resolve_segment_window(args.video, args.segment, args.algo_dir,
+                                                   pre_pad=args.pre_pad, post_pad=args.post_pad)
+        # Set info_panel_mode for the live panel (auto-detected from algo-dir
+        # contents when --segment + --algo-dir are given).
+        widget.info_panel_mode = _detect_panel_mode(args.algo_dir, args.mode)
+        widget.screenshot_dir = _resolve_screenshot_dir(
+            args.screenshot_dir, args.algo_dir, args.video, args.segment
+        )
+        widget._screenshot_segment = args.segment
+        widget._load_video(args.video, frame_range=frame_range)
+        if args.segment is not None:
+            _apply_segment_jump(widget, args.video, args.segment, args.algo_dir)
+        elif args.frame is not None:
+            widget._jump_to_frame(args.frame)
 
     napari.run()
 
@@ -2550,6 +3029,22 @@ def main_review():
 
     parser = argparse.ArgumentParser(description="MouseReach Review Tool")
     parser.add_argument('video', nargs='?', type=Path, help="Video file to load")
+    parser.add_argument('--segment', type=int, default=None,
+                        help="Jump to this segment's decision_window after load")
+    parser.add_argument('--frame', type=int, default=None,
+                        help="Jump to this absolute frame after load")
+    parser.add_argument('--algo-dir', type=Path, default=None,
+                        help="Directory containing the *_pellet_outcomes.json")
+    parser.add_argument('--mode', choices=['outcome', 'reach', 'segmentation', 'general'],
+                        default=None,
+                        help="Info panel mode (auto-detected from --algo-dir if omitted)")
+    parser.add_argument('--screenshot-dir', type=Path, default=None,
+                        help="Default save dir for the Screenshot button. "
+                             "Auto-derived from --algo-dir + --segment if omitted.")
+    parser.add_argument('--pre-pad', type=int, default=0,
+                        help="Extra frames to load BEFORE the decision window (default 0)")
+    parser.add_argument('--post-pad', type=int, default=0,
+                        help="Extra frames to load AFTER the decision window (default 0)")
     args = parser.parse_args()
 
     viewer = napari.Viewer(title="MouseReach Review Tool")
@@ -2557,7 +3052,21 @@ def main_review():
     viewer.window.add_dock_widget(widget, name="Review Tool", area="right")
 
     if args.video:
-        widget._load_video(args.video)
+        # Resolve frame_range so we only LOAD the decision-window frames.
+        frame_range = None
+        if args.segment is not None:
+            frame_range = _resolve_segment_window(args.video, args.segment, args.algo_dir,
+                                                   pre_pad=args.pre_pad, post_pad=args.post_pad)
+        widget.info_panel_mode = _detect_panel_mode(args.algo_dir, args.mode)
+        widget.screenshot_dir = _resolve_screenshot_dir(
+            args.screenshot_dir, args.algo_dir, args.video, args.segment
+        )
+        widget._screenshot_segment = args.segment
+        widget._load_video(args.video, frame_range=frame_range)
+        if args.segment is not None:
+            _apply_segment_jump(widget, args.video, args.segment, args.algo_dir)
+        elif args.frame is not None:
+            widget._jump_to_frame(args.frame)
 
     napari.run()
 
