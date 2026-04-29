@@ -17,8 +17,10 @@ from mousereach.improvement.outcome.metrics import (
     derive_gt_causal_reach,
     _compute_verdict,
     _match_causal_reaches,
+    _normalize_algo_punted_outcome,
     compute_outcome_metrics,
     TOUCHED_OUTCOMES,
+    NON_EVALUABLE_OUTCOMES,
 )
 
 
@@ -103,8 +105,13 @@ class TestComputeVerdict:
     def test_label_match_without_reach_match(self):
         assert _compute_verdict("retrieved", "retrieved", False) == "label_correct_wrong_reach"
 
-    def test_label_wrong(self):
-        assert _compute_verdict("retrieved", "untouched", False) == "label_wrong"
+    def test_label_wrong_reach_wrong(self):
+        # v4.0.0+: label_wrong split into reach_correct/reach_wrong variants
+        assert _compute_verdict("retrieved", "untouched", False) == "label_wrong_reach_wrong"
+
+    def test_label_wrong_reach_correct(self):
+        # Algo got label wrong but identified the same reach GT marked causal.
+        assert _compute_verdict("retrieved", "untouched", True) == "label_wrong_reach_correct"
 
     def test_abstained(self):
         assert _compute_verdict("retrieved", "uncertain", False) == "abstained"
@@ -151,6 +158,71 @@ class TestMatchCausalReaches:
 
     def test_none_gt(self):
         assert _match_causal_reaches(100, None) is False
+
+
+# ---------------------------------------------------------------------------
+# _normalize_algo_punted_outcome (algo-punt -> abnormal_exception)
+# ---------------------------------------------------------------------------
+
+class TestNormalizeAlgoPunted:
+    """Tests for the algo-punt normalization helper.
+
+    When the outcome detector emits a non-untouched outcome but explicitly
+    assigns no causal reach AND flags for review, normalize to
+    abnormal_exception so the case is visible on the Sankey but excluded
+    from per-class precision/recall denominators.
+    """
+
+    def test_punted_displaced_sa(self):
+        seg = {"outcome": "displaced_sa", "causal_reach_id": None,
+               "flagged_for_review": True}
+        assert _normalize_algo_punted_outcome(seg) == "abnormal_exception"
+
+    def test_punted_retrieved(self):
+        seg = {"outcome": "retrieved", "causal_reach_id": None,
+               "flagged_for_review": True}
+        assert _normalize_algo_punted_outcome(seg) == "abnormal_exception"
+
+    def test_displaced_sa_with_causal_not_punted(self):
+        seg = {"outcome": "displaced_sa", "causal_reach_id": 5,
+               "flagged_for_review": True}
+        assert _normalize_algo_punted_outcome(seg) == "displaced_sa"
+
+    def test_displaced_sa_unflagged_not_punted(self):
+        seg = {"outcome": "displaced_sa", "causal_reach_id": None,
+               "flagged_for_review": False}
+        assert _normalize_algo_punted_outcome(seg) == "displaced_sa"
+
+    def test_untouched_stays_untouched(self):
+        # Untouched is never punted regardless of flag/causal state.
+        seg = {"outcome": "untouched", "causal_reach_id": None,
+               "flagged_for_review": True}
+        assert _normalize_algo_punted_outcome(seg) == "untouched"
+
+    def test_unknown_stays_unknown(self):
+        seg = {"outcome": "unknown", "causal_reach_id": None,
+               "flagged_for_review": True}
+        assert _normalize_algo_punted_outcome(seg) == "unknown"
+
+    def test_uncertain_stays_uncertain(self):
+        seg = {"outcome": "uncertain", "causal_reach_id": None,
+               "flagged_for_review": True}
+        assert _normalize_algo_punted_outcome(seg) == "uncertain"
+
+    def test_already_abnormal_exception(self):
+        seg = {"outcome": "abnormal_exception"}
+        assert _normalize_algo_punted_outcome(seg) == "abnormal_exception"
+
+    def test_none_outcome_returns_unknown(self):
+        seg = {"outcome": None}
+        assert _normalize_algo_punted_outcome(seg) == "unknown"
+
+    def test_missing_outcome_returns_unknown(self):
+        seg = {}
+        assert _normalize_algo_punted_outcome(seg) == "unknown"
+
+    def test_non_evaluable_outcomes_constant(self):
+        assert NON_EVALUABLE_OUTCOMES == {"abnormal_exception"}
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +402,10 @@ class TestComputeOutcomeMetricsPipeline:
 
             scalars = compute_outcome_metrics(gt_dir, algo_dir, out_dir)
 
-            # This is a label_wrong since GT=retrieved, algo=untouched
-            # But it's in the confusion matrix, not causal_reach (label mismatch)
-            cm = scalars["outcome_label"]["confusion_matrix"]
+            # GT=retrieved, algo=untouched is a label mismatch.
+            # v4.0.0+: outcome_label is per-reach (canonical unit). The
+            # per-segment confusion matrix lives at outcome_label_per_segment.
+            cm = scalars["outcome_label_per_segment"]["confusion_matrix"]
             assert cm.get("retrieved__untouched", 0) == 1
 
     def test_abstention(self):

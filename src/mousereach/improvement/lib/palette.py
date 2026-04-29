@@ -22,6 +22,11 @@ OUTCOME_COLORS = {
     # v4.0.0+: per-reach categories
     "miss": "#90A4AE",                 # Blue-gray - reach happened but didn't accomplish anything
     "absent": "#424242",               # Dark gray - reach exists only on the other side
+    # v4.0.0+: non-evaluable case -- visible on confusion matrix but
+    # excluded from per-class precision/recall (e.g., tail-knockover,
+    # confirmed-unfixable video-quality cases). Both GT and algo can emit
+    # this. See abnormal_exception_category_TODO.md memory entry.
+    "abnormal_exception": "#616161",   # Dim gray
 }
 
 # Shorter alias used in some analysis scripts
@@ -137,6 +142,7 @@ OUTCOME_CLASS_ORDER = [
     "displaced_outside",
     "untouched",
     "uncertain",
+    "abnormal_exception",  # v4.0.0+: non-evaluable; on Sankey, off precision/recall
     "miss",      # v4.0.0+: per-reach -- non-causal reaches default here
     "absent",    # v4.0.0+: per-reach -- reach exists only on the other side
 ]

@@ -59,8 +59,48 @@ TOUCHED_OUTCOMES = {"retrieved", "displaced_sa", "displaced_outside"}
 ABSTENTION_OUTCOMES = {"uncertain", "unknown"}
 # All recognized committed outcomes (not abstention)
 COMMITTED_OUTCOMES = {"retrieved", "displaced_sa", "displaced_outside", "untouched"}
+# Non-evaluable outcomes -- visible on the confusion matrix but excluded
+# from per-class precision/recall denominators. Tail-knockover and
+# confirmed-unfixable video-quality cases land here. Both GT and algo can
+# emit this label. See abnormal_exception_category_TODO.md memory entry.
+NON_EVALUABLE_OUTCOMES = {"abnormal_exception"}
 
 CAUSAL_REACH_WINDOW = 10  # +/- frames for start-proximity matching
+
+
+def _normalize_algo_punted_outcome(algo_seg: dict) -> str:
+    """Map algo-punted segments to ``abnormal_exception``.
+
+    When the outcome detector emits a non-untouched segment outcome but
+    explicitly assigns NO causal reach (``causal_reach_id=None``) AND
+    flags for review, the algo is saying "I detected motion but cannot
+    attribute it to a reach" -- semantically equivalent to GT's
+    ``abnormal_exception`` label (e.g. tail-knockover, case 39 of the
+    v4.0.0_dev outcome walkthrough).
+
+    Returning ``abnormal_exception`` rather than the raw outcome lets the
+    metrics layer keep the case visible on the Sankey (so it doesn't
+    silently disappear) while excluding it from per-class precision/recall
+    denominators (so algo metrics aren't deflated on cases neither side
+    can reasonably attribute to a normal class).
+
+    See memory: ``algo_punted_equivalence.md`` and
+    ``abnormal_exception_category_TODO.md``.
+    """
+    raw = algo_seg.get("outcome", "unknown")
+    if raw is None:
+        return "unknown"
+    # Already in a non-classification state -- leave alone.
+    if raw in ("untouched", "unknown", "uncertain", "abnormal_exception"):
+        return raw
+    # Non-untouched outcome but no causal-reach attribution and flagged
+    # for review = algo is punting. Normalize to abnormal_exception.
+    if (
+        algo_seg.get("causal_reach_id") is None
+        and bool(algo_seg.get("flagged_for_review", False))
+    ):
+        return "abnormal_exception"
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +365,16 @@ def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
     """
     seg_num = reach.get("segment_num") if side_kind == "gt" else reach.get("_seg_num")
     seg = side_segments_by_seg.get(seg_num, {})
-    cls = seg.get("outcome", "miss")
+    if side_kind == "algo":
+        # Apply algo-punt normalization so abnormal_exception segments
+        # are recognized at the per-reach level too.
+        cls = _normalize_algo_punted_outcome(seg)
+    else:
+        cls = seg.get("outcome", "miss")
+    # abnormal_exception segments propagate to all their reaches so the
+    # case stays visible on the per-reach confusion matrix.
+    if cls == "abnormal_exception":
+        return "abnormal_exception"
     if cls in ("untouched", "uncertain", "unknown") or cls is None:
         return "miss"
     if side_kind == "gt":
@@ -429,9 +478,13 @@ def compute_per_reach_confusion(
                 per_class_correct[gl] += 1
             n_universe += 1
 
-    # Build per-class stats
+    # Build per-class stats. abnormal_exception is excluded from
+    # precision/recall denominators per design (visible on confusion
+    # matrix, off the metric calculation).
     per_class_stats: Dict[str, Dict[str, Any]] = {}
     for cls in sorted(set(list(per_class_gt.keys()) + list(per_class_algo.keys()))):
+        if cls in NON_EVALUABLE_OUTCOMES:
+            continue
         n_gt = per_class_gt.get(cls, 0)
         n_algo = per_class_algo.get(cls, 0)
         n_correct = per_class_correct.get(cls, 0)
@@ -563,7 +616,10 @@ def compute_outcome_metrics(
             algo_seg = algo_by_seg[seg_num]
 
             gt_outcome = gt_seg.get("outcome", "unknown")
-            algo_outcome = algo_seg.get("outcome", "unknown")
+            # Normalize algo-punted segments to abnormal_exception so they
+            # are visible on the Sankey but excluded from precision/recall
+            # denominators. Single source of truth for the normalization.
+            algo_outcome = _normalize_algo_punted_outcome(algo_seg)
 
             gt_interaction = gt_seg.get("interaction_frame")
             algo_interaction = algo_seg.get("interaction_frame")
@@ -688,9 +744,13 @@ def compute_outcome_metrics(
     n_abstained = sum(1 for v in all_verdicts if v == "abstained")
     n_committed = n_total - n_abstained
 
-    # Per-class precision / recall / F1
+    # Per-class precision / recall / F1. abnormal_exception is excluded
+    # from per-class denominators (visible on confusion matrix, off the
+    # metric calculation).
     per_class_stats = {}
     for cls in sorted(set(list(per_class_gt.keys()) + list(per_class_algo.keys()))):
+        if cls in NON_EVALUABLE_OUTCOMES:
+            continue
         n_gt_cls = per_class_gt.get(cls, 0)
         n_algo_cls = per_class_algo.get(cls, 0)
         n_correct_cls = per_class_correct.get(cls, 0)
