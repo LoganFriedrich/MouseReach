@@ -73,7 +73,7 @@ import json
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -90,8 +90,17 @@ from .reach_detector import (
     VideoReaches,
 )
 
-VERSION = "7.1.0"
+VERSION = "7.2.0"
 HAND_BODYPARTS = ('RightHand', 'RHLeft', 'RHOut', 'RHRight')
+
+# v7.2.0: pose-alignment computation for per-reach feature emission.
+# See feedback_data_driven_rule_design.md and the v4.0.0 outcome
+# walkthrough's case-39 thread for context. Not gated on currently;
+# emitted as a per-reach feature for downstream analysis.
+POSE_LK_THRESHOLD = 0.7
+POSE_CONTEXT_PRE = 60
+POSE_CONTEXT_POST = 60
+POSE_MIN_CO_CONFIDENT_FRAMES = 30
 
 # Thresholds (calibrated on 47-video GT corpus; see module docstring)
 DISAPPEAR_THRESHOLD = 1
@@ -194,6 +203,54 @@ def _slit_center(df: pd.DataFrame) -> tuple[float, float]:
     return float(sx), float(sy)
 
 
+def _pose_alignment_per_frame(df: pd.DataFrame, slit_x: float, slit_y: float
+                              ) -> np.ndarray:
+    """Per-frame cosine alignment between mouse facing vector and
+    toward-slit vector. NaN where Nose or both Ears are below the
+    co-confidence threshold."""
+    nose_x = df['Nose_x'].values
+    nose_y = df['Nose_y'].values
+    nose_lk = df['Nose_likelihood'].values
+    le_x = df['LeftEar_x'].values; le_y = df['LeftEar_y'].values
+    le_lk = df['LeftEar_likelihood'].values
+    re_x = df['RightEar_x'].values; re_y = df['RightEar_y'].values
+    re_lk = df['RightEar_likelihood'].values
+
+    nose_ok = nose_lk >= POSE_LK_THRESHOLD
+    le_ok = le_lk >= POSE_LK_THRESHOLD
+    re_ok = re_lk >= POSE_LK_THRESHOLD
+    both_ok = le_ok & re_ok
+    one_ok = le_ok | re_ok
+    co_conf = nose_ok & one_ok
+
+    ear_mx = np.where(both_ok, (le_x + re_x) / 2, np.where(le_ok, le_x, re_x))
+    ear_my = np.where(both_ok, (le_y + re_y) / 2, np.where(le_ok, le_y, re_y))
+
+    fx = nose_x - ear_mx
+    fy = nose_y - ear_my
+    sx = slit_x - ear_mx
+    sy = slit_y - ear_my
+    fmag = np.sqrt(fx ** 2 + fy ** 2)
+    smag = np.sqrt(sx ** 2 + sy ** 2)
+    valid = co_conf & (fmag > 1e-3) & (smag > 1e-3)
+    align = np.where(valid, (fx * sx + fy * sy) / (fmag * smag + 1e-9), np.nan)
+    return align
+
+
+def _reach_pose_alignment(alignment: np.ndarray, start: int, end: int,
+                          n_frames: int) -> Optional[float]:
+    """Median pose alignment over [start - context, end + context] using
+    only co-confident frames. Returns None if fewer than the minimum
+    required co-confident frames."""
+    a = max(0, start - POSE_CONTEXT_PRE)
+    b = min(n_frames, end + POSE_CONTEXT_POST + 1)
+    window = alignment[a:b]
+    valid = window[~np.isnan(window)]
+    if len(valid) < POSE_MIN_CO_CONFIDENT_FRAMES:
+        return None
+    return round(float(np.median(valid)), 4)
+
+
 class ReachDetectorV8:
     """v7.1.0 reach detector. Same entry-point signature as v6's
     ReachDetector.detect(dlc_path, segments_path) -> VideoReaches."""
@@ -215,6 +272,9 @@ class ReachDetectorV8:
         hxs, hys, any_vis = _smoothed_hand_center(xs, ys, lks)
         slit_x, slit_y = _slit_center(df)
         nose_engaged = _nose_engaged(df, slit_x, slit_y)
+        # v7.2.0: per-frame pose alignment for emitting per-reach feature
+        pose_alignment = _pose_alignment_per_frame(df, slit_x, slit_y)
+        n_total_frames = len(df)
 
         # Per-frame velocity + shoot condition
         dx = np.concatenate([[0.0], np.diff(hxs)])
@@ -258,6 +318,8 @@ class ReachDetectorV8:
                         confidence=None,
                         start_confidence=None,
                         end_confidence=None,
+                        pose_alignment=_reach_pose_alignment(
+                            pose_alignment, s, e, n_total_frames),
                     ))
 
             segment_results.append(SegmentReaches(

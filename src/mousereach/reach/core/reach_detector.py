@@ -135,6 +135,17 @@ class Reach:
     start_confidence: Optional[float] = None     # How clear was start boundary (likelihood jump)
     end_confidence: Optional[float] = None       # How clear was end boundary (likelihood drop)
 
+    # v7.2.0: pose alignment (cosine of angle between mouse facing
+    # vector and toward-slit vector). Computed as median over all
+    # frames in [start_frame - 60, end_frame + 60] where Nose AND at
+    # least one Ear are co-confident at lk >= 0.7. Range [-1, 1]:
+    # +1 = directly facing slit, 0 = perpendicular, -1 = facing away.
+    # NOT used as a gate currently -- emitted as a per-reach feature
+    # for downstream analysis and future broader-corpus calibration
+    # (see feedback_data_driven_rule_design memory).
+    # None when fewer than 30 co-confident frames in the context window.
+    pose_alignment: Optional[float] = None
+
 
 @dataclass
 class SegmentReaches:
