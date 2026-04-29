@@ -48,9 +48,10 @@ from .consensus import (
     build_consensus,
     select_boundaries,
 )
+from .tray_motion import apply_tray_motion_gate
 
-SEGMENTER_VERSION = "2.2.0"
-SEGMENTER_ALGORITHM = "multi_proposer_sabl_primary_v1"
+SEGMENTER_VERSION = "2.2.1"
+SEGMENTER_ALGORITHM = "multi_proposer_sabl_primary_v1+tray_motion_gate"
 
 
 @dataclass
@@ -82,6 +83,14 @@ class MultiProposerConfig:
     # Grid fitting
     expected_interval: float = 1839.0
     n_expected: int = 21
+
+    # v2.2.1: tray-motion gate (Signal 27).
+    # Validate each boundary against ASPA-cycle physical signature.
+    # Reject and substitute boundaries that fail.
+    tray_motion_gate_enabled: bool = True
+    tray_motion_window: int = 50
+    tray_motion_excursion_threshold: float = 30.0
+    tray_motion_pillar_lk_drop_threshold: float = 0.3
 
 
 def segment_video_multi(dlc_path: Path,
@@ -194,6 +203,24 @@ def segment_video_multi(dlc_path: Path,
             boundaries.append(min(total_frames - 1,
                                   int(boundaries[-1] + med_int)))
     boundaries = sorted(boundaries)
+
+    # Phase 3.5: tray-motion gate (Signal 27).
+    # Reject boundaries that don't show a real ASPA cycle signature
+    # (SA corner excursion + pillar lk drop). Replace each rejection
+    # with a median-cadence projection from valid neighbors. See
+    # tray_motion.py and the tray_motion_segment_boundary_test memory
+    # entry.
+    if config.tray_motion_gate_enabled:
+        boundaries, tray_rejections = apply_tray_motion_gate(
+            df, boundaries, total_frames, config.expected_interval,
+            window=config.tray_motion_window,
+            excursion_threshold=config.tray_motion_excursion_threshold,
+            pillar_lk_drop_threshold=config.tray_motion_pillar_lk_drop_threshold,
+        )
+        for idx, original, reasons in tray_rejections:
+            anomalies.append(
+                f"tray_motion_gate_rejected b{idx}@{original}: {','.join(reasons)}"
+            )
 
     # Phase 4: anomaly detection
     boundary_anomalies = detect_anomalies(boundaries, fps)
