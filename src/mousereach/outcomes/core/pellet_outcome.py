@@ -107,7 +107,7 @@ from .geometry import (
 from mousereach.config import Thresholds
 
 
-VERSION = "3.0.0"  # v3.0: New-DLC recalibration -- improved retrieval detection for displaced-then-eaten pellets
+VERSION = "4.0.0_step2"  # v4.0.0 step 2: Signal 14b (pillar lk transition) overrides wobble + tray-wobble dismissals
 
 
 @dataclass
@@ -178,6 +178,59 @@ class PelletOutcomeDetector:
     def __init__(self):
         pass
     
+    def detect_pillar_lk_transition(
+        self,
+        df: pd.DataFrame,
+        seg_start: int,
+        seg_end: int,
+        window: int = 200,
+        rise_threshold: float = 0.30,
+    ) -> Dict[str, Any]:
+        """Signal 14b: pillar likelihood step-up across the segment.
+
+        When a pellet sits on the pillar, it occludes the pillar tip from
+        the camera, producing low Pillar_likelihood. When the pellet leaves
+        (retrieved or displaced), the pillar tip becomes visible and
+        Pillar_likelihood jumps to ~1.00 sustained.
+
+        We compare the median pillar_likelihood in the first ``window``
+        frames vs the last ``window`` frames of the segment. If the rise
+        exceeds ``rise_threshold``, Signal 14b has fired -- the pellet has
+        unambiguously left the pillar in this segment, regardless of any
+        threshold-based dismissal heuristics.
+
+        Calibrated 2026-04-29 from the 47-video corpus:
+          - untouched segments: pre_med=0.07, post_med=0.07, rise=0 (never fires)
+          - retrieved segments: rise>0.3 in 47% of cases
+          - displaced_sa segments: rise>0.3 in 62% of cases
+          - 0% false-positive rate on untouched at threshold 0.30
+
+        Returns a dict with:
+          - 'fired': bool
+          - 'pre_med', 'post_med', 'rise': floats (None if segment too short)
+        """
+        seg_n = seg_end - seg_start
+        if seg_n < window * 2:
+            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None}
+        if 'Pillar_likelihood' not in df.columns:
+            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None}
+        pillar_lk = df['Pillar_likelihood'].iloc[seg_start:seg_end].values
+        pre = pillar_lk[:window]
+        post = pillar_lk[-window:]
+        pre = pre[~np.isnan(pre)]
+        post = post[~np.isnan(post)]
+        if len(pre) == 0 or len(post) == 0:
+            return {'fired': False, 'pre_med': None, 'post_med': None, 'rise': None}
+        pre_med = float(np.median(pre))
+        post_med = float(np.median(post))
+        rise = post_med - pre_med
+        return {
+            'fired': rise > rise_threshold,
+            'pre_med': pre_med,
+            'post_med': post_med,
+            'rise': rise,
+        }
+
     def compute_expected_pillar(self, df: pd.DataFrame, seg_start: int, seg_end: int) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         """
         Compute expected pillar position from SABL/SABR geometry.
@@ -695,6 +748,12 @@ class PelletOutcomeDetector:
         # Get pellet trajectory data
         traj = self.get_pellet_trajectory(df, seg_start, seg_end, ruler)
 
+        # v4.0.0 step 2: Signal 14b -- pillar likelihood transition detection.
+        # When pillar lk transitions sustained-low to sustained-high across
+        # the segment, the pellet has unambiguously left the pillar.
+        # Hard evidence that overrides threshold-based dismissals.
+        pillar_transition = self.detect_pillar_lk_transition(df, seg_start, seg_end)
+
         # Detect eating behavior
         eating_detected, eating_frame = self.detect_eating_signature(df, seg_start, seg_end)
 
@@ -880,13 +939,34 @@ class PelletOutcomeDetector:
                             flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}) to far position (end: {end_distance:.2f}) - no paw detected but result is clear"
                             # Keep is_displaced = True to continue processing
                         else:
-                            # Pellet ended near pillar despite displacement - tray wobble
-                            outcome = 'untouched'
-                            confidence = 0.80
-                            flagged = True
-                            flag_reason = f"Displacement detected (max: {max_disp_dist:.2f}) but no paw proximity and pellet near pillar (end: {end_distance:.2f}) - likely tray wobble"
-                            # Override is_displaced to skip further displacement logic
-                            is_displaced = False
+                            # v4.0.0 step 2: Signal 14b override.
+                            # If pillar lk stepped up sustainedly across the
+                            # segment, the pellet definitively left the pillar.
+                            # The end_distance "near pillar" reading is from
+                            # DLC label-switching to the now-visible pillar tip,
+                            # NOT a real return -- per pellet_cannot_return_to_pillar.
+                            # Classify as displaced_sa (real off-pillar event), not
+                            # untouched (the wrong-directioned dismissal).
+                            if pillar_transition['fired']:
+                                outcome = 'displaced_sa'
+                                confidence = 0.80
+                                flagged = True
+                                flag_reason = (
+                                    f"Signal 14b: pillar lk {pillar_transition['pre_med']:.2f} "
+                                    f"-> {pillar_transition['post_med']:.2f} (rise "
+                                    f"{pillar_transition['rise']:+.2f}) confirms displacement "
+                                    f"despite end-position label-switch artifact "
+                                    f"(end: {end_distance:.2f})"
+                                )
+                                # Keep is_displaced = True
+                            else:
+                                # Pellet ended near pillar despite displacement - tray wobble
+                                outcome = 'untouched'
+                                confidence = 0.80
+                                flagged = True
+                                flag_reason = f"Displacement detected (max: {max_disp_dist:.2f}) but no paw proximity and pellet near pillar (end: {end_distance:.2f}) - likely tray wobble"
+                                # Override is_displaced to skip further displacement logic
+                                is_displaced = False
 
                 if is_displaced:
                     # STAGE 3: Temporal validation - check if pellet settled after displacement
@@ -946,6 +1026,14 @@ class PelletOutcomeDetector:
                             confidence = 0.85
 
                             # STAGE 4: Additional validation - did pellet return near pillar?
+                            # NOTE (2026-04-29): an earlier version of step 2 added a
+                            # Signal 14b override here that flipped this to retrieved
+                            # when pillar lk transition fired. Reverted: caused 36
+                            # displaced_sa -> retrieved false positives on the corpus
+                            # because Signal 14b alone (pellet left pillar) cannot
+                            # discriminate retrieved (eaten) from displaced (still
+                            # on apparatus, DLC lost it). Need Signal 21 (sustained
+                            # off-pillar cluster) to distinguish; deferred to step 3.
                             if end_distance < 0.15:
                                 # Pellet ended up back on/near pillar after being displaced
                                 # This is unusual but possible (bounced back)
@@ -1050,12 +1138,35 @@ class PelletOutcomeDetector:
                                     flag_reason = f"Spike (max: {max_distance:.2f}) with paw, pellet disappeared after - likely retrieved"
                                     displacement_start_frame = spike_touch_frame
                                 elif end_distance < 0.15:
-                                    # v2.4.3: Pellet returned to pillar (<0.15) - classify as untouched
-                                    # Even with paw contact spike, if pellet is back on pillar it wasn't displaced
-                                    outcome = 'untouched'
-                                    confidence = 0.85
-                                    flagged = True
-                                    flag_reason = f"Spike (max: {max_distance:.2f}) with paw but pellet returned to pillar (end: {end_distance:.2f})"
+                                    # v4.0.0 step 2: Signal 14b override.
+                                    # The "spike + paw + return to pillar" signature
+                                    # WITH pillar lk transition firing means: paw
+                                    # grabbed the pellet, pellet is gone, DLC switched
+                                    # to tracking the now-visible pillar tip. Per
+                                    # pellet_cannot_return_to_pillar memory: the
+                                    # "return" is mistracking, not real return.
+                                    # Pellet was retrieved (case-1 / cases-1-12 of
+                                    # the v4.0.0 walkthrough).
+                                    if pillar_transition['fired']:
+                                        outcome = 'retrieved'
+                                        confidence = 0.85
+                                        flagged = True
+                                        flag_reason = (
+                                            f"Signal 14b: spike + paw + pillar lk "
+                                            f"{pillar_transition['pre_med']:.2f} "
+                                            f"-> {pillar_transition['post_med']:.2f} "
+                                            f"(rise {pillar_transition['rise']:+.2f}) -- "
+                                            f"end-position is label-switch artifact, "
+                                            f"pellet is gone -> retrieved"
+                                        )
+                                        displacement_start_frame = spike_touch_frame
+                                    else:
+                                        # v2.4.3: Pellet returned to pillar (<0.15) - classify as untouched
+                                        # Even with paw contact spike, if pellet is back on pillar it wasn't displaced
+                                        outcome = 'untouched'
+                                        confidence = 0.85
+                                        flagged = True
+                                        flag_reason = f"Spike (max: {max_distance:.2f}) with paw but pellet returned to pillar (end: {end_distance:.2f})"
                                 else:
                                     # Pellet grabbed then stayed away from pillar -> displaced_sa
                                     outcome = 'displaced_sa'
@@ -1083,6 +1194,12 @@ class PelletOutcomeDetector:
                                 flagged = True
                                 flag_reason = f"Spike (max: {max_distance:.2f}) without paw proximity but pellet disappeared - possible retrieval"
                             else:
+                                # NOTE (2026-04-29): an earlier version of step 2
+                                # added a Signal 14b override here that flipped
+                                # untouched -> retrieved when pillar lk fired.
+                                # Reverted alongside the analogous override above
+                                # for the same reason: Signal 14b alone cannot
+                                # discriminate retrieved from displaced.
                                 outcome = 'untouched'
                                 confidence = 0.85
 

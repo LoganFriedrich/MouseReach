@@ -83,6 +83,21 @@ _ABNORMAL_EXCEPTION_FLAG_PATTERNS = (
 )
 
 
+def _collapse_displaced_outside(outcome: str) -> str:
+    """Collapse displaced_outside -> displaced_sa for both algo and GT
+    sides.
+
+    Per the user's directive (2026-04-29): the displaced_outside class
+    is treated as a sub-case of displaced_sa for the purposes of
+    classification accuracy. Whether the pellet ended on-tray vs
+    off-tray is a kinematic detail; what matters for the outcome is
+    that the pellet was DISPLACED (not retrieved, not untouched).
+    """
+    if outcome == "displaced_outside":
+        return "displaced_sa"
+    return outcome
+
+
 def _normalize_algo_punted_outcome(algo_seg: dict) -> str:
     """Map algo-punted segments to ``abnormal_exception``.
 
@@ -389,6 +404,8 @@ def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
         cls = _normalize_algo_punted_outcome(seg)
     else:
         cls = seg.get("outcome", "miss")
+    # Collapse displaced_outside -> displaced_sa per user directive.
+    cls = _collapse_displaced_outside(cls)
     # abnormal_exception segments propagate to all their reaches so the
     # case stays visible on the per-reach confusion matrix.
     if cls == "abnormal_exception":
@@ -638,6 +655,10 @@ def compute_outcome_metrics(
             # are visible on the Sankey but excluded from precision/recall
             # denominators. Single source of truth for the normalization.
             algo_outcome = _normalize_algo_punted_outcome(algo_seg)
+            # Collapse displaced_outside -> displaced_sa on both sides
+            # (treated as one class per user directive).
+            gt_outcome = _collapse_displaced_outside(gt_outcome)
+            algo_outcome = _collapse_displaced_outside(algo_outcome)
 
             gt_interaction = gt_seg.get("interaction_frame")
             algo_interaction = algo_seg.get("interaction_frame")
