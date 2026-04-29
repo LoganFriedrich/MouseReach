@@ -19,6 +19,9 @@ OUTCOME_COLORS = {
     "untouched": "#2196F3",           # Blue
     "no_pellet": "#9E9E9E",           # Gray
     "uncertain": "#9C27B0",           # Purple
+    # v4.0.0+: per-reach categories
+    "miss": "#90A4AE",                 # Blue-gray - reach happened but didn't accomplish anything
+    "absent": "#424242",               # Dark gray - reach exists only on the other side
 }
 
 # Shorter alias used in some analysis scripts
@@ -134,6 +137,8 @@ OUTCOME_CLASS_ORDER = [
     "displaced_outside",
     "untouched",
     "uncertain",
+    "miss",      # v4.0.0+: per-reach -- non-causal reaches default here
+    "absent",    # v4.0.0+: per-reach -- reach exists only on the other side
 ]
 
 

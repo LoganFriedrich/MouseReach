@@ -223,10 +223,42 @@ def _match_causal_reaches(
     gt_causal_start: Optional[int],
     window: int = CAUSAL_REACH_WINDOW,
 ) -> bool:
-    """Return True if algo and GT causal reach starts are within +/- window."""
+    """Return True if algo and GT causal reach starts are within +/- window.
+
+    DEPRECATED: this comparison is unreliable because GT reach_ids and algo
+    reach_ids are in different namespaces, so the start frames being
+    compared often refer to different physical reaches. Use
+    ``_algo_reach_contains_frame`` instead.
+    """
     if algo_causal_start is None or gt_causal_start is None:
         return False
     return abs(algo_causal_start - gt_causal_start) <= window
+
+
+def _algo_reach_contains_frame(
+    algo_causal_id: Optional[int],
+    algo_reaches: list,
+    frame: Optional[int],
+    slack: int = 2,
+) -> bool:
+    """Return True if the algo reach identified as causal has a window that
+    contains the given frame (with +/- slack frames of tolerance).
+
+    This is the correct way to evaluate causal-reach correctness when
+    comparing across GT and algo namespaces. The algo's causal reach is
+    "right" if its [start_frame, end_frame] window covers the moment GT
+    identifies as the causal interaction.
+    """
+    if algo_causal_id is None or frame is None:
+        return False
+    for r in algo_reaches:
+        if r.get("reach_id") == algo_causal_id:
+            s = r.get("start_frame")
+            e = r.get("end_frame")
+            if s is None or e is None:
+                return False
+            return (s - slack) <= frame <= (e + slack)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +272,14 @@ def _compute_verdict(
 ) -> str:
     """Compute the verdict for a single segment.
 
-    Returns one of: label_correct_untouched, label_and_reach_correct,
-    label_correct_wrong_reach, label_wrong, abstained.
+    Returns one of:
+      - label_correct_untouched
+      - label_and_reach_correct
+      - label_correct_wrong_reach
+      - label_wrong_reach_correct  (label is wrong but algo identified the
+        same reach GT marked as causal -- the reach is investigable)
+      - label_wrong_reach_wrong    (both label and reach attribution wrong)
+      - abstained
     """
     # Abstention: algo said uncertain/unknown, GT committed
     if algo_outcome in ABSTENTION_OUTCOMES and gt_outcome not in ABSTENTION_OUTCOMES:
@@ -260,8 +298,159 @@ def _compute_verdict(
         else:
             return "label_correct_wrong_reach"
 
-    # Label mismatch
-    return "label_wrong"
+    # Label mismatch -- still useful to know whether the algo at least
+    # identified the same physical reach GT considered causal.
+    if causal_reach_match:
+        return "label_wrong_reach_correct"
+    return "label_wrong_reach_wrong"
+
+
+# ---------------------------------------------------------------------------
+# v4.0.0+: per-reach confusion (the canonical unit per the user's
+# PER_REACH_IS_THE_UNIT memory). For each reach in the universe of
+# (GT reaches union algo reaches), label by what each side says about
+# that reach: causal-reach gets the segment outcome; non-causal reaches
+# default to 'miss'; reaches that exist only on one side flow to/from
+# 'absent' on the other side.
+# ---------------------------------------------------------------------------
+
+def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
+    """Label a single reach with its outcome per the given side (gt or algo).
+
+    side_segments_by_seg : {segment_num: segment_dict_with_outcome_and_causal}
+    side_kind : 'gt' or 'algo'
+
+    GT side uses interaction_frame -> reach window containment to identify
+    causal; algo side uses causal_reach_id == reach.reach_id.
+    """
+    seg_num = reach.get("segment_num") if side_kind == "gt" else reach.get("_seg_num")
+    seg = side_segments_by_seg.get(seg_num, {})
+    cls = seg.get("outcome", "miss")
+    if cls in ("untouched", "uncertain", "unknown") or cls is None:
+        return "miss"
+    if side_kind == "gt":
+        ifr = seg.get("interaction_frame")
+        sf, ef = reach.get("start_frame"), reach.get("end_frame")
+        if ifr is None or sf is None or ef is None:
+            return "miss"
+        if sf <= ifr <= ef:
+            return cls if cls in ("retrieved", "displaced_sa", "displaced_outside") else "miss"
+        return "miss"
+    else:  # algo
+        cid = seg.get("causal_reach_id")
+        if cid is None:
+            return "miss"
+        if reach.get("reach_id") == cid:
+            return cls if cls in ("retrieved", "displaced_sa", "displaced_outside") else "miss"
+        return "miss"
+
+
+def compute_per_reach_confusion(
+    gt_dir: Path,
+    algo_dir: Path,
+    reaches_dir: Path,
+    video_ids: List[str],
+    match_window: int = 10,
+) -> Dict[str, Any]:
+    """Compute a per-reach confusion matrix across the universe of GT and
+    algo reaches.
+
+    For every reach in the union (matched pairs + GT-only + algo-only):
+      - GT label: outcome attribution from GT side (causal -> segment
+        outcome; non-causal -> 'miss'; not in GT -> 'absent')
+      - algo label: outcome attribution from algo side (same rule)
+    The (gt_label, algo_label) pair is incremented in the confusion matrix.
+
+    Returns a dict with structure::
+        {
+          "n_reaches_universe": int,
+          "confusion_matrix": {"gt__algo": count},
+          "per_class": {class: {n_gt, n_algo, precision, recall, f1}},
+        }
+    """
+    from mousereach.improvement.reach_detection.metrics import match_reaches, Reach
+
+    confusion: Dict[str, int] = defaultdict(int)
+    per_class_gt: Dict[str, int] = defaultdict(int)
+    per_class_algo: Dict[str, int] = defaultdict(int)
+    per_class_correct: Dict[str, int] = defaultdict(int)
+    n_universe = 0
+
+    for vid in video_ids:
+        gt_file = _find_gt_file(gt_dir, vid)
+        algo_file = _find_algo_file(algo_dir, vid)
+        algo_reach_file = _find_algo_reaches_file(reaches_dir, vid)
+        if gt_file is None or algo_file is None or algo_reach_file is None:
+            continue
+
+        gt_data = json.loads(gt_file.read_text(encoding="utf-8"))
+        gt_segments = {s["segment_num"]: s for s in gt_data.get("outcomes", {}).get("segments", [])}
+        gt_reaches_raw = gt_data.get("reaches", {}).get("reaches", [])
+
+        algo_data = json.loads(algo_file.read_text(encoding="utf-8"))
+        algo_segs_by_num = {s["segment_num"]: s for s in algo_data.get("segments", [])}
+
+        algo_reach_data = json.loads(algo_reach_file.read_text(encoding="utf-8"))
+        algo_reach_list: List[Dict[str, Any]] = []
+        for sg in algo_reach_data.get("segments", []):
+            sn = sg["segment_num"]
+            for r in sg.get("reaches", []):
+                r["_seg_num"] = sn
+                algo_reach_list.append(r)
+
+        # Per-reach labels
+        gt_labels = [_label_reach_by_side(r, gt_segments, "gt") for r in gt_reaches_raw]
+        algo_labels = [_label_reach_by_side(r, algo_segs_by_num, "algo") for r in algo_reach_list]
+
+        # Match using the reach-detection matcher (algo first, gt second per the API)
+        gt_lite = [Reach(r["start_frame"], r["end_frame"], i)
+                   for i, r in enumerate(gt_reaches_raw)
+                   if r.get("start_frame") is not None]
+        algo_lite = [Reach(r["start_frame"], r["end_frame"], i)
+                     for i, r in enumerate(algo_reach_list)
+                     if r.get("start_frame") is not None]
+        results = match_reaches(algo_lite, gt_lite, window=match_window)
+        for res in results:
+            if res.status == "matched":
+                gl = gt_labels[res.gt_reach_index]
+                al = algo_labels[res.algo_reach_index]
+            elif res.status == "fn":
+                gl = gt_labels[res.gt_reach_index]
+                al = "absent"
+            elif res.status == "fp":
+                gl = "absent"
+                al = algo_labels[res.algo_reach_index]
+            else:
+                continue
+            confusion[f"{gl}__{al}"] += 1
+            per_class_gt[gl] += 1
+            per_class_algo[al] += 1
+            if gl == al:
+                per_class_correct[gl] += 1
+            n_universe += 1
+
+    # Build per-class stats
+    per_class_stats: Dict[str, Dict[str, Any]] = {}
+    for cls in sorted(set(list(per_class_gt.keys()) + list(per_class_algo.keys()))):
+        n_gt = per_class_gt.get(cls, 0)
+        n_algo = per_class_algo.get(cls, 0)
+        n_correct = per_class_correct.get(cls, 0)
+        precision = round(n_correct / n_algo, 4) if n_algo > 0 else 0.0
+        recall = round(n_correct / n_gt, 4) if n_gt > 0 else 0.0
+        f1 = round(2 * precision * recall / (precision + recall), 4) if (precision + recall) > 0 else 0.0
+        per_class_stats[cls] = {
+            "n_gt": n_gt,
+            "n_algo": n_algo,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+        }
+
+    return {
+        "n_reaches_universe": n_universe,
+        "confusion_matrix": dict(confusion),
+        "per_class": per_class_stats,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +462,7 @@ def compute_outcome_metrics(
     algo_dir: Path,
     output_dir: Path,
     video_ids: Optional[List[str]] = None,
+    reaches_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Compute outcome classification accuracy metrics.
 
@@ -290,6 +480,12 @@ def compute_outcome_metrics(
         Where to write deliverables.
     video_ids : list of str, optional
         Explicit video IDs. If None, auto-discovers from GT files.
+    reaches_dir : Path, optional
+        Directory containing ``*_reaches.json`` files used to look up the
+        algo's causal-reach window. If None, defaults to ``algo_dir`` for
+        backward compatibility (which is wrong when the outcome and reach
+        outputs live in separate dirs -- pass the reach detector's output
+        dir explicitly to get correct causal-reach matching).
 
     Returns
     -------
@@ -299,6 +495,10 @@ def compute_outcome_metrics(
     gt_dir = Path(gt_dir)
     algo_dir = Path(algo_dir)
     output_dir = Path(output_dir)
+    if reaches_dir is None:
+        reaches_dir = algo_dir
+    else:
+        reaches_dir = Path(reaches_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if video_ids is None:
@@ -343,8 +543,9 @@ def compute_outcome_metrics(
         if exhaustive:
             n_exhaustive_videos += 1
 
-        # Load algo reaches for causal reach lookup
-        algo_reaches_file = _find_algo_reaches_file(algo_dir, vid)
+        # Load algo reaches for causal reach lookup. Reaches usually live in
+        # a different dir than outcomes; reaches_dir was added explicitly.
+        algo_reaches_file = _find_algo_reaches_file(reaches_dir, vid)
         algo_reaches = _load_algo_reaches(algo_reaches_file) if algo_reaches_file else []
 
         # Index segments by segment_num
@@ -389,8 +590,13 @@ def compute_outcome_metrics(
             if algo_causal_start is not None and gt_causal_start is not None:
                 causal_start_delta = algo_causal_start - gt_causal_start
 
-            # Causal reach match
-            causal_match = _match_causal_reaches(algo_causal_start, gt_causal_start)
+            # Causal reach match: does the algo's causal reach window
+            # contain GT's interaction_frame? (Reach IDs are in different
+            # namespaces between GT and algo, so we use frame-containment
+            # rather than reach-id matching.)
+            causal_match = _algo_reach_contains_frame(
+                algo_causal_id, algo_reaches, gt_interaction
+            )
 
             # Verdict
             verdict = _compute_verdict(gt_outcome, algo_outcome, causal_match)
@@ -511,11 +717,32 @@ def compute_outcome_metrics(
     causal_overall_dict = dict(causal_overall)
     causal_per_class_dict = {k: dict(v) for k, v in causal_per_class.items()}
 
+    # v4.0.0+: per-reach is the canonical unit (per PER_REACH_IS_THE_UNIT
+    # memory). Compute per-reach confusion and add it to scalars under
+    # both `outcome_label_per_reach` (explicit) and as the default for
+    # `outcome_label.confusion_matrix` so run_sankey() picks it up.
+    per_reach = compute_per_reach_confusion(
+        gt_dir=gt_dir,
+        algo_dir=algo_dir,
+        reaches_dir=reaches_dir,
+        video_ids=video_ids,
+    )
+
     scalars: Dict[str, Any] = {
         "n_videos": len(video_ids) - len(skipped),
         "n_videos_exhaustive": n_exhaustive_videos,
         "n_segments_paired": n_total,
+        "n_reaches_universe": per_reach["n_reaches_universe"],
         "outcome_label": {
+            # Per-reach by default (canonical unit). Per-segment mirror is
+            # under outcome_label_per_segment.
+            "strict_accuracy": round(n_correct_strict / n_total, 4) if n_total > 0 else None,
+            "committed_accuracy": round(n_correct_strict / n_committed, 4) if n_committed > 0 else None,
+            "abstention_rate": round(n_abstained / n_total, 4) if n_total > 0 else None,
+            "per_class": per_reach["per_class"],
+            "confusion_matrix": per_reach["confusion_matrix"],
+        },
+        "outcome_label_per_segment": {
             "strict_accuracy": round(n_correct_strict / n_total, 4) if n_total > 0 else None,
             "committed_accuracy": round(n_correct_strict / n_committed, 4) if n_committed > 0 else None,
             "abstention_rate": round(n_abstained / n_total, 4) if n_total > 0 else None,

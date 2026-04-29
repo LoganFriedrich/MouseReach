@@ -84,6 +84,36 @@ Open `MouseReach_Pipeline/Improvement_Snapshots/<phase>/<snapshot>/vault/`
 as an Obsidian vault. The `.obsidian/` directory is pre-created so Obsidian
 recognizes it immediately. Mermaid diagrams render inline.
 
+## How to Generate Figures From a Snapshot
+
+**Figures are NOT hand-rolled per-session.** Each phase has a runner
+script that produces the canonical figures (Sankey, violin, summary
+table, etc.) from a snapshot's `metrics/scalars.json`. Runners use the
+shared palette in `lib/palette.py` and the layout patterns developed
+across the project so figures stay consistent.
+
+Per-phase runners:
+- Outcome: `outcome/_run_notebooks.py` -- `run_sankey()`,
+  `run_interaction_frame_violin()`, `run_summary_table()`.
+- (Other phases follow the same pattern -- check
+  `<phase>/_run_notebooks.py` or `<phase>/*.ipynb`.)
+
+Usage from Python:
+```python
+from pathlib import Path
+from mousereach.improvement.outcome._run_notebooks import run_sankey
+run_sankey(Path("Y:/.../Improvement_Snapshots/outcome/outcome_vX.Y.Z_dev_<tag>"))
+```
+
+The runner reads `metrics/scalars.json` and writes
+`figures/sankey.png` + `figures/sankey_legend.md` into the snapshot.
+
+**If you find yourself writing matplotlib code for a Sankey or any
+other phase figure, STOP and use the runner script.** Curated
+renderers exist for consistency, color palette, label-collision
+avoidance, and paper-quality output. Hand-rolled figures are not a
+substitute.
+
 ## How to Add a New Phase
 
 1. Create `src/mousereach/improvement/<phase_name>/` with `__init__.py`
