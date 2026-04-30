@@ -125,6 +125,7 @@ def create_processing_manifest(
     seg_path = processing_dir / f"{video_id}_segments.json"
     reach_path = processing_dir / f"{video_id}_reaches.json"
     outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
+    features_path = processing_dir / f"{video_id}_features.json"
 
     # Read validation statuses
     seg_val = read_validation_from_json(seg_path)
@@ -135,6 +136,7 @@ def create_processing_manifest(
     seg_version = read_version_from_json(seg_path, 'segmenter_version')
     reach_version = read_version_from_json(reach_path, 'detector_version')
     outcome_version = read_version_from_json(outcome_path, 'detector_version')
+    kinematic_version = read_version_from_json(features_path, 'extractor_version')
 
     manifest = {
         'manifest_version': MANIFEST_VERSION,
@@ -151,6 +153,7 @@ def create_processing_manifest(
             'segmenter': seg_version,
             'reach_detector': reach_version,
             'outcome_detector': outcome_version,
+            'kinematic_extractor': kinematic_version,
         },
 
         # Validation statuses
