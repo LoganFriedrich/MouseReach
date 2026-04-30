@@ -122,6 +122,7 @@ def initialize_versions(nas_root: Path = None) -> dict:
             'segmenter': '',   # Set after first segmentation
             'reach_detector': '',  # Set after first reach detection
             'outcome_detector': '',  # Set after first outcome detection
+            'kinematic_extractor': '',  # Set after first feature extraction
         },
         'notes': 'Initial version tracking - update component versions after first run',
     }
@@ -173,6 +174,7 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
         'segmenter': 'segmenter',
         'reach_detector': 'reach_detector',
         'outcome_detector': 'outcome_detector',
+        'kinematic_extractor': 'kinematic_extractor',
     }
 
     for current_key, manifest_key in component_map.items():
