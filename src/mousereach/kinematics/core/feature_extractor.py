@@ -41,46 +41,54 @@ class ReachFeatures:
     duration_frames: int = 0
 
     # Extent features (from Step 4 - reach detection)
+    # Kept for backward compatibility; superseded by per-paw extension_past_nose in `extended`.
     max_extent_pixels: Optional[float] = None
     max_extent_ruler: Optional[float] = None  # Normalized to 9mm ruler
     max_extent_mm: Optional[float] = None  # Physical units
 
     # Velocity features (computed from DLC)
+    # Kept for backward compatibility; superseded by per-paw mean/peak/apex_speed in `extended`.
     velocity_at_apex_px_per_frame: Optional[float] = None
     velocity_at_apex_mm_per_sec: Optional[float] = None  # Assuming 30 fps
     peak_velocity_px_per_frame: Optional[float] = None
     mean_velocity_px_per_frame: Optional[float] = None
 
     # Trajectory features
-    trajectory_straightness: Optional[float] = None  # Ratio of straight-line to actual path
-    trajectory_smoothness: Optional[float] = None  # Inverse of jerk
+    # Kept for backward compatibility; superseded by per-paw path_directness / motion_smoothness.
+    trajectory_straightness: Optional[float] = None
+    trajectory_smoothness: Optional[float] = None
 
-    # Hand orientation features
-    hand_angle_at_apex_deg: Optional[float] = None  # Angle of RH points relative to horizontal
-    hand_rotation_total_deg: Optional[float] = None  # Total rotation during reach
+    # Hand orientation features (kept)
+    hand_angle_at_apex_deg: Optional[float] = None
+    hand_rotation_total_deg: Optional[float] = None
 
-    # Grasp aperture features (if digit tracking available)
+    # Grasp aperture features (deprecated; superseded by paw_width_proxy_* in `extended`)
     grasp_aperture_max_mm: Optional[float] = None
     grasp_aperture_at_contact_mm: Optional[float] = None
 
     # Body/posture during reach
-    head_width_at_apex_mm: Optional[float] = None  # LeftEar-RightEar at apex
-    nose_to_slit_at_apex_mm: Optional[float] = None  # Distance to slit at apex
-    head_angle_at_apex_deg: Optional[float] = None  # Head orientation at apex
-    head_angle_change_deg: Optional[float] = None  # Head rotation during reach
+    head_width_at_apex_mm: Optional[float] = None
+    nose_to_slit_at_apex_mm: Optional[float] = None
+    head_angle_at_apex_deg: Optional[float] = None
+    head_angle_change_deg: Optional[float] = None
 
-    # Spatial context
-    apex_distance_to_pellet_mm: Optional[float] = None  # How close to target
-    lateral_deviation_mm: Optional[float] = None  # Side-to-side from straight path
+    # Spatial context (deprecated; lateral_deviation now per-paw in `extended`)
+    apex_distance_to_pellet_mm: Optional[float] = None
+    lateral_deviation_mm: Optional[float] = None
 
     # Confidence/quality metrics
-    mean_likelihood: Optional[float] = None  # Average DLC confidence during reach
-    frames_low_confidence: int = 0  # Frames with likelihood < 0.5
-    tracking_quality_score: Optional[float] = None  # Mean across all tracked bodyparts
+    # Kept; per-paw visibility profile in `extended` carries the richer signal.
+    mean_likelihood: Optional[float] = None
+    frames_low_confidence: int = 0
+    tracking_quality_score: Optional[float] = None
 
     # Flags
     flagged_for_review: bool = False
     flag_reason: Optional[str] = None
+
+    # Extended kinematic feature set (flat dict; keys are stable column names).
+    # Populated by FeatureExtractor for v2 outputs. See REACH_KINEMATIC_DATA_DICTIONARY.md.
+    extended: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -154,8 +162,11 @@ class VideoFeatures:
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "1.0.0"
-    FRAMERATE = 30.0  # fps (assumed)
+    VERSION = "2.0.0"  # 2.0: extended kinematic feature set (nose-relative,
+                       # slit-anchored, per-paw trajectories, paw shape proxies,
+                       # per-paw visibility profile, tray contact). See
+                       # REACH_KINEMATIC_DATA_DICTIONARY.md.
+    FRAMERATE = 30.0  # fps (assumed - not authoritative; see data dictionary)
     RULER_MM = 9.0  # Physical size of ruler (SABL-SABR distance)
 
     def __init__(self):
@@ -369,6 +380,20 @@ class FeatureExtractor:
             features.nose_to_slit_at_apex_mm = body_features['nose_to_slit_mm']
             features.head_angle_at_apex_deg = body_features['head_angle_deg']
             features.head_angle_change_deg = body_features['head_angle_change']
+
+        # Extended (v2) kinematic feature set populated as a flat dict on
+        # `features.extended`. See REACH_KINEMATIC_DATA_DICTIONARY.md.
+        try:
+            features.extended = self._extended_features(
+                df,
+                start_frame=start_frame,
+                apex_frame=apex_frame,
+                end_frame=end_frame,
+                interaction_frame=features.interaction_frame,
+                ruler_pixels=ruler_pixels,
+            )
+        except Exception as exc:
+            features.extended = {'_extended_features_error': str(exc)}
 
         return features
 
@@ -908,6 +933,487 @@ class FeatureExtractor:
         features['tracking_dropout_frames'] = int(dropout_frames)
 
         return features
+
+    # ------------------------------------------------------------------
+    # Extended (v2) per-reach kinematic features.
+    # See docs/REACH_KINEMATIC_DATA_DICTIONARY.md for the full spec.
+    # ------------------------------------------------------------------
+
+    PAW_POINTS = ('RightHand', 'RHLeft', 'RHRight', 'RHOut')
+    PAW_COL_PREFIX = {
+        'RightHand': 'righthand',
+        'RHLeft': 'rhleft',
+        'RHRight': 'rhright',
+        'RHOut': 'rhout',
+    }
+
+    def _build_augmented_nose_relative_trajectory(
+        self,
+        df: pd.DataFrame,
+        paw_point: str,
+        start_frame: int,
+        end_frame: int,
+    ) -> Tuple[np.ndarray, np.ndarray, Tuple[float, float], Tuple[float, float]]:
+        """
+        Construct a nose-subtracted paw trajectory bracketed by synthetic slit anchors.
+
+        Synthetic pre-anchor: midpoint of (Nose, BoxL) at start_frame, then nose-subtracted.
+            (= (BoxL - Nose) / 2 in nose-relative coords)
+        Synthetic post-anchor: midpoint of (BoxR, Nose) at end_frame, then nose-subtracted.
+            (= (BoxR - Nose) / 2 in nose-relative coords)
+
+        Returns:
+            (x, y) nose-relative augmented trajectory arrays (length = real_frames + 2),
+            (pre_x, pre_y) synthetic pre-anchor in nose-relative coords,
+            (post_x, post_y) synthetic post-anchor in nose-relative coords.
+        """
+        real_df = df.iloc[start_frame:end_frame + 1]
+        paw_x = real_df[f'{paw_point}_x'].values - real_df['Nose_x'].values
+        paw_y = real_df[f'{paw_point}_y'].values - real_df['Nose_y'].values
+
+        s_row = df.iloc[start_frame]
+        pre_x = (s_row['BOXL_x'] - s_row['Nose_x']) / 2.0
+        pre_y = (s_row['BOXL_y'] - s_row['Nose_y']) / 2.0
+
+        e_row = df.iloc[end_frame]
+        post_x = (e_row['BOXR_x'] - e_row['Nose_x']) / 2.0
+        post_y = (e_row['BOXR_y'] - e_row['Nose_y']) / 2.0
+
+        x = np.concatenate([[pre_x], paw_x, [post_x]])
+        y = np.concatenate([[pre_y], paw_y, [post_y]])
+        return x, y, (float(pre_x), float(pre_y)), (float(post_x), float(post_y))
+
+    def _paw_trajectory_features(
+        self,
+        df: pd.DataFrame,
+        paw_point: str,
+        start_frame: int,
+        end_frame: int,
+        ruler_pixels: float,
+    ) -> Dict[str, Optional[float]]:
+        """
+        Compute the per-paw-point trajectory feature group on the augmented,
+        nose-relative trajectory. Image y increases downward, so reach extension
+        out through the slit produces y > 0 in nose-relative coords.
+        """
+        prefix = self.PAW_COL_PREFIX[paw_point]
+        mm_per_px = self.RULER_MM / ruler_pixels if ruler_pixels and ruler_pixels > 0 else 0.0
+
+        x, y, (pre_x, pre_y), (post_x, post_y) = self._build_augmented_nose_relative_trajectory(
+            df, paw_point, start_frame, end_frame
+        )
+
+        out: Dict[str, Optional[float]] = {}
+
+        # Per-point apex: real frame within reach with maximum nose-relative y.
+        real_y = y[1:-1]
+        if real_y.size > 0 and not np.all(np.isnan(real_y)):
+            apex_idx_real = int(np.nanargmax(real_y))
+            apex_frame = int(start_frame + apex_idx_real)
+            ext_px = float(real_y[apex_idx_real])
+        else:
+            apex_idx_real = None
+            apex_frame = None
+            ext_px = None
+
+        out[f'{prefix}_apex_frame'] = apex_frame
+        out[f'{prefix}_extension_past_nose_px'] = ext_px
+        out[f'{prefix}_extension_past_nose_mm'] = ext_px * mm_per_px if ext_px is not None else None
+
+        # Frame-to-frame segment lengths on the augmented trajectory.
+        dx = np.diff(x)
+        dy = np.diff(y)
+        seg_len = np.sqrt(dx ** 2 + dy ** 2)
+        path_px = float(np.nansum(seg_len)) if seg_len.size else 0.0
+        out[f'{prefix}_total_path_px'] = path_px if seg_len.size else None
+        out[f'{prefix}_total_path_mm'] = path_px * mm_per_px if seg_len.size else None
+
+        # Lateral spread = max(x) - min(x) on the augmented trajectory.
+        if x.size > 1 and not np.all(np.isnan(x)):
+            spread_px = float(np.nanmax(x) - np.nanmin(x))
+        else:
+            spread_px = None
+        out[f'{prefix}_lateral_spread_px'] = spread_px
+        out[f'{prefix}_lateral_spread_mm'] = spread_px * mm_per_px if spread_px is not None else None
+
+        # Swept area: shoelace polygon on valid points.
+        valid = ~(np.isnan(x) | np.isnan(y))
+        if valid.sum() >= 3:
+            xv = x[valid]
+            yv = y[valid]
+            area_px = 0.5 * abs(
+                np.dot(xv, np.roll(yv, 1)) - np.dot(yv, np.roll(xv, 1))
+            )
+            out[f'{prefix}_swept_area_px2'] = float(area_px)
+            out[f'{prefix}_swept_area_mm2'] = float(area_px * (mm_per_px ** 2))
+        else:
+            out[f'{prefix}_swept_area_px2'] = None
+            out[f'{prefix}_swept_area_mm2'] = None
+
+        # Path directness = straight-line(pre, post) / total path length.
+        straight_px = float(np.sqrt((post_x - pre_x) ** 2 + (post_y - pre_y) ** 2))
+        if path_px > 0:
+            out[f'{prefix}_path_directness'] = float(straight_px / path_px)
+        else:
+            out[f'{prefix}_path_directness'] = None
+
+        # Motion smoothness = 1 / (1 + mean |jerk|), where jerk is the third diff.
+        if x.size >= 4:
+            jx = np.diff(np.diff(np.diff(x)))
+            jy = np.diff(np.diff(np.diff(y)))
+            jmag = np.sqrt(jx ** 2 + jy ** 2)
+            mean_jerk = float(np.nanmean(jmag)) if jmag.size and not np.all(np.isnan(jmag)) else None
+            if mean_jerk is not None:
+                out[f'{prefix}_motion_smoothness'] = 1.0 / (1.0 + mean_jerk)
+            else:
+                out[f'{prefix}_motion_smoothness'] = None
+        else:
+            out[f'{prefix}_motion_smoothness'] = None
+
+        # Lateral deviation: max perpendicular distance from any trajectory point
+        # to the synthetic-pre to synthetic-post line.
+        if straight_px > 0 and valid.any():
+            ax_, ay_ = post_x - pre_x, post_y - pre_y
+            cross = (x - pre_x) * ay_ - (y - pre_y) * ax_
+            perp = np.abs(cross) / straight_px
+            max_perp = float(np.nanmax(perp)) if not np.all(np.isnan(perp)) else None
+        else:
+            max_perp = None
+        out[f'{prefix}_lateral_deviation_px'] = max_perp
+        out[f'{prefix}_lateral_deviation_mm'] = max_perp * mm_per_px if max_perp is not None else None
+
+        # Speeds. Mean speed = path_length / number_of_inter_frame_segments.
+        if seg_len.size > 0 and not np.all(np.isnan(seg_len)):
+            mean_speed = float(np.nansum(seg_len) / seg_len.size)
+            peak_speed = float(np.nanmax(seg_len))
+        else:
+            mean_speed = None
+            peak_speed = None
+        out[f'{prefix}_mean_speed_px_per_frame'] = mean_speed
+        out[f'{prefix}_mean_speed_mm_per_frame'] = mean_speed * mm_per_px if mean_speed is not None else None
+        out[f'{prefix}_peak_speed_px_per_frame'] = peak_speed
+        out[f'{prefix}_peak_speed_mm_per_frame'] = peak_speed * mm_per_px if peak_speed is not None else None
+
+        # Apex speed: segment length straddling the per-point apex frame
+        # (uses the segment immediately after the apex frame in the augmented array).
+        apex_speed = None
+        if apex_idx_real is not None:
+            idx_aug = apex_idx_real + 1  # +1 to skip the synthetic pre-anchor
+            if idx_aug < seg_len.size:
+                v = seg_len[idx_aug]
+                if not np.isnan(v):
+                    apex_speed = float(v)
+            elif idx_aug - 1 >= 0:
+                v = seg_len[idx_aug - 1]
+                if not np.isnan(v):
+                    apex_speed = float(v)
+        out[f'{prefix}_apex_speed_px_per_frame'] = apex_speed
+        out[f'{prefix}_apex_speed_mm_per_frame'] = apex_speed * mm_per_px if apex_speed is not None else None
+
+        return out
+
+    def _cross_paw_timing(
+        self,
+        per_point_apex_frames: Dict[str, Optional[int]],
+        df: pd.DataFrame,
+        start_frame: int,
+        end_frame: int,
+    ) -> Dict[str, Optional[float]]:
+        """Cross-paw apex timing and velocity-profile coordination."""
+        out: Dict[str, Optional[float]] = {}
+
+        valid = {p: f for p, f in per_point_apex_frames.items() if f is not None}
+        if len(valid) >= 2:
+            frames = list(valid.values())
+            out['paw_apex_lead_frames'] = int(max(frames) - min(frames))
+            leading_pt = min(valid, key=valid.get)
+            out['paw_leading_point'] = self.PAW_COL_PREFIX[leading_pt]
+        else:
+            out['paw_apex_lead_frames'] = None
+            out['paw_leading_point'] = None
+
+        # Velocity-correlation: mean pairwise Pearson r of frame-to-frame speed
+        # series across the four paw points (real frames only, no synthetic anchors).
+        speed_series = []
+        real_df = df.iloc[start_frame:end_frame + 1]
+        nose_x = real_df['Nose_x'].values
+        nose_y = real_df['Nose_y'].values
+        for p in self.PAW_POINTS:
+            px = real_df[f'{p}_x'].values - nose_x
+            py = real_df[f'{p}_y'].values - nose_y
+            if px.size < 2:
+                continue
+            sp = np.sqrt(np.diff(px) ** 2 + np.diff(py) ** 2)
+            speed_series.append(sp)
+
+        if len(speed_series) >= 2 and all(s.size >= 2 for s in speed_series):
+            import itertools
+            rs = []
+            for a, b in itertools.combinations(speed_series, 2):
+                m = ~(np.isnan(a) | np.isnan(b))
+                if m.sum() >= 2:
+                    sa = a[m]
+                    sb = b[m]
+                    if sa.std() > 0 and sb.std() > 0:
+                        rs.append(float(np.corrcoef(sa, sb)[0, 1]))
+            out['paw_velocity_correlation'] = float(np.mean(rs)) if rs else None
+        else:
+            out['paw_velocity_correlation'] = None
+
+        return out
+
+    def _paw_shape_features(
+        self,
+        df: pd.DataFrame,
+        start_frame: int,
+        apex_frame: Optional[int],
+        end_frame: int,
+        interaction_frame: Optional[int],
+        ruler_pixels: float,
+    ) -> Dict[str, Optional[float]]:
+        """
+        Inter-paw geometry: paw_width_proxy (RHLeft<->RHRight),
+        paw_outline_area (4-point polygon, ordered by angle around centroid),
+        paw_spread_max (max of all 6 pairwise distances).
+
+        Each measure summarised at start/apex/end/contact and as max/min/mean/range
+        over the reach. Operates on real frames only (no synthetic anchors).
+        """
+        prefix_map = {
+            'paw_width_proxy': ('px', 'mm', 1),
+            'paw_outline_area': ('px2', 'mm2', 2),
+            'paw_spread_max': ('px', 'mm', 1),
+        }
+        out: Dict[str, Optional[float]] = {}
+
+        seg = df.iloc[start_frame:end_frame + 1]
+        n = len(seg)
+        if n == 0:
+            for measure, (raw_u, mm_u, _) in prefix_map.items():
+                for sfx in ('at_start', 'at_apex', 'at_end', 'at_contact', 'max', 'min', 'mean', 'range'):
+                    out[f'{measure}_{sfx}_{raw_u}'] = None
+                    out[f'{measure}_{sfx}_{mm_u}'] = None
+            return out
+
+        mm_per_px = self.RULER_MM / ruler_pixels if ruler_pixels and ruler_pixels > 0 else 0.0
+
+        # Per-frame width proxy: distance(RHLeft, RHRight)
+        width = np.sqrt(
+            (seg['RHLeft_x'].values - seg['RHRight_x'].values) ** 2
+            + (seg['RHLeft_y'].values - seg['RHRight_y'].values) ** 2
+        )
+
+        # Per-frame paw spread max (max pairwise distance among the 4 points).
+        import itertools
+        pts = [(seg[f'{p}_x'].values, seg[f'{p}_y'].values) for p in self.PAW_POINTS]
+        pair_dists = []
+        for (ax, ay), (bx, by) in itertools.combinations(pts, 2):
+            pair_dists.append(np.sqrt((ax - bx) ** 2 + (ay - by) ** 2))
+        spread = np.nanmax(np.stack(pair_dists, axis=0), axis=0)
+
+        # Per-frame outline area: shoelace polygon over the 4 paw points,
+        # ordered by angle around their per-frame centroid.
+        outline = np.full(n, np.nan)
+        all_x = np.stack([p[0] for p in pts], axis=0)  # (4, n)
+        all_y = np.stack([p[1] for p in pts], axis=0)
+        for i in range(n):
+            xi = all_x[:, i]
+            yi = all_y[:, i]
+            if np.any(np.isnan(xi)) or np.any(np.isnan(yi)):
+                continue
+            cx = xi.mean()
+            cy = yi.mean()
+            ang = np.arctan2(yi - cy, xi - cx)
+            order = np.argsort(ang)
+            xo = xi[order]
+            yo = yi[order]
+            outline[i] = 0.5 * abs(
+                np.dot(xo, np.roll(yo, 1)) - np.dot(yo, np.roll(xo, 1))
+            )
+
+        def _frame_idx_relative(absolute_frame: Optional[int]) -> Optional[int]:
+            if absolute_frame is None:
+                return None
+            idx = absolute_frame - start_frame
+            if 0 <= idx < n:
+                return idx
+            return None
+
+        anchors = {
+            'at_start': 0,
+            'at_apex': _frame_idx_relative(apex_frame),
+            'at_end': n - 1,
+            'at_contact': _frame_idx_relative(interaction_frame),
+        }
+
+        def _summarize(measure: str, arr: np.ndarray, raw_u: str, mm_u: str, exp: int):
+            mm_factor = mm_per_px ** exp
+            for sfx, idx in anchors.items():
+                if idx is None or idx >= arr.size:
+                    out[f'{measure}_{sfx}_{raw_u}'] = None
+                    out[f'{measure}_{sfx}_{mm_u}'] = None
+                else:
+                    v = arr[idx]
+                    if np.isnan(v):
+                        out[f'{measure}_{sfx}_{raw_u}'] = None
+                        out[f'{measure}_{sfx}_{mm_u}'] = None
+                    else:
+                        out[f'{measure}_{sfx}_{raw_u}'] = float(v)
+                        out[f'{measure}_{sfx}_{mm_u}'] = float(v * mm_factor)
+            if arr.size and not np.all(np.isnan(arr)):
+                vmax = float(np.nanmax(arr))
+                vmin = float(np.nanmin(arr))
+                vmean = float(np.nanmean(arr))
+                out[f'{measure}_max_{raw_u}'] = vmax
+                out[f'{measure}_max_{mm_u}'] = vmax * mm_factor
+                out[f'{measure}_min_{raw_u}'] = vmin
+                out[f'{measure}_min_{mm_u}'] = vmin * mm_factor
+                out[f'{measure}_mean_{raw_u}'] = vmean
+                out[f'{measure}_mean_{mm_u}'] = vmean * mm_factor
+                out[f'{measure}_range_{raw_u}'] = vmax - vmin
+                out[f'{measure}_range_{mm_u}'] = (vmax - vmin) * mm_factor
+            else:
+                for stat in ('max', 'min', 'mean', 'range'):
+                    out[f'{measure}_{stat}_{raw_u}'] = None
+                    out[f'{measure}_{stat}_{mm_u}'] = None
+
+        _summarize('paw_width_proxy', width, 'px', 'mm', 1)
+        _summarize('paw_outline_area', outline, 'px2', 'mm2', 2)
+        _summarize('paw_spread_max', spread, 'px', 'mm', 1)
+
+        return out
+
+    def _paw_visibility_features(
+        self,
+        df: pd.DataFrame,
+        start_frame: int,
+        apex_frame: Optional[int],
+        end_frame: int,
+        interaction_frame: Optional[int],
+    ) -> Dict[str, Optional[float]]:
+        """
+        Per-paw-point likelihood profile across the reach. Likelihood is
+        dimensionless (0-1); reported as visibility because dropouts often
+        carry behavioural signal (rotation, grasp closure, occlusion).
+        """
+        seg = df.iloc[start_frame:end_frame + 1]
+        n = len(seg)
+        out: Dict[str, Optional[float]] = {}
+
+        def _frame_idx_relative(absolute_frame: Optional[int]) -> Optional[int]:
+            if absolute_frame is None:
+                return None
+            idx = absolute_frame - start_frame
+            if 0 <= idx < n:
+                return idx
+            return None
+
+        anchors = {
+            'at_start': 0 if n > 0 else None,
+            'at_apex': _frame_idx_relative(apex_frame),
+            'at_end': (n - 1) if n > 0 else None,
+            'at_contact': _frame_idx_relative(interaction_frame),
+        }
+
+        for paw in self.PAW_POINTS:
+            prefix = self.PAW_COL_PREFIX[paw]
+            lk = seg[f'{paw}_likelihood'].values
+
+            for sfx, idx in anchors.items():
+                if idx is None or idx >= lk.size or np.isnan(lk[idx]):
+                    out[f'{prefix}_visibility_{sfx}'] = None
+                else:
+                    out[f'{prefix}_visibility_{sfx}'] = float(lk[idx])
+
+            if lk.size and not np.all(np.isnan(lk)):
+                out[f'{prefix}_visibility_max'] = float(np.nanmax(lk))
+                out[f'{prefix}_visibility_min'] = float(np.nanmin(lk))
+                out[f'{prefix}_visibility_mean'] = float(np.nanmean(lk))
+                out[f'{prefix}_visibility_range'] = float(np.nanmax(lk) - np.nanmin(lk))
+            else:
+                out[f'{prefix}_visibility_max'] = None
+                out[f'{prefix}_visibility_min'] = None
+                out[f'{prefix}_visibility_mean'] = None
+                out[f'{prefix}_visibility_range'] = None
+
+        # Aggregate: frames where the minimum likelihood across all 4 paw points < 0.5.
+        if n > 0:
+            paw_lk = np.stack([seg[f'{p}_likelihood'].values for p in self.PAW_POINTS], axis=0)
+            min_per_frame = np.nanmin(paw_lk, axis=0)
+            out['frames_any_paw_low_confidence'] = int(np.nansum(min_per_frame < 0.5))
+        else:
+            out['frames_any_paw_low_confidence'] = 0
+
+        return out
+
+    def _tray_contact_duration(
+        self,
+        df: pd.DataFrame,
+        start_frame: int,
+        end_frame: int,
+    ) -> Optional[int]:
+        """
+        Count of frames within the reach window where pellet/tray motion is
+        detected while the wrist (RightHand) is not confidently tracked.
+
+        Mirrors ASPA's tray_motion: pellet x rolling-std > 2 px AND wrist
+        likelihood < 0.5 AND pillar likelihood < 0.5.
+        """
+        seg = df.iloc[start_frame:end_frame + 1]
+        if len(seg) < 4:
+            return 0
+
+        try:
+            std_x = seg['Pellet_x'].rolling(4).std().values
+            motion = (
+                (std_x > 2)
+                & (seg['Pillar_likelihood'].values < 0.5)
+                & (seg['RightHand_likelihood'].values < 0.5)
+            )
+            return int(np.nansum(motion))
+        except KeyError:
+            return None
+
+    def _extended_features(
+        self,
+        df: pd.DataFrame,
+        start_frame: int,
+        apex_frame: Optional[int],
+        end_frame: int,
+        interaction_frame: Optional[int],
+        ruler_pixels: float,
+    ) -> Dict[str, Optional[float]]:
+        """Run all extended-feature groups and return a flat dict."""
+        ext: Dict[str, Optional[float]] = {}
+
+        # Per-paw-point trajectory features (4 points x ~14 columns each)
+        per_point_apex: Dict[str, Optional[int]] = {}
+        for p in self.PAW_POINTS:
+            point_features = self._paw_trajectory_features(
+                df, p, start_frame, end_frame, ruler_pixels
+            )
+            ext.update(point_features)
+            per_point_apex[p] = point_features[f'{self.PAW_COL_PREFIX[p]}_apex_frame']
+
+        # Cross-paw timing and coordination
+        ext.update(self._cross_paw_timing(per_point_apex, df, start_frame, end_frame))
+
+        # Inter-paw shape proxies
+        ext.update(self._paw_shape_features(
+            df, start_frame, apex_frame, end_frame, interaction_frame, ruler_pixels
+        ))
+
+        # Per-paw visibility profile
+        ext.update(self._paw_visibility_features(
+            df, start_frame, apex_frame, end_frame, interaction_frame
+        ))
+
+        # Tray contact
+        ext['tray_contact_duration_frames'] = self._tray_contact_duration(
+            df, start_frame, end_frame
+        )
+
+        return ext
 
     def _compute_summary(self, segment_features: List[SegmentFeatures]) -> Dict:
         """Compute summary statistics across all reaches."""
