@@ -31,7 +31,7 @@ from qtpy.QtWidgets import (
     QFileDialog, QProgressBar, QGroupBox, QScrollArea,
     QDialog, QTextBrowser, QComboBox, QSpinBox, QFrame,
     QSizePolicy, QCheckBox, QButtonGroup, QRadioButton,
-    QMessageBox, QSplitter
+    QMessageBox, QSplitter, QLineEdit
 )
 from qtpy.QtCore import Qt, Signal, QTimer
 from qtpy.QtGui import QFont, QColor
@@ -41,7 +41,8 @@ from napari.utils.notifications import show_info, show_warning, show_error
 
 from .unified_gt import (
     UnifiedGroundTruth, BoundaryGT, ReachGT, OutcomeGT,
-    load_or_create_unified_gt, save_unified_gt, get_username, get_timestamp
+    load_or_create_unified_gt, save_unified_gt,
+    get_username, get_timestamp, get_triage_timestamp,
 )
 
 
@@ -1524,6 +1525,37 @@ class GroundTruthWidget(QWidget):
         comment_btn.clicked.connect(lambda _, o=outcome: self._edit_outcome_comment(o))
         header_row.addWidget(comment_btn)
 
+        # Expected Triage toggle - high-visibility ON state so it reads at a glance
+        triage_btn = QPushButton(
+            "[!] TRIAGE: ON" if outcome.expected_triage else "Triage: off"
+        )
+        if outcome.expected_triage:
+            triage_btn.setStyleSheet(
+                "background-color: #FF9500; color: black; font-weight: bold; "
+                "padding: 2px 10px; border: 2px solid #B66700;"
+            )
+            triage_tip = (
+                f"Expected Triage: ON\n"
+                f"Flagged by: {outcome.expected_triage_flagged_by or '?'}\n"
+                f"At: {outcome.expected_triage_flagged_at or '?'}\n"
+                f"Reason: {outcome.expected_triage_reason or '(none)'}\n\n"
+                f"Click to clear."
+            )
+        else:
+            triage_btn.setStyleSheet(
+                "background-color: #444; color: #aaa; padding: 2px 10px; "
+                "border: 1px solid #555;"
+            )
+            triage_tip = (
+                "Expected Triage: OFF\n\n"
+                "Click to mark this segment as one the algorithm "
+                "should have triaged (or is acceptable to either commit or triage)."
+            )
+        triage_btn.setToolTip(triage_tip)
+        triage_btn.setMaximumWidth(120)
+        triage_btn.clicked.connect(lambda _, o=outcome: self._toggle_expected_triage(o))
+        header_row.addWidget(triage_btn)
+
         header_row.addStretch()
         main_layout.addLayout(header_row)
 
@@ -1587,6 +1619,20 @@ class GroundTruthWidget(QWidget):
             comment_row.addWidget(comment_label)
             main_layout.addLayout(comment_row)
 
+        # Expected-triage reason field - only shown when toggle is ON
+        if outcome.expected_triage:
+            reason_row = QHBoxLayout()
+            reason_label = QLabel("[!] Triage reason:")
+            reason_label.setStyleSheet("color: #FF9500; font-weight: bold;")
+            reason_row.addWidget(reason_label)
+            reason_edit = QLineEdit(outcome.expected_triage_reason or "")
+            reason_edit.setPlaceholderText("Why is this expected to triage? (optional)")
+            reason_edit.editingFinished.connect(
+                lambda o=outcome, e=reason_edit: self._set_expected_triage_reason(o, e.text())
+            )
+            reason_row.addWidget(reason_edit)
+            main_layout.addLayout(reason_row)
+
         # Style: green if determined
         if outcome.determined:
             row.setStyleSheet("QFrame { background-color: #1a3010; }")
@@ -1624,6 +1670,32 @@ class GroundTruthWidget(QWidget):
         self._refresh_outcomes_list()
         self._update_status()
         show_info(f"Seg {outcome.segment_num} outcome known frame set to {current}")
+
+    def _toggle_expected_triage(self, outcome: OutcomeGT):
+        """Toggle the expected_triage flag on this segment.
+
+        ON: stamp flagged_by/flagged_at with current scorer + UTC timestamp.
+        OFF: clear the flag but leave flagged_by/flagged_at as audit trail.
+        """
+        if outcome.expected_triage:
+            outcome.expected_triage = False
+        else:
+            outcome.expected_triage = True
+            outcome.expected_triage_flagged_by = get_username().upper()
+            outcome.expected_triage_flagged_at = get_triage_timestamp()
+        self._refresh_outcomes_list()
+        self._update_status()
+        state = "ON" if outcome.expected_triage else "OFF"
+        show_info(f"Seg {outcome.segment_num} expected_triage: {state}")
+
+    def _set_expected_triage_reason(self, outcome: OutcomeGT, text: str):
+        """Set or clear the expected_triage_reason free-form note."""
+        new_value = text.strip() or None
+        if outcome.expected_triage_reason == new_value:
+            return
+        outcome.expected_triage_reason = new_value
+        self._refresh_outcomes_list()
+        self._update_status()
 
     # =========================================================================
     # Verification Actions
