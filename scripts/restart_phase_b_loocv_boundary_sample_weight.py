@@ -321,10 +321,12 @@ def main():
 
         s = summary
         zone_pct = 100 * n_in_zone / n_total_train if n_total_train else 0
+        sd_mean = s['tp_start_delta']['mean']
+        sd_mean_str = f"{sd_mean:.3f}" if sd_mean is not None else "n/a"
         print(f"    TP={s['n_tp']:>4} FP={s['n_fp']:>4} FN={s['n_fn']:>4}  "
               f"start_delta median={s['tp_start_delta']['median']} "
               f"abs_median={s['tp_start_delta']['abs_median']} "
-              f"mean={s['tp_start_delta']['mean']:.3f}  "
+              f"mean={sd_mean_str}  "
               f"span_delta median={s['tp_span_delta']['median']} "
               f"abs_median={s['tp_span_delta']['abs_median']}  "
               f"boundary-zone={zone_pct:.1f}% of train",
@@ -342,13 +344,17 @@ def main():
     print(f"AGGREGATE LOOCV RESULTS (boundary buf={BOUNDARY_BUFFER}, w={BOUNDARY_WEIGHT})")
     print("=" * 70)
     print(f"  TP={agg['n_tp']}  FP={agg['n_fp']}  FN={agg['n_fn']}")
+    sd_mean_a = agg['tp_start_delta']['mean']
+    sp_mean_a = agg['tp_span_delta']['mean']
+    sd_mean_a_s = f"{sd_mean_a:.3f}" if sd_mean_a is not None else "n/a"
+    sp_mean_a_s = f"{sp_mean_a:.3f}" if sp_mean_a is not None else "n/a"
     print(f"  Start delta on TPs: median={agg['tp_start_delta']['median']}f  "
           f"|median|={agg['tp_start_delta']['abs_median']}f  "
-          f"mean={agg['tp_start_delta']['mean']:.3f}  "
+          f"mean={sd_mean_a_s}  "
           f"range=[{agg['tp_start_delta']['min']},{agg['tp_start_delta']['max']}]")
     print(f"  Span delta on TPs:  median={agg['tp_span_delta']['median']}f  "
           f"|median|={agg['tp_span_delta']['abs_median']}f  "
-          f"mean={agg['tp_span_delta']['mean']:.3f}  "
+          f"mean={sp_mean_a_s}  "
           f"range=[{agg['tp_span_delta']['min']},{agg['tp_span_delta']['max']}]")
     print()
     print("Compare against baseline v8.0.0_dev_initial_loocv:")
