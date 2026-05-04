@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -77,6 +77,11 @@ def get_username():
         return os.getlogin()
     except (OSError, AttributeError):
         return os.environ.get('USERNAME', os.environ.get('USER', 'unknown'))
+
+
+def _get_triage_timestamp():
+    """UTC ISO timestamp matching the corpus expected_triage convention."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 class PelletOutcomeAnnotatorWidget(QWidget):
@@ -440,7 +445,27 @@ class PelletOutcomeAnnotatorWidget(QWidget):
         self.flag_reason.textChanged.connect(self._update_flag_reason)
         flag_reason_layout.addWidget(self.flag_reason)
         flag_layout.addLayout(flag_reason_layout)
-        
+
+        # === Expected Triage (sibling to "flag for review") ===
+        # High-visibility separator + toggle so the ON state reads at a glance.
+        self.triage_check = QCheckBox("[!] Expected triage (algo should have triaged)")
+        self.triage_check.stateChanged.connect(self._toggle_expected_triage)
+        self.triage_check.setEnabled(False)
+        self.triage_check.setStyleSheet(
+            "QCheckBox { padding-top: 6px; }"
+            "QCheckBox:checked { color: #FF9500; font-weight: bold; }"
+        )
+        flag_layout.addWidget(self.triage_check)
+
+        triage_reason_layout = QHBoxLayout()
+        triage_reason_layout.addWidget(QLabel("Triage reason:"))
+        self.triage_reason = QLineEdit()
+        self.triage_reason.setPlaceholderText("Why is this expected to triage? (optional)")
+        self.triage_reason.setEnabled(False)
+        self.triage_reason.textChanged.connect(self._update_expected_triage_reason)
+        triage_reason_layout.addWidget(self.triage_reason)
+        flag_layout.addLayout(triage_reason_layout)
+
         layout.addWidget(flag_group)
         
         # === Segment List ===
@@ -1227,6 +1252,8 @@ class PelletOutcomeAnnotatorWidget(QWidget):
         self.confirm_untouched_btn.setEnabled(enabled)
         self.flag_check.setEnabled(enabled)
         self.flag_reason.setEnabled(enabled)
+        self.triage_check.setEnabled(enabled)
+        self.triage_reason.setEnabled(enabled)
         self.save_progress_btn.setEnabled(enabled)
         self.save_btn.setEnabled(enabled)
         self.save_gt_btn.setEnabled(enabled)
@@ -1299,7 +1326,16 @@ class PelletOutcomeAnnotatorWidget(QWidget):
         self.flag_check.setChecked(flagged)
         self.flag_check.blockSignals(False)
         self.flag_reason.setText(seg_data.get('flag_reason', '') or '')
-        
+
+        # Expected Triage
+        triage_on = seg_data.get('expected_triage', False)
+        self.triage_check.blockSignals(True)
+        self.triage_check.setChecked(triage_on)
+        self.triage_check.blockSignals(False)
+        self.triage_reason.blockSignals(True)
+        self.triage_reason.setText(seg_data.get('expected_triage_reason', '') or '')
+        self.triage_reason.blockSignals(False)
+
         # Update segment list
         self._update_segment_list()
         
@@ -1806,7 +1842,33 @@ class PelletOutcomeAnnotatorWidget(QWidget):
         seg_data = self._get_segment_data()
         if seg_data:
             seg_data['flag_reason'] = text
-    
+
+    # === Expected Triage ===
+
+    def _toggle_expected_triage(self, state):
+        """Toggle the expected_triage flag on the current segment.
+
+        ON: stamp flagged_by/flagged_at with current user + UTC timestamp.
+        OFF: clear flag but leave flagged_by/flagged_at as audit trail.
+        """
+        seg_data = self._get_segment_data()
+        if not seg_data:
+            return
+
+        is_on = bool(state)
+        seg_data['expected_triage'] = is_on
+        if is_on:
+            seg_data['expected_triage_flagged_by'] = get_username().upper()
+            seg_data['expected_triage_flagged_at'] = _get_triage_timestamp()
+        # On OFF: leave flagged_by/flagged_at in place as audit trail
+
+        self._update_display()
+
+    def _update_expected_triage_reason(self, text):
+        seg_data = self._get_segment_data()
+        if seg_data:
+            seg_data['expected_triage_reason'] = text or None
+
     # === Save ===
     
     def _save_progress(self):
@@ -1962,6 +2024,11 @@ class PelletOutcomeAnnotatorWidget(QWidget):
                     'verified_at': datetime.now().isoformat(),
                     'flagged_for_review': seg.get('flagged_for_review', False),
                     'flag_reason': seg.get('flag_reason'),
+                    # Expected-triage metadata - human flag distinct from flagged_for_review
+                    'expected_triage': seg.get('expected_triage', False),
+                    'expected_triage_flagged_by': seg.get('expected_triage_flagged_by'),
+                    'expected_triage_flagged_at': seg.get('expected_triage_flagged_at'),
+                    'expected_triage_reason': seg.get('expected_triage_reason'),
                     # Preserve original if corrected
                     'original_outcome': seg.get('original_outcome') if is_corrected else None,
                 }

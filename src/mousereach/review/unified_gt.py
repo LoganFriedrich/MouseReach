@@ -22,7 +22,7 @@ Schema versions:
 import json
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, field, asdict
 
@@ -82,6 +82,13 @@ class OutcomeGT:
     determined_by: Optional[str] = None
     determined_at: Optional[str] = None
     comment: Optional[str] = None  # Free-form notes about this outcome
+    # Expected-triage flag: human marks segment as one the algo should have triaged
+    # (or, by emerging convention, is acceptable to either commit or triage).
+    # _flagged_by/_flagged_at remain populated even after toggling OFF as audit trail.
+    expected_triage: bool = False
+    expected_triage_flagged_by: Optional[str] = None
+    expected_triage_flagged_at: Optional[str] = None
+    expected_triage_reason: Optional[str] = None
 
 
 @dataclass
@@ -214,6 +221,14 @@ def get_username() -> str:
 def get_timestamp() -> str:
     """Get current timestamp in ISO format."""
     return datetime.now().isoformat()
+
+
+def get_triage_timestamp() -> str:
+    """Get current UTC timestamp matching the corpus expected_triage convention.
+
+    Format: 'YYYY-MM-DDTHH:MM:SS.ffffff+00:00'
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 def get_unified_gt_path(video_path: Path) -> Path:
@@ -361,6 +376,10 @@ def _dict_to_unified_gt(data: Dict) -> UnifiedGroundTruth:
             determined_by=determined_by,
             determined_at=determined_at,
             comment=o_data.get("comment"),
+            expected_triage=o_data.get("expected_triage", False),
+            expected_triage_flagged_by=o_data.get("expected_triage_flagged_by"),
+            expected_triage_flagged_at=o_data.get("expected_triage_flagged_at"),
+            expected_triage_reason=o_data.get("expected_triage_reason"),
         ))
 
     # Update completion status
@@ -437,6 +456,10 @@ def _unified_gt_to_dict(gt: UnifiedGroundTruth) -> Dict:
                     "determined_by": o.determined_by,
                     "determined_at": o.determined_at,
                     "comment": o.comment,
+                    "expected_triage": o.expected_triage,
+                    "expected_triage_flagged_by": o.expected_triage_flagged_by,
+                    "expected_triage_flagged_at": o.expected_triage_flagged_at,
+                    "expected_triage_reason": o.expected_triage_reason,
                 }
                 for o in gt.outcomes
             ],
@@ -1050,6 +1073,11 @@ def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGro
             if so.causal_reach_id is not None:
                 o.causal_reach_id = so.causal_reach_id
             o.comment = so.comment
+            # Carry expected_triage metadata across the overlay
+            o.expected_triage = so.expected_triage
+            o.expected_triage_flagged_by = so.expected_triage_flagged_by
+            o.expected_triage_flagged_at = so.expected_triage_flagged_at
+            o.expected_triage_reason = so.expected_triage_reason
 
     algo_gt.update_completion_status()
 
