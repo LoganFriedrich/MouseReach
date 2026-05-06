@@ -397,36 +397,14 @@ class PillarGeometryAnnotatorWidget(QWidget):
         show_info(f"Loaded {self.video_path.name}")
 
     def _compute_auto_pillar(self, frame_idx: int) -> Tuple[float, float, float]:
-        """
-        Compute automatic pillar position using geometric calculation.
+        """Per-frame calculated pillar (cx, cy, r) in pixels.
 
-        Returns:
-            (center_x, center_y, radius) in pixels
+        Delegates to the shared `mousereach.lib.pillar_geometry` module
+        so the formula stays consistent everywhere it's used.
         """
+        from mousereach.lib.pillar_geometry import compute_pillar_geometry_row
         row = self.dlc_df.iloc[frame_idx]
-
-        sabl_x = row['SABL_x']
-        sabl_y = row['SABL_y']
-        sabr_x = row['SABR_x']
-        sabr_y = row['SABR_y']
-
-        # SA midpoint
-        mid_x = (sabl_x + sabr_x) / 2
-        mid_y = (sabl_y + sabr_y) / 2
-
-        # Ruler for this frame
-        ruler = np.sqrt((sabr_x - sabl_x)**2 + (sabr_y - sabl_y)**2)
-
-        # Geometric pillar: 0.944 ruler units perpendicular from SA midpoint
-        # In image coordinates, "above" SA means negative Y
-        pillar_x = mid_x
-        pillar_y = mid_y - (0.944 * ruler)
-
-        # Estimate radius: assume pillar diameter ~= pellet diameter ~= 0.20 ruler units
-        # So radius = 0.10 ruler units
-        radius = 0.10 * ruler
-
-        return pillar_x, pillar_y, radius
+        return compute_pillar_geometry_row(row)
 
     def _update_sa_points(self):
         """Update SABL/SABR reference points for current frame."""
