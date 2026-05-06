@@ -1,17 +1,27 @@
 """
-Reach assignment v1.
+Reach assignment v1 -- per-reach permanent output table.
 
-Per-reach binary classifier predicting causal-vs-miss within touched
-segments. Trained per LOOCV fold against GT causal labels (the reach
-whose [start_frame, end_frame] contains GT's interaction_frame for
-the segment).
+Production v1.0.0 is a cascade-trusted JOIN: takes the v8 reach detector
+outputs and the v6 cascade outcome detector outputs and stamps a final
+outcome label on every reach. Downstream kinematic analysis reads this
+table directly and never re-derives outcomes per reach.
 
-At inference time:
-  - For each touched segment, score every reach.
-  - Pick the reach with the highest causal probability as the segment's
-    causal reach. Other reaches are tagged as misses.
+The module also retains the v1.0.0_dev learned classifier (features.py
++ train.py + overrides.py) used in development eval; it remains
+importable for analysis but is NOT the production path.
 
-For untouched segments, all reaches are tagged not-on-pellet (no
-causal classification needed).
+Usage:
+    from mousereach.assignment.v1 import assign_reaches_v1
+    out = assign_reaches_v1(
+        reaches=algo_reaches,
+        segments_with_outcomes=cascade_segments,
+        video_id="20250626_CNT0102_P4",
+    )
+    # out is the standard reach-assignments dict; write to JSON or
+    # serialize as needed.
 """
-VERSION = "1.0.0_dev"
+from .assign import assign_reaches_v1
+
+VERSION = "1.0.0"
+
+__all__ = ["assign_reaches_v1", "VERSION"]
