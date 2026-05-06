@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mousereach"
-version = "2.7.0-dev"
+version = "2.9.0-dev"
 description = "MouseReach Pipeline - Mouse Reaching Behavior Analysis"
 readme = "README.md"
 license = {text = "MIT"}
@@ -108,6 +108,10 @@ mousereach-review-tool = "mousereach.review.ground_truth_widget:main_review"
 mousereach-unified-review = "mousereach.review.ground_truth_widget:main"
 mousereach-gt = "mousereach.review.ground_truth_widget:main"  # Short alias for GT tool
 mousereach-migrate-gt = "mousereach.review.unified_gt:cli_migrate"
+
+# Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes
+# into per-reach permanent output for kinematic analysis)
+mousereach-assign-reaches = "mousereach.assignment.cli:main_batch"
 
 # Step 5 - Grasp Kinematics
 mousereach-grasp-analyze = "mousereach.kinematics.cli:main_batch"
