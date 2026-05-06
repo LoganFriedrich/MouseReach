@@ -406,10 +406,34 @@ def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
         cls = seg.get("outcome", "miss")
     # Collapse displaced_outside -> displaced_sa per user directive.
     cls = _collapse_displaced_outside(cls)
-    # abnormal_exception segments propagate to all their reaches so the
-    # case stays visible on the per-reach confusion matrix.
+    # abnormal_exception: only the CAUSAL reach in the segment gets
+    # this label. Other reaches in those segments are misses, like in
+    # any other touched segment. GT identifies the causal reach via
+    # interaction_frame; algo via causal_reach_id.
     if cls == "abnormal_exception":
-        return "abnormal_exception"
+        if side_kind == "gt":
+            ifr = seg.get("interaction_frame")
+            sf, ef = reach.get("start_frame"), reach.get("end_frame")
+            if ifr is None or sf is None or ef is None:
+                return "miss"
+            return "abnormal_exception" if sf <= ifr <= ef else "miss"
+        else:  # algo
+            cid = seg.get("causal_reach_id")
+            if cid is None:
+                return "miss"
+            return "abnormal_exception" if reach.get("reach_id") == cid else "miss"
+    # triaged segments: only the WOULD-HAVE-BEEN-causal reach gets the
+    # triaged label on the algo side. Other reaches in the segment are
+    # misses (their kinematics weren't going to enter analysis anyway).
+    # GT side never sees "triaged" since GT always commits.
+    if cls == "triaged":
+        if side_kind == "gt":
+            # GT shouldn't have triaged outcomes; defensive fall-through
+            return "miss"
+        cid = seg.get("would_be_causal_reach_id") or seg.get("causal_reach_id")
+        if cid is None:
+            return "miss"
+        return "triaged" if reach.get("reach_id") == cid else "miss"
     if cls in ("untouched", "uncertain", "unknown") or cls is None:
         return "miss"
     if side_kind == "gt":

@@ -43,6 +43,15 @@ Thumbs.db
 # Claude context (private)
 .claude/
 
+# OMC (oh-my-claudecode) workspace state
+.omc/
+
+# Pytest temporary cache directories
+pytest-cache-files-*/
+
+# Side project planning docs -- kept locally, not tracked here
+Lesion Simulator/
+
 # Logs
 *.log
 
@@ -75,6 +84,8 @@ util_Tools/
 !src/mousereach/setup/*.json
 # But track Obsidian vault template config (Improvement Process framework)
 !src/mousereach/improvement/lib/vault_template/.obsidian/*.json
+# But track production model metadata sidecars (v8 reach detector etc.)
+!src/mousereach/reach/v8/models/*.meta.json
 *.npz
 *.zip
 *.csv

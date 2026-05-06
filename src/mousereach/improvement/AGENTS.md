@@ -3,6 +3,43 @@
 **This is CODE.** Algorithm-improvement-process tooling for MouseReach.
 Snapshot DATA accumulates in `Y:\2_Connectome\Behavior\MouseReach_Pipeline\Improvement_Snapshots\`.
 
+## REPORTING STANDARDS (READ BEFORE EVERY MODEL EVALUATION)
+
+The user has mandated how reach detection and outcome classification
+performance is reported. This is not preference -- it is the standard.
+Drifting back to summary scalars is the failure mode being prevented.
+
+### Outcome model evaluation
+- **LEAD with the Sankey** (`outcome/_run_notebooks.py:run_sankey`).
+  Show GT class -> algo class flow widths and call out the
+  directional shifts (e.g. `displaced_sa -> retrieved` is a different
+  problem than `retrieved -> displaced_sa`).
+- **Within correct categorical calls, report causal-reach correctness
+  separately**: did the algo identify the SAME reach as causal (TP) or
+  a different one (FP/FN)? Per-reach matching, not segment-level
+  agreement.
+- **Precision/recall are supporting only**, never the lead.
+- **F1 is banned** (see `feedback_no_f1.md` in cross-session memory).
+
+### Reach detection evaluation
+Two layers, both required.
+
+**Layer 1: detection TP/TN/FP/FN.** A detected reach counts as TP iff
+its start_frame is within +/- **2 frames** of a GT reach start AND
+its frame span is roughly the same. (Note: the existing
+`match_reaches` uses +/- 10f, which is appropriate for outcome
+causal-reach matching, NOT for headline reach detection eval.)
+
+**Layer 2: for TPs only, distribution of error.** Histogram or violin
+of `algo_start - gt_start` and `algo_span - gt_span`. Tells us if the
+model is biased early/late and how tight the agreement is.
+
+### Don't drift back
+Before sending any model-performance message: re-read the cross-session
+memory entry `reach_outcome_evaluation_format.md`. If the report leads
+with a P/R/F1 table or a single accuracy scalar, it has failed and
+must be redone with Sankey + direction as the lead.
+
 ## Critical: do NOT hand-roll figures from this snapshot data
 
 Each phase has a canonical figure-runner script. Use it. Hand-rolling
