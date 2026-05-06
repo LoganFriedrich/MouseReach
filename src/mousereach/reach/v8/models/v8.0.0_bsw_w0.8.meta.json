@@ -1,0 +1,63 @@
+{
+  "version": "8.0.0",
+  "model_path": "Y:/2_Connectome/Behavior/MouseReach/src/mousereach/reach/v8/models/v8.0.0_bsw_w0.8.joblib",
+  "trained_at": "2026-05-06T16:19:44.646179+00:00",
+  "trained_by": "friedrichl",
+  "trained_on": {
+    "n_videos_total": 20,
+    "video_ids": [
+      "20250624_CNT0107_P3",
+      "20250626_CNT0102_P4",
+      "20250627_CNT0105_P1",
+      "20250630_CNT0104_P3",
+      "20250701_CNT0111_P1",
+      "20250708_CNT0210_P3",
+      "20250710_CNT0215_P4",
+      "20250811_CNT0303_P4",
+      "20250812_CNT0301_P3",
+      "20250813_CNT0314_P4",
+      "20250820_CNT0103_P3",
+      "20250821_CNT0110_P4",
+      "20250909_CNT0209_P4",
+      "20251009_CNT0310_P2",
+      "20251010_CNT0308_P2",
+      "20251022_CNT0413_P4",
+      "20251024_CNT0402_P4",
+      "20251028_CNT0404_P4",
+      "20251030_CNT0403_P1",
+      "20251031_CNT0407_P1"
+    ],
+    "n_frames": 743024,
+    "n_positive_frames": 39528,
+    "corpus": "_corpus/2026-04-30_restart_inventory (train_pool + test_holdout, exhaustive subset)"
+  },
+  "training_config": {
+    "boundary_buffer": 1,
+    "boundary_weight": 0.8,
+    "max_iter": 200,
+    "learning_rate": 0.05,
+    "max_depth": 6,
+    "random_state": 42,
+    "early_stopping": false
+  },
+  "holdout_test_summary": {
+    "snapshot": "Improvement_Snapshots/reach_detection/v8.0.0_holdout_generalization_BSW_w0.8/",
+    "n_exhaustive_holdout_reaches": 328,
+    "tp": 301,
+    "fp": 54,
+    "fn": 27,
+    "precision": 0.848,
+    "recall": 0.918,
+    "start_delta_median": 0,
+    "span_delta_median": 0,
+    "verdict": "GENERALIZES (within 5pp of LOOCV calibration; recall improved with full data; no new failure modes)"
+  },
+  "calibration_reference": {
+    "snapshot": "Improvement_Snapshots/reach_detection/v8.0.0_dev_boundary_sample_weight_b1_w0.8/",
+    "loocv_tp": 1935,
+    "loocv_fp": 330,
+    "loocv_fn": 440,
+    "loocv_precision": 0.854,
+    "loocv_recall": 0.815
+  }
+}
