@@ -59,6 +59,7 @@ metadata (validation_status field), not by folder location.
 """
 
 import argparse
+import json
 from pathlib import Path
 
 
@@ -69,6 +70,10 @@ def main_batch():
     """
     Classify pellet outcomes for multiple videos.
 
+    Default detector: v6 cascade (30 physics-grounded stages,
+    first-to-commit wins, triage on uncertain). Use --legacy to fall
+    back to the v2.4.4 detector.
+
     This command:
     1. Finds videos with reach detection results
     2. Tracks pellet position throughout each segment
@@ -77,14 +82,14 @@ def main_batch():
 
     Examples:
         mousereach-detect-outcomes -i Processing/
+        mousereach-detect-outcomes -i Processing/ --legacy
     """
-    from mousereach.outcomes.core import process_batch
-
     parser = argparse.ArgumentParser(
         description="Classify pellet outcomes (retrieved/displaced/untouched)",
         epilog="""
 Examples:
   mousereach-detect-outcomes -i Processing/
+  mousereach-detect-outcomes -i Processing/ --legacy
   mousereach-detect-outcomes -i Processing/ -s '*_pellet_outcomes.json'
         """
     )
@@ -96,16 +101,171 @@ Examples:
                         help="Minimal output (no per-file progress)")
     parser.add_argument('-s', '--skip-if-exists', nargs='+',
                         help="Skip videos with files matching patterns")
+    parser.add_argument('--legacy', action='store_true',
+                        help="Use legacy v2.4.4 detector instead of v6 cascade")
     args = parser.parse_args()
 
-    results = process_batch(
-        args.input,
-        output_dir=args.output,
-        verbose=not args.quiet,
-        skip_if_exists=args.skip_if_exists
-    )
+    if args.legacy:
+        from mousereach.outcomes.core import process_batch
 
-    print(f"\nComplete: {results['success']}/{results['total']} succeeded")
+        if not args.quiet:
+            print("[outcome detector] Using legacy v2.4.4 detector")
+        results = process_batch(
+            args.input,
+            output_dir=args.output,
+            verbose=not args.quiet,
+            skip_if_exists=args.skip_if_exists
+        )
+        print(f"\nComplete: {results['success']}/{results['total']} succeeded")
+    else:
+        _main_batch_v6(args)
+
+
+def _main_batch_v6(args):
+    """v6 cascade batch processing (default detector)."""
+    from mousereach.outcomes.v6_cascade import detect_outcomes_v6_cascade, VERSION
+    from mousereach.outcomes.core.batch import find_file_sets
+    from mousereach.reach.v8.features import load_dlc_h5
+
+    input_dir = args.input
+    output_dir = args.output or input_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    verbose = not args.quiet
+
+    if verbose:
+        print(f"[outcome detector] v6 cascade (VERSION {VERSION})")
+
+    file_sets = find_file_sets(input_dir, skip_if_exists=args.skip_if_exists)
+
+    if not file_sets:
+        if verbose:
+            print(f"No file sets found in {input_dir}")
+        return
+
+    if verbose:
+        print(f"Found {len(file_sets)} video(s) to process")
+        print("-" * 70)
+
+    n_success = 0
+    n_failed = 0
+
+    for i, fs in enumerate(file_sets, 1):
+        video_name = fs["video_name"]
+        if verbose:
+            print(f"[{i}/{len(file_sets)}] {video_name}...", end=" ", flush=True)
+
+        try:
+            # Load DLC
+            dlc_df = load_dlc_h5(fs["dlc_file"])
+
+            # Load segments
+            seg_data = json.loads(fs["seg_file"].read_text(encoding="utf-8"))
+            boundaries = _extract_boundaries(seg_data)
+            segments = [
+                (boundaries[j], boundaries[j + 1] - 1)
+                for j in range(len(boundaries) - 1)
+            ]
+
+            # Load reaches (v6 cascade uses reach windows)
+            reaches = []
+            if fs.get("reach_file") and fs["reach_file"].exists():
+                reach_data = json.loads(
+                    fs["reach_file"].read_text(encoding="utf-8"))
+                reaches = _extract_reaches(reach_data)
+
+            # Detect video dir for Stage 98 CV checks
+            video_dir = _find_video_dir(input_dir, video_name)
+
+            # Run cascade
+            result = detect_outcomes_v6_cascade(
+                dlc_df=dlc_df,
+                segments=segments,
+                reaches=reaches,
+                video_id=video_name,
+                video_dir=video_dir,
+            )
+
+            # Write output
+            out_path = output_dir / f"{video_name}_pellet_outcomes.json"
+            out_path.write_text(
+                json.dumps(result, indent=2), encoding="utf-8")
+
+            # Summary counts
+            counts = {}
+            for s in result["segments"]:
+                o = s["outcome"]
+                counts[o] = counts.get(o, 0) + 1
+
+            n_success += 1
+            if verbose:
+                parts = []
+                for key in ("retrieved", "displaced_sa", "untouched", "triaged"):
+                    if counts.get(key, 0) > 0:
+                        tag = key[0].upper()
+                        parts.append(f"{tag}={counts[key]}")
+                print(f"OK ({'/'.join(parts)})")
+
+        except Exception as e:
+            n_failed += 1
+            if verbose:
+                print(f"FAILED: {e}")
+
+    if verbose:
+        print("-" * 70)
+    print(f"\nComplete: {n_success}/{len(file_sets)} succeeded"
+          + (f", {n_failed} failed" if n_failed else ""))
+
+
+def _extract_boundaries(seg_data):
+    """Extract frame boundaries from various segment JSON formats."""
+    # Format 1: {"segmentation": {"boundaries": [{"frame": N}, ...]}}
+    if "segmentation" in seg_data:
+        return [int(b["frame"])
+                for b in seg_data["segmentation"]["boundaries"]]
+    # Format 2: {"boundaries": [N, N, ...]}
+    if "boundaries" in seg_data:
+        return [int(b) for b in seg_data["boundaries"]]
+    # Format 3: {"segments": [{"start": N, "end": N}, ...]}
+    if "segments" in seg_data and isinstance(seg_data["segments"], list):
+        bounds = set()
+        for s in seg_data["segments"]:
+            if "start" in s:
+                bounds.add(int(s["start"]))
+            if "end" in s:
+                bounds.add(int(s["end"]))
+        return sorted(bounds)
+    raise ValueError(
+        "Cannot parse segment boundaries from JSON "
+        f"(keys: {list(seg_data.keys())})")
+
+
+def _extract_reaches(reach_data):
+    """Extract (start, end) tuples from various reach JSON formats."""
+    reaches = []
+    # Format 1: {"reaches": [{"start_frame": N, "end_frame": N}, ...]}
+    if "reaches" in reach_data and isinstance(reach_data["reaches"], list):
+        for r in reach_data["reaches"]:
+            s = r.get("start_frame") or r.get("start")
+            e = r.get("end_frame") or r.get("end")
+            if s is not None and e is not None:
+                reaches.append((int(s), int(e)))
+    return reaches
+
+
+def _find_video_dir(input_dir, video_name):
+    """Try to find the directory containing the source video file."""
+    for ext in (".avi", ".mp4"):
+        candidate = input_dir / f"{video_name}{ext}"
+        if candidate.exists():
+            return input_dir
+    # Check parent and siblings
+    for sibling in ("videos", "Videos", "raw"):
+        d = input_dir / sibling
+        if d.is_dir():
+            for ext in (".avi", ".mp4"):
+                if (d / f"{video_name}{ext}").exists():
+                    return d
+    return None
 
 
 # =============================================================================
