@@ -27,6 +27,11 @@ OUTCOME_COLORS = {
     # confirmed-unfixable video-quality cases). Both GT and algo can emit
     # this. See abnormal_exception_category_TODO.md memory entry.
     "abnormal_exception": "#616161",   # Dim gray
+    # v5/v1: triage is its own algo-side outcome -- "I'm flagging this
+    # for manual review rather than committing to a class". Holds back
+    # from kinematic analysis. Different from `uncertain` (which is a
+    # legacy abstention category from the rules-based detector).
+    "triaged": "#FFEB3B",              # Yellow - flag for manual review
 }
 
 # Shorter alias used in some analysis scripts
@@ -145,6 +150,7 @@ OUTCOME_CLASS_ORDER = [
     "abnormal_exception",  # v4.0.0+: non-evaluable; on Sankey, off precision/recall
     "miss",      # v4.0.0+: per-reach -- non-causal reaches default here
     "absent",    # v4.0.0+: per-reach -- reach exists only on the other side
+    "triaged",   # v5/v1+: algo flagged this for manual review (low confidence)
 ]
 
 
