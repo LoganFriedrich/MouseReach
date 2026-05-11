@@ -85,9 +85,25 @@ def _segments_with_outcomes(
 
 
 def _reaches_list(reaches_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if "reaches" in reaches_doc:
+    """Extract a flat list of reach dicts from a reach detector output.
+
+    Handles two schemas:
+      - v8+ (flat): top-level ``reaches: [...]``
+      - v7.x (nested): top-level ``segments: [{reaches: [...]}, ...]``
+    """
+    if isinstance(reaches_doc.get("reaches"), list):
         return list(reaches_doc["reaches"])
-    return []
+    flat: List[Dict[str, Any]] = []
+    for seg in reaches_doc.get("segments", []) or []:
+        seg_reaches = seg.get("reaches") or []
+        seg_num = seg.get("segment_num")
+        for r in seg_reaches:
+            # Stamp the segment_num onto the reach dict if not already present
+            # so downstream code can group reaches by segment.
+            if "segment_num" not in r and seg_num is not None:
+                r = {**r, "segment_num": seg_num}
+            flat.append(r)
+    return flat
 
 
 def _find_video_inputs(video_dir: Path) -> Optional[Tuple[Path, Path, Path]]:
