@@ -312,8 +312,18 @@ def _draw_sankey_panel(ax, cm: dict, panel_title: str, footer_text: str) -> int:
     return total_segments
 
 
-def run_sankey(snapshot_dir: Path) -> None:
-    """Render outcome-classification Sankey.
+def run_sankey(snapshot_dir: Path, *,
+               subject: str = "Per-segment outcome",
+               unit_label: str = "segments") -> None:
+    """Render a classification Sankey.
+
+    ``subject`` is the human-readable description of what each flow line
+    represents -- e.g. "Per-segment outcome" (algo 3, default) or
+    "Per-reach assignment" (algo 4). Appears in the figure suptitle and
+    panel titles to make the unit of analysis explicit.
+
+    ``unit_label`` is the plural noun for the flow units, used in the
+    "N=400 segments" / "N=4145 reaches" annotation.
 
     If the snapshot's scalars.json carries the two-level
     ``outcome_label.{pre_review, post_review}`` blocks (i.e., the
@@ -363,8 +373,10 @@ def run_sankey(snapshot_dir: Path) -> None:
                           if acc is not None else
                           f"still triaged: {n_tri}  |  GT auto-resolved: {n_resolved_total}")
             tot = _draw_sankey_panel(ax_std, level["confusion_matrix"], title, footer)
-            fig_std.suptitle(f"{snapshot_dir.name}  --  outcome flow (N={tot})",
-                             fontsize=13, fontweight="bold", y=0.99)
+            fig_std.suptitle(
+                f"{subject} flow  --  {snapshot_dir.name}  (N={tot} {unit_label})",
+                fontsize=13, fontweight="bold", y=0.99,
+            )
             plt.tight_layout()
             standalone_path = fig_dir / f"sankey_{suffix}.png"
             fig_std.savefig(str(standalone_path), dpi=DPI, bbox_inches="tight",
@@ -402,7 +414,7 @@ def run_sankey(snapshot_dir: Path) -> None:
         )
         total_segments = max(total_pre, total_post)
         fig.suptitle(
-            f"Outcome classification flow  (N={total_segments} segments)",
+            f"{subject} classification flow  (N={total_segments} {unit_label})",
             fontsize=15, fontweight="bold", y=1.00,
         )
 
@@ -432,7 +444,7 @@ def run_sankey(snapshot_dir: Path) -> None:
         if committed_acc is not None and committed_acc != strict_acc:
             footer += f"  |  Committed acc: {committed_acc:.1%}"
         total_segments = _draw_sankey_panel(
-            ax, cm, f"Outcome classification flow", footer,
+            ax, cm, f"{subject} classification flow", footer,
         )
         if total_segments == 0:
             plt.close(fig)
