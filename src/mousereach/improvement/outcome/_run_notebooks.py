@@ -36,6 +36,7 @@ from mousereach.improvement.lib.palette import (
 
 SNAPSHOTS = [
     Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Improvement_Snapshots\outcome\outcome_v2.4.4_pre_new_dlc"),
+    Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\iterations\generalization_test_2026-05-11"),
 ]
 
 DPI = 300
@@ -48,21 +49,16 @@ EXHAUSTIVE_WARNING = (
 
 # ---- sankey ----------------------------------------------------------------
 
-def run_sankey(snapshot_dir: Path) -> None:
-    print(f"\n=== SANKEY: {snapshot_dir.name} ===")
+def _draw_sankey_panel(ax, cm: dict, panel_title: str, footer_text: str) -> int:
+    """Draw a single Sankey panel into ``ax``. Returns total flow count."""
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
 
-    scalars_path = snapshot_dir / "metrics" / "scalars.json"
-    if not scalars_path.exists():
-        print(f"  SKIP: no scalars.json in {snapshot_dir.name}")
-        return
-
-    with open(scalars_path, "r") as f:
-        scalars = json.load(f)
-
-    cm = scalars.get("outcome_label", {}).get("confusion_matrix", {})
     if not cm:
-        print("  SKIP: empty confusion matrix")
-        return
+        ax.text(0.5, 0.5, f"{panel_title}\n(no data)",
+                ha="center", va="center", fontsize=12, transform=ax.transAxes)
+        return 0
 
     # Build flow data: (gt_outcome, algo_outcome, count)
     flows = []
@@ -71,12 +67,13 @@ def run_sankey(snapshot_dir: Path) -> None:
         if len(parts) == 2:
             flows.append((parts[0], parts[1], count))
 
-    # Sort by GT outcome order, then algo outcome order
     gt_order = {o: i for i, o in enumerate(OUTCOME_CLASS_ORDER)}
     algo_order = {o: i for i, o in enumerate(OUTCOME_CLASS_ORDER)}
+    # Make sure "triaged" sorts to the bottom of the algo column even though
+    # it's not in OUTCOME_CLASS_ORDER, so the pre-review panel's triaged flows
+    # cluster together visually.
     flows.sort(key=lambda x: (gt_order.get(x[0], 99), algo_order.get(x[1], 99)))
 
-    # Get unique outcomes on each side
     gt_outcomes = []
     algo_outcomes = []
     for gt, algo, _ in flows:
@@ -85,7 +82,6 @@ def run_sankey(snapshot_dir: Path) -> None:
         if algo not in algo_outcomes:
             algo_outcomes.append(algo)
 
-    # Compute totals for positioning
     gt_totals = {}
     algo_totals = {}
     for gt, algo, count in flows:
@@ -93,10 +89,10 @@ def run_sankey(snapshot_dir: Path) -> None:
         algo_totals[algo] = algo_totals.get(algo, 0) + count
 
     total_segments = sum(c for _, _, c in flows)
-
-    # Layout: left column = GT, right column = algo
-    figsize = (10, 7)
-    fig, ax = plt.subplots(figsize=figsize, dpi=DPI)
+    if total_segments == 0:
+        ax.text(0.5, 0.5, f"{panel_title}\n(empty)",
+                ha="center", va="center", fontsize=12, transform=ax.transAxes)
+        return 0
 
     bar_width = 0.12
     gap = 0.02
@@ -288,37 +284,128 @@ def run_sankey(snapshot_dir: Path) -> None:
                     bbox=dict(boxstyle="round,pad=0.18", facecolor="white",
                               alpha=0.92, edgecolor=label_color, linewidth=0.7))
 
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
-
-    # Title and labels
-    ax.text(0.5, 0.98, f"Outcome classification flow (N={total_segments})",
-            ha="center", va="top", fontsize=14, fontweight="bold",
+    # Panel title (just above the GT/algo bars; the figure title goes above
+    # the whole grid in the caller).
+    ax.text(0.5, 0.995, panel_title,
+            ha="center", va="top", fontsize=12, fontweight="bold",
             transform=ax.transAxes)
-    ax.text(left_x, 0.96, "Ground Truth", ha="center", va="top", fontsize=11,
+    ax.text(left_x, 0.96, "Ground Truth", ha="center", va="top", fontsize=10,
             fontweight="bold", transform=ax.transAxes)
-    ax.text(right_x, 0.96, "Algorithm", ha="center", va="top", fontsize=11,
+    ax.text(right_x, 0.96, "Algorithm", ha="center", va="top", fontsize=10,
             fontweight="bold", transform=ax.transAxes)
 
-    # Footer
+    # Panel footer
     n_correct = sum(c for gt, al, c in flows if gt == al)
-    strict_acc = scalars.get("outcome_label", {}).get("strict_accuracy")
-    committed_acc = scalars.get("outcome_label", {}).get("committed_accuracy")
-    footer = f"Correct flows: {n_correct}/{total_segments}"
-    if strict_acc is not None:
-        footer += f" | Strict acc: {strict_acc:.1%}"
-    if committed_acc is not None:
-        footer += f" | Committed acc: {committed_acc:.1%}"
-    ax.text(0.5, 0.02, footer, ha="center", va="bottom", fontsize=9,
-            color="#555555", transform=ax.transAxes)
+    footer = f"Correct: {n_correct}/{total_segments}"
+    if footer_text:
+        footer = f"{footer}  |  {footer_text}"
+    ax.text(0.5, 0.015, footer, ha="center", va="bottom", fontsize=9,
+            color="#333333", transform=ax.transAxes)
+    return total_segments
 
-    plt.tight_layout()
 
-    # Save
+def run_sankey(snapshot_dir: Path) -> None:
+    """Render outcome-classification Sankey.
+
+    If the snapshot's scalars.json carries the two-level
+    ``outcome_label.{pre_review, post_review}`` blocks (i.e., the
+    analyzer was run after GT auto-resolve was integrated), draw a
+    side-by-side two-panel figure. Otherwise fall back to the legacy
+    single-panel render.
+    """
+    print(f"\n=== SANKEY: {snapshot_dir.name} ===")
+
+    scalars_path = snapshot_dir / "metrics" / "scalars.json"
+    if not scalars_path.exists():
+        print(f"  SKIP: no scalars.json in {snapshot_dir.name}")
+        return
+
+    with open(scalars_path, "r") as f:
+        scalars = json.load(f)
+
+    label = scalars.get("outcome_label", {}) or {}
+    pre = label.get("pre_review")
+    post = label.get("post_review")
+    has_two_level = bool(pre and post and pre.get("confusion_matrix")
+                         and post.get("confusion_matrix"))
+
     fig_dir = snapshot_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
+    if has_two_level:
+        figsize = (18, 7)
+        fig, (ax_pre, ax_post) = plt.subplots(1, 2, figsize=figsize, dpi=DPI)
+
+        pre_acc = pre.get("accuracy")
+        post_acc = post.get("accuracy")
+        n_pre_triaged = pre.get("n_triaged", 0)
+        n_post_triaged = post.get("n_triaged", 0)
+        tr = scalars.get("triage_resolution", {}) or {}
+        n_resolved = tr.get("n_resolved_from_gt", 0)
+
+        pre_footer = (
+            f"Pre-review accuracy: {pre_acc:.1%}  |  triaged: {n_pre_triaged}"
+            if pre_acc is not None else f"triaged: {n_pre_triaged}"
+        )
+        post_footer = (
+            f"Post-review accuracy: {post_acc:.1%}  |  still triaged: {n_post_triaged}  |  GT auto-resolved: {n_resolved}"
+            if post_acc is not None else
+            f"still triaged: {n_post_triaged}  |  GT auto-resolved: {n_resolved}"
+        )
+
+        total_pre = _draw_sankey_panel(
+            ax_pre, pre["confusion_matrix"],
+            "PRE-REVIEW  (algo in isolation)", pre_footer,
+        )
+        total_post = _draw_sankey_panel(
+            ax_post, post["confusion_matrix"],
+            "POST-REVIEW  (after GT auto-resolve)", post_footer,
+        )
+        total_segments = max(total_pre, total_post)
+        fig.suptitle(
+            f"Outcome classification flow  (N={total_segments} segments)",
+            fontsize=15, fontweight="bold", y=1.00,
+        )
+
+        n_correct_pre = pre.get("n_correct", 0)
+        n_correct_post = post.get("n_correct", 0)
+        data_summary = (
+            f"- Total segments: {total_segments}\n"
+            f"- Pre-review: {n_correct_pre} correct, {n_pre_triaged} triaged "
+            f"({(pre_acc or 0)*100:.1f}% accuracy)\n"
+            f"- Post-review: {n_correct_post} correct, {n_post_triaged} triaged "
+            f"({(post_acc or 0)*100:.1f}% accuracy)\n"
+            f"- GT auto-resolved triaged segments: {n_resolved}"
+        )
+    else:
+        figsize = (10, 7)
+        fig, ax = plt.subplots(figsize=figsize, dpi=DPI)
+        cm = label.get("confusion_matrix", {})
+        if not cm:
+            print("  SKIP: empty confusion matrix")
+            plt.close(fig)
+            return
+        strict_acc = label.get("strict_accuracy")
+        committed_acc = label.get("committed_accuracy")
+        footer = ""
+        if strict_acc is not None:
+            footer += f"Strict acc: {strict_acc:.1%}"
+        if committed_acc is not None and committed_acc != strict_acc:
+            footer += f"  |  Committed acc: {committed_acc:.1%}"
+        total_segments = _draw_sankey_panel(
+            ax, cm, f"Outcome classification flow", footer,
+        )
+        if total_segments == 0:
+            plt.close(fig)
+            return
+        n_correct = sum(v for k, v in cm.items()
+                        if "__" in k and k.split("__")[0] == k.split("__")[1])
+        data_summary = (
+            f"- Total segments: {total_segments}\n"
+            f"- Correct: {n_correct} ({100*n_correct/total_segments:.1f}%)"
+        )
+
+    plt.tight_layout()
     png_path = fig_dir / "sankey.png"
     fig.savefig(str(png_path), dpi=DPI, bbox_inches="tight", pad_inches=0.15,
                 facecolor="white")
@@ -329,21 +416,38 @@ def run_sankey(snapshot_dir: Path) -> None:
 ## What question this answers
 
 How does the algorithm's outcome classification compare to ground truth?
-Each flow shows how many segments with a given GT outcome were classified
-by the algorithm. Correct flows (GT == algo) are colored by outcome class;
-misclassified flows are red with counts labeled.
+
+When the snapshot was analyzed after GT auto-resolve was integrated, the
+figure is rendered as **two side-by-side panels**:
+
+- **PRE-REVIEW** -- the algorithm's call in isolation. Segments the cascade
+  triaged stay in the ``triaged`` lane. This is the algo's standalone
+  classification quality, before any review / GT auto-resolve fires.
+- **POST-REVIEW** -- after GT auto-resolve has lifted triage on every
+  segment with a matching unified-GT entry. This is what the downstream
+  kinematic pipeline actually sees in production for any video that has
+  been ground-truthed.
+
+For older snapshots without two-level metrics, a single panel is drawn.
 
 ## What improvement looks like
 
-- Thicker correct flows (same color, GT to algo).
-- Thinner or absent red cross-flows.
-- Equal bar heights on both sides (no systematic over/under-prediction).
+- Pre-review: thicker correct flows, less mass flowing into the triaged
+  lane (algo getting more right unaided).
+- Post-review: even more concentrated diagonal -- ideally all GT classes
+  flow only to their own algo class.
+- The gap between pre and post should NOT be growing -- if it is, the
+  algo is leaning on GT auto-resolve to bail it out.
 
 ## Red-flag patterns
 
-- **Thick red flows**: systematic misclassification (e.g., retrieved -> displaced_sa).
-- **Unbalanced bars**: algorithm over-predicts one class at expense of another.
-- **Many flows to uncertain**: algorithm abstaining too often.
+- **Pre-review has thick wrong-commit flows** (e.g., retrieved -> displaced_sa).
+  These are the truly costly errors -- GT auto-resolve can't fix them, since
+  the algo didn't punt.
+- **Pre-review triaged lane is shrinking but wrong-commit flows are growing**
+  -- algo getting overconfident.
+- **Post-review still has residual triaged flow** -- means some segments
+  were triaged AND had no GT entry to clean them up (human review needed).
 
 ## Exhaustive flag
 
@@ -357,8 +461,7 @@ misclassified flows are red with counts labeled.
 
 ## Data summary
 
-- Total segments: {total_segments}
-- Correct: {n_correct} ({100*n_correct/total_segments:.1f}%)
+{data_summary}
 """
     legend_path = fig_dir / "sankey_legend.md"
     legend_path.write_text(legend_md, encoding="utf-8")
