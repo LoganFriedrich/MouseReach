@@ -74,13 +74,21 @@ def _draw_sankey_panel(ax, cm: dict, panel_title: str, footer_text: str) -> int:
     # cluster together visually.
     flows.sort(key=lambda x: (gt_order.get(x[0], 99), algo_order.get(x[1], 99)))
 
-    gt_outcomes = []
-    algo_outcomes = []
-    for gt, algo, _ in flows:
-        if gt not in gt_outcomes:
-            gt_outcomes.append(gt)
-        if algo not in algo_outcomes:
-            algo_outcomes.append(algo)
+    # Use the palette's canonical class order on BOTH sides so a class
+    # always sits at the same y on left and right. Correct flows stay
+    # horizontal -- crossings only happen for genuine misclassification.
+    # Triage / uncertain / unknown / abnormal_exception are appended at
+    # the bottom (in that order) if any flow uses them.
+    present_left = {f[0] for f in flows}
+    present_right = {f[1] for f in flows}
+    canonical = list(OUTCOME_CLASS_ORDER)
+    tail = []
+    for cls in ("triaged", "uncertain", "unknown", "abnormal_exception"):
+        if cls in present_left | present_right and cls not in canonical:
+            tail.append(cls)
+    ordered = canonical + tail
+    gt_outcomes = [c for c in ordered if c in present_left]
+    algo_outcomes = [c for c in ordered if c in present_right]
 
     gt_totals = {}
     algo_totals = {}
