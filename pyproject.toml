@@ -103,10 +103,11 @@ mousereach-advance-outcomes = "mousereach.outcomes.cli:main_advance"
 mousereach-review-pellet-outcomes = "mousereach.outcomes.cli:main_review"
 mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated: use mousereach-review-pellet-outcomes
 
-# Review Tool (saves corrections to algo files) and GT Tool (creates unified GT file)
-mousereach-review-tool = "mousereach.review.ground_truth_widget:main_review"
+# Triage Clearing tool (per-segment review of algo-flagged segments) and GT Tool
+mousereach-review-tool = "mousereach.review.triage_clearing:main"  # Triage clearing (per-segment, worklist-driven)
 mousereach-unified-review = "mousereach.review.ground_truth_widget:main"
-mousereach-gt = "mousereach.review.ground_truth_widget:main"  # Short alias for GT tool
+mousereach-gt = "mousereach.review.ground_truth_widget:main"  # GT scoring tool
+mousereach-review-legacy = "mousereach.review.ground_truth_widget:main_review"  # Old whole-video review (kept for compat)
 mousereach-migrate-gt = "mousereach.review.unified_gt:cli_migrate"
 
 # Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes
