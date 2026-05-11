@@ -13,7 +13,11 @@ from mousereach.improvement.outcome._run_notebooks import run_sankey
 
 def graph(snapshot_dir: Path) -> Path:
     paths = load_snapshot_paths(snapshot_dir)
-    run_sankey(paths.snapshot_dir)
+    run_sankey(
+        paths.snapshot_dir,
+        subject="Per-reach assignment",
+        unit_label="reaches",
+    )
     return paths.figures_dir / "sankey.png"
 
 
