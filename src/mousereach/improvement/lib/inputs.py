@@ -107,10 +107,26 @@ def load_gt_reaches(gt_dir: Path, video_id: str) -> List[dict]:
 
 
 def load_gt_boundaries(gt_dir: Path, video_id: str) -> List[int]:
-    """GT segment boundaries if present (segmentation eval)."""
+    """GT segment boundaries if present (segmentation eval).
+
+    Handles two schemas:
+      - Legacy: ``boundaries: [int, int, ...]`` (frame numbers)
+      - Unified GT v2.0: ``boundaries: [{"index": i, "frame": F, "determined": bool,
+        ...}, ...]``
+    Returns a flat list of integer frame numbers either way.
+    """
     gt = load_gt_video(gt_dir, video_id)
     block = gt.get("segmentation", {}) or {}
-    return list(block.get("boundaries", []) or [])
+    raw = list(block.get("boundaries", []) or [])
+    out: List[int] = []
+    for b in raw:
+        if isinstance(b, dict):
+            f = b.get("frame")
+            if f is not None:
+                out.append(int(f))
+        else:
+            out.append(int(b))
+    return out
 
 
 # ---------------------------------------------------------------------------
