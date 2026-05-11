@@ -110,7 +110,55 @@ def analyze(snapshot_dir: Path) -> dict:
         matches=[m.to_dict() for m in matches],
     )
     out = scalars.to_dict()
+
+    # Back-compat block consumed by the segmentation summary-table runner,
+    # which expects scalars["all"] = { n_gt_boundaries, n_algo_boundaries,
+    # n_phantom, n_miss } and similar per-subset blocks. Subsets aren't
+    # populated yet (the analyzer does not yet stamp boundary-level GT
+    # subset tags), so all are aliased to the "all" rollup.
+    n_phantom = int(sum(1 for m in matches if m.status == "fp"))
+    n_miss = int(sum(1 for m in matches if m.status == "fn"))
+    n_matched_local = int(sum(1 for m in matches if m.status == "matched"))
+    all_block = {
+        "n_gt_boundaries": n_matched_local + n_miss,
+        "n_algo_boundaries": n_matched_local + n_phantom,
+        "n_phantom": n_phantom,
+        "n_miss": n_miss,
+    }
+    out["all"] = all_block
+    # Subset breakdowns (inter_pellet vs endpoint) aren't yet stamped at
+    # boundary level. The summary-table runner needs them; until they're
+    # implemented the table is skipped (violin still tells the story).
+
+    # Canonical scalars.json the runners read.
     write_scalars(paths.metrics_dir, out, "segmentation_scalars.json")
+    write_scalars(paths.metrics_dir, out, "scalars.json")
+
+    # Per-boundary CSV consumed by the violin + summary-table runners.
+    # Map status names to what those runners expect: fp -> phantom (algo
+    # emitted a boundary GT didn't have), fn -> miss (GT had a boundary
+    # algo didn't emit). subset_tag stays "all" for now -- future GT
+    # versions can stamp boundary-level subsets and we'll surface them.
+    import csv
+    status_map = {"matched": "matched", "fp": "phantom", "fn": "miss"}
+    deltas_path = paths.metrics_dir / "boundary_deltas.csv"
+    with open(deltas_path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(
+            fh, fieldnames=[
+                "video_id", "status", "signed_delta", "subset_tag",
+                "algo_frame", "gt_frame",
+            ],
+        )
+        w.writeheader()
+        for m in matches:
+            w.writerow({
+                "video_id": m.video_id,
+                "status": status_map.get(m.status, m.status),
+                "signed_delta": m.delta if m.delta is not None else 0,
+                "subset_tag": "all",
+                "algo_frame": m.algo_frame if m.algo_frame is not None else "",
+                "gt_frame": m.gt_frame if m.gt_frame is not None else "",
+            })
     return out
 
 
