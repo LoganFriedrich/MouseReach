@@ -194,6 +194,13 @@ class TriageClearingWidget(GroundTruthWidget):
             entry.end_frame + self.post_pad,
         )
         self._load_video(video_path, frame_range=frame_range)
+        # Ensure an OutcomeGT row exists for this segment so the reviewer
+        # can pick the outcome class and stamp the interaction / known
+        # frame via the inherited GT-tool outcome row. Triaged segments
+        # usually have no GT entry; without this placeholder the outcomes
+        # sidebar is empty and there's nowhere to click.
+        self._ensure_outcome_placeholder(entry.segment_num)
+        self._refresh_outcomes_list()
         # Clear notes for the new segment
         if self._notes_edit is not None:
             self._notes_edit.setPlainText("")
@@ -202,6 +209,67 @@ class TriageClearingWidget(GroundTruthWidget):
         if entry.already_cleared:
             self._prefill_prior_call(entry)
         return True
+
+    def _algo_files_dir(self) -> Path:
+        """Triage tool runs against quarantines where the video and the
+        algo JSONs live in sibling directories (``videos/`` vs
+        ``algo_outputs_current/``). Point saves at the worklist's
+        algo_dir instead of the video's parent."""
+        if self.worklist is not None:
+            return self.worklist.algo_dir
+        return super()._algo_files_dir()
+
+    def _save_to_algo_files(self):
+        """Override the inherited Review-Tool "✓ Save & Continue" button so
+        it does triage clearing (with proper markers) AND advances the
+        worklist -- not a raw file dump that leaves the reviewer on the
+        same segment. Single canonical save path regardless of which
+        save button the user clicks."""
+        self._on_save_and_next_clicked()
+
+    def _add_reach(self):
+        """Override the GT-tool's reach adder so newly-added reaches are
+        tagged with the CURRENT TRIAGE ENTRY's segment_num, not whichever
+        segment the napari slider happens to land in. The triage tool's
+        whole purpose is to clear one specific segment; the reviewer
+        adding a reach is by definition adding the causal reach for THAT
+        segment, even if the displayed frame falls in a neighboring
+        boundary-defined slot."""
+        super()._add_reach()
+        if not self.worklist or self.worklist.current is None:
+            return
+        target_seg = int(self.worklist.current.segment_num)
+        # The reach we just added is the new self._selected_reach (set by
+        # the parent's _add_reach).
+        new_reach = getattr(self, "_selected_reach", None)
+        if new_reach is None:
+            return
+        if int(getattr(new_reach, "segment_num", -1)) == target_seg:
+            return
+        new_reach.segment_num = target_seg
+        # Re-render the sidebar so the row moves to the right segment header.
+        self._refresh_reaches_list()
+
+    def _ensure_outcome_placeholder(self, segment_num: int) -> None:
+        """If self.gt.outcomes has no entry for ``segment_num``, append a
+        placeholder so the GT-tool outcome row renders. The placeholder
+        starts as ``outcome="unknown"`` / not-determined; the reviewer's
+        dropdown + interaction-frame button then mutate it normally."""
+        if not self.gt:
+            return
+        from mousereach.review.unified_gt import OutcomeGT
+        for o in (self.gt.outcomes or []):
+            if int(getattr(o, "segment_num", -1)) == int(segment_num):
+                return
+        placeholder = OutcomeGT(
+            segment_num=int(segment_num),
+            outcome="unknown",
+            determined=False,
+        )
+        if self.gt.outcomes is None:
+            self.gt.outcomes = [placeholder]
+        else:
+            self.gt.outcomes.append(placeholder)
 
     def _prefill_prior_call(self, entry: TriageEntry) -> None:
         """If the segment is already cleared, load the prior call into UI."""
@@ -294,7 +362,7 @@ class TriageClearingWidget(GroundTruthWidget):
         username = get_username()
         timestamp = get_timestamp()
         notes = self._notes_edit.toPlainText().strip() if self._notes_edit else ""
-        parent = self.video_path.parent
+        parent = self._algo_files_dir()
         video_stem = self.video_path.stem
         if "DLC_" in video_stem:
             video_stem = video_stem.split("DLC_")[0]
