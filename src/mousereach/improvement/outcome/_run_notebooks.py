@@ -333,6 +333,37 @@ def run_sankey(snapshot_dir: Path) -> None:
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     if has_two_level:
+        # Also render two standalone single-panel PNGs so each level can be
+        # viewed in isolation and easily juxtaposed across snapshots (e.g.
+        # training-pre vs generalization-pre).
+        tr = scalars.get("triage_resolution", {}) or {}
+        n_resolved_total = tr.get("n_resolved_from_gt", 0)
+        for level_key, level, suffix in (
+            ("pre_review", pre, "pre"),
+            ("post_review", post, "post"),
+        ):
+            fig_std, ax_std = plt.subplots(figsize=(10, 7), dpi=DPI)
+            acc = level.get("accuracy")
+            n_tri = level.get("n_triaged", 0)
+            if suffix == "pre":
+                title = "PRE-REVIEW  (algo in isolation)"
+                footer = (f"Accuracy: {acc:.1%}  |  triaged: {n_tri}"
+                          if acc is not None else f"triaged: {n_tri}")
+            else:
+                title = "POST-REVIEW  (after GT auto-resolve)"
+                footer = (f"Accuracy: {acc:.1%}  |  still triaged: {n_tri}  |  GT auto-resolved: {n_resolved_total}"
+                          if acc is not None else
+                          f"still triaged: {n_tri}  |  GT auto-resolved: {n_resolved_total}")
+            tot = _draw_sankey_panel(ax_std, level["confusion_matrix"], title, footer)
+            fig_std.suptitle(f"{snapshot_dir.name}  --  outcome flow (N={tot})",
+                             fontsize=13, fontweight="bold", y=0.99)
+            plt.tight_layout()
+            standalone_path = fig_dir / f"sankey_{suffix}.png"
+            fig_std.savefig(str(standalone_path), dpi=DPI, bbox_inches="tight",
+                            pad_inches=0.15, facecolor="white")
+            print(f"  Saved: {standalone_path}")
+            plt.close(fig_std)
+
         figsize = (18, 7)
         fig, (ax_pre, ax_post) = plt.subplots(1, 2, figsize=figsize, dpi=DPI)
 
@@ -630,31 +661,72 @@ def run_summary_table(snapshot_dir: Path) -> None:
     per_class = label_data.get("per_class", {})
 
     label_rows = []
-    # Overall row
-    label_rows.append({
-        "Class": "OVERALL",
-        "N_GT": scalars.get("n_segments_paired", 0),
-        "N_algo": scalars.get("n_segments_paired", 0),
-        "Precision": "",
-        "Recall": "",
-        "F1": "",
-        "Strict Acc %": f"{label_data.get('strict_accuracy', 0)*100:.1f}",
-        "Committed Acc %": f"{label_data.get('committed_accuracy', 0)*100:.1f}",
-        "Abstention %": f"{label_data.get('abstention_rate', 0)*100:.1f}",
-    })
-    for cls in ["retrieved", "displaced_sa", "displaced_outside", "untouched"]:
-        pc = per_class.get(cls, {})
+    pre_block = label_data.get("pre_review") or {}
+    post_block = label_data.get("post_review") or {}
+    pre_acc = pre_block.get("accuracy")
+    post_acc = post_block.get("accuracy")
+    tr_block = scalars.get("triage_resolution", {}) or {}
+    # Overall row -- expose pre + post accuracy when two-level metrics are
+    # available; fall back to the legacy single accuracy otherwise.
+    if pre_acc is not None and post_acc is not None:
         label_rows.append({
-            "Class": cls,
-            "N_GT": pc.get("n_gt", 0),
-            "N_algo": pc.get("n_algo", 0),
-            "Precision": f"{pc.get('precision', 0)*100:.1f}",
-            "Recall": f"{pc.get('recall', 0)*100:.1f}",
-            "F1": f"{pc.get('f1', 0)*100:.1f}",
-            "Strict Acc %": "",
-            "Committed Acc %": "",
-            "Abstention %": "",
+            "Class": "OVERALL",
+            "N_GT": scalars.get("n_segments_paired", 0),
+            "N_algo": scalars.get("n_segments_paired", 0),
+            "Precision": "",
+            "Recall": "",
+            "Pre-review Acc %": f"{pre_acc*100:.1f}",
+            "Post-review Acc %": f"{post_acc*100:.1f}",
+            "Pre triaged": pre_block.get("n_triaged", 0),
+            "Post triaged": post_block.get("n_triaged", 0),
+            "GT auto-resolved": tr_block.get("n_resolved_from_gt", 0),
         })
+    else:
+        label_rows.append({
+            "Class": "OVERALL",
+            "N_GT": scalars.get("n_segments_paired", 0),
+            "N_algo": scalars.get("n_segments_paired", 0),
+            "Precision": "",
+            "Recall": "",
+            "F1": "",
+            "Strict Acc %": f"{label_data.get('strict_accuracy', 0)*100:.1f}",
+            "Committed Acc %": f"{label_data.get('committed_accuracy', 0)*100:.1f}",
+            "Abstention %": f"{label_data.get('abstention_rate', 0)*100:.1f}",
+        })
+    # Per-class rows. In two-level mode, show post-review P/R (production
+    # realistic view). Pre-review per-class is in scalars.json for anyone
+    # who wants it. Drop F1 per the user's reporting rule (Sankey leads;
+    # P/R support; never F1).
+    per_class_for_rows = (post_block.get("per_class") or per_class
+                          if pre_acc is not None and post_acc is not None
+                          else per_class)
+    for cls in ["retrieved", "displaced_sa", "displaced_outside", "untouched"]:
+        pc = per_class_for_rows.get(cls, {})
+        if pre_acc is not None and post_acc is not None:
+            label_rows.append({
+                "Class": cls,
+                "N_GT": pc.get("n_gt", 0),
+                "N_algo": pc.get("n_algo", 0),
+                "Precision": f"{pc.get('precision', 0)*100:.1f}",
+                "Recall": f"{pc.get('recall', 0)*100:.1f}",
+                "Pre-review Acc %": "",
+                "Post-review Acc %": "",
+                "Pre triaged": "",
+                "Post triaged": "",
+                "GT auto-resolved": "",
+            })
+        else:
+            label_rows.append({
+                "Class": cls,
+                "N_GT": pc.get("n_gt", 0),
+                "N_algo": pc.get("n_algo", 0),
+                "Precision": f"{pc.get('precision', 0)*100:.1f}",
+                "Recall": f"{pc.get('recall', 0)*100:.1f}",
+                "F1": "",
+                "Strict Acc %": "",
+                "Committed Acc %": "",
+                "Abstention %": "",
+            })
 
     # ==== Section 2: Interaction frame block ====
     ifr = scalars.get("interaction_frame", {})

@@ -104,7 +104,12 @@ def _per_class(rows: list, attr: str) -> Dict[str, dict]:
         n_algo = sum(1 for r in rows if getattr(r, attr) == cls)
         n_correct = sum(1 for r in rows
                         if r.gt_outcome == cls and getattr(r, attr) == cls)
-        per[cls] = {"n_gt": n_gt, "n_algo": n_algo, "n_correct": n_correct}
+        precision = (n_correct / n_algo) if n_algo else 0.0
+        recall = (n_correct / n_gt) if n_gt else 0.0
+        per[cls] = {
+            "n_gt": n_gt, "n_algo": n_algo, "n_correct": n_correct,
+            "precision": precision, "recall": recall,
+        }
     return per
 
 
@@ -183,6 +188,25 @@ def analyze(snapshot_dir: Path) -> dict:
     for row_dict, row_obj in zip(out["rows"], rows):
         row_dict["algo_outcome_pre_review"] = getattr(row_obj, "algo_outcome_pre_review")
 
+    # Interaction frame summary (median/mean signed delta over rows where
+    # both algo and GT have a frame). Consumed by the summary_table header.
+    paired_deltas = [r.interaction_delta for r in rows
+                     if r.interaction_delta is not None]
+    if paired_deltas:
+        import statistics as _stats
+        abs_deltas = [abs(d) for d in paired_deltas]
+        out["interaction_frame"] = {
+            "n_paired": len(paired_deltas),
+            "median_abs_delta": int(_stats.median(abs_deltas)),
+            "mean_signed_delta": sum(paired_deltas) / len(paired_deltas),
+        }
+    else:
+        out["interaction_frame"] = {
+            "n_paired": 0,
+            "median_abs_delta": None,
+            "mean_signed_delta": None,
+        }
+
     out["triage_resolution"] = {
         "n_triaged_pre_review": n_triaged_pre,
         "n_resolved_from_gt": n_resolved_from_gt,
@@ -222,6 +246,33 @@ def analyze(snapshot_dir: Path) -> dict:
 
     write_scalars(paths.metrics_dir, out, "outcome_scalars.json")
     write_scalars(paths.metrics_dir, out, "scalars.json")
+
+    # Per-segment CSV consumed by the interaction-violin + summary-table
+    # runners. Column names match the legacy schema those tools expect
+    # (`interaction_frame_delta`) plus the new ``algo_outcome_pre_review``.
+    import csv
+    csv_path = paths.metrics_dir / "outcome_per_segment.csv"
+    fieldnames = [
+        "video_id", "segment_num",
+        "gt_outcome", "algo_outcome", "algo_outcome_pre_review",
+        "gt_interaction_frame", "algo_interaction_frame",
+        "interaction_frame_delta", "gt_exhaustive",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "video_id": r.video_id,
+                "segment_num": r.segment_num,
+                "gt_outcome": r.gt_outcome or "",
+                "algo_outcome": r.algo_outcome or "",
+                "algo_outcome_pre_review": getattr(r, "algo_outcome_pre_review", "") or "",
+                "gt_interaction_frame": r.gt_interaction_frame if r.gt_interaction_frame is not None else "",
+                "algo_interaction_frame": r.algo_interaction_frame if r.algo_interaction_frame is not None else "",
+                "interaction_frame_delta": r.interaction_delta if r.interaction_delta is not None else "",
+                "gt_exhaustive": "true" if r.gt_exhaustive else "false",
+            })
     return out
 
 
