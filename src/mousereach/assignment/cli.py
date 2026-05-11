@@ -92,7 +92,12 @@ def _reaches_list(reaches_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _find_video_inputs(video_dir: Path) -> Optional[Tuple[Path, Path, Path]]:
     """Resolve the (segments_json, reaches_json, outcomes_json) trio
-    in `video_dir`. Returns None if any are missing."""
+    in `video_dir`. Returns None if any are missing.
+
+    Picks the first matching candidate of each type. Use ``_find_inputs_for_stem``
+    when the dir contains multiple videos and the caller knows which stem
+    to resolve.
+    """
     seg_candidates = list(video_dir.glob("*_segmentation.json")) + list(video_dir.glob("*_segments.json"))
     reach_candidates = list(video_dir.glob("*_reaches.json"))
     outcome_candidates = list(video_dir.glob("*_pellet_outcomes.json"))
@@ -101,12 +106,21 @@ def _find_video_inputs(video_dir: Path) -> Optional[Tuple[Path, Path, Path]]:
     return seg_candidates[0], reach_candidates[0], outcome_candidates[0]
 
 
-def _process_video_dir(video_dir: Path) -> Optional[Path]:
-    inputs = _find_video_inputs(video_dir)
-    if inputs is None:
+def _find_inputs_for_stem(root: Path, stem: str) -> Optional[Tuple[Path, Path, Path]]:
+    """Resolve inputs for a specific video stem in a flat-layout dir."""
+    seg = root / f"{stem}_segments.json"
+    if not seg.exists():
+        seg = root / f"{stem}_segmentation.json"
+    reach = root / f"{stem}_reaches.json"
+    out = root / f"{stem}_pellet_outcomes.json"
+    if not seg.exists() or not reach.exists() or not out.exists():
         return None
-    seg_path, reach_path, outcome_path = inputs
+    return seg, reach, out
 
+
+def _process_inputs(seg_path: Path, reach_path: Path, outcome_path: Path,
+                     output_dir: Path, video_id_hint: str) -> Optional[Path]:
+    """Run assignment v1 on a single resolved input triple. Returns output path."""
     segments_doc = _load_json(seg_path)
     reaches_doc = _load_json(reach_path)
     outcomes_doc = _load_json(outcome_path)
@@ -114,7 +128,7 @@ def _process_video_dir(video_dir: Path) -> Optional[Path]:
     video_id = (
         outcomes_doc.get("video_id")
         or reaches_doc.get("video_id")
-        or video_dir.name
+        or video_id_hint
     )
 
     merged_segs = _segments_with_outcomes(segments_doc, outcomes_doc)
@@ -126,21 +140,57 @@ def _process_video_dir(video_dir: Path) -> Optional[Path]:
         video_id=video_id,
     )
 
-    out_path = video_dir / f"{video_id}_reach_assignments.json"
+    out_path = output_dir / f"{video_id}_reach_assignments.json"
     out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return out_path
 
 
+def _process_video_dir(video_dir: Path) -> Optional[Path]:
+    """Single-video-dir processing. Kept for the legacy per-video-subdir layout."""
+    inputs = _find_video_inputs(video_dir)
+    if inputs is None:
+        return None
+    return _process_inputs(*inputs, output_dir=video_dir, video_id_hint=video_dir.name)
+
+
 def _walk_input_root(root: Path) -> Iterable[Path]:
-    """Yield directories that look like per-video processing dirs."""
+    """Yield directories that look like per-video processing dirs.
+
+    Three layouts are supported:
+      1. ``root`` itself has exactly one video's worth of files.
+      2. ``root`` contains per-video subdirectories.
+      3. ``root`` contains MANY videos' files flat (e.g., an improvement
+         quarantine's ``algo_outputs_*``/ folder). In this case we yield
+         ``root`` once per video stem so ``_process_video_dir_for_stem``
+         can pick the right files.
+    """
     if not root.exists():
         return
+    # Count videos in flat layout: number of distinct stems with all 3 files
+    flat_stems = _flat_layout_stems(root)
+    if len(flat_stems) > 1:
+        # Flat layout with multiple videos. Yield root once per stem.
+        for stem in flat_stems:
+            yield (root, stem)
+        return
+    # Single-video at root
     if _find_video_inputs(root) is not None:
         yield root
         return
+    # Per-video subdirectories
     for child in sorted(root.iterdir()):
         if child.is_dir() and _find_video_inputs(child) is not None:
             yield child
+
+
+def _flat_layout_stems(root: Path) -> list:
+    """Return sorted list of video stems where root has segs+reaches+outcomes."""
+    stems = []
+    for seg in sorted(root.glob("*_segments.json")):
+        stem = seg.stem[: -len("_segments")]
+        if (root / f"{stem}_reaches.json").exists() and (root / f"{stem}_pellet_outcomes.json").exists():
+            stems.append(stem)
+    return stems
 
 
 def main_batch():
@@ -156,8 +206,17 @@ def main_batch():
     print(f"  input: {args.input}")
 
     written = []
-    for vdir in _walk_input_root(args.input):
-        out = _process_video_dir(vdir)
+    for item in _walk_input_root(args.input):
+        # _walk_input_root yields either a Path (per-video dir layout) or
+        # a (root, stem) tuple (flat layout with multiple videos).
+        if isinstance(item, tuple):
+            root, stem = item
+            inputs = _find_inputs_for_stem(root, stem)
+            if inputs is None:
+                continue
+            out = _process_inputs(*inputs, output_dir=root, video_id_hint=stem)
+        else:
+            out = _process_video_dir(item)
         if out is not None:
             print(f"  wrote {out}")
             written.append(out)
