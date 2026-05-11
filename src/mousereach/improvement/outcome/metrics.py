@@ -420,7 +420,14 @@ def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
         else:  # algo
             cid = seg.get("causal_reach_id")
             if cid is None:
-                return "miss"
+                # Fallback: some outcome detectors (e.g. v6 cascade) commit
+                # an outcome and an interaction_frame but don't stamp
+                # causal_reach_id. Identify causal reach by IFR containment.
+                ifr = seg.get("interaction_frame")
+                sf, ef = reach.get("start_frame"), reach.get("end_frame")
+                if ifr is None or sf is None or ef is None:
+                    return "miss"
+                return "abnormal_exception" if sf <= ifr <= ef else "miss"
             return "abnormal_exception" if reach.get("reach_id") == cid else "miss"
     # triaged segments: only the WOULD-HAVE-BEEN-causal reach gets the
     # triaged label on the algo side. Other reaches in the segment are
@@ -432,7 +439,13 @@ def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
             return "miss"
         cid = seg.get("would_be_causal_reach_id") or seg.get("causal_reach_id")
         if cid is None:
-            return "miss"
+            # Fallback: identify the would-be-causal reach by IFR containment
+            # if the outcome detector didn't stamp causal_reach_id.
+            ifr = seg.get("interaction_frame")
+            sf, ef = reach.get("start_frame"), reach.get("end_frame")
+            if ifr is None or sf is None or ef is None:
+                return "miss"
+            return "triaged" if sf <= ifr <= ef else "miss"
         return "triaged" if reach.get("reach_id") == cid else "miss"
     if cls in ("untouched", "uncertain", "unknown") or cls is None:
         return "miss"
@@ -447,6 +460,14 @@ def _label_reach_by_side(reach, side_segments_by_seg, side_kind):
     else:  # algo
         cid = seg.get("causal_reach_id")
         if cid is None:
+            # IFR-fallback for outcome detectors that commit without
+            # stamping causal_reach_id (v6 cascade behavior).
+            ifr = seg.get("interaction_frame")
+            sf, ef = reach.get("start_frame"), reach.get("end_frame")
+            if ifr is None or sf is None or ef is None:
+                return "miss"
+            if sf <= ifr <= ef:
+                return cls if cls in ("retrieved", "displaced_sa", "displaced_outside") else "miss"
             return "miss"
         if reach.get("reach_id") == cid:
             return cls if cls in ("retrieved", "displaced_sa", "displaced_outside") else "miss"
