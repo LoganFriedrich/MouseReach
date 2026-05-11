@@ -76,6 +76,11 @@ Examples:
     )
     parser.add_argument('-i', '--input', type=Path, required=True,
                         help="Directory containing DLC .h5 files")
+    parser.add_argument('-o', '--output', type=Path, default=None,
+                        help="Output directory for *_segments.json (default: Processing/ "
+                             "under PROCESSING_ROOT). For quarantined improvement runs, "
+                             "pass -o <same as -i> to write outputs alongside the inputs "
+                             "without moving anything into the production pipeline.")
     parser.add_argument('-q', '--quiet', action='store_true',
                         help="Minimal output (no per-file progress)")
     parser.add_argument('--no-triage', action='store_true',
@@ -93,6 +98,7 @@ Examples:
     # Run batch processing
     results = process_batch(
         args.input,
+        output_dir=args.output,
         auto_triage=not args.no_triage,
         verbose=not args.quiet
     )

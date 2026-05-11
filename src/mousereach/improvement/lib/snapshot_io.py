@@ -34,12 +34,20 @@ from .manifest import Manifest
 # ---------------------------------------------------------------------------
 
 def get_snapshots_root() -> Path:
-    """Return the Improvement_Snapshots directory under MouseReach_Pipeline.
+    """Return the Improvement_Snapshots directory.
 
     Resolution order:
       1. MOUSEREACH_SNAPSHOTS_ROOT environment variable (if set).
-      2. CONNECTOME_ROOT / Behavior / MouseReach_Pipeline / Improvement_Snapshots.
-      3. Y:\\2_Connectome\\Behavior\\MouseReach_Pipeline\\Improvement_Snapshots (fallback).
+      2. CONNECTOME_ROOT / Behavior / MouseReach_Improvement / Improvement_Snapshots.
+      3. Y:\\2_Connectome\\Behavior\\MouseReach_Improvement\\Improvement_Snapshots (canonical).
+      4. Legacy fallback: CONNECTOME_ROOT / Behavior / MouseReach_Pipeline / Improvement_Snapshots
+         and Y:\\2_Connectome\\Behavior\\MouseReach_Pipeline\\Improvement_Snapshots
+         (kept for compatibility with installs that have not yet migrated; only
+         used if neither canonical path exists but the legacy path does).
+
+    The 2026-05-11 reorg moved Improvement_Snapshots out of MouseReach_Pipeline/
+    (which is watcher-scanned) into the sibling MouseReach_Improvement/ tree
+    so improvement work cannot be accidentally ingested by production watchers.
     """
     env = os.environ.get("MOUSEREACH_SNAPSHOTS_ROOT")
     if env:
@@ -47,9 +55,21 @@ def get_snapshots_root() -> Path:
 
     connectome_root = os.environ.get("CONNECTOME_ROOT")
     if connectome_root:
-        return Path(connectome_root) / "Behavior" / "MouseReach_Pipeline" / "Improvement_Snapshots"
+        canonical = Path(connectome_root) / "Behavior" / "MouseReach_Improvement" / "Improvement_Snapshots"
+        if canonical.exists():
+            return canonical
+        legacy = Path(connectome_root) / "Behavior" / "MouseReach_Pipeline" / "Improvement_Snapshots"
+        if legacy.exists():
+            return legacy
+        return canonical  # default to canonical even if missing; callers may mkdir
 
-    return Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Improvement_Snapshots")
+    canonical_y = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\Improvement_Snapshots")
+    if canonical_y.exists():
+        return canonical_y
+    legacy_y = Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Improvement_Snapshots")
+    if legacy_y.exists():
+        return legacy_y
+    return canonical_y
 
 
 def snapshot_dir(phase: str, snapshot_name: str,
