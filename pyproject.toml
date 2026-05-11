@@ -110,6 +110,12 @@ mousereach-gt = "mousereach.review.ground_truth_widget:main"  # GT scoring tool
 mousereach-review-legacy = "mousereach.review.ground_truth_widget:main_review"  # Old whole-video review (kept for compat)
 mousereach-migrate-gt = "mousereach.review.unified_gt:cli_migrate"
 
+# Triage auto-resolve (pre-check before human review): if a triaged segment
+# has a matching unified GT entry, lift the flag and copy the GT outcome.
+# Runs as a step in the normal processing pipeline; only segments without
+# GT remain triaged for the napari review tool.
+mousereach-resolve-triage-from-gt = "mousereach.triage.gt_resolve:main"
+
 # Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes
 # into per-reach permanent output for kinematic analysis)
 mousereach-assign-reaches = "mousereach.assignment.cli:main_batch"

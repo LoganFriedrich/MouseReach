@@ -41,6 +41,12 @@ def load_snapshot_paths(snapshot_dir: Path) -> SnapshotPaths:
       algo_outputs_dir: path to algo output JSONs (defaults to
         snapshot_dir/algo_outputs if not given)
       video_ids: list of video IDs (defaults to discovery from gt_dir)
+
+    Falls back to quarantine-layout defaults when the manifest is missing
+    or under-specified: sibling ``gt/`` for GT JSONs, and the first of
+    ``algo_outputs_current/`` / ``algo_outputs/`` that exists for algo
+    output JSONs. This lets the eval framework run directly against
+    iteration quarantines without an extra adapter manifest.
     """
     snapshot_dir = Path(snapshot_dir)
     manifest_path = snapshot_dir / "manifest.json"
@@ -49,11 +55,27 @@ def load_snapshot_paths(snapshot_dir: Path) -> SnapshotPaths:
 
     gt_dir = Path(manifest["gt_dir"]) if "gt_dir" in manifest else None
     if gt_dir is None:
-        raise ValueError(
-            f"manifest.json must specify gt_dir for snapshot {snapshot_dir}")
+        # Quarantine convention: GT JSONs live in <snapshot>/gt/
+        cand = snapshot_dir / "gt"
+        if cand.is_dir():
+            gt_dir = cand
+        else:
+            raise ValueError(
+                f"manifest.json must specify gt_dir for snapshot {snapshot_dir} "
+                f"(and no sibling gt/ directory was found)")
 
-    algo_outputs_dir = Path(manifest.get(
-        "algo_outputs_dir", snapshot_dir / "algo_outputs"))
+    if "algo_outputs_dir" in manifest:
+        algo_outputs_dir = Path(manifest["algo_outputs_dir"])
+    else:
+        # Prefer algo_outputs_current/ (post-resolution, what production sees)
+        # then algo_outputs/ (raw, pre-resolution baseline).
+        for name in ("algo_outputs_current", "algo_outputs"):
+            cand = snapshot_dir / name
+            if cand.is_dir():
+                algo_outputs_dir = cand
+                break
+        else:
+            algo_outputs_dir = snapshot_dir / "algo_outputs"
 
     video_ids = manifest.get("video_ids")
     if video_ids is None:

@@ -7,10 +7,32 @@ Reads:
 
 Writes:
   <snapshot>/metrics/outcome_scalars.json
+  <snapshot>/metrics/scalars.json  (canonical, read by run_sankey/summary_table)
 
 Per-segment confusion. 4 classes: retrieved, displaced_sa, untouched,
 abnormal_exception. displaced_outside is collapsed to displaced_sa.
-algo can also emit "triaged" -- counted as a separate flow.
+The algo can also emit "triaged" -- counted as a separate flow.
+
+Two-level reporting
+-------------------
+The pipeline includes a GT auto-resolve step: when a triaged segment has a
+matching unified GT entry, the cascade's flag is lifted and the GT outcome
+is stamped in (``triage_cleared=True`` / ``cleared_by="gt_auto_resolve"``).
+We report metrics at TWO levels so the algo's in-isolation performance and
+its production-pipeline-realistic performance are both visible:
+
+- **pre_review**: the algo's call BEFORE GT auto-resolve fires. For a
+  segment that GT auto-resolve cleared, the pre-review call is the
+  ``original_outcome`` (the cascade's pre-resolution outcome, typically
+  "triaged" / "uncertain") rather than the resolved outcome. This is the
+  algo's true in-isolation behavior.
+- **post_review**: the algo's call AFTER GT auto-resolve fires. For a
+  segment that was auto-resolved, post-review uses the GT-stamped outcome.
+  This is what downstream kinematic analysis actually sees.
+
+In production, post_review is the metric that matters; pre_review tells us
+how much of the algo's apparent accuracy is "algo got it right" versus
+"GT auto-resolve cleaned up after the algo".
 """
 from __future__ import annotations
 
@@ -32,11 +54,67 @@ def _collapse(o):
     return o
 
 
+def _pre_review_outcome(seg: dict) -> str | None:
+    """Return the algo's call BEFORE GT auto-resolve fired.
+
+    For segments cleared by gt_auto_resolve, the current ``outcome`` field
+    holds the GT-stamped class; the algo's pre-resolution call lives in
+    ``original_outcome`` (or, if it equalled GT and so was not preserved,
+    the current outcome stands).
+
+    For segments cleared by a human reviewer (napari triage-clearing tool),
+    the same convention applies: ``original_outcome`` holds the algo's
+    pre-clearing call. Those count as "triaged" pre-review because the
+    algo did punt -- a human merely supplied the answer afterward.
+    """
+    if not seg.get("triage_cleared"):
+        return _collapse(seg.get("outcome"))
+    orig = seg.get("original_outcome")
+    if orig:
+        return _collapse(orig)
+    # original_outcome was elided because it matched GT, OR the pre-clearing
+    # call was literally the "triaged" sentinel. In either case, the algo
+    # was not confident at this segment in isolation -- record as triaged.
+    return "triaged"
+
+
+def _accuracy(rows: list, attr: str) -> float | None:
+    """Fraction of rows where ``r.gt_outcome == r.<attr>`` (excluding rows
+    with no GT label). Returns None if no eligible rows."""
+    paired = [r for r in rows if r.gt_outcome]
+    if not paired:
+        return None
+    n_correct = sum(1 for r in paired if getattr(r, attr) == r.gt_outcome)
+    return n_correct / len(paired)
+
+
+def _confusion(rows: list, attr: str) -> Dict[str, int]:
+    cm: Dict[str, int] = defaultdict(int)
+    for r in rows:
+        algo = getattr(r, attr)
+        if r.gt_outcome and algo:
+            cm[f"{r.gt_outcome}__{algo}"] += 1
+    return dict(cm)
+
+
+def _per_class(rows: list, attr: str) -> Dict[str, dict]:
+    per: Dict[str, dict] = {}
+    for cls in CLASSES:
+        n_gt = sum(1 for r in rows if r.gt_outcome == cls)
+        n_algo = sum(1 for r in rows if getattr(r, attr) == cls)
+        n_correct = sum(1 for r in rows
+                        if r.gt_outcome == cls and getattr(r, attr) == cls)
+        per[cls] = {"n_gt": n_gt, "n_algo": n_algo, "n_correct": n_correct}
+    return per
+
+
 def analyze(snapshot_dir: Path) -> dict:
     paths = load_snapshot_paths(snapshot_dir)
     rows: List[SegmentOutcomeRow] = []
-    confusion: Dict[str, int] = defaultdict(int)
-    triage_count = 0
+    n_triaged_pre = 0  # algo punted before resolve
+    n_resolved_from_gt = 0  # of those, lifted by gt_auto_resolve
+    n_resolved_from_human = 0  # of those, lifted by napari triage tool
+    n_still_triaged_post = 0  # neither resolved -> downstream still sees triaged
 
     for vid in paths.video_ids:
         algo_data = load_algo_outcomes(paths.algo_outputs_dir, vid)
@@ -48,57 +126,101 @@ def analyze(snapshot_dir: Path) -> dict:
             gt = gt_by.get(sn)
             if gt is None:
                 continue
-            algo_label = _collapse(seg.get("outcome"))
+            pre_label = _pre_review_outcome(seg)
+            post_label = _collapse(seg.get("outcome"))
             gt_label = _collapse(gt.get("outcome"))
-            if algo_label == "triaged":
-                triage_count += 1
+
+            if pre_label == "triaged":
+                n_triaged_pre += 1
+                cleared_by = seg.get("cleared_by") if seg.get("triage_cleared") else None
+                if cleared_by == "gt_auto_resolve":
+                    n_resolved_from_gt += 1
+                elif cleared_by:
+                    n_resolved_from_human += 1
+                else:
+                    n_still_triaged_post += 1
 
             ai = seg.get("interaction_frame")
             gi = gt.get("interaction_frame")
             delta = (int(ai) - int(gi)) if (ai is not None and gi is not None) else None
 
-            rows.append(SegmentOutcomeRow(
+            row = SegmentOutcomeRow(
                 video_id=vid, segment_num=int(sn),
-                gt_outcome=gt_label, algo_outcome=algo_label,
+                gt_outcome=gt_label, algo_outcome=post_label,
                 gt_interaction_frame=gi, algo_interaction_frame=ai,
                 interaction_delta=delta, gt_exhaustive=exhaustive,
-            ))
-            if gt_label and algo_label:
-                confusion[f"{gt_label}__{algo_label}"] += 1
+            )
+            # Stamp pre-review label on the row (attribute, not a constructor
+            # arg, to avoid touching the schema and downstream consumers).
+            setattr(row, "algo_outcome_pre_review", pre_label)
+            rows.append(row)
 
-    # Per-class P/R counts
-    per_class = {}
-    for cls in CLASSES:
-        n_gt = sum(1 for r in rows if r.gt_outcome == cls)
-        n_algo = sum(1 for r in rows if r.algo_outcome == cls)
-        n_correct = sum(1 for r in rows
-                        if r.gt_outcome == cls and r.algo_outcome == cls)
-        per_class[cls] = {"n_gt": n_gt, "n_algo": n_algo, "n_correct": n_correct}
+    # Pre- and post-review confusion matrices + per-class breakdowns.
+    confusion_pre = _confusion(rows, "algo_outcome_pre_review")
+    confusion_post = _confusion(rows, "algo_outcome")
+    per_class_pre = _per_class(rows, "algo_outcome_pre_review")
+    per_class_post = _per_class(rows, "algo_outcome")
+    acc_pre = _accuracy(rows, "algo_outcome_pre_review")
+    acc_post = _accuracy(rows, "algo_outcome")
 
-    n_correct = sum(1 for r in rows if r.gt_outcome == r.algo_outcome and r.gt_outcome)
+    n_correct_post = sum(1 for r in rows if r.gt_outcome and r.algo_outcome == r.gt_outcome)
+    n_correct_pre = sum(1 for r in rows
+                        if r.gt_outcome
+                        and getattr(r, "algo_outcome_pre_review") == r.gt_outcome)
 
     out = OutcomeScalars(
         n_videos=len(paths.video_ids),
         n_segments=len(rows),
-        n_correct=n_correct,
-        triage_count=triage_count,
-        confusion_matrix=dict(confusion),
-        per_class=per_class,
+        n_correct=n_correct_post,  # back-compat: legacy "n_correct" == post-review
+        triage_count=n_triaged_pre,  # back-compat: pre-review triaged count
+        confusion_matrix=dict(confusion_post),  # back-compat: post-review
+        per_class=per_class_post,  # back-compat: post-review
         rows=[r.to_dict() for r in rows],
     ).to_dict()
 
-    # Also write the legacy outcome_label key the run_sankey reader expects
+    # Augment the row dicts with the pre-review label so notebooks / Sankey
+    # readers can render the two-level view from a single artifact.
+    for row_dict, row_obj in zip(out["rows"], rows):
+        row_dict["algo_outcome_pre_review"] = getattr(row_obj, "algo_outcome_pre_review")
+
+    out["triage_resolution"] = {
+        "n_triaged_pre_review": n_triaged_pre,
+        "n_resolved_from_gt": n_resolved_from_gt,
+        "n_resolved_from_human": n_resolved_from_human,
+        "n_still_triaged_post_review": n_still_triaged_post,
+        "resolution_rate": (
+            (n_resolved_from_gt + n_resolved_from_human) / n_triaged_pre
+            if n_triaged_pre else None
+        ),
+    }
+
+    # Two-level breakdown -- the headline numbers the user asked for.
     out["outcome_label"] = {
-        "confusion_matrix": dict(confusion),
-        "per_class": per_class,
-        "strict_accuracy": (n_correct / len(rows)) if rows else None,
-        "committed_accuracy": (n_correct / len(rows)) if rows else None,
-        "abstention_rate": 0.0,
+        # Legacy keys preserved for existing readers; mapped to post-review.
+        "confusion_matrix": dict(confusion_post),
+        "per_class": per_class_post,
+        "strict_accuracy": acc_post,
+        "committed_accuracy": acc_post,
+        "abstention_rate": (n_still_triaged_post / len(rows)) if rows else 0.0,
+        # New explicit two-level reporting.
+        "pre_review": {
+            "confusion_matrix": dict(confusion_pre),
+            "per_class": per_class_pre,
+            "accuracy": acc_pre,
+            "n_correct": n_correct_pre,
+            "n_triaged": n_triaged_pre,
+        },
+        "post_review": {
+            "confusion_matrix": dict(confusion_post),
+            "per_class": per_class_post,
+            "accuracy": acc_post,
+            "n_correct": n_correct_post,
+            "n_triaged": n_still_triaged_post,
+        },
     }
     out["n_segments_paired"] = len(rows)
 
     write_scalars(paths.metrics_dir, out, "outcome_scalars.json")
-    # ALSO write the canonical scalars.json the existing run_sankey reads
     write_scalars(paths.metrics_dir, out, "scalars.json")
     return out
 
@@ -109,4 +231,14 @@ if __name__ == "__main__":
         print("Usage: python -m mousereach.improvement.outcome.analyze <snapshot_dir>")
         sys.exit(1)
     res = analyze(Path(sys.argv[1]))
-    print(f"n_segments={res['n_segments']}  n_correct={res['n_correct']}  triage={res['triage_count']}")
+    tr = res["triage_resolution"]
+    ol = res["outcome_label"]
+    pre = ol["pre_review"]
+    post = ol["post_review"]
+    n = res["n_segments"]
+    print(f"n_segments={n}")
+    print(f"  pre-review:  acc={pre['accuracy']:.3f} ({pre['n_correct']}/{n}), "
+          f"triaged={pre['n_triaged']}")
+    print(f"  post-review: acc={post['accuracy']:.3f} ({post['n_correct']}/{n}), "
+          f"triaged={post['n_triaged']}")
+    print(f"  resolved from GT: {tr['n_resolved_from_gt']} / {tr['n_triaged_pre_review']}")
