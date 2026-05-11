@@ -140,9 +140,20 @@ def scan_corpus_for_triage(
             out_flag = bool(out_seg.get("flagged_for_review"))
             rch_seg = reach_segs.get(sn, {})
             rch_flag = bool(rch_seg.get("flagged_for_review"))
-            if not (out_flag or rch_flag):
-                continue
-            cleared = _segment_already_cleared(unified_gt, sn)
+            # `triage_cleared` segments (resolved by GT auto-resolve or the
+            # napari clearing tool) drop `flagged_for_review` to False --
+            # we still want them visible under --include-cleared.
+            out_cleared = bool(out_seg.get("triage_cleared"))
+            rch_cleared = bool(rch_seg.get("triage_cleared"))
+            any_flagged = out_flag or rch_flag
+            any_cleared = out_cleared or rch_cleared
+            if include_cleared:
+                if not (any_flagged or any_cleared):
+                    continue
+            else:
+                if not any_flagged:
+                    continue
+            cleared = any_cleared or _segment_already_cleared(unified_gt, sn)
             if cleared and not include_cleared:
                 continue
             entries.append(TriageEntry(

@@ -1236,8 +1236,14 @@ class GroundTruthWidget(QWidget):
         # Determine expected segment count from boundaries
         n_segments = max(len(self.gt.boundaries) - 1, 0) if self.gt.boundaries else 0
 
+        # Union with segment numbers that actually have reaches, so a reach
+        # added at a segment_num outside the loaded boundary range (e.g.
+        # the triage clearing tool focuses one segment but reaches carry
+        # the absolute video segment number) still renders.
+        seg_nums_to_show = set(range(1, n_segments + 1)) | set(reaches_by_segment.keys())
+
         # Show reaches grouped by segment, including empty segments
-        for seg_num in range(1, n_segments + 1):
+        for seg_num in sorted(seg_nums_to_show):
             segment_reaches = reaches_by_segment.get(seg_num, [])
 
             if not segment_reaches:
@@ -1995,6 +2001,17 @@ class GroundTruthWidget(QWidget):
         show_info(f"Ground truth saved: {n_boundaries} boundaries, {n_reaches} reaches, {n_outcomes} outcomes")
         self.data_saved.emit(path)
 
+    def _algo_files_dir(self) -> Path:
+        """Directory where this video's algo output JSONs live.
+
+        Default: the video's own parent directory (the production
+        pipeline layout, where videos and algo JSONs share a folder).
+        Subclasses can override -- e.g. the triage clearing tool, which
+        runs against quarantines where videos/ and algo_outputs_current/
+        are sibling directories under the snapshot root.
+        """
+        return self.video_path.parent
+
     def _save_to_algo_files(self):
         """Save corrections back to algorithm output files (Review Tool mode)."""
         if not self.gt or not self.video_path:
@@ -2010,7 +2027,7 @@ class GroundTruthWidget(QWidget):
         video_stem = self.video_path.stem
         if 'DLC_' in video_stem:
             video_stem = video_stem.split('DLC_')[0]
-        parent = self.video_path.parent
+        parent = self._algo_files_dir()
 
         saved_files = []
 
