@@ -142,7 +142,57 @@ def analyze(snapshot_dir: Path) -> dict:
         span_delta_max=int(spd.max()) if len(spd) else None,
         matches=[m.to_dict() for m in matches],
     ).to_dict()
+    # Back-compat: summary-table runner expects scalars["total"] with
+    # n_fp/n_fn/n_matched/n_gt/n_algo + top-level n_perfect_videos.
+    n_matched = out["n_tp"]
+    n_fp = out["n_fp"]
+    n_fn = out["n_fn"]
+    out["total"] = {
+        "n_matched": n_matched,
+        "n_fp": n_fp,
+        "n_fn": n_fn,
+        "n_gt": n_matched + n_fn,
+        "n_algo": n_matched + n_fp,
+    }
+    perfect_videos = set(paths.video_ids)
+    for m in matches:
+        if m.status in ("fp", "fn"):
+            perfect_videos.discard(m.video_id)
+    out["n_perfect_videos"] = len(perfect_videos)
+
     write_scalars(paths.metrics_dir, out, "reach_detection_scalars.json")
+    write_scalars(paths.metrics_dir, out, "scalars.json")
+
+    # Per-reach CSV consumed by the violin + summary-table runners.
+    # Map status: tp -> matched (runner convention). end_delta = algo_end -
+    # gt_end (signed). subset_tag stays "all".
+    import csv
+    status_map = {"tp": "matched", "fp": "fp", "fn": "fn"}
+    csv_path = paths.metrics_dir / "reach_matches.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(
+            fh, fieldnames=[
+                "video_id", "status", "start_delta", "end_delta",
+                "subset_tag", "algo_start", "algo_end", "gt_start", "gt_end",
+            ],
+        )
+        w.writeheader()
+        for m in matches:
+            end_delta = None
+            if (m.status == "tp" and m.algo_end is not None
+                    and m.gt_end is not None):
+                end_delta = int(m.algo_end) - int(m.gt_end)
+            w.writerow({
+                "video_id": m.video_id,
+                "status": status_map.get(m.status, m.status),
+                "start_delta": m.start_delta if m.start_delta is not None else 0,
+                "end_delta": end_delta if end_delta is not None else 0,
+                "subset_tag": "all",
+                "algo_start": m.algo_start if m.algo_start is not None else "",
+                "algo_end": m.algo_end if m.algo_end is not None else "",
+                "gt_start": m.gt_start if m.gt_start is not None else "",
+                "gt_end": m.gt_end if m.gt_end is not None else "",
+            })
     return out
 
 
