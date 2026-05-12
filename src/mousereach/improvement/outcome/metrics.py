@@ -538,7 +538,12 @@ def compute_per_reach_confusion(
         algo_lite = [Reach(r["start_frame"], r["end_frame"], i)
                      for i, r in enumerate(algo_reach_list)
                      if r.get("start_frame") is not None]
-        results = match_reaches(algo_lite, gt_lite, window=match_window)
+        # Use the strict canonical criterion (start within +/-2 AND span
+        # agreement) so the per-reach Sankey's matched/fp/fn counts line
+        # up with the reach-detection scalar metrics. The legacy lenient
+        # window (+/-10 frames, no span check) labeled algo reaches as
+        # "matched" that the detection report counted as FP/FN.
+        results = match_reaches(algo_lite, gt_lite, strict=True)
         for res in results:
             if res.status == "matched":
                 gl = gt_labels[res.gt_reach_index]

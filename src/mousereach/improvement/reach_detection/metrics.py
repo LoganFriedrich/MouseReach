@@ -118,17 +118,32 @@ def match_reaches(
     algo_reaches: List[Reach],
     gt_reaches: List[Reach],
     window: int = 10,
+    strict: bool = False,
+    strict_start_tol: int = 2,
+    strict_span_tol_rel: float = 0.5,
+    strict_span_tol_abs: int = 5,
 ) -> List[ReachMatchResult]:
     """Match algo reaches to GT reaches within a +/- *window* frame tolerance.
 
     Algorithm:
       1. For each GT reach, find all algo reaches whose start_frame is
-         within +/- window frames.
-      2. Build candidate pairs (gt_idx, algo_idx, abs_start_delta).
-      3. Sort by abs_start_delta ascending.
+         within +/- window frames (or +/- strict_start_tol when
+         ``strict=True``).
+      2. When ``strict=True``, additionally require span agreement:
+         |algo_span - gt_span| <= max(strict_span_tol_rel * gt_span,
+         strict_span_tol_abs).
+      3. Build candidate pairs and sort by abs_start_delta (then
+         abs_span_delta when strict).
       4. Greedily assign: each GT and each algo reach can appear in at
          most one match. If already assigned, skip.
       5. Unmatched GT reaches -> fn. Unmatched algo reaches -> fp.
+
+    The ``strict`` mode matches the canonical reach-detection criterion
+    documented in the project memory: TP iff algo start within +/-2f of
+    GT start AND roughly the same span. The default (non-strict)
+    ``window=10`` mode is the legacy lenient matcher used by older
+    pipelines and is kept for callers that want only start-frame
+    proximity without enforcing span equality.
 
     Parameters
     ----------
@@ -137,23 +152,53 @@ def match_reaches(
     gt_reaches : list of Reach
         Ground-truth reaches.
     window : int
-        Maximum absolute start-frame distance for a match (inclusive).
+        Maximum absolute start-frame distance for a match (inclusive),
+        used only when ``strict=False``.
+    strict : bool, default False
+        If True, enforce the canonical TP criterion: start within +/-
+        ``strict_start_tol`` frames AND span within tolerance.
+    strict_start_tol : int, default 2
+        Start-frame tolerance when ``strict=True``.
+    strict_span_tol_rel : float, default 0.5
+        Span-tolerance relative-to-gt-span fraction.
+    strict_span_tol_abs : int, default 5
+        Span-tolerance absolute floor (frames).
 
     Returns
     -------
     list of ReachMatchResult
         One entry per matched pair, plus one per fn and one per fp.
     """
-    # Build candidate pairs: (abs_delta, gt_idx, algo_idx)
-    candidates: List[Tuple[int, int, int]] = []
-    for gr in gt_reaches:
-        for ar in algo_reaches:
-            d = abs(ar.start_frame - gr.start_frame)
-            if d <= window:
-                candidates.append((d, gr.index, ar.index))
+    # Effective start-frame window depends on mode.
+    eff_start_tol = strict_start_tol if strict else window
 
-    # Sort by abs_delta so closest pairs are assigned first
-    candidates.sort(key=lambda x: x[0])
+    # Build candidate pairs. When strict, attach span_delta and require
+    # the span check to pass; sort by (start_delta, span_delta).
+    candidates: List[Tuple[int, int, int, int]] = []  # (start_delta, span_delta, gi, ai)
+    for gr in gt_reaches:
+        gspan = gr.end_frame - gr.start_frame + 1
+        for ar in algo_reaches:
+            d_start = abs(ar.start_frame - gr.start_frame)
+            if d_start > eff_start_tol:
+                continue
+            if strict:
+                aspan = ar.end_frame - ar.start_frame + 1
+                span_tol = max(strict_span_tol_rel * gspan,
+                                strict_span_tol_abs)
+                d_span = abs(aspan - gspan)
+                if d_span > span_tol:
+                    continue
+                candidates.append((d_start, d_span, gr.index, ar.index))
+            else:
+                candidates.append((d_start, 0, gr.index, ar.index))
+
+    # Sort: prefer closer start, then closer span (latter is meaningful
+    # only when strict).
+    candidates.sort(key=lambda x: (x[0], x[1]))
+
+    # Adapter for the unchanged downstream loop expecting (delta, gi, ai)
+    # tuples — drop the span_delta from the head.
+    candidates = [(d, gi, ai) for d, _spd, gi, ai in candidates]
 
     matched_gt: set = set()
     matched_algo: set = set()
