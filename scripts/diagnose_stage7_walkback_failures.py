@@ -14,7 +14,7 @@ from mousereach.outcomes.v6_cascade.stage_7_pellet_settled_off_pillar_late impor
     Stage7PelletSettledOffPillarLate, PAW_BODYPARTS)
 from mousereach.reach.v8.features import load_dlc_h5
 
-QUARANTINE = P('Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough')
+QUARANTINE = P('Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough')
 CORPUS = P('Y:/2_Connectome/Behavior/MouseReach_Pipeline/Improvement_Snapshots/_corpus/2026-04-30_restart_inventory')
 
 stage = Stage7PelletSettledOffPillarLate()

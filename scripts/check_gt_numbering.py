@@ -3,7 +3,7 @@ means pellet N = algo seg N+1) or algo-segment-numbering."""
 import json
 from pathlib import Path
 
-QUARANTINE = Path(r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough")
+QUARANTINE = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough")
 
 print(f"{'video':<35s} | total | in_segN | in_segN+1 | mismatch?")
 print("-" * 90)

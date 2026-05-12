@@ -519,7 +519,7 @@ def main():
         "--algo-dir", type=Path, default=None,
         help="Directory containing *_reaches.json / *_pellet_outcomes.json. "
              "Defaults to the latest quarantine under "
-             "CONNECTOME_ROOT/Validation_Runs/DLC_*/iterations/*/algo_outputs/.",
+             "CONNECTOME_ROOT/Behavior/MouseReach_Improvement/validation_runs/DLC_*/iterations/*/algo_outputs/.",
     )
     parser.add_argument(
         "--video-name", type=str, default=None,

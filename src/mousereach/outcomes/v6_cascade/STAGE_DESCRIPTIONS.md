@@ -178,7 +178,7 @@ Confounded cases are moved into Stage 2 for further examination.
   `mousereach.outcomes.v6_cascade.trust_calibrator` (commit on master at
   validation time)
 - **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from project
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/dlc_project`, run
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/dlc_project`, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
 - **Reach detector version used to produce reach windows:** v7.1.0 (GT
@@ -198,7 +198,7 @@ Confounded cases are moved into Stage 2 for further examination.
   - Transition zone half-width: 5 frames either side of segment boundary
   - Cascade OKF emit: `seg_end − 5` (last clean-zone frame)
 - **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot at
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
   created 2026-04-28
 - **GT corrections incorporated since corpus creation:**
   - 7 segments migrated from displaced/retrieved to abnormal_exception
@@ -292,7 +292,7 @@ Confounded cases are moved into Stage 3 for further examination.
   `mousereach.outcomes.v6_cascade.trust_calibrator` (commit on master at
   validation time)
 - **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from project
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/dlc_project`, run
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/dlc_project`, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
 - **Reach detector version used to produce reach windows:** v7.1.0 (GT
@@ -328,7 +328,7 @@ Confounded cases are moved into Stage 3 for further examination.
     boundary (clean zone for Stage 2 = `[seg_start, seg_end - 5]`)
   - Cascade OKF emit on commit: `seg_end − 5` (last clean-zone frame)
 - **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot at
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
   created 2026-04-28
 - **Empirical-floor derivation corpus:** all 381 GT-confirmed causal
   contact reaches in the train-pool 37 videos (the same train-pool
@@ -467,7 +467,7 @@ Confounded cases are moved into Stage 4 for further examination.
   single-frame DLC failures on SA do not contaminate per-frame pillar
   position/radius.
 - **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from project
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/dlc_project`, run
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/dlc_project`, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
 - **Reach detector version used to produce reach windows:** v7.1.0 (GT
@@ -519,7 +519,7 @@ Confounded cases are moved into Stage 4 for further examination.
     falsely committed.
 - **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot
   at
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
   created 2026-04-28
 - **GT corrections incorporated since corpus creation:**
   - 7 segments migrated from displaced/retrieved to abnormal_exception
@@ -663,7 +663,7 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
   `mousereach.lib.pillar_geometry.compute_pillar_geometry_series_cleaned`
   (cleans SA bodyparts before computing per-frame geometry).
 - **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from
-  project `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/dlc_project`,
+  project `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/dlc_project`,
   run completed 2026-02-19 21:13:08+00:00.
 - **Segmenter version:** v2.1.2.
 - **Reach detector version:** v7.1.0 (GT reach windows used; Stage 4
@@ -723,7 +723,7 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
   at the same image position simultaneously).
 - **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot
   at
-  `Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
+  `Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
   created 2026-04-28.
 - **GT corrections incorporated since corpus creation:** same as
   Stages 1-3 (no additional corrections specific to Stage 4).

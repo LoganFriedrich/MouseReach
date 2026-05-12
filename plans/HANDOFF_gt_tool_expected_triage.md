@@ -41,7 +41,7 @@ Existing examples (already in this state on disk; do NOT regenerate them):
 - `20251023_CNT0401_P4_unified_ground_truth.json`
 - `20251031_CNT0413_P2_unified_ground_truth.json`
 
-Both canonical (`Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\gt\`) and quarantine (`Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt\`) trees were updated. New scoring sessions should produce the same shape via the new toggle.
+Both canonical (`Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\gt\`) and quarantine (`Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt\`) trees were updated. New scoring sessions should produce the same shape via the new toggle.
 
 ---
 

@@ -34,8 +34,8 @@ from mousereach.improvement.reach_detection.metrics import (
     compute_kinematic_completeness,
 )
 
-GT_DIR = Path(r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\gt")
-ALGO_DIR_POST = Path(r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\outputs_reach_v7.1.0")
+GT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\gt")
+ALGO_DIR_POST = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\outputs_reach_v7.1.0")
 DB_PATH = Path(r"Y:\2_Connectome\Databases\connectome.db")
 SNAPSHOT_PRE = Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Improvement_Snapshots\reach_detection\baseline_pre_dlc")
 SNAPSHOT_POST = Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Improvement_Snapshots\reach_detection\reach_v7.1.0_visibility_direction_reversal")
@@ -299,7 +299,7 @@ def main():
         "inputs": [
             "Reach data from connectome.db (reach_data table, 357824 reaches total across 57 subjects)",
             "Subset matched to GT corpus: {} videos with reach data".format(pre_metrics["n_videos"]),
-            "GT dir: Y:\\2_Connectome\\Validation_Runs\\DLC_2026_03_27\\gt",
+            "GT dir: Y:\\2_Connectome\\Behavior\\MouseReach_Improvement\\validation_runs\\DLC_2026_03_27\\gt",
             "Source: production pipeline with OLD DLC model (DLC_resnet50_MPSAOct27shuffle1_100000)",
         ],
         "metrics_summary": pre_metrics,

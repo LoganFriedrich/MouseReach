@@ -297,7 +297,7 @@ def find_default_algo_dir() -> Optional[Path]:
       2. ``CONNECTOME_ROOT / Behavior / MouseReach_Pipeline / Improvement_Snapshots``
          is NOT the right place (those are snapshots, not algo outputs); skip
       3. Latest quarantine under
-         ``CONNECTOME_ROOT / Validation_Runs / DLC_*/iterations/*/algo_outputs/``
+         ``CONNECTOME_ROOT / Behavior / MouseReach_Improvement / validation_runs / DLC_*/iterations/*/algo_outputs/``
     """
     env = os.environ.get("MOUSEREACH_TRIAGE_ALGO_DIR")
     if env:
@@ -305,7 +305,7 @@ def find_default_algo_dir() -> Optional[Path]:
         if p.is_dir():
             return p
     cr = os.environ.get("CONNECTOME_ROOT", r"Y:\2_Connectome")
-    valid = Path(cr) / "Validation_Runs"
+    valid = Path(cr) / "Behavior" / "MouseReach_Improvement" / "validation_runs"
     if not valid.is_dir():
         return None
     candidates = list(valid.glob("DLC_*/iterations/*/algo_outputs"))
