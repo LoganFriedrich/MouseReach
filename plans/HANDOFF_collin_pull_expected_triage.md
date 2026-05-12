@@ -153,7 +153,7 @@ from pathlib import Path
 import json
 from mousereach.review.unified_gt import _dict_to_unified_gt, _unified_gt_to_dict
 
-gt_path = Path(r'Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/gt/20250710_CNT0215_P4_unified_ground_truth.json')
+gt_path = Path(r'Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/gt/20250710_CNT0215_P4_unified_ground_truth.json')
 with open(gt_path) as f:
     gt = _dict_to_unified_gt(json.load(f))
 flagged = [o for o in gt.outcomes if o.expected_triage]

@@ -31,7 +31,7 @@ from mousereach.reach.v8.features import load_dlc_h5
 
 
 QUARANTINE = Path(
-    r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\iterations"
+    r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations"
     r"\2026-04-28_outcome_v4.0.0_dev_walkthrough"
 )
 DLC_DIR = QUARANTINE / "dlc"

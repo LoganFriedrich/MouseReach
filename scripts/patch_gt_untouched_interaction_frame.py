@@ -34,7 +34,7 @@ CORRECTION_NOTE = (
 
 # Where to look for copies of each GT file
 SEARCH_ROOTS = [
-    Path(r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27"),
+    Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27"),
 ]
 
 

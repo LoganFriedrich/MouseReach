@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 QUARANTINE = Path(
-    r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\iterations"
+    r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations"
     r"\2026-04-28_outcome_v4.0.0_dev_walkthrough"
 )
 GT_DIR = QUARANTINE / "gt"

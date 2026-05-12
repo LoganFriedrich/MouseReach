@@ -1,4 +1,4 @@
-﻿"""
+"""
 Stage 4 GT Frame Relationship Analysis
 Characterises relationship between GT OKF/IFR and paw-past-y-line bouts
 for ALL displaced_sa segments in the 37-video train pool.
@@ -20,8 +20,8 @@ if MOUSEREACH_SRC not in sys.path:
 from mousereach.lib.dlc_cleaning import clean_dlc_bodyparts
 from mousereach.lib.pillar_geometry import compute_pillar_geometry_series_cleaned
 
-GT_DIR = "Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/gt/"
-DLC_DIR = "Y:/2_Connectome/Validation_Runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/dlc/"
+GT_DIR = "Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/gt/"
+DLC_DIR = "Y:/2_Connectome/Behavior/MouseReach_Improvement/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/dlc/"
 CV_FOLDS_PATH = "Y:/2_Connectome/Behavior/MouseReach_Pipeline/Improvement_Snapshots/_corpus/2026-04-30_restart_inventory/cv_folds.json"
 REPORT_PATH = ("Y:/2_Connectome/Behavior/MouseReach_Pipeline/Improvement_Snapshots/"
                "outcome/v6.0.0_dev_stage4_design/gt_frame_relationship_analysis.md")

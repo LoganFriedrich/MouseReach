@@ -32,7 +32,7 @@ from mousereach.reach.v8.labels import load_gt_reaches, per_frame_labels, reach_
 
 
 QUARANTINE = Path(
-    r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\iterations"
+    r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations"
     r"\2026-04-28_outcome_v4.0.0_dev_walkthrough"
 )
 DLC_DIR = QUARANTINE / "dlc"

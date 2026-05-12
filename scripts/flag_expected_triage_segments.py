@@ -8,7 +8,7 @@ expected_triage captures whether the algo should be expected to score
 it or send it to human review.
 
 Updates BOTH canonical GT (MouseReach_Pipeline/Processing/) and the
-quarantine GT (Validation_Runs/.../gt/), with an audit trail.
+quarantine GT (Behavior/MouseReach_Improvement/validation_runs/.../gt/), with an audit trail.
 
 Per memory rule `gt_correction_workflow.md`: when the segment is
 clearly outside the algo's reasonable competence (and the user has
@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CANONICAL_GT = Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Processing")
-QUARANTINE_GT = Path(r"Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt")
+QUARANTINE_GT = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt")
 
 # Segments to flag. Each entry: (video_id, segment_num, reason).
 FLAG_LIST = [

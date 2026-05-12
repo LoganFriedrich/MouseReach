@@ -95,7 +95,7 @@ your recalibration recovered. Don't skip (1) — without it you can't
 tell whether a post-edit 94% is a gain or a loss.
 
 Store both eval reports under a timestamped or triggered directory:
-`Y:\2_Connectome\Validation_Runs\<trigger>_<date>\reports\`. Keep them.
+`Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\<trigger>_<date>\reports\`. Keep them.
 They are the provenance for the decision.
 
 ### What to report (and what NOT to lead with)
@@ -203,7 +203,7 @@ recalibration must pass a fresh-holdout test before being declared done.
    Select randomly across cohorts (don't pick all from one cohort).
 2. Run the new (recalibrated) MouseReach on those videos, writing
    outputs to a separate subtree (e.g.,
-   `Y:\2_Connectome\Validation_Runs\<trigger>_<date>\generalization\`).
+   `Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\<trigger>_<date>\generalization\`).
 3. Ground-truth those 10 videos through the usual Review / GT tool
    process. This is human time, ~1-2h per video for full annotation.
 4. Score the new MouseReach output against the fresh GT. Also run the
@@ -264,7 +264,7 @@ A recalibration is complete when all of these exist:
 
 This playbook was first written during the 2026-03-27 DLC model swap.
 The validation run lives at
-`Y:\2_Connectome\Validation_Runs\DLC_2026_03_27\`. That directory is a
+`Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\`. That directory is a
 worked example of the steps above — reports, generalization queue, and
 SUMMARY.md if/when it exists.
 
