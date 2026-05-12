@@ -13,6 +13,12 @@ class BoundaryMatch:
     algo_frame: Optional[int] = None
     gt_frame: Optional[int] = None
     delta: Optional[int] = None      # algo - gt; only when matched
+    # Subset classification of this boundary by its position in the video:
+    #   "endpoint_B1_B21" -- first or last boundary in the video
+    #   "inter_pellet_B2_B20" -- any interior boundary
+    # Used to split out endpoint vs inter-pellet boundary quality. None for
+    # unmatched FP rows that have no corresponding GT index to classify against.
+    subset_tag: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
