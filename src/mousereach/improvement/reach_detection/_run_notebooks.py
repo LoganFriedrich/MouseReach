@@ -176,6 +176,7 @@ def run_summary_table(snapshot_dir: Path) -> None:
         n_d1 = int((abs_d == 1).sum())
         n_d2_5 = int(((abs_d >= 2) & (abs_d <= 5)).sum())
         n_d6_10 = int(((abs_d >= 6) & (abs_d <= 10)).sum())
+        n_d_gt10 = int((abs_d > 10).sum())
 
         def pct(n):
             return round(100 * n / n_matched, 1) if n_matched > 0 else 0.0
@@ -187,10 +188,9 @@ def run_summary_table(snapshot_dir: Path) -> None:
             "Delta Type": label,
             "delta=0 (%)": pct(n_d0),
             "|delta|=1 (%)": pct(n_d1),
-            "2-5 (%)": pct(n_d2_5),
-            "6-10 (%)": pct(n_d6_10),
-            "FP": n_fp,
-            "FN": n_fn,
+            "|delta|=2-5 (%)": pct(n_d2_5),
+            "|delta|=6-10 (%)": pct(n_d6_10),
+            "|delta|>10 (%)": pct(n_d_gt10),
             "med|d|": median_abs,
             "mean d": round(mean_signed, 2),
         })
@@ -204,16 +204,17 @@ def run_summary_table(snapshot_dir: Path) -> None:
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=figsize, dpi=DPI,
                                           gridspec_kw={"height_ratios": [1, 2.5]})
 
-    # --- Top section: overall counts ---
+    # --- Top section: overall counts (includes FP / FN — algo-error counts
+    # belong with the headline numbers, not buried in the per-delta-row block).
     ax_top.axis("off")
     header_data = [
-        ["n_videos", "n_gt_total", "n_algo_total", "n_matched", "n_perfect_videos"],
-        [str(n_videos), str(n_gt), str(n_algo), str(n_matched), str(n_perfect)],
+        ["n_videos", "n_gt_total", "n_algo_total", "n_matched (TP)", "FP (algo only)", "FN (GT only)", "n_perfect_videos"],
+        [str(n_videos), str(n_gt), str(n_algo), str(n_matched), str(n_fp), str(n_fn), str(n_perfect)],
     ]
     header_table = ax_top.table(
         cellText=[header_data[1]],
         colLabels=header_data[0],
-        colColours=[header_color] * 5,
+        colColours=[header_color] * len(header_data[0]),
         loc="center",
         cellLoc="center",
     )
@@ -236,7 +237,7 @@ def run_summary_table(snapshot_dir: Path) -> None:
     neutral_color = "#FFFFFF"
 
     good_high_cols = {"delta=0 (%)"}
-    good_low_cols = {"2-5 (%)", "6-10 (%)"}
+    good_low_cols = {"|delta|=2-5 (%)", "|delta|=6-10 (%)", "|delta|>10 (%)"}
 
     for _, row in table_df.iterrows():
         row_text = []
