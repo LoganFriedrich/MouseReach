@@ -500,6 +500,21 @@ For older snapshots without two-level metrics, a single panel is drawn.
 - The gap between pre and post should NOT be growing -- if it is, the
   algo is leaning on GT auto-resolve to bail it out.
 
+## What "triaged" means here
+
+The triaged lane in this Sankey is **outcome-uncertain triage only** --
+the cascade emitted ``outcome="triaged"`` (or ``flagged_for_review=True``)
+because it couldn't classify what happened to the pellet at all.
+
+**Reach-assignment uncertainty** (cascade committed an outcome but no
+algo reach contained the interaction frame, so no causal reach could
+be picked) is NOT reflected in the triaged lane. Those cases instead
+show up as ``GT retrieved / displaced_sa -> algo miss`` flows. They are
+quantitatively tiny in current pipeline state (~1% of total triage
+signal pre-review, on tested corpora); the cascade design intentionally
+folds them into outcome triage because if you can't pick the reach,
+you typically can't trust the outcome either.
+
 ## Red-flag patterns
 
 - **Pre-review has thick wrong-commit flows** (e.g., retrieved -> displaced_sa).
@@ -509,6 +524,9 @@ For older snapshots without two-level metrics, a single panel is drawn.
   -- algo getting overconfident.
 - **Post-review still has residual triaged flow** -- means some segments
   were triaged AND had no GT entry to clean them up (human review needed).
+- **Many GT touched -> algo miss flows when the cascade has committed**
+  -- might indicate the rare reach-assignment-uncertain case; investigate
+  the affected segments individually.
 
 ## Exhaustive flag
 
