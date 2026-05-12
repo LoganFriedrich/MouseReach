@@ -103,6 +103,18 @@ def analyze(snapshot_dir: Path) -> dict:
             if r.get("triaged") or r.get("triage_reason"):
                 triage_count += 1
 
+        # Pre-extract usable starts/ends for nearest-neighbor lookup
+        algo_starts_ends = [
+            (int(a["start_frame"]), int(a["end_frame"]))
+            for a in algo if a.get("start_frame") is not None
+            and a.get("end_frame") is not None
+        ]
+        gt_starts_ends = [
+            (int(g["start_frame"]), int(g["end_frame"]))
+            for g in gt if g.get("start_frame") is not None
+            and g.get("end_frame") is not None
+        ]
+
         for status, gi, ai, sd, spd in _match(algo, gt):
             mr = ReachMatch(video_id=vid, status=status)
             if gi >= 0:
@@ -114,6 +126,19 @@ def analyze(snapshot_dir: Path) -> dict:
             if status == "tp":
                 mr.start_delta = sd
                 mr.span_delta = spd
+            elif status == "fp" and gt_starts_ends:
+                # algo reach with no GT match -> nearest GT by start_frame
+                a_s, a_e = mr.algo_start, mr.algo_end
+                nearest = min(gt_starts_ends, key=lambda t: abs(t[0] - a_s))
+                mr.nearest_opp_start_delta = a_s - nearest[0]
+                mr.nearest_opp_span_delta = (a_e - a_s + 1) - (nearest[1] - nearest[0] + 1)
+            elif status == "fn" and algo_starts_ends:
+                # GT reach with no algo match -> nearest algo by start_frame
+                g_s, g_e = mr.gt_start, mr.gt_end
+                nearest = min(algo_starts_ends, key=lambda t: abs(t[0] - g_s))
+                # Sign convention: signed = (gt - algo) so positive = gt later
+                mr.nearest_opp_start_delta = g_s - nearest[0]
+                mr.nearest_opp_span_delta = (nearest[1] - nearest[0] + 1) - (g_e - g_s + 1)
             matches.append(mr)
 
     sd = np.array([m.start_delta for m in matches if m.status == "tp"], dtype=int) \
@@ -174,6 +199,7 @@ def analyze(snapshot_dir: Path) -> dict:
             fh, fieldnames=[
                 "video_id", "status", "start_delta", "end_delta",
                 "subset_tag", "algo_start", "algo_end", "gt_start", "gt_end",
+                "nearest_opp_start_delta", "nearest_opp_span_delta",
             ],
         )
         w.writeheader()
@@ -192,6 +218,14 @@ def analyze(snapshot_dir: Path) -> dict:
                 "algo_end": m.algo_end if m.algo_end is not None else "",
                 "gt_start": m.gt_start if m.gt_start is not None else "",
                 "gt_end": m.gt_end if m.gt_end is not None else "",
+                "nearest_opp_start_delta": (
+                    m.nearest_opp_start_delta
+                    if m.nearest_opp_start_delta is not None else ""
+                ),
+                "nearest_opp_span_delta": (
+                    m.nearest_opp_span_delta
+                    if m.nearest_opp_span_delta is not None else ""
+                ),
             })
     return out
 
