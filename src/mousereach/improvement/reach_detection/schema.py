@@ -14,6 +14,12 @@ class ReachMatch:
     algo_end: Optional[int] = None
     start_delta: Optional[int] = None    # algo - gt; only when tp
     span_delta: Optional[int] = None     # algo.span - gt.span; only when tp
+    # Diagnostics for unmatched reaches: distance to the nearest
+    # opposite-side reach (by start_frame). Helps distinguish "near-miss
+    # of the strict criterion" (small delta) from "genuine over-detection
+    # / missed reach" (large delta).
+    nearest_opp_start_delta: Optional[int] = None  # signed: algo - gt for fp; gt - algo for fn
+    nearest_opp_span_delta: Optional[int] = None   # signed: algo span - gt span at the nearest neighbor
 
     def to_dict(self) -> dict:
         return asdict(self)

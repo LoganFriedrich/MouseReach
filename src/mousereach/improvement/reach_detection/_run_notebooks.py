@@ -198,11 +198,78 @@ def run_summary_table(snapshot_dir: Path) -> None:
 
     table_df = pd.DataFrame(rows)
 
-    figsize = (16, 5)
+    # Build FP / FN characterization from the per-row nearest-neighbor
+    # distances written by the analyzer. Story we want to tell: for each
+    # FP, how far was the nearest GT? for each FN, how far was the
+    # nearest algo? Most FP/FN are near-misses of the strict criterion;
+    # very few are genuinely far from any opposite-side reach.
+    def _bucket_distances(distances):
+        edges = [(0, 1), (2, 5), (6, 10), (11, 20), (21, 50), (51, 10**9)]
+        labels = ["0-1f", "2-5f", "6-10f", "11-20f", "21-50f", ">50f"]
+        counts = [0] * len(edges)
+        for d in distances:
+            ad = abs(int(d))
+            for i, (lo, hi) in enumerate(edges):
+                if lo <= ad <= hi:
+                    counts[i] += 1
+                    break
+        return labels, counts
+
+    df_fp = df_all[df_all["status"] == "fp"].copy()
+    df_fn = df_all[df_all["status"] == "fn"].copy()
+    # Coerce nearest_opp_* to numeric (the CSV writes "" when missing)
+    for col in ("nearest_opp_start_delta", "nearest_opp_span_delta"):
+        if col in df_fp.columns:
+            df_fp[col] = pd.to_numeric(df_fp[col], errors="coerce")
+        if col in df_fn.columns:
+            df_fn[col] = pd.to_numeric(df_fn[col], errors="coerce")
+
+    fp_dists = df_fp["nearest_opp_start_delta"].dropna().values \
+        if "nearest_opp_start_delta" in df_fp.columns else []
+    fn_dists = df_fn["nearest_opp_start_delta"].dropna().values \
+        if "nearest_opp_start_delta" in df_fn.columns else []
+    bucket_labels, fp_counts = _bucket_distances(fp_dists)
+    _, fn_counts = _bucket_distances(fn_dists)
+
+    def _pct_of(counts, total):
+        if total == 0:
+            return ["--"] * len(counts)
+        return [f"{c} ({100*c/total:.0f}%)" for c in counts]
+
+    fp_row = {"Group": f"FP (n={n_fp})"}
+    for lab, cell in zip(bucket_labels, _pct_of(fp_counts, n_fp)):
+        fp_row[f"dist={lab}"] = cell
+    # Span delta summary among near-misses (within 20f start)
+    fp_near = df_fp.loc[
+        df_fp["nearest_opp_start_delta"].abs() <= 20,
+        "nearest_opp_span_delta",
+    ].dropna() if "nearest_opp_span_delta" in df_fp.columns else pd.Series([])
+    fp_row["span Δ (≤20f near-miss, med)"] = (
+        f"{int(fp_near.median())} (algo {'shorter' if fp_near.median()<0 else 'longer'})"
+        if len(fp_near) else "--"
+    )
+
+    fn_row = {"Group": f"FN (n={n_fn})"}
+    for lab, cell in zip(bucket_labels, _pct_of(fn_counts, n_fn)):
+        fn_row[f"dist={lab}"] = cell
+    fn_near = df_fn.loc[
+        df_fn["nearest_opp_start_delta"].abs() <= 20,
+        "nearest_opp_span_delta",
+    ].dropna() if "nearest_opp_span_delta" in df_fn.columns else pd.Series([])
+    fn_row["span Δ (≤20f near-miss, med)"] = (
+        f"{int(fn_near.median())} (algo {'shorter' if fn_near.median()<0 else 'longer'})"
+        if len(fn_near) else "--"
+    )
+
+    fpfn_df = pd.DataFrame([fp_row, fn_row])
+
+    figsize = (16, 7)
     header_color = "#E8EAF6"
 
-    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=figsize, dpi=DPI,
-                                          gridspec_kw={"height_ratios": [1, 2.5]})
+    fig, (ax_top, ax_bot, ax_diag) = plt.subplots(
+        3, 1, figsize=figsize, dpi=DPI,
+        gridspec_kw={"height_ratios": [1, 2.5, 2]},
+    )
 
     # --- Top section: overall counts (includes FP / FN — algo-error counts
     # belong with the headline numbers, not buried in the per-delta-row block).
@@ -290,6 +357,30 @@ def run_summary_table(snapshot_dir: Path) -> None:
         if row_idx == 0:
             cell.set_text_props(fontweight="bold", fontsize=8)
         cell.set_edgecolor("#CCCCCC")
+
+    # --- Third section: FP / FN characterization ---
+    ax_diag.axis("off")
+    diag_cols = list(fpfn_df.columns)
+    diag_cell_text = [[str(row[c]) for c in diag_cols]
+                       for _, row in fpfn_df.iterrows()]
+    diag_table = ax_diag.table(
+        cellText=diag_cell_text,
+        colLabels=diag_cols,
+        colColours=[header_color] * len(diag_cols),
+        loc="center",
+        cellLoc="center",
+    )
+    diag_table.auto_set_font_size(False)
+    diag_table.set_fontsize(8)
+    diag_table.scale(1, 1.6)
+    for (row_idx, col_idx), cell in diag_table.get_celld().items():
+        if row_idx == 0:
+            cell.set_text_props(fontweight="bold", fontsize=8)
+        cell.set_edgecolor("#CCCCCC")
+    ax_diag.set_title(
+        "FP/FN characterization: nearest opposite-side reach distance + span delta on near-miss",
+        fontsize=10, fontweight="bold", pad=10,
+    )
 
     fig.suptitle("Reach detection accuracy summary", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
