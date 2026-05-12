@@ -351,9 +351,18 @@ def run_sankey(snapshot_dir: Path, *,
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     if has_two_level:
-        # Also render two standalone single-panel PNGs so each level can be
-        # viewed in isolation and easily juxtaposed across snapshots (e.g.
-        # training-pre vs generalization-pre).
+        # CANONICAL output: the two-panel composite (`sankey.png` below)
+        # is the only primary report. Per `reach_outcome_evaluation_format.md`,
+        # per-reach / per-segment Sankeys must be reported as the
+        # composite — never a standalone pre or post panel alone, which
+        # hides one half of the story.
+        #
+        # The standalone single-panel PNGs below are SUPPLEMENTARY (e.g.,
+        # for cross-snapshot juxtaposition like training-pre vs gen-pre).
+        # They live in a `panels/` subdir so they can't be grabbed by
+        # accident as "the report."
+        panels_dir = fig_dir / "panels"
+        panels_dir.mkdir(parents=True, exist_ok=True)
         tr = scalars.get("triage_resolution", {}) or {}
         n_resolved_total = tr.get("n_resolved_from_gt", 0)
         for level_key, level, suffix in (
@@ -374,14 +383,15 @@ def run_sankey(snapshot_dir: Path, *,
                           f"still triaged: {n_tri}  |  GT auto-resolved: {n_resolved_total}")
             tot = _draw_sankey_panel(ax_std, level["confusion_matrix"], title, footer)
             fig_std.suptitle(
-                f"{subject} flow  --  {snapshot_dir.name}  (N={tot} {unit_label})",
-                fontsize=13, fontweight="bold", y=0.99,
+                f"{subject} flow  --  {snapshot_dir.name}  (N={tot} {unit_label})  "
+                f"--  SUPPLEMENTARY single panel, see ../sankey.png for canonical view",
+                fontsize=12, fontweight="bold", y=0.99,
             )
             plt.tight_layout()
-            standalone_path = fig_dir / f"sankey_{suffix}.png"
+            standalone_path = panels_dir / f"sankey_{suffix}_panel_only.png"
             fig_std.savefig(str(standalone_path), dpi=DPI, bbox_inches="tight",
                             pad_inches=0.15, facecolor="white")
-            print(f"  Saved: {standalone_path}")
+            print(f"  Saved (supplementary): {standalone_path}")
             plt.close(fig_std)
 
         figsize = (18, 7)
