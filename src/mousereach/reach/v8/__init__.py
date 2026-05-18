@@ -32,7 +32,7 @@ from typing import List, Optional, Tuple
 
 import joblib
 
-VERSION = "8.0.0"
+VERSION = "8.0.1"
 
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
@@ -42,7 +42,7 @@ DEFAULT_MODEL_PATH = Path(__file__).parent / "models" / "v8.0.0_bsw_w0.8.joblib"
 # Production inference hyperparameters (must match the BSW w=0.8
 # calibration to keep behaviour consistent with training).
 DEFAULT_THRESHOLD = 0.5
-DEFAULT_MERGE_GAP = 2
+DEFAULT_MERGE_GAP = 0
 DEFAULT_MIN_SPAN = 3
 
 _MODEL_CACHE = {}
