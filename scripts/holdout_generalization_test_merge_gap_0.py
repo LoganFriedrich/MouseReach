@@ -277,9 +277,9 @@ def main():
     d_tp = total_tp - BASELINE_TP
     d_fp = total_fp - BASELINE_FP
     d_fn = total_fn - BASELINE_FN
-    print(f"  Δ TP: {d_tp:+d}")
-    print(f"  Δ FP: {d_fp:+d}")
-    print(f"  Δ FN: {d_fn:+d}")
+    print(f"  TP delta: {d_tp:+d}")
+    print(f"  FP delta: {d_fp:+d}")
+    print(f"  FN delta: {d_fn:+d}")
     print()
 
     # Boundary precision check
