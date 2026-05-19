@@ -52,6 +52,80 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Metric filter conventions
+# ---------------------------------------------------------------------------
+
+# Reaches shorter than this many frames are excluded from headline TP/FP/FN
+# counts. Rationale: very short reaches don't carry meaningful kinematic
+# content (trajectory-feature smoothness uses third differences which need
+# >= 4 frames; the data dictionary describes mice completing "most reaches
+# in ~6 frames"). The exclusion is applied POST-MATCH (Option 2 from the
+# 2026-05-19 discussion) so that asymmetric exclusions (one side short, one
+# side long) don't artificially orphan the long side into an FP or FN.
+#
+# Semantics:
+#   - A matched pair counts as TP iff BOTH algo_span >= MIN_REPORTED_SPAN
+#     AND gt_span >= MIN_REPORTED_SPAN.
+#   - An FP counts iff algo_span >= MIN_REPORTED_SPAN.
+#   - An FN counts iff gt_span >= MIN_REPORTED_SPAN.
+#   - Reaches below MIN_REPORTED_SPAN still exist in the raw reach JSON
+#     output; the algorithm is unchanged. They are just silently ignored
+#     by the headline metric.
+
+MIN_REPORTED_SPAN = 4
+
+
+def is_kinematically_excluded(start_frame: int, end_frame: int,
+                              min_span: int = MIN_REPORTED_SPAN) -> bool:
+    """True if this reach should be excluded from headline TP/FP/FN counts.
+
+    A reach is "kinematically excluded" if its span (end - start + 1) is
+    shorter than `min_span` frames. Used by the post-match filter and the
+    FP/FN review manifest generator.
+    """
+    return (end_frame - start_frame + 1) < min_span
+
+
+def count_filtered_metrics(results, min_span: int = MIN_REPORTED_SPAN):
+    """Count TP/FP/FN under Option 2 (post-match) filtering semantics.
+
+    Iterates over a list of ReachMatchResult-shaped objects (each with
+    `status`, `algo_start`, `algo_end`, `gt_start`, `gt_end`) and applies
+    the post-match exclusion rule:
+      - matched: count iff BOTH sides span >= min_span
+      - fp:      count iff algo span >= min_span
+      - fn:      count iff gt span >= min_span
+
+    Excluded events are silently dropped from the totals (neither TP, FP,
+    nor FN). They still exist in the raw `results` list for inspection.
+
+    Returns
+    -------
+    (tp, fp, fn) : tuple of int
+    """
+    tp = fp = fn = 0
+    for r in results:
+        if r.status == "matched":
+            a_span = r.algo_end - r.algo_start + 1
+            g_span = r.gt_end - r.gt_start + 1
+            if a_span < min_span or g_span < min_span:
+                continue
+            tp += 1
+        elif r.status == "fp":
+            a_span = r.algo_end - r.algo_start + 1
+            if a_span < min_span:
+                continue
+            fp += 1
+        elif r.status == "fn":
+            g_span = r.gt_end - r.gt_start + 1
+            if g_span < min_span:
+                continue
+            fn += 1
+    return tp, fp, fn
+
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
