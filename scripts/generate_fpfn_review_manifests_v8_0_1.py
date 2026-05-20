@@ -254,6 +254,143 @@ def categorize_fn(gt_start: int, gt_end: int,
     return "tolerance_miss_span"
 
 
+# ---------------------------------------------------------------------------
+# Topology classifier (connected components of algo-GT overlap graph)
+# ---------------------------------------------------------------------------
+#
+# Computes a topology label per connected component and assigns a
+# component_id + topology fields to each event in the manifest. The 7
+# topology labels (renamed from the original 6-event taxonomy by Logan
+# 2026-05-20):
+#
+#   TP              - 1 algo + 1 GT, start AND span tolerance both pass
+#   TOLERANCE_ERROR - 1 algo + 1 GT, overlap exists but tolerance fails
+#   MERGED          - 1 algo + 2+ GT (algo span covers multiple GT reaches)
+#   FRAGMENTED      - 2+ algo + 1 GT (multiple algo split one GT)
+#   FALSE_POSITIVE  - 1 algo + 0 GT (algo with no GT overlap anywhere)
+#   FALSE_NEGATIVE  - 0 algo + 1 GT (GT with no algo overlap anywhere)
+#   COMPLEX         - 2+ algo + 2+ GT in one component (merge AND fragment)
+#
+# The pre-existing FP/FN sub-category labels (within_gt, tolerance_miss_*,
+# phantom, etc.) are preserved on each event in the original `category`
+# field. The new `topology` and `component_id` fields are ADDITIVE -- they
+# do not replace existing fields. Backwards-compat with current widget.
+# Per Logan's "Way 1" preference 2026-05-20.
+
+def _overlaps(reach_a: Reach, reach_b: Reach) -> bool:
+    return not (reach_a.end_frame < reach_b.start_frame
+                or reach_a.start_frame > reach_b.end_frame)
+
+
+def build_topology_components(algos: List[Reach], gts: List[Reach]
+                              ) -> Tuple[Dict[Tuple[int, int], int],
+                                         Dict[Tuple[int, int], int],
+                                         List[Tuple[List[Reach], List[Reach]]]]:
+    """Connected components of the (algo, gt) overlap graph for one video.
+
+    Returns three things:
+      algo_to_cid: maps (algo_start, algo_end) -> component_id
+      gt_to_cid:   maps (gt_start, gt_end)     -> component_id
+      components:  list of (algo_list, gt_list) tuples in component_id order
+
+    Algorithm: union-find over algo + gt nodes, with an edge between an
+    algo node and a gt node iff their frame intervals overlap. Each
+    connected component is one "topology event."
+    """
+    # Build parent dict for union-find. Keys: ("algo", i) or ("gt", i).
+    parent: Dict[Tuple[str, int], Tuple[str, int]] = {}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    for i in range(len(algos)):
+        parent[("algo", i)] = ("algo", i)
+    for j in range(len(gts)):
+        parent[("gt", j)] = ("gt", j)
+
+    # Edges: algo-gt overlap. Could optimize with interval tree but the
+    # typical per-video reach count is < 500, so O(n*m) is fine here.
+    for i, a in enumerate(algos):
+        for j, g in enumerate(gts):
+            if _overlaps(a, g):
+                union(("algo", i), ("gt", j))
+
+    # Collect components: root -> list of nodes
+    comp_nodes: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
+    for node in parent:
+        comp_nodes[find(node)].append(node)
+
+    # Assign sequential component_id (stable order: by first node's identity)
+    sorted_roots = sorted(comp_nodes.keys())
+    components: List[Tuple[List[Reach], List[Reach]]] = []
+    algo_to_cid: Dict[Tuple[int, int], int] = {}
+    gt_to_cid: Dict[Tuple[int, int], int] = {}
+
+    for cid, root in enumerate(sorted_roots):
+        a_list = []
+        g_list = []
+        for node in comp_nodes[root]:
+            kind, idx = node
+            if kind == "algo":
+                a_list.append(algos[idx])
+                algo_to_cid[(algos[idx].start_frame, algos[idx].end_frame)] = cid
+            else:
+                g_list.append(gts[idx])
+                gt_to_cid[(gts[idx].start_frame, gts[idx].end_frame)] = cid
+        components.append((a_list, g_list))
+
+    return algo_to_cid, gt_to_cid, components
+
+
+def classify_component(algo_list: List[Reach], gt_list: List[Reach]
+                       ) -> Tuple[str, Optional[str]]:
+    """Return (topology_label, topology_sub) for a connected component.
+
+    topology_sub is an optional finer label. For multi-reach topologies it
+    encodes the counts (e.g. "2_gt" for a MERGED with 2 GTs). For
+    TOLERANCE_ERROR the sub label is derived from which of start/span
+    tolerance failed. For TP, FALSE_POSITIVE, FALSE_NEGATIVE the sub
+    label is None.
+    """
+    n_algo = len(algo_list)
+    n_gt = len(gt_list)
+
+    if n_algo == 1 and n_gt == 0:
+        return ("FALSE_POSITIVE", None)
+    if n_algo == 0 and n_gt == 1:
+        return ("FALSE_NEGATIVE", None)
+    if n_algo == 1 and n_gt == 1:
+        a = algo_list[0]
+        g = gt_list[0]
+        a_span = a.end_frame - a.start_frame + 1
+        g_span = g.end_frame - g.start_frame + 1
+        start_ok = abs(a.start_frame - g.start_frame) <= STRICT_START_TOL
+        span_ok = _passes_span_tol(a_span, g_span)
+        if start_ok and span_ok:
+            return ("TP", None)
+        if not start_ok and not span_ok:
+            return ("TOLERANCE_ERROR", "start_and_span_off")
+        if not start_ok:
+            return ("TOLERANCE_ERROR", "start_off")
+        return ("TOLERANCE_ERROR", "span_off")
+    if n_algo == 1 and n_gt >= 2:
+        return ("MERGED", f"{n_gt}_gt")
+    if n_algo >= 2 and n_gt == 1:
+        return ("FRAGMENTED", f"{n_algo}_algo")
+    if n_algo >= 2 and n_gt >= 2:
+        return ("COMPLEX", f"{n_algo}_algo_{n_gt}_gt")
+    # Should be unreachable (n_algo=0 and n_gt=0 = no component to classify)
+    return ("UNKNOWN", None)
+
+
 def categorize_fp(algo_start: int, algo_end: int,
                   gts: List[Reach], matched_gt_keys: set) -> str:
     for g in gts:
@@ -277,10 +414,44 @@ def categorize_fp(algo_start: int, algo_end: int,
 # Manifest assembly
 # ---------------------------------------------------------------------------
 
+def _topology_for_event(kind: str,
+                        algo_key: Optional[Tuple[int, int]],
+                        gt_key: Optional[Tuple[int, int]],
+                        algo_to_cid: Dict[Tuple[int, int], int],
+                        gt_to_cid: Dict[Tuple[int, int], int],
+                        components: List[Tuple[List[Reach], List[Reach]]]
+                        ) -> Tuple[str, Optional[str], Optional[int]]:
+    """Return (topology, topology_sub, component_id) for a manifest event.
+
+    The event identifies its component via the algo and/or GT frame keys
+    that participate in the event. For TP both keys are used (and should
+    map to the same component); for FP only the algo key; for FN only the
+    GT key.
+    """
+    cid: Optional[int] = None
+    if algo_key is not None and algo_key in algo_to_cid:
+        cid = algo_to_cid[algo_key]
+    elif gt_key is not None and gt_key in gt_to_cid:
+        cid = gt_to_cid[gt_key]
+
+    if cid is None:
+        # Event references a reach not present in algo or gt lists. Should
+        # not happen if reconstruct_per_video runs on the same records.
+        return ("UNKNOWN", None, None)
+
+    a_list, g_list = components[cid]
+    topology, topology_sub = classify_component(a_list, g_list)
+    return (topology, topology_sub, cid)
+
+
 def _build_event(rec: Dict[str, Any],
                  algos: List[Reach], gts: List[Reach],
                  matched_gt_keys: set,
-                 gt_boundaries: List[int]) -> Dict[str, Any]:
+                 gt_boundaries: List[int],
+                 algo_to_cid: Dict[Tuple[int, int], int],
+                 gt_to_cid: Dict[Tuple[int, int], int],
+                 components: List[Tuple[List[Reach], List[Reach]]]
+                 ) -> Dict[str, Any]:
     kind = rec["kind"]
     if kind == "TP":
         a_s = int(rec["algo_start"]); a_e = int(rec["algo_end"])
@@ -288,6 +459,9 @@ def _build_event(rec: Dict[str, Any],
         # Excluded if EITHER side is below MIN_REPORTED_SPAN.
         excl = (is_kinematically_excluded(a_s, a_e)
                 or is_kinematically_excluded(g_s, g_e))
+        topology, topology_sub, cid = _topology_for_event(
+            "TP", (a_s, a_e), (g_s, g_e),
+            algo_to_cid, gt_to_cid, components)
         # TP is by construction inside segmentation (matched to a GT reach,
         # which is always inside segmentation). Flag set False for schema
         # uniformity.
@@ -300,12 +474,18 @@ def _build_event(rec: Dict[str, Any],
             "span_delta": rec["span_delta"],
             "kinematically_excluded": bool(excl),
             "outside_gt_segmentation": False,
+            "topology": topology,
+            "topology_sub": topology_sub,
+            "component_id": cid,
         }
     if kind == "FP":
         a_s = int(rec["algo_start"]); a_e = int(rec["algo_end"])
         cat = categorize_fp(a_s, a_e, gts, matched_gt_keys)
         excl = is_kinematically_excluded(a_s, a_e)
         outside = is_outside_gt_segmentation(a_s, gt_boundaries)
+        topology, topology_sub, cid = _topology_for_event(
+            "FP", (a_s, a_e), None,
+            algo_to_cid, gt_to_cid, components)
         return {
             "kind": "FP",
             "detector": {"start": a_s, "end": a_e},
@@ -313,11 +493,17 @@ def _build_event(rec: Dict[str, Any],
             "category": cat,
             "kinematically_excluded": bool(excl),
             "outside_gt_segmentation": bool(outside),
+            "topology": topology,
+            "topology_sub": topology_sub,
+            "component_id": cid,
         }
     if kind == "FN":
         g_s = int(rec["gt_start"]); g_e = int(rec["gt_end"])
         cat = categorize_fn(g_s, g_e, algos)
         excl = is_kinematically_excluded(g_s, g_e)
+        topology, topology_sub, cid = _topology_for_event(
+            "FN", None, (g_s, g_e),
+            algo_to_cid, gt_to_cid, components)
         # FN is by construction inside segmentation (GT reaches always are).
         # Flag set False for schema uniformity.
         return {
@@ -327,6 +513,9 @@ def _build_event(rec: Dict[str, Any],
             "category": cat,
             "kinematically_excluded": bool(excl),
             "outside_gt_segmentation": False,
+            "topology": topology,
+            "topology_sub": topology_sub,
+            "component_id": cid,
         }
     raise ValueError(f"Unknown kind: {kind}")
 
@@ -344,6 +533,11 @@ def build_manifests(records: List[Dict[str, Any]],
         algos, gts = per_video_reaches.get(video_id, ([], []))
         gt_boundaries = _load_gt_boundaries(corpus_label, video_id)
 
+        # Build the algo-GT overlap graph and its connected components for
+        # the new topology labels (Way 1 per Logan 2026-05-20).
+        algo_to_cid, gt_to_cid, components = build_topology_components(
+            algos, gts)
+
         results = match_reaches(
             algos, gts, strict=True,
             strict_start_tol=STRICT_START_TOL,
@@ -356,7 +550,8 @@ def build_manifests(records: List[Dict[str, Any]],
                 matched_gt_keys.add((int(r.gt_start), int(r.gt_end)))
 
         events = [
-            _build_event(rec, algos, gts, matched_gt_keys, gt_boundaries)
+            _build_event(rec, algos, gts, matched_gt_keys, gt_boundaries,
+                         algo_to_cid, gt_to_cid, components)
             for rec in video_records
         ]
         def _sort_key(ev):
@@ -364,6 +559,14 @@ def build_manifests(records: List[Dict[str, Any]],
                 return ev["gt"]["start"]
             return ev["detector"]["start"]
         events.sort(key=_sort_key)
+
+        # Per-manifest topology summary: count of each topology label
+        # across the video's components (not events). One component = one
+        # topology event, regardless of how many TP/FP/FN rows it spans.
+        topology_summary: Dict[str, int] = defaultdict(int)
+        for a_list, g_list in components:
+            label, _sub = classify_component(a_list, g_list)
+            topology_summary[label] += 1
 
         manifests[video_id] = {
             "video_id": video_id,
@@ -377,6 +580,7 @@ def build_manifests(records: List[Dict[str, Any]],
                 "first_frame": gt_boundaries[0] if gt_boundaries else None,
                 "last_frame": gt_boundaries[-1] if gt_boundaries else None,
             },
+            "topology_summary": dict(topology_summary),
             "events": events,
         }
 
