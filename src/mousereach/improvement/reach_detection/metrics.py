@@ -77,6 +77,34 @@ logger = logging.getLogger(__name__)
 MIN_REPORTED_SPAN = 4
 
 
+# Algo reaches whose start_frame falls outside the GT segmentation window
+# (before the first GT boundary or after the last GT boundary) are excluded
+# from headline TP/FP/FN counts. Rationale: the SA tray is not in reaching
+# position outside the segmentation window -- no pellet is present, so a real
+# reach is physically impossible. Phantoms that the GBM produces in this
+# pre/post-segment dead time are not detector errors a model fix can address;
+# they are downstream of the apparatus state, which the detector has no
+# awareness of (the reach detector runs per-frame without segment context).
+#
+# This is a metric-side rule only. The reach detector is NOT modified -- it
+# still emits reaches wherever the per-frame proba exceeds threshold. In
+# production, where GT does not exist, no filter is applied. In calibration
+# and holdout scoring, where GT segmentation is available, the headline
+# metric drops these phantoms.
+#
+# Semantics (Option 2 post-match, parallel to MIN_REPORTED_SPAN):
+#   - A matched pair (TP) is unaffected -- a real GT reach is by construction
+#     inside the segmentation window, so any algo reach that matched it is
+#     also inside.
+#   - An FP counts iff algo_start is within [first_boundary, last_boundary]
+#     inclusive on both ends.
+#   - An FN is unaffected for the same reason as TP (GT reaches always inside
+#     segmentation).
+#   - Excluded events still exist in raw output and in manifests with the
+#     `outside_gt_segmentation` flag set true; only the headline counter
+#     drops them.
+
+
 def is_kinematically_excluded(start_frame: int, end_frame: int,
                               min_span: int = MIN_REPORTED_SPAN) -> bool:
     """True if this reach should be excluded from headline TP/FP/FN counts.
@@ -88,18 +116,50 @@ def is_kinematically_excluded(start_frame: int, end_frame: int,
     return (end_frame - start_frame + 1) < min_span
 
 
-def count_filtered_metrics(results, min_span: int = MIN_REPORTED_SPAN):
+def is_outside_gt_segmentation(start_frame: int,
+                               gt_boundaries: List[int]) -> bool:
+    """True if this reach starts outside the GT segmentation window.
+
+    The GT segmentation window is the inclusive interval
+    [min(gt_boundaries), max(gt_boundaries)]. Reaches whose `start_frame`
+    falls outside that interval are physically impossible (the apparatus
+    is not in reaching position) and should be excluded from headline
+    metrics.
+
+    If `gt_boundaries` is empty or None, returns False (no filter applied).
+    """
+    if not gt_boundaries:
+        return False
+    return start_frame < min(gt_boundaries) or start_frame > max(gt_boundaries)
+
+
+def count_filtered_metrics(results, min_span: int = MIN_REPORTED_SPAN,
+                           gt_boundaries: Optional[List[int]] = None):
     """Count TP/FP/FN under Option 2 (post-match) filtering semantics.
 
     Iterates over a list of ReachMatchResult-shaped objects (each with
     `status`, `algo_start`, `algo_end`, `gt_start`, `gt_end`) and applies
-    the post-match exclusion rule:
+    the post-match exclusion rules:
       - matched: count iff BOTH sides span >= min_span
-      - fp:      count iff algo span >= min_span
+      - fp:      count iff algo span >= min_span AND algo_start is inside
+                 the GT segmentation window (when gt_boundaries provided)
       - fn:      count iff gt span >= min_span
 
     Excluded events are silently dropped from the totals (neither TP, FP,
     nor FN). They still exist in the raw `results` list for inspection.
+
+    Parameters
+    ----------
+    results : list of ReachMatchResult-shaped objects
+    min_span : int
+        Minimum reach span to count in headline (see MIN_REPORTED_SPAN).
+    gt_boundaries : list of int, optional
+        GT segmentation boundary frames for this video. When provided, FP
+        events with algo_start outside [min, max] of boundaries are
+        excluded. Must be a single-video boundary list; for multi-video
+        scoring, call this function per video. When None or empty, no
+        segmentation filter is applied (single-video callers without GT
+        segmentation, or callers that have already pre-filtered).
 
     Returns
     -------
@@ -116,6 +176,8 @@ def count_filtered_metrics(results, min_span: int = MIN_REPORTED_SPAN):
         elif r.status == "fp":
             a_span = r.algo_end - r.algo_start + 1
             if a_span < min_span:
+                continue
+            if is_outside_gt_segmentation(r.algo_start, gt_boundaries or []):
                 continue
             fp += 1
         elif r.status == "fn":
