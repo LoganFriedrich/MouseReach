@@ -52,10 +52,10 @@ from mousereach.improvement.reach_detection.metrics import (
 
 CAL_SOURCE = Path(
     r"Y:\2_Connectome\Behavior\MouseReach_Improvement\Improvement_Snapshots"
-    r"\reach_detection\v8.0.0_dev_merge_gap_0_candidate"
+    r"\reach_detection\v8.0.0_dev_merge_gap_0_candidate_rescored_2026-05-20"
     r"\metrics\loocv_aggregate.json"
 )
-CAL_SNAPSHOT_NAME = "v8.0.0_dev_merge_gap_0_candidate"
+CAL_SNAPSHOT_NAME = "v8.0.0_dev_merge_gap_0_candidate_rescored_2026-05-20"
 
 GEN_SOURCE = Path(
     r"Y:\2_Connectome\Behavior\MouseReach_Improvement\Improvement_Snapshots"
