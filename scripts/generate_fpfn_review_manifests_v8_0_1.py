@@ -33,8 +33,11 @@ OUTPUTS
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -44,6 +47,12 @@ from mousereach.improvement.reach_detection.metrics import (
     Reach, match_reaches, MIN_REPORTED_SPAN, is_kinematically_excluded,
     is_outside_gt_segmentation,
 )
+
+# Tag for the current generation run. Override via MOUSEREACH_MANIFEST_RUN_TAG.
+# Used when archiving prior manifests (the tag describes what's about to CHANGE
+# in this regen, so the archived snapshot is labeled by what it pre-dates).
+# Examples: "pre_topology_enrichment", "pre_segmentation_filter", "gt_edit_rescore".
+RUN_TAG = os.environ.get("MOUSEREACH_MANIFEST_RUN_TAG", "regen")
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +383,47 @@ def build_manifests(records: List[Dict[str, Any]],
     return manifests
 
 
+def archive_existing_manifests() -> Optional[Path]:
+    """Move any existing per-corpus manifest dirs into a dated archive.
+
+    Output layout:
+      <OUTPUT_ROOT.parent>/<OUTPUT_ROOT.name>_archive/<YYYY-MM-DDTHH-MM>_<tag>/
+        calibration_loocv/   (if it existed and had content)
+        holdout_2026_05_11/  (if it existed and had content)
+
+    Returns the archive directory path if anything was archived, else None.
+
+    Atomicity: shutil.move is a rename when src and dst are on the same
+    filesystem (both are under OUTPUT_ROOT's parent on Y:\\), so each
+    corpus dir is moved atomically. A partial-failure scenario could only
+    occur across filesystems, which is not the case here.
+
+    Skipped corpora (no existing dir, or empty dir) are not archived --
+    nothing to preserve.
+    """
+    corpora = ["calibration_loocv", "holdout_2026_05_11"]
+    populated = [c for c in corpora
+                 if (OUTPUT_ROOT / c).exists()
+                 and any((OUTPUT_ROOT / c).iterdir())]
+    if not populated:
+        return None
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M")
+    archive_root = (OUTPUT_ROOT.parent
+                    / f"{OUTPUT_ROOT.name}_archive"
+                    / f"{timestamp}_{RUN_TAG}")
+    archive_root.mkdir(parents=True, exist_ok=True)
+
+    print(f"Archiving prior manifests to: {archive_root}")
+    for corpus in populated:
+        src = OUTPUT_ROOT / corpus
+        dst = archive_root / corpus
+        shutil.move(str(src), str(dst))
+        print(f"  {corpus}: {len(list(dst.iterdir()))} manifests archived")
+
+    return archive_root
+
+
 def write_manifests(manifests: Dict[str, Dict[str, Any]],
                     corpus_label: str) -> int:
     out_dir = OUTPUT_ROOT / corpus_label
@@ -433,7 +483,14 @@ def main():
     print("=" * 70)
     print(f"Generate FP/FN review manifests -- v8.0.1 (post-mg=0 ship)")
     print(f"Output: {OUTPUT_ROOT}")
+    print(f"Run tag: {RUN_TAG}")
     print("=" * 70)
+    print()
+
+    # Archive any prior manifests at OUTPUT_ROOT/<corpus>/ into a dated
+    # archive subfolder before writing fresh ones. Preserves history per
+    # the project's archive-then-write convention.
+    archive_existing_manifests()
     print()
 
     print(f"Loading calibration source: {CAL_SOURCE.name}")
