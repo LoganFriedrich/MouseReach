@@ -32,7 +32,7 @@ from typing import List, Optional, Tuple
 
 import joblib
 
-VERSION = "8.0.1"
+VERSION = "8.0.2"
 
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
@@ -44,6 +44,12 @@ DEFAULT_MODEL_PATH = Path(__file__).parent / "models" / "v8.0.0_bsw_w0.8.joblib"
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_MERGE_GAP = 0
 DEFAULT_MIN_SPAN = 3
+
+# v8.0.2 leading-trim postprocess defaults (calibrated 2026-05-21).
+# See postprocess.trim_leading_sustained_lk for the calibration evidence.
+DEFAULT_TRIM_LK_THRESHOLD = 0.60
+DEFAULT_TRIM_SUSTAIN_N = 3
+DEFAULT_TRIM_ENABLED = True
 
 _MODEL_CACHE = {}
 
@@ -63,6 +69,9 @@ def detect_reaches_v8(
     threshold: float = DEFAULT_THRESHOLD,
     merge_gap: int = DEFAULT_MERGE_GAP,
     min_span: int = DEFAULT_MIN_SPAN,
+    leading_trim_enabled: bool = DEFAULT_TRIM_ENABLED,
+    leading_trim_lk_threshold: float = DEFAULT_TRIM_LK_THRESHOLD,
+    leading_trim_sustain_n: int = DEFAULT_TRIM_SUSTAIN_N,
 ) -> List[Tuple[int, int]]:
     """Run the v8 production reach detector on a DLC trajectory dataframe.
 
@@ -80,13 +89,23 @@ def detect_reaches_v8(
         they are kept separate.
     min_span : int
         Minimum length (in frames) for a run to be emitted as a reach.
+    leading_trim_enabled : bool
+        Whether to apply the v8.0.2 leading-trim postprocess. Default True.
+        Trims leading frames of each reach where the paw is poorly tracked
+        by DLC (sustained low-likelihood run).
+    leading_trim_lk_threshold : float
+        paw_mean_lk threshold for the leading-trim. Default 0.60.
+    leading_trim_sustain_n : int
+        Number of consecutive low-lk frames required to trim a leading frame.
+        Default 3.
 
     Returns
     -------
     list of (start_frame, end_frame) tuples, video-frame indices.
     """
     from .features import extract_features
-    from .postprocess import probabilities_to_reaches
+    from .postprocess import (probabilities_to_reaches, compute_paw_mean_lk,
+                              trim_leading_sustained_lk)
 
     if model_path is None:
         model_path = DEFAULT_MODEL_PATH
@@ -100,4 +119,14 @@ def detect_reaches_v8(
 
     spans = probabilities_to_reaches(
         proba, threshold=threshold, merge_gap=merge_gap, min_span=min_span)
+
+    if leading_trim_enabled:
+        paw_mean_lk = compute_paw_mean_lk(dlc_df)
+        spans = trim_leading_sustained_lk(
+            spans, paw_mean_lk,
+            threshold=leading_trim_lk_threshold,
+            sustain_n=leading_trim_sustain_n,
+            min_span=min_span,
+        )
+
     return [(int(s.start_frame), int(s.end_frame)) for s in spans]
