@@ -77,6 +77,37 @@ logger = logging.getLogger(__name__)
 MIN_REPORTED_SPAN = 4
 
 
+# Asymmetric start-frame tolerance for the strict matching rule.
+#
+# Background: the canonical strict criterion historically required
+# |algo_start - gt_start| <= 2. Phase A diagnostic 2026-05-22 showed that
+# the population of TOLERANCE_ERROR(start_late) events (start_delta > +2,
+# under the symmetric rule) is dominated by a "truncated subset" sub-pop:
+# 88% calibration / 97% holdout of these events have the algo window
+# completely INSIDE the GT window (algo_start >= gt_start AND
+# algo_end <= gt_end). For these events, the algo's reach window contains
+# no pre-reach frames -- no kinematic contamination, only incompleteness
+# (missing the first 3-5 frames of a real reach).
+#
+# Phase B experiment 2026-05-22 verified that relaxing the late side to
+# start_delta <= +5 while keeping the early side at -2 admits sub-pop A
+# only (the truncated subset cases); sub-pop B (algo found only the tail
+# of a long GT reach) is already filtered by the existing span tolerance.
+# All non-TP/non-TOLERANCE_ERROR topology classes are invariant under the
+# change. Net effect: calibration LOOCV +50 TP / -50 FP / -50 FN;
+# holdout +27 TP / -27 FP / -27 FN. start_delta abs_median holds at 0.
+#
+# Per CARDINAL_RULE_NUANCE_2026-05-18: late-start TPs have lower magnitude
+# on Class B/C features (missing initial frames) but no contamination.
+# Early-start would add non-reach frames; that is corruption and stays
+# rejected at +/-2.
+#
+# Snapshots: v8.0.2_dev_start_late_diagnostic, v8.0.2_dev_asymmetric_tolerance_k5.
+
+STRICT_START_TOL_EARLY = 2  # |negative start_delta| <= this
+STRICT_START_TOL_LATE = 5   # positive start_delta <= this
+
+
 # Algo reaches whose start_frame falls outside the GT segmentation window
 # (before the first GT boundary or after the last GT boundary) are excluded
 # from headline TP/FP/FN counts. Rationale: the SA tray is not in reaching
@@ -255,7 +286,8 @@ def match_reaches(
     gt_reaches: List[Reach],
     window: int = 10,
     strict: bool = False,
-    strict_start_tol: int = 2,
+    strict_start_tol: int = STRICT_START_TOL_EARLY,
+    strict_start_tol_late: int = STRICT_START_TOL_LATE,
     strict_span_tol_rel: float = 0.5,
     strict_span_tol_abs: int = 5,
 ) -> List[ReachMatchResult]:
@@ -263,8 +295,8 @@ def match_reaches(
 
     Algorithm:
       1. For each GT reach, find all algo reaches whose start_frame is
-         within +/- window frames (or +/- strict_start_tol when
-         ``strict=True``).
+         within +/- window frames (or within the strict asymmetric
+         tolerance window when ``strict=True``: see below).
       2. When ``strict=True``, additionally require span agreement:
          |algo_span - gt_span| <= max(strict_span_tol_rel * gt_span,
          strict_span_tol_abs).
@@ -274,12 +306,14 @@ def match_reaches(
          most one match. If already assigned, skip.
       5. Unmatched GT reaches -> fn. Unmatched algo reaches -> fp.
 
-    The ``strict`` mode matches the canonical reach-detection criterion
-    documented in the project memory: TP iff algo start within +/-2f of
-    GT start AND roughly the same span. The default (non-strict)
-    ``window=10`` mode is the legacy lenient matcher used by older
-    pipelines and is kept for callers that want only start-frame
-    proximity without enforcing span equality.
+    The ``strict`` mode matches the canonical reach-detection criterion.
+    Historically this was symmetric +/-2; as of 2026-05-22 the rule is
+    asymmetric: ``-strict_start_tol <= start_delta <= strict_start_tol_late``.
+    Default values give early tolerance of 2 (corrupted-window guard,
+    Cardinal Rule) and late tolerance of 5 (truncated-subset events
+    that have no kinematic contamination, only incompleteness). See the
+    STRICT_START_TOL_LATE module-level constant for the calibration
+    evidence.
 
     Parameters
     ----------
@@ -291,10 +325,15 @@ def match_reaches(
         Maximum absolute start-frame distance for a match (inclusive),
         used only when ``strict=False``.
     strict : bool, default False
-        If True, enforce the canonical TP criterion: start within +/-
-        ``strict_start_tol`` frames AND span within tolerance.
-    strict_start_tol : int, default 2
-        Start-frame tolerance when ``strict=True``.
+        If True, enforce the canonical TP criterion: start within the
+        asymmetric tolerance window AND span within tolerance.
+    strict_start_tol : int, default ``STRICT_START_TOL_EARLY`` (2)
+        Early-side start-frame tolerance when ``strict=True``. An algo
+        reach with start_delta < -strict_start_tol is rejected.
+    strict_start_tol_late : int, default ``STRICT_START_TOL_LATE`` (5)
+        Late-side start-frame tolerance when ``strict=True``. An algo
+        reach with start_delta > strict_start_tol_late is rejected. Pass
+        the same value as ``strict_start_tol`` for symmetric behavior.
     strict_span_tol_rel : float, default 0.5
         Span-tolerance relative-to-gt-span fraction.
     strict_span_tol_abs : int, default 5
@@ -306,7 +345,15 @@ def match_reaches(
         One entry per matched pair, plus one per fn and one per fp.
     """
     # Effective start-frame window depends on mode.
-    eff_start_tol = strict_start_tol if strict else window
+    # In strict mode the window is asymmetric: [-strict_start_tol,
+    # +strict_start_tol_late].
+    # In non-strict mode the window is symmetric: +/- window.
+    if strict:
+        eff_tol_early = strict_start_tol
+        eff_tol_late = strict_start_tol_late
+    else:
+        eff_tol_early = window
+        eff_tol_late = window
 
     # Build candidate pairs. When strict, attach span_delta and require
     # the span check to pass; sort by (start_delta, span_delta).
@@ -314,9 +361,13 @@ def match_reaches(
     for gr in gt_reaches:
         gspan = gr.end_frame - gr.start_frame + 1
         for ar in algo_reaches:
-            d_start = abs(ar.start_frame - gr.start_frame)
-            if d_start > eff_start_tol:
+            # Signed start_delta = algo - gt; asymmetric bounds.
+            start_delta_signed = ar.start_frame - gr.start_frame
+            if start_delta_signed < -eff_tol_early:
                 continue
+            if start_delta_signed > eff_tol_late:
+                continue
+            d_start = abs(start_delta_signed)
             if strict:
                 aspan = ar.end_frame - ar.start_frame + 1
                 span_tol = max(strict_span_tol_rel * gspan,
