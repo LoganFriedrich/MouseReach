@@ -677,7 +677,7 @@ def _topology_for_event(algo_key: Optional[Tuple[int, int]],
         return ("FRAGMENTED", f"{n_algo}_algo", cid)
     # N:M (N>=2, M>=2): decompose
     if event_kind == "TP":
-        return ("TP", "decomposed", cid)
+        return ("TP", None, cid)
     # Build sets of matched algo/gt keys within THIS component
     if matched_pair_keys is None:
         matched_pair_keys = set()
@@ -694,14 +694,14 @@ def _topology_for_event(algo_key: Optional[Tuple[int, int]],
         a_s, a_e = algo_key
         for (g_s, g_e) in unmatched_g:
             if not (a_e < g_s or a_s > g_e):
-                return ("TOLERANCE_ERROR", "soft_pair_in_complex", cid)
-        return ("FALSE_POSITIVE", "stranded_in_complex", cid)
+                return ("TOLERANCE_ERROR", None, cid)
+        return ("FALSE_POSITIVE", None, cid)
     if event_kind == "FN":
         g_s, g_e = gt_key
         for (a_s, a_e) in unmatched_a:
             if not (a_e < g_s or a_s > g_e):
-                return ("TOLERANCE_ERROR", "soft_pair_in_complex", cid)
-        return ("FALSE_NEGATIVE", "stranded_in_complex", cid)
+                return ("TOLERANCE_ERROR", None, cid)
+        return ("FALSE_NEGATIVE", None, cid)
     return ("UNKNOWN", None, cid)
 
 
