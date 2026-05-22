@@ -82,7 +82,7 @@ from mousereach.reach.v8.postprocess import (
 
 
 RUN_TAG = os.environ.get("MOUSEREACH_MANIFEST_RUN_TAG",
-                          "pre_v8_0_2_and_asym_tol")
+                          "pre_live_gt_fix")
 
 
 # ---------------------------------------------------------------------------
@@ -189,29 +189,97 @@ def load_dlc_h5(path: Path) -> pd.DataFrame:
 PARQUET_LK_COLS = ["RightHand_lk", "RHLeft_lk", "RHOut_lk", "RHRight_lk"]
 
 
-def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
-    """Returns dict[video_id] = {"algos": [(s,e),...], "gts": [(s,e),...]}.
-    Algos have v8.0.2 trim applied.
+def _load_live_gt_reaches(corpus_label: str, video_id: str
+                          ) -> Tuple[List[Tuple[int, int]], Optional[str]]:
+    """Load GT reaches from the LIVE GT file (current truth on disk).
+
+    Reads from GT_ROOTS[corpus_label] / "<video_id>_unified_ground_truth.json".
+    Returns (reaches, last_modified_at). Reaches is the sorted list of
+    (start_frame, end_frame) tuples excluding any marked exclude_from_analysis.
+    last_modified_at is the GT file's top-level field for staleness tracking.
+
+    Use this instead of pulling GT from snapshot JSONs (which have GT baked
+    in as of when the snapshot was generated and become stale when GT is
+    edited).
     """
-    print(f"Loading calibration LOOCV: {CAL_LOOCV_SOURCE.name}", flush=True)
+    gt_root = GT_ROOTS.get(corpus_label)
+    if gt_root is None:
+        return [], None
+    gt_path = gt_root / f"{video_id}_unified_ground_truth.json"
+    if not gt_path.exists():
+        return [], None
+    try:
+        data = json.loads(gt_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return [], None
+    last_modified = data.get("last_modified_at")
+    reaches_obj = data.get("reaches", {})
+    rlist = (reaches_obj.get("reaches", [])
+             if isinstance(reaches_obj, dict) else [])
+    pairs = sorted(set(
+        (int(r["start_frame"]), int(r["end_frame"]))
+        for r in rlist if not r.get("exclude_from_analysis")
+    ))
+    return pairs, last_modified
+
+
+def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
+    """Returns dict[video_id] = {"algos": [(s,e),...], "gts": [(s,e),...],
+                                  "v801_algo_count": int,
+                                  "gt_last_modified_at": str|None}.
+
+    Algos come from the v8.0.1 LOOCV snapshot (still valid -- algo output
+    doesn't depend on GT) and have v8.0.2 trim applied.
+
+    GTs come from LIVE GT files (current truth) -- NOT from the LOOCV
+    snapshot's raw_results. The snapshot GT is stale relative to any GT
+    edits made after the LOOCV was scored. Fixed 2026-05-22 after the
+    widget-side Claude flagged CNT0301_P3 reach #13: live=2171-2186
+    (edited 2026-05-19), snapshot=2162-2186 (stale).
+    """
+    print(f"Loading calibration v8.0.1 algo reaches from: "
+          f"{CAL_LOOCV_SOURCE.name}", flush=True)
     data = json.loads(CAL_LOOCV_SOURCE.read_text(encoding="utf-8"))
     raw = data["raw_results"]
 
     algos_pre = defaultdict(set)
-    gts = defaultdict(set)
+    snapshot_gts = defaultdict(set)
     for r in raw:
         vid = r["video_id"]
         if r["algo_start_frame"] >= 0:
             algos_pre[vid].add((int(r["algo_start_frame"]),
                                 int(r["algo_end_frame"])))
         if r["gt_start_frame"] >= 0:
-            gts[vid].add((int(r["gt_start_frame"]),
-                          int(r["gt_end_frame"])))
+            snapshot_gts[vid].add((int(r["gt_start_frame"]),
+                                    int(r["gt_end_frame"])))
 
-    print(f"  {len(algos_pre)} videos; "
-          f"{sum(len(s) for s in algos_pre.values())} v8.0.1 algo reaches; "
-          f"{sum(len(s) for s in gts.values())} GT reaches",
+    all_vids = sorted(set(algos_pre.keys()) | set(snapshot_gts.keys()))
+    print(f"  {len(algos_pre)} videos with algo reaches; "
+          f"{sum(len(s) for s in algos_pre.values())} v8.0.1 algo reaches",
           flush=True)
+
+    # Load LIVE GT for each video; report staleness
+    print(f"Loading LIVE calibration GT from {GT_ROOTS['calibration_loocv']}...",
+          flush=True)
+    live_gts: Dict[str, List[Tuple[int, int]]] = {}
+    gt_modified: Dict[str, Optional[str]] = {}
+    stale_videos = []
+    for vid in all_vids:
+        live, last_mod = _load_live_gt_reaches("calibration_loocv", vid)
+        live_gts[vid] = live
+        gt_modified[vid] = last_mod
+        snap = snapshot_gts.get(vid, set())
+        if set(live) != snap:
+            n_diff = len(set(live) ^ snap)
+            stale_videos.append((vid, n_diff, last_mod))
+    if stale_videos:
+        print(f"  STALE-GT detected on {len(stale_videos)} videos "
+              f"(snapshot GT differs from live):", flush=True)
+        for vid, n_diff, last_mod in stale_videos:
+            print(f"    {vid:35} {n_diff} reach differences (live last_modified_at: {last_mod})",
+                  flush=True)
+    else:
+        print(f"  No stale-GT detected; live GT matches snapshot GT on all videos.")
 
     # Load paw_mean_lk from parquet
     print(f"Loading parquet for paw_mean_lk...", flush=True)
@@ -229,7 +297,7 @@ def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
     # Apply v8.0.2 trim
     out = {}
     n_dropped = 0
-    for vid in sorted(set(algos_pre.keys()) | set(gts.keys())):
+    for vid in all_vids:
         algos_v1 = sorted(algos_pre.get(vid, set()))
         if vid in lk_by_vid:
             algos_v2 = apply_v802_trim(algos_v1, lk_by_vid[vid])
@@ -238,8 +306,9 @@ def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
         n_dropped += len(algos_v1) - len(algos_v2)
         out[vid] = {
             "algos": sorted(set(algos_v2)),
-            "gts": sorted(gts.get(vid, set())),
+            "gts": live_gts[vid],  # <-- LIVE GT, not snapshot GT
             "v801_algo_count": len(algos_v1),
+            "gt_last_modified_at": gt_modified[vid],
         }
     print(f"  v8.0.2 trim: dropped {n_dropped} reaches across all videos "
           f"(remaining: {sum(len(v['algos']) for v in out.values())})",
@@ -248,8 +317,11 @@ def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
 
 
 def _build_holdout_per_video() -> Dict[str, Dict[str, Any]]:
-    """Same as calibration but for the holdout corpus."""
-    print(f"Loading holdout v8.0.1 algo outputs + GT + DLC...", flush=True)
+    """Same as calibration but for the holdout corpus. Holdout already reads
+    GT from live files (correct behavior); also records gt_last_modified_at
+    for staleness tracking.
+    """
+    print(f"Loading holdout v8.0.1 algo outputs + LIVE GT + DLC...", flush=True)
     out = {}
     n_v1_total = 0
     n_v2_total = 0
@@ -270,15 +342,8 @@ def _build_holdout_per_video() -> Dict[str, Dict[str, Any]]:
             (int(r["start_frame"]), int(r["end_frame"]))
             for r in adata.get("reaches", [])
         ))
-        # Load GT reaches
-        gdata = json.loads(gt_path.read_text(encoding="utf-8"))
-        reaches_obj = gdata.get("reaches", {})
-        rlist = (reaches_obj.get("reaches", [])
-                 if isinstance(reaches_obj, dict) else [])
-        gts = sorted(set(
-            (int(r["start_frame"]), int(r["end_frame"]))
-            for r in rlist if not r.get("exclude_from_analysis")
-        ))
+        # Load LIVE GT reaches + last_modified for staleness tracking
+        gts, gt_last_mod = _load_live_gt_reaches("holdout_2026_05_11", vid)
         # Load DLC for paw_mean_lk
         dlc = load_dlc_h5(dlc_path)
         paw_lk = compute_paw_mean_lk(dlc)
@@ -289,6 +354,7 @@ def _build_holdout_per_video() -> Dict[str, Dict[str, Any]]:
             "algos": sorted(set(algos_v2)),
             "gts": gts,
             "v801_algo_count": len(algos_v1),
+            "gt_last_modified_at": gt_last_mod,
         }
         n_v1_total += len(algos_v1)
         n_v2_total += len(algos_v2)
@@ -649,6 +715,8 @@ def build_manifests(per_video: Dict[str, Dict[str, Any]],
             "v802_algo_count": len(algos_tuples),
             "v802_trim_dropped": (vd.get("v801_algo_count", 0)
                                    - len(algos_tuples)),
+            "gt_last_modified_at": vd.get("gt_last_modified_at"),
+            "manifest_generated_at": datetime.now().isoformat(),
             "gt_segmentation": {
                 "n_boundaries": len(gt_boundaries),
                 "first_frame": gt_boundaries[0] if gt_boundaries else None,
