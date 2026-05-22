@@ -32,7 +32,7 @@ from typing import List, Optional, Tuple
 
 import joblib
 
-VERSION = "8.0.2"
+VERSION = "8.0.3"
 
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
@@ -50,6 +50,14 @@ DEFAULT_MIN_SPAN = 3
 DEFAULT_TRIM_LK_THRESHOLD = 0.60
 DEFAULT_TRIM_SUSTAIN_N = 3
 DEFAULT_TRIM_ENABLED = True
+
+# v8.0.3 apex-split postprocess defaults (calibrated 2026-05-22).
+# See postprocess.apex_split_at_trough for the calibration evidence.
+DEFAULT_APEX_SPLIT_ENABLED = True
+DEFAULT_APEX_SPLIT_PROMINENCE = 0.12
+DEFAULT_APEX_SPLIT_DEPTH_MIN = 0.5
+DEFAULT_APEX_SPLIT_PEAK2_REL_MAX = 0.85
+DEFAULT_APEX_SPLIT_MIN_DISTANCE = 4
 
 _MODEL_CACHE = {}
 
@@ -72,6 +80,11 @@ def detect_reaches_v8(
     leading_trim_enabled: bool = DEFAULT_TRIM_ENABLED,
     leading_trim_lk_threshold: float = DEFAULT_TRIM_LK_THRESHOLD,
     leading_trim_sustain_n: int = DEFAULT_TRIM_SUSTAIN_N,
+    apex_split_enabled: bool = DEFAULT_APEX_SPLIT_ENABLED,
+    apex_split_prominence: float = DEFAULT_APEX_SPLIT_PROMINENCE,
+    apex_split_depth_min: float = DEFAULT_APEX_SPLIT_DEPTH_MIN,
+    apex_split_peak2_rel_max: float = DEFAULT_APEX_SPLIT_PEAK2_REL_MAX,
+    apex_split_min_distance: int = DEFAULT_APEX_SPLIT_MIN_DISTANCE,
 ) -> List[Tuple[int, int]]:
     """Run the v8 production reach detector on a DLC trajectory dataframe.
 
@@ -98,6 +111,20 @@ def detect_reaches_v8(
     leading_trim_sustain_n : int
         Number of consecutive low-lk frames required to trim a leading frame.
         Default 3.
+    apex_split_enabled : bool
+        Whether to apply the v8.0.3 apex-split postprocess. Default True.
+        Splits each reach at the trough between two prominent peaks in
+        the hand-to-BoxL normalized distance trajectory, catching the
+        paw-visibility and apparatus-quirk merger failure modes.
+    apex_split_prominence : float
+        scipy.signal.find_peaks prominence threshold. Default 0.12.
+    apex_split_depth_min : float
+        Minimum trough depth required for a split. Default 0.5.
+    apex_split_peak2_rel_max : float
+        Suppress split if last peak is at >= cutoff of algo span.
+        Default 0.85.
+    apex_split_min_distance : int
+        Minimum distance between detected peaks (frames). Default 4.
 
     Returns
     -------
@@ -105,7 +132,9 @@ def detect_reaches_v8(
     """
     from .features import extract_features
     from .postprocess import (probabilities_to_reaches, compute_paw_mean_lk,
-                              trim_leading_sustained_lk)
+                              trim_leading_sustained_lk,
+                              compute_hand_to_boxl_norm_pos,
+                              apex_split_at_trough)
 
     if model_path is None:
         model_path = DEFAULT_MODEL_PATH
@@ -126,6 +155,17 @@ def detect_reaches_v8(
             spans, paw_mean_lk,
             threshold=leading_trim_lk_threshold,
             sustain_n=leading_trim_sustain_n,
+            min_span=min_span,
+        )
+
+    if apex_split_enabled:
+        norm_pos = compute_hand_to_boxl_norm_pos(dlc_df)
+        spans = apex_split_at_trough(
+            spans, norm_pos,
+            prominence=apex_split_prominence,
+            depth_min=apex_split_depth_min,
+            peak2_rel_max=apex_split_peak2_rel_max,
+            min_distance=apex_split_min_distance,
             min_span=min_span,
         )
 
