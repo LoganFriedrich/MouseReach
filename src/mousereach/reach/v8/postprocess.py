@@ -12,6 +12,13 @@ v8.0.2 adds an optional fourth step:
   4. Trim leading frames of each reach where the paw is poorly tracked
      by DLC (sustained low-likelihood run). See `trim_leading_sustained_lk`.
 
+v8.0.3 adds an optional fifth step:
+  5. Split each reach at the trough between two prominent peaks in the
+     hand-to-BoxL normalized distance trajectory. Catches the
+     paw-visibility merger and apparatus-quirk merger failure modes
+     where the GBM emits one algo span covering two real reaches.
+     See `apex_split_at_trough`.
+
 The threshold + merge gap + min span are calibration knobs. Defaults
 are starting points to be tuned per the eval (over-call OK; iterate to
 maximize TP recall while keeping start delta tight).
@@ -22,6 +29,8 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
+import pandas as pd
+from scipy.signal import find_peaks
 
 # Hand-keypoint likelihood columns used to compute paw_mean_lk for the
 # leading-trim postprocess. Must match the DLC bodypart names in
@@ -198,4 +207,167 @@ def trim_leading_sustained_lk(
             new_s += 1
         if e - new_s + 1 >= min_span:
             out.append(ReachSpan(start_frame=new_s, end_frame=e))
+    return out
+
+
+# ---- v8.0.3 apex-split postprocess ----
+
+# Hand and apparatus keypoints used to compute the per-frame
+# hand-centroid-to-BoxL normalized distance signal.
+HAND_KEYPOINTS = ("RightHand", "RHLeft", "RHOut", "RHRight")
+BOXL_KEYPOINT = "BOXL"
+BOXR_KEYPOINT = "BOXR"
+
+NORM_POS_SMOOTH_WINDOW = 5
+APPARATUS_WIDTH_FLOOR = 1e-3
+
+
+def compute_hand_to_boxl_norm_pos(dlc_df) -> np.ndarray:
+    """Per-frame distance from hand centroid to BoxL, normalized by
+    apparatus width (BoxL-to-BoxR distance).
+
+    Returns an array of length n_frames. Each value is in [0, ~1.x]
+    where 0 = hand at BoxL, 1 = hand at BoxR. Smoothed with a 5-frame
+    centered moving average on every input coordinate before the
+    distance computation.
+
+    Used by `apex_split_at_trough` to detect double-hump reach
+    trajectories indicating two real reaches merged into one algo span.
+    """
+    def smooth(x):
+        return pd.Series(x).rolling(NORM_POS_SMOOTH_WINDOW,
+                                     center=True,
+                                     min_periods=1).mean().to_numpy(dtype=np.float32)
+
+    hand_x = smooth(np.mean(
+        [dlc_df[f"{kp}_x"].to_numpy() for kp in HAND_KEYPOINTS], axis=0))
+    hand_y = smooth(np.mean(
+        [dlc_df[f"{kp}_y"].to_numpy() for kp in HAND_KEYPOINTS], axis=0))
+    boxl_x = smooth(dlc_df[f"{BOXL_KEYPOINT}_x"].to_numpy())
+    boxl_y = smooth(dlc_df[f"{BOXL_KEYPOINT}_y"].to_numpy())
+    boxr_x = smooth(dlc_df[f"{BOXR_KEYPOINT}_x"].to_numpy())
+    boxr_y = smooth(dlc_df[f"{BOXR_KEYPOINT}_y"].to_numpy())
+    apparatus = np.sqrt((boxr_x - boxl_x) ** 2 + (boxr_y - boxl_y) ** 2)
+    dist_boxl = np.sqrt((hand_x - boxl_x) ** 2 + (hand_y - boxl_y) ** 2)
+    return dist_boxl / np.maximum(apparatus, APPARATUS_WIDTH_FLOOR)
+
+
+def apex_split_at_trough(
+    reaches: List[ReachSpan],
+    norm_pos: np.ndarray,
+    prominence: float = 0.12,
+    depth_min: float = 0.5,
+    peak2_rel_max: float = 0.85,
+    min_distance: int = 4,
+    min_span: int = 3,
+) -> List[ReachSpan]:
+    """Split each reach at the deep trough between two prominent peaks.
+
+    For each emitted reach span, examine the hand-centroid-to-BoxL
+    normalized distance signal over that span. If `scipy.signal.find_peaks`
+    detects 2+ peaks meeting the prominence threshold AND the trough
+    between two consecutive peaks is at least `depth_min` deep AND the
+    last peak is at < `peak2_rel_max` of the span length, split the
+    reach at the deepest trough frame.
+
+    Rationale: each real reach has one extension apex (peak of
+    hand-to-BoxL distance). When the GBM emits one algo span covering
+    two real reaches (paw-visibility merger, apparatus-quirk merger),
+    the normalized-position trajectory has a clean double-hump with a
+    deep trough between. The peak2_rel guard rejects end-of-reach
+    artifacts (grab, hold, jitter) where the second peak is near the
+    end of the algo span and represents a single-reach pattern.
+
+    Calibrated 2026-05-22 on the model 3.1 DLC corpus (16-video
+    calibration LOOCV + 19-video holdout):
+      - Calibration: TP +84 / FP -35 / FN -84 vs v8.0.2 baseline.
+        MERGED topology reduced 57 -> 10 (82% reduction).
+      - Holdout: TP +22 / FP -7 / FN -22.
+        MERGED topology reduced 17 -> 3 (82% reduction).
+      - start_delta abs_median held at 0 on both corpora.
+      - span_delta abs_median held at 0 on both corpora.
+      - Over-splits (apex FRAGMENTED whose GT was baseline TP):
+        2 cal, 1 hol.
+      - FRAGMENTED ratio vs baseline: 1.4x cal, 1.1x hol (under 2x).
+
+    Sub-sweeps that selected these defaults:
+      - prominence sweep (0.05..0.15 at depth=0.5, peak2=0.85): 0.12
+        chosen for the over-split / MERGED-catch tradeoff sweet spot.
+      - depth sweep (0.4..0.7 at prom=0.12, peak2=0.85): 0.5 matches
+        0.4 at prom=0.12 (prominence is the binding constraint); above
+        0.5 loses MERGED catches.
+      - peak2_rel sweep (0.70..0.90 at prom=0.12, depth=0.5): 0.85 is
+        the cal saturation point and is Pareto-optimal vs 0.90 on
+        holdout (fewer over-splits at same FN gain).
+
+    Snapshot: Improvement_Snapshots/reach_detection/
+    v8.0.2_dev_apex_split_holdout_gate/RESULTS.md
+
+    Parameters
+    ----------
+    reaches : list of ReachSpan
+        Output of `probabilities_to_reaches` (optionally already trimmed
+        by `trim_leading_sustained_lk`).
+    norm_pos : np.ndarray
+        Per-frame normalized hand-to-BoxL distance, length = n_frames.
+        See `compute_hand_to_boxl_norm_pos`.
+    prominence : float
+        scipy.signal.find_peaks prominence threshold. Default 0.12
+        (calibrated). Higher = fewer false splits inside single reaches.
+    depth_min : float
+        Minimum trough depth (max(peak1, peak2) - trough) required for
+        a split. Default 0.5 (calibrated). At the default prominence,
+        prominence is the binding constraint so depth_min=0.5 acts as
+        a sanity floor rather than the primary filter.
+    peak2_rel_max : float
+        Suppress the split if the last detected peak's position is at
+        >= this fraction of the algo span. Default 0.85 (calibrated).
+        Filters end-of-reach grab/hold/jitter patterns.
+    min_distance : int
+        scipy.signal.find_peaks min_distance between peaks. Default 4.
+    min_span : int
+        Minimum span (in frames) of each half after the split.
+        Default 3. If either half would be shorter, the split is not made.
+
+    Returns
+    -------
+    list of ReachSpan (sorted by start_frame).
+    """
+    if not reaches:
+        return []
+    n_frames = len(norm_pos)
+    out = []
+    for r in reaches:
+        s, e = r.start_frame, r.end_frame
+        if e >= n_frames:
+            out.append(r); continue
+        sig = norm_pos[s:e + 1]
+        if len(sig) < 3 or np.any(np.isnan(sig)):
+            out.append(r); continue
+        peaks, _ = find_peaks(sig, prominence=prominence, distance=min_distance)
+        if len(peaks) < 2:
+            out.append(r); continue
+        peak2_rel = peaks[-1] / (len(sig) - 1)
+        if peak2_rel >= peak2_rel_max:
+            out.append(r); continue
+        best_depth = 0.0
+        best_trough_frame: Optional[int] = None
+        for i in range(len(peaks) - 1):
+            p1, p2 = peaks[i], peaks[i + 1]
+            if p2 - p1 < 2:
+                continue
+            between = sig[p1:p2 + 1]
+            t_local = int(np.argmin(between))
+            depth = max(float(sig[p1]), float(sig[p2])) - float(between[t_local])
+            if depth > best_depth:
+                best_depth = depth
+                best_trough_frame = s + p1 + t_local
+        if best_depth < depth_min or best_trough_frame is None:
+            out.append(r); continue
+        half1_span = best_trough_frame - s + 1
+        half2_span = e - (best_trough_frame + 1) + 1
+        if half1_span < min_span or half2_span < min_span:
+            out.append(r); continue
+        out.append(ReachSpan(start_frame=s, end_frame=best_trough_frame))
+        out.append(ReachSpan(start_frame=best_trough_frame + 1, end_frame=e))
     return out
