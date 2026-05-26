@@ -85,7 +85,8 @@ from mousereach.improvement.reach_detection.metrics import (
     STRICT_START_TOL_EARLY, STRICT_START_TOL_LATE,
 )
 from mousereach.reach.v8.postprocess import (
-    ReachSpan, trim_leading_sustained_lk, compute_paw_mean_lk,
+    ReachSpan, trim_leading_sustained_lk, trim_trailing_sustained_lk,
+    compute_paw_mean_lk,
     apex_split_at_trough, compute_hand_to_boxl_norm_pos,
 )
 
@@ -142,7 +143,7 @@ GT_ROOTS = {
 }
 
 # v8.0.3 + asymmetric tolerance metadata embedded in each manifest
-DETECTOR_VERSION = "v8.0.3_bsw_w0.8_mg0_trim_n3_t0.6_apex_p0.12_d0.5_pk2_0.85"
+DETECTOR_VERSION = "v8.0.4_bsw_w0.8_mg0_trim_n3_t0.6_apex_p0.12_d0.5_pk2_0.85_trailtrim_n3_t0.6"
 MATCHING_CRITERION = (
     "asymmetric_start_-2_+5_span_50pct_or_5f"
 )
@@ -166,6 +167,11 @@ APEX_DEPTH_MIN = 0.5
 APEX_PEAK2_REL_MAX = 0.85
 APEX_MIN_DISTANCE = 4
 APEX_MIN_SPAN = 3
+
+# v8.0.4 trailing-trim parameters (production defaults, calibrated 2026-05-26)
+TRAILING_TRIM_THRESHOLD = 0.60
+TRAILING_TRIM_SUSTAIN_N = 3
+TRAILING_TRIM_MIN_SPAN = 3
 
 # DLC scorer suffix (used for holdout h5 filenames)
 DLC_SUFFIX = "DLC_resnet50_MPSAOct27shuffle1_100000"
@@ -205,6 +211,19 @@ def apply_v803_apex_split(algos: List[Tuple[int, int]], norm_pos: np.ndarray
         min_span=APEX_MIN_SPAN,
     )
     return [(r.start_frame, r.end_frame) for r in split]
+
+
+def apply_v804_trailing_trim(algos: List[Tuple[int, int]], paw_mean_lk: np.ndarray
+                              ) -> List[Tuple[int, int]]:
+    """Apply v8.0.4 trailing-trim-sustained-lk."""
+    spans = [ReachSpan(start_frame=s, end_frame=e) for s, e in algos]
+    trimmed = trim_trailing_sustained_lk(
+        spans, paw_mean_lk,
+        threshold=TRAILING_TRIM_THRESHOLD,
+        sustain_n=TRAILING_TRIM_SUSTAIN_N,
+        min_span=TRAILING_TRIM_MIN_SPAN,
+    )
+    return [(r.start_frame, r.end_frame) for r in trimmed]
 
 
 def load_dlc_h5(path: Path) -> pd.DataFrame:
@@ -343,9 +362,10 @@ def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
         np_arr[g["frame"].to_numpy()] = np_local
         norm_pos_by_vid[vid] = np_arr
 
-    # Apply v8.0.2 trim, then v8.0.3 apex split
+    # Apply v8.0.2 leading-trim, v8.0.4 trailing-trim, then v8.0.3 apex split
     out = {}
-    n_trim_dropped = 0
+    n_leading_dropped = 0
+    n_trailing_dropped = 0
     n_apex_splits = 0
     for vid in all_vids:
         algos_v1 = sorted(algos_pre.get(vid, set()))
@@ -353,20 +373,28 @@ def _build_calibration_per_video() -> Dict[str, Dict[str, Any]]:
             algos_v2 = apply_v802_trim(algos_v1, lk_by_vid[vid])
         else:
             algos_v2 = algos_v1
-        n_trim_dropped += len(algos_v1) - len(algos_v2)
-        if vid in norm_pos_by_vid:
-            algos_v3 = apply_v803_apex_split(algos_v2, norm_pos_by_vid[vid])
+        n_leading_dropped += len(algos_v1) - len(algos_v2)
+        if vid in lk_by_vid:
+            algos_v2b = apply_v804_trailing_trim(algos_v2, lk_by_vid[vid])
         else:
-            algos_v3 = algos_v2
-        n_apex_splits += len(algos_v3) - len(algos_v2)
+            algos_v2b = algos_v2
+        n_trailing_dropped += len(algos_v2) - len(algos_v2b)
+        if vid in norm_pos_by_vid:
+            algos_v3 = apply_v803_apex_split(algos_v2b, norm_pos_by_vid[vid])
+        else:
+            algos_v3 = algos_v2b
+        n_apex_splits += len(algos_v3) - len(algos_v2b)
         out[vid] = {
             "algos": sorted(set(algos_v3)),
             "gts": live_gts[vid],
             "v801_algo_count": len(algos_v1),
             "v802_algo_count": len(algos_v2),
+            "v804_algo_count": len(algos_v2b),
             "gt_last_modified_at": gt_modified[vid],
         }
-    print(f"  v8.0.2 trim: dropped {n_trim_dropped} reaches across all videos",
+    print(f"  v8.0.2 leading-trim: dropped {n_leading_dropped} reaches",
+          flush=True)
+    print(f"  v8.0.4 trailing-trim: dropped {n_trailing_dropped} reaches",
           flush=True)
     print(f"  v8.0.3 apex: {n_apex_splits} additional reaches from splits "
           f"(remaining: {sum(len(v['algos']) for v in out.values())})",
@@ -407,24 +435,28 @@ def _build_holdout_per_video() -> Dict[str, Dict[str, Any]]:
         dlc = load_dlc_h5(dlc_path)
         paw_lk = compute_paw_mean_lk(dlc)
         norm_pos = compute_hand_to_boxl_norm_pos(dlc)
-        # Apply v8.0.2 trim, then v8.0.3 apex split
+        # Apply v8.0.2 leading-trim, v8.0.4 trailing-trim, then v8.0.3 apex split
         algos_v2 = apply_v802_trim(algos_v1, paw_lk)
-        algos_v3 = apply_v803_apex_split(algos_v2, norm_pos)
+        algos_v2b = apply_v804_trailing_trim(algos_v2, paw_lk)
+        algos_v3 = apply_v803_apex_split(algos_v2b, norm_pos)
 
         out[vid] = {
             "algos": sorted(set(algos_v3)),
             "gts": gts,
             "v801_algo_count": len(algos_v1),
             "v802_algo_count": len(algos_v2),
+            "v804_algo_count": len(algos_v2b),
             "gt_last_modified_at": gt_last_mod,
         }
         n_v1_total += len(algos_v1)
         n_v2_total += len(algos_v2)
         n_v3_total += len(algos_v3)
+    n_v2b_total = sum(o.get("v804_algo_count", 0) for o in out.values())
     print(f"  {len(out)} holdout videos processed; "
-          f"v8.0.1: {n_v1_total} algos; v8.0.2: {n_v2_total} algos "
-          f"(dropped {n_v1_total - n_v2_total} via trim); "
-          f"v8.0.3: {n_v3_total} algos (+{n_v3_total - n_v2_total} from splits)",
+          f"v8.0.1: {n_v1_total} algos; v8.0.2 (leading-trim): {n_v2_total} "
+          f"(dropped {n_v1_total - n_v2_total}); "
+          f"v8.0.4 (trailing-trim): {n_v2b_total} (dropped {n_v2_total - n_v2b_total}); "
+          f"v8.0.3 (apex-split): {n_v3_total} (+{n_v3_total - n_v2b_total})",
           flush=True)
     return out
 
@@ -882,11 +914,14 @@ def build_manifests(per_video: Dict[str, Dict[str, Any]],
             "min_reported_span": MIN_REPORTED_SPAN,
             "v801_algo_count": vd.get("v801_algo_count"),
             "v802_algo_count": vd.get("v802_algo_count"),
+            "v804_algo_count": vd.get("v804_algo_count"),
             "v803_algo_count": len(algos_tuples),
             "v802_trim_dropped": (vd.get("v801_algo_count", 0)
                                    - vd.get("v802_algo_count", 0)),
+            "v804_trailing_dropped": (vd.get("v802_algo_count", 0)
+                                       - vd.get("v804_algo_count", 0)),
             "v803_apex_splits_added": (len(algos_tuples)
-                                         - vd.get("v802_algo_count", 0)),
+                                         - vd.get("v804_algo_count", 0)),
             "gt_last_modified_at": vd.get("gt_last_modified_at"),
             "manifest_generated_at": datetime.now().isoformat(),
             "gt_segmentation": {
