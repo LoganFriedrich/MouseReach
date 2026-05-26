@@ -210,6 +210,91 @@ def trim_leading_sustained_lk(
     return out
 
 
+def trim_trailing_sustained_lk(
+    reaches: List[ReachSpan],
+    paw_mean_lk: np.ndarray,
+    threshold: float = 0.60,
+    sustain_n: int = 3,
+    min_span: int = 3,
+) -> List[ReachSpan]:
+    """Trim trailing frames of each reach where the paw is poorly tracked.
+
+    Symmetric to `trim_leading_sustained_lk`. For each reach, walk inward
+    from `end_frame`; at each candidate frame F, only trim if frames
+    [F-sustain_n+1, ..., F] are ALL below the likelihood threshold. The
+    sustain check protects clean reach tails against isolated low-lk
+    frames (DLC jitter at reach termination) while still catching the
+    "hold-after-extension" pattern where the mouse extends, grasps or
+    holds the paw stationary for ~5-20 frames with partial visibility
+    (paw_lk drops to 0.3-0.6), and the GBM keeps emitting through the
+    hold past GT_end.
+
+    Reaches reduced below min_span after trimming are dropped from the
+    output entirely.
+
+    Calibrated 2026-05-26 on the model 3.1 DLC corpus:
+      - Calibration LOOCV: TP +3 / FP -3 / FN -3 vs v8.0.3 baseline.
+        TOLERANCE_ERROR pairs reduced 22 -> 19 (-3).
+      - Holdout (19 videos): TP +1 / FP -2 / FN -1.
+        TOLERANCE_ERROR pairs 14 -> 13, FRAGMENTED 9 -> 8.
+      - start_delta abs_median AND span_delta abs_median both held at
+        0 on both corpora (Cardinal Rule preserved on both axes).
+
+    Threshold T=0.60 matches the leading-trim. Higher thresholds (0.65+)
+    catch more SPAN-LONG cases but chew into clean reach tails, dropping
+    TP. T=0.60 is the conservative sweet spot.
+
+    Snapshot:
+      Improvement_Snapshots/reach_detection/v8.0.3_dev_trailing_trim_sweep/
+      RESULTS.md (ship decision document).
+
+    Parameters
+    ----------
+    reaches : list of ReachSpan
+        Output of `trim_leading_sustained_lk`.
+    paw_mean_lk : np.ndarray
+        Per-frame mean DLC likelihood across the 4 hand keypoints
+        (see `compute_paw_mean_lk`). Length must equal video frames.
+    threshold : float
+        Likelihood cutoff: a frame is "low-lk" if paw_mean_lk < threshold.
+        Default 0.60 (calibrated).
+    sustain_n : int
+        Number of consecutive frames that must all be low-lk for the
+        trailing frame to be trimmed. Default 3 (calibrated, mirrors
+        leading-trim).
+    min_span : int
+        Reaches with span (end - start + 1) below this after trimming
+        are dropped entirely. Default 3.
+
+    Returns
+    -------
+    list of ReachSpan (sorted by start_frame).
+    """
+    if not reaches:
+        return []
+    n_frames = len(paw_mean_lk)
+    out = []
+    for r in reaches:
+        s, e = r.start_frame, r.end_frame
+        new_e = e
+        while new_e >= s:
+            window_start = new_e - sustain_n + 1
+            if window_start < s:
+                # not enough frames left to satisfy the sustain check
+                break
+            if window_start < 0 or new_e >= n_frames:
+                break
+            window = paw_mean_lk[window_start:new_e + 1]
+            if np.any(np.isnan(window)):
+                break
+            if np.any(window >= threshold):
+                break  # at least one confident frame in window; stop trimming
+            new_e -= 1
+        if new_e - s + 1 >= min_span:
+            out.append(ReachSpan(start_frame=s, end_frame=new_e))
+    return out
+
+
 # ---- v8.0.3 apex-split postprocess ----
 
 # Hand and apparatus keypoints used to compute the per-frame
