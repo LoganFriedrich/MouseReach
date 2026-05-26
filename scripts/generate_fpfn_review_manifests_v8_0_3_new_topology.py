@@ -830,6 +830,25 @@ def build_manifests(per_video: Dict[str, Dict[str, Any]],
         events.sort(key=lambda ev: (ev["gt"]["start"] if ev["kind"] == "FN"
                                      else ev["detector"]["start"]))
 
+        # Propagate kinematically_excluded across TOLERANCE_ERROR pairs.
+        # A TOL pair represents one structural relationship (algo overlaps GT
+        # but failed tolerance). If either side has span < MIN_REPORTED_SPAN,
+        # the whole pair should be excluded from headline counts. Without
+        # this, the long side stays kex=False even when its paired short-side
+        # is filtered, causing the widget to display half-pairs.
+        tol_by_cid = defaultdict(list)
+        for ev in events:
+            if ev["topology"] == "TOLERANCE_ERROR":
+                tol_by_cid[ev["component_id"]].append(ev)
+        for cid, pair_events in tol_by_cid.items():
+            # In 1:1 TOL components there's exactly one FP + one FN, paired.
+            # In N:M decomposed components, multiple TOL events may share a
+            # cid; in either case, if ANY event in the cid has kex=True,
+            # propagate to all (the pair is broken).
+            if any(e.get("kinematically_excluded") for e in pair_events):
+                for e in pair_events:
+                    e["kinematically_excluded"] = True
+
         # Topology summary now built per the new classifier:
         # count events by their (new) topology label.
         topology_summary = defaultdict(int)
