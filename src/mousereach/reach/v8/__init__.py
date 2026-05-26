@@ -32,7 +32,7 @@ from typing import List, Optional, Tuple
 
 import joblib
 
-VERSION = "8.0.3"
+VERSION = "8.0.4"
 
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
@@ -59,6 +59,13 @@ DEFAULT_APEX_SPLIT_DEPTH_MIN = 0.5
 DEFAULT_APEX_SPLIT_PEAK2_REL_MAX = 0.85
 DEFAULT_APEX_SPLIT_MIN_DISTANCE = 4
 
+# v8.0.4 trailing-trim postprocess defaults (calibrated 2026-05-26).
+# Symmetric to the leading-trim, applied to reach end frames.
+# See postprocess.trim_trailing_sustained_lk for the calibration evidence.
+DEFAULT_TRAILING_TRIM_ENABLED = True
+DEFAULT_TRAILING_TRIM_LK_THRESHOLD = 0.60
+DEFAULT_TRAILING_TRIM_SUSTAIN_N = 3
+
 _MODEL_CACHE = {}
 
 
@@ -80,6 +87,9 @@ def detect_reaches_v8(
     leading_trim_enabled: bool = DEFAULT_TRIM_ENABLED,
     leading_trim_lk_threshold: float = DEFAULT_TRIM_LK_THRESHOLD,
     leading_trim_sustain_n: int = DEFAULT_TRIM_SUSTAIN_N,
+    trailing_trim_enabled: bool = DEFAULT_TRAILING_TRIM_ENABLED,
+    trailing_trim_lk_threshold: float = DEFAULT_TRAILING_TRIM_LK_THRESHOLD,
+    trailing_trim_sustain_n: int = DEFAULT_TRAILING_TRIM_SUSTAIN_N,
     apex_split_enabled: bool = DEFAULT_APEX_SPLIT_ENABLED,
     apex_split_prominence: float = DEFAULT_APEX_SPLIT_PROMINENCE,
     apex_split_depth_min: float = DEFAULT_APEX_SPLIT_DEPTH_MIN,
@@ -111,6 +121,16 @@ def detect_reaches_v8(
     leading_trim_sustain_n : int
         Number of consecutive low-lk frames required to trim a leading frame.
         Default 3.
+    trailing_trim_enabled : bool
+        Whether to apply the v8.0.4 trailing-trim postprocess. Default True.
+        Symmetric to leading-trim, applied to reach end frames. Targets the
+        hold-during-extension mechanism where the mouse grasps/holds and
+        the algo overshoots GT_end.
+    trailing_trim_lk_threshold : float
+        paw_mean_lk threshold for the trailing-trim. Default 0.60.
+    trailing_trim_sustain_n : int
+        Number of consecutive low-lk frames required to trim a trailing
+        frame. Default 3.
     apex_split_enabled : bool
         Whether to apply the v8.0.3 apex-split postprocess. Default True.
         Splits each reach at the trough between two prominent peaks in
@@ -133,6 +153,7 @@ def detect_reaches_v8(
     from .features import extract_features
     from .postprocess import (probabilities_to_reaches, compute_paw_mean_lk,
                               trim_leading_sustained_lk,
+                              trim_trailing_sustained_lk,
                               compute_hand_to_boxl_norm_pos,
                               apex_split_at_trough)
 
@@ -149,12 +170,25 @@ def detect_reaches_v8(
     spans = probabilities_to_reaches(
         proba, threshold=threshold, merge_gap=merge_gap, min_span=min_span)
 
-    if leading_trim_enabled:
+    # Lazily compute paw_mean_lk only if any trim is enabled (reused
+    # across leading + trailing trim).
+    paw_mean_lk = None
+    if leading_trim_enabled or trailing_trim_enabled:
         paw_mean_lk = compute_paw_mean_lk(dlc_df)
+
+    if leading_trim_enabled:
         spans = trim_leading_sustained_lk(
             spans, paw_mean_lk,
             threshold=leading_trim_lk_threshold,
             sustain_n=leading_trim_sustain_n,
+            min_span=min_span,
+        )
+
+    if trailing_trim_enabled:
+        spans = trim_trailing_sustained_lk(
+            spans, paw_mean_lk,
+            threshold=trailing_trim_lk_threshold,
+            sustain_n=trailing_trim_sustain_n,
             min_span=min_span,
         )
 
