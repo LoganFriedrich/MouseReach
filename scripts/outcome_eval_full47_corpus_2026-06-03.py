@@ -8,7 +8,8 @@ non-exhaustive (21 train + 6 holdout) were inferred + added 2026-06-03, so the
 whole corpus can now be scored on model 3.1.
 
 No algorithm change -- scores the shipped v6.0.4 cascade (build_stages_with_leverA).
-DLC: canonical model-3.1 folder. GT: walkthrough gt. Reports overall + splits
+DLC: canonical model-3.1 folder. GT: canonical reach corpus gt (DLC_2026_03_27\gt).
+Reports overall + splits
 (train vs holdout; exhaustive vs non-exhaustive).
 """
 from __future__ import annotations
@@ -20,7 +21,9 @@ spec = importlib.util.spec_from_file_location("_lva", S / "outcome_leverA_net_di
 lva = importlib.util.module_from_spec(spec); spec.loader.exec_module(lva)
 
 DLC_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\Processing\updated dlc model 3.1")
-GT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt")
+# Canonical GT: the reach corpus folder. Outcomes were reconciled into this
+# folder on 2026-06-08 so reaches and outcomes read from one place.
+GT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs\DLC_2026_03_27\gt")
 CVF = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\Improvement_Snapshots\_corpus\2026-04-30_restart_inventory\cv_folds.json")
 SNAP = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\Improvement_Snapshots\outcome\v6.0.4_eval_full47_corpus_2026-06-03")
 
