@@ -18,10 +18,11 @@ INPUTS (verified 2026-06-03)
     - DLC h5: Y: canonical
       validation_runs\\DLC_2026_03_27\\Processing\\updated dlc model 3.1
       (byte-identical to A:\\MouseReach_Pipeline\\All DLC Models\\DLC Model v3.1)
-    - GT:     walkthrough corpus gt/ (corpus GT of record; see
-      DLC_SOURCE.txt). GT PROVENANCE CAVEAT: this is the corpus GT from
-      2026-04-28. Before acting on any individual error, cross-check the
-      segment against live GT.
+    - GT:     canonical reach corpus folder
+      validation_runs\\DLC_2026_03_27\\gt  (reaches + outcomes now read
+      from one place). Outcome blocks were reconciled into this folder on
+      2026-06-08 from the former walkthrough corpus gt/; the walkthrough
+      copy is preserved as the pre-reconciliation original.
 
 NOT AN EXPERIMENT
     No algorithm change. This is an evaluation/error-inventory run.
@@ -62,8 +63,9 @@ save_reaches_segmented = fixb.save_reaches_segmented
 
 DLC_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs"
                r"\DLC_2026_03_27\Processing\updated dlc model 3.1")
+# Canonical GT: the reach corpus folder (outcomes reconciled in 2026-06-08).
 GT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs"
-              r"\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt")
+              r"\DLC_2026_03_27\gt")
 SNAPSHOT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement"
                     r"\Improvement_Snapshots\outcome"
                     r"\v6.0.3_eval_model31_corpus_2026-06-03")
