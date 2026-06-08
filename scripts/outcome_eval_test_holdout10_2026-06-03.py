@@ -9,7 +9,8 @@ development (which used the 37 train_pool). Until today only the 4 exhaustive
 holdout videos had model-3.1 DLC; now all 10 do.
 
 No algorithm change -- scores the shipped v6.0.4 cascade (build_stages_with_leverA).
-DLC: canonical model-3.1 folder. GT: walkthrough gt. Reports overall + split by
+DLC: canonical model-3.1 folder. GT: canonical reach corpus gt (DLC_2026_03_27\gt).
+Reports overall + split by
 exhaustive vs non-exhaustive (the 6 newly-scoreable).
 """
 from __future__ import annotations
@@ -35,8 +36,9 @@ load_gt_segments = lva.load_gt_segments
 
 DLC_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs"
                r"\DLC_2026_03_27\Processing\updated dlc model 3.1")
+# Canonical GT: the reach corpus folder (outcomes reconciled in 2026-06-08).
 GT_DIR = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement\validation_runs"
-              r"\DLC_2026_03_27\iterations\2026-04-28_outcome_v4.0.0_dev_walkthrough\gt")
+              r"\DLC_2026_03_27\gt")
 SNAP = Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement"
             r"\Improvement_Snapshots\outcome\v6.0.4_eval_test_holdout10_2026-06-03")
 
