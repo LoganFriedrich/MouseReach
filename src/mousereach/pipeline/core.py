@@ -541,6 +541,7 @@ class UnifiedPipelineProcessor:
         """
         from mousereach.outcomes.core.pellet_outcome import PelletOutcomeDetector
         from mousereach.reach.core.reach_detector import ReachDetector
+        from mousereach.reach.core.span_to_reaches import detect_video_reaches
         from mousereach.reach.core.triage import check_anomalies
 
         if source_dir is None:
@@ -580,10 +581,11 @@ class UnifiedPipelineProcessor:
                 else:
                     results.outcome_completed += 1
 
-            # Run reach detection in same folder
+            # Run reach detection in same folder. Uses the shared
+            # whole-video detector + flat-span -> nested translation so this
+            # path and batch.py produce identical _reaches.json.
             self.progress_callback('reaches', 2, 2, f"Detecting reaches for {video_id}...")
-            reach_detector = ReachDetector()
-            reaches = reach_detector.detect(dlc_path, seg_path)
+            reaches = detect_video_reaches(dlc_path, seg_path)
             reach_path = source_dir / f"{video_id}_reaches.json"
             ReachDetector.save_results(reaches, reach_path)
             results.reach_processed += 1
