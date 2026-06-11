@@ -137,6 +137,7 @@ mousereach-migrate = "mousereach.migrate_to_processing:main"
 
 # Algorithm Evaluation
 mousereach-eval-all = "mousereach.improvement.eval_all:main"
+mousereach-eval-registry = "mousereach.improvement.registry:main"
 mousereach-eval = "mousereach.eval.cli:main"
 mousereach-eval-direct = "mousereach.eval.run_direct:main"
 mousereach-eval-report = "mousereach.eval.report_cli:main"
