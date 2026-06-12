@@ -11,8 +11,8 @@ import shutil
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 
-from .reach_detector import VideoReaches
-from .reach_detector_v8 import ReachDetectorV8 as ReachDetector
+from .reach_detector import VideoReaches, ReachDetector
+from .span_to_reaches import detect_video_reaches
 
 
 def get_associated_files(input_dir: Path, video_name: str) -> List[Path]:
@@ -155,13 +155,18 @@ def process_single(
     if output_dir is None:
         output_dir = dlc_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    detector = ReachDetector()
-    results = detector.detect(dlc_path, seg_path)
-    
+
+    # Improved whole-video reach detector, re-shaped into the nested
+    # VideoReaches structure the downstream consumers require. The flat-span
+    # -> nested translation lives in span_to_reaches.detect_video_reaches so
+    # this entry point and the napari pipeline share one code path.
+    results = detect_video_reaches(dlc_path, seg_path)
+
     output_path = output_dir / f"{results.video_name}_reaches.json"
-    detector.save_results(results, output_path)
-    
+    # Persist via the existing writer so JSON shape + index/db sync are
+    # unchanged from the old detector.
+    ReachDetector.save_results(results, output_path)
+
     return {
         'video_name': results.video_name,
         'total_reaches': results.summary['total_reaches'],
