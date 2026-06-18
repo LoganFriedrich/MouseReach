@@ -23,7 +23,7 @@ from mousereach.improvement.lib.inputs import (
 )
 from .schema import ReachMatch, ReachDetectionScalars
 
-START_TOL = 2
+START_TOL = 4
 SPAN_TOL_REL = 0.5
 SPAN_TOL_ABS = 5
 
