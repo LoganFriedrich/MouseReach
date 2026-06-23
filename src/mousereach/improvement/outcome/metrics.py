@@ -531,27 +531,84 @@ def compute_per_reach_confusion(
         gt_labels = [_label_reach_by_side(r, gt_segments, "gt") for r in gt_reaches_raw]
         algo_labels = [_label_reach_by_side(r, algo_segs_by_num, "algo") for r in algo_reach_list]
 
-        # Match using the reach-detection matcher (algo first, gt second per the API)
+        # --- Causal attribution: causality-aware (2026-06-22) ---
+        # The strict reach-window matcher conflated causal ATTRIBUTION with
+        # reach-DETECTION window differences: a causal reach correctly
+        # attributed (its window contains GT's interaction frame) but with
+        # bounds >2f from GT's was counted fp/fn ("absent"), inflating causal
+        # error. Pair each segment's causal reaches DIRECTLY and judge the
+        # algo's causal reach by CONTAINMENT of GT's interaction frame
+        # (causality: the cause must span the moment the pellet leaves the
+        # pillar; a reach STARTING AFTER it cannot be the cause). Non-causal
+        # reaches keep the strict reach-detection matching below.
+        # Causal-side labels: committed outcomes, plus triaged (the
+        # would-be-causal reach in a flagged segment -- pre-review) and
+        # abnormal_exception. Recognizing triaged/abnormal here is what keeps
+        # the triage lane intact (otherwise those reaches fall through to
+        # "absent", destroying the triage safety net).
+        _GT_CAUSAL = ("retrieved", "displaced_sa", "displaced_outside", "abnormal_exception")
+        _ALGO_CAUSAL = ("retrieved", "displaced_sa", "displaced_outside", "abnormal_exception", "triaged")
+        gt_causal = {}    # seg_num -> (reach idx, label)
+        for i, lbl in enumerate(gt_labels):
+            if lbl in _GT_CAUSAL:
+                gt_causal[gt_reaches_raw[i].get("segment_num")] = (i, lbl)
+        algo_causal = {}  # seg_num -> (reach idx, label)
+        for i, lbl in enumerate(algo_labels):
+            if lbl in _ALGO_CAUSAL:
+                algo_causal[algo_reach_list[i].get("_seg_num")] = (i, lbl)
+        handled_gt, handled_algo = set(), set()
+        for seg_num in set(gt_causal) | set(algo_causal):
+            gt_info = gt_causal.get(seg_num)
+            algo_info = algo_causal.get(seg_num)
+            gl = "absent"
+            if gt_info is not None:
+                gi, gl = gt_info
+                handled_gt.add(gi)
+            al = "absent"
+            if algo_info is not None:
+                ai, alabel = algo_info
+                handled_algo.add(ai)
+                if alabel in ("triaged", "abnormal_exception"):
+                    al = alabel                      # preserve triage / abnormal lane
+                elif gt_info is not None:
+                    # judge committed algo causal reach by containment of GT's
+                    # interaction frame (too-late / wrong reach -> miss).
+                    gt_ifr = gt_segments.get(seg_num, {}).get("interaction_frame")
+                    ar = algo_reach_list[ai]
+                    s, e = ar.get("start_frame"), ar.get("end_frame")
+                    al = alabel if (gt_ifr is not None and s is not None and e is not None
+                                    and s <= gt_ifr <= e) else "miss"
+                else:
+                    al = alabel                      # invented causal (GT has none here)
+            confusion[f"{gl}__{al}"] += 1
+            per_class_gt[gl] += 1
+            per_class_algo[al] += 1
+            if gl == al:
+                per_class_correct[gl] += 1
+            n_universe += 1
+
+        # --- Non-causal reaches: strict reach-detection matching (holistic view) ---
         gt_lite = [Reach(r["start_frame"], r["end_frame"], i)
                    for i, r in enumerate(gt_reaches_raw)
                    if r.get("start_frame") is not None]
         algo_lite = [Reach(r["start_frame"], r["end_frame"], i)
                      for i, r in enumerate(algo_reach_list)
                      if r.get("start_frame") is not None]
-        # Use the strict canonical criterion (start within +/-2 AND span
-        # agreement) so the per-reach Sankey's matched/fp/fn counts line
-        # up with the reach-detection scalar metrics. The legacy lenient
-        # window (+/-10 frames, no span check) labeled algo reaches as
-        # "matched" that the detection report counted as FP/FN.
         results = match_reaches(algo_lite, gt_lite, strict=True)
         for res in results:
             if res.status == "matched":
+                if res.gt_reach_index in handled_gt or res.algo_reach_index in handled_algo:
+                    continue
                 gl = gt_labels[res.gt_reach_index]
                 al = algo_labels[res.algo_reach_index]
             elif res.status == "fn":
+                if res.gt_reach_index in handled_gt:
+                    continue
                 gl = gt_labels[res.gt_reach_index]
                 al = "absent"
             elif res.status == "fp":
+                if res.algo_reach_index in handled_algo:
+                    continue
                 gl = "absent"
                 al = algo_labels[res.algo_reach_index]
             else:
