@@ -65,6 +65,36 @@ def _archive_step_figures(step: str, snapshot_dir: Path) -> None:
             shutil.copy2(f, step_dir / f.name)
 
 
+def _open_figures_in_vscode(snapshot_dir: Path, steps: List[str]) -> None:
+    """Open the rendered canonical PNGs for each step in VS Code, so a
+    scorecard is never produced without its figures being shown. PNGs only
+    (no legend .md, no manifest). Never raises -- a viewer failure must not
+    fail the eval; the paths are printed as a fallback."""
+    import shutil as _sh
+    import subprocess
+    pngs: List[str] = []
+    for step in steps:
+        step_dir = snapshot_dir / "figures" / step
+        if step_dir.is_dir():
+            pngs.extend(str(p) for p in sorted(step_dir.glob("*.png")))
+    if not pngs:
+        print("  [open] no figures found to open")
+        return
+    code = _sh.which("code") or _sh.which("code.cmd")
+    if not code:
+        print("  [open] 'code' CLI not on PATH -- open these manually:")
+        for p in pngs:
+            print(f"    {p}")
+        return
+    try:
+        subprocess.run([code, *pngs], check=False)
+        print(f"  [open] opened {len(pngs)} canonical figures in VS Code")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [open] could not open in VS Code ({exc}); paths:")
+        for p in pngs:
+            print(f"    {p}")
+
+
 def run_one_step(step: str, snapshot_dir: Path, *,
                  archive: bool = True) -> None:
     """Run analyzer + every available renderer for one algo step.
@@ -160,6 +190,7 @@ def eval_all(
     only: Optional[str] = None,
     skip_gt_resolve: bool = False,
     gt_dir: Optional[Path] = None,
+    open_figures: bool = False,
 ) -> None:
     snapshot_dir = Path(snapshot_dir).resolve()
     print(f"Snapshot: {snapshot_dir}")
@@ -186,6 +217,8 @@ def eval_all(
         print(f"Figures emitted in {fig_dir} ({len(pngs)}):")
         for p in pngs:
             print(f"  - {p}")
+    if open_figures:
+        _open_figures_in_vscode(snapshot_dir, steps)
 
 
 def main():
@@ -205,6 +238,9 @@ def main():
                         help="Skip GT auto-resolve pre-step.")
     parser.add_argument("--gt-dir", type=Path, default=None,
                         help="GT directory (defaults to <snapshot>/gt/).")
+    parser.add_argument("--no-open", action="store_true",
+                        help="Do not open the rendered figures in VS Code "
+                             "(default: open them -- the figures ARE the report).")
     args = parser.parse_args()
 
     try:
@@ -213,6 +249,7 @@ def main():
             only=args.only,
             skip_gt_resolve=args.no_gt_resolve,
             gt_dir=args.gt_dir,
+            open_figures=not args.no_open,
         )
     except Exception as exc:
         print(f"FATAL: {type(exc).__name__}: {exc}", file=sys.stderr)
