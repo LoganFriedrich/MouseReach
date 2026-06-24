@@ -1468,10 +1468,19 @@ class PelletOutcomeDetector:
                                     outcome = 'untouched'
                                     confidence = 0.85
 
-                                    # STAGE 4: Flag high spikes for review
-                                    if max_distance > 0.45:
-                                        flagged = True
-                                        flag_reason = f"Momentary spike (max: {max_distance:.2f}) but no sustained displacement"
+                                    # NOTE (2026-06-23): no flag here. We are in the
+                                    # branch where the pellet ENDED ON THE PILLAR
+                                    # (end_distance < 0.20) with no sustained
+                                    # displacement, no paw nearby during the spike, no
+                                    # pellet disappearance, and no pillar-visibility
+                                    # transition. A momentary distance spike under those
+                                    # conditions is DLC jitter, not an interaction -- the
+                                    # pellet never actually left (it could not have
+                                    # returned to the pillar if it had). Flagging it for
+                                    # review previously triaged ~230 correctly-untouched
+                                    # segments (~57% of all outcome triage) on tracking
+                                    # noise; the outcome was already 'untouched'. Commit
+                                    # untouched; do not flag.
 
                 elif end_distance > 0.25:
                     # Pellet ended far from pillar
