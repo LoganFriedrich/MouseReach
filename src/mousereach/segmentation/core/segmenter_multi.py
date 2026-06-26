@@ -50,8 +50,8 @@ from .consensus import (
 )
 from .tray_motion import apply_tray_motion_gate
 
-SEGMENTER_VERSION = "2.2.1"
-SEGMENTER_ALGORITHM = "multi_proposer_sabl_primary_v1+tray_motion_gate"
+SEGMENTER_VERSION = "2.2.2"
+SEGMENTER_ALGORITHM = "multi_proposer_sabl_primary_v1+tray_motion_gate+pellet_window_gate"
 
 
 @dataclass
@@ -91,6 +91,69 @@ class MultiProposerConfig:
     tray_motion_window: int = 50
     tray_motion_excursion_threshold: float = 30.0
     tray_motion_pillar_lk_drop_threshold: float = 0.3
+
+    # v2.2.2: pellet-active-window gate (Model-4.0 first-cycle damping).
+    # A stronger DLC model (e.g. Model 4.0) tracks the SA corners more stably
+    # but emits spurious low-velocity boundary candidates in the pre-trial
+    # setup and post-session shutdown -- periods where NO pellet is ever on the
+    # pillar. Those phantoms push a proposer above n_expected, knocking it out
+    # of the reliable SABL-primary path into the fragile consensus/grid-fit,
+    # which phase-shifts the whole segment numbering (canonical: CNT0312_P2,
+    # an 8376-frame B1 miss). Gate a proposer's candidates to the pellet-active
+    # window. CONSERVATIVE by design:
+    #   - acts only on a proposer with > n_expected candidates (a real surplus),
+    #     never an already-clean count;
+    #   - reverts if gating would drop below n_expected (not clean removal);
+    #   - excludes only the pre/post dead zones -- a no-pellet MIDDLE segment is
+    #     always kept.
+    # Pellet *presence* is binary/robust even though pellet *position* is noisy;
+    # it is used here ONLY as a dead-zone exclusion, not a per-segment "must
+    # have a pellet" test (a real cycle can rarely present no pellet). The one
+    # residual ambiguity -- a no-pellet FIRST/LAST segment -- falls back to the
+    # existing count-check / triage.
+    pellet_window_gate_enabled: bool = True
+    pellet_window_lk_threshold: float = 0.5
+    pellet_window_smooth: int = 60
+    pellet_window_active_frac: float = 0.3
+    pellet_window_margin: int = 200
+
+
+def _pellet_active_window(df: pd.DataFrame, lk_threshold: float,
+                          smooth: int, active_frac: float
+                          ) -> Optional[Tuple[int, int]]:
+    """First and last frame of sustained pellet presence (the active window).
+
+    Returns ``None`` if there is no pellet column or no pellet is ever present
+    (in which case the gate is a no-op).
+    """
+    if "Pellet_likelihood" not in df.columns:
+        return None
+    present = (df["Pellet_likelihood"].values > lk_threshold).astype(float)
+    run = np.convolve(present, np.ones(smooth) / smooth, mode="same")
+    active = np.where(run > active_frac)[0]
+    if len(active) == 0:
+        return None
+    return int(active[0]), int(active[-1])
+
+
+def _gate_candidates_to_window(cands: List[Candidate],
+                               window: Optional[Tuple[int, int]],
+                               margin: int, n_expected: int) -> List[Candidate]:
+    """Drop dead-zone phantom candidates outside the pellet-active window.
+
+    Acts only when there are MORE than ``n_expected`` candidates (a real
+    phantom surplus), and reverts to the originals if gating would leave fewer
+    than ``n_expected`` (i.e. it was not clean phantom removal). So it can
+    recover a phantom-padded proposer back toward ``n_expected`` but can never
+    strip a real boundary from an already-clean count.
+    """
+    if window is None or len(cands) <= n_expected:
+        return cands
+    lo, hi = window
+    gated = [c for c in cands if (lo - margin) <= c.frame <= (hi + margin)]
+    if len(gated) < n_expected:
+        return cands
+    return gated
 
 
 def segment_video_multi(dlc_path: Path,
@@ -146,6 +209,27 @@ def segment_video_multi(dlc_path: Path,
         )
         per_proposer[bp] = cands
         all_candidates.extend(cands)
+
+    # Phase 2.2: pellet-active-window gate (v2.2.2). Trim pre-trial/post-session
+    # phantom candidates so a phantom surplus does not knock a proposer out of
+    # the SABL-primary path. Excess-only + revert-if-undershoot (see config).
+    if config.pellet_window_gate_enabled:
+        window = _pellet_active_window(
+            df, config.pellet_window_lk_threshold,
+            config.pellet_window_smooth, config.pellet_window_active_frac)
+        if window is not None:
+            all_candidates = []
+            for bp in ['SABL', 'SABR', 'SATL', 'SATR']:
+                original = per_proposer.get(bp, [])
+                gated = _gate_candidates_to_window(
+                    original, window, config.pellet_window_margin,
+                    config.n_expected)
+                if len(gated) < len(original):
+                    anomalies.append(
+                        f"pellet_window_gate: {bp} dropped "
+                        f"{len(original) - len(gated)} dead-zone candidate(s)")
+                per_proposer[bp] = gated
+                all_candidates.extend(gated)
 
     n_primary = len(per_proposer.get('SABL', []))
     n_sa_total = len(all_candidates)
