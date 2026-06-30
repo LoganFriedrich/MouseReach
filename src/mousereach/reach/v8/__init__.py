@@ -32,7 +32,7 @@ from typing import List, Optional, Tuple
 
 import joblib
 
-VERSION = "8.0.4"
+VERSION = "8.1.0"
 
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
@@ -45,10 +45,16 @@ DEFAULT_THRESHOLD = 0.5
 DEFAULT_MERGE_GAP = 0
 DEFAULT_MIN_SPAN = 3
 
-# v8.0.2 leading-trim postprocess defaults (calibrated 2026-05-21).
+# v8.0.2 leading-trim postprocess defaults (calibrated 2026-05-21 for DLC Model 3.1).
+# v8.1.0 (2026-06-30): recalibrated for DLC Model 4.0 (resnet101). Model 4.0's steadier
+# tracking saturates the paw likelihood, so the 3.1-tuned floor (0.60/N3) under-trimmed
+# reach edges on 4.0. Raised to 0.90/N2 per Colin's gen-20 sandbox sweep
+# (recalib_4.0_sandbox/RESULTS.md). On 4.0 this lifts causal recall 90.5% -> 97.0% and
+# cuts false reaches 631 -> 183; on 3.1 it is causal-neutral but over-trims non-causal
+# reaches, so this config ships WITH the Model-4.0 DLC flip, not before it.
 # See postprocess.trim_leading_sustained_lk for the calibration evidence.
-DEFAULT_TRIM_LK_THRESHOLD = 0.60
-DEFAULT_TRIM_SUSTAIN_N = 3
+DEFAULT_TRIM_LK_THRESHOLD = 0.90
+DEFAULT_TRIM_SUSTAIN_N = 2
 DEFAULT_TRIM_ENABLED = True
 
 # v8.0.3 apex-split postprocess defaults (calibrated 2026-05-22).
@@ -59,12 +65,14 @@ DEFAULT_APEX_SPLIT_DEPTH_MIN = 0.5
 DEFAULT_APEX_SPLIT_PEAK2_REL_MAX = 0.85
 DEFAULT_APEX_SPLIT_MIN_DISTANCE = 4
 
-# v8.0.4 trailing-trim postprocess defaults (calibrated 2026-05-26).
-# Symmetric to the leading-trim, applied to reach end frames.
+# v8.0.4 trailing-trim postprocess defaults (calibrated 2026-05-26 for DLC Model 3.1).
+# v8.1.0 (2026-06-30): recalibrated to 0.90/N2 for Model 4.0, symmetric to the
+# leading-trim (see above). Near-inert on 4.0 (it holds high lk through reach ends),
+# but kept symmetric for consistency.
 # See postprocess.trim_trailing_sustained_lk for the calibration evidence.
 DEFAULT_TRAILING_TRIM_ENABLED = True
-DEFAULT_TRAILING_TRIM_LK_THRESHOLD = 0.60
-DEFAULT_TRAILING_TRIM_SUSTAIN_N = 3
+DEFAULT_TRAILING_TRIM_LK_THRESHOLD = 0.90
+DEFAULT_TRAILING_TRIM_SUSTAIN_N = 2
 
 _MODEL_CACHE = {}
 
