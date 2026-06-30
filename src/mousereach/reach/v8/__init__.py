@@ -37,10 +37,15 @@ VERSION = "8.1.0"
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
 # runtime if needed.
-DEFAULT_MODEL_PATH = Path(__file__).parent / "models" / "v8.0.0_bsw_w0.8.joblib"
+# v8.1.0 (2026-06-30): recalibrated to the w=0.7 GBM retrained on DLC Model 4.0
+# features (recalib_4.0_sandbox; Colin's locked 4.0 reach config). Reproduces his
+# gen-20 scorecard exactly: classic [3693,48,63], topology 3688/37/16/17/3/8.
+# 4.0-trained -> ships WITH the Model-4.0 DLC flip; the prior 3.1 model
+# (v8.0.0_bsw_w0.8.joblib) stays in models/ for 3.1 inference.
+DEFAULT_MODEL_PATH = Path(__file__).parent / "models" / "v8.1.0_bsw_w0.7_model4.0.joblib"
 
-# Production inference hyperparameters (must match the BSW w=0.8
-# calibration to keep behaviour consistent with training).
+# Production inference hyperparameters (BSW w=0.7 on Model 4.0; the prior 3.1
+# config was w=0.8 -- see the DEFAULT_MODEL_PATH note above).
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_MERGE_GAP = 0
 DEFAULT_MIN_SPAN = 3

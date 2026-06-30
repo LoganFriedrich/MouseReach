@@ -1,0 +1,17 @@
+{
+  "bundle": "v8.1.0_bsw_w0.7_model4.0.joblib",
+  "trained_on": "DLC model 4.0 (resnet101 shuffle3 @100000)",
+  "config": {
+    "bsw_buffer": 1,
+    "bsw_weight": 0.7,
+    "max_iter": 200,
+    "learning_rate": 0.05,
+    "max_depth": 6,
+    "random_state": 42,
+    "only_exhaustive_for_train": true
+  },
+  "n_train_videos": 37,
+  "n_train_frames": 1413715,
+  "n_features": 405,
+  "recapitulates": "Colin recalib_4.0_sandbox locked reach config (w0.7); pairs with trim 0.90/N2 (reach v8.1.0)"
+}
