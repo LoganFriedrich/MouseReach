@@ -139,6 +139,13 @@ from .comparison_panel import (
 
 from .unified_widget import UnifiedReviewWidget      # Legacy tabbed widget (deprecated)
 from .ground_truth_widget import GroundTruthWidget # Current widget (both modes)
+from .causal_review_widget import CausalReviewWidget  # Causal review tool
+from .causal_review_io import (
+    save_causal_review,
+    update_corpus_index,
+    build_segment_record,
+    collect_provenance,
+)
 
 # =============================================================================
 # GROUND TRUTH DATA STRUCTURES
@@ -173,6 +180,12 @@ __all__ = [
     # Widgets
     "UnifiedReviewWidget",
     "GroundTruthWidget",
+    "CausalReviewWidget",
+    # Causal Review I/O
+    "save_causal_review",
+    "update_corpus_index",
+    "build_segment_record",
+    "collect_provenance",
     # Ground Truth
     "UnifiedGroundTruth",
     "BoundaryGT",

@@ -112,11 +112,12 @@ class UnifiedReviewWidget(QWidget):
         self._seg_widget = None
         self._reach_widget = None
         self._outcome_widget = None
+        self._causal_widget = None
 
         # Track which tabs have been initialized (UI created)
-        self._tab_initialized = {'seg': False, 'reach': False, 'outcome': False}
+        self._tab_initialized = {'seg': False, 'reach': False, 'outcome': False, 'causal': False}
         # Track which tabs have had data loaded (separate from UI init)
-        self._data_loaded = {'seg': False, 'reach': False, 'outcome': False}
+        self._data_loaded = {'seg': False, 'reach': False, 'outcome': False, 'causal': False}
 
         self._build_ui()
         self._setup_common_keybindings()
@@ -325,10 +326,12 @@ class UnifiedReviewWidget(QWidget):
         self.tab_widget.addTab(QWidget(), "Boundaries")
         self.tab_widget.addTab(QWidget(), "Reaches")
         self.tab_widget.addTab(QWidget(), "Outcomes")
+        self.tab_widget.addTab(QWidget(), "Causal Review")
 
-        # Initially disable reach/outcome tabs until dependencies are met
+        # Initially disable reach/outcome/causal tabs until dependencies are met
         self.tab_widget.setTabEnabled(1, False)  # Reaches needs segments
         self.tab_widget.setTabEnabled(2, False)  # Outcomes needs segments
+        self.tab_widget.setTabEnabled(3, False)  # Causal needs segments + outcomes
 
         main_layout.addWidget(self.tab_widget, stretch=1)
 
@@ -590,6 +593,7 @@ class UnifiedReviewWidget(QWidget):
         QTimer.singleShot(50, self._init_seg_widget_background)
         QTimer.singleShot(150, self._init_reach_widget_background)
         QTimer.singleShot(250, self._init_outcome_widget_background)
+        QTimer.singleShot(350, self._init_causal_widget_background)
 
     def _init_seg_widget_background(self):
         """Initialize boundaries widget UI in background (no data)."""
@@ -636,6 +640,21 @@ class UnifiedReviewWidget(QWidget):
         self.tab_widget.insertTab(2, self._outcome_widget, "Outcomes")
 
         self._tab_initialized['outcome'] = True
+
+    def _init_causal_widget_background(self):
+        """Initialize causal review widget UI in background (no data)."""
+        if self._causal_widget is not None:
+            return
+
+        from mousereach.review.causal_review_widget import CausalReviewWidget
+
+        self._causal_widget = CausalReviewWidget(self.viewer)
+
+        # Replace placeholder with actual widget
+        self.tab_widget.removeTab(3)
+        self.tab_widget.insertTab(3, self._causal_widget, "Causal Review")
+
+        self._tab_initialized['causal'] = True
 
     def _init_seg_widget(self):
         """Initialize the segmentation review widget and set shared video state."""
@@ -695,6 +714,28 @@ class UnifiedReviewWidget(QWidget):
         self._outcome_widget._shared_video_fps = self.fps
         self._outcome_widget.scale_factor = self.scale_factor
 
+    def _init_causal_widget(self):
+        """Initialize the causal review widget and set shared video state."""
+        if self._causal_widget is None:
+            from mousereach.review.causal_review_widget import CausalReviewWidget
+            self._causal_widget = CausalReviewWidget(self.viewer)
+
+            self.tab_widget.removeTab(3)
+            self.tab_widget.insertTab(3, self._causal_widget, "Causal Review")
+
+            self._tab_initialized['causal'] = True
+
+        # Shared video state -- the causal widget does its own loading,
+        # so we just pass the video path for it to load from.
+
+    def _load_data_into_causal_widget(self):
+        """Load data into the causal review widget."""
+        if self._causal_widget is None or self.video_path is None:
+            return
+        # The causal widget loads its own video + algo data, so trigger
+        # its full load from the shared video path.
+        self._causal_widget._load_video(self.video_path)
+
     def _load_data_into_seg_widget(self):
         """Load data into the segmentation widget using shared video."""
         if self._seg_widget is None or self.video_path is None:
@@ -736,6 +777,7 @@ class UnifiedReviewWidget(QWidget):
             self.tab_widget.setTabEnabled(0, False)
             self.tab_widget.setTabEnabled(1, False)
             self.tab_widget.setTabEnabled(2, False)
+            self.tab_widget.setTabEnabled(3, False)
             return
 
         # Boundaries tab always available if video loaded
@@ -762,6 +804,10 @@ class UnifiedReviewWidget(QWidget):
         # Enable outcomes if segments exist
         self.tab_widget.setTabEnabled(2, has_segments)
 
+        # Enable causal review if segments + outcomes exist
+        has_outcomes = (self.video_path.parent / f"{video_stem}_pellet_outcomes.json").exists()
+        self.tab_widget.setTabEnabled(3, has_segments and has_outcomes)
+
         # Update status
         if not has_segments:
             self.status_label.setText("Complete Boundaries first to unlock Reaches and Outcomes tabs")
@@ -771,7 +817,7 @@ class UnifiedReviewWidget(QWidget):
         if self.video_path is None:
             return
 
-        tab_names = ['seg', 'reach', 'outcome']
+        tab_names = ['seg', 'reach', 'outcome', 'causal']
         tab_name = tab_names[index] if index < len(tab_names) else None
 
         # Initialize widget and set shared video state
@@ -781,6 +827,8 @@ class UnifiedReviewWidget(QWidget):
             self._init_reach_widget()
         elif tab_name == 'outcome':
             self._init_outcome_widget()
+        elif tab_name == 'causal':
+            self._init_causal_widget()
 
         # Load data if not already loaded (separate from widget init!)
         if tab_name == 'reach' and not self._data_loaded['reach']:
@@ -789,6 +837,9 @@ class UnifiedReviewWidget(QWidget):
         elif tab_name == 'outcome' and not self._data_loaded['outcome']:
             self._load_data_into_outcome_widget()
             self._data_loaded['outcome'] = True
+        elif tab_name == 'causal' and not self._data_loaded['causal']:
+            self._load_data_into_causal_widget()
+            self._data_loaded['causal'] = True
 
         # Update keybindings for the active tab
         self._update_keybindings_for_tab(index)
@@ -800,7 +851,7 @@ class UnifiedReviewWidget(QWidget):
         self._update_item_label()
 
         # Status update
-        tab_labels = ['Boundaries', 'Reaches', 'Outcomes']
+        tab_labels = ['Boundaries', 'Reaches', 'Outcomes', 'Causal Review']
         if index < len(tab_labels):
             self.status_label.setText(f"Reviewing: {tab_labels[index]}")
 
