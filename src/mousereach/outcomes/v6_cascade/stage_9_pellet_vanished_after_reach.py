@@ -87,6 +87,32 @@ MIN_UNCOVERED_PAW_RUN = 10
 
 OKF_VANISH_OFFSET = 5
 
+# 4.0 recalibration: sustained-on-pillar recheck parameters.
+# On 4.0 the pellet reads on-pillar for a couple of frames right after
+# the grab, and G4's `post_on_pillar == 0` counts PER-FRAME (unlike its
+# off-pillar and any-pellet checks, which use SUSTAINED runs), so a
+# 2-frame blip trips the hard zero -> no causal reach -> defer. The
+# recheck uses a SUSTAINED on-pillar check (>= SUST_RUN frames = a
+# real return) + any-pellet budget POST_ANY.
+SUST_RUN = 3
+POST_ANY = 10
+
+
+def _sustained(a, mr):
+    """Boolean mask: True at frames inside a True-run of length >= mr."""
+    out = np.zeros_like(a, dtype=bool)
+    run = 0
+    for i in range(len(a)):
+        if a[i]:
+            run += 1
+        else:
+            if run >= mr:
+                out[i - run:i] = True
+            run = 0
+    if run >= mr:
+        out[len(a) - run:] = True
+    return out
+
 
 class Stage9PelletVanishedAfterReach(Stage):
     name = "stage_9_pellet_vanished_after_reach"
@@ -125,6 +151,107 @@ class Stage9PelletVanishedAfterReach(Stage):
         self.transition_zone_half = transition_zone_half
 
     def decide(self, seg: SegmentInput) -> StageDecision:
+        dec = self._decide_core(seg)
+        # 4.0 recalibration: sustained-on-pillar recheck. When the
+        # parent defers with 'no_candidate_reach_for_retrieval' (G4's
+        # per-frame on_pillar == 0 tripped by a 2-frame on-pillar blip),
+        # re-attribute the causal reach with a SUSTAINED on-pillar check
+        # (>= SUST_RUN frames = a real return) + any-pellet budget
+        # POST_ANY. The segment already passed G1 (vanished) + G3 (not
+        # displaced), so the class is retrieved-safe.
+        if (dec.decision != "continue"
+                or not dec.reason
+                or "no_candidate_reach_for_retrieval" not in dec.reason):
+            return dec
+        r = self._recheck(seg)
+        if r is None:
+            return dec
+        ifr_v, okf_v = r
+        return StageDecision(
+            decision="commit", committed_class="retrieved",
+            whens={"outcome_known_frame": okf_v,
+                   "interaction_frame": ifr_v},
+            reason="pellet_vanished_after_reach (sustained-on-pillar recheck)")
+
+    def _recheck(self, seg: SegmentInput):
+        """Sustained-on-pillar causal-reach re-attribution for 4.0."""
+        ce = seg.seg_end - self.transition_zone_half
+        if ce <= seg.seg_start:
+            return None
+        sub_raw = seg.dlc_df.iloc[seg.seg_start:ce + 1]
+        n = len(sub_raw)
+        if n == 0:
+            return None
+        sub = clean_dlc_bodyparts(sub_raw, other_bodyparts_to_clean=("Pellet",))
+        g = compute_pillar_geometry_series(sub)
+        cx = g["pillar_cx"].to_numpy(float)
+        cy = g["pillar_cy"].to_numpy(float)
+        r = g["pillar_r"].to_numpy(float)
+        slit = cy + r
+        plk = sub_raw["Pellet_likelihood"].to_numpy(float)
+        px = sub["Pellet_x"].to_numpy(float)
+        py = sub["Pellet_y"].to_numpy(float)
+        dist = np.sqrt((px - cx) ** 2 + (py - cy) ** 2) / np.maximum(r, 1e-6)
+        paw = np.zeros(n, bool)
+        for bp in PAW_BODYPARTS:
+            paw |= ((sub[f"{bp}_y"].to_numpy(float) <= slit)
+                     & (sub_raw[f"{bp}_likelihood"].to_numpy(float)
+                        >= self.paw_lk_threshold))
+        confident = (plk >= self.pellet_lk_threshold) & (~paw)
+        on_pillar_sus = _sustained(confident & (dist <= self.on_pillar_radii),
+                                   SUST_RUN)
+        satl_y = sub["SATL_y"].to_numpy(float)
+        satr_y = sub["SATR_y"].to_numpy(float)
+        sabl_y = sub["SABL_y"].to_numpy(float)
+        sabr_y = sub["SABR_y"].to_numpy(float)
+        sabl_x = sub["SABL_x"].to_numpy(float)
+        satl_x = sub["SATL_x"].to_numpy(float)
+        sabr_x = sub["SABR_x"].to_numpy(float)
+        satr_x = sub["SATR_x"].to_numpy(float)
+        sa_top = (satl_y + satr_y) / 2.0
+        sa_bot = (sabl_y + sabr_y) / 2.0
+        sa_left = np.minimum(sabl_x, satl_x)
+        sa_right = np.maximum(sabr_x, satr_x)
+        in_sa = ((py >= sa_top) & (py <= sa_bot)
+                 & (px >= sa_left) & (px <= sa_right))
+        off_in_sa = _sustained(
+            (plk >= 0.7) & (dist > 1.5) & (~paw) & in_sa,
+            self.min_sustained_pellet_run)
+        anyp = _sustained((plk >= 0.5) & (~paw),
+                           self.min_sustained_pellet_run)
+        rl = []
+        for rs, re in seg.reach_windows:
+            ls = max(0, int(rs) - seg.seg_start)
+            le = min(n - 1, int(re) - seg.seg_start)
+            if le >= ls:
+                rl.append((ls, le))
+        rl.sort()
+        if not rl:
+            return None
+        causal_first = None
+        for ri, (rs, re) in enumerate(rl):
+            if (on_pillar_sus[re + 1:].sum() == 0
+                    and off_in_sa[re + 1:].sum()
+                    <= self.max_post_off_pillar_for_retrieved
+                    and anyp[re + 1:].sum() <= POST_ANY):
+                causal_first = ri
+                break
+        if causal_first is None or causal_first > 3:
+            return None
+        ci = causal_first
+        while ci + 1 < len(rl):
+            if rl[ci + 1][0] - rl[ci][1] <= self.chain_gap_threshold:
+                ci += 1
+            else:
+                break
+        bs, be = rl[ci]
+        bl = be - bs + 1
+        ifr = bs + bl // 2
+        okf = min(be + self.okf_vanish_offset, n - 1)
+        return int(seg.seg_start + ifr), int(seg.seg_start + okf)
+
+    def _decide_core(self, seg: SegmentInput) -> StageDecision:
+        """Original Stage 9 decide logic (pre-4.0 recheck)."""
         clean_end = seg.seg_end - self.transition_zone_half
         if clean_end <= seg.seg_start:
             return StageDecision(decision="continue",

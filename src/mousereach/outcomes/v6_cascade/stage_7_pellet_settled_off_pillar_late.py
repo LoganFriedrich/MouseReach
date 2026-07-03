@@ -64,7 +64,10 @@ ANCHOR_PELLET_LK_THR = 0.7     # more permissive for the off-pillar-
                                # confident immediately post-reach but
                                # the pellet is still observably
                                # displaced)
-PAW_LK_THR = 0.5
+# 4.0 recalibration: raised from 0.5 to 0.9 so only a near-certain
+# paw blocks pellet observation (approaching paw detected past the slit
+# at moderate lk on 4.0).
+PAW_LK_THR = 0.9
 PELLET_OFF_PILLAR_RADII = 1.0  # outside the pillar circle
 ANCHOR_OFF_PILLAR_RADII = 0.85 # slightly looser for transition anchor
 SA_QUAD_Y_BUFFER_PX = 0        # no buffer; strict SA quadrilateral
@@ -92,10 +95,10 @@ MIN_ON_PILLAR_FRAMES = 5        # need at least this many on-pillar frames
 #   - POST_BOUT_WINDOW frames after bout end: pellet observed
 #     confidently off-pillar (>= MIN_POST_BOUT_OFF_PILLAR_FRAMES)
 # First bout (in segment order) matching both = causal bout.
-PRE_BOUT_WINDOW = 2  # user 2026-05-03: just the immediate frame(s)
-                     # before reach start. Pellet either was on pillar
-                     # right before the reach or it wasn't -- a wide
-                     # window adds noise from intervening events.
+# 4.0 recalibration: widened from 2 to 20 so the pre-reach on-pillar
+# check has enough frames to find evidence despite 4.0 paw inflation
+# in immediate pre-reach frames.
+PRE_BOUT_WINDOW = 20
 POST_BOUT_WINDOW = 30
 MIN_PRE_BOUT_ON_PILLAR_FRAMES = 1   # 1 of 2 immediate-pre frames
                                      # showing on-pillar

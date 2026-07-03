@@ -69,7 +69,10 @@ PELLET_LK_THR = 0.95   # raised from 0.7 to filter DLC label-switch
                        # cases at moderate lk; 0.95 catches abnormal
                        # cases but `20250716_CNT0213_P3` cases pass
 PILLAR_LK_THR = 0.7
-PAW_LK_THR = 0.5
+# 4.0 recalibration: raised from 0.5 to 0.95 so the pre-reach
+# on-pillar precondition is not blocked by 4.0's approaching paw
+# detected past the line at moderate lk.
+PAW_LK_THR = 0.95
 
 # Co-detection triage (same as Stage 5). Both lk thresholds are very
 # high (per 2026-05-02 user refinement) and distance very tight, so

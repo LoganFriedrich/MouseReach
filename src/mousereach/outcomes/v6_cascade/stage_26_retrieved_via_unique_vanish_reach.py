@@ -66,6 +66,11 @@ from .stage_base import SegmentInput, Stage, StageDecision
 PRE_WINDOW = 30
 POST_WINDOW = 60
 PELLET_CONF_THR = 0.7
+# 4.0 recalibration: relaxed vanish test fraction. 4.0 keeps a spurious
+# confident pellet visible in the post-reach window (reflection/
+# hallucination), so the strict 'post has ZERO confident frames' vanish
+# test fails. Relax to 'post confident FRACTION < POST_ABSENT_FRAC'.
+POST_ABSENT_FRAC = 0.2
 PELLET_STRICT_CONF_THR = 0.85
 MIN_PRIOR_DISPLACEMENT_PX = 10.0
 OFF_PILLAR_RADII = 1.5
@@ -148,7 +153,10 @@ class Stage26RetrievedViaUniqueVanishReach(Stage):
         post_c = post_lk >= self.pellet_conf_thr
         if not pre_c.any():
             return False, None
-        if not post_c.any():
+        # 4.0 recalibration: relaxed vanish test. Was: `not post_c.any()`
+        # (strict zero). Now: post confident fraction < POST_ABSENT_FRAC
+        # so a few spurious 4.0 frames still read as vanish.
+        if post_c.mean() < POST_ABSENT_FRAC:
             return True, None
         pre_x = pre_slice["Pellet_x"].to_numpy(dtype=float)
         pre_y = pre_slice["Pellet_y"].to_numpy(dtype=float)
