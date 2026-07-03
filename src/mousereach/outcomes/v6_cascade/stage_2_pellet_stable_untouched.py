@@ -38,6 +38,10 @@ from .stage_base import SegmentInput, Stage, StageDecision
 COMMIT_FRAC_THRESHOLD = 0.95
 COMMIT_DISTANCE_THRESHOLD_RADII = 1.0
 START_END_WINDOW = 30  # frames at start / end to compute median position
+# 4.0 recalibration: relax the all-or-nothing analysis-window 'all clean'
+# requirement (fragile to 4.0 wobble/paw) to clean_frac >= 0.6.
+# frac_inside gate unchanged (robust on 4.0).
+COMMIT_CLEAN_FRAC = 0.6
 # Transition zone around segmenter's seg_end. Per the 2026-05-01 user
 # reframing: GT outcome_known_frame marks "new segment is solidly started";
 # segmenter's seg_end marks "old segment is clearly ending"; between them
@@ -199,6 +203,29 @@ class Stage2PelletStableUntouched(Stage):
                     f"pellet_stable_inside_pillar_circle "
                     f"(frac={frac_inside:.3f}, analysis_window_clean=1.0, "
                     f"anchor={anchor_frame})"
+                ),
+                features=feats,
+            )
+
+        # 4.0 recalibration: relaxed commit path. When the strict
+        # all-clean check fails but the pellet is predominantly inside
+        # the pillar circle (frac >= commit_frac) AND the analysis
+        # window is reasonably clean (>= COMMIT_CLEAN_FRAC), commit
+        # untouched. This catches segments where 4.0 wobble/paw causes
+        # a few non-clean frames in the analysis window.
+        if (frac_inside >= self.commit_frac
+                and analysis_window_clean_frac >= COMMIT_CLEAN_FRAC):
+            okf = anchor_frame
+            feats["outcome_known_frame_emitted"] = int(okf)
+            return StageDecision(
+                decision="commit",
+                committed_class="untouched",
+                whens={"outcome_known_frame": int(okf),
+                       "interaction_frame": None},
+                reason=(
+                    f"pellet_stable_inside_pillar_circle "
+                    f"(frac={frac_inside:.3f}, "
+                    f"clean_frac={analysis_window_clean_frac:.2f}>=0.6)"
                 ),
                 features=feats,
             )

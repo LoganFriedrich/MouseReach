@@ -45,6 +45,7 @@ from typing import List, Tuple
 import numpy as np
 
 from mousereach.lib.pillar_geometry import compute_pillar_geometry_series
+from .guards import pellet_displaced_or_vanished
 from .stage_base import SegmentInput, Stage, StageDecision
 
 
@@ -169,6 +170,16 @@ class Stage6PelletPredominantlyOnPillar(Stage):
                     f"{n_off_pillar} off-pillar frames); pellet had "
                     f"meaningful off-pillar evidence -- defer)"
                 ),
+                features=feats,
+            )
+
+        # 4.0 recalibration: guard against committing untouched on a
+        # displaced segment whose pellet reads predominantly-on-pillar.
+        if pellet_displaced_or_vanished(seg.dlc_df, seg.seg_start,
+                                        seg.seg_end):
+            return StageDecision(
+                decision="continue",
+                reason="pellet_displaced_or_vanished_guard",
                 features=feats,
             )
 
