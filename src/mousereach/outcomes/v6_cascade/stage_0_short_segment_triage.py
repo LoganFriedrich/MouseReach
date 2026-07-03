@@ -58,26 +58,7 @@ class Stage0ShortSegmentTriage(Stage):
         self.min_normal_segment_length = min_normal_segment_length
 
     def decide(self, seg: SegmentInput) -> StageDecision:
-        seg_length = seg.seg_end - seg.seg_start + 1
-        if seg_length < self.min_normal_segment_length:
-            return StageDecision(
-                decision="triage",
-                reason=(
-                    f"abnormally_short_segment "
-                    f"({seg_length} frames < "
-                    f"{self.min_normal_segment_length} threshold; "
-                    f"typical pellet trial is ~1840 frames, this is "
-                    f"likely an end-of-video apparatus failure / "
-                    f"cycling abort, not a real trial -- triaged for "
-                    f"data-quality review)"
-                ),
-                features={
-                    "segment_length": int(seg_length),
-                    "data_quality_triage": True,
-                },
-            )
-        return StageDecision(
-            decision="continue",
-            reason=f"segment_length_normal ({seg_length} frames)",
-            features={"segment_length": int(seg_length)},
-        )
+        # 4.0 recalibration: segment length is algo 1's concern, not
+        # algo 3's. Bypass length-based triage entirely so short
+        # segments proceed through the cascade for outcome classification.
+        return StageDecision(decision="continue", reason="stage0_bypassed")
