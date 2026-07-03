@@ -90,6 +90,7 @@ from .guards import (
     wrap_vanish_guard,
     wrap_sa_presence_guard,
 )
+from .cv_artifact_gate import wrap_cv_artifact_guard
 
 
 def _build_production_stages(
@@ -147,7 +148,9 @@ def _build_production_stages(
     # 4.0 recalibration: apply guards to all stage instances.
     # Order: paw_lk overrides -> vanish guard (ALL stages; only fires
     # on displaced_sa commits internally) -> SA-presence guard (ALL
-    # stages; only fires on displaced_sa commits internally).
+    # stages; only fires on displaced_sa commits internally) -> CV
+    # artifact gate (ALL stages; only fires on displaced_sa commits, and
+    # only when video_dir is available -- otherwise a no-op).
     out = []
     for lab, s in raw_stages:
         cn = type(s).__name__
@@ -155,6 +158,7 @@ def _build_production_stages(
             s.paw_lk_threshold = PAW_LK_OVERRIDES[cn]
         wrap_vanish_guard(s)
         wrap_sa_presence_guard(s)
+        wrap_cv_artifact_guard(s, video_dir)
         out.append((lab, s))
     return out
 
