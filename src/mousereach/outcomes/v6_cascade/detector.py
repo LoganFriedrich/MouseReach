@@ -58,6 +58,7 @@ from .stage_3_paw_never_in_pellet_area import Stage3PawNeverInPelletArea
 from .stage_4_pellet_returns_to_pillar import Stage4PelletReturnsToPillar
 from .stage_5_pellet_off_pillar_throughout import Stage5PelletOffPillarThroughout
 from .stage_6_pellet_predominantly_on_pillar import Stage6PelletPredominantlyOnPillar
+from .stage_6b_never_entered_sa import Stage6bNeverEnteredSA
 from .stage_7_pellet_settled_off_pillar_late import Stage7PelletSettledOffPillarLate
 from .stage_8_pellet_displaced_to_sa import Stage8PelletDisplacedToSA
 from .stage_9_pellet_vanished_after_reach import Stage9PelletVanishedAfterReach
@@ -83,6 +84,12 @@ from .stage_28_retrieved_via_pillar_visibility_transition import Stage28Retrieve
 from .stage_29_displaced_sa_via_pillar_disambiguated_multi_displacement import Stage29DisplacedSaViaPillarDisambiguatedMultiDisplacement
 from .stage_98_lost_in_shadow_triage import Stage98LostInShadowTriage
 from .stage_99_residual_triage import Stage99ResidualTriage
+from .guards import (
+    DISPLACED_VANISH_GUARD_CLASSES,
+    PAW_LK_OVERRIDES,
+    wrap_vanish_guard,
+    wrap_sa_presence_guard,
+)
 
 
 def _build_production_stages(
@@ -101,7 +108,7 @@ def _build_production_stages(
     -------
     list of (label, stage_instance) tuples
     """
-    return [
+    raw_stages = [
         ("stage_0_short_segment_triage", Stage0ShortSegmentTriage()),
         ("stage_1_position_never_changed", Stage1PelletPositionNeverChanged()),
         ("stage_2_stable_on_pillar", Stage2PelletStableUntouched(commit_frac=0.95, commit_distance_radii=1.5)),
@@ -109,6 +116,7 @@ def _build_production_stages(
         ("stage_4_pellet_returns_to_pillar", Stage4PelletReturnsToPillar()),
         ("stage_5_pellet_off_pillar_throughout", Stage5PelletOffPillarThroughout()),
         ("stage_6_predominantly_on_pillar", Stage6PelletPredominantlyOnPillar()),
+        ("stage_6b_never_entered_sa", Stage6bNeverEnteredSA()),
         ("stage_7_settled_off_pillar_late", Stage7PelletSettledOffPillarLate()),
         ("stage_8_pellet_displaced_to_sa", Stage8PelletDisplacedToSA()),
         ("stage_9_pellet_vanished_after_reach", Stage9PelletVanishedAfterReach()),
@@ -135,6 +143,20 @@ def _build_production_stages(
         ("stage_98_lost_in_shadow_triage", Stage98LostInShadowTriage(video_dir=video_dir)),
         ("stage_99_residual_triage", Stage99ResidualTriage()),
     ]
+
+    # 4.0 recalibration: apply guards to all stage instances.
+    # Order: paw_lk overrides -> vanish guard (ALL stages; only fires
+    # on displaced_sa commits internally) -> SA-presence guard (ALL
+    # stages; only fires on displaced_sa commits internally).
+    out = []
+    for lab, s in raw_stages:
+        cn = type(s).__name__
+        if cn in PAW_LK_OVERRIDES:
+            s.paw_lk_threshold = PAW_LK_OVERRIDES[cn]
+        wrap_vanish_guard(s)
+        wrap_sa_presence_guard(s)
+        out.append((lab, s))
+    return out
 
 
 def _find_reaches_in_segment(
