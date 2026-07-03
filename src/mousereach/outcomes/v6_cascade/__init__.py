@@ -13,7 +13,7 @@ Production entry point::
 
     from mousereach.outcomes.v6_cascade import detect_outcomes_v6_cascade, VERSION
 """
-VERSION = "6.0.0"
+VERSION = "6.1.0"
 
 from .detector import detect_outcomes_v6_cascade  # noqa: E402, F401
 
