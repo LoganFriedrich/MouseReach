@@ -297,8 +297,29 @@ class CausalReviewWidget(QWidget):
         if path:
             self._load_video(Path(path))
 
+    def load_from_manifest(self, manifest: Dict[str, Any], bundle_dir: Path) -> None:
+        """Load a copy-free review bundle.
+
+        The bundle dir holds only the four algo JSONs + manifest.json; the mp4
+        and DLC pose are loaded from the manifest's canonical Y: paths (they live
+        in different dirs and are never copied). See mousereach.review.staging
+        for how bundles are produced.
+        """
+        self._manifest = dict(manifest)
+        self._bundle_dir = Path(bundle_dir)
+        self._load_video(Path(manifest["canonical_video_path"]))
+
+    # frames of context padded around a reach when windowing a segment
+    WINDOW_PAD = 45
+
     def _load_video(self, video_path: Path):
-        """Load video frames, DLC overlays, and algo data."""
+        """One-time setup for a video: metadata, DLC, algo data, segment list.
+
+        Frames are NOT bulk-loaded here. Each segment loads only its own reach
+        window on demand (see ``_load_frame_window``), so a 10-minute /
+        ~37k-frame pillar video opens in seconds instead of decoding the whole
+        thing (~29 GB) into RAM.
+        """
         import cv2
 
         self.video_path = video_path
@@ -307,7 +328,7 @@ class CausalReviewWidget(QWidget):
         self._progress.setValue(0)
 
         try:
-            # Resolve preview
+            # Resolve preview / scale
             video_stem = video_path.stem.replace("_preview", "")
             if "DLC" in video_stem:
                 video_stem = video_stem.split("DLC")[0].rstrip("_")
@@ -315,76 +336,39 @@ class CausalReviewWidget(QWidget):
 
             preview_path = video_path.parent / f"{video_stem}_preview.mp4"
             if "_preview" not in video_path.stem and preview_path.exists():
-                actual_video = preview_path
+                self._actual_video = preview_path
                 self.scale_factor = 0.75
             else:
-                actual_video = video_path
+                self._actual_video = video_path
                 self.scale_factor = 1.0
 
-            # Read frames
-            cap = cv2.VideoCapture(str(actual_video))
+            # Metadata only -- do NOT read frames here
+            cap = cv2.VideoCapture(str(self._actual_video))
             if not cap.isOpened():
                 raise RuntimeError(f"Could not open video: {video_path}")
-
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
-            self.n_frames = total_frames
-            self.frame_offset = 0
-            self.frame_window_end = total_frames - 1
-
-            frames = []
-            for i in range(total_frames):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                if i % 500 == 0:
-                    self._progress.setValue(int(60 * i / max(total_frames, 1)))
-                    from qtpy.QtWidgets import QApplication
-                    QApplication.processEvents()
             cap.release()
-            self.n_frames = len(frames)
-            self.frame_window_end = self.n_frames - 1
-            self._progress.setValue(65)
+            self._progress.setValue(30)
 
-            # Remove old video layer
-            if self.video_layer is not None:
-                try:
-                    self.viewer.layers.remove(self.video_layer)
-                except (ValueError, AttributeError):
-                    pass
+            # DLC (whole h5, once) + pillar overlay (updates per-frame via callback)
+            self._load_dlc_data()
+            self._add_pillar_shapes_layer()
+            self._progress.setValue(55)
 
-            self.video_layer = self.viewer.add_image(
-                np.stack(frames), name=video_path.stem, rgb=True
-            )
+            # Algo data + segment list
+            self._load_algo_data()
+            self._build_segment_list()
             self._progress.setValue(75)
 
-            # Load DLC data
-            self._load_dlc_data()
-            self._progress.setValue(80)
-            self._add_dlc_points_layer()
-            self._progress.setValue(85)
-            self._add_pillar_shapes_layer()
-            self._progress.setValue(88)
-
-            # Load algo data
-            self._load_algo_data()
-            self._progress.setValue(92)
-
-            # Build segment list
-            self._build_segment_list()
-            self._progress.setValue(95)
-
-            # Enable controls
+            # Enable controls, show first segment (loads its window)
             self._enable_controls(True)
-
-            # Show first segment
             self._current_seg_idx = 0
             self._show_current_segment()
 
             self._video_label.setText(
-                f"Loaded: {video_path.name} ({self.n_frames} frames, "
-                f"{len(self._segment_list)} segments)"
+                f"Loaded: {video_path.name}  --  {self.n_frames} frames, "
+                f"{len(self._segment_list)} segments (windowed per segment)"
             )
             self._progress.setValue(100)
 
@@ -395,21 +379,105 @@ class CausalReviewWidget(QWidget):
         finally:
             self._progress.setVisible(False)
 
+    def _compute_segment_window(self, seg: Dict[str, Any]) -> Tuple[int, int]:
+        """Absolute frame range to load for a segment: the relevant reach + pad.
+
+        - touched w/ a causal reach -> the causal reach + pad each side
+        - miss / triaged / untouched -> the LAST reach in the segment + pad
+          (you verify a miss/triage by watching the final reach)
+        - no reaches at all -> a small window at the segment start
+
+        Progressive expansion on a "no" answer widens this later.
+        """
+        pad = self.WINDOW_PAD
+        cr = seg.get("causal_reach")
+        if cr and not seg.get("is_boundary"):
+            return (int(cr["start"]) - pad, int(cr["end"]) + pad)
+        reaches = seg.get("all_reaches") or []
+        if reaches:
+            last = max(reaches, key=lambda r: r.get("start", 0))
+            return (int(last["start"]) - pad, int(last["end"]) + pad)
+        return (int(seg["start_frame"]),
+                min(int(seg["start_frame"]) + 4 * pad, int(seg["end_frame"])))
+
+    def _load_frame_window(self, frame_range: Tuple[int, int]):
+        """Load ONLY the given absolute frame range into the video layer.
+
+        The image layer is translated so its world z-coordinate equals the
+        absolute frame index, so all frame-indexed logic (DLC overlay, pillar,
+        question text) stays valid. DLC points are rebuilt for the same window.
+        """
+        import cv2
+        fr_start = max(0, int(frame_range[0]))
+        fr_end = min(self.n_frames - 1, int(frame_range[1]))
+        if fr_end < fr_start:
+            fr_end = fr_start
+        self.frame_offset = fr_start
+        self.frame_window_end = fr_end
+        n_to_read = fr_end - fr_start + 1
+
+        cap = cv2.VideoCapture(str(self._actual_video))
+        if fr_start > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, fr_start)
+        frames = []
+        for _ in range(n_to_read):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        cap.release()
+        if not frames:
+            return
+
+        if self.video_layer is not None:
+            try:
+                self.viewer.layers.remove(self.video_layer)
+            except (ValueError, AttributeError):
+                pass
+        self.video_layer = self.viewer.add_image(
+            np.stack(frames), name=self.video_path.stem, rgb=True,
+            translate=(self.frame_offset, 0.0, 0.0),
+        )
+        # keep the video underneath the DLC / pillar overlays
+        try:
+            self.viewer.layers.move(
+                self.viewer.layers.index(self.video_layer), 0)
+        except Exception:
+            pass
+
+        # Rebuild DLC points for just this window
+        self._add_dlc_points_layer()
+
+        # Constrain the time slider to the loaded window
+        try:
+            self.viewer.dims.set_range(
+                0, (self.frame_offset, self.frame_window_end + 1, 1))
+        except Exception:
+            pass
+
     def _load_dlc_data(self):
-        """Load DLC H5 for overlays."""
+        """Load DLC H5 for overlays.
+
+        In manifest (bundle) mode the pose h5 is loaded from the manifest's
+        canonical path (it lives in a different dir than the mp4); otherwise we
+        glob the video's parent dir.
+        """
         if not self.video_path:
             return
-        video_stem = self._video_stem
-        for pattern_name in [f"{video_stem}*.h5"]:
-            for h5_path in self.video_path.parent.glob(pattern_name):
-                try:
-                    import pandas as pd
-                    df = pd.read_hdf(h5_path)
-                    df.columns = ['_'.join([str(c) for c in col[1:]]) for col in df.columns]
-                    self.dlc_df = df
-                    return
-                except Exception:
-                    pass
+        import pandas as pd
+        candidates = []
+        manifest = getattr(self, "_manifest", None)
+        if manifest and manifest.get("canonical_dlc_h5_path"):
+            candidates.append(Path(manifest["canonical_dlc_h5_path"]))
+        candidates.extend(self.video_path.parent.glob(f"{self._video_stem}*.h5"))
+        for h5_path in candidates:
+            try:
+                df = pd.read_hdf(h5_path)
+                df.columns = ['_'.join([str(c) for c in col[1:]]) for col in df.columns]
+                self.dlc_df = df
+                return
+            except Exception:
+                pass
         self.dlc_df = None
 
     def _add_dlc_points_layer(self):
@@ -429,7 +497,12 @@ class CausalReviewWidget(QWidget):
         point_bps = []
         scale = self.scale_factor
 
-        for frame_idx in range(len(self.dlc_df)):
+        # Only build points for the currently-loaded frame window (keeps the
+        # overlay light and aligned with the windowed video layer).
+        lo = int(getattr(self, 'frame_offset', 0))
+        hi = int(getattr(self, 'frame_window_end', len(self.dlc_df) - 1))
+        hi = min(hi, len(self.dlc_df) - 1)
+        for frame_idx in range(lo, hi + 1):
             for bp in bodyparts:
                 x = self.dlc_df.iloc[frame_idx].get(f'{bp}_x', np.nan)
                 y = self.dlc_df.iloc[frame_idx].get(f'{bp}_y', np.nan)
@@ -527,10 +600,15 @@ class CausalReviewWidget(QWidget):
     # ===================================================================
 
     def _load_algo_data(self):
-        """Load segments, reaches, outcomes, and assignments JSONs."""
+        """Load segments, reaches, outcomes, and assignments JSONs.
+
+        In manifest (bundle) mode the JSONs live in the bundle dir, not next to
+        the canonical mp4.
+        """
         if not self.video_path:
             return
-        parent = self.video_path.parent
+        bundle_dir = getattr(self, "_bundle_dir", None)
+        parent = Path(bundle_dir) if bundle_dir else self.video_path.parent
         stem = self._video_stem
 
         def _try_load(suffix: str) -> Dict[str, Any]:
@@ -678,7 +756,10 @@ class CausalReviewWidget(QWidget):
         self._prev_seg_btn.setEnabled(self._current_seg_idx > 0)
         self._next_seg_btn.setEnabled(self._current_seg_idx < total - 1)
 
-        # Navigate viewer to the segment's frame range
+        # Load ONLY this segment's reach window (fast; no full-video decode)
+        self._load_frame_window(self._compute_segment_window(seg))
+
+        # Navigate playhead within the loaded window
         self._navigate_to_segment(seg)
 
         # Build question panel
@@ -699,7 +780,7 @@ class CausalReviewWidget(QWidget):
         else:
             target = seg["start_frame"]
 
-        target = max(0, min(self.n_frames - 1, target))
+        target = max(self.frame_offset, min(self.frame_window_end, target))
         try:
             self.viewer.dims.set_current_step(0, target)
         except Exception:
@@ -1374,10 +1455,12 @@ class CausalReviewWidget(QWidget):
             self._show_current_segment()
 
     def _load_whole_segment(self):
-        """Jump viewer to show the entire current segment."""
+        """Load the entire current segment's frames (wider than the default
+        reach window) so the reviewer can hunt outside the reach."""
         if not self._segment_list:
             return
         seg = self._segment_list[self._current_seg_idx]
+        self._load_frame_window((seg["start_frame"], seg["end_frame"]))
         try:
             self.viewer.dims.set_current_step(0, seg["start_frame"])
         except Exception:
@@ -1417,7 +1500,7 @@ class CausalReviewWidget(QWidget):
         current = self.viewer.dims.current_step[0]
         skip = max(1, int(self.playback_speed))
         new_frame = current + (skip * self.playback_direction)
-        if 0 <= new_frame < self.n_frames:
+        if self.frame_offset <= new_frame <= self.frame_window_end:
             self.viewer.dims.set_current_step(0, new_frame)
         else:
             self._stop_play()
@@ -1435,7 +1518,8 @@ class CausalReviewWidget(QWidget):
         if self.n_frames == 0:
             return
         current = self.viewer.dims.current_step[0]
-        new_frame = max(0, min(self.n_frames - 1, current + delta))
+        new_frame = max(self.frame_offset,
+                        min(self.frame_window_end, current + delta))
         self.viewer.dims.set_current_step(0, new_frame)
 
     def _on_frame_change(self, event=None):
