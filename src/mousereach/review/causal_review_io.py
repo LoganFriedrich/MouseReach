@@ -147,6 +147,7 @@ def save_causal_review(
     segments: List[Dict[str, Any]],
     provenance: Dict[str, Any],
     reviewer: Optional[str] = None,
+    manual_segmentation: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
 
@@ -179,10 +180,237 @@ def save_causal_review(
         "provenance": provenance,
         "segments": segments,
     }
+    if manual_segmentation:
+        doc["manual_segmentation"] = manual_segmentation
 
     out_path = output_dir / f"{video_stem}_causal_review.json"
     _write_json(out_path, doc)
     return out_path
+
+
+def load_causal_review(video_stem: str, output_dir: Path):
+    """Load a saved per-video causal review, if present.
+
+    Returns ``(doc, {segment_num: record})``; ``(None, {})`` if no file. The
+    per-segment records are exactly what ``_collect_answers`` produced, so they
+    can be dropped straight back into the widget's ``_review_records`` to restore
+    a prior review session (resume + re-populate the panel).
+    """
+    path = Path(output_dir) / f"{video_stem}_causal_review.json"
+    if not path.exists():
+        return None, {}
+    doc = _read_json(path)
+    by_seg: Dict[int, Any] = {}
+    for rec in doc.get("segments", []):
+        sn = rec.get("segment_num")
+        if sn is not None:
+            by_seg[int(sn)] = rec
+    return doc, by_seg
+
+
+# ---------------------------------------------------------------------------
+# Review -> outcomes bridge: apply a reviewer's corrections onto the algo's
+# per-segment outcomes so a correction made in the Causal Review tool actually
+# flows FORWARD into kinematics (which reads outcome + causal_reach_id from the
+# outcomes). This is the missing link between review and the data product.
+# ---------------------------------------------------------------------------
+
+_TOUCHED_OUTCOMES = ("retrieved", "displaced_sa", "displaced_outside")
+
+
+def apply_review_overrides(
+    outcomes_data: Dict[str, Any],
+    review_by_seg: Dict[int, Dict[str, Any]],
+    reviewer: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Override the algo's per-segment ``outcome`` + ``causal_reach_id`` with the
+    human review, for segments that were actually reviewed.
+
+    NON-DESTRUCTIVE: returns a deep copy. The algo's originals are preserved on
+    each segment as ``algo_outcome`` / ``algo_causal_reach_id``; provenance is
+    recorded as ``outcome_source`` ("human_review" or "algo").
+
+    - A touched human outcome (retrieved / displaced_sa / displaced_outside)
+      sets ``causal_reach_id`` to the human's causal-reach id.
+    - untouched / abnormal_exception carry NO causal reach (``causal_reach_id``
+      = None), so kinematics excludes them from causal-reach kinematics.
+    - abnormal ignore-windows are carried onto the segment as ``abnormal_ranges``.
+    - Unreviewed segments (or ``reviewed: False`` placeholders) are untouched.
+    """
+    import copy
+    out = copy.deepcopy(outcomes_data)
+    by_seg = {int(k): v for k, v in (review_by_seg or {}).items()}
+    for seg in out.get("segments", []):
+        seg["outcome_source"] = "algo"
+        sn = seg.get("segment_num")
+        if sn is None:
+            continue
+        rec = by_seg.get(int(sn))
+        if not rec:
+            continue
+        ans = rec.get("answers") or {}
+        if ans.get("reviewed") is False:
+            continue
+        human = rec.get("human") or {}
+        ho = human.get("outcome")
+        if ho is None:
+            continue
+        hc = human.get("causal_reach") or {}
+        seg["algo_outcome"] = seg.get("outcome")
+        seg["algo_causal_reach_id"] = seg.get("causal_reach_id")
+        seg["outcome"] = ho
+        seg["causal_reach_id"] = hc.get("reach_id") if ho in _TOUCHED_OUTCOMES else None
+        seg["outcome_source"] = "human_review"
+        if reviewer:
+            seg["reviewed_by"] = reviewer
+        if ans.get("abnormal_ranges"):
+            seg["abnormal_ranges"] = ans["abnormal_ranges"]
+    return out
+
+
+def load_and_apply_review(
+    outcomes_data: Dict[str, Any],
+    review_path: Path,
+    video_stem: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Load a causal-review file and apply its corrections onto ``outcomes_data``.
+
+    ``review_path`` may be the review JSON itself OR a directory containing
+    ``{video_stem}_causal_review.json``. Returns ``outcomes_data`` unchanged if
+    no review is found (safe no-op)."""
+    review_path = Path(review_path)
+    doc = None
+    if review_path.is_file():
+        doc = _read_json(review_path)
+    elif review_path.is_dir():
+        stem = video_stem or outcomes_data.get("video_name") or ""
+        cand = review_path / f"{stem}_causal_review.json"
+        if cand.exists():
+            doc = _read_json(cand)
+    if not doc:
+        return outcomes_data
+    by_seg = {}
+    for rec in doc.get("segments", []):
+        sn = rec.get("segment_num")
+        if sn is not None:
+            by_seg[int(sn)] = rec
+    return apply_review_overrides(outcomes_data, by_seg, reviewer=doc.get("reviewer"))
+
+
+# ---------------------------------------------------------------------------
+# Ground-truth detection -- a video that's already GT'd shouldn't be reviewed;
+# we already know the answer. GT files are chained to a video by stem and may
+# live anywhere (improvement snapshots, Processing, next to the video, or in the
+# bundle), so we index them by stem across the known roots.
+# ---------------------------------------------------------------------------
+
+GT_INDEX_ROOTS = [
+    Path(r"Y:\2_Connectome\Behavior\MouseReach_Improvement"),
+    Path(r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Processing"),
+]
+
+_GT_INDEX_CACHE: Optional[Dict[str, Path]] = None
+
+
+def build_gt_index(roots=None) -> Dict[str, Path]:
+    """Scan the GT roots for ``*_unified_ground_truth.json`` -> {stem: path}
+    (most-recently-modified wins on duplicates)."""
+    roots = roots or GT_INDEX_ROOTS
+    idx: Dict[str, Path] = {}
+    for r in roots:
+        r = Path(r)
+        if not r.exists():
+            continue
+        for p in r.rglob("*_unified_ground_truth.json"):
+            stem = p.name.split("_unified_ground_truth.json")[0]
+            try:
+                if stem not in idx or p.stat().st_mtime > idx[stem].stat().st_mtime:
+                    idx[stem] = p
+            except OSError:
+                idx.setdefault(stem, p)
+    return idx
+
+
+def gt_index(refresh: bool = False) -> Dict[str, Path]:
+    """Cached stem -> unified-GT-path index (built once per process)."""
+    global _GT_INDEX_CACHE
+    if _GT_INDEX_CACHE is None or refresh:
+        _GT_INDEX_CACHE = build_gt_index()
+    return _GT_INDEX_CACHE
+
+
+def find_gt(video_stem: str, extra_dirs=()) -> Optional[Path]:
+    """Path to the video's unified GT if it exists ANYWHERE, else None.
+
+    Checks co-located dirs first (bundle / next-to-video -- "chained at the hip"),
+    then the corpus-wide GT index.
+    """
+    for d in extra_dirs:
+        p = Path(d) / f"{video_stem}_unified_ground_truth.json"
+        if p.exists():
+            return p
+    return gt_index().get(video_stem)
+
+
+def has_gt(video_stem: str, extra_dirs=()) -> bool:
+    return find_gt(video_stem, extra_dirs) is not None
+
+
+# ---------------------------------------------------------------------------
+# Session flags -- "this mouse+day has a physical issue; review ALL its videos"
+# ---------------------------------------------------------------------------
+
+def session_key(video_stem: str) -> str:
+    """Group key for videos of the same mouse on the same day: {date}_{mouse}.
+
+    e.g. ``20250624_CNT0101_P1`` -> ``20250624_CNT0101``. A session-level issue
+    (a cage artifact that day, a misplaced pellet, etc.) affects every ``P#`` of
+    that mouse+day, so they should all get human review.
+    """
+    parts = str(video_stem).split("_")
+    return "_".join(parts[:2]) if len(parts) >= 2 else str(video_stem)
+
+
+def _flagged_sessions_path(review_root: Path) -> Path:
+    return Path(review_root) / "flagged_sessions.json"
+
+
+def load_flagged_sessions(review_root: Path) -> Dict[str, Any]:
+    """Return {session_key: flag_record} for the review corpus."""
+    p = _flagged_sessions_path(review_root)
+    if p.exists():
+        return _read_json(p).get("sessions", {})
+    return {}
+
+
+def is_session_flagged(video_stem: str, review_root: Path) -> bool:
+    return session_key(video_stem) in load_flagged_sessions(review_root)
+
+
+def flag_session(video_stem: str, review_root: Path, reason: str = "",
+                 flagged_by: Optional[str] = None) -> str:
+    """Flag the video's whole session (mouse+day) as must-be-human-reviewed.
+
+    Idempotent: re-flagging the same session updates the record. Returns the
+    session key. Videos already GT'd/reviewed are still honored -- the flag only
+    forces review of the ones that aren't yet resolved.
+    """
+    key = session_key(video_stem)
+    p = _flagged_sessions_path(review_root)
+    doc = _read_json(p) if p.exists() else {}
+    doc.setdefault("type", "flagged_sessions")
+    doc.setdefault("schema_version", "1.0")
+    sessions = doc.setdefault("sessions", {})
+    sessions[key] = {
+        "session_key": key,
+        "reason": reason,
+        "flagged_by": flagged_by or _get_username(),
+        "flagged_at": _get_timestamp(),
+        "requires_human_review": True,
+    }
+    doc["last_updated"] = _get_timestamp()
+    _write_json(p, doc)
+    return key
 
 
 # ---------------------------------------------------------------------------
