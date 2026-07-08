@@ -40,6 +40,15 @@ def main_batch():
         action='store_true',
         help='Overwrite existing feature files'
     )
+    parser.add_argument(
+        '--reviews-dir',
+        type=Path,
+        default=None,
+        help='Directory holding {video}_causal_review.json files. When a review '
+             'exists for a video, the human outcome + causal reach OVERRIDE the '
+             'algo for the reviewed segments (provenance: outcome_source). The '
+             'input dir is also checked.'
+    )
 
     args = parser.parse_args()
 
@@ -104,9 +113,24 @@ def main_batch():
             print(f"  [SKIP] Output exists (use --overwrite)")
             continue
 
+        # Human review override: find {video}_causal_review.json (reviews-dir
+        # first, then the input dir). When present, the reviewer's corrections
+        # drive kinematics for the reviewed segments.
+        review_path = None
+        for _rd in [args.reviews_dir, input_dir]:
+            if _rd is None:
+                continue
+            cand = Path(_rd) / f"{video_name}_causal_review.json"
+            if cand.exists():
+                review_path = cand
+                break
+        if review_path is not None:
+            print(f"  [review] applying human corrections from {review_path.name}")
+
         try:
             # Extract features
-            results = extractor.extract(dlc_path, reaches_path, outcome_path)
+            results = extractor.extract(dlc_path, reaches_path, outcome_path,
+                                        review_path=review_path)
 
             # Save results
             with open(output_path, 'w') as f:

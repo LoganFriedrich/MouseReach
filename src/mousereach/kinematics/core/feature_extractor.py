@@ -176,7 +176,8 @@ class FeatureExtractor:
         self,
         dlc_path: Path,
         reaches_path: Path,
-        outcomes_path: Path
+        outcomes_path: Path,
+        review_path: Optional[Path] = None,
     ) -> VideoFeatures:
         """
         Extract features for all reaches in a video.
@@ -199,6 +200,20 @@ class FeatureExtractor:
         # Load outcomes
         with open(outcomes_path) as f:
             outcomes_data = json.load(f)
+
+        # HUMAN REVIEW OVERRIDE: if a causal-review is provided, the reviewer's
+        # outcome + causal-reach corrections replace the algo's for the reviewed
+        # segments, so kinematics reflects the human truth. Non-destructive (algo
+        # originals kept as algo_outcome/algo_causal_reach_id; provenance in
+        # outcome_source). Safe no-op if no review is found.
+        if review_path is not None:
+            try:
+                from mousereach.review.causal_review_io import load_and_apply_review
+                outcomes_data = load_and_apply_review(
+                    outcomes_data, review_path,
+                    video_stem=reaches_data.get('video_name'))
+            except Exception as _e:
+                print(f"[feature_extractor] review override skipped: {_e}")
 
         video_name = reaches_data['video_name']
         total_frames = reaches_data['total_frames']
@@ -252,9 +267,9 @@ class FeatureExtractor:
                 start_frame=seg_data['start_frame'],
                 end_frame=seg_data['end_frame'],
                 ruler_pixels=seg_data['ruler_pixels'],
-                outcome=outcome_data['outcome'],
-                outcome_confidence=outcome_data['confidence'],
-                outcome_flagged=outcome_data['flagged_for_review'],
+                outcome=outcome_data.get('outcome'),
+                outcome_confidence=outcome_data.get('confidence'),
+                outcome_flagged=outcome_data.get('flagged_for_review', False),
                 n_reaches=seg_data['n_reaches'],
                 causal_reach_id=outcome_data.get('causal_reach_id'),
                 reaches=[],
