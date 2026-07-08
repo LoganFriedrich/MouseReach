@@ -164,9 +164,18 @@ class CausalReviewWidget(QWidget):
 
     data_saved = Signal(Path)
 
-    def __init__(self, napari_viewer: napari.Viewer):
+    def __init__(self, napari_viewer: napari.Viewer, triage_only: bool = False):
         super().__init__()
         self.viewer = napari_viewer
+
+        # Triaged-only mode: the video queue only includes videos that still
+        # have an unresolved triaged element, and the segment walk SKIPS the
+        # segments the algo already got right -- so the reviewer walks ONLY
+        # triaged elements. Decisions still save to _causal_review.json and feed
+        # kinematics in place of the algo's "triaged" call (existing bridge).
+        self._triage_only = bool(triage_only)
+        self._triaged_indices: List[int] = []
+        self._has_triage_cache: Dict[str, bool] = {}
 
         # Video state
         self.video_path: Optional[Path] = None
@@ -221,7 +230,9 @@ class CausalReviewWidget(QWidget):
         header_layout = QVBoxLayout()
         header.setLayout(header_layout)
 
-        title = QLabel("<b>Causal Review Tool</b>")
+        title = QLabel("<b>Causal Review Tool"
+                       + (" &mdash; TRIAGED-ONLY" if self._triage_only else "")
+                       + "</b>")
         title.setStyleSheet("font-size: 14px;")
         header_layout.addWidget(title)
 
@@ -809,9 +820,9 @@ class CausalReviewWidget(QWidget):
             saved_algo = (rec.get("algo") or {}).get("outcome")
             return saved_algo == seg.get("outcome")  # algo unchanged -> still done
 
-        idx = 0
-        for i, seg in enumerate(self._segment_list):
-            if not _done(seg):
+        idx = self._first_visible_idx()
+        for i in self._visible_indices():
+            if not _done(self._segment_list[i]):
                 idx = i
                 break
         self._current_seg_idx = idx
@@ -983,6 +994,48 @@ class CausalReviewWidget(QWidget):
                 "all_reaches": all_reaches,
             })
 
+        self._recompute_triaged_indices()
+
+    # ===================================================================
+    # Triaged-only navigation helpers
+    # ===================================================================
+
+    def _is_triaged(self, seg: Dict) -> bool:
+        """A segment needs human triage: the algo could not call the outcome
+        (outcome_uncertain) or committed a touched outcome with no causal reach
+        (reach_uncertain)."""
+        return bool(seg.get("outcome_uncertain") or seg.get("reach_uncertain"))
+
+    def _recompute_triaged_indices(self) -> None:
+        self._triaged_indices = [
+            i for i, s in enumerate(self._segment_list) if self._is_triaged(s)]
+
+    def _visible_indices(self) -> List[int]:
+        """Segment indices the reviewer walks: triaged-only in triage mode,
+        else every segment."""
+        if self._triage_only:
+            return self._triaged_indices
+        return list(range(len(self._segment_list)))
+
+    def _first_visible_idx(self) -> int:
+        vis = self._visible_indices()
+        return vis[0] if vis else 0
+
+    def _next_visible_idx(self, cur: int) -> Optional[int]:
+        for i in self._visible_indices():
+            if i > cur:
+                return i
+        return None
+
+    def _prev_visible_idx(self, cur: int) -> Optional[int]:
+        prev = None
+        for i in self._visible_indices():
+            if i < cur:
+                prev = i
+            else:
+                break
+        return prev
+
     # ===================================================================
     # Segment display
     # ===================================================================
@@ -993,17 +1046,27 @@ class CausalReviewWidget(QWidget):
             return
 
         seg = self._segment_list[self._current_seg_idx]
-        total = len(self._segment_list)
+        vis = self._visible_indices()
 
-        self._seg_label.setText(
-            f"Segment: {self._current_seg_idx + 1} / {total}  "
-            f"(seg #{seg['segment_num']}, "
-            f"frames {seg['start_frame']}-{seg['end_frame']})"
-        )
+        if self._triage_only and vis:
+            pos = (vis.index(self._current_seg_idx) + 1
+                   if self._current_seg_idx in vis else "?")
+            self._seg_label.setText(
+                f"Triaged element: {pos} / {len(vis)}  "
+                f"(seg #{seg['segment_num']}, "
+                f"frames {seg['start_frame']}-{seg['end_frame']})"
+            )
+        else:
+            self._seg_label.setText(
+                f"Segment: {self._current_seg_idx + 1} / {len(self._segment_list)}  "
+                f"(seg #{seg['segment_num']}, "
+                f"frames {seg['start_frame']}-{seg['end_frame']})"
+            )
 
-        # Update nav button state
-        self._prev_seg_btn.setEnabled(self._current_seg_idx > 0)
-        self._next_seg_btn.setEnabled(self._current_seg_idx < total - 1)
+        # Update nav button state (visible-list aware: in triaged-only mode the
+        # arrows step between triaged elements, not raw segments).
+        self._prev_seg_btn.setEnabled(self._prev_visible_idx(self._current_seg_idx) is not None)
+        self._next_seg_btn.setEnabled(self._next_visible_idx(self._current_seg_idx) is not None)
 
         # Load ONLY this segment's reach window (fast; no full-video decode)
         self._load_frame_window(self._compute_segment_window(seg))
@@ -1474,7 +1537,7 @@ class CausalReviewWidget(QWidget):
         self._review_records = {}
         self._load_algo_data()
         self._build_segment_list()
-        self._current_seg_idx = 0
+        self._current_seg_idx = self._first_visible_idx()
         self._show_current_segment()
         show_info(
             f"Re-segmented + re-scored into {len(self._segment_list)} segments -- "
@@ -1991,11 +2054,14 @@ class CausalReviewWidget(QWidget):
                 f"[OK] Recorded segment {seg_num}  "
                 f"({len(self._review_records)} reviewed so far)")
 
-        if self._current_seg_idx < len(self._segment_list) - 1:
-            self._current_seg_idx += 1
+        nxt = self._next_visible_idx(self._current_seg_idx)
+        if nxt is not None:
+            self._current_seg_idx = nxt
             self._show_current_segment()
         else:
-            show_info("Last segment -- saving review and loading next video.")
+            show_info("Last triaged element -- saving review and loading next video."
+                      if self._triage_only
+                      else "Last segment -- saving review and loading next video.")
             self._save_and_next_video()
 
     # ===================================================================
@@ -2088,10 +2154,43 @@ class CausalReviewWidget(QWidget):
         anoms = sd.get("anomalies") or []
         return any("reference quality" in str(a).lower() for a in anoms)
 
+    def _bundle_has_triage(self, b: Path) -> bool:
+        """True if bundle ``b`` has >=1 triaged element -- SAME definition the
+        segment walk uses (outcome uncertain, or a touched outcome with no
+        committed causal reach). Cached per session: the algo data is static, so
+        a bundle's triage status never changes within a run, which keeps
+        repeated 'next video' pool scans cheap."""
+        key = b.name
+        cached = self._has_triage_cache.get(key)
+        if cached is not None:
+            return cached
+        result = False
+        try:
+            od = json.loads((b / f"{key}_pellet_outcomes.json").read_text(encoding="utf-8"))
+            ad = json.loads((b / f"{key}_reach_assignments.json").read_text(encoding="utf-8"))
+            causal = {int(r["segment_num"]) for r in ad.get("reaches", [])
+                      if r.get("is_causal") and r.get("segment_num") is not None}
+            _T = ("retrieved", "displaced_sa", "displaced_outside")
+            for s in od.get("segments", []):
+                oc = s.get("outcome"); sn = s.get("segment_num")
+                if sn is None:
+                    continue
+                if oc == "triaged" or s.get("flagged_for_review"):
+                    result = True
+                    break
+                if oc in _T and int(sn) not in causal:
+                    result = True
+                    break
+        except Exception:
+            result = False
+        self._has_triage_cache[key] = result
+        return result
+
     def _needs_review_pool(self, pending_dir: Path, root: Path,
                            exclude: Optional[Path] = None) -> List[Path]:
         """All Pending bundles that still need review (not flagged, not GT'd, not
-        done, not a failed-segmentation video), optionally excluding one bundle."""
+        done, not a failed-segmentation video), optionally excluding one bundle.
+        In triaged-only mode, also skip videos with nothing to triage."""
         ex = str(Path(exclude)) if exclude else None
         pool = []
         for b in Path(pending_dir).iterdir():
@@ -2101,6 +2200,8 @@ class CausalReviewWidget(QWidget):
                 continue
             if self._segmentation_failed(b):
                 continue   # failed-seg -> manual re-seg queue, not normal review
+            if self._triage_only and not self._bundle_has_triage(b):
+                continue   # triaged-only: skip videos with no triaged element
             if self._bundle_needs_review(b, root):
                 pool.append(b)
         return pool
@@ -2242,16 +2343,18 @@ class CausalReviewWidget(QWidget):
         record = self._collect_answers()
         if record is not None:
             self._review_records[record["segment_num"]] = record
-        if self._current_seg_idx > 0:
-            self._current_seg_idx -= 1
+        prev = self._prev_visible_idx(self._current_seg_idx)
+        if prev is not None:
+            self._current_seg_idx = prev
             self._show_current_segment()
 
     def _next_segment(self):
         record = self._collect_answers()
         if record is not None:
             self._review_records[record["segment_num"]] = record
-        if self._current_seg_idx < len(self._segment_list) - 1:
-            self._current_seg_idx += 1
+        nxt = self._next_visible_idx(self._current_seg_idx)
+        if nxt is not None:
+            self._current_seg_idx = nxt
             self._show_current_segment()
 
     def _load_whole_segment(self):
@@ -2374,3 +2477,50 @@ class CausalReviewWidget(QWidget):
         self._save_advance_btn.setEnabled(enabled)
         self._save_next_video_btn.setEnabled(enabled)
         self._flag_session_btn.setEnabled(enabled)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point: causal review, TRIAGED-ONLY over the routine Pending queue
+# ---------------------------------------------------------------------------
+def main():
+    """Launch the causal review tool in TRIAGED-ONLY mode (CLI: mousereach-review-tool).
+
+    Walks ONLY the triaged elements the algo could not resolve, across the
+    routine Pending queue (videos with nothing to triage are skipped). Each
+    decision saves to the video's _causal_review.json; the kinematics extractor
+    substitutes those human calls for the algo's "triaged" before computing
+    kinematics (existing review->kinematics bridge). --all-segments walks every
+    segment (full review) instead.
+    """
+    import argparse
+    import napari
+    from .staging import DEFAULT_PENDING_DIR
+
+    parser = argparse.ArgumentParser(
+        description="Causal review, triaged-only: resolve just the segments the "
+                    "algo could not, over the routine Pending queue.")
+    parser.add_argument("--pending-dir", type=Path, default=DEFAULT_PENDING_DIR,
+                        help="Review queue root of per-video bundles. "
+                             "Default: MouseReach_Pipeline/Model40_Review/Pending.")
+    parser.add_argument("--all-segments", action="store_true",
+                        help="Walk ALL segments, not just triaged ones (full review).")
+    args = parser.parse_args()
+
+    pending_dir = Path(args.pending_dir)
+    if not pending_dir.is_dir():
+        print(f"Pending queue not found: {pending_dir}")
+        return 1
+
+    mode = "full review" if args.all_segments else "TRIAGED-ONLY"
+    print(f"Launching Causal Review ({mode}) over {pending_dir} ...")
+    print("Building queue (scanning bundles for triaged elements) ...", flush=True)
+    viewer = napari.Viewer(title=f"MouseReach Causal Review ({mode})")
+    widget = CausalReviewWidget(viewer, triage_only=not args.all_segments)
+    viewer.window.add_dock_widget(widget, name="Causal Review", area="right")
+    widget.load_pending_queue(pending_dir)
+    napari.run()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
