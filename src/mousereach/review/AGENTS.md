@@ -82,3 +82,50 @@ class MyReviewWidget(QWidget, AlgoGTReviewMixin):
 - `dataclasses` - Structured data (DiffItem, DiffSummary)
 
 <!-- MANUAL: -->
+
+## Routine triage + QC tool (`mousereach-review-tool`)
+
+The **triage tool** the routine protocol uses is `TriageClearingWidget`
+(`triage_clearing.py`, CLI `mousereach-review-tool`) -- NOT the tabbed
+`UnifiedReviewWidget`, which is **deprecated legacy**. It is a lean,
+worklist-driven surface that ingests ONLY unresolved problems and presents them
+one segment at a time. (`CausalReviewWidget` in `causal_review_widget.py` is the
+separate deep per-video results-review surface.)
+
+| File | Role |
+|------|------|
+| `triage_queue.py` | Build the worklist: `scan_corpus_for_triage` (per bundle) + `scan_corpus_root_for_triage` / `TriageWorklist.from_corpus_root` (whole corpus). Triggers: `flagged_for_review` (outcome/reach) AND the **unattributed-causal-reach** trigger (a touched outcome with no committed causal reach in `_reach_assignments.json`). Failed-seg videos -> `needs_reseg` lane, not the worklist. `find_default_corpus_root()` -> `Model40_Review/Pending` (or `MOUSEREACH_ROUTINE_ROOT`). |
+| `triage_clearing.py` | The widget + CLI. Per-segment clear saves `triage_cleared`/`human_verified`/`human_corrected` back to the bundle's JSONs; non-causal reaches get `exclude_from_analysis`. |
+| `qc_pool.py` | Routine spot-check pool: sample the algo's CONFIDENT calls (stratified rotating by cohort\|date), confirm-the-algo, persist to `<review_root>/_QC/` (`qc_state.json` + `qc_drift_log.jsonl`), report an agreement rate. |
+| `clear_guard.py` | Preserve human clears across a re-run (see invariant below). |
+
+### Ingestion layouts (mode-gated)
+- **corpus_root** (routine): per-video bundle dirs; the algo JSONs live APART
+  from the video and (under deferred 4.0 activation) use a different DLC model
+  than the one beside the mp4. `TriageClearingWidget` overrides `_gt_algo_dir()`
+  (load JSONs from the bundle) and `_dlc_h5_path()` (load the canonical
+  resnet101 pose) so it shows the bundle's real 4.0 data, not the stale
+  co-located production outputs. Gated by `worklist.mode == "corpus_root"`.
+- **algo_dir** (quarantine/flat): video + h5 + JSONs co-located; base
+  `GroundTruthWidget` behavior, unchanged.
+
+`unified_gt.py` and `ground_truth_widget.py` gained backward-compatible
+`algo_dir` overrides / `_gt_algo_dir()` + `_dlc_h5_path()` hooks (default None =
+co-located) to support the split (bundle) layout without touching base behavior.
+
+### Spot-check CLI
+- `--qc-count N` blends N stratified-rotating spot-checks into a corpus-root
+  session (kind=="qc" entries; green Confirm / Flag row). Confirm logs
+  agreement; Flag sets `flagged_for_review` so the segment re-enters triage.
+- `--qc-report` prints the agreement/drift summary without launching napari.
+
+### INVARIANT: clear-before-kinematics (do not clobber human clears)
+Routine order is **PROCESS -> TRIAGE-CLEAR (human) -> KINEMATICS**. Kinematics
+reads the in-place algo JSONs, so a human clear propagates natively -- but a
+re-run of the detectors between clearing and kinematics would overwrite it.
+`stage_video(..., preserve_clears=True)` (default) captures human-locked
+segments before a re-stage and re-applies them via
+`clear_guard.merge_preserving_clears` after the fresh run (human call wins,
+matched by `segment_num`). It is intentionally **skipped when boundaries change**
+(manual re-seg renumbers segments); locked segments that vanish are reported,
+not silently dropped. Any future detector re-run path MUST honor this guard.
