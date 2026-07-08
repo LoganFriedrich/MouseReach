@@ -341,6 +341,38 @@ def assign_reaches_v2(
             # Triage for safety (absence is not agreement).
             seg_decision[seg_idx] = ("triage", None)
 
+    # --- Triage reduction: inside each triaged segment, recategorize the
+    #     reaches we already KNOW are misses (pellet did not change on-pillar
+    #     state) from 'triaged' to 'miss', leaving only the genuine candidate(s)
+    #     triaged and tagged by why they still need a human. This never
+    #     determines an outcome (that is algo 3's exhausted job) -- the only new
+    #     label it writes is 'miss'. Reuses algo 3's per-reach on-pillar physics.
+    from mousereach.assignment.v2.triage_reduction import reduce_triaged_segment
+    reduced_label: Dict[int, str] = {}      # reach_id -> "miss" | "triaged"
+    seg_triage_reason: Dict[int, str] = {}  # seg_idx -> residual triage-kind
+    for _sidx, _dec in seg_decision.items():
+        if _dec[0] != "triage":
+            continue
+        _seg = segments_with_outcomes[_sidx]
+        _sf = int(_seg.get("start_frame", 0))
+        _ef = int(_seg.get("end_frame", len(radius) - 1))
+        _outcome_known = _collapse(_seg.get("outcome")) in ("retrieved", "displaced_sa")
+        _seg_reaches = [
+            {"reach_id": reaches[oi].get("reach_id", oi),
+             "start_frame": rs_, "end_frame": re_}
+            for (rs_, re_, oi) in reaches_by_seg.get(_sidx, [])
+        ]
+        if not _seg_reaches:
+            continue
+        try:
+            _labels, _reason = reduce_triaged_segment(
+                dlc_df, _sf, _ef, _seg_reaches, _outcome_known)
+            reduced_label.update(_labels)
+            if _reason is not None:
+                seg_triage_reason[_sidx] = _reason
+        except Exception:
+            pass  # any failure -> leave the segment fully triaged, unchanged
+
     # --- Build output reach list ---
     out_reaches: List[Dict] = []
 
@@ -375,7 +407,10 @@ def assign_reaches_v2(
         if decision is not None:
             action, causal_ri = decision
             if action == "triage":
-                label = "triaged"
+                # Triaged segment: the reduction pass may have already
+                # recategorized this reach to 'miss' if we know it is one;
+                # only genuine candidate(s) remain 'triaged'.
+                label = reduced_label.get(rid, "triaged")
             elif action == "commit" and causal_ri == ri:
                 label = f"causal_{collapsed}"
             else:
@@ -390,7 +425,7 @@ def assign_reaches_v2(
 
         is_causal = label.startswith("causal_")
 
-        out_reaches.append({
+        rec = {
             "reach_id": int(rid),
             "segment_num": int(seg_num) if seg_num is not None else None,
             "start_frame": rs,
@@ -399,12 +434,17 @@ def assign_reaches_v2(
             "is_causal": is_causal,
             "segment_outcome": collapsed,
             "segment_ifr": int(seg_ifr) if seg_ifr is not None else None,
-        })
+        }
+        # Tag surviving triaged reaches with WHY they still need review
+        # (reach_uncertain / outcome_uncertain / both_uncertain).
+        if label == "triaged" and seg_idx in seg_triage_reason:
+            rec["triage_reason"] = seg_triage_reason[seg_idx]
+        out_reaches.append(rec)
 
     return {
         "video_id": video_id,
         "detector": "assignment_v2",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "n_reaches": len(out_reaches),
         "reaches": out_reaches,
     }
