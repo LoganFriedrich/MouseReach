@@ -214,6 +214,7 @@ def stage_video(
     pose_dirs: Optional[List[Path]] = None,
     mp4_dirs: Optional[List[Path]] = None,
     boundaries_override: Optional[List[int]] = None,
+    preserve_clears: bool = True,
 ) -> Path:
     """Run the 4.0 algos on a video's canonical files and write a review bundle.
 
@@ -250,6 +251,12 @@ def stage_video(
         log(f"already staged (manifest present); skipping. Use overwrite=True to redo.")
         return bundle
     bundle.mkdir(parents=True, exist_ok=True)
+
+    # Clear-guard: capture any human triage-clears BEFORE the fresh run
+    # overwrites the JSONs, so they can be re-applied afterwards. Skipped when
+    # boundaries change (manual re-seg renumbers segments -> can't map clears).
+    _old_outcome = _load_json(outcome_out) if (preserve_clears and outcome_out.exists()) else None
+    _old_reach = _load_json(reach_out) if (preserve_clears and reach_out.exists()) else None
 
     # 1. SEGMENTATION (v2.2.2) -- OR a manual re-segmentation: when the reviewer
     # supplies boundaries, skip auto-segmentation and write a minimal manual
@@ -318,6 +325,32 @@ def stage_video(
         video_id=stem,
     )
     assign_out.write_text(json.dumps(assign_result, indent=2) + "\n", encoding="utf-8")
+
+    # 4b. CLEAR-GUARD: re-apply human triage-clears the fresh run just
+    # overwrote. Human calls win over the recomputed algo call. Skipped for
+    # manual re-segmentation (boundaries changed -> segment_num can't be mapped
+    # safely; the reviewer is intentionally re-scoring).
+    if preserve_clears and boundaries_override is None and (_old_outcome or _old_reach):
+        from .clear_guard import (
+            merge_preserving_clears, is_outcome_locked, is_reach_locked)
+        if _old_outcome:
+            _new_o = _load_json(outcome_out)
+            _new_o, kept, skipped = merge_preserving_clears(_new_o, _old_outcome, is_outcome_locked)
+            if kept:
+                outcome_out.write_text(json.dumps(_new_o, indent=2), encoding="utf-8")
+                log(f"clear-guard: preserved {len(kept)} human-cleared outcome segment(s) {kept}")
+            if skipped:
+                log(f"clear-guard: WARNING {len(skipped)} cleared outcome segment(s) "
+                    f"not re-applied (segment_num absent after re-run): {skipped}")
+        if _old_reach:
+            _new_r = _load_json(reach_out)
+            _new_r, kept, skipped = merge_preserving_clears(_new_r, _old_reach, is_reach_locked)
+            if kept:
+                reach_out.write_text(json.dumps(_new_r, indent=2), encoding="utf-8")
+                log(f"clear-guard: preserved {len(kept)} human-cleared reach segment(s) {kept}")
+            if skipped:
+                log(f"clear-guard: WARNING {len(skipped)} cleared reach segment(s) "
+                    f"not re-applied (segment_num absent after re-run): {skipped}")
 
     # 5. MANIFEST -- pointers to canonical files + provenance (versions, sources)
     manifest = _build_manifest(
