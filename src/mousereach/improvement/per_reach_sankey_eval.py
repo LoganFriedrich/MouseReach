@@ -683,7 +683,9 @@ def algo_vs_gt(
     render_algo_left_sankey(
         res["confusion_matrix"], fig, ref_label="Ground Truth",
         title=f"Per-reach outcome: algo vs GT  (N={res['n_reaches_universe']} reaches, {staged} videos)",
-        footer="algo exactly as run; flows = algo -> GT")
+        footer="algo exactly as run; flows = algo -> GT.   GT triage is "
+               "outcome-uncertain only (reach-uncertainty is an algo-4 label, "
+               "not modeled in this interaction-frame GT eval)")
     print(f"[algo_vs_gt] done -> {out_dir}")
     return out_dir
 
