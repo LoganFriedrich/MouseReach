@@ -50,7 +50,7 @@ from .consensus import (
 )
 from .tray_motion import apply_tray_motion_gate
 
-SEGMENTER_VERSION = "2.2.2"
+SEGMENTER_VERSION = "2.2.3"
 SEGMENTER_ALGORITHM = "multi_proposer_sabl_primary_v1+tray_motion_gate+pellet_window_gate"
 
 
@@ -173,9 +173,31 @@ def segment_video_multi(dlc_path: Path,
     df = load_dlc(dlc_path)
     total_frames = len(df)
 
+    anomalies: List[str] = []
     box_center, boxl_std, boxr_std, ref_quality = assess_reference_quality(df)
     sa_coverage = assess_sa_quality(df)
-    anomalies: List[str] = []
+
+    # v2.2.3 rescue: a 'bad' whole-file reference is often an over-long recording
+    # (operator left the camera running past the session) whose trailing junk
+    # frames -- no reference tracking -- tank the metric even though the real
+    # session tracks fine. Re-assess on the pellet-active window; if the session
+    # is good, adopt it and segment the session instead of bailing the whole
+    # video to uniform slicing. Good videos never enter this branch (their
+    # whole-file reference is already good), so their boundaries are unchanged.
+    if (box_center is None or ref_quality == 'bad') and config.pellet_window_gate_enabled:
+        _active = _pellet_active_window(
+            df, config.pellet_window_lk_threshold,
+            config.pellet_window_smooth, config.pellet_window_active_frac)
+        if _active is not None and (_active[1] - _active[0] + 1) < 0.9 * total_frames:
+            _sub = df.iloc[_active[0]:_active[1] + 1]
+            bc2, bl2, br2, rq2 = assess_reference_quality(_sub)
+            if bc2 is not None and rq2 != 'bad':
+                box_center, boxl_std, boxr_std, ref_quality = bc2, bl2, br2, rq2
+                sa_coverage = assess_sa_quality(_sub)
+                anomalies.append(
+                    f"reference rescued on pellet-active window "
+                    f"[{_active[0]},{_active[1]}] of {total_frames} frames "
+                    f"(over-long recording; out-of-session frames excluded)")
 
     # Reference bailout -- evenly spaced fallback, same behavior as v2.1.3.
     if box_center is None or ref_quality == 'bad':
