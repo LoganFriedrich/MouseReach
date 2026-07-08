@@ -660,15 +660,11 @@ def algo_vs_gt(
     finally:
         shutil.rmtree(tmp_gt, ignore_errors=True)
 
-    # GT-side triaged is all OUTCOME-uncertain: the metrics path reads algo-3's
-    # outcome ('triaged') and attributes touched outcomes by interaction frame, so
-    # it has no reach-uncertain class (that would need algo-4 run on all 67 GT
-    # videos). Relabel for consistent terminology with the review Sankey.
-    _cm = res["confusion_matrix"]
-    res["confusion_matrix"] = {
-        (k + "_outcome" if k.endswith("__triaged") else k): v for k, v in _cm.items()
-    }
-
+    # GT triage stays generic 'triaged' -- NOT split into triaged_reach /
+    # triaged_outcome. The metrics path attributes outcomes by interaction frame
+    # and never runs algo-4, so the reach/outcome axis isn't computed here; only
+    # the review Sankey (which reads algo-4) earns the split labels. Labeling GT
+    # triage 'triaged_outcome' would overclaim a decomposition that wasn't done.
     _write_scalars(out_dir, {
         "eval": "algo_vs_gt",
         "source_live_run": str(live_dir),
@@ -683,9 +679,8 @@ def algo_vs_gt(
     render_algo_left_sankey(
         res["confusion_matrix"], fig, ref_label="Ground Truth",
         title=f"Per-reach outcome: algo vs GT  (N={res['n_reaches_universe']} reaches, {staged} videos)",
-        footer="algo exactly as run; flows = algo -> GT.   GT triage is "
-               "outcome-uncertain only (reach-uncertainty is an algo-4 label, "
-               "not modeled in this interaction-frame GT eval)")
+        footer="algo exactly as run; flows = algo -> GT.   'triaged' is not split "
+               "into reach/outcome here (that's an algo-4 measure -- see the review Sankey)")
     print(f"[algo_vs_gt] done -> {out_dir}")
     return out_dir
 
