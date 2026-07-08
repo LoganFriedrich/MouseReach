@@ -78,8 +78,19 @@ def cohort_dir_for_stem(stem: str) -> str:
     return f"CNT{m.group(1)}"
 
 
-def resolve_canonical_paths(stem: str, connectome_root: Path) -> Dict[str, Path]:
-    """Resolve the canonical mp4 + 4.0 pose h5 for a stem. Raises if missing."""
+def resolve_canonical_paths(
+    stem: str, connectome_root: Path,
+    pose_dirs: Optional[List[Path]] = None,
+    mp4_dirs: Optional[List[Path]] = None,
+) -> Dict[str, Path]:
+    """Resolve the canonical mp4 + 4.0 pose h5 for a stem. Raises if missing.
+
+    ``pose_dirs`` are extra directories searched for the 4.0 pose h5 when it is
+    not in the standard ``DLC Model 4/<cohort>`` tree. ``mp4_dirs`` are extra
+    directories searched for the mp4 when it is not archived in the canonical
+    Connectome tree (e.g. still sitting in a DLC_Queue / DLC_Complete staging
+    dir). Both are used in place -- nothing is copied into the archive.
+    """
     cohort = cohort_dir_for_stem(stem)
     mp4 = connectome_root / cohort / f"{stem}.mp4"
     dlc_dir = connectome_root / DLC4_SUBDIR / cohort
@@ -88,8 +99,20 @@ def resolve_canonical_paths(stem: str, connectome_root: Path) -> Dict[str, Path]
     if not h5.exists():
         cands = sorted(dlc_dir.glob(f"{stem}DLC_resnet101*shuffle3*.h5"))
         h5 = cands[0] if cands else h5
+    if not h5.exists() and pose_dirs:
+        for pdir in pose_dirs:
+            cands = sorted(Path(pdir).glob(f"{stem}DLC_resnet101*shuffle3*.h5"))
+            if cands:
+                h5 = cands[0]
+                break
+    if not mp4.exists() and mp4_dirs:
+        for mdir in mp4_dirs:
+            cand = Path(mdir) / f"{stem}.mp4"
+            if cand.exists():
+                mp4 = cand
+                break
     if not mp4.exists():
-        raise FileNotFoundError(f"canonical mp4 not found: {mp4}")
+        raise FileNotFoundError(f"mp4 not found for {stem}: {mp4}")
     if not h5.exists():
         raise FileNotFoundError(f"canonical 4.0 pose h5 not found for {stem} in {dlc_dir}")
     return {"mp4": mp4, "h5": h5, "mp4_dir": mp4.parent, "cohort": cohort}
@@ -134,6 +157,51 @@ def _reaches_as_tuples(reach_doc: Dict[str, Any]) -> List[Tuple[int, int]]:
 
 
 # ---------------------------------------------------------------------------
+# Side-effect neutralization
+# ---------------------------------------------------------------------------
+_SIDE_EFFECTS_DISABLED = False
+
+
+def _neutralize_pipeline_side_effects() -> None:
+    """Silence the production pipeline's write-side effects for this process.
+
+    ``save_segmentation`` and ``ReachDetector.save_results`` each best-effort
+    update the pipeline index (``C:\\...\\pipeline_index.json``) and, for reach,
+    sync to a central DB. During staging those are (a) a violation of the
+    "never write to C:" rule and (b) a correctness hazard under parallel
+    staging -- every worker rewrites the same index file, which yields
+    ``WinError 32`` + "Corrupt index file, rebuilding". The review bundles are
+    self-contained JSON on Y:, so the index/DB updates are simply not wanted.
+
+    Idempotent; monkeypatches only this process's imported objects (workers get
+    it too because ProcessPoolExecutor re-imports this module on spawn).
+    """
+    global _SIDE_EFFECTS_DISABLED
+    if _SIDE_EFFECTS_DISABLED:
+        return
+    try:
+        from mousereach.index import PipelineIndex
+
+        def _noop_load(self):
+            self._loaded = True
+            if getattr(self, "_data", None) is None:
+                self._data = {"videos": {}, "folder_mtimes": {}}
+            return self._data
+
+        PipelineIndex.load = _noop_load
+        PipelineIndex.save = lambda self: None
+        PipelineIndex.record_file_created = lambda self, *a, **k: None
+    except Exception:
+        pass
+    try:
+        import mousereach.sync.database as _db  # local import target of save_results
+        _db.sync_file_to_database = lambda *a, **k: None
+    except Exception:
+        pass
+    _SIDE_EFFECTS_DISABLED = True
+
+
+# ---------------------------------------------------------------------------
 # The stager
 # ---------------------------------------------------------------------------
 def stage_video(
@@ -143,12 +211,17 @@ def stage_video(
     pending_dir: Path = DEFAULT_PENDING_DIR,
     overwrite: bool = False,
     verbose: bool = True,
+    pose_dirs: Optional[List[Path]] = None,
+    mp4_dirs: Optional[List[Path]] = None,
+    boundaries_override: Optional[List[int]] = None,
 ) -> Path:
     """Run the 4.0 algos on a video's canonical files and write a review bundle.
 
     Returns the bundle directory. Reads only canonical Y: paths; writes only
     the four small JSONs + manifest into ``pending_dir/{stem}/``. No copies.
     """
+    _neutralize_pipeline_side_effects()  # no C: index / DB writes; parallel-safe
+
     # Imports are local so the module loads even if a dependency is unavailable.
     from mousereach.segmentation.core.segmenter_multi import segment_video_multi
     from mousereach.segmentation.core.segmenter_robust import save_segmentation
@@ -163,7 +236,7 @@ def stage_video(
         if verbose:
             print(f"[stage {stem}] {msg}")
 
-    paths = resolve_canonical_paths(stem, connectome_root)
+    paths = resolve_canonical_paths(stem, connectome_root, pose_dirs=pose_dirs, mp4_dirs=mp4_dirs)
     mp4, h5, mp4_dir = paths["mp4"], paths["h5"], paths["mp4_dir"]
 
     bundle = pending_dir / stem
@@ -178,10 +251,40 @@ def stage_video(
         return bundle
     bundle.mkdir(parents=True, exist_ok=True)
 
-    # 1. SEGMENTATION (v2.2.2) -- reads pose only
-    log("segment...")
-    boundaries, diagnostics = segment_video_multi(h5)
-    save_segmentation(boundaries, diagnostics, seg_out)
+    # 1. SEGMENTATION (v2.2.2) -- OR a manual re-segmentation: when the reviewer
+    # supplies boundaries, skip auto-segmentation and write a minimal manual
+    # segments.json (downstream reach/outcome/assignment read only the boundary
+    # list + frame count). Re-running the algos on the reviewer's cuts means
+    # UNCHANGED segments keep the algo's scoring and every segment still shows an
+    # algo verdict -- fixing one boundary no longer forces a full re-score.
+    if boundaries_override is not None:
+        log("manual re-segmentation (given boundaries; skipping auto-segment)...")
+        _b = sorted({int(x) for x in boundaries_override})
+        _total = None
+        if seg_out.exists():
+            try:
+                _total = int(_load_json(seg_out).get("total_frames"))
+            except Exception:
+                _total = None
+        if _total is None:
+            _total = int(len(load_dlc_h5(h5)))
+        seg_out.write_text(json.dumps({
+            "segmenter_version": "manual_resegmentation",
+            "segmenter_algorithm": "manual",
+            "video_name": stem,
+            "total_frames": _total,
+            "fps": 60.0,
+            "boundaries": _b,
+            "reference_quality": "manual",
+            "overall_confidence": 1.0,
+            "anomalies": [],
+            "anomaly_summary": {"critical": 0, "warning": 0, "info": 0},
+            "manual_resegmentation": True,
+        }, indent=2), encoding="utf-8")
+    else:
+        log("segment...")
+        boundaries, diagnostics = segment_video_multi(h5)
+        save_segmentation(boundaries, diagnostics, seg_out)
 
     # 2. REACH DETECTION (v8.1.0 w=0.7 model4.0) -- reads pose + segments, no gate
     log("detect reaches...")
@@ -289,6 +392,37 @@ def list_stems_for_cohort(cohort: str, connectome_root: Path = DEFAULT_CONNECTOM
     return stems
 
 
+def list_all_cohorts(connectome_root: Path = DEFAULT_CONNECTOME_ROOT) -> List[str]:
+    """Every CNT## cohort folder that has a 4.0 pose tree (skips ``_logs`` etc.)."""
+    dlc_root = connectome_root / DLC4_SUBDIR
+    if not dlc_root.exists():
+        return []
+    return sorted(d.name for d in dlc_root.iterdir()
+                  if d.is_dir() and d.name.upper().startswith("CNT"))
+
+
+def list_all_stems(connectome_root: Path = DEFAULT_CONNECTOME_ROOT) -> List[str]:
+    """All DLC-4.0-processed video stems across every cohort."""
+    stems: List[str] = []
+    for c in list_all_cohorts(connectome_root):
+        stems.extend(list_stems_for_cohort(c, connectome_root))
+    return stems
+
+
+def _stage_one_result(stem: str, connectome_root: Path, pending_dir: Path,
+                      overwrite: bool) -> Tuple[str, bool, Optional[str]]:
+    """Top-level worker for parallel batches: stage one video, never raise.
+
+    Must be module-level (picklable) so ProcessPoolExecutor can dispatch it.
+    """
+    try:
+        stage_video(stem, connectome_root=connectome_root,
+                    pending_dir=pending_dir, overwrite=overwrite, verbose=False)
+        return (stem, True, None)
+    except Exception as e:  # noqa: BLE001 -- keep the batch alive on a bad video
+        return (stem, False, repr(e))
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Stage 4.0 review bundles (seg->reach->outcome->assignment v2) "
@@ -298,7 +432,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--stems", nargs="+", help="Explicit video stems, e.g. 20250624_CNT0101_P1")
     src.add_argument("--cnt", help="Cohort folder (e.g. CNT01); stage its videos")
-    parser.add_argument("--limit", type=int, default=None, help="With --cnt, cap number of videos")
+    src.add_argument("--all", action="store_true",
+                     help="Stage EVERY DLC-4.0 video across all cohorts (the full review corpus)")
+    parser.add_argument("--limit", type=int, default=None, help="With --cnt/--all, cap number of videos")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Parallel staging processes (default 1 = serial)")
+    parser.add_argument("--include-gt", action="store_true",
+                        help="Also stage already-ground-truthed videos (default: skip; GT is the answer)")
     parser.add_argument("--connectome-root", type=Path, default=DEFAULT_CONNECTOME_ROOT)
     parser.add_argument("--pending-dir", type=Path, default=DEFAULT_PENDING_DIR)
     parser.add_argument("--overwrite", action="store_true", help="Restage even if a bundle exists")
@@ -306,24 +446,62 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.stems:
         stems = list(args.stems)
+    elif args.all:
+        stems = list_all_stems(args.connectome_root)
     else:
         stems = list_stems_for_cohort(args.cnt, args.connectome_root)
-        if args.limit:
-            stems = stems[: args.limit]
 
-    print(f"Staging {len(stems)} video(s) into {args.pending_dir}")
+    # For cohort/all batches, skip work that would never be reviewed anyway:
+    # already-ground-truthed videos (GT stands in for a review) and, unless
+    # restaging, bundles already present. Explicit --stems are always honored.
+    if not args.stems:
+        n0 = len(stems)
+        if not args.include_gt:
+            from mousereach.review.causal_review_io import has_gt
+            stems = [s for s in stems if not has_gt(s)]
+        if not args.overwrite:
+            already = ({d.name for d in args.pending_dir.iterdir() if d.is_dir()}
+                       if args.pending_dir.exists() else set())
+            stems = [s for s in stems if s not in already]
+        skipped = n0 - len(stems)
+        if skipped:
+            print(f"Skipped {skipped} video(s) already GT'd or staged.")
+    if args.limit:
+        stems = stems[: args.limit]
+
+    print(f"Staging {len(stems)} video(s) into {args.pending_dir} "
+          f"(workers={args.workers})", flush=True)
     ok, failed = [], []
-    for stem in stems:
-        try:
-            stage_video(stem, connectome_root=args.connectome_root,
-                        pending_dir=args.pending_dir, overwrite=args.overwrite)
-            ok.append(stem)
-        except Exception as e:  # keep the batch alive on a single bad video
-            failed.append((stem, repr(e)))
-            print(f"[stage {stem}] FAILED: {e}")
-            traceback.print_exc()
+    total = len(stems)
 
-    print(f"\nDone. staged={len(ok)}  failed={len(failed)}")
+    if args.workers > 1 and total > 1:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        with ProcessPoolExecutor(max_workers=args.workers) as ex:
+            futs = {ex.submit(_stage_one_result, s, args.connectome_root,
+                              args.pending_dir, args.overwrite): s for s in stems}
+            for i, fut in enumerate(as_completed(futs), 1):
+                stem, good, err = fut.result()
+                if good:
+                    ok.append(stem)
+                else:
+                    failed.append((stem, err))
+                    print(f"[{i}/{total}] FAILED {stem}: {err}", flush=True)
+                if good and (i % 25 == 0 or i == total):
+                    print(f"[{i}/{total}] staged (ok={len(ok)} fail={len(failed)})", flush=True)
+    else:
+        for i, stem in enumerate(stems, 1):
+            try:
+                stage_video(stem, connectome_root=args.connectome_root,
+                            pending_dir=args.pending_dir, overwrite=args.overwrite,
+                            verbose=False)
+                ok.append(stem)
+            except Exception as e:  # keep the batch alive on a single bad video
+                failed.append((stem, repr(e)))
+                print(f"[{i}/{total}] FAILED {stem}: {e}", flush=True)
+            if i % 25 == 0 or i == total:
+                print(f"[{i}/{total}] staged (ok={len(ok)} fail={len(failed)})", flush=True)
+
+    print(f"\nDone. staged={len(ok)}  failed={len(failed)}", flush=True)
     for stem, err in failed:
         print(f"  FAILED {stem}: {err}")
     return 0 if not failed else 1

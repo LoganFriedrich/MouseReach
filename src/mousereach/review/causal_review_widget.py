@@ -41,7 +41,13 @@ from .causal_review_io import (
     build_segment_record,
     collect_provenance,
     save_causal_review,
+    load_causal_review,
     update_corpus_index,
+    flag_session,
+    is_session_flagged,
+    session_key,
+    find_gt,
+    has_gt,
     _get_username,
     _get_timestamp,
 )
@@ -57,6 +63,90 @@ OUTCOME_CHOICES = [
     "retrieved",
     "abnormal",
 ]
+
+
+class _LazyVideo:
+    """Array-like view of a video that decodes frames on demand.
+
+    Presents ``shape (n_frames, H, W, 3)`` uint8 to napari. ``__getitem__`` over
+    the time axis reads (and caches) individual frames directly -- NO dask graph,
+    so slicing is O(1) instead of O(n_frames) (a 37k-frame dask stack makes
+    per-frame slicing pathologically slow). Sequential reads skip the per-frame
+    seek so Play runs at decode speed; a bounded cache serves re-visits instantly.
+    """
+
+    def __init__(self, path, n_frames, h, w, max_cache=1500):
+        import threading
+        self._path = str(path)
+        self.shape = (int(n_frames), int(h), int(w), 3)
+        self.dtype = np.dtype(np.uint8)
+        self.ndim = 4
+        self._h, self._w = int(h), int(w)
+        self._cache: Dict[int, Any] = {}
+        self._order: List[int] = []
+        self._max = int(max_cache)
+        self._lock = threading.Lock()
+        self._tl = threading.local()
+
+    def __len__(self):
+        return self.shape[0]
+
+    def _frame(self, i: int):
+        import cv2
+        i = int(i)
+        if i < 0:
+            i += self.shape[0]
+        with self._lock:
+            a = self._cache.get(i)
+        if a is not None:
+            return a
+        cap = getattr(self._tl, "cap", None)
+        pos = getattr(self._tl, "pos", -10)
+        if cap is None:
+            cap = self._tl.cap = cv2.VideoCapture(self._path)
+            pos = -10
+        if i != pos + 1:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, i)  # seek only when NOT sequential
+        ok, frame = cap.read()
+        self._tl.pos = i
+        rgb = (cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if ok
+               else np.zeros((self._h, self._w, 3), np.uint8))
+        with self._lock:
+            self._cache[i] = rgb
+            self._order.append(i)
+            if len(self._order) > self._max:
+                self._cache.pop(self._order.pop(0), None)
+        return rgb
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple):
+            key = (key,)
+        t = key[0]
+        rest = key[1:]
+        if isinstance(t, (int, np.integer)):
+            frame = self._frame(int(t))          # (H, W, 3)
+            return frame[rest] if rest else frame
+        if isinstance(t, slice):
+            idxs = range(*t.indices(self.shape[0]))
+        else:
+            idxs = [int(x) for x in np.atleast_1d(t)]
+        stacked = np.stack([self._frame(int(i)) for i in idxs], axis=0)
+        return stacked[(slice(None),) + rest] if rest else stacked
+
+    def __array__(self, dtype=None):
+        # Last-resort full materialization; napari shouldn't call this for
+        # display, but keep it correct just in case.
+        arr = np.stack([self._frame(i) for i in range(self.shape[0])], axis=0)
+        return arr.astype(dtype) if dtype is not None else arr
+
+
+class _NotesTextEdit(QTextEdit):
+    """QTextEdit that consumes its own keystrokes, so typing notes does not leak
+    through to napari's single-key shortcuts (which otherwise fire mid-word)."""
+
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        event.accept()
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +204,7 @@ class CausalReviewWidget(QWidget):
         self.playback_timer.timeout.connect(self._playback_step)
 
         self._build_ui()
+        self._setup_keybindings()
 
     # ===================================================================
     # UI construction
@@ -268,6 +359,26 @@ class CausalReviewWidget(QWidget):
         self._save_advance_btn.setEnabled(False)
         footer_layout.addWidget(self._save_advance_btn)
 
+        self._save_next_video_btn = QPushButton("Save Review + Next Video")
+        self._save_next_video_btn.setStyleSheet("background: #16405a; color: white;")
+        self._save_next_video_btn.setToolTip(
+            "Save this video's review and load the next video in the Pending queue."
+        )
+        self._save_next_video_btn.clicked.connect(self._save_and_next_video)
+        self._save_next_video_btn.setEnabled(False)
+        footer_layout.addWidget(self._save_next_video_btn)
+
+        self._flag_session_btn = QPushButton("Flag Session (needs review)")
+        self._flag_session_btn.setStyleSheet("background: #5a3a16; color: white;")
+        self._flag_session_btn.setToolTip(
+            "Mark this mouse+day session (every P# of this date) as "
+            "must-be-human-reviewed -- e.g. a cage artifact affecting every "
+            "video shot that day."
+        )
+        self._flag_session_btn.clicked.connect(self._flag_session)
+        self._flag_session_btn.setEnabled(False)
+        footer_layout.addWidget(self._flag_session_btn)
+
         footer_layout.addStretch()
 
         self._status_label = QLabel("Load a video to begin")
@@ -313,12 +424,14 @@ class CausalReviewWidget(QWidget):
     WINDOW_PAD = 45
 
     def _load_video(self, video_path: Path):
-        """One-time setup for a video: metadata, DLC, algo data, segment list.
+        """One-time setup: a lazy full-video layer + overlays + algo data.
 
-        Frames are NOT bulk-loaded here. Each segment loads only its own reach
-        window on demand (see ``_load_frame_window``), so a 10-minute /
-        ~37k-frame pillar video opens in seconds instead of decoding the whole
-        thing (~29 GB) into RAM.
+        The video is added ONCE as a decode-on-demand (dask) image layer, so its
+        extent is stable and we NEVER swap image layers on navigation. Repeated
+        layer add/remove or in-place data swaps churn the vispy/OpenGL renderer
+        and crash it here (OpenGL fault / evented-model stack overflow). With a
+        static full-video layer, navigation just moves the playhead to the
+        segment's reach -- nothing to churn.
         """
         import cv2
 
@@ -342,33 +455,51 @@ class CausalReviewWidget(QWidget):
                 self._actual_video = video_path
                 self.scale_factor = 1.0
 
-            # Metadata only -- do NOT read frames here
             cap = cv2.VideoCapture(str(self._actual_video))
             if not cap.isOpened():
                 raise RuntimeError(f"Could not open video: {video_path}")
             self.n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             cap.release()
-            self._progress.setValue(30)
+            self.frame_offset = 0
+            self.frame_window_end = self.n_frames - 1
+            self._progress.setValue(20)
 
-            # DLC (whole h5, once) + pillar overlay (updates per-frame via callback)
+            # Lazy, decode-on-demand video layer -- added ONCE, never swapped.
+            lazy = self._make_lazy_video(self._actual_video, self.n_frames, h, w)
+            if self.video_layer is not None and self.video_layer in self.viewer.layers:
+                try:
+                    self.viewer.layers.remove(self.video_layer)
+                except Exception:
+                    pass
+            self.video_layer = self.viewer.add_image(
+                lazy, name=video_path.stem, rgb=True)
+            self._progress.setValue(40)
+
+            # DLC overlay (all frames, once) + pillar overlay (per-frame callback)
             self._load_dlc_data()
+            self._add_dlc_points_layer()
             self._add_pillar_shapes_layer()
-            self._progress.setValue(55)
+            self._progress.setValue(70)
 
             # Algo data + segment list
             self._load_algo_data()
+            # Restore any prior manual re-segmentation before building segments.
+            self._manual_boundaries = self._peek_manual_boundaries()
             self._build_segment_list()
-            self._progress.setValue(75)
+            self._progress.setValue(85)
 
-            # Enable controls, show first segment (loads its window)
             self._enable_controls(True)
-            self._current_seg_idx = 0
+            # Resume: load any prior review, restore answers, skip to first
+            # segment that is unscored or whose algo output changed since review.
+            self._load_saved_review()
             self._show_current_segment()
 
             self._video_label.setText(
                 f"Loaded: {video_path.name}  --  {self.n_frames} frames, "
-                f"{len(self._segment_list)} segments (windowed per segment)"
+                f"{len(self._segment_list)} segments (lazy)"
             )
             self._progress.setValue(100)
 
@@ -379,81 +510,72 @@ class CausalReviewWidget(QWidget):
         finally:
             self._progress.setVisible(False)
 
-    def _compute_segment_window(self, seg: Dict[str, Any]) -> Tuple[int, int]:
-        """Absolute frame range to load for a segment: the relevant reach + pad.
+    def _make_lazy_video(self, path: Path, n_frames: int, h: int, w: int):
+        """Return a decode-on-demand array-like for the whole video.
 
-        - touched w/ a causal reach -> the causal reach + pad each side
-        - miss / triaged / untouched -> the LAST reach in the segment + pad
-          (you verify a miss/triage by watching the final reach)
-        - no reaches at all -> a small window at the segment start
-
-        Progressive expansion on a "no" answer widens this later.
+        Uses a custom __getitem__ array (_LazyVideo) rather than a dask stack:
+        dask's stack-of-37k-delayed graph makes per-frame slicing O(n_frames)
+        and freezes scrubbing/playback. _LazyVideo slices in O(1) with a frame
+        cache + sequential-read fast path.
         """
-        pad = self.WINDOW_PAD
+        video = _LazyVideo(path, n_frames, h, w)
+        self._frame_cache = video._cache
+        return video
+
+    def _relevant_reach(self, seg: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """The reach the reviewer should open ON for a segment.
+
+        Priority (this is the whole point of the tool -- always land on the
+        evaluated element, never on a segment boundary or arbitrary frame):
+          1. YOUR corrected causal reach, if you've reviewed this segment and set
+             one -- once you correct it, THAT is the evaluated element.
+          2. the algo's causal reach (touched)
+          3. the LAST reach in the segment (miss / triaged)
+        None only if the segment genuinely has no reaches.
+        """
+        rec = self._review_records.get(seg["segment_num"]) if getattr(self, "_review_records", None) else None
+        if rec:
+            hc = (rec.get("human") or {}).get("causal_reach")
+            if hc and hc.get("start") is not None and hc.get("end") is not None:
+                return {"start": int(hc["start"]), "end": int(hc["end"])}
         cr = seg.get("causal_reach")
-        if cr and not seg.get("is_boundary"):
-            return (int(cr["start"]) - pad, int(cr["end"]) + pad)
+        if cr:
+            return {"start": int(cr["start"]), "end": int(cr["end"])}
         reaches = seg.get("all_reaches") or []
         if reaches:
             last = max(reaches, key=lambda r: r.get("start", 0))
-            return (int(last["start"]) - pad, int(last["end"]) + pad)
-        return (int(seg["start_frame"]),
-                min(int(seg["start_frame"]) + 4 * pad, int(seg["end_frame"])))
+            return {"start": int(last["start"]), "end": int(last["end"])}
+        return None
+
+    def _compute_segment_window(self, seg: Dict[str, Any]) -> Tuple[int, int]:
+        """Absolute frame range to frame for a segment: the RELEVANT REACH plus a
+        few frames each side, clamped to the segment. Reach-centric always --
+        touched -> causal reach; miss/triaged -> last reach.
+        """
+        pad = self.WINDOW_PAD
+        sf, ef = int(seg["start_frame"]), int(seg["end_frame"])
+        reach = self._relevant_reach(seg)
+        if reach is None:
+            # No reaches at all -> don't force watching the whole segment. Frame
+            # the segment-CHANGING move (the tray cycle at the segment end): open
+            # ~30 frames before it (the full video stays scrubbable to watch it).
+            lead = 30
+            return (max(sf, ef - lead - pad), min(self.n_frames - 1, ef + 15))
+        return (max(sf, min(reach["start"] - pad, ef)),
+                max(sf, min(reach["end"] + pad, ef)))
 
     def _load_frame_window(self, frame_range: Tuple[int, int]):
-        """Load ONLY the given absolute frame range into the video layer.
-
-        The image layer is translated so its world z-coordinate equals the
-        absolute frame index, so all frame-indexed logic (DLC overlay, pillar,
-        question text) stays valid. DLC points are rebuilt for the same window.
+        """Frame the current segment: record the window bounds so the playhead
+        and playback stay near the relevant reach. No layer manipulation -- the
+        lazy video layer is static, so navigation can't churn/crash the renderer.
+        The actual playhead jump happens in _navigate_to_segment.
         """
-        import cv2
         fr_start = max(0, int(frame_range[0]))
         fr_end = min(self.n_frames - 1, int(frame_range[1]))
         if fr_end < fr_start:
             fr_end = fr_start
         self.frame_offset = fr_start
         self.frame_window_end = fr_end
-        n_to_read = fr_end - fr_start + 1
-
-        cap = cv2.VideoCapture(str(self._actual_video))
-        if fr_start > 0:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, fr_start)
-        frames = []
-        for _ in range(n_to_read):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        cap.release()
-        if not frames:
-            return
-
-        if self.video_layer is not None:
-            try:
-                self.viewer.layers.remove(self.video_layer)
-            except (ValueError, AttributeError):
-                pass
-        self.video_layer = self.viewer.add_image(
-            np.stack(frames), name=self.video_path.stem, rgb=True,
-            translate=(self.frame_offset, 0.0, 0.0),
-        )
-        # keep the video underneath the DLC / pillar overlays
-        try:
-            self.viewer.layers.move(
-                self.viewer.layers.index(self.video_layer), 0)
-        except Exception:
-            pass
-
-        # Rebuild DLC points for just this window
-        self._add_dlc_points_layer()
-
-        # Constrain the time slider to the loaded window
-        try:
-            self.viewer.dims.set_range(
-                0, (self.frame_offset, self.frame_window_end + 1, 1))
-        except Exception:
-            pass
 
     def _load_dlc_data(self):
         """Load DLC H5 for overlays.
@@ -481,56 +603,65 @@ class CausalReviewWidget(QWidget):
         self.dlc_df = None
 
     def _add_dlc_points_layer(self):
-        """Add DLC tracking points overlay (copied from GroundTruthWidget pattern)."""
+        """Add the DLC tracking-points overlay for the WHOLE video (built once).
+
+        Vectorized per bodypart so all ~37k frames build in well under a second.
+        napari only renders the points at the current frame, so a full-video
+        points layer is cheap to display and never needs rebuilding on nav.
+        """
         if self.dlc_df is None:
             return
-
-        bodyparts = sorted({col[:-2] for col in self.dlc_df.columns if col.endswith('_x')})
+        df = self.dlc_df
+        n = len(df)
+        bodyparts = sorted({col[:-2] for col in df.columns if col.endswith('_x')})
         colors_base = [
             [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1],
             [1, 0.5, 0], [0.5, 0, 1], [0, 1, 0.5], [1, 0, 0.5]
         ]
-        bp_colors = {bp: colors_base[i % len(colors_base)] for i, bp in enumerate(bodyparts)}
-
-        points_data = []
-        point_colors = []
-        point_bps = []
         scale = self.scale_factor
+        frames_all = np.arange(n)
 
-        # Only build points for the currently-loaded frame window (keeps the
-        # overlay light and aligned with the windowed video layer).
-        lo = int(getattr(self, 'frame_offset', 0))
-        hi = int(getattr(self, 'frame_window_end', len(self.dlc_df) - 1))
-        hi = min(hi, len(self.dlc_df) - 1)
-        for frame_idx in range(lo, hi + 1):
-            for bp in bodyparts:
-                x = self.dlc_df.iloc[frame_idx].get(f'{bp}_x', np.nan)
-                y = self.dlc_df.iloc[frame_idx].get(f'{bp}_y', np.nan)
-                lk = float(self.dlc_df.iloc[frame_idx].get(f'{bp}_likelihood', 0))
-                if np.isnan(x) or np.isnan(y):
-                    continue
-                if lk < 0.5:
-                    alpha = 0.05
-                else:
-                    norm = (lk - 0.5) / 0.5
-                    alpha = 0.10 + 0.90 * (norm ** 2)
-                points_data.append([frame_idx, y * scale, x * scale])
-                point_colors.append(bp_colors[bp] + [alpha])
-                point_bps.append(bp)
+        pts_chunks, col_chunks, bp_list = [], [], []
+        for i, bp in enumerate(bodyparts):
+            xcol, ycol, lcol = f'{bp}_x', f'{bp}_y', f'{bp}_likelihood'
+            if xcol not in df.columns or ycol not in df.columns:
+                continue
+            xs = df[xcol].to_numpy(dtype=float)
+            ys = df[ycol].to_numpy(dtype=float)
+            lks = df[lcol].to_numpy(dtype=float) if lcol in df.columns else np.ones(n)
+            valid = ~(np.isnan(xs) | np.isnan(ys))
+            if not valid.any():
+                continue
+            fv = frames_all[valid]
+            xv = xs[valid] * scale
+            yv = ys[valid] * scale
+            lv = np.clip(lks[valid], 0.0, 1.0)
+            alpha = np.where(lv < 0.5, 0.05,
+                             0.10 + 0.90 * (((lv - 0.5) / 0.5) ** 2))
+            base = np.array(colors_base[i % len(colors_base)], dtype=float)
+            m = len(fv)
+            pts_chunks.append(np.column_stack([fv, yv, xv]))
+            col_chunks.append(np.column_stack([np.tile(base, (m, 1)), alpha]))
+            bp_list.extend([bp] * m)
 
-        if points_data:
-            if self.points_layer is not None:
-                try:
-                    self.viewer.layers.remove(self.points_layer)
-                except Exception:
-                    pass
-            self.points_layer = self.viewer.add_points(
-                np.array(points_data), name='DLC Points', size=3,
-                face_color=np.array(point_colors),
-                features={'bp': point_bps},
-                text={'string': '{bp}', 'size': 7, 'color': 'white',
-                      'translation': [0, -7, 0]},
-            )
+        if not pts_chunks:
+            self.points_layer = None
+            return
+        points_data = np.vstack(pts_chunks)
+        point_colors = np.vstack(col_chunks)
+
+        if self.points_layer is not None and self.points_layer in self.viewer.layers:
+            try:
+                self.viewer.layers.remove(self.points_layer)
+            except Exception:
+                pass
+        self.points_layer = self.viewer.add_points(
+            points_data, name='DLC Points', size=3,
+            face_color=point_colors,
+            features={'bp': bp_list},
+            text={'string': '{bp}', 'size': 7, 'color': 'white',
+                  'translation': [0, -7, 0]},
+        )
 
     def _add_pillar_shapes_layer(self):
         """Add pillar circle overlay."""
@@ -552,6 +683,8 @@ class CausalReviewWidget(QWidget):
 
     def _update_pillar_circle(self, event=None):
         """Update pillar circle for current frame."""
+        if getattr(self, '_suspend_pillar', False):
+            return
         if self.pillar_shapes_layer is None or self.dlc_df is None:
             return
         frame_idx = int(self.viewer.dims.current_step[0])
@@ -624,13 +757,92 @@ class CausalReviewWidget(QWidget):
         self._outcomes_data = _try_load("_pellet_outcomes.json")
         self._assignments_data = _try_load("_reach_assignments.json")
 
+    def _review_dir(self) -> Path:
+        """Where to SAVE the review: the bundle dir in manifest mode (so it
+        travels with the bundle Pending->Reviewed), else next to the video.
+        Loading checks both locations."""
+        bd = getattr(self, "_bundle_dir", None)
+        return Path(bd) if bd else self.video_path.parent
+
+    def _algo_dir(self) -> Path:
+        """Where the algo output JSONs live (the bundle dir in manifest mode)."""
+        bd = getattr(self, "_bundle_dir", None)
+        return Path(bd) if bd else self.video_path.parent
+
+    def _load_saved_review(self):
+        """Load a prior review (if any) so scored segments restore their answers
+        and the walk RESUMES at the first unscored / algo-changed segment.
+
+        A segment counts as already done only if it was ACTUALLY reviewed AND the
+        algo's outcome for it is unchanged since. If the algo output changed, it's
+        worth re-checking -- so it's treated as needing review again.
+        """
+        self._review_records = {}
+        # Check next to the video (canonical) first, then the bundle dir, so a
+        # review saved under either location is always found.
+        candidates = []
+        bd = getattr(self, "_bundle_dir", None)
+        if bd:
+            candidates.append(Path(bd))
+        if self.video_path.parent not in candidates:
+            candidates.append(self.video_path.parent)
+        by_seg = {}
+        for d in candidates:
+            try:
+                _, bs = load_causal_review(self._video_stem, d)
+            except Exception:
+                bs = {}
+            if bs:
+                by_seg = bs
+                break
+        # Keep only ACTUALLY-reviewed segments; the save writes reviewed:False
+        # placeholder rows for un-scored segments, which must not count as done.
+        self._review_records = {
+            sn: rec for sn, rec in by_seg.items()
+            if (rec.get("answers") or {}).get("reviewed") is not False
+        }
+
+        def _done(seg):
+            rec = self._review_records.get(seg["segment_num"])
+            if not rec:
+                return False
+            saved_algo = (rec.get("algo") or {}).get("outcome")
+            return saved_algo == seg.get("outcome")  # algo unchanged -> still done
+
+        idx = 0
+        for i, seg in enumerate(self._segment_list):
+            if not _done(seg):
+                idx = i
+                break
+        self._current_seg_idx = idx
+
+        if self._review_records:
+            n_done = sum(1 for seg in self._segment_list if _done(seg))
+            n_changed = sum(
+                1 for seg in self._segment_list
+                if seg["segment_num"] in self._review_records and not _done(seg))
+            first = (self._segment_list[idx]["segment_num"]
+                     if self._segment_list else "?")
+            msg = f"Resumed: {n_done}/{len(self._segment_list)} already scored"
+            if n_changed:
+                msg += f"; {n_changed} to re-check (algo changed)"
+            msg += f"  --  opening segment {first}"
+            self._status_label.setText(msg)
+
     def _build_segment_list(self):
         """Build the unified segment list from segments + outcomes + assignments."""
         self._segment_list = []
 
+        # Manual re-segmentation override: when the reviewer re-cut the video via
+        # the segmentation editor (Q1 = No), use THEIR boundaries and score every
+        # segment fresh (the algo's per-old-segment outcomes no longer apply).
+        manual = getattr(self, "_manual_boundaries", None)
+
         # Extract boundaries
         boundaries = []
-        if "boundaries" in self._segments_data:
+        if manual:
+            boundaries = sorted({int(x) for x in manual})
+        elif "boundaries" in self._segments_data:
             for b in self._segments_data["boundaries"]:
                 if isinstance(b, dict):
                     boundaries.append(int(b.get("frame", b.get("index", 0))))
@@ -666,19 +878,32 @@ class CausalReviewWidget(QWidget):
             if sn is not None:
                 assignments_by_seg.setdefault(int(sn), []).append(r)
 
-        # Also get raw reaches (from reach detector) grouped by segment
+        # Raw reaches (from the reach detector) grouped by segment. Flatten both
+        # storage formats to one list first.
         raw_reaches_by_seg: Dict[int, List[Dict]] = {}
-        # Flat format (v8+)
+        _all_raw: List[Dict] = []
         if isinstance(self._reaches_data.get("reaches"), list):
-            for r in self._reaches_data["reaches"]:
-                # Determine which segment this reach belongs to by frame
+            _all_raw = list(self._reaches_data["reaches"])            # flat (v8+)
+        elif isinstance(self._reaches_data.get("segments"), list):
+            for _s in self._reaches_data["segments"]:                # nested
+                _all_raw.extend(_s.get("reaches", []))
+
+        if manual or isinstance(self._reaches_data.get("reaches"), list):
+            # Assign each reach to the segment whose window contains its midpoint.
+            # REQUIRED after manual re-segmentation: a reach's ORIGINAL segment_num
+            # no longer maps to the reviewer's new cuts, so the Q2 candidates must
+            # be re-derived by frame -- otherwise the picker offers reaches from
+            # other windows entirely (the nested format grouped them by old
+            # segment_num). The flat format already worked this way.
+            for r in _all_raw:
                 mid = (int(r.get("start_frame", 0)) + int(r.get("end_frame", 0))) // 2
                 for seg_idx in range(n_segments):
                     if boundaries[seg_idx] <= mid < boundaries[seg_idx + 1]:
                         raw_reaches_by_seg.setdefault(seg_idx + 1, []).append(r)
                         break
-        # Nested format
         elif isinstance(self._reaches_data.get("segments"), list):
+            # Nested format on the algo's own boundaries: trust the detector's
+            # per-segment grouping.
             for seg in self._reaches_data["segments"]:
                 sn = seg.get("segment_num")
                 if sn is not None:
@@ -689,28 +914,39 @@ class CausalReviewWidget(QWidget):
             start_frame = boundaries[seg_idx]
             end_frame = boundaries[seg_idx + 1] - 1
 
-            # Pellet number: segment 1 = NO PELLET (boundary), last = NO PELLET
-            # segment 2 = pellet 1, segment 3 = pellet 2, ...
-            is_boundary = (seg_num == 1 or seg_num == n_segments)
-            pellet_num = None if is_boundary else seg_num - 1
+            # The segmenter emits one segment per pellet presentation and drops
+            # the pre/post no-pellet brackets, so EVERY segment is a real pellet
+            # segment (the validated pipeline scores all N as pellet outcomes)
+            # and gets the full review flow. In the segmenter's numbering,
+            # segment N == pellet N. (If the segmenter is later fixed to emit the
+            # two bracket segments, revisit this.)
+            is_boundary = False
+            pellet_num = seg_num
 
-            outcome_info = outcomes_by_seg.get(seg_num, {})
-            outcome = outcome_info.get("outcome")
-            interaction_frame = outcome_info.get("interaction_frame")
-            flagged = bool(outcome_info.get("flagged_for_review", False))
+            if manual:
+                # Fresh segments from the reviewer's cuts -- no algo outcome maps.
+                outcome = None
+                interaction_frame = None
+                flagged = False
+                causal_reach = None
+            else:
+                outcome_info = outcomes_by_seg.get(seg_num, {})
+                outcome = outcome_info.get("outcome")
+                interaction_frame = outcome_info.get("interaction_frame")
+                flagged = bool(outcome_info.get("flagged_for_review", False))
 
-            # Find the causal reach from assignments
-            causal_reach = None
-            assigned_reaches = assignments_by_seg.get(seg_num, [])
-            for ar in assigned_reaches:
-                if ar.get("is_causal"):
-                    causal_reach = {
-                        "start": int(ar["start_frame"]),
-                        "end": int(ar["end_frame"]),
-                        "reach_id": ar.get("reach_id"),
-                        "label": ar.get("label"),
-                    }
-                    break
+                # Find the causal reach from assignments
+                causal_reach = None
+                assigned_reaches = assignments_by_seg.get(seg_num, [])
+                for ar in assigned_reaches:
+                    if ar.get("is_causal"):
+                        causal_reach = {
+                            "start": int(ar["start_frame"]),
+                            "end": int(ar["end_frame"]),
+                            "reach_id": ar.get("reach_id"),
+                            "label": ar.get("label"),
+                        }
+                        break
 
             # All reaches in this segment (for the reach picker)
             all_reaches = []
@@ -721,6 +957,16 @@ class CausalReviewWidget(QWidget):
                     "reach_id": r.get("reach_id"),
                 })
 
+            # Two independent triage axes (mutually exclusive in practice):
+            #   outcome_uncertain -> algo-3 could not call the OUTCOME (== "triaged").
+            #     The human must make the outcome call.  ("OUTCOME CALL" tag)
+            #   reach_uncertain   -> algo-3 committed a touched outcome but algo-4
+            #     pinned NO causal reach. The outcome is algo-confirmed; the human
+            #     must identify the reach.  ("TRIAGED (reach)" tag)
+            _TOUCHED = ("retrieved", "displaced_sa", "displaced_outside")
+            outcome_uncertain = (outcome == "triaged") or flagged
+            reach_uncertain = (outcome in _TOUCHED) and (causal_reach is None)
+
             self._segment_list.append({
                 "segment_num": seg_num,
                 "pellet_num": pellet_num,
@@ -730,6 +976,9 @@ class CausalReviewWidget(QWidget):
                 "outcome": outcome,
                 "interaction_frame": interaction_frame,
                 "flagged": flagged,
+                "outcome_uncertain": outcome_uncertain,
+                "reach_uncertain": reach_uncertain,
+                "manual": bool(manual),
                 "causal_reach": causal_reach,
                 "all_reaches": all_reaches,
             })
@@ -770,16 +1019,15 @@ class CausalReviewWidget(QWidget):
             self._restore_answers(seg["segment_num"])
 
     def _navigate_to_segment(self, seg: Dict[str, Any]):
-        """Jump the viewer to show the segment's relevant frames."""
-        # For touched segments with a causal reach, center on the reach
-        # with prev/next reach context
-        if seg.get("causal_reach") and not seg["is_boundary"]:
-            cr = seg["causal_reach"]
-            # Show from 30 frames before reach start to 30 after reach end
-            target = max(0, cr["start"] - 30)
+        """Open the playhead ON the relevant reach -- the causal reach for a
+        touched segment, the last reach for a miss/triaged segment -- NOT on a
+        segment-relative frame."""
+        reach = self._relevant_reach(seg)
+        if reach is not None:
+            target = reach["start"]
         else:
-            target = seg["start_frame"]
-
+            # no reaches -> open ~30 frames before the segment-changing move (end)
+            target = int(seg["end_frame"]) - 30
         target = max(self.frame_offset, min(self.frame_window_end, target))
         try:
             self.viewer.dims.set_current_step(0, target)
@@ -815,10 +1063,26 @@ class CausalReviewWidget(QWidget):
         if seg.get("outcome"):
             seg_info += f"  --  Algo outcome: <b>{seg['outcome']}</b>"
 
-        if seg.get("flagged"):
-            seg_info += "  --  <span style='color: #ffa500;'>TRIAGED</span>"
+        if seg.get("outcome_uncertain"):
+            seg_info += "  --  <span style='color: #ffa500;'>OUTCOME CALL</span>"
+        if seg.get("reach_uncertain"):
+            seg_info += "  --  <span style='color: #ffcc00;'>TRIAGED (reach)</span>"
+        if seg.get("manual"):
+            seg_info += "  --  <span style='color: #4af;'>MANUAL SEG</span>"
 
         banner_layout.addWidget(QLabel(seg_info))
+
+        # If this segment was already reviewed, say so (answers restored below).
+        prev = self._review_records.get(seg["segment_num"])
+        if prev:
+            agreed = (prev.get("human") or {}).get("agreed")
+            tag = "agreed with algo" if agreed else "corrected"
+            note = QLabel(
+                f"[OK] Previously scored ({tag}) -- your answers are loaded; "
+                f"edit and re-save to update.")
+            note.setStyleSheet("color: #6c6; font-size: 11px;")
+            note.setWordWrap(True)
+            banner_layout.addWidget(note)
 
         if seg.get("causal_reach"):
             cr = seg["causal_reach"]
@@ -868,6 +1132,12 @@ class CausalReviewWidget(QWidget):
                     f"Q2: Is the reach starting at frame {cr['start']} "
                     f"the causal reach?"
                 )
+            elif seg.get("reach_uncertain"):
+                q2_text = (
+                    f"Q2: Algo determined the outcome is '{seg.get('outcome')}' but did NOT "
+                    f"identify the causal reach (TRIAGED -- reach uncertain). Answer NO and "
+                    f"pick the causal reach below (or use the ignore-window if no reach caused it)."
+                )
             else:
                 q2_text = "Q2: Is the causal reach correctly identified? (none detected)"
             q2 = self._make_yes_no_question(
@@ -902,11 +1172,15 @@ class CausalReviewWidget(QWidget):
             )
             self._questions_layout.addWidget(q_miss)
 
+        # --- Ignore windows (abnormal non-reach events) -- on ANY non-boundary
+        # segment, independent of the reach questions above ---
+        self._questions_layout.addWidget(self._make_abnormal_ranges_widget(seg))
+
         # --- Notes ---
         notes_group = QGroupBox("Notes")
         notes_layout = QVBoxLayout()
         notes_group.setLayout(notes_layout)
-        self._notes_edit = QTextEdit()
+        self._notes_edit = _NotesTextEdit()
         self._notes_edit.setPlaceholderText("Optional free-text notes for this segment...")
         self._notes_edit.setMaximumHeight(60)
         notes_layout.addWidget(self._notes_edit)
@@ -1015,16 +1289,196 @@ class CausalReviewWidget(QWidget):
         layout.addLayout(renum_row)
         self._q_widgets.setdefault("_pellet_correction", {})["renumber"] = renum_spin
 
-        # Merge/split stubs
-        merge_label = QLabel(
-            "<i>Merge/split boundary editing: TODO -- use the "
-            "Boundaries tab in the Review Tool for now.</i>"
-        )
-        merge_label.setWordWrap(True)
-        merge_label.setStyleSheet("color: #888; font-size: 10px;")
-        layout.addWidget(merge_label)
+        # Deep correction: RE-SEGMENT the whole video. When the pellet/segment is
+        # wrong because the SEGMENTATION is wrong (e.g. the segmenter fell back to
+        # uniform slicing on bad tracking), phantom/renumber can't help -- the
+        # reviewer has to re-cut the video. This opens a full segmentation editor.
+        reseg_btn = QPushButton("Re-segment this video (open segmentation editor)")
+        reseg_btn.setStyleSheet("font-weight: bold;")
+        reseg_btn.clicked.connect(self._open_resegmentation_editor)
+        layout.addWidget(reseg_btn)
+        hint = QLabel(
+            "<i>Use this when the segmentation itself is wrong. You'll mark the "
+            "real segment cuts on the video, then reload and score them.</i>")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 10px;")
+        layout.addWidget(hint)
 
         return w
+
+    # ===================================================================
+    # Manual re-segmentation (deep correction, opened from Q1 = No)
+    # ===================================================================
+
+    def _current_boundaries(self):
+        """Active segment-cut frames from the algo segmentation data."""
+        sd = getattr(self, "_segments_data", {}) or {}
+        if "boundaries" in sd:
+            out = []
+            for b in sd["boundaries"]:
+                out.append(int(b.get("frame", b.get("index", 0)))
+                           if isinstance(b, dict) else int(b))
+            return sorted(set(out))
+        bs = []
+        for s in sd.get("segments", []):
+            if s.get("start_frame") is not None:
+                bs.append(int(s["start_frame"]))
+            if s.get("end_frame") is not None:
+                bs.append(int(s["end_frame"]) + 1)
+        return sorted(set(bs))
+
+    def _peek_manual_boundaries(self):
+        """Restore a prior manual re-segmentation (saved in the review doc) so the
+        segments rebuild from the reviewer's cuts on reopen; else None."""
+        candidates = []
+        bd = getattr(self, "_bundle_dir", None)
+        if bd:
+            candidates.append(Path(bd))
+        if self.video_path and self.video_path.parent not in candidates:
+            candidates.append(self.video_path.parent)
+        for d in candidates:
+            try:
+                doc, _ = load_causal_review(self._video_stem, d)
+            except Exception:
+                doc = None
+            b = (doc or {}).get("manual_segmentation", {}).get("boundaries")
+            if b:
+                return sorted({int(x) for x in b})
+        return None
+
+    def _reseg_cur_frame(self):
+        try:
+            return int(self.viewer.dims.current_step[0])
+        except Exception:
+            return 0
+
+    def _open_resegmentation_editor(self):
+        """Full-video segmentation editor: scrub the video, drop/remove segment
+        cuts at the current frame, then Apply to rebuild + re-score the segments
+        from those cuts. Used when the SEGMENTATION itself is wrong."""
+        seed = getattr(self, "_manual_boundaries", None) or self._current_boundaries()
+        self._reseg_boundaries = sorted({int(x) for x in seed})
+
+        while self._questions_layout.count():
+            child = self._questions_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        banner = QLabel(
+            "<b>Segmentation editor</b> -- the cuts below define the segments. "
+            "Scrub to the START of each real pellet segment and 'Add cut'. "
+            "'Apply' rebuilds and re-scores from your cuts.")
+        banner.setWordWrap(True)
+        banner.setStyleSheet(
+            "QLabel { background:#3a2a1a; border:1px solid #6a4a2a; padding:6px; }")
+        self._questions_layout.addWidget(banner)
+
+        self._reseg_summary = QLabel()
+        self._reseg_summary.setWordWrap(True)
+        self._questions_layout.addWidget(self._reseg_summary)
+
+        def _row(*btns):
+            r = QHBoxLayout()
+            for b in btns:
+                r.addWidget(b)
+            r.addStretch()
+            holder = QWidget()
+            holder.setLayout(r)
+            self._questions_layout.addWidget(holder)
+
+        add_btn = QPushButton("Add cut @ current frame")
+        add_btn.clicked.connect(self._reseg_add_cut)
+        rm_btn = QPushButton("Remove nearest cut")
+        rm_btn.clicked.connect(self._reseg_remove_nearest)
+        _row(add_btn, rm_btn)
+        clear_btn = QPushButton("Clear all cuts")
+        clear_btn.clicked.connect(self._reseg_clear)
+        reset_btn = QPushButton("Reset to algo cuts")
+        reset_btn.clicked.connect(self._reseg_reset)
+        _row(clear_btn, reset_btn)
+        apply_btn = QPushButton("Apply & reload segments")
+        apply_btn.setStyleSheet("font-weight:bold; background:#2a5a2a;")
+        apply_btn.clicked.connect(self._reseg_apply)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self._reseg_cancel)
+        _row(apply_btn, cancel_btn)
+
+        self._questions_layout.addStretch()
+        self._reseg_refresh()
+
+    def _reseg_refresh(self):
+        b = self._reseg_boundaries
+        n_seg = max(0, len(b) - 1)
+        cuts = ", ".join(str(x) for x in b) if b else "(none)"
+        self._reseg_summary.setText(
+            f"<b>{len(b)} cuts -> {n_seg} segments.</b>  Cuts: {cuts}")
+
+    def _reseg_add_cut(self):
+        self._reseg_boundaries = sorted(
+            set(self._reseg_boundaries) | {self._reseg_cur_frame()})
+        self._reseg_refresh()
+
+    def _reseg_remove_nearest(self):
+        if not self._reseg_boundaries:
+            return
+        f = self._reseg_cur_frame()
+        nearest = min(self._reseg_boundaries, key=lambda b: abs(b - f))
+        self._reseg_boundaries = [b for b in self._reseg_boundaries if b != nearest]
+        self._reseg_refresh()
+
+    def _reseg_clear(self):
+        self._reseg_boundaries = []
+        self._reseg_refresh()
+
+    def _reseg_reset(self):
+        self._reseg_boundaries = sorted({int(x) for x in self._current_boundaries()})
+        self._reseg_refresh()
+
+    def _reseg_cancel(self):
+        self._show_current_segment()
+
+    def _reseg_apply(self):
+        b = sorted({int(x) for x in getattr(self, "_reseg_boundaries", [])})
+        if len(b) < 2:
+            show_warning("Need at least 2 cuts (a start and an end) to define a segment.")
+            return
+        pend = self._pending_dir()
+        if pend is None or not self._video_stem:
+            show_warning("Re-segmentation needs a bundle loaded from the review queue.")
+            return
+        # RE-RUN mousereach on the reviewer's boundaries (reach -> outcome ->
+        # assignment) instead of blanking. Unchanged segments keep the algo's
+        # verdict, every segment shows an algo call, and fixing one boundary no
+        # longer forces a full re-score. This runs the real pipeline (loads
+        # models), so it takes ~1 min and the window may appear to pause.
+        self._status_label.setText(
+            "Re-running mousereach on your boundaries (reach + outcome + "
+            "assignment; ~1 min -- the window may pause)...")
+        try:
+            from qtpy.QtWidgets import QApplication
+            QApplication.processEvents()   # flush the status before the blocking run
+        except Exception:
+            pass
+        try:
+            from mousereach.review.staging import stage_video
+            stage_video(self._video_stem, pending_dir=pend, overwrite=True,
+                        verbose=False, boundaries_override=b)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            show_warning(f"Re-segmentation pipeline failed: {e}")
+            self._status_label.setText("Re-segmentation failed -- see console.")
+            return
+        # Reload the freshly re-scored bundle (real algo verdicts per segment).
+        self._manual_boundaries = None
+        self._review_records = {}
+        self._load_algo_data()
+        self._build_segment_list()
+        self._current_seg_idx = 0
+        self._show_current_segment()
+        show_info(
+            f"Re-segmented + re-scored into {len(self._segment_list)} segments -- "
+            f"unchanged ranges keep the algo's verdict; correct only what's wrong.")
 
     def _make_reach_picker(self, seg: Dict) -> QWidget:
         """Inline reach picker: choose from detected reaches or draw a new one."""
@@ -1069,6 +1523,10 @@ class CausalReviewWidget(QWidget):
         manual_row.addWidget(end_spin)
         manual_row.addStretch()
         layout.addLayout(manual_row)
+
+        # (Abnormal / non-reach events are marked with the standalone "Ignore
+        # windows" section on the segment -- not a reach-picker option -- so they
+        # can be recorded even when every reach is a genuine miss.)
 
         # Jump button for each reach
         jump_row = QHBoxLayout()
@@ -1177,6 +1635,88 @@ class CausalReviewWidget(QWidget):
 
         return w
 
+    def _make_abnormal_ranges_widget(self, seg: Dict) -> QWidget:
+        """Ignore-window picker: mark frame ranges where a NON-reach event moved
+        the pellet (tail bump, artifact). Available on every non-boundary segment
+        ALONGSIDE the normal reach scoring -- reaches keep their own miss/causal
+        labels. The windows exclude that stretch from causal attribution +
+        causal-reach kinematics; if no reach is affirmed causal but a window is
+        set, the segment's outcome becomes abnormal_exception (a human-only,
+        non-evaluable class)."""
+        box = QGroupBox("Ignore windows (abnormal non-reach events)")
+        layout = QVBoxLayout()
+        box.setLayout(layout)
+
+        info = QLabel(
+            "Mark frame ranges with non-reach weirdness (e.g. tail/bump moved the "
+            "pellet) to exclude from causal attribution + kinematics. Reaches still "
+            "get their own miss/causal scoring.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #9ab; font-size: 11px;")
+        layout.addWidget(info)
+
+        summary = QLabel("Ignore windows: (none)")
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        ranges: List[Dict[str, Any]] = []
+
+        def _refresh():
+            if ranges:
+                summary.setText("Ignore windows: " + ", ".join(
+                    f"{r['start_frame']}-{r['end_frame']}" for r in ranges))
+            else:
+                summary.setText("Ignore windows: (none)")
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Start:"))
+        start_spin = QSpinBox()
+        start_spin.setRange(0, self.n_frames - 1)
+        start_spin.setValue(seg["start_frame"])
+        start_spin.setMaximumWidth(80)
+        row.addWidget(start_spin)
+        start_cur = QPushButton("Use current")
+        start_cur.clicked.connect(
+            lambda: start_spin.setValue(int(self.viewer.dims.current_step[0])))
+        row.addWidget(start_cur)
+        row.addWidget(QLabel("End:"))
+        end_spin = QSpinBox()
+        end_spin.setRange(0, self.n_frames - 1)
+        end_spin.setValue(seg["end_frame"])
+        end_spin.setMaximumWidth(80)
+        row.addWidget(end_spin)
+        end_cur = QPushButton("Use current")
+        end_cur.clicked.connect(
+            lambda: end_spin.setValue(int(self.viewer.dims.current_step[0])))
+        row.addWidget(end_cur)
+        row.addStretch()
+        layout.addLayout(row)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add ignore window")
+        clear_btn = QPushButton("Clear windows")
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(clear_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        def _add():
+            s, e = int(start_spin.value()), int(end_spin.value())
+            if e < s:
+                s, e = e, s
+            ranges.append({"start_frame": s, "end_frame": e, "reason": ""})
+            _refresh()
+
+        def _clear():
+            ranges.clear()
+            _refresh()
+
+        add_btn.clicked.connect(_add)
+        clear_btn.clicked.connect(_clear)
+
+        self._q_widgets["_abnormal_ranges"] = {"ranges": ranges, "refresh": _refresh}
+        return box
+
     # ===================================================================
     # Answer collection
     # ===================================================================
@@ -1248,6 +1788,7 @@ class CausalReviewWidget(QWidget):
                             "start": rp["start_spin"].value(),
                             "end": rp["end_spin"].value(),
                         }
+                    # (abnormal / non-reach events -> Ignore-windows section)
 
             # Q3: end frame correct?
             q3_ans = self._get_toggle_answer("end_correct")
@@ -1268,10 +1809,19 @@ class CausalReviewWidget(QWidget):
                 if combo:
                     human_outcome = combo.currentText()
         else:
-            # Untouched segment
+            # Untouched / outcome-uncertain segment.
             q_miss_ans = self._get_toggle_answer("all_miss")
             answers["all_miss"] = q_miss_ans
-            if q_miss_ans is False:
+            if q_miss_ans is True:
+                # "all reaches are misses" == the segment is untouched. Record it
+                # explicitly so an algo 'triaged' (outcome-uncertain) segment the
+                # reviewer resolves as all-miss becomes 'untouched' -- not left
+                # 'triaged', which otherwise surfaces as an unresolved
+                # triaged -> triaged even though the human DID make the call.
+                if seg.get("outcome") == "triaged":
+                    agreed = False   # the human resolved what the algo could not
+                human_outcome = "untouched"
+            elif q_miss_ans is False:
                 agreed = False
                 # Reach picker + outcome for untouched-was-wrong
                 rp = self._q_widgets.get("_reach_picker", {})
@@ -1286,9 +1836,33 @@ class CausalReviewWidget(QWidget):
                             "start": rp["start_spin"].value(),
                             "end": rp["end_spin"].value(),
                         }
+                    # (abnormal / non-reach events -> Ignore-windows section)
                 combo = self._q_widgets.get("_untouched_outcome_combo")
                 if combo:
                     human_outcome = combo.currentText()
+
+        # Ignore windows: frame ranges where a NON-reach event moved the pellet.
+        # Recorded alongside the normal reach scoring (misses stay misses). If no
+        # reach is affirmed causal but a window is set, the pellet's displacement
+        # was not reach-caused -> the segment outcome is abnormal_exception (a
+        # human-only, non-evaluable class, excluded from causal-reach kinematics).
+        # The windows also pin WHERE the weirdness is for frame-level exclusion
+        # downstream.
+        abn = self._q_widgets.get("_abnormal_ranges")
+        abnormal_ranges = list(abn["ranges"]) if abn else []
+        if abnormal_ranges:
+            answers["abnormal_ranges"] = abnormal_ranges
+            # No human-affirmed causal reach? (untouched w/ all-miss, or touched
+            # w/ the algo reach rejected and no replacement chosen.)
+            no_causal = human_causal_reach is None
+            if answers.get("is_causal") is False:
+                no_causal = (human_causal_reach is None
+                             or human_causal_reach == seg.get("causal_reach"))
+            if no_causal:
+                human_outcome = "abnormal_exception"
+                human_causal_reach = None
+                if seg.get("outcome") not in ("abnormal", "abnormal_exception"):
+                    agreed = False
 
         notes = self._notes_edit.toPlainText().strip() if hasattr(self, '_notes_edit') else ""
 
@@ -1317,11 +1891,15 @@ class CausalReviewWidget(QWidget):
         return checked == 1  # 1 = Yes, 0 = No
 
     def _restore_answers(self, segment_num: int):
-        """Pre-populate question widgets from a saved review record."""
+        """Pre-populate the question panel from a saved review record, including
+        the corrections, so a revisited segment shows your work as you left it."""
         rec = self._review_records.get(segment_num)
         if not rec:
             return
-        answers = rec.get("answers", {})
+        answers = rec.get("answers", {}) or {}
+        human = rec.get("human", {}) or {}
+        hc = human.get("causal_reach") or {}
+        ho = human.get("outcome")
 
         for key in ["is_pellet", "is_causal", "end_correct", "outcome_correct", "all_miss"]:
             val = answers.get(key)
@@ -1330,14 +1908,43 @@ class CausalReviewWidget(QWidget):
             q = self._q_widgets.get(key)
             if not q:
                 continue
-            if val:
-                q["yes_btn"].setChecked(True)
-            else:
-                q["no_btn"].setChecked(True)
-            # Trigger correction visibility
+            (q["yes_btn"] if val else q["no_btn"]).setChecked(True)
             q["correction_container"].setVisible(not val)
 
-        # Restore notes
+        # Restore the specific corrections made on a "no" answer.
+        if answers.get("outcome_correct") is False and ho:
+            combo = self._q_widgets.get("_outcome_combo")
+            if combo:
+                i = combo.findText(ho)
+                if i >= 0:
+                    combo.setCurrentIndex(i)
+        if answers.get("all_miss") is False and ho:
+            combo = self._q_widgets.get("_untouched_outcome_combo")
+            if combo:
+                i = combo.findText(ho)
+                if i >= 0:
+                    combo.setCurrentIndex(i)
+        if answers.get("end_correct") is False and hc.get("end") is not None:
+            spin = self._q_widgets.get("_end_frame_spin")
+            if spin:
+                spin.setValue(int(hc["end"]))
+        if (answers.get("is_causal") is False or answers.get("all_miss") is False) and hc:
+            rp = self._q_widgets.get("_reach_picker", {})
+            if rp and "start_spin" in rp and hc.get("start") is not None:
+                try:
+                    rp["start_spin"].setValue(int(hc["start"]))
+                    rp["end_spin"].setValue(int(hc["end"]))
+                except Exception:
+                    pass
+
+        # Restore the ignore windows (abnormal non-reach events).
+        abn = self._q_widgets.get("_abnormal_ranges")
+        saved_ranges = answers.get("abnormal_ranges")
+        if abn is not None and saved_ranges:
+            abn["ranges"].clear()
+            abn["ranges"].extend(saved_ranges)
+            abn["refresh"]()
+
         notes = rec.get("notes", "")
         if hasattr(self, '_notes_edit') and notes:
             self._notes_edit.setPlainText(notes)
@@ -1353,12 +1960,172 @@ class CausalReviewWidget(QWidget):
             seg_num = record["segment_num"]
             self._review_records[seg_num] = record
             show_info(f"Segment {seg_num} recorded")
+            self._status_label.setText(
+                f"[OK] Recorded segment {seg_num}  "
+                f"({len(self._review_records)} reviewed so far)")
 
         if self._current_seg_idx < len(self._segment_list) - 1:
             self._current_seg_idx += 1
             self._show_current_segment()
         else:
-            show_info("Last segment reached. Use 'Save Review' to write the file.")
+            show_info("Last segment -- saving review and loading next video.")
+            self._save_and_next_video()
+
+    # ===================================================================
+    # Review queue (Pending folder) navigation
+    # ===================================================================
+
+    def _pending_dir(self) -> Optional[Path]:
+        """The review queue root -- the bundle's parent (the Pending folder)."""
+        bd = getattr(self, "_bundle_dir", None)
+        return Path(bd).parent if bd else None
+
+    def _review_root(self) -> Path:
+        """Root of the review corpus (Model40_Review), where corpus-level files
+        like flagged_sessions.json live -- the parent of Pending."""
+        pd = self._pending_dir()
+        return pd.parent if pd is not None else self.video_path.parent
+
+    def _flag_session(self):
+        """Flag this video's whole mouse+day session for mandatory human review
+        (e.g. a cage artifact that day affecting every P# of this mouse)."""
+        if not self._video_stem:
+            return
+        reason = (self._notes_edit.toPlainText().strip()
+                  if hasattr(self, "_notes_edit") else "")
+        try:
+            key = flag_session(self._video_stem, self._review_root(), reason=reason)
+            show_info(f"Flagged session {key} -- all its videos need human review.")
+            self._status_label.setText(
+                f"[FLAG] Session {key} flagged for mandatory human review "
+                f"(every P# of this mouse+day).")
+        except Exception as e:
+            show_error(f"Could not flag session: {e}")
+
+    def _list_queue(self) -> List[Path]:
+        """Sorted per-video bundle dirs in the Pending queue (a bundle is a dir
+        containing a manifest.json)."""
+        pd = self._pending_dir()
+        if pd is None or not pd.exists():
+            return []
+        return sorted(d for d in pd.iterdir()
+                      if d.is_dir() and (d / "manifest.json").exists())
+
+    def _bundle_reviewed(self, bundle_dir: Path) -> bool:
+        """True if this bundle already has a COMPLETE review (every segment
+        real-reviewed), in the bundle or next to its canonical video."""
+        stem = bundle_dir.name
+        dirs = [bundle_dir]
+        try:
+            man = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+            cvp = man.get("canonical_video_path")
+            if cvp:
+                dirs.append(Path(cvp).parent)
+        except Exception:
+            pass
+        for d in dirs:
+            try:
+                _, by_seg = load_causal_review(stem, d)
+            except Exception:
+                by_seg = {}
+            if by_seg and all((r.get("answers") or {}).get("reviewed") is not False
+                              for r in by_seg.values()):
+                return True
+        return False
+
+    def _bundle_needs_review(self, bundle_dir: Path, root: Path) -> bool:
+        """A bundle needs review iff it is NOT flagged, NOT already ground-truthed
+        (GT IS the answer -- it stands in for a review), and NOT already reviewed."""
+        stem = bundle_dir.name
+        if is_session_flagged(stem, root):
+            return False
+        if has_gt(stem, extra_dirs=[bundle_dir]):
+            return False  # already ground-truthed -> GT is the correct answer
+        if self._bundle_reviewed(bundle_dir):
+            return False
+        return True
+
+    def _segmentation_failed(self, b: Path) -> bool:
+        """True if the segmenter FAILED on this video (overall_confidence 0 / bad
+        reference quality -> uniform-fallback boundaries -- e.g. an over-long
+        recording whose trailing junk frames tank DLC reference tracking). These
+        need manual re-segmentation, not normal outcome review, so they are held
+        OUT of the auto-review queue (pending a proper failed-seg triage flow)."""
+        try:
+            sd = json.loads((b / f"{b.name}_segments.json").read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        c = sd.get("overall_confidence")
+        if c is not None and c <= 0.0:
+            return True
+        anoms = sd.get("anomalies") or []
+        return any("reference quality" in str(a).lower() for a in anoms)
+
+    def _needs_review_pool(self, pending_dir: Path, root: Path,
+                           exclude: Optional[Path] = None) -> List[Path]:
+        """All Pending bundles that still need review (not flagged, not GT'd, not
+        done, not a failed-segmentation video), optionally excluding one bundle."""
+        ex = str(Path(exclude)) if exclude else None
+        pool = []
+        for b in Path(pending_dir).iterdir():
+            if not (b.is_dir() and (b / "manifest.json").exists()):
+                continue
+            if ex and str(b) == ex:
+                continue
+            if self._segmentation_failed(b):
+                continue   # failed-seg -> manual re-seg queue, not normal review
+            if self._bundle_needs_review(b, root):
+                pool.append(b)
+        return pool
+
+    def load_pending_queue(self, pending_dir: Path):
+        """Enter the review queue on a RANDOM video that still needs review
+        (skips flagged sessions and already-complete videos). Random sampling
+        keeps the reviewed set unbiased across cohorts/days."""
+        import random
+        pending_dir = Path(pending_dir)
+        root = pending_dir.parent
+        pool = self._needs_review_pool(pending_dir, root)
+        if not pool:
+            show_info("Review queue: nothing left to review (all flagged or complete).")
+            return
+        b = random.choice(pool)
+        manifest = json.loads((b / "manifest.json").read_text(encoding="utf-8"))
+        self.load_from_manifest(manifest, b)
+        self._status_label.setText(
+            self._status_label.text() + f"   [random pick -- {len(pool)} left to review]")
+
+    def _load_next_video(self):
+        """Load a RANDOM next video from the pool that still NEEDS review,
+        skipping flagged sessions, already-complete videos, and the current one.
+        Random sampling keeps the reviewed set unbiased across cohorts/days."""
+        import random
+        pending = self._pending_dir()
+        if pending is None or not pending.exists():
+            show_info("No review queue found (not loaded from a Pending bundle).")
+            return
+        root = self._review_root()
+        pool = self._needs_review_pool(pending, root,
+                                       exclude=getattr(self, "_bundle_dir", None))
+        if not pool:
+            msg = "Queue complete -- nothing left to review."
+            show_info(msg)
+            self._status_label.setText(msg)
+            return
+        nxt = random.choice(pool)
+        try:
+            manifest = json.loads((nxt / "manifest.json").read_text(encoding="utf-8"))
+            self.load_from_manifest(manifest, nxt)
+            self._status_label.setText(
+                self._status_label.text()
+                + f"   [random pick -- {len(pool)} left to review]")
+        except Exception as e:
+            show_error(f"Could not load next video ({nxt.name}): {e}")
+
+    def _save_and_next_video(self):
+        """Save this video's review, then load the next video in the queue."""
+        self._save_review()
+        self._load_next_video()
 
     def _save_review(self):
         """Save all accumulated review records to the per-video file + index."""
@@ -1397,17 +2164,23 @@ class CausalReviewWidget(QWidget):
                     notes="",
                 ))
 
-        provenance = collect_provenance(self.video_path.parent, self._video_stem)
+        # Provenance from the algo JSONs (bundle dir in manifest mode); the
+        # review file itself saves next to the video (_review_dir).
+        provenance = collect_provenance(self._algo_dir(), self._video_stem)
         reviewer = _get_username()
         timestamp = _get_timestamp()
 
         # Save per-video file
+        mb = getattr(self, "_manual_boundaries", None)
+        manual_seg = ({"boundaries": list(mb), "by": reviewer, "at": timestamp,
+                       "n_segments": max(0, len(mb) - 1)} if mb else None)
         out_path = save_causal_review(
             video_stem=self._video_stem,
-            output_dir=self.video_path.parent,
+            output_dir=self._review_dir(),
             segments=segments,
             provenance=provenance,
             reviewer=reviewer,
+            manual_segmentation=manual_seg,
         )
 
         # Update corpus index
@@ -1470,6 +2243,38 @@ class CausalReviewWidget(QWidget):
     # Playback (reused from GT widget pattern)
     # ===================================================================
 
+    def _setup_keybindings(self):
+        """Keyboard shortcuts, bound THROUGH napari (viewer.bind_key) so they
+        actually fire in a docked widget AND are suppressed while a text field
+        (notes) is focused -- which also stops napari's own single-key shortcuts
+        from hijacking the arrows/space during playback."""
+        v = self.viewer
+
+        @v.bind_key('Space', overwrite=True)
+        def _toggle_play(viewer):
+            if self.is_playing:
+                self._stop_play()
+            else:
+                self._play_forward()
+
+        @v.bind_key('b', overwrite=True)
+        def _toggle_reverse(viewer):
+            if self.is_playing:
+                self._stop_play()
+            else:
+                self._play_reverse()
+
+        for key, delta in [('Left', -1), ('Right', 1), ('Shift-Left', -10),
+                           ('Shift-Right', 10), ('Control-Left', -100),
+                           ('Control-Right', 100)]:
+            v.bind_key(key, (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
+                       overwrite=True)
+
+        # Speed keys 1..6 -> 0.25, 0.5, 1, 2, 4, 8
+        for key, spd in zip('123456', [0.25, 0.5, 1, 2, 4, 8]):
+            v.bind_key(key, (lambda s: (lambda viewer: self._set_speed(s)))(spd),
+                       overwrite=True)
+
     def _play_forward(self):
         self.playback_direction = 1
         self._start_playback()
@@ -1500,7 +2305,7 @@ class CausalReviewWidget(QWidget):
         current = self.viewer.dims.current_step[0]
         skip = max(1, int(self.playback_speed))
         new_frame = current + (skip * self.playback_direction)
-        if self.frame_offset <= new_frame <= self.frame_window_end:
+        if 0 <= new_frame < self.n_frames:
             self.viewer.dims.set_current_step(0, new_frame)
         else:
             self._stop_play()
@@ -1518,8 +2323,7 @@ class CausalReviewWidget(QWidget):
         if self.n_frames == 0:
             return
         current = self.viewer.dims.current_step[0]
-        new_frame = max(self.frame_offset,
-                        min(self.frame_window_end, current + delta))
+        new_frame = max(0, min(self.n_frames - 1, current + delta))
         self.viewer.dims.set_current_step(0, new_frame)
 
     def _on_frame_change(self, event=None):
@@ -1541,3 +2345,5 @@ class CausalReviewWidget(QWidget):
         self._load_whole_seg_btn.setEnabled(enabled)
         self._save_btn.setEnabled(enabled)
         self._save_advance_btn.setEnabled(enabled)
+        self._save_next_video_btn.setEnabled(enabled)
+        self._flag_session_btn.setEnabled(enabled)
