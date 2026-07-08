@@ -835,8 +835,9 @@ class GroundTruthWidget(QWidget):
             )
             self.progress.setValue(85)
 
-            # Load GT data
-            self.gt = load_or_create_unified_gt(video_path)
+            # Load GT data. Subclasses may point the algo JSONs at a directory
+            # apart from the video (bundle layout) via _gt_algo_dir().
+            self.gt = load_or_create_unified_gt(video_path, algo_dir=self._gt_algo_dir())
             self.progress.setValue(90)
 
             # Load DLC data for J/K navigation and overlays
@@ -912,10 +913,35 @@ class GroundTruthWidget(QWidget):
         finally:
             self.progress.setVisible(False)
 
+    def _gt_algo_dir(self):
+        """Directory holding this video's algo JSONs, when they live APART from
+        the video (e.g. copy-free review bundles). Default None -> co-located
+        with the video. Subclasses override to point loads at a bundle."""
+        return None
+
+    def _dlc_h5_path(self):
+        """Explicit DLC .h5 to load, when it is NOT co-located with the video
+        (e.g. a different DLC model than the one beside the mp4). Default None
+        -> discover next to the video. Subclasses override."""
+        return None
+
     def _load_dlc_data(self):
         """Load DLC data for hand-visible frame navigation and points overlay."""
         if not self.video_path:
             return
+
+        # Explicit override (bundle / non-co-located DLC model) wins.
+        override = self._dlc_h5_path()
+        if override is not None and Path(override).is_file():
+            try:
+                import pandas as pd
+                self.dlc_data = pd.read_hdf(override)
+                df = pd.read_hdf(override)
+                df.columns = ['_'.join([str(c) for c in col[1:]]) for col in df.columns]
+                self.dlc_df = df
+                return
+            except Exception:
+                pass
 
         video_stem = self.video_path.stem.replace("_preview", "")
 

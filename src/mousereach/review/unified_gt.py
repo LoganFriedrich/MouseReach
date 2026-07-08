@@ -216,21 +216,27 @@ def get_timestamp() -> str:
     return datetime.now().isoformat()
 
 
-def get_unified_gt_path(video_path: Path) -> Path:
-    """Get the unified GT file path for a video."""
+def get_unified_gt_path(video_path: Path, algo_dir: Optional[Path] = None) -> Path:
+    """Get the unified GT file path for a video.
+
+    ``algo_dir`` overrides the directory (used when the algo JSONs live apart
+    from the video, e.g. copy-free review bundles). Defaults to the video's
+    parent directory (the co-located / routine layout).
+    """
     video_stem = video_path.stem.replace("_preview", "")
     if "DLC" in video_stem:
         video_stem = video_stem.split("DLC")[0].rstrip("_")
-    return video_path.parent / f"{video_stem}_unified_ground_truth.json"
+    base = Path(algo_dir) if algo_dir is not None else video_path.parent
+    return base / f"{video_stem}_unified_ground_truth.json"
 
 
-def load_unified_gt(video_path: Path) -> Optional[UnifiedGroundTruth]:
+def load_unified_gt(video_path: Path, algo_dir: Optional[Path] = None) -> Optional[UnifiedGroundTruth]:
     """
     Load unified ground truth file for a video.
 
     Returns None if file doesn't exist.
     """
-    gt_path = get_unified_gt_path(video_path)
+    gt_path = get_unified_gt_path(video_path, algo_dir)
     if not gt_path.exists():
         return None
 
@@ -243,13 +249,21 @@ def load_unified_gt(video_path: Path) -> Optional[UnifiedGroundTruth]:
         return None
 
 
-def save_unified_gt(gt: UnifiedGroundTruth, video_path: Path) -> Path:
+def save_unified_gt(gt: UnifiedGroundTruth, video_path: Path,
+                    algo_dir: Optional[Path] = None) -> Path:
     """
     Save unified ground truth to file.
 
-    Updates timestamps and completion status before saving.
+    Updates timestamps and completion status before saving. ``algo_dir``
+    overrides the directory (bundle layout). If ``video_path`` is already a
+    ``*_unified_ground_truth.json`` path, it is used verbatim (tolerates
+    callers that pass the resolved GT path directly).
     """
-    gt_path = get_unified_gt_path(video_path)
+    vp = Path(video_path)
+    if vp.name.endswith("_unified_ground_truth.json"):
+        gt_path = vp
+    else:
+        gt_path = get_unified_gt_path(vp, algo_dir)
 
     # Update metadata
     gt.last_modified_at = get_timestamp()
@@ -601,7 +615,8 @@ def _migrate_outcome_gt(gt: UnifiedGroundTruth, outcome_data: Dict):
 # =============================================================================
 
 
-def create_from_algorithm_output(video_path: Path) -> Optional[UnifiedGroundTruth]:
+def create_from_algorithm_output(video_path: Path,
+                                 algo_dir: Optional[Path] = None) -> Optional[UnifiedGroundTruth]:
     """
     Create a new unified GT from algorithm output files.
 
@@ -610,13 +625,14 @@ def create_from_algorithm_output(video_path: Path) -> Optional[UnifiedGroundTrut
     - *_reaches.json
     - *_pellet_outcomes.json
 
-    All items start undetermined.
+    ``algo_dir`` overrides where those JSONs are read from (bundle layout);
+    defaults to the video's parent directory. All items start undetermined.
     """
     video_stem = video_path.stem.replace("_preview", "")
     if "DLC" in video_stem:
         video_stem = video_stem.split("DLC")[0].rstrip("_")
 
-    parent = video_path.parent
+    parent = Path(algo_dir) if algo_dir is not None else video_path.parent
 
     gt = UnifiedGroundTruth(video_name=video_stem)
 
@@ -935,12 +951,17 @@ def cli_migrate():
             print(f"  - {err}")
 
 
-def load_or_create_unified_gt(video_path: Path) -> UnifiedGroundTruth:
+def load_or_create_unified_gt(video_path: Path,
+                              algo_dir: Optional[Path] = None) -> UnifiedGroundTruth:
     """
     Load algorithm outputs, then overlay any existing GT determinations.
 
     The review tool reviews ALGORITHM OUTPUTS, not GT files.
     GT is the OUTPUT of the review process.
+
+    ``algo_dir`` overrides where the algo JSONs (and the saved unified GT) are
+    read from -- used when they live apart from the video (copy-free review
+    bundles). Defaults to the video's parent directory (co-located layout).
 
     Flow:
     1. ALWAYS load algorithm outputs first (segments, reaches, outcomes)
@@ -953,10 +974,10 @@ def load_or_create_unified_gt(video_path: Path) -> UnifiedGroundTruth:
         video_stem = video_stem.split("DLC")[0].rstrip("_")
 
     # Step 1: Load algorithm outputs (the data we're reviewing)
-    gt = create_from_algorithm_output(video_path)
+    gt = create_from_algorithm_output(video_path, algo_dir)
     if gt is None:
         # No algorithm output - try unified GT or old GTs as fallback
-        gt = load_unified_gt(video_path)
+        gt = load_unified_gt(video_path, algo_dir)
         if gt is not None:
             return gt
         gt = migrate_from_old_formats(video_path)
@@ -966,7 +987,7 @@ def load_or_create_unified_gt(video_path: Path) -> UnifiedGroundTruth:
         return UnifiedGroundTruth(video_name=video_stem)
 
     # Step 2: If unified GT exists, overlay determination status
-    existing_gt = load_unified_gt(video_path)
+    existing_gt = load_unified_gt(video_path, algo_dir)
     if existing_gt is not None:
         _overlay_gt_determinations(gt, existing_gt)
         return gt

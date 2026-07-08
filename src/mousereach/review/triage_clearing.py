@@ -210,13 +210,46 @@ class TriageClearingWidget(GroundTruthWidget):
             self._prefill_prior_call(entry)
         return True
 
+    def _in_corpus_root_mode(self) -> bool:
+        return bool(self.worklist is not None
+                    and getattr(self.worklist, "mode", "algo_dir") == "corpus_root")
+
+    def _gt_algo_dir(self):
+        """Corpus-root mode: load the algo JSONs (segments/reaches/outcomes +
+        saved unified GT) from the current entry's bundle dir, NOT from beside
+        the mp4 (which holds the stale production outputs). None in flat/
+        quarantine mode -> base co-located behavior is unchanged."""
+        if self._in_corpus_root_mode() and self.worklist.current is not None:
+            return self.worklist.current.algo_dir
+        return None
+
+    def _dlc_h5_path(self):
+        """Corpus-root mode: the pose for THIS video is the routine/Model-4.0
+        h5 resolved canonically -- NOT whatever DLC model sits next to the mp4
+        (the bundle's reaches were computed on the canonical pose, so the
+        overlay must match it). None in flat/quarantine mode."""
+        if not self._in_corpus_root_mode() or self.worklist.current is None:
+            return None
+        try:
+            from .staging import resolve_canonical_paths, DEFAULT_CONNECTOME_ROOT
+            h5 = Path(resolve_canonical_paths(
+                self.worklist.current.video_name, DEFAULT_CONNECTOME_ROOT)["h5"])
+            return h5 if h5.is_file() else None
+        except Exception:
+            return None
+
     def _algo_files_dir(self) -> Path:
-        """Triage tool runs against quarantines where the video and the
-        algo JSONs live in sibling directories (``videos/`` vs
-        ``algo_outputs_current/``). Point saves at the worklist's
-        algo_dir instead of the video's parent."""
+        """Where this entry's algo JSONs live, for saving cleared results.
+
+        Corpus-root mode: each entry carries its own per-video bundle dir
+        (``entry.algo_dir``) -- saves must go THERE, not to a single shared
+        dir. Quarantine mode: fall back to the worklist's single algo_dir."""
         if self.worklist is not None:
-            return self.worklist.algo_dir
+            entry = self.worklist.current
+            if entry is not None and entry.algo_dir is not None:
+                return Path(entry.algo_dir)
+            if self.worklist.algo_dir is not None:
+                return self.worklist.algo_dir
         return super()._algo_files_dir()
 
     def _save_to_algo_files(self):
@@ -363,9 +396,14 @@ class TriageClearingWidget(GroundTruthWidget):
         timestamp = get_timestamp()
         notes = self._notes_edit.toPlainText().strip() if self._notes_edit else ""
         parent = self._algo_files_dir()
-        video_stem = self.video_path.stem
-        if "DLC_" in video_stem:
-            video_stem = video_stem.split("DLC_")[0]
+        # Prefer the worklist entry's video_name -- the algo JSONs in the bundle
+        # are named after it, and the canonical mp4 stem may differ from it.
+        if self.worklist is not None and self.worklist.current is not None:
+            video_stem = self.worklist.current.video_name
+        else:
+            video_stem = self.video_path.stem
+            if "DLC_" in video_stem:
+                video_stem = video_stem.split("DLC_")[0]
 
         # === Update _reaches.json (per-segment scope) ===
         reaches_path = parent / f"{video_stem}_reaches.json"
@@ -483,9 +521,16 @@ class TriageClearingWidget(GroundTruthWidget):
         return None
 
     def _unified_gt_path_for_video(self) -> Path:
-        """Resolve unified GT path for the current video, matching the
-        quarantine layout (sibling gt/) if present.
+        """Resolve unified GT path for the current video.
+
+        Corpus-root mode: keep it beside the bundle's algo JSONs
+        (``entry.algo_dir``), since the canonical mp4 lives elsewhere.
+        Quarantine mode: sibling ``gt/`` dir if present, else next to the mp4.
         """
+        if self.worklist is not None and self.worklist.current is not None \
+                and self.worklist.current.algo_dir is not None:
+            e = self.worklist.current
+            return Path(e.algo_dir) / f"{e.video_name}_unified_ground_truth.json"
         parent = self.video_path.parent
         gt_sibling = parent.parent / "gt"
         if gt_sibling.is_dir():
@@ -507,7 +552,7 @@ def main():
     """
     import argparse
     import napari
-    from .triage_queue import find_default_algo_dir
+    from .triage_queue import find_default_algo_dir, find_default_corpus_root
 
     parser = argparse.ArgumentParser(
         description=(
@@ -516,10 +561,21 @@ def main():
         ),
     )
     parser.add_argument(
+        "--corpus-root", type=Path, default=None,
+        help="ROUTINE mode: root of per-video bundle subdirs (each holds the "
+             "four algo JSONs). Scans every bundle for unresolved problems and "
+             "routes failed-segmentation videos to a separate re-seg lane. "
+             "Defaults to the routine review queue "
+             "(CONNECTOME_ROOT/Behavior/MouseReach_Pipeline/Model40_Review/Pending) "
+             "or MOUSEREACH_ROUTINE_ROOT. Ignored if --algo-dir is given.",
+    )
+    parser.add_argument(
         "--algo-dir", type=Path, default=None,
-        help="Directory containing *_reaches.json / *_pellet_outcomes.json. "
-             "Defaults to the latest quarantine under "
-             "CONNECTOME_ROOT/Behavior/MouseReach_Improvement/validation_runs/DLC_*/iterations/*/algo_outputs/.",
+        help="Single flat directory containing *_reaches.json / "
+             "*_pellet_outcomes.json (quarantine layout). Overrides --corpus-root. "
+             "Defaults (only if no corpus root is found) to the latest quarantine "
+             "under CONNECTOME_ROOT/Behavior/MouseReach_Improvement/validation_runs/"
+             "DLC_*/iterations/*/algo_outputs/.",
     )
     parser.add_argument(
         "--video-name", type=str, default=None,
@@ -539,23 +595,54 @@ def main():
     )
     args = parser.parse_args()
 
-    algo_dir = args.algo_dir or find_default_algo_dir()
-    if algo_dir is None:
-        print("No algo_dir specified and no default quarantine found.")
-        print("Set MOUSEREACH_TRIAGE_ALGO_DIR or pass --algo-dir.")
-        return 1
-    if not algo_dir.is_dir():
-        print(f"algo_dir not found: {algo_dir}")
-        return 1
-
     video_filter = [args.video_name] if args.video_name else None
-    worklist = TriageWorklist.from_algo_dir(
-        algo_dir,
-        video_filter=video_filter,
-        include_cleared=args.include_cleared,
-    )
+
+    # Source resolution: explicit --algo-dir wins (quarantine layout); else the
+    # routine corpus root (--corpus-root or default); else fall back to the
+    # latest quarantine so the old workflow still works.
+    if args.algo_dir is not None:
+        if not args.algo_dir.is_dir():
+            print(f"algo_dir not found: {args.algo_dir}")
+            return 1
+        source = f"algo_dir {args.algo_dir}"
+        print(f"Building worklist from {source} ...")
+        worklist = TriageWorklist.from_algo_dir(
+            args.algo_dir, video_filter=video_filter,
+            include_cleared=args.include_cleared)
+    else:
+        corpus_root = args.corpus_root or find_default_corpus_root()
+        if corpus_root is not None and corpus_root.is_dir():
+            source = f"corpus root {corpus_root}"
+            print(f"Building routine worklist from {source} "
+                  f"(scanning bundles -- this can take ~1-2 min) ...")
+            worklist = TriageWorklist.from_corpus_root(
+                corpus_root, video_filter=video_filter,
+                include_cleared=args.include_cleared)
+        else:
+            algo_dir = find_default_algo_dir()
+            if algo_dir is None or not algo_dir.is_dir():
+                print("No --corpus-root, no routine review queue, and no default "
+                      "quarantine found.")
+                print("Pass --corpus-root or --algo-dir, or set "
+                      "MOUSEREACH_ROUTINE_ROOT / MOUSEREACH_TRIAGE_ALGO_DIR.")
+                return 1
+            source = f"algo_dir {algo_dir} (quarantine fallback)"
+            print(f"Building worklist from {source} ...")
+            worklist = TriageWorklist.from_algo_dir(
+                algo_dir, video_filter=video_filter,
+                include_cleared=args.include_cleared)
+
+    # Failed-segmentation videos are not per-segment triageable -- report them
+    # as a separate manual re-seg lane rather than silently dropping them.
+    needs_reseg = getattr(worklist, "needs_reseg", None) or []
+    if needs_reseg:
+        print(f"NOTE: {len(needs_reseg)} video(s) have FAILED segmentation and were "
+              f"held OUT of the per-segment worklist (manual re-seg lane):")
+        for s in needs_reseg:
+            print(f"  - {s}")
+
     if len(worklist) == 0:
-        print(f"No triaged segments pending review in {algo_dir}.")
+        print(f"No triaged segments pending review in {source}.")
         print("If you expect there to be some, try --include-cleared to re-review.")
         return 0
 
