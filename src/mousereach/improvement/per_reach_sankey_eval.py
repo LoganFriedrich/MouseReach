@@ -403,14 +403,15 @@ def _human_label_for_reach(reach: dict, rec: Optional[dict]) -> Tuple[str, bool]
 
     hcr = human.get("causal_reach") or {}
     rid = hcr.get("reach_id")
-    is_causal = False
-    if rid is not None:
-        is_causal = (reach.get("reach_id") == rid)
-    else:
-        s, e = reach.get("start_frame"), reach.get("end_frame")
-        hs, he = hcr.get("start"), hcr.get("end")
-        if None not in (s, e, hs, he):
-            is_causal = (s <= he and hs <= e)   # any overlap
+    # Match on reach_id OR frame overlap: a human causal reach that overlaps an
+    # algo reach IS that reach, even if the ids differ across runs (raw vs
+    # assignment numbering). This keeps a detected-but-renumbered reach from
+    # spuriously counting as 'absent'.
+    id_match = rid is not None and reach.get("reach_id") == rid
+    s, e = reach.get("start_frame"), reach.get("end_frame")
+    hs, he = hcr.get("start"), hcr.get("end")
+    overlap = None not in (s, e, hs, he) and s <= he and hs <= e
+    is_causal = id_match or overlap
 
     if not is_causal:
         return "miss", False

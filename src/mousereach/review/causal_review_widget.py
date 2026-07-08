@@ -1721,6 +1721,31 @@ class CausalReviewWidget(QWidget):
     # Answer collection
     # ===================================================================
 
+    def _snap_to_detected_reach(self, start, end, all_reaches):
+        """If a manually-typed [start, end] causal reach OVERLAPS an already-
+        detected reach (any frame overlap), return THAT reach
+        ({start, end, reach_id}) so it matches the algo -- instead of becoming a
+        phantom 'undetected' reach that would surface as a spurious 'absent' in
+        eval. Picks the largest-overlap reach; returns the typed range only if
+        nothing overlaps (a genuinely undetected reach)."""
+        try:
+            s, e = int(start), int(end)
+        except Exception:
+            s, e = start, end
+        best = None
+        for r in (all_reaches or []):
+            rs, re = r.get("start"), r.get("end")
+            if rs is None or re is None:
+                continue
+            if rs <= e and s <= re:                       # true interval overlap
+                ov = min(e, re) - max(s, rs)
+                if best is None or ov > best[0]:
+                    best = (ov, r)
+        if best is not None:
+            r = best[1]
+            return {"start": r["start"], "end": r["end"], "reach_id": r.get("reach_id")}
+        return {"start": s, "end": e}
+
     def _collect_answers(self) -> Optional[Dict[str, Any]]:
         """Collect current segment's answers from the question widgets.
 
@@ -1782,12 +1807,13 @@ class CausalReviewWidget(QWidget):
                     reaches = rp["all_reaches"]
                     if 0 <= checked_id < len(reaches):
                         r = reaches[checked_id]
-                        human_causal_reach = {"start": r["start"], "end": r["end"]}
+                        human_causal_reach = {"start": r["start"], "end": r["end"],
+                                              "reach_id": r.get("reach_id")}
                     elif checked_id == len(reaches):
-                        human_causal_reach = {
-                            "start": rp["start_spin"].value(),
-                            "end": rp["end_spin"].value(),
-                        }
+                        # Manually typed range: snap to an overlapping detected
+                        # reach if one exists (so it matches the algo, not 'absent').
+                        human_causal_reach = self._snap_to_detected_reach(
+                            rp["start_spin"].value(), rp["end_spin"].value(), reaches)
                     # (abnormal / non-reach events -> Ignore-windows section)
 
             # Q3: end frame correct?
@@ -1830,12 +1856,13 @@ class CausalReviewWidget(QWidget):
                     reaches = rp["all_reaches"]
                     if 0 <= checked_id < len(reaches):
                         r = reaches[checked_id]
-                        human_causal_reach = {"start": r["start"], "end": r["end"]}
+                        human_causal_reach = {"start": r["start"], "end": r["end"],
+                                              "reach_id": r.get("reach_id")}
                     elif checked_id == len(reaches):
-                        human_causal_reach = {
-                            "start": rp["start_spin"].value(),
-                            "end": rp["end_spin"].value(),
-                        }
+                        # Manually typed range: snap to an overlapping detected
+                        # reach if one exists (so it matches the algo, not 'absent').
+                        human_causal_reach = self._snap_to_detected_reach(
+                            rp["start_spin"].value(), rp["end_spin"].value(), reaches)
                     # (abnormal / non-reach events -> Ignore-windows section)
                 combo = self._q_widgets.get("_untouched_outcome_combo")
                 if combo:
