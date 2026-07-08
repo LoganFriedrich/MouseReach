@@ -29,6 +29,7 @@ from napari.utils.notifications import show_info, show_warning
 
 from .ground_truth_widget import GroundTruthWidget
 from .triage_queue import TriageEntry, TriageWorklist
+from .qc_pool import RoutineQCPool
 from .unified_gt import get_timestamp, get_username, save_unified_gt
 
 
@@ -62,6 +63,7 @@ class TriageClearingWidget(GroundTruthWidget):
         worklist: TriageWorklist,
         pre_pad: int = 30,
         post_pad: int = 30,
+        qc_pool: Optional[RoutineQCPool] = None,
     ):
         # IMPORTANT: super().__init__ calls _build_ui which sets up the
         # entire widget. We add our extra UI bits after that.
@@ -69,9 +71,14 @@ class TriageClearingWidget(GroundTruthWidget):
         self.worklist = worklist
         self.pre_pad = pre_pad
         self.post_pad = post_pad
+        # Routine spot-check pool -- present to record confirm/flag verdicts on
+        # kind=="qc" worklist entries. None -> triage-only session.
+        self.qc_pool = qc_pool
         self._notes_edit: Optional[QTextEdit] = None
         self._banner_label: Optional[QLabel] = None
         self._progress_label: Optional[QLabel] = None
+        self._triage_nav: Optional[QWidget] = None
+        self._qc_nav: Optional[QWidget] = None
         self._build_triage_clearing_ui()
 
     # ------------------------------------------------------------------
@@ -142,7 +149,35 @@ class TriageClearingWidget(GroundTruthWidget):
         nav_layout.addStretch()
         nav_layout.addWidget(skip_btn)
         nav_layout.addWidget(save_btn)
+        self._triage_nav = nav
         main_layout.addWidget(nav)
+
+        # QC (spot-check) action row -- shown only for kind=="qc" entries. The
+        # reviewer confirms the algo's call or flags a disagreement (which turns
+        # the segment into a triage item). No causal-reach marking required.
+        qc_nav = QFrame()
+        qc_nav.setStyleSheet("QFrame { background: #E8F5E9; padding: 4px; }")
+        qc_layout = QHBoxLayout()
+        qc_layout.setContentsMargins(6, 4, 6, 4)
+        qc_nav.setLayout(qc_layout)
+        qc_prev = QPushButton("← Previous")
+        qc_prev.setToolTip("Go back to the previous item")
+        qc_prev.clicked.connect(self._on_previous_clicked)
+        confirm_btn = QPushButton("✓ Algo is RIGHT (confirm)")
+        confirm_btn.setStyleSheet("font-weight: bold; background: #28A745; color: white;")
+        confirm_btn.setToolTip("Record agreement with the algo's call and advance")
+        confirm_btn.clicked.connect(self._on_qc_confirm_clicked)
+        flag_btn = QPushButton("✗ Algo is WRONG (flag -> triage)")
+        flag_btn.setStyleSheet("font-weight: bold; background: #C62828; color: white;")
+        flag_btn.setToolTip("Record a disagreement; the segment becomes a triage item to resolve")
+        flag_btn.clicked.connect(self._on_qc_flag_clicked)
+        qc_layout.addWidget(qc_prev)
+        qc_layout.addStretch()
+        qc_layout.addWidget(flag_btn)
+        qc_layout.addWidget(confirm_btn)
+        self._qc_nav = qc_nav
+        qc_nav.setVisible(False)
+        main_layout.addWidget(qc_nav)
 
     def _refresh_banner_and_progress(self) -> None:
         """Update the banner + progress label based on current worklist entry."""
@@ -156,11 +191,13 @@ class TriageClearingWidget(GroundTruthWidget):
                 self._progress_label.setText("0 remaining")
             return
         if self._banner_label:
+            is_qc = getattr(entry, "kind", "triage") == "qc"
+            reason_label = "Spot-check" if is_qc else "Algo flag reason"
             txt = (
                 f"<b>Video:</b> {entry.video_name} &nbsp; "
                 f"<b>Segment:</b> {entry.segment_num} "
                 f"(frames {entry.start_frame}-{entry.end_frame})<br>"
-                f"<b>Algo flag reason:</b> {entry.triage_reason}"
+                f"<b>{reason_label}:</b> {entry.triage_reason}"
             )
             if entry.already_cleared:
                 txt += "<br><i>(previously cleared — re-review will overwrite)</i>"
@@ -205,10 +242,21 @@ class TriageClearingWidget(GroundTruthWidget):
         if self._notes_edit is not None:
             self._notes_edit.setPlainText("")
         self._refresh_banner_and_progress()
+        self._refresh_mode_ui()
         # If already cleared, pre-populate notes from prior call
         if entry.already_cleared:
             self._prefill_prior_call(entry)
         return True
+
+    def _refresh_mode_ui(self) -> None:
+        """Show the triage nav (Prev/Skip/Save) for triage entries, or the QC
+        nav (Confirm/Flag) for spot-check entries."""
+        entry = self.worklist.current if self.worklist else None
+        is_qc = bool(entry is not None and getattr(entry, "kind", "triage") == "qc")
+        if self._triage_nav is not None:
+            self._triage_nav.setVisible(not is_qc)
+        if self._qc_nav is not None:
+            self._qc_nav.setVisible(is_qc)
 
     def _in_corpus_root_mode(self) -> bool:
         return bool(self.worklist is not None
@@ -325,6 +373,10 @@ class TriageClearingWidget(GroundTruthWidget):
     # ------------------------------------------------------------------
 
     def _on_save_and_next_clicked(self) -> None:
+        entry = self.worklist.current if self.worklist else None
+        if entry is not None and getattr(entry, "kind", "triage") == "qc":
+            show_info("This is a spot-check -- use Confirm or Flag, not Save.")
+            return
         ok = self._save_current_triage_segment()
         if ok:
             self.worklist.advance()
@@ -348,8 +400,75 @@ class TriageClearingWidget(GroundTruthWidget):
         QMessageBox.information(
             self,
             "All caught up",
-            f"All {len(self.worklist)} triaged segments have been reviewed.",
+            f"All {len(self.worklist)} items have been reviewed.",
         )
+
+    # ------------------------------------------------------------------
+    # QC (spot-check) handlers -- confirm the algo, or flag a disagreement
+    # ------------------------------------------------------------------
+
+    def _on_qc_confirm_clicked(self) -> None:
+        self._record_qc_verdict("confirmed")
+
+    def _on_qc_flag_clicked(self) -> None:
+        self._record_qc_verdict("flagged")
+
+    def _qc_algo_call(self, entry: TriageEntry):
+        """(algo_outcome, algo_causal_reach_id) for a QC entry, read from the
+        bundle's pellet_outcomes.json."""
+        try:
+            p = Path(entry.algo_dir) / f"{entry.video_name}_pellet_outcomes.json"
+            data = json.loads(p.read_text(encoding="utf-8"))
+            for s in data.get("segments", []):
+                if s.get("segment_num") == entry.segment_num:
+                    return s.get("outcome"), s.get("causal_reach_id")
+        except Exception:
+            pass
+        return None, None
+
+    def _flag_segment_for_triage(self, entry: TriageEntry, algo_outcome) -> None:
+        """A flagged spot-check re-enters the triage worklist: set
+        flagged_for_review on the segment in the bundle's outcomes JSON."""
+        try:
+            p = Path(entry.algo_dir) / f"{entry.video_name}_pellet_outcomes.json"
+            data = json.loads(p.read_text(encoding="utf-8"))
+            for s in data.get("segments", []):
+                if s.get("segment_num") == entry.segment_num:
+                    s["flagged_for_review"] = True
+                    s["flag_reason"] = (f"spot-check disagreement (reviewer flagged "
+                                        f"algo's '{algo_outcome}')")
+                    s["triage_cleared"] = None
+                    break
+            p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            show_warning(f"Failed to flag segment for triage: {e}")
+
+    def _record_qc_verdict(self, verdict: str) -> None:
+        entry = self.worklist.current if self.worklist else None
+        if entry is None:
+            return
+        algo_outcome, algo_causal = self._qc_algo_call(entry)
+        note = self._notes_edit.toPlainText().strip() if self._notes_edit else ""
+        if self.qc_pool is not None:
+            try:
+                self.qc_pool.record_verdict(
+                    entry.video_name, entry.segment_num, verdict=verdict,
+                    algo_outcome=algo_outcome, algo_causal_reach_id=algo_causal,
+                    reviewer=get_username(), note=note)
+            except Exception as e:
+                show_warning(f"Failed to record QC verdict: {e}")
+        if verdict == "flagged":
+            self._flag_segment_for_triage(entry, algo_outcome)
+            show_info(f"Flagged {entry.video_name} seg {entry.segment_num} "
+                      f"(algo said '{algo_outcome}') -> triage.")
+        else:
+            show_info(f"Confirmed {entry.video_name} seg {entry.segment_num} "
+                      f"(algo '{algo_outcome}').")
+        self.worklist.advance()
+        if self.worklist.is_at_end():
+            self._on_worklist_exhausted()
+        else:
+            self.load_current_entry()
 
     # ------------------------------------------------------------------
     # Save (per-segment, preserves other segments and writes triage fields)
@@ -593,7 +712,34 @@ def main():
         "--post-pad", type=int, default=30,
         help="Frames to load after each segment's end (context). Default 30.",
     )
+    parser.add_argument(
+        "--qc-count", type=int, default=0,
+        help="Routine spot-check: blend N already-passing segments into the "
+             "session (stratified rotating sample) for confirm-the-algo QC. "
+             "Only in corpus-root mode. Default 0 (triage only).",
+    )
+    parser.add_argument(
+        "--qc-report", action="store_true",
+        help="Print the routine spot-check agreement/drift summary and exit "
+             "(does not launch napari).",
+    )
     args = parser.parse_args()
+
+    # Spot-check drift report (no napari): summarize the QC agreement log.
+    if args.qc_report:
+        corpus_root = args.corpus_root or find_default_corpus_root()
+        if corpus_root is None or not Path(corpus_root).is_dir():
+            print("No corpus root found for the QC report "
+                  "(pass --corpus-root or set MOUSEREACH_ROUTINE_ROOT).")
+            return 1
+        pool = RoutineQCPool.open(corpus_root)
+        s = pool.agreement_summary()
+        rate = "n/a" if s["agreement_rate"] is None else f"{s['agreement_rate']:.1%}"
+        print(f"Routine spot-check QC report -- {pool.log_path}")
+        print(f"  checks: {s['n_checks']}   confirmed: {s['confirmed']}   "
+              f"flagged: {s['flagged']}")
+        print(f"  agreement rate: {rate}")
+        return 0
 
     video_filter = [args.video_name] if args.video_name else None
 
@@ -641,23 +787,39 @@ def main():
         for s in needs_reseg:
             print(f"  - {s}")
 
+    # Routine spot-check pool: blend N confident already-passing segments into
+    # the session for confirm-the-algo QC (corpus-root mode only).
+    qc_pool = None
+    if args.qc_count > 0 and getattr(worklist, "mode", "algo_dir") == "corpus_root":
+        print(f"Sampling {args.qc_count} routine spot-check(s) ...")
+        qc_pool = RoutineQCPool.open(worklist.algo_dir)
+        sampled = qc_pool.sample(args.qc_count)
+        qc_entries = qc_pool.to_entries(sampled)
+        worklist.entries.extend(qc_entries)
+        summ = qc_pool.agreement_summary()
+        print(f"  added {len(qc_entries)} spot-check item(s); "
+              f"{summ['n_checks']} historical checks logged "
+              f"(agreement so far: {summ['agreement_rate']}).")
+    elif args.qc_count > 0:
+        print("NOTE: --qc-count only applies in corpus-root mode; ignoring.")
+
     if len(worklist) == 0:
-        print(f"No triaged segments pending review in {source}.")
-        print("If you expect there to be some, try --include-cleared to re-review.")
+        print(f"No items pending review in {source}.")
+        print("If you expect some, try --include-cleared, or add --qc-count N.")
         return 0
 
     print(
-        f"Loaded triage worklist: {len(worklist)} segments across "
-        f"{len(worklist.videos_covered())} videos."
+        f"Loaded worklist: {len(worklist)} item(s) across "
+        f"{len(worklist.videos_covered())} video(s)."
     )
     print(f"First entry: {worklist.current.video_name} seg {worklist.current.segment_num}")
 
-    viewer = napari.Viewer(title="MouseReach Triage Clearing")
+    viewer = napari.Viewer(title="MouseReach Triage / QC")
     widget = TriageClearingWidget(
         viewer, worklist=worklist,
-        pre_pad=args.pre_pad, post_pad=args.post_pad,
+        pre_pad=args.pre_pad, post_pad=args.post_pad, qc_pool=qc_pool,
     )
-    viewer.window.add_dock_widget(widget, name="Triage Clearing", area="right")
+    viewer.window.add_dock_widget(widget, name="Triage / QC", area="right")
     widget.load_current_entry()
     napari.run()
     return 0
