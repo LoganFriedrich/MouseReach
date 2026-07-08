@@ -103,8 +103,9 @@ mousereach-advance-outcomes = "mousereach.outcomes.cli:main_advance"
 mousereach-review-pellet-outcomes = "mousereach.outcomes.cli:main_review"
 mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated: use mousereach-review-pellet-outcomes
 
-# Triage Clearing tool (per-segment review of algo-flagged segments) and GT Tool
-mousereach-review-tool = "mousereach.review.triage_clearing:main"  # Triage clearing (per-segment, worklist-driven)
+# Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue
+mousereach-review-tool = "mousereach.review.causal_review_widget:main"  # Causal review, triaged-only (walk only unresolved elements)
+mousereach-triage-clearing = "mousereach.review.triage_clearing:main"  # (legacy) GroundTruthWidget-based per-segment triage clearing
 mousereach-unified-review = "mousereach.review.ground_truth_widget:main"
 mousereach-gt = "mousereach.review.ground_truth_widget:main"  # GT scoring tool
 mousereach-review-legacy = "mousereach.review.ground_truth_widget:main_review"  # Old whole-video review (kept for compat)
