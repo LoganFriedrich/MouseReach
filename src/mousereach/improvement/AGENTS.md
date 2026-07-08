@@ -40,6 +40,32 @@ memory entry `reach_outcome_evaluation_format.md`. If the report leads
 with a P/R/F1 table or a single accuracy scalar, it has failed and
 must be redone with Sankey + direction as the lead.
 
+### Per-reach eval Sankeys (algo vs GT or review) -- USE THIS, don't hand-roll
+
+**To measure how the algo is doing / generalizing PER REACH against ground
+truth or human review alone, use `per_reach_sankey_eval.py`. This is the
+canonical generator -- do not hand-roll a per-reach Sankey for this.**
+
+```
+python -m mousereach.improvement.per_reach_sankey_eval algo-vs-gt
+python -m mousereach.improvement.per_reach_sankey_eval algo-vs-review
+```
+
+- `algo_vs_gt` -- algo (exactly as run) vs ground truth, per reach. Reproduces
+  the canonical algo-4 confusion (`outcome/metrics.compute_per_reach_confusion`)
+  and renders it **algo-left / GT-right**.
+- `algo_vs_review` -- algo (exactly as run) vs human causal-review, per reach,
+  over the Causal Review tool's reviewed bundles. **Triage is a per-segment
+  decision: one `triaged` mark per triaged segment, re-routed to the human's
+  resolution -- NOT one per reach (that ~10x inflation is the documented
+  anti-pattern; see `assignment/AGENTS.md`). `absent` is dropped except when a
+  human causal reach overlaps no algo reach** (a reach the algo missed entirely).
+
+Both figures are the algo EXACTLY AS RUN vs the reference -- there is NO
+"post-correction" panel (that only proves the results file was edited, not how
+the algo performed). Writes a dated snapshot (`metrics/scalars.json` +
+`figures/*.png`) under `MouseReach_Improvement/model40_eval/`.
+
 ## Critical: do NOT hand-roll figures from this snapshot data
 
 Each phase has a canonical figure-runner script. Use it. Hand-rolling
