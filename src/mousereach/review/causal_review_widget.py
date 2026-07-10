@@ -1179,57 +1179,76 @@ class CausalReviewWidget(QWidget):
             "abnormal_exception",
         )
 
+        # Running question number so labels stay sequential even when a
+        # question is skipped (e.g. no algo causal reach -> no end-frame Q, so
+        # the outcome question is Q3, not a gap-leaving Q4).
+        qn = 1
+
         # --- Q1: Is this pellet #N? ---
         q1 = self._make_yes_no_question(
-            f"Q1: Is this pellet #{seg['pellet_num']}?",
+            f"Q{qn}: Is this pellet #{seg['pellet_num']}?",
             "is_pellet",
             correction_widget_factory=lambda: self._make_pellet_correction(seg),
         )
         self._questions_layout.addWidget(q1)
 
         if is_touched:
-            # --- Q2: Is the causal reach correct? ---
             cr = seg.get("causal_reach")
+            qn += 1
+            # --- Q(n): which reach is causal ---
             if cr:
                 q2_text = (
-                    f"Q2: Is the reach starting at frame {cr['start']} "
+                    f"Q{qn}: Is the reach starting at frame {cr['start']} "
                     f"the causal reach?"
                 )
             elif seg.get("reach_uncertain"):
                 q2_text = (
-                    f"Q2: Algo determined the outcome is '{seg.get('outcome')}' but did NOT "
-                    f"identify the causal reach (TRIAGED -- reach uncertain). Answer NO and "
-                    f"pick the causal reach below (or use the ignore-window if no reach caused it)."
+                    f"Q{qn}: The outcome is '{seg.get('outcome')}' (algo-confirmed) but the "
+                    f"causal reach is unknown -- pick which reach caused it below."
                 )
             else:
-                q2_text = "Q2: Is the causal reach correctly identified? (none detected)"
+                q2_text = f"Q{qn}: Is the causal reach correctly identified? (none detected)"
             q2 = self._make_yes_no_question(
                 q2_text, "is_causal",
                 correction_widget_factory=lambda: self._make_reach_picker(seg),
             )
             self._questions_layout.addWidget(q2)
 
-            # --- Q3: End frame correct? ---
+            # Reach-uncertain: there's no algo causal reach to accept, so the
+            # reviewer will ALWAYS pick -- pre-reveal the picker (default "No")
+            # to save a click.
+            if seg.get("reach_uncertain") and not cr:
+                w = self._q_widgets.get("is_causal", {})
+                if w.get("no_btn") is not None:
+                    w["no_btn"].setChecked(True)
+                    w["correction_container"].setVisible(True)
+
+            # --- Q(n): End frame correct? -- only when there IS an algo causal
+            # reach to check. In triaged-only mode there never is, so this is
+            # skipped and does not leave a numbering gap. ---
             if cr:
+                qn += 1
                 q3 = self._make_yes_no_question(
-                    f"Q3: Did that reach end at frame {cr['end']}?",
+                    f"Q{qn}: Did that reach end at frame {cr['end']}?",
                     "end_correct",
                     correction_widget_factory=lambda: self._make_frame_setter("Correct end frame:", cr["end"]),
                 )
                 self._questions_layout.addWidget(q3)
 
-            # --- Q4: Outcome correct? ---
-            q4 = self._make_yes_no_question(
-                f"Q4: Did that reach cause outcome '{seg.get('outcome', '?')}'?",
+            # --- Q(n): Outcome correct? ---
+            qn += 1
+            q_out = self._make_yes_no_question(
+                f"Q{qn}: Did that reach cause outcome '{seg.get('outcome', '?')}'?",
                 "outcome_correct",
                 correction_widget_factory=lambda: self._make_outcome_picker(seg),
             )
-            self._questions_layout.addWidget(q4)
+            self._questions_layout.addWidget(q_out)
 
         else:
             # Untouched segment
+            qn += 1
             q_miss = self._make_yes_no_question(
-                "Q2: Are all reaches misses (pellet on pillar at segment end)?",
+                f"Q{qn}: Are all reaches misses (pellet on pillar at segment end)?",
                 "all_miss",
                 correction_widget_factory=lambda: self._make_untouched_correction(seg),
             )
@@ -1544,29 +1563,59 @@ class CausalReviewWidget(QWidget):
             f"unchanged ranges keep the algo's verdict; correct only what's wrong.")
 
     def _make_reach_picker(self, seg: Dict) -> QWidget:
-        """Inline reach picker: choose from detected reaches or draw a new one."""
+        """Inline reach picker: choose from detected reaches or draw a new one.
+
+        Detected reaches go in a height-capped SCROLL AREA so a segment with
+        many reaches doesn't produce an enormous panel. The reach nearest the
+        known interaction frame (the likely causal one) is highlighted."""
         w = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         w.setLayout(layout)
 
-        layout.addWidget(QLabel("Pick the correct causal reach:"))
-
-        # List detected reaches
         all_reaches = seg.get("all_reaches", [])
+        layout.addWidget(QLabel(
+            f"Pick the correct causal reach ({len(all_reaches)} detected):"))
+
         reach_group = QButtonGroup(w)
         reach_group.setExclusive(True)
 
-        for i, r in enumerate(all_reaches):
-            rb = QRadioButton(
-                f"Reach {r.get('reach_id', i)}: "
-                f"frames {r['start']}-{r['end']}"
-            )
-            rb.setProperty("reach_data", r)
-            reach_group.addButton(rb, i)
-            layout.addWidget(rb)
+        # Likely causal reach = the detected reach nearest the known interaction
+        # frame (the outcome is algo-confirmed, so its interaction frame points
+        # at the reach that probably caused it). Highlight it, don't auto-pick.
+        ifr = seg.get("interaction_frame")
+        best_i = None
+        if ifr is not None and all_reaches:
+            best_i = min(
+                range(len(all_reaches)),
+                key=lambda j: min(abs(all_reaches[j]["start"] - ifr),
+                                  abs(all_reaches[j]["end"] - ifr)))
 
-        # Option: undetected reach (manual entry)
+        # Height-capped, scrollable list of detected reaches.
+        reaches_box = QWidget()
+        reaches_layout = QVBoxLayout()
+        reaches_layout.setContentsMargins(2, 2, 2, 2)
+        reaches_layout.setSpacing(1)
+        reaches_box.setLayout(reaches_layout)
+        for i, r in enumerate(all_reaches):
+            label = f"Reach {r.get('reach_id', i)}: frames {r['start']}-{r['end']}"
+            if i == best_i:
+                label += "   * nearest interaction frame"
+            rb = QRadioButton(label)
+            rb.setProperty("reach_data", r)
+            if i == best_i:
+                rb.setStyleSheet("font-weight: bold;")
+            reach_group.addButton(rb, i)
+            reaches_layout.addWidget(rb)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(reaches_box)
+        scroll.setMaximumHeight(160)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        layout.addWidget(scroll)
+
+        # Option: undetected reach (manual entry) -- outside the scroll so it is
+        # always visible.
         manual_rb = QRadioButton("Undetected reach (enter frames manually):")
         reach_group.addButton(manual_rb, len(all_reaches))
         layout.addWidget(manual_rb)
