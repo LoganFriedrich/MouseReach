@@ -64,6 +64,11 @@ OUTCOME_CHOICES = [
     "abnormal",
 ]
 
+# Sentinel shown pre-selected in an outcome dropdown that the reviewer MUST
+# answer (outcome-uncertain / both-uncertain triage). Leaving it selected means
+# "not answered yet" -- we never fabricate an outcome the reviewer didn't pick.
+OUTCOME_PICK_SENTINEL = "-- select outcome --"
+
 
 class _LazyVideo:
     """Array-like view of a video that decodes frames on demand.
@@ -1120,8 +1125,14 @@ class CausalReviewWidget(QWidget):
         )
         if seg["is_boundary"]:
             seg_info += "  --  <i>BOUNDARY (no pellet)</i>"
-        elif seg["pellet_num"] is not None:
-            seg_info += f"  --  Pellet #{seg['pellet_num']}"
+        else:
+            # Always tell the reviewer which pellet the algo thinks this is
+            # (segmenter numbering: segment N == pellet N). Fall back to the
+            # segment number if pellet_num wasn't populated in the algo output.
+            pnum = seg.get("pellet_num")
+            if pnum is None:
+                pnum = seg.get("segment_num")
+            seg_info += f"  --  <b>Pellet #{pnum}</b>"
 
         if seg.get("outcome"):
             seg_info += f"  --  Algo outcome: <b>{seg['outcome']}</b>"
@@ -1174,85 +1185,49 @@ class CausalReviewWidget(QWidget):
         # Store question widget references for answer collection
         self._q_widgets: Dict[str, Any] = {}
 
-        is_touched = seg.get("outcome") in (
-            "displaced_sa", "displaced_outside", "retrieved", "abnormal",
-            "abnormal_exception",
-        )
+        # Triaged-only reviewer: present ONLY the open question(s) for this
+        # triaged element, driven by WHY it was triaged. The pellet is shown in
+        # the banner above (not a question); a wrong pellet is a segmentation
+        # issue handled by the per-video "send to detailed review" button.
+        #   reach_uncertain   -> outcome is algo-known; pick the causal reach.
+        #   outcome_uncertain -> the causal reach is pinned (1 candidate); pick
+        #                        what it did to the pellet.
+        #   both_uncertain    -> pick which reach (if any) acted, then what it did.
+        kind, cand_reaches = self._segment_triage(seg)
+        self._panel_kind = kind
+        self._pinned_reach = None
 
-        # Running question number so labels stay sequential even when a
-        # question is skipped (e.g. no algo causal reach -> no end-frame Q, so
-        # the outcome question is Q3, not a gap-leaving Q4).
-        qn = 1
+        def _hdr(text):
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("font-weight: bold; margin-bottom: 4px;")
+            self._questions_layout.addWidget(lbl)
 
-        # --- Q1: Is this pellet #N? ---
-        q1 = self._make_yes_no_question(
-            f"Q{qn}: Is this pellet #{seg['pellet_num']}?",
-            "is_pellet",
-            correction_widget_factory=lambda: self._make_pellet_correction(seg),
-        )
-        self._questions_layout.addWidget(q1)
+        if kind == "reach_uncertain":
+            _hdr(f"The outcome is '<span style='color:#8f8'>{seg.get('outcome')}</span>' "
+                 f"(algo-confirmed). Which reach caused it?")
+            self._questions_layout.addWidget(self._make_reach_picker(seg))
 
-        if is_touched:
-            cr = seg.get("causal_reach")
-            qn += 1
-            # --- Q(n): which reach is causal ---
-            if cr:
-                q2_text = (
-                    f"Q{qn}: Is the reach starting at frame {cr['start']} "
-                    f"the causal reach?"
-                )
-            elif seg.get("reach_uncertain"):
-                q2_text = (
-                    f"Q{qn}: The outcome is '{seg.get('outcome')}' (algo-confirmed) but the "
-                    f"causal reach is unknown -- pick which reach caused it below."
-                )
+        elif kind == "outcome_uncertain":
+            r = cand_reaches[0] if cand_reaches else None
+            self._pinned_reach = r
+            if r is not None:
+                _hdr(f"Causal reach pinned: <span style='color:#8cf'>reach "
+                     f"{r.get('reach_id')}</span> (frames {r['start']}-{r['end']}). "
+                     f"What did it do to the pellet?")
             else:
-                q2_text = f"Q{qn}: Is the causal reach correctly identified? (none detected)"
-            q2 = self._make_yes_no_question(
-                q2_text, "is_causal",
-                correction_widget_factory=lambda: self._make_reach_picker(seg),
-            )
-            self._questions_layout.addWidget(q2)
+                _hdr("Something moved the pellet but no reach was detected. "
+                     "What happened to the pellet?")
+            self._questions_layout.addWidget(
+                self._make_outcome_picker(seg, require_pick=True))
 
-            # Reach-uncertain: there's no algo causal reach to accept, so the
-            # reviewer will ALWAYS pick -- pre-reveal the picker (default "No")
-            # to save a click.
-            if seg.get("reach_uncertain") and not cr:
-                w = self._q_widgets.get("is_causal", {})
-                if w.get("no_btn") is not None:
-                    w["no_btn"].setChecked(True)
-                    w["correction_container"].setVisible(True)
-
-            # --- Q(n): End frame correct? -- only when there IS an algo causal
-            # reach to check. In triaged-only mode there never is, so this is
-            # skipped and does not leave a numbering gap. ---
-            if cr:
-                qn += 1
-                q3 = self._make_yes_no_question(
-                    f"Q{qn}: Did that reach end at frame {cr['end']}?",
-                    "end_correct",
-                    correction_widget_factory=lambda: self._make_frame_setter("Correct end frame:", cr["end"]),
-                )
-                self._questions_layout.addWidget(q3)
-
-            # --- Q(n): Outcome correct? ---
-            qn += 1
-            q_out = self._make_yes_no_question(
-                f"Q{qn}: Did that reach cause outcome '{seg.get('outcome', '?')}'?",
-                "outcome_correct",
-                correction_widget_factory=lambda: self._make_outcome_picker(seg),
-            )
-            self._questions_layout.addWidget(q_out)
-
-        else:
-            # Untouched segment
-            qn += 1
-            q_miss = self._make_yes_no_question(
-                f"Q{qn}: Are all reaches misses (pellet on pillar at segment end)?",
-                "all_miss",
-                correction_widget_factory=lambda: self._make_untouched_correction(seg),
-            )
-            self._questions_layout.addWidget(q_miss)
+        else:  # both_uncertain
+            _hdr("Neither the causal reach nor the outcome is known. Pick which "
+                 "reach (if any) acted, then what it did "
+                 "(choose 'untouched' if nothing happened).")
+            self._questions_layout.addWidget(self._make_reach_picker(seg))
+            self._questions_layout.addWidget(
+                self._make_outcome_picker(seg, require_pick=True))
 
         # --- Ignore windows (abnormal non-reach events) -- on ANY non-boundary
         # segment, independent of the reach questions above ---
@@ -1562,34 +1537,189 @@ class CausalReviewWidget(QWidget):
             f"Re-segmented + re-scored into {len(self._segment_list)} segments -- "
             f"unchanged ranges keep the algo's verdict; correct only what's wrong.")
 
+    def _candidate_reach_ids(self, seg: Dict):
+        """Reach ids algo-4's reduction could NOT rule out as misses for this
+        triaged segment -- the few the reviewer should actually consider (the
+        rest provably never moved the pellet, so they can't be causal). Cached
+        per (video, segment). Returns None when it can't be computed, so the
+        caller falls back to showing all reaches."""
+        if self.dlc_df is None:
+            return None
+        all_reaches = seg.get("all_reaches") or []
+        if not all_reaches:
+            return None
+        cache = getattr(self, "_cand_cache", None)
+        if cache is None:
+            cache = self._cand_cache = {}
+        key = (getattr(self, "_video_stem", ""), seg.get("segment_num"))
+        if key in cache:
+            return cache[key]
+        seg_reaches = [
+            {"reach_id": r.get("reach_id"), "start_frame": r["start"], "end_frame": r["end"]}
+            for r in all_reaches if r.get("reach_id") is not None
+        ]
+        result = None
+        if seg_reaches:
+            try:
+                from mousereach.assignment.v2.triage_reduction import reduce_triaged_segment
+                outcome_known = seg.get("outcome") in (
+                    "retrieved", "displaced_sa", "displaced_outside")
+                cv_state, cv_valid = self._get_cv_states()
+                labels, _ = reduce_triaged_segment(
+                    self.dlc_df, int(seg["start_frame"]), int(seg["end_frame"]),
+                    seg_reaches, outcome_known=bool(outcome_known),
+                    cv_state=cv_state, cv_valid=cv_valid)
+                result = {rid for rid, lab in labels.items() if lab != "miss"}
+            except Exception:
+                result = None
+        cache[key] = result
+        return result
+
+    def _get_cv_states(self):
+        """Per-video CV pellet localization (CV_ON / CV_OFF / CV_GONE per frame)
+        for the TRIAGED frames only, computed once per video and cached. This is
+        the confluence signal the reduction uses to verify the pellet's on/off
+        state where the small keypoint is unreliable (it both recovers dropped
+        on-pillar reads and overrides a fragile keypoint 'off'). Only the triaged
+        segments' frames are decoded, so it stays fast. Returns (None, None) if
+        the video/CV is unavailable -- the reduction then uses its safe
+        keypoint-only fallback (conservative off->off gate)."""
+        if self.dlc_df is None:
+            return None, None
+        cache = getattr(self, "_cv_cache", None)
+        if cache is None:
+            cache = self._cv_cache = {}
+        stem = getattr(self, "_video_stem", "")
+        if stem in cache:
+            return cache[stem]
+        result = (None, None)
+        try:
+            from mousereach.review.staging import (
+                resolve_canonical_paths, DEFAULT_CONNECTOME_ROOT)
+            from mousereach.lib.dlc_cleaning import clean_dlc_bodyparts
+            from mousereach.lib.pillar_geometry import compute_pillar_geometry_series
+            from mousereach.lib.cv_pellet_presence import compute_cv_states
+            from mousereach.assignment.v2.triage_reduction import compute_pellet_states
+            mp4 = resolve_canonical_paths(stem, DEFAULT_CONNECTOME_ROOT).get("mp4")
+            n = len(self.dlc_df)
+            needed = []
+            for s in self._segment_list:
+                if not s.get("is_boundary") and self._is_triaged(s):
+                    a = max(0, int(s["start_frame"]))
+                    b = min(n - 1, int(s["end_frame"]))
+                    if b >= a:
+                        needed.extend(range(a, b + 1))
+            if mp4 and Path(mp4).exists() and needed:
+                on, off, paw = compute_pellet_states(self.dlc_df, 0, n - 1)
+                sub = clean_dlc_bodyparts(self.dlc_df, other_bodyparts_to_clean=("Pellet",))
+                g = compute_pillar_geometry_series(sub)
+                st, vv, _ = compute_cv_states(
+                    mp4, g["pillar_cx"].to_numpy(float), g["pillar_cy"].to_numpy(float),
+                    g["pillar_r"].to_numpy(float), on, off, paw,
+                    sub["Pellet_x"].to_numpy(float), sub["Pellet_y"].to_numpy(float),
+                    self.dlc_df["Pellet_likelihood"].to_numpy(float),
+                    frames_needed=needed)
+                result = (st, vv)
+        except Exception:
+            result = (None, None)
+        cache[stem] = result
+        return result
+
+    def _segment_triage(self, seg: Dict):
+        """Classify WHY this segment is triaged and return (kind, candidates):
+
+          reach_uncertain   -- outcome is algo-committed; the causal reach is
+                               open. candidates = reaches algo-4 couldn't rule
+                               out as misses.
+          outcome_uncertain -- exactly one candidate reach survives, so the
+                               causal reach is effectively pinned; the outcome
+                               is open. candidates = [that reach].
+          both_uncertain    -- outcome unknown AND zero or >1 candidate reaches
+                               -- both are open.
+
+        candidates is a list of the seg's reach dicts ({start,end,reach_id}).
+        """
+        all_reaches = seg.get("all_reaches") or []
+        cand_ids = self._candidate_reach_ids(seg)
+        if cand_ids is None:
+            cands = list(all_reaches)
+        else:
+            cands = [r for r in all_reaches if r.get("reach_id") in cand_ids] or list(all_reaches)
+        outcome_known = seg.get("outcome") in (
+            "retrieved", "displaced_sa", "displaced_outside", "abnormal",
+            "abnormal_exception",
+        )
+        if outcome_known:
+            kind = "reach_uncertain"
+        elif len(cands) == 1:
+            kind = "outcome_uncertain"
+        else:
+            kind = "both_uncertain"
+        return kind, cands
+
+    def _read_reach_pick(self, rp: Dict):
+        """Read the reach chosen in a reach-picker widget dict, or None.
+
+        Radio ids 0..len(candidates)-1 index the candidate list; id ==
+        len(candidates) is the manual-entry row, which snaps to an overlapping
+        detected reach so a hand-typed range still matches the algo."""
+        if not rp:
+            return None
+        checked_id = rp["reach_group"].checkedId()
+        reaches = rp["all_reaches"]
+        if 0 <= checked_id < len(reaches):
+            r = reaches[checked_id]
+            return {"start": r["start"], "end": r["end"], "reach_id": r.get("reach_id")}
+        if checked_id == len(reaches):
+            return self._snap_to_detected_reach(
+                rp["start_spin"].value(), rp["end_spin"].value(),
+                rp.get("all_detected", reaches))
+        return None
+
     def _make_reach_picker(self, seg: Dict) -> QWidget:
         """Inline reach picker: choose from detected reaches or draw a new one.
 
-        Detected reaches go in a height-capped SCROLL AREA so a segment with
-        many reaches doesn't produce an enormous panel. The reach nearest the
-        known interaction frame (the likely causal one) is highlighted."""
+        Shows ONLY the reaches algo-4's reduction could not rule out as misses
+        (never every reach), in a height-capped SCROLL AREA. The reach nearest
+        the known interaction frame (the likely causal one) is highlighted."""
         w = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         w.setLayout(layout)
 
         all_reaches = seg.get("all_reaches", [])
-        layout.addWidget(QLabel(
-            f"Pick the correct causal reach ({len(all_reaches)} detected):"))
+        # Show ONLY the reaches algo-4's reduction couldn't rule out as misses
+        # -- the reviewer should never scroll every reach. Fall back to all if
+        # the reduction can't narrow (bad tracking) so nothing is ever hidden
+        # wrongly; the manual-entry row still covers a rare mis-ruling.
+        cands = self._candidate_reach_ids(seg)
+        if cands is not None:
+            shown = [r for r in all_reaches if r.get("reach_id") in cands]
+            if not shown:
+                shown = list(all_reaches)
+        else:
+            shown = list(all_reaches)
+        n_ruled = len(all_reaches) - len(shown)
+        if n_ruled > 0:
+            layout.addWidget(QLabel(
+                f"Pick the causal reach -- {len(shown)} candidate(s) "
+                f"({n_ruled} ruled out as misses by algo-4):"))
+        else:
+            layout.addWidget(QLabel(
+                f"Pick the correct causal reach ({len(shown)} reach(es)):"))
 
         reach_group = QButtonGroup(w)
         reach_group.setExclusive(True)
 
-        # Likely causal reach = the detected reach nearest the known interaction
-        # frame (the outcome is algo-confirmed, so its interaction frame points
-        # at the reach that probably caused it). Highlight it, don't auto-pick.
+        # Likely causal reach = the shown reach nearest the known interaction
+        # frame. Highlight it, don't auto-pick.
         ifr = seg.get("interaction_frame")
         best_i = None
-        if ifr is not None and all_reaches:
+        if ifr is not None and shown:
             best_i = min(
-                range(len(all_reaches)),
-                key=lambda j: min(abs(all_reaches[j]["start"] - ifr),
-                                  abs(all_reaches[j]["end"] - ifr)))
+                range(len(shown)),
+                key=lambda j: min(abs(shown[j]["start"] - ifr),
+                                  abs(shown[j]["end"] - ifr)))
 
         # Height-capped, scrollable list of detected reaches.
         reaches_box = QWidget()
@@ -1597,7 +1727,7 @@ class CausalReviewWidget(QWidget):
         reaches_layout.setContentsMargins(2, 2, 2, 2)
         reaches_layout.setSpacing(1)
         reaches_box.setLayout(reaches_layout)
-        for i, r in enumerate(all_reaches):
+        for i, r in enumerate(shown):
             label = f"Reach {r.get('reach_id', i)}: frames {r['start']}-{r['end']}"
             if i == best_i:
                 label += "   * nearest interaction frame"
@@ -1607,6 +1737,12 @@ class CausalReviewWidget(QWidget):
                 rb.setStyleSheet("font-weight: bold;")
             reach_group.addButton(rb, i)
             reaches_layout.addWidget(rb)
+        # Default the selection to the highlighted (likely causal) reach so the
+        # reviewer confirms or overrides rather than starting from nothing.
+        if best_i is not None:
+            btn = reach_group.button(best_i)
+            if btn is not None:
+                btn.setChecked(True)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(reaches_box)
@@ -1617,7 +1753,7 @@ class CausalReviewWidget(QWidget):
         # Option: undetected reach (manual entry) -- outside the scroll so it is
         # always visible.
         manual_rb = QRadioButton("Undetected reach (enter frames manually):")
-        reach_group.addButton(manual_rb, len(all_reaches))
+        reach_group.addButton(manual_rb, len(shown))
         layout.addWidget(manual_rb)
 
         manual_row = QHBoxLayout()
@@ -1644,7 +1780,7 @@ class CausalReviewWidget(QWidget):
         jump_row = QHBoxLayout()
         jump_btn = QPushButton("Jump to selected reach")
         jump_btn.clicked.connect(
-            lambda: self._jump_to_selected_reach(reach_group, all_reaches, start_spin)
+            lambda: self._jump_to_selected_reach(reach_group, shown, start_spin)
         )
         jump_row.addWidget(jump_btn)
         jump_row.addStretch()
@@ -1652,7 +1788,8 @@ class CausalReviewWidget(QWidget):
 
         self._q_widgets["_reach_picker"] = {
             "reach_group": reach_group,
-            "all_reaches": all_reaches,
+            "all_reaches": shown,          # candidate list -- radio ids index into THIS
+            "all_detected": all_reaches,   # every detected reach -- for snapping a manual entry
             "start_spin": start_spin,
             "end_spin": end_spin,
         }
@@ -1698,19 +1835,28 @@ class CausalReviewWidget(QWidget):
         self._q_widgets["_end_frame_spin"] = spin
         return w
 
-    def _make_outcome_picker(self, seg: Dict) -> QWidget:
-        """Inline outcome picker dropdown."""
+    def _make_outcome_picker(self, seg: Dict, require_pick: bool = False) -> QWidget:
+        """Inline outcome picker dropdown.
+
+        require_pick: prepend the "-- select outcome --" sentinel and leave it
+        selected, so an outcome-uncertain / both-uncertain segment is only
+        resolved once the reviewer actively chooses (we never default to a
+        concrete outcome they didn't pick)."""
         w = QWidget()
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         w.setLayout(layout)
 
-        layout.addWidget(QLabel("Correct outcome:"))
+        layout.addWidget(QLabel("What did it do to the pellet?"
+                                if require_pick else "Correct outcome:"))
         combo = QComboBox()
+        if require_pick:
+            combo.addItem(OUTCOME_PICK_SENTINEL)
         combo.addItems(OUTCOME_CHOICES)
-        # Pre-select current algo outcome if it matches
+        # Pre-select the current algo outcome only when it's a real one and we're
+        # not forcing an explicit pick.
         current = seg.get("outcome", "")
-        if current in OUTCOME_CHOICES:
+        if not require_pick and current in OUTCOME_CHOICES:
             combo.setCurrentText(current)
         layout.addWidget(combo)
         layout.addStretch()
@@ -1889,96 +2035,51 @@ class CausalReviewWidget(QWidget):
         is_phantom = False
         agreed = True
 
-        # Q1: Is pellet correct?
-        q1_ans = self._get_toggle_answer("is_pellet")
-        answers["is_pellet"] = q1_ans
-        if q1_ans is False:
-            agreed = False
-            pc = self._q_widgets.get("_pellet_correction", {})
-            phantom_check = pc.get("phantom")
-            renum_spin = pc.get("renumber")
-            if phantom_check and phantom_check.isChecked():
-                is_phantom = True
-            # If renumbered, we note it but don't change pellet_num in the
-            # segment list (the review record captures the correction)
+        # Triaged-only: collect the answer(s) for the open question(s), per the
+        # reason this element was triaged. The recorded shape is unchanged
+        # (human_outcome + human_causal_reach), so the kinematics bridge is
+        # unaffected. A left-unanswered element stays 'triaged' -- we never
+        # fabricate a decision the reviewer didn't make.
+        kind = getattr(self, "_panel_kind", None)
+        answers["triage_kind"] = kind
 
-        is_touched = seg.get("outcome") in (
-            "displaced_sa", "displaced_outside", "retrieved", "abnormal",
-            "abnormal_exception",
-        )
+        if kind == "reach_uncertain":
+            # Outcome is algo-committed; the reviewer pins the causal reach.
+            human_outcome = seg.get("outcome")
+            picked = self._read_reach_pick(self._q_widgets.get("_reach_picker", {}))
+            if picked is not None:
+                human_causal_reach = picked
+                answers["causal_pick"] = picked
+                if picked != seg.get("causal_reach"):
+                    agreed = False
 
-        if is_touched:
-            # Q2: causal reach correct?
-            q2_ans = self._get_toggle_answer("is_causal")
-            answers["is_causal"] = q2_ans
-            if q2_ans is False:
-                agreed = False
-                rp = self._q_widgets.get("_reach_picker", {})
-                if rp:
-                    checked_id = rp["reach_group"].checkedId()
-                    reaches = rp["all_reaches"]
-                    if 0 <= checked_id < len(reaches):
-                        r = reaches[checked_id]
-                        human_causal_reach = {"start": r["start"], "end": r["end"],
-                                              "reach_id": r.get("reach_id")}
-                    elif checked_id == len(reaches):
-                        # Manually typed range: snap to an overlapping detected
-                        # reach if one exists (so it matches the algo, not 'absent').
-                        human_causal_reach = self._snap_to_detected_reach(
-                            rp["start_spin"].value(), rp["end_spin"].value(), reaches)
-                    # (abnormal / non-reach events -> Ignore-windows section)
+        elif kind == "outcome_uncertain":
+            # Causal reach is pinned; the reviewer says what it did.
+            human_causal_reach = getattr(self, "_pinned_reach", None)
+            combo = self._q_widgets.get("_outcome_combo")
+            picked = combo.currentText() if combo else None
+            if picked and picked != OUTCOME_PICK_SENTINEL:
+                human_outcome = picked
+                agreed = False  # the algo could not call the outcome; the human did
+                answers["outcome_pick"] = picked
+                if picked == "untouched":
+                    human_causal_reach = None
 
-            # Q3: end frame correct?
-            q3_ans = self._get_toggle_answer("end_correct")
-            answers["end_correct"] = q3_ans
-            if q3_ans is False:
+        elif kind == "both_uncertain":
+            # Neither known: outcome first (untouched => no causal reach), else
+            # the reviewer also pins which reach acted.
+            combo = self._q_widgets.get("_outcome_combo")
+            picked = combo.currentText() if combo else None
+            if picked and picked != OUTCOME_PICK_SENTINEL:
+                human_outcome = picked
                 agreed = False
-                spin = self._q_widgets.get("_end_frame_spin")
-                if spin and human_causal_reach:
-                    human_causal_reach = dict(human_causal_reach)
-                    human_causal_reach["end"] = spin.value()
-
-            # Q4: outcome correct?
-            q4_ans = self._get_toggle_answer("outcome_correct")
-            answers["outcome_correct"] = q4_ans
-            if q4_ans is False:
-                agreed = False
-                combo = self._q_widgets.get("_outcome_combo")
-                if combo:
-                    human_outcome = combo.currentText()
-        else:
-            # Untouched / outcome-uncertain segment.
-            q_miss_ans = self._get_toggle_answer("all_miss")
-            answers["all_miss"] = q_miss_ans
-            if q_miss_ans is True:
-                # "all reaches are misses" == the segment is untouched. Record it
-                # explicitly so an algo 'triaged' (outcome-uncertain) segment the
-                # reviewer resolves as all-miss becomes 'untouched' -- not left
-                # 'triaged', which otherwise surfaces as an unresolved
-                # triaged -> triaged even though the human DID make the call.
-                if seg.get("outcome") == "triaged":
-                    agreed = False   # the human resolved what the algo could not
-                human_outcome = "untouched"
-            elif q_miss_ans is False:
-                agreed = False
-                # Reach picker + outcome for untouched-was-wrong
-                rp = self._q_widgets.get("_reach_picker", {})
-                if rp:
-                    checked_id = rp["reach_group"].checkedId()
-                    reaches = rp["all_reaches"]
-                    if 0 <= checked_id < len(reaches):
-                        r = reaches[checked_id]
-                        human_causal_reach = {"start": r["start"], "end": r["end"],
-                                              "reach_id": r.get("reach_id")}
-                    elif checked_id == len(reaches):
-                        # Manually typed range: snap to an overlapping detected
-                        # reach if one exists (so it matches the algo, not 'absent').
-                        human_causal_reach = self._snap_to_detected_reach(
-                            rp["start_spin"].value(), rp["end_spin"].value(), reaches)
-                    # (abnormal / non-reach events -> Ignore-windows section)
-                combo = self._q_widgets.get("_untouched_outcome_combo")
-                if combo:
-                    human_outcome = combo.currentText()
+                answers["outcome_pick"] = picked
+                if picked == "untouched":
+                    human_causal_reach = None
+                else:
+                    human_causal_reach = self._read_reach_pick(
+                        self._q_widgets.get("_reach_picker", {}))
+                    answers["causal_pick"] = human_causal_reach
 
         # Ignore windows: frame ranges where a NON-reach event moved the pellet.
         # Recorded alongside the normal reach scoring (misses stay misses). If no
@@ -1993,10 +2094,10 @@ class CausalReviewWidget(QWidget):
             answers["abnormal_ranges"] = abnormal_ranges
             # No human-affirmed causal reach? (untouched w/ all-miss, or touched
             # w/ the algo reach rejected and no replacement chosen.)
+            # No human-affirmed causal reach (reach left unpicked, or the
+            # reviewer chose 'untouched') + an ignore-window set => the pellet's
+            # displacement was a non-reach event.
             no_causal = human_causal_reach is None
-            if answers.get("is_causal") is False:
-                no_causal = (human_causal_reach is None
-                             or human_causal_reach == seg.get("causal_reach"))
             if no_causal:
                 human_outcome = "abnormal_exception"
                 human_causal_reach = None
@@ -2040,41 +2141,35 @@ class CausalReviewWidget(QWidget):
         hc = human.get("causal_reach") or {}
         ho = human.get("outcome")
 
-        for key in ["is_pellet", "is_causal", "end_correct", "outcome_correct", "all_miss"]:
-            val = answers.get(key)
-            if val is None:
-                continue
-            q = self._q_widgets.get(key)
-            if not q:
-                continue
-            (q["yes_btn"] if val else q["no_btn"]).setChecked(True)
-            q["correction_container"].setVisible(not val)
-
-        # Restore the specific corrections made on a "no" answer.
-        if answers.get("outcome_correct") is False and ho:
+        # The triaged-only panel has no yes/no toggles -- restore the reviewer's
+        # decision directly: set the outcome dropdown, and pre-check the picked
+        # causal reach (or its manual-entry fallback) in the reach picker.
+        if ho:
             combo = self._q_widgets.get("_outcome_combo")
             if combo:
                 i = combo.findText(ho)
                 if i >= 0:
                     combo.setCurrentIndex(i)
-        if answers.get("all_miss") is False and ho:
-            combo = self._q_widgets.get("_untouched_outcome_combo")
-            if combo:
-                i = combo.findText(ho)
-                if i >= 0:
-                    combo.setCurrentIndex(i)
-        if answers.get("end_correct") is False and hc.get("end") is not None:
-            spin = self._q_widgets.get("_end_frame_spin")
-            if spin:
-                spin.setValue(int(hc["end"]))
-        if (answers.get("is_causal") is False or answers.get("all_miss") is False) and hc:
+        if hc:
             rp = self._q_widgets.get("_reach_picker", {})
-            if rp and "start_spin" in rp and hc.get("start") is not None:
-                try:
-                    rp["start_spin"].setValue(int(hc["start"]))
-                    rp["end_spin"].setValue(int(hc["end"]))
-                except Exception:
-                    pass
+            if rp:
+                reaches = rp.get("all_reaches", [])
+                idx = next((j for j, r in enumerate(reaches)
+                            if r.get("reach_id") == hc.get("reach_id")), None)
+                if idx is not None:
+                    btn = rp["reach_group"].button(idx)
+                    if btn is not None:
+                        btn.setChecked(True)
+                elif hc.get("start") is not None and "start_spin" in rp:
+                    # saved reach isn't among the candidates -> manual-entry row
+                    try:
+                        rp["start_spin"].setValue(int(hc["start"]))
+                        rp["end_spin"].setValue(int(hc["end"]))
+                        man = rp["reach_group"].button(len(reaches))
+                        if man is not None:
+                            man.setChecked(True)
+                    except Exception:
+                        pass
 
         # Restore the ignore windows (abnormal non-reach events).
         abn = self._q_widgets.get("_abnormal_ranges")
