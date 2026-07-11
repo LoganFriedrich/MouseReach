@@ -59,6 +59,7 @@ from mousereach.outcomes.v6_cascade.stage_21_causal_reach_via_immediate_on_off_t
     IMMEDIATE_WINDOW_FRAMES,
     MIN_PAW_CLEAR_FRAMES_REQUIRED,
 )
+from mousereach.lib.cv_pellet_presence import CV_ON
 
 # Residual triage-kind labels (why a reach still needs review).
 TRIAGE_REACH_UNCERTAIN = "reach_uncertain"      # outcome known, which reach unsure
@@ -68,6 +69,7 @@ TRIAGE_BOTH_UNCERTAIN = "both_uncertain"        # neither pinned
 
 def compute_pellet_states(
     raw_dlc_df: pd.DataFrame, seg_start: int, seg_end: int,
+    cv_state: Optional[np.ndarray] = None, cv_valid: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Per-frame ``on_pillar``, ``off_pillar`` and ``paw_past_y`` boolean arrays
     over [seg_start, seg_end], computed exactly as algo 3 stage 21 does
@@ -78,6 +80,17 @@ def compute_pellet_states(
     off_pillar : detected (lk >= high) AND clearly in the SA (> 1.5 r).
     A frame that is neither (undetected, or in the 1.0-1.5 r edge zone) counts
     as neither -- i.e. 'can't tell', so it never proves a miss.
+
+    CV confluence (optional): the small pellet keypoint drops out (-> ``uncertain``)
+    and can misfire off-pillar. When per-video CV states are supplied
+    (``cv_state``/``cv_valid``, whole-video arrays aligned to ``raw_dlc_df``; see
+    ``mousereach.lib.cv_pellet_presence.compute_cv_states``), CV is used ONLY to
+    ADD on-pillar reads: a paw-clear ``CV_ON`` frame (a pellet-sized sphere found
+    ON the pillar, pillar-first) becomes on-pillar. This recovers on-pillar frames
+    the keypoint dropped AND overrides a fragile keypoint ``off`` when the sphere
+    is really on the pillar. CV NEVER asserts ``off`` -- off stays keypoint-derived,
+    merely suppressed where on -- so it can only move a frame toward on and can
+    never invent an ``off`` that would score a real departure a miss.
     """
     sub_raw = raw_dlc_df.iloc[seg_start:seg_end + 1]
     n = len(sub_raw)
@@ -107,6 +120,20 @@ def compute_pellet_states(
     detected = pellet_lk >= PELLET_LK_HIGH
     on_pillar = detected & (dist_radii <= ON_PILLAR_RADII) & (~paw_past_y)
     off_pillar = detected & (dist_radii > PELLET_OFF_PILLAR_RADII_FOR_SA) & (~paw_past_y)
+
+    # CV confluence: CV is used ONLY to ADD on-pillar reads -- it recovers an
+    # on-pillar frame the keypoint dropped, and overrides a fragile keypoint
+    # 'off' when the sphere is actually on the pillar (pillar-first localization).
+    # It NEVER asserts 'off': off stays keypoint-derived and is merely suppressed
+    # where CV/keypoint sees on. So CV can only turn a frame toward on and can
+    # never invent an 'off' that would score a real causal reach a miss.
+    if cv_state is not None and cv_valid is not None:
+        st = np.asarray(cv_state[seg_start:seg_end + 1])
+        vv = np.asarray(cv_valid[seg_start:seg_end + 1], dtype=bool)
+        if st.shape[0] == n and vv.shape[0] == n:
+            cv_on = vv & (~paw_past_y) & (st == CV_ON)
+            on_pillar = on_pillar | cv_on
+            off_pillar = off_pillar & (~on_pillar)
     return on_pillar, off_pillar, paw_past_y
 
 
@@ -144,27 +171,31 @@ def classify_triaged_reaches(
     on_pillar: np.ndarray,
     off_pillar: np.ndarray,
     paw_past_y: np.ndarray,
+    cv_verified: bool = False,
 ) -> List[str]:
     """Return ``"miss"`` or ``"triaged"`` for each reach (in the given order).
 
-    Two safe miss rules; everything else stays ``triaged``:
+    Two miss rules; everything else stays ``triaged``:
 
       * ``on->on`` -- pellet confidently on the pillar before AND after the
-        reach: it never left, so the reach did nothing. Always safe.
-      * ``off->off`` AFTER the departure is ESTABLISHED -- the pellet is
-        confidently in the SA before AND after, AND some earlier reach showed a
-        confident ``on->off`` transition (so we KNOW the pellet already left the
-        pillar). Only then is an off->off reach provably too late to be causal.
+        reach: it never left, so the reach did nothing.
+      * ``off->off`` -- pellet confidently in the SA (off the pillar) before AND
+        after the reach: it was already gone, so this reach cannot have taken a
+        pillar-pellet.
 
-    The off->off rule is gated on an established departure because, when pellet
-    tracking is poor (the pellet is barely detected on the pillar), an ``off``
-    read before a reach can just be a missed on-phase -- and the reach could be
-    the very one that displaced the pellet. Without a confident on->off
-    departure anywhere in the segment, no off->off reach is scored a miss.
+    Both are miss states by the same physics: displacement AND retrieval both
+    require the pellet to leave the pillar, so a reach across which the pellet's
+    on/off state did not change did nothing to it. A confident ``off`` requires
+    the pellet to be DETECTED clearly in the SA -- a mere dropout reads
+    ``uncertain``, not ``off`` -- so an ``off`` genuinely means the pellet was
+    seen off the pillar, not just untracked.
 
-    The causal reach (an ``on->off`` transition) is always kept ``triaged`` -- it
-    is never scored a miss -- and any uncertain (not-detected / mixed) read
-    stays ``triaged`` too.
+    The causal reach is an ``on->off`` transition -- its pre (on) and post (off)
+    differ by construction, so it can never be scored a miss -- and any uncertain
+    (not-detected / mixed) read stays ``triaged`` too. CV resolution (see
+    ``compute_pellet_states``) recovers the causal reach's true ``on`` pre-read
+    when the keypoint dropped it, so a genuine departure stays ``on->off`` rather
+    than collapsing to a spurious ``off->off``.
     """
     n = len(on_pillar)
     states = [
@@ -172,7 +203,8 @@ def classify_triaged_reaches(
          _state_in_window(on_pillar, off_pillar, paw_past_y, le + 1, n, "after"))
         for (ls, le) in reach_windows_local
     ]
-    # First confident on->off transition establishes that the pellet has left.
+    # First confident on->off transition establishes that the pellet has left --
+    # used only for the no-CV fallback gate below.
     departure_idx: Optional[int] = None
     for i, (pre, post) in enumerate(states):
         if pre == "on" and post == "off":
@@ -181,12 +213,48 @@ def classify_triaged_reaches(
     labels: List[str] = []
     for i, (pre, post) in enumerate(states):
         if pre == "on" and post == "on":
-            labels.append("miss")                    # never left the pillar
-        elif (pre == "off" and post == "off"
-              and departure_idx is not None and i > departure_idx):
-            labels.append("miss")                    # already gone before this reach
+            labels.append("miss")     # never left the pillar
+        elif pre == "off" and post == "off":
+            # off->off is physically a miss (pellet already off the pillar). When
+            # the off states are CV-verified we trust it unconditionally. Without
+            # CV the keypoint 'off' is fragile, so we keep the conservative gate:
+            # only score off->off a miss AFTER a confident on->off departure has
+            # been established, so a false off on the causal reach's pre-window
+            # cannot score it a miss.
+            if cv_verified or (departure_idx is not None and i > departure_idx):
+                labels.append("miss")
+            else:
+                labels.append("triaged")
         else:
-            labels.append("triaged")                 # departure / uncertain / not-yet-left
+            labels.append("triaged")  # on->off departure, or any uncertain read
+
+    # Recursion / departure-window (ON side, pellet-identity-safe). This pellet
+    # leaves the pillar once. The FIRST confident on->off in the segment IS that
+    # departure -- a LATER on-run is the NEXT pellet arriving at the boundary, not
+    # this one, so we must bound to the first departure (naively taking the last
+    # on-frame conflates the two pellets and blows up the window). Any reach
+    # ending before the last on-frame of that first on-run was entirely before the
+    # departure (pellet still on) -> miss, even if its own windows read uncertain.
+    # The causal reach brackets the departure (on at its start), so a strict
+    # inequality never rules it out. The off side is intentionally omitted: a
+    # spurious keypoint 'off' is fragile, so we only ever rule out on the
+    # CV-robust on side. Under tracking noise this degrades to conservative (fewer
+    # misses), never unsafe.
+    on_idx = np.flatnonzero(on_pillar)
+    off_idx = np.flatnonzero(off_pillar)
+    last_on = -1
+    if on_idx.size and off_idx.size:
+        first_on = int(on_idx[0])
+        off_after_first_on = off_idx[off_idx > first_on]
+        if off_after_first_on.size:
+            first_off = int(off_after_first_on[0])          # this pellet's departure
+            on_before_dep = on_idx[on_idx < first_off]
+            if on_before_dep.size:
+                last_on = int(on_before_dep[-1])
+    if last_on >= 0:
+        for i, (ls, le) in enumerate(reach_windows_local):
+            if labels[i] == "triaged" and le < last_on:
+                labels[i] = "miss"      # pellet still on-pillar after this reach
     return labels
 
 
@@ -212,6 +280,8 @@ def reduce_triaged_segment(
     seg_end: int,
     seg_reaches: List[Dict],
     outcome_known: bool,
+    cv_state: Optional[np.ndarray] = None,
+    cv_valid: Optional[np.ndarray] = None,
 ) -> Tuple[Dict[int, str], Optional[str]]:
     """Recategorize the known-miss reaches of one triaged segment.
 
@@ -237,7 +307,8 @@ def reduce_triaged_segment(
     if not seg_reaches:
         return {}, None
 
-    on_pillar, off_pillar, paw_past_y = compute_pellet_states(raw_dlc_df, seg_start, seg_end)
+    on_pillar, off_pillar, paw_past_y = compute_pellet_states(
+        raw_dlc_df, seg_start, seg_end, cv_state=cv_state, cv_valid=cv_valid)
     n = len(on_pillar)
     if n == 0:
         return ({r["reach_id"]: "triaged" for r in seg_reaches},
@@ -247,11 +318,18 @@ def reduce_triaged_segment(
     local: List[Tuple[int, int]] = []
     for k in order:
         r = seg_reaches[k]
-        ls = max(0, int(r["start_frame"]) - seg_start)
-        le = min(n - 1, int(r["end_frame"]) - seg_start)
+        # Clamp BOTH ends into [0, n-1]. A reach whose frames fall outside the
+        # segment bounds (a mis-assigned reach from the caller) must not drive an
+        # out-of-range window index into the state arrays -- that raises
+        # IndexError deep in the stage-21 window scan. Clamping keeps the pass
+        # robust; a genuinely out-of-range reach collapses to an edge window and
+        # reads 'uncertain' (stays a candidate), never crashes.
+        ls = min(n - 1, max(0, int(r["start_frame"]) - seg_start))
+        le = min(n - 1, max(0, int(r["end_frame"]) - seg_start))
         local.append((ls, le))
 
-    reach_labels = classify_triaged_reaches(local, on_pillar, off_pillar, paw_past_y)
+    reach_labels = classify_triaged_reaches(
+        local, on_pillar, off_pillar, paw_past_y, cv_verified=(cv_state is not None))
 
     labels: Dict[int, str] = {}
     for pos, k in enumerate(order):
