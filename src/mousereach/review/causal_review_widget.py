@@ -1207,6 +1207,11 @@ class CausalReviewWidget(QWidget):
             _hdr(f"The outcome is '<span style='color:#8f8'>{seg.get('outcome')}</span>' "
                  f"(algo-confirmed). Which reach caused it?")
             self._questions_layout.addWidget(self._make_reach_picker(seg))
+            # Override: the algo-confirmed outcome can still be wrong.
+            self._questions_layout.addWidget(QLabel(
+                "<i>Outcome also wrong? Correct it here:</i>"))
+            self._questions_layout.addWidget(
+                self._make_outcome_picker(seg, require_pick=False))
 
         elif kind == "outcome_uncertain":
             r = cand_reaches[0] if cand_reaches else None
@@ -1220,6 +1225,11 @@ class CausalReviewWidget(QWidget):
                      "What happened to the pellet?")
             self._questions_layout.addWidget(
                 self._make_outcome_picker(seg, require_pick=True))
+            # Override: the pinned reach can be wrong -- pick a different one
+            # ("Show all reaches" reaches one algo-4 ruled out as a miss).
+            self._questions_layout.addWidget(QLabel(
+                "<i>Wrong reach? Pick the correct one here:</i>"))
+            self._questions_layout.addWidget(self._make_reach_picker(seg))
 
         else:  # both_uncertain
             _hdr("Neither the causal reach nor the outcome is known. Pick which "
@@ -1688,25 +1698,29 @@ class CausalReviewWidget(QWidget):
         w.setLayout(layout)
 
         all_reaches = seg.get("all_reaches", [])
-        # Show ONLY the reaches algo-4's reduction couldn't rule out as misses
-        # -- the reviewer should never scroll every reach. Fall back to all if
-        # the reduction can't narrow (bad tracking) so nothing is ever hidden
-        # wrongly; the manual-entry row still covers a rare mis-ruling.
+        # Candidates = reaches algo-4's reduction could not rule out as misses;
+        # the reviewer normally only needs these. But the narrowing can be wrong
+        # (it ruled out the TRUE reach), so the ruled-out reaches are built too --
+        # hidden behind a "Show all reaches" toggle -- so a wrong call is always
+        # correctable. Radio ids index into `ordered` (candidates first).
         cands = self._candidate_reach_ids(seg)
         if cands is not None:
-            shown = [r for r in all_reaches if r.get("reach_id") in cands]
-            if not shown:
-                shown = list(all_reaches)
+            candidate_reaches = [r for r in all_reaches if r.get("reach_id") in cands]
+            other_reaches = [r for r in all_reaches if r.get("reach_id") not in cands]
         else:
-            shown = list(all_reaches)
-        n_ruled = len(all_reaches) - len(shown)
+            candidate_reaches, other_reaches = list(all_reaches), []
+        if not candidate_reaches:
+            candidate_reaches, other_reaches = list(all_reaches), []
+        ordered = candidate_reaches + other_reaches
+        n_cand = len(candidate_reaches)
+        n_ruled = len(other_reaches)
         if n_ruled > 0:
             layout.addWidget(QLabel(
-                f"Pick the causal reach -- {len(shown)} candidate(s) "
-                f"({n_ruled} ruled out as misses by algo-4):"))
+                f"Pick the causal reach -- {n_cand} candidate(s) "
+                f"({n_ruled} ruled out as misses):"))
         else:
             layout.addWidget(QLabel(
-                f"Pick the correct causal reach ({len(shown)} reach(es)):"))
+                f"Pick the correct causal reach ({n_cand} reach(es)):"))
 
         reach_group = QButtonGroup(w)
         reach_group.setExclusive(True)
@@ -1715,11 +1729,11 @@ class CausalReviewWidget(QWidget):
         # frame. Highlight it, don't auto-pick.
         ifr = seg.get("interaction_frame")
         best_i = None
-        if ifr is not None and shown:
+        if ifr is not None and candidate_reaches:
             best_i = min(
-                range(len(shown)),
-                key=lambda j: min(abs(shown[j]["start"] - ifr),
-                                  abs(shown[j]["end"] - ifr)))
+                range(n_cand),
+                key=lambda j: min(abs(candidate_reaches[j]["start"] - ifr),
+                                  abs(candidate_reaches[j]["end"] - ifr)))
 
         # Height-capped, scrollable list of detected reaches.
         reaches_box = QWidget()
@@ -1727,14 +1741,22 @@ class CausalReviewWidget(QWidget):
         reaches_layout.setContentsMargins(2, 2, 2, 2)
         reaches_layout.setSpacing(1)
         reaches_box.setLayout(reaches_layout)
-        for i, r in enumerate(shown):
+        other_radios = []
+        for i, r in enumerate(ordered):
+            is_other = i >= n_cand
             label = f"Reach {r.get('reach_id', i)}: frames {r['start']}-{r['end']}"
             if i == best_i:
                 label += "   * nearest interaction frame"
+            elif is_other:
+                label += "   (ruled out as miss)"
             rb = QRadioButton(label)
             rb.setProperty("reach_data", r)
             if i == best_i:
                 rb.setStyleSheet("font-weight: bold;")
+            elif is_other:
+                rb.setStyleSheet("color: #999;")
+                rb.setVisible(False)           # revealed by the "Show all reaches" toggle
+                other_radios.append(rb)
             reach_group.addButton(rb, i)
             reaches_layout.addWidget(rb)
         # Default the selection to the highlighted (likely causal) reach so the
@@ -1750,10 +1772,18 @@ class CausalReviewWidget(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         layout.addWidget(scroll)
 
+        # "Show all reaches" -- reveal the ruled-out reaches so the reviewer can
+        # override a wrong narrowing and pick a reach algo-4 called a miss.
+        if other_radios:
+            show_all = QCheckBox(f"Show all reaches ({n_ruled} ruled out)")
+            show_all.toggled.connect(
+                lambda checked, radios=other_radios: [rb.setVisible(bool(checked)) for rb in radios])
+            layout.addWidget(show_all)
+
         # Option: undetected reach (manual entry) -- outside the scroll so it is
         # always visible.
         manual_rb = QRadioButton("Undetected reach (enter frames manually):")
-        reach_group.addButton(manual_rb, len(shown))
+        reach_group.addButton(manual_rb, len(ordered))
         layout.addWidget(manual_rb)
 
         manual_row = QHBoxLayout()
@@ -1780,7 +1810,7 @@ class CausalReviewWidget(QWidget):
         jump_row = QHBoxLayout()
         jump_btn = QPushButton("Jump to selected reach")
         jump_btn.clicked.connect(
-            lambda: self._jump_to_selected_reach(reach_group, shown, start_spin)
+            lambda: self._jump_to_selected_reach(reach_group, ordered, start_spin)
         )
         jump_row.addWidget(jump_btn)
         jump_row.addStretch()
@@ -1788,7 +1818,7 @@ class CausalReviewWidget(QWidget):
 
         self._q_widgets["_reach_picker"] = {
             "reach_group": reach_group,
-            "all_reaches": shown,          # candidate list -- radio ids index into THIS
+            "all_reaches": ordered,        # radio ids index into THIS (candidates first, then ruled-out)
             "all_detected": all_reaches,   # every detected reach -- for snapping a manual entry
             "start_spin": start_spin,
             "end_spin": end_spin,
@@ -2045,17 +2075,34 @@ class CausalReviewWidget(QWidget):
 
         if kind == "reach_uncertain":
             # Outcome is algo-committed; the reviewer pins the causal reach.
-            human_outcome = seg.get("outcome")
             picked = self._read_reach_pick(self._q_widgets.get("_reach_picker", {}))
             if picked is not None:
                 human_causal_reach = picked
                 answers["causal_pick"] = picked
                 if picked != seg.get("causal_reach"):
                     agreed = False
+            # Outcome override: correct the algo-confirmed outcome if it's wrong;
+            # an unchanged picker keeps the algo outcome.
+            combo = self._q_widgets.get("_outcome_combo")
+            otxt = combo.currentText() if combo else None
+            if otxt and otxt != OUTCOME_PICK_SENTINEL and otxt != seg.get("outcome"):
+                human_outcome = otxt
+                agreed = False
+                answers["outcome_override"] = otxt
+                if otxt == "untouched":
+                    human_causal_reach = None
+            else:
+                human_outcome = seg.get("outcome")
 
         elif kind == "outcome_uncertain":
-            # Causal reach is pinned; the reviewer says what it did.
-            human_causal_reach = getattr(self, "_pinned_reach", None)
+            # Causal reach is pinned (reach picker defaults to it); the reviewer
+            # says what it did, and may override the reach too.
+            pinned = getattr(self, "_pinned_reach", None)
+            rpick = self._read_reach_pick(self._q_widgets.get("_reach_picker", {}))
+            human_causal_reach = rpick if rpick is not None else pinned
+            if rpick is not None and rpick != pinned:
+                answers["reach_override"] = rpick
+                agreed = False
             combo = self._q_widgets.get("_outcome_combo")
             picked = combo.currentText() if combo else None
             if picked and picked != OUTCOME_PICK_SENTINEL:
