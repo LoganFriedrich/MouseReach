@@ -235,8 +235,8 @@ class CausalReviewWidget(QWidget):
         header_layout = QVBoxLayout()
         header.setLayout(header_layout)
 
-        title = QLabel("<b>Causal Review Tool"
-                       + (" &mdash; TRIAGED-ONLY" if self._triage_only else "")
+        title = QLabel("<b>"
+                       + ("Triage Review Tool" if self._triage_only else "Causal Review Tool")
                        + "</b>")
         title.setStyleSheet("font-size: 14px;")
         header_layout.addWidget(title)
@@ -2472,7 +2472,7 @@ class CausalReviewWidget(QWidget):
             if s.get("answers", {}).get("reviewed", True) is not False
         )
         show_info(
-            f"Saved causal review: {n_reviewed}/{len(segments)} segments "
+            f"Saved review: {n_reviewed}/{len(segments)} segments "
             f"-> {out_path.name}"
         )
         self._status_label.setText(f"Saved: {out_path.name}")
@@ -2624,10 +2624,10 @@ class CausalReviewWidget(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point: causal review, TRIAGED-ONLY over the routine Pending queue
+# CLI entry point: triage review, TRIAGED-ONLY over the routine Pending queue
 # ---------------------------------------------------------------------------
 def main():
-    """Launch the causal review tool in TRIAGED-ONLY mode (CLI: mousereach-review-tool).
+    """Launch the triage review tool in TRIAGED-ONLY mode (CLI: mousereach-review-tool).
 
     Walks ONLY the triaged elements the algo could not resolve, across the
     routine Pending queue (videos with nothing to triage are skipped). Each
@@ -2641,8 +2641,8 @@ def main():
     from .staging import DEFAULT_PENDING_DIR
 
     parser = argparse.ArgumentParser(
-        description="Causal review, triaged-only: resolve just the segments the "
-                    "algo could not, over the routine Pending queue.")
+        description="Triage review: resolve just the triaged segments the algo "
+                    "could not, over the routine Pending queue.")
     parser.add_argument("--pending-dir", type=Path, default=DEFAULT_PENDING_DIR,
                         help="Review queue root of per-video bundles. "
                              "Default: MouseReach_Pipeline/Model40_Review/Pending.")
@@ -2655,12 +2655,14 @@ def main():
         print(f"Pending queue not found: {pending_dir}")
         return 1
 
-    mode = "full review" if args.all_segments else "TRIAGED-ONLY"
-    print(f"Launching Causal Review ({mode}) over {pending_dir} ...")
+    triage_only = not args.all_segments
+    tool_name = "Triage Review" if triage_only else "Causal Review"
+    mode = "triaged-only" if triage_only else "full review"
+    print(f"Launching {tool_name} ({mode}) over {pending_dir} ...")
     print("Building queue (scanning bundles for triaged elements) ...", flush=True)
-    viewer = napari.Viewer(title=f"MouseReach Causal Review ({mode})")
-    widget = CausalReviewWidget(viewer, triage_only=not args.all_segments)
-    viewer.window.add_dock_widget(widget, name="Causal Review", area="right")
+    viewer = napari.Viewer(title=f"MouseReach {tool_name} ({mode})")
+    widget = CausalReviewWidget(viewer, triage_only=triage_only)
+    viewer.window.add_dock_widget(widget, name=tool_name, area="right")
     widget.load_pending_queue(pending_dir)
     napari.run()
     return 0
