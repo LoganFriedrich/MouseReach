@@ -438,6 +438,9 @@ class CausalReviewWidget(QWidget):
 
     # frames of context padded around a reach when windowing a segment
     WINDOW_PAD = 45
+    # Land the playhead this many frames BEFORE the likely reach starts, so the
+    # reviewer sees the pellet's pre-reach state and can watch the reach happen.
+    OPEN_LEAD = 25
 
     def _load_video(self, video_path: Path):
         """One-time setup: a lazy full-video layer + overlays + algo data.
@@ -546,7 +549,8 @@ class CausalReviewWidget(QWidget):
           1. YOUR corrected causal reach, if you've reviewed this segment and set
              one -- once you correct it, THAT is the evaluated element.
           2. the algo's causal reach (touched)
-          3. the LAST reach in the segment (miss / triaged)
+          3. the MOST-LIKELY candidate reach -- nearest the interaction frame,
+             the same reach the panel highlights -- for miss / triaged.
         None only if the segment genuinely has no reaches.
         """
         rec = self._review_records.get(seg["segment_num"]) if getattr(self, "_review_records", None) else None
@@ -557,11 +561,30 @@ class CausalReviewWidget(QWidget):
         cr = seg.get("causal_reach")
         if cr:
             return {"start": int(cr["start"]), "end": int(cr["end"])}
-        reaches = seg.get("all_reaches") or []
-        if reaches:
-            last = max(reaches, key=lambda r: r.get("start", 0))
-            return {"start": int(last["start"]), "end": int(last["end"])}
+        # Triaged / miss: open on the MOST-LIKELY candidate reach -- the same one
+        # the question panel highlights -- so the playhead and the suggested reach
+        # agree (previously this used the LAST reach, which often disagreed).
+        ml = self._most_likely_reach(seg)
+        if ml is not None:
+            return {"start": int(ml["start"]), "end": int(ml["end"])}
         return None
+
+    def _most_likely_reach(self, seg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The candidate reach the reviewer most likely needs -- the one nearest
+        the interaction frame, i.e. the SAME reach the question panel highlights.
+        Falls back to the last candidate, then any reach. Keeps the playhead and
+        the panel's suggested reach in agreement."""
+        all_reaches = seg.get("all_reaches") or []
+        if not all_reaches:
+            return None
+        cand_ids = self._candidate_reach_ids(seg)
+        cands = ([r for r in all_reaches if r.get("reach_id") in cand_ids]
+                 if cand_ids is not None else list(all_reaches)) or list(all_reaches)
+        ifr = seg.get("interaction_frame")
+        if ifr is not None:
+            return min(cands, key=lambda r: min(abs(r["start"] - ifr),
+                                                abs(r["end"] - ifr)))
+        return max(cands, key=lambda r: r.get("start", 0))
 
     def _compute_segment_window(self, seg: Dict[str, Any]) -> Tuple[int, int]:
         """Absolute frame range to frame for a segment: the RELEVANT REACH plus a
@@ -1092,7 +1115,9 @@ class CausalReviewWidget(QWidget):
         segment-relative frame."""
         reach = self._relevant_reach(seg)
         if reach is not None:
-            target = reach["start"]
+            # Land a bit BEFORE the reach so the reviewer sees the pellet's
+            # pre-reach state and can watch the reach happen.
+            target = int(reach["start"]) - self.OPEN_LEAD
         else:
             # no reaches -> open ~30 frames before the segment-changing move (end)
             target = int(seg["end_frame"]) - 30
@@ -1593,7 +1618,14 @@ class CausalReviewWidget(QWidget):
         on-pillar reads and overrides a fragile keypoint 'off'). Only the triaged
         segments' frames are decoded, so it stays fast. Returns (None, None) if
         the video/CV is unavailable -- the reduction then uses its safe
-        keypoint-only fallback (conservative off->off gate)."""
+        keypoint-only fallback (conservative off->off gate).
+
+        Off by default: CV decodes the video (slow over the NAS -- ~15s on a
+        video whose triaged segments span most of it). The CLI --cv flag opts in.
+        Without it the reduction uses its fast, safe DLC-only path, which still
+        narrows via the departure recursion."""
+        if not getattr(self, "_use_cv", False):
+            return None, None
         if self.dlc_df is None:
             return None, None
         cache = getattr(self, "_cv_cache", None)
@@ -2695,6 +2727,9 @@ def main():
                              "Default: MouseReach_Pipeline/Model40_Review/Pending.")
     parser.add_argument("--all-segments", action="store_true",
                         help="Walk ALL segments, not just triaged ones (full review).")
+    parser.add_argument("--cv", action="store_true",
+                        help="Use CV pellet localization for tighter narrowing "
+                             "(slower: decodes each loaded video over the NAS).")
     args = parser.parse_args()
 
     pending_dir = Path(args.pending_dir)
@@ -2709,6 +2744,7 @@ def main():
     print("Building queue (scanning bundles for triaged elements) ...", flush=True)
     viewer = napari.Viewer(title=f"MouseReach {tool_name} ({mode})")
     widget = CausalReviewWidget(viewer, triage_only=triage_only)
+    widget._use_cv = bool(args.cv)
     viewer.window.add_dock_widget(widget, name=tool_name, area="right")
     widget.load_pending_queue(pending_dir)
     napari.run()
