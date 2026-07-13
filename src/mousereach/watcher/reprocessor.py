@@ -61,6 +61,7 @@ class ReprocessingScanner:
             'outdated_partial': 0, # Only need seg/reach/outcomes rerun
             'crystallized_skipped': 0,
             'no_manifest': 0,
+            'review_triggered': 0,  # version-current but a newer human review to apply
             'errors': 0,
             'outdated_videos': [],
         }
@@ -88,12 +89,26 @@ class ReprocessingScanner:
 
                 # Compare against current versions
                 comparison = compare_manifest_to_current(manifest, current)
+                # A freshly-saved human review that post-dates the archived
+                # kinematics must also be applied -- re-run so the reviewer's
+                # triage resolution flows into features/DB (the extractor applies
+                # it; see orchestrator + resolve_review_path).
+                review_pending = self._review_pending(video_id)
 
-                if comparison['is_current']:
+                if comparison['is_current'] and not review_pending:
                     summary['current'] += 1
                 else:
                     summary['outdated'] += 1
-                    scope = 'full' if comparison['needs_full_reprocess'] else 'post_dlc'
+                    if not comparison['is_current']:
+                        scope = 'full' if comparison['needs_full_reprocess'] else 'post_dlc'
+                        stale = list(comparison['stale_components'])
+                        if review_pending:
+                            stale.append('human_review')
+                    else:
+                        # version-current, but a newer human review needs applying
+                        scope = 'post_dlc'
+                        stale = ['human_review']
+                        summary['review_triggered'] += 1
 
                     if scope == 'full':
                         summary['outdated_full'] += 1
@@ -103,7 +118,7 @@ class ReprocessingScanner:
                     summary['outdated_videos'].append({
                         'video_id': video_id,
                         'scope': scope,
-                        'stale_components': comparison['stale_components'],
+                        'stale_components': stale,
                     })
 
                     if mark_outdated:
@@ -113,7 +128,7 @@ class ReprocessingScanner:
                         )
                         logger.info(
                             f"Marked {video_id} as outdated "
-                            f"(scope={scope}, stale: {comparison['stale_components']})"
+                            f"(scope={scope}, stale: {stale})"
                         )
 
             except Exception as e:
@@ -131,6 +146,24 @@ class ReprocessingScanner:
         )
 
         return summary
+
+    def _review_pending(self, video_id: str) -> bool:
+        """True if a saved human review exists and is NEWER than the archived
+        kinematics -- i.e. the reviewer's triage resolution has not yet been
+        applied to the features/DB product. Such videos are re-run (post_dlc
+        scope); the feature extractor then substitutes the human calls. Never
+        raises; any error yields False (no spurious reprocessing)."""
+        try:
+            from mousereach.review.causal_review_io import resolve_review_path
+            review = resolve_review_path(video_id)
+            if review is None:
+                return False
+            feats = next(self.archive_dir.rglob(f"{video_id}_features.json"), None)
+            if feats is None:
+                return True  # reviewed but no kinematics yet -> needs a run
+            return review.stat().st_mtime > feats.stat().st_mtime
+        except Exception:
+            return False
 
     def _load_manifest(self, video_id: str) -> Optional[dict]:
         """Find and load processing manifest for an archived video.
