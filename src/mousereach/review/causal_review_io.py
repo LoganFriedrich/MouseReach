@@ -30,6 +30,44 @@ def _get_username() -> str:
     return os.environ.get("USERNAME", os.environ.get("USER", "unknown"))
 
 
+def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
+    """Locate a saved ``{video_stem}_causal_review.json`` across the canonical
+    save locations, NEWEST first: an explicit ``primary_dir`` (e.g. a processing
+    dir), the routine Pending bundle, and next to the canonical video. Returns the
+    Path (which ``load_and_apply_review`` accepts directly) or None.
+
+    The review tool saves the per-video review either in the bundle dir (routine
+    manifest mode, Pending/<stem>/) or next to the video -- neither of which is
+    the pipeline's processing dir. This resolver lets any (re)processing find and
+    auto-apply the reviewer's resolution wherever it was saved. It NEVER raises;
+    a missing review yields None and the extractor no-ops."""
+    candidates: List[Path] = []
+    if primary_dir is not None:
+        candidates.append(Path(primary_dir))
+    try:
+        from mousereach.review.staging import (
+            DEFAULT_PENDING_DIR, resolve_canonical_paths, DEFAULT_CONNECTOME_ROOT)
+        candidates.append(Path(DEFAULT_PENDING_DIR) / video_stem)
+        try:
+            candidates.append(Path(
+                resolve_canonical_paths(video_stem, DEFAULT_CONNECTOME_ROOT)["mp4"]).parent)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    found: List[Path] = []
+    for d in candidates:
+        try:
+            p = d / f"{video_stem}_causal_review.json"
+            if p.is_file():
+                found.append(p)
+        except Exception:
+            pass
+    if not found:
+        return None
+    return max(found, key=lambda p: p.stat().st_mtime)
+
+
 def _get_timestamp() -> str:
     return datetime.now().isoformat()
 
