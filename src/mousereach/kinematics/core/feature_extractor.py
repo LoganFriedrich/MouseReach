@@ -86,6 +86,12 @@ class ReachFeatures:
     flagged_for_review: bool = False
     flag_reason: Optional[str] = None
 
+    # Review provenance -- distinguishes a human-corrected reach from raw algo.
+    outcome_source: Optional[str] = None        # 'human_review' when a reviewer resolved this segment
+    reviewed_by: Optional[str] = None           # reviewer username (when human_review)
+    algo_outcome: Optional[str] = None          # the algo's original outcome, preserved on override
+    algo_causal_reach_id: Optional[int] = None  # the algo's original causal reach id, preserved on override
+
     # Extended kinematic feature set (flat dict; keys are stable column names).
     # Populated by FeatureExtractor for v2 outputs. See REACH_KINEMATIC_DATA_DICTIONARY.md.
     extended: Optional[Dict[str, float]] = None
@@ -342,6 +348,14 @@ class FeatureExtractor:
             max_extent_pixels=reach.get('max_extent_pixels'),
             max_extent_ruler=reach.get('max_extent_ruler')
         )
+
+        # Review provenance (stamped on the segment by apply_review_overrides when
+        # a reviewer resolved it) -- carried per-reach so a human-corrected reach
+        # is distinguishable from a raw-algo reach in reach_data.
+        features.outcome_source = outcome_data.get('outcome_source')
+        features.reviewed_by = outcome_data.get('reviewed_by')
+        features.algo_outcome = outcome_data.get('algo_outcome')
+        features.algo_causal_reach_id = outcome_data.get('algo_causal_reach_id')
 
         # Check if this is the causal reach
         causal_reach_id = outcome_data.get('causal_reach_id')

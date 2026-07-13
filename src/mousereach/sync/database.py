@@ -66,6 +66,7 @@ REACH_JSON_COLUMNS = [
     'apex_distance_to_pellet_mm', 'lateral_deviation_mm',
     'mean_likelihood', 'frames_low_confidence', 'tracking_quality_score',
     'flagged_for_review', 'flag_reason',
+    'outcome_source', 'reviewed_by', 'algo_outcome', 'algo_causal_reach_id',
 ]
 
 # Boolean fields that need int conversion for SQLite
@@ -157,6 +158,12 @@ CREATE TABLE IF NOT EXISTS reach_data (
     -- Flags
     flagged_for_review INTEGER NOT NULL DEFAULT 0,
     flag_reason TEXT,
+
+    -- Review provenance (human triage resolution; NULL/algo for raw-algo reaches)
+    outcome_source TEXT,
+    reviewed_by TEXT,
+    algo_outcome TEXT,
+    algo_causal_reach_id INTEGER,
 
     -- Segment-level context (denormalized)
     segment_outcome TEXT,
@@ -373,6 +380,10 @@ class DatabaseSyncer:
             ('segmenter_version', 'TEXT'),
             ('reach_detector_version', 'TEXT'),
             ('outcome_detector_version', 'TEXT'),
+            ('outcome_source', 'TEXT'),
+            ('reviewed_by', 'TEXT'),
+            ('algo_outcome', 'TEXT'),
+            ('algo_causal_reach_id', 'INTEGER'),
         ]
         try:
             with self.engine.connect() as conn:
