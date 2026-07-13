@@ -912,8 +912,16 @@ class DLCOrchestrator(BaseOrchestrator):
                 if reach_path.exists() and outcome_path.exists():
                     try:
                         from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+                        from mousereach.review.causal_review_io import resolve_review_path
                         extractor = FeatureExtractor()
-                        features = extractor.extract(dlc_path, reach_path, outcome_path)
+                        # Auto-apply the reviewer's triage resolution if one was
+                        # saved (bundle dir or next to the video). Safe: None when
+                        # unreviewed -> extract() no-ops -> raw algo outcome.
+                        review_path = resolve_review_path(video_id, processing_dir)
+                        if review_path is not None:
+                            logger.info(f"Applying human review corrections: {review_path.name}")
+                        features = extractor.extract(dlc_path, reach_path, outcome_path,
+                                                     review_path=review_path)
                         features_path = processing_dir / f"{video_id}_features.json"
                         with open(features_path, 'w') as f:
                             json.dump(features.to_dict(), f, indent=2)
@@ -1683,8 +1691,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
                 try:
                     from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+                    from mousereach.review.causal_review_io import resolve_review_path
                     extractor = FeatureExtractor()
-                    features = extractor.extract(dlc_path, reach_path, outcome_path)
+                    # Auto-apply the reviewer's triage resolution if one was saved
+                    # (bundle dir or next to the video). Safe: None when unreviewed
+                    # -> extract() no-ops -> raw algo outcome.
+                    review_path = resolve_review_path(video_id, self.processing_dir)
+                    if review_path is not None:
+                        logger.info(f"Applying human review corrections: {review_path.name}")
+                    features = extractor.extract(dlc_path, reach_path, outcome_path,
+                                                 review_path=review_path)
 
                     features_path = self.processing_dir / f"{video_id}_features.json"
                     with open(features_path, 'w') as f:
