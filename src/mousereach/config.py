@@ -116,6 +116,20 @@ class Paths:
     # Final validated outputs, organized by project/cohort (Step 6 destination)
     ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" if NAS_ROOT else None
 
+    # --- Human-review queue roots (NAS -- cross-node visible) ---
+    # A video only reaches kinematics + connectome.db when it is CLEAN. Anything
+    # the algo cannot commit is held OUT of the archive+DB as a self-contained
+    # bundle here until a human clears it. Two queues:
+    #   TRIAGE_REVIEW -- per-element "which reach / what outcome" questions the
+    #     triage review tool answers quickly (<5s each). Reuses the existing
+    #     Model40_Review/Pending root the review tool already reads.
+    #   DEEP_REVIEW   -- segmentation FAILED, or a reviewer escalated a video
+    #     that needs the causal/GT deep tools. Clearing a deep-review flag
+    #     re-injects the video at the START of the pipeline (re-segment).
+    REVIEW_ROOT = NAS_ROOT / "Model40_Review" if NAS_ROOT else None
+    TRIAGE_REVIEW = REVIEW_ROOT / "Pending" if REVIEW_ROOT else None
+    DEEP_REVIEW = REVIEW_ROOT / "Deep_Review" if REVIEW_ROOT else None
+
     # --- Processing Pipeline Paths (derived from MouseReach_PROCESSING_ROOT) ---
     # These will be None if PROCESSING_ROOT is not configured
     #
