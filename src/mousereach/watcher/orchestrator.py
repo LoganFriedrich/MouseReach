@@ -99,6 +99,9 @@ class BaseOrchestrator:
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
 
+                # Periodically pick up freshly-saved reviews / version staleness.
+                self._maybe_review_reprocess_scan()
+
                 # Phase A: Scan for new work
                 self._scan_phase()
 
@@ -123,6 +126,7 @@ class BaseOrchestrator:
         """Run one full cycle: scan + process all pending items, then exit."""
         logger.info(f"{self.__class__.__name__} running once")
 
+        self._maybe_review_reprocess_scan(force=True)
         self._scan_phase()
 
         processed = 0
@@ -134,6 +138,33 @@ class BaseOrchestrator:
             processed += 1
 
         logger.info(f"Run-once complete: processed {processed} items")
+
+    def _maybe_review_reprocess_scan(self, force: bool = False):
+        """Periodically scan this node's archived videos for freshly-saved reviews
+        (and tool-version staleness) and mark them 'outdated', so a RUNNING watcher
+        applies reviews automatically -- no manual 'mousereach-version-check' step.
+        Runs at startup then on an interval; fully guarded so it can never break
+        the main loop."""
+        interval = getattr(self.config, 'reprocess_scan_interval_seconds', 1800)
+        now = time.time()
+        if not force and (now - getattr(self, '_last_reprocess_scan', 0.0)) < interval:
+            return
+        self._last_reprocess_scan = now
+        try:
+            from mousereach.config import Paths
+            nas_root = Paths.NAS_ROOT
+            if not nas_root:
+                return
+            from mousereach.watcher.reprocessor import ReprocessingScanner
+            summary = ReprocessingScanner(self.db, nas_root).scan(mark_outdated=True)
+            n_out = summary.get('outdated', 0)
+            if n_out:
+                logger.info(
+                    f"Reprocess scan: {n_out} archived videos marked outdated "
+                    f"({summary.get('review_triggered', 0)} from new reviews) "
+                    f"-- watcher will reprocess them")
+        except Exception as e:
+            logger.warning(f"Reprocess scan skipped: {e}")
 
     # =========================================================================
     # ABSTRACT METHODS (subclasses must implement)
