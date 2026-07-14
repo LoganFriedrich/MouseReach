@@ -36,12 +36,24 @@ VIDEO_TRANSITIONS = {
     'dlc_queued': ['dlc_running'],
     'dlc_running': ['dlc_complete', 'dlc_queued', 'failed'],  # dlc_queued = re-queue on interrupt
     'dlc_complete': ['processing'],
-    'processing': ['processed', 'failed'],
+    'processing': ['processed', 'failed', 'triage', 'deep_review'],  # triage/deep_review = human-review holds
     'processed': ['archiving'],
     'archiving': ['archived', 'failed'],
     'archived': ['outdated', 'crystallized'],  # Version-aware reprocessing
     'outdated': ['dlc_queued', 'processing', 'failed'],  # Re-enters pipeline
     'crystallized': [],  # Locked against reprocessing (use force_state to unlock)
+    # --- Human-review holds: the video is held OUT of the archive + connectome.db
+    # until a human clears it. Kinematics NEVER run on a held video. ---
+    # 'triage': the algo left per-element questions (which reach / what outcome).
+    #   The triage review tool answers them. When EVERY triaged element is
+    #   addressed -> 'outdated' (the reprocessor re-runs the pipeline and the gate
+    #   re-checks). If the reviewer cannot resolve it -> escalate to 'deep_review'.
+    'triage': ['outdated', 'processing', 'deep_review', 'failed'],
+    # 'deep_review': segmentation FAILED, or a reviewer escalated a triaged video.
+    #   The causal/GT deep tools clear the flag -> the video is re-injected at the
+    #   START of the pipeline (re-segment): -> 'outdated'/'processing' (re-seg) or
+    #   'dlc_queued' (only if the deep fix changed the pose h5).
+    'deep_review': ['outdated', 'processing', 'dlc_queued', 'failed'],
     'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed'],  # Retry from any prior state
 }
 
