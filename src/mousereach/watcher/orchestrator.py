@@ -1252,6 +1252,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
             except Exception as e:
                 logger.warning(f"Reprocessing scan failed: {e}")
 
+        # Periodic review-return scan: re-inject human-cleared held videos
+        # (triage fully resolved / deep-review flag cleared) back into Processing
+        # so the pipeline re-runs them and the gate re-checks.
+        if (self._scan_cycle_count % self._reprocess_scan_interval == 0
+                and self.processing_dir):
+            try:
+                from mousereach.watcher.review_return import scan_review_queues
+                scan_review_queues(self.db, self.processing_dir)
+            except Exception as e:
+                logger.warning(f"Review-return scan failed: {e}")
+
     # =========================================================================
     # WORK QUEUE
     # =========================================================================
