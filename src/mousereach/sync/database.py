@@ -78,7 +78,7 @@ ALL_COLUMNS = (
     + REACH_JSON_COLUMNS
     + ['segment_outcome', 'segment_outcome_confidence', 'segment_outcome_flagged',
        'attention_score', 'pellet_position_idealness']
-    + ['source_file', 'extractor_version', 'imported_at']
+    + ['source_file', 'extractor_version', 'imported_at', 'extended_features']
     + ['processed_by', 'mousereach_version', 'dlc_scorer', 'segmenter_version',
        'reach_detector_version', 'outcome_detector_version']
 )
@@ -184,6 +184,12 @@ CREATE TABLE IF NOT EXISTS reach_data (
     segmenter_version TEXT,
     reach_detector_version TEXT,
     outcome_detector_version TEXT,
+
+    -- Full v2 per-paw extended feature set (all extractor 'extended' keys) as a
+    -- JSON blob. Zero-loss: nothing the extractor computes is dropped. Query via
+    -- json_extract or expand in pandas; specific metrics can be promoted to flat
+    -- columns later WITHOUT reprocessing (the blob already holds everything).
+    extended_features TEXT,
 
     -- One row per reach per video
     UNIQUE(video_name, reach_id)
@@ -384,6 +390,7 @@ class DatabaseSyncer:
             ('reviewed_by', 'TEXT'),
             ('algo_outcome', 'TEXT'),
             ('algo_causal_reach_id', 'INTEGER'),
+            ('extended_features', 'TEXT'),
         ]
         try:
             with self.engine.connect() as conn:
@@ -571,6 +578,10 @@ class DatabaseSyncer:
                         if col in BOOL_COLUMNS and val is not None:
                             val = 1 if val else 0
                         row[col] = val
+
+                    # Full v2 extended feature set (per-paw) as a JSON blob --
+                    # zero-loss capture of everything the extractor computed.
+                    row['extended_features'] = json.dumps(reach.get('extended') or {})
 
                     # Segment context
                     row.update(seg_context)
