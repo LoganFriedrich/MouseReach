@@ -48,6 +48,7 @@ from .causal_review_io import (
     session_key,
     find_gt,
     has_gt,
+    bundle_manifest_path,
     _get_username,
     _get_timestamp,
 )
@@ -2325,7 +2326,7 @@ class CausalReviewWidget(QWidget):
         if pd is None or not pd.exists():
             return []
         return sorted(d for d in pd.iterdir()
-                      if d.is_dir() and (d / "manifest.json").exists())
+                      if d.is_dir() and bundle_manifest_path(d).exists())
 
     def _bundle_reviewed(self, bundle_dir: Path) -> bool:
         """True if this bundle already has a COMPLETE review (every segment
@@ -2333,7 +2334,7 @@ class CausalReviewWidget(QWidget):
         stem = bundle_dir.name
         dirs = [bundle_dir]
         try:
-            man = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+            man = json.loads(bundle_manifest_path(bundle_dir).read_text(encoding="utf-8"))
             cvp = man.get("canonical_video_path")
             if cvp:
                 dirs.append(Path(cvp).parent)
@@ -2441,7 +2442,7 @@ class CausalReviewWidget(QWidget):
             show_info("Review queue: nothing left to review (all flagged or complete).")
             return
         b = random.choice(pool)
-        manifest = json.loads((b / "manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(bundle_manifest_path(b).read_text(encoding="utf-8"))
         self.load_from_manifest(manifest, b)
         self._status_label.setText(
             self._status_label.text() + f"   [random pick -- {len(pool)} left to review]")
@@ -2465,7 +2466,7 @@ class CausalReviewWidget(QWidget):
             return
         nxt = random.choice(pool)
         try:
-            manifest = json.loads((nxt / "manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads(bundle_manifest_path(nxt).read_text(encoding="utf-8"))
             self.load_from_manifest(manifest, nxt)
             self._status_label.setText(
                 self._status_label.text()

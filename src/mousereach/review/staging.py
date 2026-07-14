@@ -245,9 +245,9 @@ def stage_video(
     reach_out = bundle / f"{stem}_reaches.json"
     outcome_out = bundle / f"{stem}_pellet_outcomes.json"
     assign_out = bundle / f"{stem}_reach_assignments.json"
-    manifest_out = bundle / "manifest.json"
+    manifest_out = bundle / f"{stem}_manifest.json"
 
-    if bundle.exists() and manifest_out.exists() and not overwrite:
+    if bundle.exists() and (manifest_out.exists() or (bundle / "manifest.json").exists()) and not overwrite:
         log(f"already staged (manifest present); skipping. Use overwrite=True to redo.")
         return bundle
     bundle.mkdir(parents=True, exist_ok=True)

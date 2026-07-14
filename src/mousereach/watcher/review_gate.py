@@ -78,7 +78,7 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
             "self_contained": True,
         },
     }
-    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def route_to_queue(

@@ -30,6 +30,25 @@ def _get_username() -> str:
     return os.environ.get("USERNAME", os.environ.get("USER", "unknown"))
 
 
+def bundle_manifest_path(bundle_dir, video_stem: Optional[str] = None) -> Path:
+    """Path to a review bundle's manifest.
+
+    Honors the project naming convention -- every file associated with an origin
+    source carries that video's full title first: ``{stem}_manifest.json`` -- with
+    a fallback to the legacy bare ``manifest.json`` for bundles staged before the
+    convention. When neither exists, returns the stem-named path (the write
+    target)."""
+    bundle_dir = Path(bundle_dir)
+    stem = video_stem or bundle_dir.name
+    named = bundle_dir / f"{stem}_manifest.json"
+    if named.exists():
+        return named
+    legacy = bundle_dir / "manifest.json"
+    if legacy.exists():
+        return legacy
+    return named
+
+
 def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
     """Locate a saved ``{video_stem}_causal_review.json`` across the canonical
     save locations, NEWEST first: an explicit ``primary_dir`` (e.g. a processing
