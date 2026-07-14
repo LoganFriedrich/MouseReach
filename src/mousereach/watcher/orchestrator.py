@@ -863,8 +863,10 @@ class DLCOrchestrator(BaseOrchestrator):
         from mousereach.segmentation.core.batch import process_single as seg_single
         from mousereach.reach.core.batch import process_single as reach_single
         from mousereach.outcomes.core.batch import process_single as outcome_single
+        from mousereach.assignment.run import assign_reaches_for_video
         from mousereach.pipeline.manifest import create_processing_manifest
         from mousereach.pipeline.triage import triage_video
+        from mousereach.watcher.review_gate import run_gate, route_deep_review, DECISION_CLEAN
 
         video_id = work['id']
         video_data = work['data']
@@ -902,7 +904,17 @@ class DLCOrchestrator(BaseOrchestrator):
             else:
                 error = seg_result.get('error', 'segmentation failed')
                 self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
-                self.db.mark_failed(video_id, f"Segmentation failed: {error}")
+                # Seg failure -> DEEP review, not a dead 'failed'. Move the whole
+                # bundle out of Processing so a human re-segments with the deep tools.
+                try:
+                    route_deep_review(
+                        video_id, processing_dir,
+                        f"segmentation_failed: {error}", db=self.db,
+                        extra_sources=[processing_dir / f"{video_id}.mp4"],
+                    )
+                except Exception as re:
+                    logger.warning(f"Deep-review routing failed for {video_id}: {re}")
+                    self.db.mark_failed(video_id, f"Segmentation failed: {error}")
                 return
 
             # Step 2: Reach Detection
@@ -936,38 +948,16 @@ class DLCOrchestrator(BaseOrchestrator):
                                 duration=outcome_duration)
                 logger.info(f"Outcome detection complete: {video_id} ({outcome_duration:.1f}s)")
 
-            # Step 4: Feature Extraction
+            # Step 3.5: Reach Assignment (algo-4) -- causal-reach attribution.
+            # Runs before the gate (a touched segment with no committed causal
+            # reach counts as triaged).
             if not skip_outcomes:
-                reach_path = processing_dir / f"{video_id}_reaches.json"
-                outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
-                if reach_path.exists() and outcome_path.exists():
-                    try:
-                        from mousereach.kinematics.core.feature_extractor import FeatureExtractor
-                        from mousereach.review.causal_review_io import resolve_review_path
-                        extractor = FeatureExtractor()
-                        # Auto-apply the reviewer's triage resolution if one was
-                        # saved (bundle dir or next to the video). Safe: None when
-                        # unreviewed -> extract() no-ops -> raw algo outcome.
-                        review_path = resolve_review_path(video_id, processing_dir)
-                        if review_path is not None:
-                            logger.info(f"Applying human review corrections: {review_path.name}")
-                        features = extractor.extract(dlc_path, reach_path, outcome_path,
-                                                     review_path=review_path)
-                        features_path = processing_dir / f"{video_id}_features.json"
-                        with open(features_path, 'w') as f:
-                            json.dump(features.to_dict(), f, indent=2)
-                        logger.info(f"Feature extraction complete: {video_id}")
+                try:
+                    assign_reaches_for_video(processing_dir, video_id, dlc_path)
+                except Exception as e:
+                    logger.warning(f"Assignment (algo-4) failed for {video_id}: {e}")
 
-                        # Database sync
-                        try:
-                            from mousereach.sync.database import sync_file_to_database
-                            sync_file_to_database(features_path)
-                        except Exception as e:
-                            logger.warning(f"Database sync failed for {video_id}: {e}")
-                    except Exception as e:
-                        logger.warning(f"Feature extraction failed for {video_id}: {e}")
-
-            # Generate provenance manifest
+            # Generate provenance manifest (travels with the bundle if held)
             pipeline_duration = time.time() - pipeline_start
             try:
                 step_timestamps = {
@@ -983,13 +973,15 @@ class DLCOrchestrator(BaseOrchestrator):
             except Exception as e:
                 logger.warning(f"Manifest creation failed for {video_id}: {e}")
 
-            # Unified triage
+            # Unified QC triage
+            qc_verdict = 'auto_approved'
             try:
                 triage_result = triage_video(
                     video_id=video_id,
                     processing_dir=processing_dir,
                     h5_path=dlc_path,
                 )
+                qc_verdict = triage_result.verdict
                 for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
                     json_path = processing_dir / f"{video_id}{suffix}"
                     if json_path.exists():
@@ -1009,6 +1001,46 @@ class DLCOrchestrator(BaseOrchestrator):
                 triage_result.save(processing_dir / f"{video_id}_triage.json")
             except Exception as e:
                 logger.warning(f"Unified triage failed for {video_id}: {e}")
+
+            # GATE: nothing reaches kinematics / connectome.db until it is CLEAN.
+            # seg soft-fail / QC-critical -> DEEP_REVIEW; unresolved triage ->
+            # TRIAGE. A held video's whole bundle is MOVED out of Processing; STOP.
+            decision = run_gate(
+                video_id, processing_dir, self.db,
+                qc_verdict=qc_verdict,
+                mp4_path=processing_dir / f"{video_id}.mp4",
+            )
+            if decision != DECISION_CLEAN:
+                logger.info(f"Local pipeline held: {video_id} -> {decision} "
+                            f"(no kinematics until cleared)")
+                return
+
+            # Step 4: Feature Extraction + DB sync (CLEAN videos ONLY)
+            if not skip_outcomes:
+                reach_path = processing_dir / f"{video_id}_reaches.json"
+                outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
+                if reach_path.exists() and outcome_path.exists():
+                    try:
+                        from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+                        from mousereach.review.causal_review_io import resolve_review_path
+                        extractor = FeatureExtractor()
+                        review_path = resolve_review_path(video_id, processing_dir)
+                        if review_path is not None:
+                            logger.info(f"Applying human review corrections: {review_path.name}")
+                        features = extractor.extract(dlc_path, reach_path, outcome_path,
+                                                     review_path=review_path)
+                        features_path = processing_dir / f"{video_id}_features.json"
+                        with open(features_path, 'w') as f:
+                            json.dump(features.to_dict(), f, indent=2)
+                        logger.info(f"Feature extraction complete: {video_id}")
+
+                        try:
+                            from mousereach.sync.database import sync_file_to_database
+                            sync_file_to_database(features_path)
+                        except Exception as e:
+                            logger.warning(f"Database sync failed for {video_id}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Feature extraction failed for {video_id}: {e}")
 
             self.db.update_state(video_id, 'processed')
             self.db.log_step(video_id, 'local_pipeline', 'completed',
@@ -1609,8 +1641,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         from mousereach.segmentation.core.batch import process_single as seg_single, add_validation_status
         from mousereach.reach.core.batch import process_single as reach_single
         from mousereach.outcomes.core.batch import process_single as outcome_single
+        from mousereach.assignment.run import assign_reaches_for_video
         from mousereach.pipeline.manifest import create_processing_manifest
         from mousereach.pipeline.triage import triage_video
+        from mousereach.watcher.review_gate import run_gate, route_deep_review, DECISION_CLEAN
 
         video_id = work['id']
         video_data = work['data']
@@ -1646,7 +1680,19 @@ class ProcessingOrchestrator(BaseOrchestrator):
             else:
                 error = seg_result.get('error', 'segmentation failed')
                 self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
-                self.db.mark_failed(video_id, f"Segmentation failed: {error}")
+                # Seg failure -> DEEP review, not a dead 'failed'. Over-long
+                # recordings / uniform-fallback boundaries need manual re-seg with
+                # the deep tools; move the whole bundle out of Processing so a
+                # human can clear it and re-inject the video.
+                try:
+                    route_deep_review(
+                        video_id, self.processing_dir,
+                        f"segmentation_failed: {error}", db=self.db,
+                        extra_sources=[self.processing_dir / f"{video_id}.mp4"],
+                    )
+                except Exception as re:
+                    logger.warning(f"Deep-review routing failed for {video_id}: {re}")
+                    self.db.mark_failed(video_id, f"Segmentation failed: {error}")
                 return
 
         except Exception as e:
@@ -1711,61 +1757,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
         else:
             logger.info(f"Skipping outcomes for {video_id} (tray type: {tray_type})")
 
-        # --- Step 4: Feature Extraction (join reaches + outcomes + DLC kinematics) ---
+        # --- Step 3.5: Reach Assignment (algo-4) -- causal-reach attribution ---
+        # Runs BEFORE the gate: the gate treats a touched segment with no
+        # committed causal reach as triaged, so the assignment must exist first.
         if not skip_outcomes:
-            reach_path = self.processing_dir / f"{video_id}_reaches.json"
-            outcome_path = self.processing_dir / f"{video_id}_pellet_outcomes.json"
+            self.db.log_step(video_id, 'assignment', 'started')
+            step_start = time.time()
+            try:
+                assign_reaches_for_video(self.processing_dir, video_id, dlc_path)
+                self.db.log_step(video_id, 'assignment', 'completed',
+                                 duration=time.time() - step_start)
+            except Exception as e:
+                logger.warning(f"Assignment (algo-4) failed for {video_id}: {e}")
 
-            if reach_path.exists() and outcome_path.exists():
-                self.db.log_step(video_id, 'feature_extraction', 'started')
-                step_start = time.time()
-
-                try:
-                    from mousereach.kinematics.core.feature_extractor import FeatureExtractor
-                    from mousereach.review.causal_review_io import resolve_review_path
-                    extractor = FeatureExtractor()
-                    # Auto-apply the reviewer's triage resolution if one was saved
-                    # (bundle dir or next to the video). Safe: None when unreviewed
-                    # -> extract() no-ops -> raw algo outcome.
-                    review_path = resolve_review_path(video_id, self.processing_dir)
-                    if review_path is not None:
-                        logger.info(f"Applying human review corrections: {review_path.name}")
-                    features = extractor.extract(dlc_path, reach_path, outcome_path,
-                                                 review_path=review_path)
-
-                    features_path = self.processing_dir / f"{video_id}_features.json"
-                    with open(features_path, 'w') as f:
-                        json.dump(features.to_dict(), f, indent=2)
-
-                    feat_duration = time.time() - step_start
-                    self.db.log_step(
-                        video_id, 'feature_extraction', 'completed',
-                        message=f"segments={features.n_segments}",
-                        duration=feat_duration
-                    )
-                    logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
-
-                    # --- Step 5: Database sync (push features to connectome.db) ---
-                    try:
-                        from mousereach.sync.database import sync_file_to_database
-                        synced = sync_file_to_database(features_path)
-                        if synced:
-                            self.db.log_step(video_id, 'db_sync', 'completed', message="Synced to connectome.db")
-                            logger.info(f"Database sync complete: {video_id}")
-                        else:
-                            logger.debug(f"Database sync skipped for {video_id} (subject not in DB or DB unavailable)")
-                    except Exception as e:
-                        logger.warning(f"Database sync failed for {video_id}: {e}")
-
-                except Exception as e:
-                    feat_duration = time.time() - step_start
-                    self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e), duration=feat_duration)
-                    # Feature extraction failure is non-fatal — video still gets triaged/processed
-                    logger.warning(f"Feature extraction failed for {video_id}: {e}")
-
-        # --- Pipeline complete — generate provenance manifest ---
+        # --- Provenance manifest (travels with the bundle if the video is held) ---
         pipeline_duration = time.time() - pipeline_start
-
         try:
             step_timestamps = {
                 'pipeline_started_at': datetime.fromtimestamp(pipeline_start).isoformat(),
@@ -1784,17 +1790,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning(f"Manifest creation failed for {video_id}: {e}")
 
-        # --- Unified triage: run AFTER all pipeline steps complete ---
-        # Evaluates DLC coherence, structural integrity, cross-step
-        # consistency, and statistical outliers in one pass.
+        # --- Unified QC triage (DLC coherence / structural / cross-step / outliers) ---
+        qc_verdict = 'auto_approved'
         try:
             triage_result = triage_video(
                 video_id=video_id,
                 processing_dir=self.processing_dir,
                 h5_path=dlc_path,
             )
-
-            # Write validation_status to each output JSON based on unified verdict
+            qc_verdict = triage_result.verdict
             for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
                 json_path = self.processing_dir / f"{video_id}{suffix}"
                 if json_path.exists():
@@ -1811,16 +1815,76 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             json.dump(data, f, indent=2)
                     except Exception:
                         pass
-
-            # Save triage result
             triage_result.save(self.processing_dir / f"{video_id}_triage.json")
-
             logger.info(
                 f"Triage: {video_id} -> {triage_result.verdict} "
                 f"({triage_result.n_critical} critical, {triage_result.n_warnings} warnings)"
             )
         except Exception as e:
             logger.warning(f"Unified triage failed for {video_id}: {e}")
+
+        # --- GATE: nothing reaches kinematics / connectome.db until it is CLEAN ---
+        # seg soft-fail or QC-critical -> DEEP_REVIEW; any unresolved triaged
+        # element -> TRIAGE. A held video's whole bundle is MOVED out of
+        # Processing into the queue; STOP here -- no kinematics, no DB sync, no
+        # 'processed'. It re-enters via the review -> reprocess path once cleared.
+        decision = run_gate(
+            video_id, self.processing_dir, self.db,
+            qc_verdict=qc_verdict,
+            mp4_path=self.processing_dir / f"{video_id}.mp4",
+        )
+        if decision != DECISION_CLEAN:
+            logger.info(f"Pipeline held: {video_id} -> {decision} "
+                        f"({pipeline_duration:.1f}s, kinematics deferred until cleared)")
+            return
+
+        # --- Step 4/5: Feature Extraction + DB sync (CLEAN videos ONLY) ---
+        if not skip_outcomes:
+            reach_path = self.processing_dir / f"{video_id}_reaches.json"
+            outcome_path = self.processing_dir / f"{video_id}_pellet_outcomes.json"
+
+            if reach_path.exists() and outcome_path.exists():
+                self.db.log_step(video_id, 'feature_extraction', 'started')
+                step_start = time.time()
+                try:
+                    from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+                    from mousereach.review.causal_review_io import resolve_review_path
+                    extractor = FeatureExtractor()
+                    # Apply the reviewer's resolution if one exists (reprocess-after-
+                    # review path). Safe: None when unreviewed -> raw algo outcome.
+                    review_path = resolve_review_path(video_id, self.processing_dir)
+                    if review_path is not None:
+                        logger.info(f"Applying human review corrections: {review_path.name}")
+                    features = extractor.extract(dlc_path, reach_path, outcome_path,
+                                                 review_path=review_path)
+
+                    features_path = self.processing_dir / f"{video_id}_features.json"
+                    with open(features_path, 'w') as f:
+                        json.dump(features.to_dict(), f, indent=2)
+
+                    feat_duration = time.time() - step_start
+                    self.db.log_step(
+                        video_id, 'feature_extraction', 'completed',
+                        message=f"segments={features.n_segments}",
+                        duration=feat_duration
+                    )
+                    logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
+
+                    try:
+                        from mousereach.sync.database import sync_file_to_database
+                        synced = sync_file_to_database(features_path)
+                        if synced:
+                            self.db.log_step(video_id, 'db_sync', 'completed', message="Synced to connectome.db")
+                            logger.info(f"Database sync complete: {video_id}")
+                        else:
+                            logger.debug(f"Database sync skipped for {video_id} (subject not in DB or DB unavailable)")
+                    except Exception as e:
+                        logger.warning(f"Database sync failed for {video_id}: {e}")
+
+                except Exception as e:
+                    feat_duration = time.time() - step_start
+                    self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e), duration=feat_duration)
+                    logger.warning(f"Feature extraction failed for {video_id}: {e}")
 
         self.db.update_state(video_id, 'processed')
         self.db.log_step(
