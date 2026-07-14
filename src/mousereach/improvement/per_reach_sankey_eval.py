@@ -440,10 +440,10 @@ def _is_complete_review(by_seg: Dict[int, dict]) -> bool:
 
 def find_reviewed_bundles(pending_dir: Path) -> List[Path]:
     """All Pending bundles that carry a COMPLETE human review + the assignment."""
-    from mousereach.review.causal_review_io import load_causal_review
+    from mousereach.review.causal_review_io import load_causal_review, bundle_manifest_path
     out: List[Path] = []
     for b in sorted(Path(pending_dir).iterdir()):
-        if not (b.is_dir() and (b / "manifest.json").exists()):
+        if not (b.is_dir() and bundle_manifest_path(b).exists()):
             continue
         if not (b / f"{b.name}_reach_assignments.json").exists():
             continue
