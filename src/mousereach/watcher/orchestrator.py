@@ -1422,7 +1422,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             current_path=str(self.processing_dir / f"{video_id}.mp4")
         )
 
-        # Run the standard pipeline (seg/reach/outcomes)
+        # Run the standard pipeline (seg/reach/outcomes) -- dependency-aware:
+        # start from the earliest stale stage and reuse the current upstream outputs.
+        start_stage = work.get('data', {}).get('reprocess_scope', 'segmentation')
         reprocess_work = {
             'type': 'pipeline',
             'id': video_id,
@@ -1430,6 +1432,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 'video_id': video_id,
                 'dlc_output_path': str(local_h5[0]) if local_h5 else '',
                 'current_path': str(self.processing_dir / f"{video_id}.mp4"),
+                'reprocess_start_stage': start_stage,
             }
         }
         self._run_pipeline(reprocess_work)
@@ -1673,12 +1676,28 @@ class ProcessingOrchestrator(BaseOrchestrator):
         logger.info(f"Running pipeline on {video_id}")
         pipeline_start = time.time()
 
+        # Dependency-aware reprocessing: reuse a stage's existing output when it is
+        # current AND upstream of the earliest stale stage. Fresh videos have no
+        # reprocess_start_stage -> index 0 -> every stage runs.
+        _STAGE_IDX = {"segmentation": 0, "reach": 1, "outcome": 2, "kinematics": 3}
+        _start_idx = _STAGE_IDX.get(video_data.get("reprocess_start_stage"), 0)
+        _seg_out = self.processing_dir / f"{video_id}_segments.json"
+        _reach_out = self.processing_dir / f"{video_id}_reaches.json"
+        _outcome_out = self.processing_dir / f"{video_id}_pellet_outcomes.json"
+        _run_seg = _start_idx <= 0 or not _seg_out.exists()
+        _run_reach = _start_idx <= 1 or not _reach_out.exists()
+        _run_outcome = _start_idx <= 2 or not _outcome_out.exists()
+
         # --- Step 1: Segmentation ---
         self.db.log_step(video_id, 'segmentation', 'started')
         step_start = time.time()
 
         try:
-            seg_result = seg_single(dlc_path)
+            if _run_seg:
+                seg_result = seg_single(dlc_path)
+            else:
+                logger.info(f"Reusing segmentation for {video_id} (dependency-aware reprocess)")
+                seg_result = {'success': True, 'status': 'reused', 'n_boundaries': 0}
             seg_duration = time.time() - step_start
 
             if seg_result.get('success', False):
@@ -1722,7 +1741,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         step_start = time.time()
 
         try:
-            reach_result = reach_single(dlc_path, seg_path)
+            if _run_reach:
+                reach_result = reach_single(dlc_path, seg_path)
+            else:
+                logger.info(f"Reusing reach detection for {video_id} (dependency-aware reprocess)")
+                reach_result = {'total_reaches': 0}
             reach_duration = time.time() - step_start
 
             self.db.log_step(
@@ -1750,7 +1773,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
             step_start = time.time()
 
             try:
-                outcome_result = outcome_single(dlc_path, seg_path, reach_path)
+                if _run_outcome:
+                    outcome_result = outcome_single(dlc_path, seg_path, reach_path)
+                else:
+                    logger.info(f"Reusing outcomes for {video_id} (dependency-aware reprocess)")
+                    outcome_result = {'n_segments': 0}
                 outcome_duration = time.time() - step_start
 
                 self.db.log_step(
@@ -1775,7 +1802,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'assignment', 'started')
             step_start = time.time()
             try:
-                assign_reaches_for_video(self.processing_dir, video_id, dlc_path)
+                if _run_outcome or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists():
+                    assign_reaches_for_video(self.processing_dir, video_id, dlc_path)
+                else:
+                    logger.info(f"Reusing assignment for {video_id} (dependency-aware reprocess)")
                 self.db.log_step(video_id, 'assignment', 'completed',
                                  duration=time.time() - step_start)
             except Exception as e:

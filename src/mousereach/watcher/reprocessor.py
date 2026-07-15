@@ -20,6 +20,27 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Dependency-aware reprocessing: map each version-tracked component to its pipeline
+# stage, in order. Given the stale components we re-run from the EARLIEST stale
+# post-DLC stage and reuse the still-current upstream outputs.
+_STAGE_FOR_COMPONENT = {
+    "segmenter": "segmentation",
+    "reach_detector": "reach",
+    "outcome_detector": "outcome",
+    "kinematic_extractor": "kinematics",
+}
+_POST_DLC_ORDER = ["segmentation", "reach", "outcome", "kinematics"]
+
+
+def earliest_stale_stage(stale_components) -> str:
+    """The earliest post-DLC stage to re-run given the stale components (that
+    stage + everything downstream re-runs; upstream is reused). Falls back to
+    'segmentation' when the stale set is unknown."""
+    stages = [_STAGE_FOR_COMPONENT[c] for c in stale_components if c in _STAGE_FOR_COMPONENT]
+    if not stages:
+        return "segmentation"
+    return min(stages, key=_POST_DLC_ORDER.index)
+
 
 class ReprocessingScanner:
     """Scan archived videos for outdated tool versions."""
@@ -100,13 +121,17 @@ class ReprocessingScanner:
                 else:
                     summary['outdated'] += 1
                     if not comparison['is_current']:
-                        scope = 'full' if comparison['needs_full_reprocess'] else 'post_dlc'
+                        if comparison['needs_full_reprocess']:
+                            scope = 'full'  # DLC changed -> re-run everything
+                        else:
+                            scope = earliest_stale_stage(comparison['stale_components'])
                         stale = list(comparison['stale_components'])
                         if review_pending:
                             stale.append('human_review')
                     else:
-                        # version-current, but a newer human review needs applying
-                        scope = 'post_dlc'
+                        # version-current, only a newer human review to apply ->
+                        # re-run just kinematics (the extractor applies the review).
+                        scope = 'kinematics'
                         stale = ['human_review']
                         summary['review_triggered'] += 1
 
