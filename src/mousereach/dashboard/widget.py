@@ -212,13 +212,166 @@ class IndexAdapter:
         return rebuild_index(self.index, progress_callback)
 
 
+class WatcherAdapter:
+    """Adapts the watcher SQLite DB to the dashboard format.
+
+    Used when a ``watcher.db`` exists -- that is the AUTHORITATIVE pipeline state
+    (the daemon updates it), so the dashboard shows each video's real position
+    (including the new ``triage`` / ``deep_review`` human-review holds) instead of
+    the folder-derived PipelineIndex. Exposes the same public surface as
+    IndexAdapter so PipelineDashboard is source-agnostic.
+    """
+
+    # state -> health bucket used for the status-column coloring
+    _VALIDATED = {"archived", "archiving", "processed", "crystallized"}
+    _NEEDS_REVIEW = {"triage", "deep_review"}
+    _FAILED = {"failed", "quarantined"}
+
+    def __init__(self):
+        self.processing_root = Paths.PROCESSING_ROOT
+        self.db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
+        self.files: Dict[str, Dict] = {}
+
+    def scan(self) -> Dict[str, Dict]:
+        self.files = {}
+        # Gate on existence BEFORE constructing WatcherDB (constructing creates it).
+        if not self.processing_root or not self.db_path or not self.db_path.exists():
+            return self.files
+        try:
+            from mousereach.watcher.db import WatcherDB, VIDEO_TRANSITIONS
+            db = WatcherDB(self.db_path)
+            for state in VIDEO_TRANSITIONS.keys():   # read keys so new states appear automatically
+                for row in db.get_videos_in_state(state):
+                    vid = row.get("video_id")
+                    if vid:
+                        self.files[vid] = self._row_to_dashboard(dict(row))
+        except Exception:
+            pass  # fall back handled by caller / silent per _safe_refresh contract
+        return self.files
+
+    def _status_bucket(self, state: str) -> str:
+        if state in self._VALIDATED:
+            return "validated"
+        if state in self._NEEDS_REVIEW:
+            return "needs_review"
+        if state in self._FAILED:
+            return "failed"
+        return "in_progress"
+
+    def _row_to_dashboard(self, row: Dict) -> Dict:
+        state = row.get("state", "unknown")
+        timestamps = {}
+        for col in ("discovered_at", "validated_at", "crop_completed_at",
+                    "dlc_completed_at", "processing_completed_at", "archived_at", "updated_at"):
+            v = row.get(col)
+            if v:
+                timestamps[col] = str(v)
+        locations = []
+        cp = row.get("current_path")
+        if cp:
+            locations.append({"stage": state, "path": str(cp)})
+        tray_type = row.get("tray_type")
+        seg_status, reach_status, outcome_status, versions, gts = self._hydrate(row.get("video_id"))
+        return {
+            "locations": locations,
+            "versions": versions,
+            "timestamps": timestamps,
+            "ground_truths": gts,
+            "status": self._status_bucket(state),   # health bucket -> status-column color
+            "current_stage": state,                  # exact watcher state -> stage column
+            "metadata": {
+                "state": state,
+                "error": row.get("error_message"),
+                "reprocess_scope": row.get("reprocess_scope"),
+                "animal_id": row.get("animal_id"),
+            },
+            "seg_status": seg_status,
+            "reach_status": reach_status,
+            "outcome_status": outcome_status,
+            "archive_ready": state in self._VALIDATED,
+            "tray_type": tray_type,
+            "tray_supported": (tray_type not in ("E", "F")) if tray_type else True,
+        }
+
+    def _hydrate(self, video_id):
+        """Fill per-step validation + versions + GT from the per-video JSONs in
+        Paths.PROCESSING when co-located (the watcher row does not carry them);
+        default to 'pending' otherwise."""
+        seg = reach = outcome = "pending"
+        versions: Dict[str, str] = {}
+        gts: List[str] = []
+        proc = Paths.PROCESSING
+        if not video_id or not proc or not proc.exists():
+            return seg, reach, outcome, versions, gts
+
+        def _read(suffix):
+            p = proc / f"{video_id}{suffix}"
+            if p.exists():
+                try:
+                    return json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    return None
+            return None
+
+        sd = _read("_segments.json")
+        if sd is not None:
+            seg = sd.get("validation_status", "pending")
+            if sd.get("segmenter_version"):
+                versions["segmenter"] = sd["segmenter_version"]
+        rd = _read("_reaches.json")
+        if rd is not None:
+            reach = rd.get("validation_status", "pending")
+        od = _read("_pellet_outcomes.json")
+        if od is not None:
+            outcome = od.get("validation_status", "pending")
+            if od.get("detector_version"):
+                versions["outcome_detector"] = od["detector_version"]
+        if (proc / f"{video_id}_unified_ground_truth.json").exists():
+            gts.append(f"{video_id}_unified_ground_truth.json")
+        return seg, reach, outcome, versions, gts
+
+    def get_file_summary(self, filename: str) -> str:
+        info = self.files.get(filename)
+        if not info:
+            return "Not found in watcher DB"
+        lines = [f"Video: {filename}", f"State: {info['current_stage']}"]
+        if info["locations"]:
+            lines.append(f"Path: {info['locations'][0]['path']}")
+        err = info.get("metadata", {}).get("error")
+        if err:
+            lines.append(f"Error: {err}")
+        if info["ground_truths"]:
+            lines.append("Ground truth: present")
+        return "\n".join(lines)
+
+    def rebuild_index(self, progress_callback=None):
+        # The watcher DB is maintained by the daemon; there is no folder index to rebuild.
+        return self.files
+
+
+def _make_dashboard_adapter():
+    """Pick the authoritative state source: the watcher DB when it exists, else
+    the PipelineIndex. Gate on existence BEFORE constructing WatcherDB (its
+    constructor would create an empty DB and defeat the fallback)."""
+    try:
+        root = Paths.PROCESSING_ROOT
+        db_path = (root / "watcher.db") if root else None
+        if db_path and db_path.exists():
+            return WatcherAdapter()
+    except Exception:
+        pass
+    return IndexAdapter()
+
+
 class PipelineDashboard(QWidget):
     """Dashboard showing all files in the pipeline."""
 
     def __init__(self, napari_viewer: napari.Viewer):
         super().__init__()
         self.viewer = napari_viewer
-        self.adapter = IndexAdapter()  # Uses fast index instead of slow scanning
+        # Authoritative state source: the watcher DB when it exists, else the
+        # fast folder-derived PipelineIndex (graceful fallback).
+        self.adapter = _make_dashboard_adapter()
         self.all_files = {}
 
         self._build_ui()
@@ -287,6 +440,8 @@ class PipelineDashboard(QWidget):
             "All stages",
             "DLC_Queue",
             "Processing",
+            "triage",        # human-review hold (watcher DB)
+            "deep_review",   # human-review hold (watcher DB)
             "Failed",
         ])
         self.stage_filter.setToolTip("Filter which files to show")
@@ -436,6 +591,7 @@ class PipelineDashboard(QWidget):
                             if v.get("seg_status") == "needs_review"
                             or v.get("reach_status") == "needs_review"
                             or v.get("outcome_status") == "needs_review"
+                            or v.get("status") == "needs_review"
                             or "NeedsReview" in v.get("current_stage", "")}
 
         self.overview_table.setRowCount(len(filtered_files))
