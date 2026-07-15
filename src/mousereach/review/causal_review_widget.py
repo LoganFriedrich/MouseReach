@@ -2418,7 +2418,7 @@ class CausalReviewWidget(QWidget):
         ex = str(Path(exclude)) if exclude else None
         pool = []
         for b in Path(pending_dir).iterdir():
-            if not (b.is_dir() and (b / "manifest.json").exists()):
+            if not (b.is_dir() and bundle_manifest_path(b).exists()):
                 continue
             if ex and str(b) == ex:
                 continue
