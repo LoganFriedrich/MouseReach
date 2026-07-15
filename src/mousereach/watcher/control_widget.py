@@ -84,6 +84,19 @@ class WatcherControlWidget(QWidget):
         self._mode_label.setStyleSheet("color: #888;")
         cl.addWidget(self._mode_label)
 
+        # Which watcher to launch on this machine
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Run as:"))
+        self._mode_select = QComboBox()
+        self._mode_select.addItem(
+            "MouseReach -- process videos (segmentation/reach/outcome/kinematics)",
+            "processing_server")
+        self._mode_select.addItem(
+            "DLC -- crop collages + run pose estimation (needs a GPU)", "dlc_pc")
+        self._mode_select.setToolTip("Pick which of the two watchers to launch here.")
+        mode_row.addWidget(self._mode_select, 1)
+        cl.addLayout(mode_row)
+
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton("Start")
         self._start_btn.setStyleSheet("background:#1a5; color:white; font-weight:bold;")
@@ -168,7 +181,27 @@ class WatcherControlWidget(QWidget):
         form.addRow(cfg_btns)
         root.addWidget(cfg)
 
+        # --- Shipped algorithm/model versions (defines what counts as "current") ---
+        ver = QGroupBox("Shipped algorithm versions (editing marks older videos Outdated)")
+        vform = QFormLayout(ver)
+        self._ver_fields = {}
+        for key in ("dlc_scorer", "segmenter", "reach_detector", "outcome_detector", "assignment"):
+            fld = QLineEdit()
+            self._ver_fields[key] = fld
+            vform.addRow(key, fld)
+        vbtns = QHBoxLayout()
+        vreload = QPushButton("Reload")
+        vreload.clicked.connect(self._load_versions)
+        vsave = QPushButton("Save versions")
+        vsave.setStyleSheet("font-weight:bold;")
+        vsave.clicked.connect(self._save_versions)
+        vbtns.addWidget(vreload)
+        vbtns.addWidget(vsave)
+        vform.addRow(vbtns)
+        root.addWidget(ver)
+
         self._load_config_into_form()
+        self._load_versions()
 
     # ------------------------------------------------------------- helpers
     def _pause_file(self) -> Optional[Path]:
@@ -211,6 +244,7 @@ class WatcherControlWidget(QWidget):
                 ProcessingOrchestrator, DLCOrchestrator,
             )
             cfg = WatcherConfig.load()
+            cfg.mode = self._mode_select.currentData() or cfg.mode  # explicit choice wins
             db_path = cfg.db_path or (require_processing_root() / "watcher.db")
             db = WatcherDB(Path(db_path))
             if cfg.mode == "processing_server":
@@ -252,6 +286,7 @@ class WatcherControlWidget(QWidget):
         if self._is_running():
             show_info("Watcher is already running; Run Once is for when it is stopped.")
             return
+        mode = self._mode_select.currentData()
         def _once():
             try:
                 from mousereach.config import WatcherConfig, require_processing_root
@@ -260,6 +295,7 @@ class WatcherControlWidget(QWidget):
                     ProcessingOrchestrator, DLCOrchestrator,
                 )
                 cfg = WatcherConfig.load()
+                cfg.mode = mode or cfg.mode
                 db_path = cfg.db_path or (require_processing_root() / "watcher.db")
                 db = WatcherDB(Path(db_path))
                 orch = (ProcessingOrchestrator(cfg, db) if cfg.mode == "processing_server"
@@ -375,6 +411,9 @@ class WatcherControlWidget(QWidget):
             return
         self._f_enabled.setChecked(bool(d.get("enabled", False)))
         self._f_mode.setCurrentText(str(d.get("mode", "dlc_pc")))
+        _mi = self._mode_select.findData(str(d.get("mode", "dlc_pc")))
+        if _mi >= 0:
+            self._mode_select.setCurrentIndex(_mi)
         self._f_poll.setValue(int(d.get("poll_interval_seconds", 30)))
         self._f_stability.setValue(int(d.get("stability_wait_seconds", 60)))
         self._f_retries.setValue(int(d.get("max_retries", 3)))
@@ -427,6 +466,31 @@ class WatcherControlWidget(QWidget):
             show_info("Config saved. Restart the watcher for changes to take effect.")
         except Exception as e:
             show_error(f"Could not save config: {e}")
+
+    # ------------------------------------------------------------- versions
+    def _load_versions(self):
+        try:
+            from mousereach.pipeline.versions import get_current_versions
+            v = get_current_versions().get("versions", {})
+        except Exception as e:
+            show_error(f"Could not load versions: {e}")
+            return
+        for k, fld in self._ver_fields.items():
+            fld.setText(str(v.get(k, "") or ""))
+
+    def _save_versions(self):
+        updates = {k: fld.text().strip() for k, fld in self._ver_fields.items() if fld.text().strip()}
+        if not updates:
+            show_error("No versions entered.")
+            return
+        try:
+            from mousereach.pipeline.versions import update_current_versions
+            update_current_versions(updates)
+        except Exception as e:
+            show_error(f"Could not save versions: {e}")
+            return
+        show_info("Shipped versions updated. Videos processed with older versions now show "
+                  "as Outdated -- use the dashboard's 'Reprocess outdated' to bring them current.")
 
 
 def main():
