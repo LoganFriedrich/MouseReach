@@ -40,6 +40,12 @@ class _BackfillWorker(QObject):
     done = Signal(dict)
 
 
+class _FolderScanWorker(QObject):
+    """Carries folder-scan progress + completion from the worker thread to the GUI."""
+    progress = Signal(str)
+    done = Signal()
+
+
 # Plain-language labels for the raw watcher states (which mean nothing to a
 # novice). Each: (label, tooltip, category) where category drives the text color.
 STAGE_INFO = {
@@ -58,6 +64,10 @@ STAGE_INFO = {
     "triage":       ("Waiting for triage review",  "Held out of the database -- a reviewer must answer a per-element question (Review Queues tab).", "act"),
     "deep_review":  ("Waiting for deep review",    "Held out -- segmentation failed or was escalated; needs the deep-review tools (Review Queues tab).", "act"),
     "failed":       ("Failed, needs a look",       "Processing errored out -- needs investigation.", "bad"),
+    # Folder-scan stages (video's stage = which pipeline folder it sits in)
+    "raw_collage":  ("Raw collage, needs cropping", "An 8-camera collage in the intake folder -- not yet cropped into single-mouse videos.", "wait"),
+    "cropped":      ("Cropped, waiting for pose",   "Cropped to a single-mouse video, waiting for pose tracking (DLC).", "wait"),
+    "analyzed":     ("Final output (done)",         "Fully processed -- DLC + all 4 MouseReach algorithms + saved to mousedb. This is the final data output.", "done"),
 }
 
 _STAGE_CATEGORY_COLOR = {
@@ -79,8 +89,10 @@ def stage_label(state: str):
 STAGE_FILTERS = [
     ("All videos", None),
     ("Needs attention", {"triage", "deep_review", "failed", "outdated", "quarantined"}),
-    ("In progress", {"validated", "dlc_queued", "dlc_running", "dlc_complete", "processing", "archiving"}),
-    ("Done", {"processed", "archived", "crystallized"}),
+    ("Not started (raw/cropped)", {"raw_collage", "cropped"}),
+    ("In progress", {"validated", "dlc_queued", "dlc_running", "dlc_complete", "processing",
+                     "archiving", "raw_collage", "cropped"}),
+    ("Done (final output)", {"processed", "archived", "crystallized", "analyzed"}),
     ("Needs triage review", {"triage"}),
     ("Needs deep review", {"deep_review"}),
     ("Needs reprocessing (outdated)", {"outdated"}),
@@ -450,10 +462,62 @@ class WatcherAdapter:
         return self.files
 
 
+class FolderScanAdapter:
+    """Dashboard source that scans the WHOLE MouseReach_Pipeline tree and reports
+    every video by the folder it physically sits in. The scan is slow (the
+    final-output tree), so refresh_scan() runs on a background thread; scan()
+    returns the cached result."""
+
+    def __init__(self):
+        self.processing_root = Paths.PROCESSING_ROOT
+        self.files: Dict[str, Dict] = {}
+
+    def scan(self) -> Dict[str, Dict]:
+        return self.files  # cache -- populated by refresh_scan() on a worker thread
+
+    def refresh_scan(self, progress=None) -> Dict[str, Dict]:
+        from .folder_scan import scan_pipeline_folders
+        self.files = scan_pipeline_folders(progress=progress)
+        return self.files
+
+    def _ensure_version_data(self, force: bool = False):
+        if force or not hasattr(self, "_current_versions"):
+            try:
+                from mousereach.pipeline.versions import get_current_versions
+                from .version_currency import build_manifest_index
+                self._current_versions = get_current_versions()
+                self._manifest_index = build_manifest_index([Paths.PROCESSING, Paths.ANALYZED_OUTPUT])
+            except Exception:
+                self._current_versions = {}
+                self._manifest_index = {}
+
+    def version_status_for(self, video_id: str) -> str:
+        from .version_currency import version_status
+        return version_status(video_id, getattr(self, "_manifest_index", {}),
+                              getattr(self, "_current_versions", None))
+
+    def get_file_summary(self, filename: str) -> str:
+        info = self.files.get(filename)
+        if not info:
+            return "Not found"
+        lines = [f"Video: {filename}",
+                 f"Stage: {stage_label(info['current_stage'])[0]}  ({info['current_stage']})"]
+        if info["locations"]:
+            lines.append(f"Location: {info['locations'][0]['path']}")
+        return "\n".join(lines)
+
+    def rebuild_index(self, progress_callback=None):
+        return self.files
+
+
 def _make_dashboard_adapter():
-    """Pick the authoritative state source: the watcher DB when it exists, else
-    the PipelineIndex. Gate on existence BEFORE constructing WatcherDB (its
-    constructor would create an empty DB and defeat the fallback)."""
+    """Pick the dashboard's state source. Prefer the full folder scan (every video
+    by physical location); fall back to the watcher DB, then the PipelineIndex."""
+    try:
+        if Paths.ANALYZED_OUTPUT or Paths.PROCESSING_ROOT:
+            return FolderScanAdapter()
+    except Exception:
+        pass
     try:
         root = Paths.PROCESSING_ROOT
         db_path = (root / "watcher.db") if root else None
@@ -483,12 +547,49 @@ class PipelineDashboard(QWidget):
         QTimer.singleShot(100, self._safe_refresh)
 
     def _safe_refresh(self):
-        """Refresh data only if processing root is accessible."""
+        """On load: kick off the folder scan (background) for the folder-scan
+        adapter, else the fast index/DB refresh."""
         try:
-            if self.adapter.processing_root.exists():
+            if isinstance(self.adapter, FolderScanAdapter):
+                self._start_folder_scan()
+            elif self.adapter.processing_root.exists():
                 self._refresh_data()
         except Exception:
-            pass  # Silently skip if network is unavailable
+            pass
+
+    def _start_folder_scan(self):
+        """Scan the whole pipeline tree on a background thread + render when done."""
+        if getattr(self, "_scan_thread", None) and self._scan_thread.is_alive():
+            show_info("Pipeline scan already running...")
+            return
+        show_info("Scanning the pipeline folders (~30-60s the first time)...")
+        worker = _FolderScanWorker()
+        worker.progress.connect(lambda m: show_info(m))
+        worker.done.connect(self._on_folder_scan_done)
+        self._scan_worker = worker
+
+        import threading
+
+        def job():
+            try:
+                self.adapter.refresh_scan(progress=lambda m: worker.progress.emit(m))
+            except Exception as e:
+                worker.progress.emit(f"Scan error: {e}")
+            worker.done.emit()
+
+        self._scan_thread = threading.Thread(target=job, daemon=True, name="folder-scan")
+        self._scan_thread.start()
+
+    def _on_folder_scan_done(self):
+        self._refresh_data()
+        show_info(f"Pipeline scan complete: {len(self.all_files)} videos.")
+
+    def _refresh_clicked(self):
+        """Refresh button: re-scan the folders (folder adapter) or reload."""
+        if isinstance(self.adapter, FolderScanAdapter):
+            self._start_folder_scan()
+        else:
+            self._refresh_data()  # Silently skip if network is unavailable
 
     def _build_ui(self):
         """Build the dashboard UI."""
@@ -584,7 +685,7 @@ class PipelineDashboard(QWidget):
 
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setToolTip("Reload from index (fast)")
-        refresh_btn.clicked.connect(self._refresh_data)
+        refresh_btn.clicked.connect(self._refresh_clicked)
         btn_layout.addWidget(refresh_btn)
 
         rebuild_btn = QPushButton("Rebuild Index")

@@ -1,0 +1,158 @@
+"""Scan the whole MouseReach_Pipeline tree and report every video by the folder
+it physically lives in.
+
+The dashboard's source of truth is the pipeline folders themselves: a video's
+stage is simply *where it sits*. This walks every known pipeline folder (across
+the Y: canonical side and the C: working side), finds every video, and -- when a
+video appears in more than one folder -- keeps the furthest-along one.
+
+It is intentionally coarse + fast-ish: it identifies videos by cheap markers
+(media files, ``_reaches.json``, review-bundle dirs, quarantine notes) and does
+NOT open each video's JSONs. Per-step / version detail comes from the Version
+check and the File Details tab. The ``Analyzed`` rglob is the slow part, so the
+caller runs this on a background thread.
+
+ASCII-only console output (Windows cp1252).
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+_REACHES = "_reaches.json"
+_QUAR = ".quarantine.json"
+
+# Dedup priority: if a stem shows up in several folders, the highest wins.
+# A video sitting in a review queue (or quarantine/failed) is the ACTIONABLE
+# state and wins even over 'analyzed' -- e.g. legacy triage bundles were staged
+# from Analyzed, so the same stem lives in both; the operator needs to see the
+# review-queue membership, not "done".
+_PRIORITY = {
+    "triage": 120, "deep_review": 120,
+    "quarantined": 115, "failed": 110,
+    "analyzed": 100,
+    "processing": 50, "dlc_complete": 40,
+    "cropped": 30, "raw_collage": 20,
+}
+
+_VALIDATED = {"analyzed"}
+_NEEDS_REVIEW = {"triage", "deep_review"}
+_BAD = {"failed", "quarantined"}
+
+
+def _bucket(state: str) -> str:
+    if state in _VALIDATED:
+        return "validated"
+    if state in _NEEDS_REVIEW:
+        return "needs_review"
+    if state in _BAD:
+        return "failed"
+    return "in_progress"
+
+
+def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> Dict[str, Dict]:
+    """Return ``{stem: dashboard_dict}`` for every video found across the pipeline
+    folders. ``progress(message)`` is called before each phase."""
+    from mousereach.config import Paths, WatcherConfig, parse_tray_type
+
+    best: Dict[str, tuple] = {}   # stem -> (priority, state, path, mtime)
+
+    def add(stem: str, state: str, path):
+        if not stem:
+            return
+        pr = _PRIORITY.get(state, 0)
+        cur = best.get(stem)
+        if cur is None or pr > cur[0]:
+            try:
+                mt = Path(path).stat().st_mtime
+            except OSError:
+                mt = 0.0
+            best[stem] = (pr, state, str(path), mt)
+
+    def _glob_media(folder, state):
+        if not folder or not Path(folder).exists():
+            return
+        folder = Path(folder)
+        for ext in ("*.mp4", "*.mkv"):
+            for f in folder.glob(ext):
+                add(f.stem, state, f)
+
+    if progress:
+        progress("Scanning raw + cropped videos...")
+    _glob_media(Paths.MULTI_ANIMAL_SOURCE, "raw_collage")
+    _glob_media(Paths.SINGLE_ANIMAL_OUTPUT, "cropped")
+    _glob_media(Paths.DLC_STAGING, "dlc_complete")
+
+    if progress:
+        progress("Scanning the working folder...")
+    proc = Paths.PROCESSING
+    if proc and Path(proc).exists():
+        proc = Path(proc)
+        for f in proc.glob(f"*{_REACHES}"):
+            add(f.name[: -len(_REACHES)], "processing", f)
+        for f in proc.glob("*.mp4"):
+            add(f.stem, "processing", f)
+
+    failed = Paths.FAILED
+    if failed and Path(failed).exists():
+        for f in Path(failed).glob("*.mp4"):
+            add(f.stem, "failed", f)
+
+    if progress:
+        progress("Scanning the review queues...")
+    for root, state in ((Paths.TRIAGE_REVIEW, "triage"), (Paths.DEEP_REVIEW, "deep_review")):
+        if root and Path(root).exists():
+            for d in Path(root).iterdir():
+                if d.is_dir():
+                    add(d.name, state, d)
+
+    try:
+        qdir = WatcherConfig.load().get_quarantine_dir()
+    except Exception:
+        qdir = None
+    if qdir and Path(qdir).exists():
+        for j in Path(qdir).glob(f"*{_QUAR}"):
+            add(j.name[: -len(_QUAR)].rsplit(".", 1)[0], "quarantined", j)
+
+    # The big, slow one -- the final-output tree.
+    if progress:
+        progress("Scanning the final output (Analyzed) -- this is the big one, ~30s...")
+    analyzed = Paths.ANALYZED_OUTPUT
+    if analyzed and Path(analyzed).exists():
+        for f in Path(analyzed).rglob(f"*{_REACHES}"):
+            add(f.name[: -len(_REACHES)], "analyzed", f)
+
+    if progress:
+        progress(f"Building the list ({len(best)} videos)...")
+    out: Dict[str, Dict] = {}
+    for stem, (pr, state, path, mt) in best.items():
+        tray = None
+        try:
+            tray = parse_tray_type(f"{stem}.mp4").get("tray_type")
+        except Exception:
+            pass
+        ts = {}
+        if mt:
+            ts["updated"] = datetime.fromtimestamp(mt).isoformat()
+        review = state if state in ("triage", "deep_review") else "none"
+        out[stem] = {
+            "locations": [{"stage": state, "path": path}],
+            "versions": {},
+            "timestamps": ts,
+            "ground_truths": [],
+            "status": _bucket(state),
+            "current_stage": state,
+            "metadata": {"state": state, "path": path},
+            "seg_status": "pending",
+            "reach_status": "pending",
+            "outcome_status": "pending",
+            "archive_ready": state == "analyzed",
+            "review_status": review,
+            "tray_type": tray,
+            "tray_supported": (tray not in ("E", "F")) if tray else True,
+        }
+    return out
