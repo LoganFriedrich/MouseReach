@@ -87,7 +87,8 @@ class ReachFeatures:
     flag_reason: Optional[str] = None
 
     # Review provenance -- distinguishes a human-corrected reach from raw algo.
-    outcome_source: Optional[str] = None        # 'human_review' when a reviewer resolved this segment
+    outcome_source: Optional[str] = None        # 'human_review'/'ground_truth' when a human resolved this segment
+    reach_source: Optional[str] = None          # 'ground_truth' when this reach's boundaries came from GT, else 'algo'
     reviewed_by: Optional[str] = None           # reviewer username (when human_review)
     algo_outcome: Optional[str] = None          # the algo's original outcome, preserved on override
     algo_causal_reach_id: Optional[int] = None  # the algo's original causal reach id, preserved on override
@@ -207,19 +208,31 @@ class FeatureExtractor:
         with open(outcomes_path) as f:
             outcomes_data = json.load(f)
 
-        # HUMAN REVIEW OVERRIDE: if a causal-review is provided, the reviewer's
-        # outcome + causal-reach corrections replace the algo's for the reviewed
-        # segments, so kinematics reflects the human truth. Non-destructive (algo
-        # originals kept as algo_outcome/algo_causal_reach_id; provenance in
-        # outcome_source). Safe no-op if no review is found.
-        if review_path is not None:
-            try:
-                from mousereach.review.causal_review_io import load_and_apply_review
-                outcomes_data = load_and_apply_review(
-                    outcomes_data, review_path,
-                    video_stem=reaches_data.get('video_name'))
-            except Exception as _e:
-                print(f"[feature_extractor] review override skipped: {_e}")
+        # HUMAN-TRUTH LAYERING: resolve every element by
+        #     GT > causal review > triage review > algo
+        # per element (each reach, each per-segment outcome). Unconflicted algo
+        # persists. GT is whole-component-authoritative only where its exhaustive
+        # flag is set. Unlike review-only, this also lets GROUND TRUTH -- and GT
+        # reach boundaries/existence, which review never touches -- flow into the
+        # shipped kinematics. Non-destructive; provenance in outcome_source /
+        # reach_source. Falls back to review-only if the resolver errors; a
+        # pure-algo video resolves unchanged.
+        try:
+            from mousereach.review.truth_resolver import resolve_truth_layers
+            reaches_data, outcomes_data = resolve_truth_layers(
+                reaches_data, outcomes_data,
+                video_stem=reaches_data.get('video_name'),
+                primary_dir=review_path)
+        except Exception as _e:
+            print(f"[feature_extractor] truth layering skipped: {_e}")
+            if review_path is not None:
+                try:
+                    from mousereach.review.causal_review_io import load_and_apply_review
+                    outcomes_data = load_and_apply_review(
+                        outcomes_data, review_path,
+                        video_stem=reaches_data.get('video_name'))
+                except Exception as _e2:
+                    print(f"[feature_extractor] review override skipped: {_e2}")
 
         video_name = reaches_data['video_name']
         total_frames = reaches_data['total_frames']
@@ -353,6 +366,7 @@ class FeatureExtractor:
         # a reviewer resolved it) -- carried per-reach so a human-corrected reach
         # is distinguishable from a raw-algo reach in reach_data.
         features.outcome_source = outcome_data.get('outcome_source')
+        features.reach_source = reach.get('reach_source', 'algo')
         features.reviewed_by = outcome_data.get('reviewed_by')
         features.algo_outcome = outcome_data.get('algo_outcome')
         features.algo_causal_reach_id = outcome_data.get('algo_causal_reach_id')

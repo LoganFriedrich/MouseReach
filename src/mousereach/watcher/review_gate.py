@@ -37,6 +37,34 @@ DECISION_TRIAGE = "triage"
 DECISION_DEEP = "deep_review"
 
 
+def _gt_certification(video_id: str) -> Tuple[bool, set]:
+    """``(fully_exhaustive, gt_determined_outcome_segnums)`` for a video's GT.
+
+    ``fully_exhaustive`` is True when GT marks the whole video complete
+    (``completion_status.all_complete`` or both reaches+outcomes exhaustive) --
+    a human has certified every element, so the whole video is human truth. The
+    second value is the set of segment_nums whose outcome GT determined, used to
+    clear those specific segments when GT is only partial. Never raises."""
+    try:
+        from ..review.causal_review_io import find_gt
+        p = find_gt(video_id)
+        if not p:
+            return False, set()
+        gt = json.loads(Path(p).read_text(encoding="utf-8"))
+        cs = gt.get("completion_status") or {}
+        rr = (gt.get("reaches") or {}).get("exhaustive")
+        oo = (gt.get("outcomes") or {}).get("exhaustive")
+        full = bool(cs.get("all_complete")) or bool(rr and oo)
+        segs = set()
+        for seg in ((gt.get("outcomes") or {}).get("segments") or []):
+            sn = seg.get("segment_num")
+            if sn is not None and seg.get("determined") is not False:
+                segs.add(int(sn))
+        return full, segs
+    except Exception:
+        return False, set()
+
+
 def evaluate_gate(
     video_id: str,
     processing_dir: Path,
@@ -45,18 +73,25 @@ def evaluate_gate(
     """Decide a video's fate. PURE (no moves, no DB) -- returns
     ``(decision, reason, status)``.
 
-    Priority: a failed segmentation or a critical QC verdict means the whole
-    video is untrustworthy -> DEEP_REVIEW. Otherwise, any triaged element the
-    human has not addressed -> TRIAGE. Otherwise -> CLEAN.
+    Priority: an exhaustively GT'd video is certified human truth end-to-end (the
+    extractor substitutes GT for every element), so its algo triage flags -- and
+    even a failed algo segmentation -- are moot -> CLEAN. Otherwise a failed
+    segmentation or a critical QC verdict means the whole video is untrustworthy
+    -> DEEP_REVIEW. Otherwise, any triaged element the human has not addressed
+    (and that GT did not already determine) -> TRIAGE. Otherwise -> CLEAN.
     """
     st = triage_status(processing_dir, video_id)
+    gt_full, gt_segs = _gt_certification(video_id)
+    if gt_full:
+        return DECISION_CLEAN, "ground_truth_exhaustive", st
     if st.seg_failed:
         return DECISION_DEEP, "segmentation_failed", st
     if qc_verdict == "needs_review":
         return DECISION_DEEP, "qc_needs_review", st
-    if st.unresolved:
-        segs = ", ".join(str(s) for s in sorted(st.unresolved))
-        return DECISION_TRIAGE, f"{len(st.unresolved)} triaged segment(s) unresolved: {segs}", st
+    unresolved = set(st.unresolved) - gt_segs  # GT-determined segments are resolved
+    if unresolved:
+        segs = ", ".join(str(s) for s in sorted(unresolved))
+        return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
     return DECISION_CLEAN, "clean", st
 
 
