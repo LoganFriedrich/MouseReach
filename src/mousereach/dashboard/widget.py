@@ -39,6 +39,40 @@ class _BackfillWorker(QObject):
     """Carries the archive-backfill summary from the worker thread to the GUI."""
     done = Signal(dict)
 
+
+# Plain-language labels for the raw watcher states (which mean nothing to a
+# novice). Each: (label, tooltip, category) where category drives the text color.
+STAGE_INFO = {
+    "discovered":   ("New",                 "Just found -- not started yet.", "wait"),
+    "quarantined":  ("Quarantined",         "Held out -- bad filename or file. Fix it in the Quarantine tab.", "bad"),
+    "validated":    ("Ready",               "Filename checked -- ready to process.", "wait"),
+    "dlc_queued":   ("Waiting for DLC",     "Queued for pose estimation on a GPU machine.", "wait"),
+    "dlc_running":  ("Running DLC",         "Pose estimation (DeepLabCut) in progress.", "busy"),
+    "dlc_complete": ("DLC done",            "Pose estimation finished -- ready for analysis.", "wait"),
+    "processing":   ("Analyzing",           "Running segmentation, reaches, outcomes, and kinematics.", "busy"),
+    "processed":    ("Analyzed",            "Analysis done (segmentation, reaches, outcomes, kinematics). Not yet archived.", "done"),
+    "archiving":    ("Archiving",           "Copying results to the archive.", "busy"),
+    "archived":     ("Archived (done)",     "Finished -- results are in the archive.", "done"),
+    "outdated":     ("Needs reprocessing",  "Processed with older algorithm versions -- reprocess to bring current.", "act"),
+    "crystallized": ("Locked",              "Locked against reprocessing (e.g. for a publication).", "done"),
+    "triage":       ("Needs triage review", "Held -- a reviewer must answer a per-element question (Review Queues tab).", "act"),
+    "deep_review":  ("Needs deep review",   "Held -- segmentation failed or was escalated (Review Queues tab).", "act"),
+    "failed":       ("Failed",              "Processing errored -- needs investigation.", "bad"),
+}
+
+_STAGE_CATEGORY_COLOR = {
+    "act": QColor(230, 145, 0),    # orange -- needs a human
+    "bad": QColor(211, 47, 47),    # red -- broken
+    "busy": QColor(25, 118, 210),  # blue -- in progress
+    "done": QColor(56, 142, 60),   # green -- finished
+    "wait": None,                  # neutral
+}
+
+
+def stage_label(state: str):
+    """(label, tooltip, category) for a raw watcher state, with a safe fallback."""
+    return STAGE_INFO.get(state, (state, f"State: {state}", "wait"))
+
 import napari
 from napari.utils.notifications import show_info, show_error
 
@@ -811,9 +845,14 @@ class PipelineDashboard(QWidget):
             name_item = QTableWidgetItem(filename)
             self.overview_table.setItem(row, 0, name_item)
 
-            # Current stage
+            # Current stage -- plain-language label + explanation tooltip
             current_stage = info.get("current_stage", "Unknown")
-            stage_item = QTableWidgetItem(current_stage)
+            _label, _tip, _cat = stage_label(current_stage)
+            stage_item = QTableWidgetItem(_label)
+            stage_item.setToolTip(f"{_tip}  (state: {current_stage})")
+            _sc = _STAGE_CATEGORY_COLOR.get(_cat)
+            if _sc is not None:
+                stage_item.setForeground(QBrush(_sc))
             self.overview_table.setItem(row, 1, stage_item)
 
             # Tray type (P/E/F) - highlight unsupported in red
