@@ -339,6 +339,20 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
+    # Load Review Queues (open + clear the Triage / Deep-Review folders)
+    tprint("  Review Queues...", end=" ")
+    try:
+        from mousereach.review.queue_launcher_widget import ReviewQueuesWidget
+        rq_widget = ReviewQueuesWidget(viewer)
+        dw = viewer.window.add_dock_widget(rq_widget, name="Review Queues", area="right")
+        widgets_loaded.append(("queues", rq_widget))
+        dock_widgets.append(dw)
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
     # Tabify all dock widgets together (stack as tabs)
     if len(dock_widgets) > 1:
         main_window = viewer.window._qt_window

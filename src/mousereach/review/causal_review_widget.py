@@ -170,16 +170,24 @@ class CausalReviewWidget(QWidget):
 
     data_saved = Signal(Path)
 
-    def __init__(self, napari_viewer: napari.Viewer, triage_only: bool = False):
+    def __init__(self, napari_viewer: napari.Viewer, triage_only: bool = False,
+                 deep_review: bool = False):
         super().__init__()
         self.viewer = napari_viewer
+
+        # Deep-review mode: reviews the DEEP_REVIEW queue (seg-failed or escalated
+        # videos). Walks ALL segments (a failed-seg bundle has no per-element
+        # triage) and exposes a CLEAR button that writes
+        # {stem}_deep_review_cleared.json -- the watcher return scan then re-injects
+        # the video at the start of the pipeline.
+        self._deep_review = bool(deep_review)
 
         # Triaged-only mode: the video queue only includes videos that still
         # have an unresolved triaged element, and the segment walk SKIPS the
         # segments the algo already got right -- so the reviewer walks ONLY
         # triaged elements. Decisions still save to _causal_review.json and feed
         # kinematics in place of the algo's "triaged" call (existing bridge).
-        self._triage_only = bool(triage_only)
+        self._triage_only = bool(triage_only) and not self._deep_review
         self._triaged_indices: List[int] = []
         self._has_triage_cache: Dict[str, bool] = {}
 
@@ -395,6 +403,18 @@ class CausalReviewWidget(QWidget):
         self._flag_session_btn.clicked.connect(self._flag_session)
         self._flag_session_btn.setEnabled(False)
         footer_layout.addWidget(self._flag_session_btn)
+
+        # Deep-review only: mark this video cleared so the watcher re-injects it.
+        self._clear_deep_btn = QPushButton("Clear -> re-enter pipeline")
+        self._clear_deep_btn.setStyleSheet("background: #3a5a16; color: white; font-weight: bold;")
+        self._clear_deep_btn.setToolTip(
+            "Deep review done: save the review, mark this video cleared, and let "
+            "the watcher re-inject it at the start of the pipeline."
+        )
+        self._clear_deep_btn.clicked.connect(self._clear_deep_review)
+        self._clear_deep_btn.setVisible(self._deep_review)
+        self._clear_deep_btn.setEnabled(False)
+        footer_layout.addWidget(self._clear_deep_btn)
 
         footer_layout.addStretch()
 
@@ -2701,6 +2721,40 @@ class CausalReviewWidget(QWidget):
         self._save_advance_btn.setEnabled(enabled)
         self._save_next_video_btn.setEnabled(enabled)
         self._flag_session_btn.setEnabled(enabled)
+        self._clear_deep_btn.setEnabled(enabled and self._deep_review)
+
+    def _clear_deep_review(self):
+        """Deep review complete: persist the review, then write the cleared
+        marker the watcher return scan consumes to re-inject the video at the
+        pipeline start. Advances to the next deep-review bundle."""
+        bundle = getattr(self, "_bundle_dir", None)
+        stem = self._video_stem
+        if not bundle or not stem:
+            show_info("No video loaded to clear.")
+            return
+        # Save the human's work first (it travels with the bundle to Processing).
+        try:
+            self._save_review()
+        except Exception:
+            pass
+        try:
+            from .causal_review_io import _write_json
+            _write_json(Path(bundle) / f"{stem}_deep_review_cleared.json", {
+                "type": "deep_review_cleared",
+                "video_stem": stem,
+                "cleared_by": _get_username(),
+                "cleared_at": _get_timestamp(),
+                "reason": "deep review complete -- re-enter pipeline",
+            })
+        except Exception as e:
+            show_error(f"Could not write clear marker: {e}")
+            return
+        show_info(f"[OK] Cleared {stem}. The watcher will re-inject it into the pipeline.")
+        # The return scan removes the bundle from the queue; advance to the next.
+        try:
+            self._load_next_video()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
