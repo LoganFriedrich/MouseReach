@@ -36,12 +36,17 @@ from qtpy.QtWidgets import (
     QLabel, QPushButton, QGroupBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QTextEdit, QComboBox, QSpinBox, QCheckBox, QLineEdit,
 )
-from qtpy.QtCore import Qt, QTimer
+from qtpy.QtCore import Qt, QTimer, QObject, Signal
 from qtpy.QtGui import QColor, QBrush
 
 from napari.utils.notifications import show_info, show_error
 
 logger = logging.getLogger(__name__)
+
+
+class _BackupWorker(QObject):
+    """Carries the backup-finished message from the worker thread to the GUI."""
+    done = Signal(str)
 
 # States that are the reviewer's actionable holds / problems -- highlighted.
 _HOLD_STATES = {"triage", "deep_review"}
@@ -200,8 +205,34 @@ class WatcherControlWidget(QWidget):
         vform.addRow(vbtns)
         root.addWidget(ver)
 
+        # --- Backups (copy inputs + final outputs to a second drive) ---
+        bkp = QGroupBox("Backups (copy pipeline data to a second drive)")
+        bform = QFormLayout(bkp)
+        self._bkp_enabled = QCheckBox()
+        self._bkp_source = QLineEdit()
+        self._bkp_source.setPlaceholderText(r"e.g. Y:\LAB_ROOT")
+        self._bkp_dest = QLineEdit()
+        self._bkp_dest.setPlaceholderText(r"e.g. X:\LAB_ROOT_Backup")
+        bform.addRow("enabled", self._bkp_enabled)
+        bform.addRow("source (this drive)", self._bkp_source)
+        bform.addRow("backup drive", self._bkp_dest)
+        bbtns = QHBoxLayout()
+        bsave = QPushButton("Save backup settings")
+        bsave.clicked.connect(self._save_backup)
+        brun = QPushButton("Back up now")
+        brun.setStyleSheet("font-weight:bold;")
+        brun.clicked.connect(self._run_backup)
+        bbtns.addWidget(bsave)
+        bbtns.addWidget(brun)
+        bform.addRow(bbtns)
+        self._bkp_status = QLabel("")
+        self._bkp_status.setWordWrap(True)
+        bform.addRow(self._bkp_status)
+        root.addWidget(bkp)
+
         self._load_config_into_form()
         self._load_versions()
+        self._load_backup()
 
     # ------------------------------------------------------------- helpers
     def _pause_file(self) -> Optional[Path]:
@@ -491,6 +522,63 @@ class WatcherControlWidget(QWidget):
             return
         show_info("Shipped versions updated. Videos processed with older versions now show "
                   "as Outdated -- use the dashboard's 'Reprocess outdated' to bring them current.")
+
+    # ------------------------------------------------------------- backups
+    def _load_backup(self):
+        try:
+            from mousereach.config import _load_config
+            b = _load_config().get("backup", {}) or {}
+        except Exception:
+            b = {}
+        self._bkp_enabled.setChecked(bool(b.get("enabled", False)))
+        self._bkp_source.setText(str(b.get("source_root", "") or ""))
+        self._bkp_dest.setText(str(b.get("backup_root", "") or ""))
+
+    def _save_backup(self):
+        import json
+        try:
+            cfg_path = Path.home() / ".mousereach" / "config.json"
+            existing = {}
+            if cfg_path.exists():
+                existing = json.loads(cfg_path.read_text(encoding="utf-8"))
+            existing["backup"] = {
+                "enabled": self._bkp_enabled.isChecked(),
+                "source_root": self._bkp_source.text().strip(),
+                "backup_root": self._bkp_dest.text().strip(),
+            }
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            show_info("Backup settings saved.")
+        except Exception as e:
+            show_error(f"Could not save backup settings: {e}")
+
+    def _run_backup(self):
+        src = self._bkp_source.text().strip()
+        dst = self._bkp_dest.text().strip()
+        if not src or not dst:
+            show_error("Set the source and backup drive first.")
+            return
+        if getattr(self, "_bkp_thread", None) and self._bkp_thread.is_alive():
+            show_info("A backup is already running.")
+            return
+        self._bkp_status.setText("Backing up (copying changed files)... this can take a while.")
+        worker = _BackupWorker()
+        worker.done.connect(self._on_backup_done)
+        self._bkp_worker = worker
+
+        def job():
+            try:
+                from mousereach.watcher.backup import BackupWatcher
+                BackupWatcher(source_root=src, backup_root=dst).run_once()
+                worker.done.emit("Backup complete.")
+            except Exception as e:
+                worker.done.emit(f"Backup failed: {e}")
+
+        self._bkp_thread = threading.Thread(target=job, daemon=True, name="backup-run")
+        self._bkp_thread.start()
+
+    def _on_backup_done(self, msg: str):
+        self._bkp_status.setText(msg)
 
 
 def main():
