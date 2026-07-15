@@ -289,9 +289,24 @@ class WatcherAdapter:
             "reach_status": reach_status,
             "outcome_status": outcome_status,
             "archive_ready": state in self._VALIDATED,
+            "review_status": self._review_status(state, row.get("video_id")),
             "tray_type": tray_type,
             "tray_supported": (tray_type not in ("E", "F")) if tray_type else True,
         }
+
+    def _review_status(self, state, video_id):
+        """The video's human-review state for the Review column:
+          'triage'/'deep_review' -> a hold waiting on a reviewer;
+          'reviewed'             -> a saved *_causal_review.json is co-located;
+          'none'                 -> nothing to review."""
+        if state == "deep_review":
+            return "deep_review"
+        if state == "triage":
+            return "triage"
+        proc = Paths.PROCESSING
+        if video_id and proc and (proc / f"{video_id}_causal_review.json").exists():
+            return "reviewed"
+        return "none"
 
     def _hydrate(self, video_id):
         """Fill per-step validation + versions + GT from the per-video JSONs in
@@ -472,9 +487,9 @@ class PipelineDashboard(QWidget):
 
         # Table showing all files and their validation status
         self.overview_table = QTableWidget()
-        self.overview_table.setColumnCount(9)
+        self.overview_table.setColumnCount(10)
         self.overview_table.setHorizontalHeaderLabels([
-            "File", "Stage", "Tray", "Seg", "Reach", "Outcome", "Archive", "GT", "Updated"
+            "File", "Stage", "Tray", "Seg", "Reach", "Outcome", "Archive", "GT", "Review", "Updated"
         ])
         self.overview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         for col in range(1, 9):
@@ -689,6 +704,29 @@ class PipelineDashboard(QWidget):
                 gt_item.setToolTip(f"Ground truth: {', '.join(info['ground_truths'])}")
             self.overview_table.setItem(row, 7, gt_item)
 
+            # Review status: triage / deep-review holds, or a saved human review
+            rs = info.get("review_status", "none")
+            if rs == "triage":
+                review_item = QTableWidgetItem("Triage")
+                review_item.setBackground(QBrush(QColor(255, 165, 0)))  # Orange
+                review_item.setToolTip("Held -- waiting on triage review")
+            elif rs == "deep_review":
+                review_item = QTableWidgetItem("Deep")
+                review_item.setBackground(QBrush(QColor(244, 67, 54)))  # Red
+                review_item.setForeground(QBrush(QColor(255, 255, 255)))
+                review_item.setToolTip("Held -- waiting on deep review (seg-failed / escalated)")
+            elif rs == "reviewed":
+                review_item = QTableWidgetItem("✓")
+                review_item.setBackground(QBrush(QColor(76, 175, 80)))  # Green
+                review_item.setForeground(QBrush(QColor(255, 255, 255)))
+                review_item.setToolTip("Human review saved")
+            else:
+                review_item = QTableWidgetItem("-")
+                review_item.setForeground(QBrush(QColor(128, 128, 128)))
+                review_item.setToolTip("Nothing to review")
+            review_item.setTextAlignment(Qt.AlignCenter)
+            self.overview_table.setItem(row, 8, review_item)
+
             # Last update (date only, compact)
             if info["timestamps"]:
                 last_time = max(info["timestamps"].values())
@@ -696,7 +734,7 @@ class PipelineDashboard(QWidget):
                 last_item = QTableWidgetItem(last_time[:10])
             else:
                 last_item = QTableWidgetItem("-")
-            self.overview_table.setItem(row, 8, last_item)
+            self.overview_table.setItem(row, 9, last_item)
 
     def _update_file_combo(self):
         """Update file selector combo box."""
