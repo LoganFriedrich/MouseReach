@@ -34,6 +34,11 @@ class _VersionCheckWorker(QObject):
     """Carries the 'version index built' signal from the worker thread to the GUI."""
     done = Signal()
 
+
+class _BackfillWorker(QObject):
+    """Carries the archive-backfill summary from the worker thread to the GUI."""
+    done = Signal(dict)
+
 import napari
 from napari.utils.notifications import show_info, show_error
 
@@ -561,6 +566,15 @@ class PipelineDashboard(QWidget):
         reprocess_btn.clicked.connect(self._reprocess_outdated)
         btn_layout.addWidget(reprocess_btn)
 
+        import_btn = QPushButton("Import archive")
+        import_btn.setToolTip(
+            "One-time: register every video already in the archive into the "
+            "dashboard's database, so the whole corpus shows here and can be "
+            "version-checked + reprocessed. Safe to re-run."
+        )
+        import_btn.clicked.connect(self._import_archive)
+        btn_layout.addWidget(import_btn)
+
         layout.addLayout(btn_layout)
 
         widget.setLayout(layout)
@@ -685,6 +699,50 @@ class PipelineDashboard(QWidget):
             self._refresh_data()
         except Exception as e:
             show_error(f"Could not mark outdated videos: {e}")
+
+    def _import_archive(self):
+        """Register every archived video into the tracking DB (background) so the
+        dashboard shows the full corpus + reprocess reaches it. Idempotent."""
+        if getattr(self, "_backfill_thread", None) and self._backfill_thread.is_alive():
+            show_info("Import already running...")
+            return
+        try:
+            from mousereach.watcher.db import WatcherDB
+            db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
+            if not db_path:
+                show_error("Processing root is not configured.")
+                return
+            db = WatcherDB(db_path)
+        except Exception as e:
+            show_error(f"Could not open the database: {e}")
+            return
+        show_info("Importing the archive into the database -- scanning (~30s)...")
+        worker = _BackfillWorker()
+        worker.done.connect(self._on_backfill_done)
+        self._backfill_worker = worker
+
+        import threading
+
+        def job():
+            try:
+                from mousereach.watcher.backfill import backfill_archive
+                res = backfill_archive(db, Paths.ANALYZED_OUTPUT)
+            except Exception as e:
+                res = {"error": str(e)}
+            worker.done.emit(res)
+
+        self._backfill_thread = threading.Thread(target=job, daemon=True, name="archive-backfill")
+        self._backfill_thread.start()
+
+    def _on_backfill_done(self, res: dict):
+        if res.get("error"):
+            show_error(f"Import failed: {res['error']}")
+            return
+        show_info(
+            f"Imported archive: {res.get('new', 0)} newly added, "
+            f"{res.get('existing', 0)} already known, {res.get('errors', 0)} errors."
+        )
+        self._refresh_data()
 
     def _update_overview_table(self):
         """Update the overview table with validation status columns."""
