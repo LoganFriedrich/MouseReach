@@ -378,6 +378,20 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
+    # Load Quarantine (fix + release held-back files)
+    tprint("  Quarantine...", end=" ")
+    try:
+        from mousereach.watcher.quarantine_widget import QuarantineWidget
+        quar_widget = QuarantineWidget(viewer)
+        dw = viewer.window.add_dock_widget(quar_widget, name="Quarantine", area="right")
+        widgets_loaded.append(("quarantine", quar_widget))
+        dock_widgets.append(dw)
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
     # Load Setup (edit the pipeline paths from within the app)
     tprint("  Setup...", end=" ")
     try:
