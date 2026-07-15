@@ -658,7 +658,16 @@ class PipelineDashboard(QWidget):
         self._update_statistics()
 
     def _rebuild_index(self):
-        """Rebuild the pipeline index from scratch."""
+        """Rebuild the pipeline index from scratch (folder-index mode only)."""
+        # In watcher-DB mode there is no folder index to rebuild -- the daemon
+        # maintains the database. Just refresh (and point at Import archive).
+        if isinstance(self.adapter, WatcherAdapter):
+            show_info("This dashboard reads the live tracking database -- there is "
+                      "no folder index to rebuild. Use Refresh to reload, or "
+                      "'Import archive' to add older videos.")
+            self._refresh_data()
+            return
+
         show_info("Rebuilding index... This may take a moment.")
 
         def progress(current, total, message):
@@ -667,7 +676,9 @@ class PipelineDashboard(QWidget):
 
         try:
             stats = self.adapter.rebuild_index(progress)
-            show_info(f"Index rebuilt: {stats['videos_found']} videos in {stats['folders_scanned']} folders")
+            n = stats.get('videos_found', 0) if isinstance(stats, dict) else 0
+            folders = stats.get('folders_scanned', 0) if isinstance(stats, dict) else 0
+            show_info(f"Index rebuilt: {n} videos in {folders} folders")
             self._refresh_data()
         except Exception as e:
             show_error(f"Failed to rebuild index: {e}")
