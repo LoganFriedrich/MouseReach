@@ -325,6 +325,20 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
+    # Load Watcher Control (start/stop/monitor/configure the auto-processor)
+    tprint("  Watcher Control...", end=" ")
+    try:
+        from mousereach.watcher.control_widget import WatcherControlWidget
+        watch_widget = WatcherControlWidget(viewer)
+        dw = viewer.window.add_dock_widget(watch_widget, name="Watcher Control", area="right")
+        widgets_loaded.append(("watcher", watch_widget))
+        dock_widgets.append(dw)
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
     # Tabify all dock widgets together (stack as tabs)
     if len(dock_widgets) > 1:
         main_window = viewer.window._qt_window
@@ -350,8 +364,8 @@ def launch(video_path=None, steps=None):
                 if step_id in ["dashboard", "0", "1", "2", "review"]:
                     return
 
-                # Only feature viewer (step 5) needs external video loading
-                if step_id == "5":
+                # Only feature viewer (step 4) needs external video loading
+                if step_id == "4":
                     widget_has_video = (
                         hasattr(widget, 'video_layer') and
                         widget.video_layer is not None and
@@ -454,7 +468,7 @@ def main():
     parser.add_argument('video', nargs='?', type=Path,
                         help="Optional video file to auto-load")
     parser.add_argument('--step', '-s', type=str, action='append',
-                        choices=['dashboard', '0', '1', '2', '2b', '3b', '4b', '5'],
+                        choices=ALL_STEPS,
                         help="Launch specific step(s). Can be used multiple times.")
     parser.add_argument('--reviews', '-r', action='store_true',
                         help="Launch only review tools (2b, 3b, 4b)")
