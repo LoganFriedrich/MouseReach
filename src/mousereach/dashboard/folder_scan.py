@@ -43,6 +43,20 @@ _VALIDATED = {"analyzed"}
 _NEEDS_REVIEW = {"triage", "deep_review"}
 _BAD = {"failed", "quarantined"}
 
+# Which pipeline steps are complete at each stage, so the per-step columns (DLC,
+# Seg, Reach, Outcome) are meaningful under the folder scan.
+_STEPS_DONE = {
+    "raw_collage":  (),
+    "cropped":      (),
+    "dlc_complete": ("dlc",),
+    "processing":   ("dlc",),                             # DLC done, MouseReach in progress
+    "analyzed":     ("dlc", "seg", "reach", "outcome"),
+    "triage":       ("dlc", "seg", "reach", "outcome"),   # ran the algos, held on a question
+    "deep_review":  ("dlc",),                             # seg failed / escalated -> seg not trusted
+    "quarantined":  (),
+    "failed":       (),
+}
+
 
 def _bucket(state: str) -> str:
     if state in _VALIDATED:
@@ -139,6 +153,7 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
         if mt:
             ts["updated"] = datetime.fromtimestamp(mt).isoformat()
         review = state if state in ("triage", "deep_review") else "none"
+        steps = _STEPS_DONE.get(state, ())
         out[stem] = {
             "locations": [{"stage": state, "path": path}],
             "versions": {},
@@ -147,9 +162,10 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
             "status": _bucket(state),
             "current_stage": state,
             "metadata": {"state": state, "path": path},
-            "seg_status": "pending",
-            "reach_status": "pending",
-            "outcome_status": "pending",
+            "dlc_status": "validated" if "dlc" in steps else "pending",
+            "seg_status": "validated" if "seg" in steps else "pending",
+            "reach_status": "validated" if "reach" in steps else "pending",
+            "outcome_status": "validated" if "outcome" in steps else "pending",
             "archive_ready": state == "analyzed",
             "review_status": review,
             "tray_type": tray,

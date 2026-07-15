@@ -347,6 +347,18 @@ class WatcherAdapter:
             getattr(self, "_current_versions", None),
         )
 
+    def dlc_model_for(self, video_id: str):
+        """The DLC scorer/model from the video's manifest (None until the version
+        index is built via Check versions)."""
+        mp = getattr(self, "_manifest_index", {}).get(video_id)
+        if not mp:
+            return None
+        try:
+            m = json.loads(Path(mp).read_text(encoding="utf-8"))
+            return m.get("dlc_model", {}).get("dlc_scorer") or None
+        except Exception:
+            return None
+
     def _status_bucket(self, state: str) -> str:
         if state in self._VALIDATED:
             return "validated"
@@ -495,6 +507,17 @@ class FolderScanAdapter:
         from .version_currency import version_status
         return version_status(video_id, getattr(self, "_manifest_index", {}),
                               getattr(self, "_current_versions", None))
+
+    def dlc_model_for(self, video_id: str):
+        """The DLC scorer/model from the video's manifest (None until Check versions)."""
+        mp = getattr(self, "_manifest_index", {}).get(video_id)
+        if not mp:
+            return None
+        try:
+            m = json.loads(Path(mp).read_text(encoding="utf-8"))
+            return m.get("dlc_model", {}).get("dlc_scorer") or None
+        except Exception:
+            return None
 
     def get_file_summary(self, filename: str) -> str:
         info = self.files.get(filename)
@@ -668,9 +691,9 @@ class PipelineDashboard(QWidget):
 
         # Table showing all files and their validation status
         self.overview_table = QTableWidget()
-        self.overview_table.setColumnCount(11)
+        self.overview_table.setColumnCount(12)
         self.overview_table.setHorizontalHeaderLabels([
-            "File", "Stage", "Tray", "Seg", "Reach", "Outcome", "Archive", "GT", "Review", "Version", "Updated"
+            "File", "Stage", "Tray", "DLC", "Seg", "Reach", "Outcome", "Archive", "GT", "Review", "Version", "Updated"
         ])
         self.overview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         for col in range(1, 9):
@@ -1022,23 +1045,33 @@ class PipelineDashboard(QWidget):
                 tray_item.setToolTip("Pillar tray (supported)")
             self.overview_table.setItem(row, 2, tray_item)
 
+            # DLC (pose tracking) status -- done + which model in the tooltip
+            dlc_item = status_item(info.get("dlc_status", "pending"), "DLC")
+            if info.get("dlc_status") == "validated":
+                dlc_model = getattr(self.adapter, "dlc_model_for", lambda v: None)(filename)
+                dlc_item.setToolTip(
+                    f"Pose tracking (DLC) done.  Model: {dlc_model}" if dlc_model
+                    else "Pose tracking (DLC) done.  (Run 'Check versions' to show the model.)"
+                )
+            self.overview_table.setItem(row, 3, dlc_item)
+
             # Seg status (color-coded, clickable to launch review)
             seg_item = status_item(info.get("seg_status", "pending"), "Segmentation")
             seg_item.setData(Qt.UserRole, filename)  # Store video_id for click handler
             seg_item.setData(Qt.UserRole + 1, "seg")  # Store step type
-            self.overview_table.setItem(row, 3, seg_item)
+            self.overview_table.setItem(row, 4, seg_item)
 
             # Reach status (color-coded, clickable to launch review)
             reach_item = status_item(info.get("reach_status", "pending"), "Reach")
             reach_item.setData(Qt.UserRole, filename)  # Store video_id
             reach_item.setData(Qt.UserRole + 1, "reach")  # Store step type
-            self.overview_table.setItem(row, 4, reach_item)
+            self.overview_table.setItem(row, 5, reach_item)
 
             # Outcome status (color-coded, clickable to launch review)
             outcome_item = status_item(info.get("outcome_status", "pending"), "Outcome")
             outcome_item.setData(Qt.UserRole, filename)  # Store video_id
             outcome_item.setData(Qt.UserRole + 1, "outcome")  # Store step type
-            self.overview_table.setItem(row, 5, outcome_item)
+            self.overview_table.setItem(row, 6, outcome_item)
 
             # Archive ready
             archive_ready = info.get("archive_ready", False)
@@ -1048,7 +1081,7 @@ class PipelineDashboard(QWidget):
                 archive_item.setForeground(QBrush(QColor(255, 255, 255)))
             archive_item.setTextAlignment(Qt.AlignCenter)
             archive_item.setToolTip("Ready for archive" if archive_ready else "Not ready")
-            self.overview_table.setItem(row, 6, archive_item)
+            self.overview_table.setItem(row, 7, archive_item)
 
             # Ground truth - show which types exist (S=seg, R=reach, O=outcome)
             gt_types = []
@@ -1064,7 +1097,7 @@ class PipelineDashboard(QWidget):
             gt_item.setTextAlignment(Qt.AlignCenter)
             if gt_types:
                 gt_item.setToolTip(f"Ground truth: {', '.join(info['ground_truths'])}")
-            self.overview_table.setItem(row, 7, gt_item)
+            self.overview_table.setItem(row, 8, gt_item)
 
             # Review status: triage / deep-review holds, or a saved human review
             rs = info.get("review_status", "none")
@@ -1087,7 +1120,7 @@ class PipelineDashboard(QWidget):
                 review_item.setForeground(QBrush(QColor(128, 128, 128)))
                 review_item.setToolTip("Nothing to review")
             review_item.setTextAlignment(Qt.AlignCenter)
-            self.overview_table.setItem(row, 8, review_item)
+            self.overview_table.setItem(row, 9, review_item)
 
             # Version currency vs the shipped algo versions (filled by Check versions)
             vs = getattr(self.adapter, "version_status_for", lambda v: "unknown")(filename)
@@ -1105,7 +1138,7 @@ class PipelineDashboard(QWidget):
                 version_item.setForeground(QBrush(QColor(128, 128, 128)))
                 version_item.setToolTip("Click 'Check versions' to compare against the shipped versions")
             version_item.setTextAlignment(Qt.AlignCenter)
-            self.overview_table.setItem(row, 9, version_item)
+            self.overview_table.setItem(row, 10, version_item)
 
             # Last update (date only, compact)
             if info["timestamps"]:
@@ -1114,7 +1147,7 @@ class PipelineDashboard(QWidget):
                 last_item = QTableWidgetItem(last_time[:10])
             else:
                 last_item = QTableWidgetItem("-")
-            self.overview_table.setItem(row, 10, last_item)
+            self.overview_table.setItem(row, 11, last_item)
 
     def _update_file_combo(self):
         """Update file selector combo box."""
@@ -1171,30 +1204,66 @@ class PipelineDashboard(QWidget):
         self.stats_text.setText("\n".join(lines))
 
     def _on_status_cell_clicked(self, item: QTableWidgetItem):
-        """Handle click on status cell - launch review tool if applicable."""
+        """Click a status cell: the Review cell opens the triage / deep review tool
+        for that video (landing on its first held element); Seg/Reach/Outcome open
+        the per-step review."""
         col = item.column()
+        row = item.row()
 
-        # Only handle clicks on status columns (Seg=3, Reach=4, Outcome=5)
-        if col not in [3, 4, 5]:
+        # Review column (9): open the review tool on this video's first held element
+        if col == 9:
+            name_item = self.overview_table.item(row, 0)
+            if not name_item:
+                return
+            video_id = name_item.text()
+            rtext = item.text()
+            if rtext == "Triage":
+                self._open_review_for_video(video_id, deep=False)
+            elif rtext == "Deep":
+                self._open_review_for_video(video_id, deep=True)
             return
 
-        # Get status from tooltip
+        # Seg / Reach / Outcome columns (4, 5, 6): the per-step review launcher
+        if col not in [4, 5, 6]:
+            return
         status = item.toolTip()
-
-        # Only launch for reviewable statuses
         if status not in ["needs_review", "auto_approved"]:
             return
-
-        # Get video_id and step from cell data
         video_id = item.data(Qt.UserRole)
         step = item.data(Qt.UserRole + 1)
-
         if not video_id or not step:
             return
-
-        # Find the issue location and launch review
         issue_location = self._find_first_issue(video_id, step)
         self._launch_review(video_id, step, jump_to=issue_location)
+
+    def _open_review_for_video(self, video_id: str, deep: bool = False):
+        """Open the triage (or deep) review tool on ONE video's bundle -- it lands
+        on the first held/triaged element (triage_only walks triaged first)."""
+        from mousereach.config import Paths
+        root = Paths.DEEP_REVIEW if deep else Paths.TRIAGE_REVIEW
+        bundle = (root / video_id) if root else None
+        if not bundle or not bundle.exists():
+            show_info(f"No {'deep-review' if deep else 'triage'} bundle found for {video_id}. "
+                      f"(Use the Review Queues tab for the full queue.)")
+            return
+        try:
+            import napari
+            from mousereach.review.causal_review_io import bundle_manifest_path
+            from mousereach.review.causal_review_widget import CausalReviewWidget
+            mp = bundle_manifest_path(bundle, video_id)
+            if not mp.exists():
+                show_info(f"No review bundle manifest for {video_id}.")
+                return
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+            title = f"{'Deep' if deep else 'Triage'} Review -- {video_id}"
+            v = napari.Viewer(title=title)
+            w = CausalReviewWidget(v, triage_only=(not deep), deep_review=deep)
+            v.window.add_dock_widget(w, name=title, area="right")
+            w.load_from_manifest(manifest, bundle)
+            self._review_windows = getattr(self, "_review_windows", [])
+            self._review_windows.append((v, w))  # keep refs so the windows survive
+        except Exception as e:
+            show_error(f"Could not open review for {video_id}: {e}")
 
     def _find_first_issue(self, video_id: str, step: str) -> Optional[Dict]:
         """Find the first issue location for a video/step.
