@@ -73,6 +73,22 @@ def stage_label(state: str):
     """(label, tooltip, category) for a raw watcher state, with a safe fallback."""
     return STAGE_INFO.get(state, (state, f"State: {state}", "wait"))
 
+
+# Meaningful groupings for the overview 'Filter by stage' menu. Each maps a
+# plain-language label to a set of raw states (None = show everything).
+STAGE_FILTERS = [
+    ("All videos", None),
+    ("Needs attention", {"triage", "deep_review", "failed", "outdated", "quarantined"}),
+    ("In progress", {"validated", "dlc_queued", "dlc_running", "dlc_complete", "processing", "archiving"}),
+    ("Done", {"processed", "archived", "crystallized"}),
+    ("Needs triage review", {"triage"}),
+    ("Needs deep review", {"deep_review"}),
+    ("Needs reprocessing (outdated)", {"outdated"}),
+    ("Failed", {"failed"}),
+    ("Quarantined", {"quarantined"}),
+]
+_STAGE_FILTER_MAP = dict(STAGE_FILTERS)
+
 import napari
 from napari.utils.notifications import show_info, show_error
 
@@ -520,15 +536,7 @@ class PipelineDashboard(QWidget):
         filter_layout.addWidget(QLabel("Filter by stage:"))
 
         self.stage_filter = QComboBox()
-        self.stage_filter.addItems([
-            "All (except DLC_Queue)",  # Default - hide unanalyzed
-            "All stages",
-            "DLC_Queue",
-            "Processing",
-            "triage",        # human-review hold (watcher DB)
-            "deep_review",   # human-review hold (watcher DB)
-            "Failed",
-        ])
+        self.stage_filter.addItems([label for label, _ in STAGE_FILTERS])
         self.stage_filter.setToolTip("Filter which files to show")
         self.stage_filter.currentTextChanged.connect(self._update_overview_table)
         filter_layout.addWidget(self.stage_filter)
@@ -797,22 +805,12 @@ class PipelineDashboard(QWidget):
             if v.get("tray_supported", True)
         }
 
-        # Apply stage filter
-        stage_filter = self.stage_filter.currentText() if hasattr(self, 'stage_filter') else "All (except DLC_Queue)"
-
-        if stage_filter == "All (except DLC_Queue)":
+        # Apply stage filter (plain-language groups -> sets of raw states)
+        stage_filter = self.stage_filter.currentText() if hasattr(self, 'stage_filter') else "All videos"
+        _states = _STAGE_FILTER_MAP.get(stage_filter)
+        if _states is not None:
             filtered_files = {k: v for k, v in filtered_files.items()
-                            if v.get("current_stage") != "DLC_Queue"}
-        elif stage_filter == "All stages":
-            pass  # Show everything
-        elif stage_filter == "Processing":
-            # Show anything past DLC_Queue
-            filtered_files = {k: v for k, v in filtered_files.items()
-                            if v.get("current_stage") not in ["DLC_Queue", None]}
-        elif stage_filter != "All stages":
-            # Filter to specific stage
-            filtered_files = {k: v for k, v in filtered_files.items()
-                            if v.get("current_stage") == stage_filter}
+                              if v.get("current_stage") in _states}
 
         # Apply "needs review" filter
         if hasattr(self, 'show_needs_review') and self.show_needs_review.isChecked():
