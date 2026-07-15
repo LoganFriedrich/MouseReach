@@ -43,21 +43,21 @@ class _BackfillWorker(QObject):
 # Plain-language labels for the raw watcher states (which mean nothing to a
 # novice). Each: (label, tooltip, category) where category drives the text color.
 STAGE_INFO = {
-    "discovered":   ("New",                 "Just found -- not started yet.", "wait"),
-    "quarantined":  ("Quarantined",         "Held out -- bad filename or file. Fix it in the Quarantine tab.", "bad"),
-    "validated":    ("Ready",               "Filename checked -- ready to process.", "wait"),
-    "dlc_queued":   ("Waiting for DLC",     "Queued for pose estimation on a GPU machine.", "wait"),
-    "dlc_running":  ("Running DLC",         "Pose estimation (DeepLabCut) in progress.", "busy"),
-    "dlc_complete": ("DLC done",            "Pose estimation finished -- ready for analysis.", "wait"),
-    "processing":   ("Analyzing",           "Running segmentation, reaches, outcomes, and kinematics.", "busy"),
-    "processed":    ("Analyzed",            "Analysis done (segmentation, reaches, outcomes, kinematics). Not yet archived.", "done"),
-    "archiving":    ("Archiving",           "Copying results to the archive.", "busy"),
-    "archived":     ("Archived (done)",     "Finished -- results are in the archive.", "done"),
-    "outdated":     ("Needs reprocessing",  "Processed with older algorithm versions -- reprocess to bring current.", "act"),
-    "crystallized": ("Locked",              "Locked against reprocessing (e.g. for a publication).", "done"),
-    "triage":       ("Needs triage review", "Held -- a reviewer must answer a per-element question (Review Queues tab).", "act"),
-    "deep_review":  ("Needs deep review",   "Held -- segmentation failed or was escalated (Review Queues tab).", "act"),
-    "failed":       ("Failed",              "Processing errored -- needs investigation.", "bad"),
+    "discovered":   ("New, not started",           "Just found -- no processing has started yet.", "wait"),
+    "quarantined":  ("Held: bad name",             "Set aside -- the filename/file could not be read. Fix it in the Quarantine tab.", "bad"),
+    "validated":    ("Ready to process",           "Filename checked -- waiting to be cropped / pose-tracked.", "wait"),
+    "dlc_queued":   ("Waiting for pose tracking",  "Queued for DeepLabCut pose estimation on a GPU machine.", "wait"),
+    "dlc_running":  ("Pose tracking (running)",    "DeepLabCut pose estimation is running.", "busy"),
+    "dlc_complete": ("Pose done, ready to analyze","Pose estimation finished -- ready for the analysis algorithms.", "wait"),
+    "processing":   ("Analyzing now",              "Running segmentation, reach detection, outcomes, and kinematics.", "busy"),
+    "processed":    ("Analyzed, not archived yet", "Analysis finished and saved to the database, but the files are still in the working folder -- not yet copied to the archive.", "done"),
+    "archiving":    ("Copying to archive",         "Copying the finished results to the archive.", "busy"),
+    "archived":     ("Done (archived)",            "Fully finished -- results are analyzed and stored in the archive.", "done"),
+    "outdated":     ("Out of date, reprocess",     "Was processed with older algorithm versions -- reprocess to bring it up to date.", "act"),
+    "crystallized": ("Locked (published)",         "Locked against reprocessing (e.g. frozen for a publication).", "done"),
+    "triage":       ("Waiting for triage review",  "Held out of the database -- a reviewer must answer a per-element question (Review Queues tab).", "act"),
+    "deep_review":  ("Waiting for deep review",    "Held out -- segmentation failed or was escalated; needs the deep-review tools (Review Queues tab).", "act"),
+    "failed":       ("Failed, needs a look",       "Processing errored out -- needs investigation.", "bad"),
 }
 
 _STAGE_CATEGORY_COLOR = {
@@ -733,25 +733,50 @@ class PipelineDashboard(QWidget):
 
     def _reprocess_outdated(self):
         """Mark every out-of-date video for reprocessing (the watcher then brings
-        them current). Uses the same scanner the watcher uses."""
+        them current). The scan reads every archived manifest (~30s over the NAS),
+        so it runs on a background thread."""
+        if getattr(self, "_reproc_thread", None) and self._reproc_thread.is_alive():
+            show_info("Reprocess check already running...")
+            return
         try:
             from mousereach.watcher.db import WatcherDB
-            from mousereach.watcher.reprocessor import ReprocessingScanner
             db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
             if not db_path or not db_path.exists():
                 show_error("No watcher database found on this machine.")
                 return
             db = WatcherDB(db_path)
-            summary = ReprocessingScanner(db, Paths.NAS_ROOT).scan(mark_outdated=True)
-            n = summary.get("outdated", 0)
-            if n:
-                show_info(f"Marked {n} video(s) for reprocessing. Start the watcher "
-                          f"(Watcher Control tab) to bring them current.")
-            else:
-                show_info("No archived videos are out of date -- nothing to reprocess.")
-            self._refresh_data()
         except Exception as e:
-            show_error(f"Could not mark outdated videos: {e}")
+            show_error(f"Could not open the database: {e}")
+            return
+        show_info("Finding out-of-date videos (scanning the archive, ~30s)...")
+        worker = _BackfillWorker()  # reuse: done(dict)
+        worker.done.connect(self._on_reprocess_done)
+        self._reproc_worker = worker
+
+        import threading
+
+        def job():
+            try:
+                from mousereach.watcher.reprocessor import ReprocessingScanner
+                res = ReprocessingScanner(db, Paths.NAS_ROOT).scan(mark_outdated=True)
+            except Exception as e:
+                res = {"error": str(e)}
+            worker.done.emit(res)
+
+        self._reproc_thread = threading.Thread(target=job, daemon=True, name="reprocess-scan")
+        self._reproc_thread.start()
+
+    def _on_reprocess_done(self, res: dict):
+        if res.get("error"):
+            show_error(f"Could not mark outdated videos: {res['error']}")
+            return
+        n = res.get("outdated", 0)
+        if n:
+            show_info(f"Marked {n} video(s) for reprocessing. Start the watcher "
+                      f"(Watcher Control tab) to bring them current.")
+        else:
+            show_info("No archived videos are out of date -- nothing to reprocess.")
+        self._refresh_data()
 
     def _import_archive(self):
         """Register every archived video into the tracking DB (background) so the
