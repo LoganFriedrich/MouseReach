@@ -435,7 +435,7 @@ class WatcherAdapter:
         info = self.files.get(filename)
         if not info:
             return "Not found in watcher DB"
-        lines = [f"Video: {filename}", f"State: {info['current_stage']}"]
+        lines = [f"Video: {filename}", f"Stage: {stage_label(info['current_stage'])[0]}  ({info['current_stage']})"]
         if info["locations"]:
             lines.append(f"Path: {info['locations'][0]['path']}")
         err = info.get("metadata", {}).get("error")
