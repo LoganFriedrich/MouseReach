@@ -392,6 +392,20 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
+    # Load Run All Steps (push one opened video through the whole pipeline)
+    tprint("  Run All Steps...", end=" ")
+    try:
+        from mousereach.pipeline.run_all_widget import RunAllStepsWidget
+        runall_widget = RunAllStepsWidget(viewer)
+        dw = viewer.window.add_dock_widget(runall_widget, name="Run All Steps", area="right")
+        widgets_loaded.append(("runall", runall_widget))
+        dock_widgets.append(dw)
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
     # Tabify all dock widgets together (stack as tabs)
     if len(dock_widgets) > 1:
         main_window = viewer.window._qt_window
