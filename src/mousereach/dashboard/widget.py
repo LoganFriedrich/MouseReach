@@ -988,55 +988,42 @@ class PipelineDashboard(QWidget):
             self.details_text.setText(summary)
 
     def _update_statistics(self):
-        """Update statistics display with validation status breakdown."""
+        """Update statistics: a meaningful by-stage / review / version breakdown
+        across the whole shown corpus (the old per-step validation counts only
+        applied to videos currently sitting in Processing)."""
+        from collections import Counter
         total = len(self.all_files)
+        state_counts = Counter(info.get("current_stage", "unknown") for info in self.all_files.values())
+        review_counts = Counter(info.get("review_status", "none") for info in self.all_files.values())
+        has_gt = sum(1 for info in self.all_files.values() if info.get("ground_truths"))
 
-        # Count by validation status for each step
-        seg_counts = {"validated": 0, "needs_review": 0, "auto_approved": 0, "pending": 0}
-        reach_counts = {"validated": 0, "needs_review": 0, "auto_approved": 0, "pending": 0}
-        outcome_counts = {"validated": 0, "needs_review": 0, "auto_approved": 0, "pending": 0}
-        archive_ready = 0
+        lines = [f"Total videos: {total}", "", "By stage:"]
+        for state, n in sorted(state_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            lines.append(f"  {stage_label(state)[0]:24} {n}")
 
-        for info in self.all_files.values():
-            seg_status = info.get("seg_status", "pending")
-            reach_status = info.get("reach_status", "pending")
-            outcome_status = info.get("outcome_status", "pending")
-
-            seg_counts[seg_status] = seg_counts.get(seg_status, 0) + 1
-            reach_counts[reach_status] = reach_counts.get(reach_status, 0) + 1
-            outcome_counts[outcome_status] = outcome_counts.get(outcome_status, 0) + 1
-
-            if info.get("archive_ready", False):
-                archive_ready += 1
-
-        has_gt = sum(1 for info in self.all_files.values() if info["ground_truths"])
-
-        stats_lines = [
-            f"Total videos: {total}",
+        lines += [
             "",
-            "Segmentation Status:",
-            f"  ✓ Validated:    {seg_counts['validated']}",
-            f"  ⏳ Needs Review: {seg_counts['needs_review']}",
-            f"  ⚡ Auto-approved: {seg_counts['auto_approved']}",
-            f"  - Pending:      {seg_counts['pending']}",
+            "Review holds:",
+            f"  Needs triage review:   {review_counts.get('triage', 0)}",
+            f"  Needs deep review:     {review_counts.get('deep_review', 0)}",
+            f"  Human review saved:    {review_counts.get('reviewed', 0)}",
             "",
-            "Reach Detection Status:",
-            f"  ✓ Validated:    {reach_counts['validated']}",
-            f"  ⏳ Needs Review: {reach_counts['needs_review']}",
-            f"  ⚡ Auto-approved: {reach_counts['auto_approved']}",
-            f"  - Pending:      {reach_counts['pending']}",
-            "",
-            "Outcome Detection Status:",
-            f"  ✓ Validated:    {outcome_counts['validated']}",
-            f"  ⏳ Needs Review: {outcome_counts['needs_review']}",
-            f"  ⚡ Auto-approved: {outcome_counts['auto_approved']}",
-            f"  - Pending:      {outcome_counts['pending']}",
-            "",
-            f"Archive Ready: {archive_ready}/{total}",
-            f"Ground Truth:  {has_gt}/{total}",
+            f"Ground truth files:      {has_gt}/{total}",
         ]
 
-        self.stats_text.setText("\n".join(stats_lines))
+        # Version currency -- only after 'Check versions' has built the index.
+        vs_fn = getattr(self.adapter, "version_status_for", None)
+        if vs_fn is not None and getattr(self.adapter, "_manifest_index", None):
+            vc = Counter(vs_fn(f) for f in self.all_files)
+            lines += [
+                "",
+                "Versions vs the shipped set:",
+                f"  Current:   {vc.get('current', 0)}",
+                f"  Outdated:  {vc.get('outdated', 0)}",
+                f"  Unknown:   {vc.get('unknown', 0)}",
+            ]
+
+        self.stats_text.setText("\n".join(lines))
 
     def _on_status_cell_clicked(self, item: QTableWidgetItem):
         """Handle click on status cell - launch review tool if applicable."""
