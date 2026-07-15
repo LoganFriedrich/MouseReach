@@ -48,9 +48,9 @@ STAGE_INFO = {
     "validated":    ("Ready to process",           "Filename checked -- waiting to be cropped / pose-tracked.", "wait"),
     "dlc_queued":   ("Waiting for pose tracking",  "Queued for DeepLabCut pose estimation on a GPU machine.", "wait"),
     "dlc_running":  ("Pose tracking (running)",    "DeepLabCut pose estimation is running.", "busy"),
-    "dlc_complete": ("Pose done, ready to analyze","Pose estimation finished -- ready for the analysis algorithms.", "wait"),
-    "processing":   ("Analyzing now",              "Running segmentation, reach detection, outcomes, and kinematics.", "busy"),
-    "processed":    ("Analyzed, not archived yet", "Analysis finished and saved to the database, but the files are still in the working folder -- not yet copied to the archive.", "done"),
+    "dlc_complete": ("Pose done, ready for MouseReach", "Pose tracking (DLC) finished -- ready for the MouseReach algorithms.", "wait"),
+    "processing":   ("Running MouseReach algos",        "Running the MouseReach algorithms: segmentation, reach detection, outcomes, assignment, and kinematics.", "busy"),
+    "processed":    ("MouseReach done, not archived",   "Pose tracking + all 4 MouseReach algorithms + kinematics are done and saved to the database. Files are still in the working folder, not yet copied to the archive. (Human review, if any, is the Review column.)", "done"),
     "archiving":    ("Copying to archive",         "Copying the finished results to the archive.", "busy"),
     "archived":     ("Done (archived)",            "Fully finished -- results are analyzed and stored in the archive.", "done"),
     "outdated":     ("Out of date, reprocess",     "Was processed with older algorithm versions -- reprocess to bring it up to date.", "act"),
@@ -502,9 +502,11 @@ class PipelineDashboard(QWidget):
         main_layout.addWidget(header)
 
         info = QLabel(
-            "Complete view of all files in the pipeline.\n"
-            f"Index: {self.adapter.processing_root}\n"
-            "Shows location, version, timestamps, and ground truth status."
+            f"Data folder: {self.adapter.processing_root}\n"
+            "Lists the videos the auto-processor is tracking. Videos already in the "
+            "archive will NOT show until you click 'Import archive' (bottom). To "
+            "change where the pipeline lives or looks for files, use the 'Change "
+            "folders' button below (or the Setup tab)."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #888; font-size: 10px;")
@@ -616,6 +618,11 @@ class PipelineDashboard(QWidget):
         )
         import_btn.clicked.connect(self._import_archive)
         btn_layout.addWidget(import_btn)
+
+        setup_btn = QPushButton("Change folders")
+        setup_btn.setToolTip("Set or change where the pipeline lives and looks for files.")
+        setup_btn.clicked.connect(self._open_setup)
+        btn_layout.addWidget(setup_btn)
 
         layout.addLayout(btn_layout)
 
@@ -821,6 +828,18 @@ class PipelineDashboard(QWidget):
             f"{res.get('existing', 0)} already known, {res.get('errors', 0)} errors."
         )
         self._refresh_data()
+
+    def _open_setup(self):
+        """Open the folder-setup form (also available as the Setup tab) so paths
+        can be set/changed right from the dashboard."""
+        try:
+            from mousereach.setup.setup_widget import SetupWidget
+            self._setup_window = SetupWidget(self.viewer)  # keep a ref so it isn't GC'd
+            self._setup_window.setWindowTitle("MouseReach -- Folders / Setup")
+            self._setup_window.resize(600, 380)
+            self._setup_window.show()
+        except Exception as e:
+            show_error(f"Could not open Setup: {e}")
 
     def _update_overview_table(self):
         """Update the overview table with validation status columns."""
