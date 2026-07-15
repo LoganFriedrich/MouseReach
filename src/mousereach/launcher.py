@@ -103,6 +103,34 @@ REVIEW_STEPS = ["2b", "3b", "4b"]
 ALL_STEPS = [w[0] for w in WIDGETS] + REVIEW_STEPS
 
 
+def _launch_setup_only():
+    """Launch napari showing ONLY the first-run Setup widget.
+
+    Used when the pipeline paths are not configured yet, so the operator can
+    configure from the app instead of a terminal. After saving, they relaunch
+    ``mousereach`` normally.
+    """
+    import os
+    os.environ.setdefault('NAPARI_DISABLE_PLUGIN_AUTOLOAD', '1')
+    os.environ.setdefault('NAPARI_DISABLE_PLUGINS', '1')
+    try:
+        import napari
+        from napari.utils.notifications import show_info
+        from mousereach.setup.setup_widget import SetupWidget
+        viewer = napari.Viewer(title="MouseReach Setup")
+
+        def _saved():
+            show_info("Configuration saved. Close this window and run 'mousereach' again.")
+
+        viewer.window.add_dock_widget(
+            SetupWidget(viewer, on_saved=_saved), name="Setup", area="right"
+        )
+        napari.run()
+    except Exception as e:
+        print(f"Could not open the Setup screen: {e}")
+        print("Configure from a terminal instead:  mousereach-setup")
+
+
 def launch(video_path=None, steps=None):
     """
     Launch MouseReach tools in a napari viewer.
@@ -135,14 +163,11 @@ def launch(video_path=None, steps=None):
     print("OK")
     if not Paths.is_configured():
         print("\n" + "=" * 60)
-        print("MouseReach Configuration Required")
-        print("=" * 60)
-        print("\nMouseReach needs to know where your pipeline folders are located.")
-        print("\nPlease run:  mousereach-setup")
-        print("\nThis only needs to be done once per machine.")
+        print("MouseReach is not configured yet -- opening the Setup screen.")
+        print("(You can also configure from a terminal with: mousereach-setup)")
         print("=" * 60 + "\n")
-        import sys
-        sys.exit(1)
+        _launch_setup_only()
+        return
 
     # Validate paths exist (warn but continue if NAS is missing)
     problems = Paths.validate()
@@ -346,6 +371,20 @@ def launch(video_path=None, steps=None):
         rq_widget = ReviewQueuesWidget(viewer)
         dw = viewer.window.add_dock_widget(rq_widget, name="Review Queues", area="right")
         widgets_loaded.append(("queues", rq_widget))
+        dock_widgets.append(dw)
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
+    # Load Setup (edit the pipeline paths from within the app)
+    tprint("  Setup...", end=" ")
+    try:
+        from mousereach.setup.setup_widget import SetupWidget
+        setup_widget = SetupWidget(viewer)
+        dw = viewer.window.add_dock_widget(setup_widget, name="Setup", area="right")
+        widgets_loaded.append(("setup", setup_widget))
         dock_widgets.append(dw)
         print("OK")
     except ImportError as e:
