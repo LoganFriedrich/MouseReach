@@ -26,8 +26,13 @@ from qtpy.QtWidgets import (
     QComboBox, QGroupBox, QProgressBar, QTabWidget, QTextEdit,
     QCheckBox
 )
-from qtpy.QtCore import Qt, QTimer
+from qtpy.QtCore import Qt, QTimer, QObject, Signal
 from qtpy.QtGui import QColor, QBrush
+
+
+class _VersionCheckWorker(QObject):
+    """Carries the 'version index built' signal from the worker thread to the GUI."""
+    done = Signal()
 
 import napari
 from napari.utils.notifications import show_info, show_error
@@ -248,6 +253,32 @@ class WatcherAdapter:
         except Exception:
             pass  # fall back handled by caller / silent per _safe_refresh contract
         return self.files
+
+    def _ensure_version_data(self, force: bool = False):
+        """Cache the shipped versions + the (slow, archive-wide) manifest index so
+        the Version column can judge each video. Built on demand (the 'Check
+        versions' button) rather than on every refresh, since the archive rglob is
+        slow over the NAS."""
+        if force or not hasattr(self, "_current_versions"):
+            try:
+                from mousereach.pipeline.versions import get_current_versions
+                from .version_currency import build_manifest_index
+                self._current_versions = get_current_versions()
+                self._manifest_index = build_manifest_index(
+                    [Paths.PROCESSING, Paths.ANALYZED_OUTPUT]
+                )
+            except Exception:
+                self._current_versions = {}
+                self._manifest_index = {}
+
+    def version_status_for(self, video_id: str) -> str:
+        """'current' / 'outdated' / 'unknown' -- 'unknown' until the version index
+        is built (Check versions)."""
+        from .version_currency import version_status
+        return version_status(
+            video_id, getattr(self, "_manifest_index", {}),
+            getattr(self, "_current_versions", None),
+        )
 
     def _status_bucket(self, state: str) -> str:
         if state in self._VALIDATED:
@@ -487,9 +518,9 @@ class PipelineDashboard(QWidget):
 
         # Table showing all files and their validation status
         self.overview_table = QTableWidget()
-        self.overview_table.setColumnCount(10)
+        self.overview_table.setColumnCount(11)
         self.overview_table.setHorizontalHeaderLabels([
-            "File", "Stage", "Tray", "Seg", "Reach", "Outcome", "Archive", "GT", "Review", "Updated"
+            "File", "Stage", "Tray", "Seg", "Reach", "Outcome", "Archive", "GT", "Review", "Version", "Updated"
         ])
         self.overview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         for col in range(1, 9):
@@ -511,6 +542,24 @@ class PipelineDashboard(QWidget):
         rebuild_btn.setToolTip("Full rescan of all folders (slow, but thorough)")
         rebuild_btn.clicked.connect(self._rebuild_index)
         btn_layout.addWidget(rebuild_btn)
+
+        check_versions_btn = QPushButton("Check versions")
+        check_versions_btn.setToolTip(
+            "Fill the Version column: compare each video against the shipped "
+            "algorithm versions (Current / Outdated). Scans the archive -- may "
+            "take a moment the first time."
+        )
+        check_versions_btn.clicked.connect(self._check_versions)
+        btn_layout.addWidget(check_versions_btn)
+
+        reprocess_btn = QPushButton("Reprocess outdated")
+        reprocess_btn.setStyleSheet("background:#c80; color:white; font-weight:bold;")
+        reprocess_btn.setToolTip(
+            "Mark every out-of-date video for reprocessing so the watcher brings "
+            "them current with the shipped algorithm versions."
+        )
+        reprocess_btn.clicked.connect(self._reprocess_outdated)
+        btn_layout.addWidget(reprocess_btn)
 
         layout.addLayout(btn_layout)
 
@@ -574,6 +623,68 @@ class PipelineDashboard(QWidget):
             self._refresh_data()
         except Exception as e:
             show_error(f"Failed to rebuild index: {e}")
+
+    def _check_versions(self):
+        """Fill the Version column by comparing each video against the shipped
+        algorithm versions. The manifest scan is slow (archive-wide, ~30s), so it
+        runs on a background thread and the column updates when it finishes."""
+        adapter = self.adapter
+        if not hasattr(adapter, "_ensure_version_data"):
+            show_info("Version check needs the watcher database (not available here).")
+            return
+        if getattr(self, "_version_thread", None) and self._version_thread.is_alive():
+            show_info("Version check already running...")
+            return
+        show_info("Checking versions -- scanning the archive (~30s)...")
+        worker = _VersionCheckWorker()
+        worker.done.connect(self._on_versions_ready)
+        self._version_worker = worker  # keep a reference
+
+        import threading
+
+        def job():
+            try:
+                adapter._ensure_version_data(force=True)
+            except Exception:
+                pass
+            worker.done.emit()
+
+        self._version_thread = threading.Thread(target=job, daemon=True, name="version-check")
+        self._version_thread.start()
+
+    def _on_versions_ready(self):
+        self._update_overview_table()
+        try:
+            statuses = [self.adapter.version_status_for(f) for f in self.all_files]
+            show_info(
+                f"Versions: {statuses.count('current')} current, "
+                f"{statuses.count('outdated')} outdated, "
+                f"{statuses.count('unknown')} unknown."
+            )
+        except Exception:
+            pass
+
+    def _reprocess_outdated(self):
+        """Mark every out-of-date video for reprocessing (the watcher then brings
+        them current). Uses the same scanner the watcher uses."""
+        try:
+            from mousereach.watcher.db import WatcherDB
+            from mousereach.watcher.reprocessor import ReprocessingScanner
+            db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
+            if not db_path or not db_path.exists():
+                show_error("No watcher database found on this machine.")
+                return
+            db = WatcherDB(db_path)
+            summary = ReprocessingScanner(db, Paths.NAS_ROOT).scan(mark_outdated=True)
+            n = summary.get("outdated", 0)
+            if n:
+                show_info(f"Marked {n} video(s) for reprocessing. Start the watcher "
+                          f"(Watcher Control tab) to bring them current.")
+            else:
+                show_info("No archived videos are out of date -- nothing to reprocess.")
+            self._refresh_data()
+        except Exception as e:
+            show_error(f"Could not mark outdated videos: {e}")
 
     def _update_overview_table(self):
         """Update the overview table with validation status columns."""
@@ -727,6 +838,24 @@ class PipelineDashboard(QWidget):
             review_item.setTextAlignment(Qt.AlignCenter)
             self.overview_table.setItem(row, 8, review_item)
 
+            # Version currency vs the shipped algo versions (filled by Check versions)
+            vs = getattr(self.adapter, "version_status_for", lambda v: "unknown")(filename)
+            if vs == "current":
+                version_item = QTableWidgetItem("Current")
+                version_item.setBackground(QBrush(QColor(76, 175, 80)))  # Green
+                version_item.setForeground(QBrush(QColor(255, 255, 255)))
+                version_item.setToolTip("Up to date with the shipped algorithm versions")
+            elif vs == "outdated":
+                version_item = QTableWidgetItem("Outdated")
+                version_item.setBackground(QBrush(QColor(255, 165, 0)))  # Orange
+                version_item.setToolTip("Older than the shipped versions -- reprocess to bring it current")
+            else:
+                version_item = QTableWidgetItem("?")
+                version_item.setForeground(QBrush(QColor(128, 128, 128)))
+                version_item.setToolTip("Click 'Check versions' to compare against the shipped versions")
+            version_item.setTextAlignment(Qt.AlignCenter)
+            self.overview_table.setItem(row, 9, version_item)
+
             # Last update (date only, compact)
             if info["timestamps"]:
                 last_time = max(info["timestamps"].values())
@@ -734,7 +863,7 @@ class PipelineDashboard(QWidget):
                 last_item = QTableWidgetItem(last_time[:10])
             else:
                 last_item = QTableWidgetItem("-")
-            self.overview_table.setItem(row, 9, last_item)
+            self.overview_table.setItem(row, 10, last_item)
 
     def _update_file_combo(self):
         """Update file selector combo box."""
