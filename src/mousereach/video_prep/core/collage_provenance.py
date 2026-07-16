@@ -77,6 +77,61 @@ def expected_offspring(collage: str) -> List[Dict]:
     return out
 
 
+_PROC_MANIFEST_SUFFIX = "_processing_manifest.json"
+
+
+def _review_pending(stem: str, manifest_dir: Path) -> bool:
+    """True if a saved human review for this offspring is NEWER than its archived
+    features (its triage resolution has not been applied to the shipped product),
+    or a review exists with no features yet. Never raises."""
+    try:
+        from mousereach.review.causal_review_io import resolve_review_path
+        review = resolve_review_path(stem)
+        if review is None:
+            return False
+        feats = Path(manifest_dir) / f"{stem}_features.json"
+        if not feats.exists():
+            return True
+        return review.stat().st_mtime > feats.stat().st_mtime
+    except Exception:
+        return False
+
+
+def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
+    """Set of single-animal stems that are TRULY complete -- i.e. safe to treat a
+    collage as retirement-eligible on.
+
+    An offspring counts ONLY when it is (a) in the final Analyzed output, (b)
+    processed with the CURRENTLY shipped versions (its processing manifest matches
+    pipeline_versions.json -- not an outdated DLC model or algo version), and (c)
+    has no human review still pending application. An offspring sitting in Analyzed
+    from an old version, or with an unresolved review, is deliberately EXCLUDED --
+    it is not done, it is stale. Never raises; missing manifest -> not complete."""
+    from mousereach.config import Paths
+    from mousereach.pipeline.versions import (
+        get_current_versions, compare_manifest_to_current)
+
+    analyzed_root = Path(analyzed_root or Paths.ANALYZED_OUTPUT)
+    nas_root = nas_root or Paths.NAS_ROOT
+    complete: set = set()
+    if not analyzed_root.exists():
+        return complete
+    current = get_current_versions(nas_root)
+    for mp in analyzed_root.rglob(f"*{_PROC_MANIFEST_SUFFIX}"):
+        stem = mp.name[: -len(_PROC_MANIFEST_SUFFIX)]
+        try:
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cmp = compare_manifest_to_current(manifest, current)
+        if not cmp.get("is_current"):
+            continue  # outdated version -> not done
+        if _review_pending(stem, mp.parent):
+            continue  # a human review still to apply -> not done
+        complete.add(stem)
+    return complete
+
+
 def crop_manifest_path(collage_path, manifest_dir=None) -> Path:
     """Where a collage's crop manifest lives -- next to the collage by default."""
     collage_path = Path(collage_path)
@@ -145,7 +200,8 @@ def write_crop_manifest(collage_path, results: List[dict], output_dir,
         return None
 
 
-def derive_offspring_status(collage: str, downstream: Mapping[str, str]) -> Dict:
+def derive_offspring_status(collage: str, downstream: Mapping[str, str],
+                            complete_stems: Optional[set] = None) -> Dict:
     """Reconstruct a collage's crop status from the filename + a downstream index.
 
     ``downstream`` maps a single-animal stem -> its furthest pipeline stage (e.g.
@@ -155,7 +211,13 @@ def derive_offspring_status(collage: str, downstream: Mapping[str, str]) -> Dict
 
     where ``crop_state`` is uncropped / partial / cropped. A collage with a saved
     manifest is trusted for the offspring set, but stages are always read live
-    from ``downstream`` so the rollup reflects current reality."""
+    from ``downstream`` so the rollup reflects current reality.
+
+    ``complete_stems`` (from ``build_complete_stems``) is the authoritative set of
+    offspring that are truly done -- in Analyzed AND version-current AND with no
+    pending review. When given, ``all_complete`` requires every offspring to be in
+    it (an outdated or review-pending child does NOT count). When omitted, the
+    weaker "in the Analyzed folder" test is used (display-only fallback)."""
     children = [c for c in expected_offspring(collage) if not c["blank"]]
     rows = []
     present = 0
@@ -165,9 +227,14 @@ def derive_offspring_status(collage: str, downstream: Mapping[str, str]) -> Dict
         stage = downstream.get(stem)
         if stage:
             present += 1
-        if stage in COMPLETE_STAGES:
+        if complete_stems is not None:
+            is_complete = stem in complete_stems
+        else:
+            is_complete = stage in COMPLETE_STAGES
+        if is_complete:
             complete += 1
-        rows.append({"stem": stem, "animal_id": c["animal_id"], "stage": stage})
+        rows.append({"stem": stem, "animal_id": c["animal_id"],
+                     "stage": stage, "complete": is_complete})
     n_expected = len(children)
     if present == 0:
         state = CROP_UNCROPPED
@@ -261,6 +328,7 @@ def _completion_results(collage_name: str, downstream: Mapping[str, str]) -> Lis
 
 
 def retire_completed_collages(source_dir, downstream: Mapping[str, str],
+                              complete_stems: Optional[set] = None,
                               dest_dir=None, dry_run: bool = True) -> Dict:
     """Move every collage whose offspring have ALL reached the final Analyzed
     output to ultimate storage.
@@ -273,8 +341,11 @@ def retire_completed_collages(source_dir, downstream: Mapping[str, str],
     already mirrors to the Drobo -- so "ultimate storage + copied to the Drobo"
     happens without a special copy. NEVER deletes; a move is fully reversible.
 
-    ``downstream`` must be a fresh stem->furthest-stage index. Returns a summary
-    with the list of collages moved (or that would move, when ``dry_run``)."""
+    ``downstream`` must be a fresh stem->furthest-stage index. ``complete_stems``
+    (from ``build_complete_stems``) is the authoritative version-current +
+    review-clean completion set -- a collage retires only when EVERY offspring is
+    in it. Returns a summary with the list of collages moved (or that would move,
+    when ``dry_run``)."""
     import shutil
     from mousereach.config import Paths
 
@@ -290,7 +361,7 @@ def retire_completed_collages(source_dir, downstream: Mapping[str, str],
     for c in collages:
         summary["scanned"] += 1
         try:
-            st = derive_offspring_status(c.name, downstream)
+            st = derive_offspring_status(c.name, downstream, complete_stems)
             if st["n_expected"] == 0 or st["n_present"] == 0:
                 summary["uncropped"] += 1
                 continue
