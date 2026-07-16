@@ -41,6 +41,12 @@ CROP_UNCROPPED = "uncropped"   # no offspring exist yet
 CROP_PARTIAL = "partial"       # some but not all offspring exist
 CROP_CROPPED = "cropped"       # every expected offspring exists
 
+# An offspring has "made it through the entire pipeline" when it reaches the final
+# Analyzed output. A collage is retirement-eligible only when EVERY offspring is
+# there -- a child still processing, or held in a review queue, keeps the collage
+# in the active intake folder.
+COMPLETE_STAGES = {"analyzed"}
+
 
 def _tool_version() -> Optional[str]:
     try:
@@ -153,11 +159,14 @@ def derive_offspring_status(collage: str, downstream: Mapping[str, str]) -> Dict
     children = [c for c in expected_offspring(collage) if not c["blank"]]
     rows = []
     present = 0
+    complete = 0
     for c in children:
         stem = c["offspring_stem"]
         stage = downstream.get(stem)
         if stage:
             present += 1
+        if stage in COMPLETE_STAGES:
+            complete += 1
         rows.append({"stem": stem, "animal_id": c["animal_id"], "stage": stage})
     n_expected = len(children)
     if present == 0:
@@ -170,6 +179,9 @@ def derive_offspring_status(collage: str, downstream: Mapping[str, str]) -> Dict
         "crop_state": state,
         "n_expected": n_expected,
         "n_present": present,
+        "n_complete": complete,
+        # retirement-eligible: every offspring has reached the final Analyzed output
+        "all_complete": n_expected > 0 and complete == n_expected,
         "offspring": rows,
     }
 
@@ -225,4 +237,82 @@ def backfill_manifests(source_dir, downstream: Mapping[str, str],
         except Exception as e:
             summary["errors"] += 1
             logger.warning("backfill error on %s: %s", c.name, e)
+    return summary
+
+
+def _completion_results(collage_name: str, downstream: Mapping[str, str]) -> List[dict]:
+    """Synthesize a crop-results list (for the manifest) from a collage's derived
+    offspring + their current stages."""
+    results = []
+    for c in expected_offspring(collage_name):
+        if c["blank"]:
+            results.append({"position": c["position"], "animal_id": c["animal_id"],
+                            "status": "skipped", "reason": "blank_cohort_00"})
+        else:
+            stage = downstream.get(c["offspring_stem"])
+            results.append({
+                "position": c["position"],
+                "animal_id": c["animal_id"],
+                "status": "success" if stage else "unknown",
+                "output_path": f"{c['offspring_stem']}.mp4" if stage else None,
+                "final_stage": stage,
+            })
+    return results
+
+
+def retire_completed_collages(source_dir, downstream: Mapping[str, str],
+                              dest_dir=None, dry_run: bool = True) -> Dict:
+    """Move every collage whose offspring have ALL reached the final Analyzed
+    output to ultimate storage.
+
+    A collage is retired only when ``derive_offspring_status(...).all_complete`` --
+    i.e. every single-mouse child has made it through the entire pipeline. Children
+    still processing, or held in a review queue, keep the collage in the active
+    intake folder. Retired collages (and a completion-stamped crop manifest) move
+    to ``dest_dir`` (default ``Analyzed/Multi-Animal``), which the backup watcher
+    already mirrors to the Drobo -- so "ultimate storage + copied to the Drobo"
+    happens without a special copy. NEVER deletes; a move is fully reversible.
+
+    ``downstream`` must be a fresh stem->furthest-stage index. Returns a summary
+    with the list of collages moved (or that would move, when ``dry_run``)."""
+    import shutil
+    from mousereach.config import Paths
+
+    source_dir = Path(source_dir)
+    dest_dir = Path(dest_dir) if dest_dir else (Paths.ANALYZED_OUTPUT / "Multi-Animal")
+    summary = {"scanned": 0, "retired": 0, "not_complete": 0, "uncropped": 0,
+               "errors": 0, "dest": str(dest_dir), "moved": []}
+    if not source_dir.exists():
+        return summary
+    collages = sorted(list(source_dir.glob("*.mkv")) + list(source_dir.glob("*.mp4")))
+    if not dry_run:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    for c in collages:
+        summary["scanned"] += 1
+        try:
+            st = derive_offspring_status(c.name, downstream)
+            if st["n_expected"] == 0 or st["n_present"] == 0:
+                summary["uncropped"] += 1
+                continue
+            if not st["all_complete"]:
+                summary["not_complete"] += 1
+                continue
+            summary["moved"].append(c.name)
+            if dry_run:
+                summary["retired"] += 1
+                continue
+            # Stamp completion into the manifest, then move collage + manifest.
+            manifest = build_crop_manifest(c, _completion_results(c.name, downstream),
+                                           output_dir="(retired)")
+            manifest["retired"] = True
+            manifest["retired_at"] = datetime.now().isoformat()
+            manifest["offspring_all_complete"] = True
+            mpath = crop_manifest_path(c)
+            mpath.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            shutil.move(str(c), str(dest_dir / c.name))
+            shutil.move(str(mpath), str(dest_dir / mpath.name))
+            summary["retired"] += 1
+        except Exception as e:
+            summary["errors"] += 1
+            logger.warning("retire error on %s: %s", c.name, e)
     return summary
