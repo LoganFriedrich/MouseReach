@@ -1214,6 +1214,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         self._reprocess_scanner = None
         self._scan_cycle_count = 0
         self._reprocess_scan_interval = 10  # Every 10th poll cycle (~5 min at 30s interval)
+        # Collage retirement runs on a slower cadence (it does two full pipeline-tree
+        # scans); every Nth reprocess-scan cycle.
+        self._retire_scan_every = 6  # ~30 min at the interval above
+        self._retire_cycle_count = 0
 
         if Paths.NAS_ROOT:
             try:
@@ -1262,6 +1266,35 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 scan_review_queues(self.db, self.processing_dir)
             except Exception as e:
                 logger.warning(f"Review-return scan failed: {e}")
+
+        # Periodic collage retirement: move any collage whose offspring have ALL
+        # made it through the pipeline (version-current + review-clean) to ultimate
+        # storage (Analyzed/Multi-Animal, Drobo-synced). Slow cadence.
+        if self._scan_cycle_count % self._reprocess_scan_interval == 0:
+            self._retire_cycle_count += 1
+            if self._retire_cycle_count % self._retire_scan_every == 0:
+                self._retire_completed_collages()
+
+    def _retire_completed_collages(self):
+        """Retire fully-complete collages to ultimate storage. Best-effort; only
+        acts on collages every one of whose single-animal offspring is in the final
+        Analyzed output, processed with the currently-shipped versions, and with no
+        review pending. Never raises out."""
+        try:
+            from mousereach.config import Paths
+            from mousereach.video_prep.core.collage_provenance import (
+                retire_completed_collages, build_downstream_index, build_complete_stems)
+            downstream = build_downstream_index()
+            complete = build_complete_stems()
+            summ = retire_completed_collages(
+                Paths.MULTI_ANIMAL_SOURCE, downstream,
+                complete_stems=complete, dry_run=False)
+            if summ.get("retired"):
+                logger.info(
+                    f"Collage retirement: moved {summ['retired']} fully-complete "
+                    f"collage(s) to {summ['dest']} (Drobo-synced by the backup watcher)")
+        except Exception as e:
+            logger.warning(f"Collage retirement scan failed: {e}")
 
     # =========================================================================
     # WORK QUEUE

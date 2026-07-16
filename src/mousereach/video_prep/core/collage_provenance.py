@@ -80,6 +80,44 @@ def expected_offspring(collage: str) -> List[Dict]:
 _PROC_MANIFEST_SUFFIX = "_processing_manifest.json"
 
 
+_STAGE_PRIORITY = {"cropped": 30, "dlc_complete": 40, "processing": 50,
+                   "analyzed": 100, "triage": 120, "deep_review": 120}
+
+
+def build_downstream_index() -> Dict[str, str]:
+    """``{single-animal stem -> furthest pipeline stage}`` across the pipeline
+    folders (the same furthest-wins logic the dashboard uses). Used by the
+    watcher's auto-retire and by ``retire_completed_collages`` callers to resolve
+    each collage's offspring. Never raises on a missing folder."""
+    from mousereach.config import Paths
+
+    idx: Dict[str, str] = {}
+
+    def _norm(p: Path) -> str:
+        return p.stem.split("DLC")[0].replace("_full", "").strip("_")
+
+    def _add(folder, state):
+        if not folder or not Path(folder).exists():
+            return
+        for p in Path(folder).rglob("*"):
+            if p.suffix.lower() in (".mp4", ".mkv", ".h5"):
+                s = _norm(p)
+                if s and (s not in idx or
+                          _STAGE_PRIORITY.get(state, 0) > _STAGE_PRIORITY.get(idx[s], 0)):
+                    idx[s] = state
+
+    _add(Paths.SINGLE_ANIMAL_OUTPUT, "cropped")
+    _add(Paths.DLC_STAGING, "dlc_complete")
+    _add(Paths.PROCESSING, "processing")
+    _add(Paths.ANALYZED_OUTPUT, "analyzed")
+    for root, state in ((Paths.TRIAGE_REVIEW, "triage"), (Paths.DEEP_REVIEW, "deep_review")):
+        if root and Path(root).exists():
+            for d in Path(root).iterdir():
+                if d.is_dir():
+                    idx[d.name] = state
+    return idx
+
+
 def _review_pending(stem: str, manifest_dir: Path) -> bool:
     """True if a saved human review for this offspring is NEWER than its archived
     features (its triage resolution has not been applied to the shipped product),
