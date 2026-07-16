@@ -1025,6 +1025,24 @@ class PipelineDashboard(QWidget):
             # Current stage -- plain-language label + explanation tooltip
             current_stage = info.get("current_stage", "Unknown")
             _label, _tip, _cat = stage_label(current_stage)
+            # A collage still sitting in the intake folder may already be cropped:
+            # its offspring exist downstream. Tell the truth from the rollup rather
+            # than a blind "needs cropping".
+            _crop = info.get("crop_state")
+            if current_stage == "raw_collage" and _crop:
+                _n = info.get("offspring_present", 0)
+                _m = info.get("offspring_expected", 0)
+                if _crop == "cropped":
+                    _label = f"Cropped ({_n}/{_m} offspring in pipeline)"
+                    _tip = ("This collage has already been cropped -- all its "
+                            "single-mouse videos exist downstream. Its file still "
+                            "sits in the intake folder (never moved out).")
+                    _cat = "done"
+                elif _crop == "partial":
+                    _label = f"Partly cropped ({_n}/{_m} offspring)"
+                    _tip = (f"{_n} of {_m} single-mouse videos exist downstream; "
+                            "the rest are missing -- cropping is incomplete.")
+                    _cat = "act"
             stage_item = QTableWidgetItem(_label)
             stage_item.setToolTip(f"{_tip}  (state: {current_stage})")
             _sc = _STAGE_CATEGORY_COLOR.get(_cat)

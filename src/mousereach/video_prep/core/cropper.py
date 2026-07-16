@@ -171,7 +171,16 @@ def crop_collage(
                 'status': 'failed',
                 'error': f'ffmpeg returned {ret}'
             })
-    
+
+    # Provenance: record what this crop did to the collage's offspring, next to
+    # the collage, so "what happened to my children" lives with the collage.
+    # (local import avoids a circular dependency with collage_provenance)
+    try:
+        from .collage_provenance import write_crop_manifest
+        write_crop_manifest(input_path, results, output_dir)
+    except Exception as _e:
+        print(f"  [!] crop manifest not written: {_e}")
+
     return results
 
 
@@ -271,12 +280,16 @@ def archive_collages(
     for f in mkv_files:
         try:
             shutil.move(str(f), str(dest_dir / f.name))
+            # Keep the crop-provenance sidecar with its collage.
+            sidecar = f.parent / f"{f.stem}_crop_manifest.json"
+            if sidecar.exists():
+                shutil.move(str(sidecar), str(dest_dir / sidecar.name))
             count += 1
             if verbose:
                 print(f"  {f.name}")
         except Exception as e:
             print(f"  ERROR: {f.name} - {e}")
-    
+
     return count
 
 
