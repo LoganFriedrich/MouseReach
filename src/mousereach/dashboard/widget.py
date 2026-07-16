@@ -1032,12 +1032,21 @@ class PipelineDashboard(QWidget):
             if current_stage == "raw_collage" and _crop:
                 _n = info.get("offspring_present", 0)
                 _m = info.get("offspring_expected", 0)
-                if _crop == "cropped":
-                    _label = f"Cropped ({_n}/{_m} offspring in pipeline)"
-                    _tip = ("This collage has already been cropped -- all its "
-                            "single-mouse videos exist downstream. Its file still "
-                            "sits in the intake folder (never moved out).")
+                _done = info.get("offspring_complete", 0)
+                if info.get("offspring_all_complete"):
+                    _label = f"Fully processed ({_done}/{_m}) -- ready for cold storage"
+                    _tip = ("Every single-mouse child of this collage has made it "
+                            "through the entire pipeline into the final Analyzed "
+                            "output. The raw collage is ready to retire to ultimate "
+                            "storage (and the BACKUP_NAS). Its file still sits in intake.")
                     _cat = "done"
+                elif _crop == "cropped":
+                    _label = f"Cropped ({_done}/{_m} done, {_n}/{_m} in pipeline)"
+                    _tip = ("Cropped -- all single-mouse videos exist downstream, "
+                            f"but only {_done}/{_m} have finished the pipeline; the "
+                            "rest are still processing or held in review. Stays in "
+                            "intake until every child is done.")
+                    _cat = "busy"
                 elif _crop == "partial":
                     _label = f"Partly cropped ({_n}/{_m} offspring)"
                     _tip = (f"{_n} of {_m} single-mouse videos exist downstream; "
