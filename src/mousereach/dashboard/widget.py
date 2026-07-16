@@ -748,6 +748,18 @@ class PipelineDashboard(QWidget):
         setup_btn.clicked.connect(self._open_setup)
         btn_layout.addWidget(setup_btn)
 
+        retire_btn = QPushButton("Retire completed collages")
+        retire_btn.setToolTip(
+            "Move every raw collage whose single-mouse videos have ALL made it "
+            "through the entire pipeline (in the final Analyzed output, processed "
+            "with the currently-shipped versions, and with no review pending) to "
+            "ultimate storage (Analyzed/Multi-Animal, backed up to the BACKUP_NAS). "
+            "Collages with any child still processing or held in review stay put. "
+            "Nothing is deleted; the move is reversible."
+        )
+        retire_btn.clicked.connect(self._retire_completed_collages)
+        btn_layout.addWidget(retire_btn)
+
         layout.addLayout(btn_layout)
 
         widget.setLayout(layout)
@@ -907,6 +919,91 @@ class PipelineDashboard(QWidget):
                       f"(Watcher Control tab) to bring them current.")
         else:
             show_info("No archived videos are out of date -- nothing to reprocess.")
+        self._refresh_data()
+
+    def _retire_completed_collages(self):
+        """Retire raw collages whose offspring have ALL made it through the whole
+        pipeline (version-current + review-clean) to ultimate storage. Dry-runs
+        first (background, ~2 full pipeline scans), asks to confirm, then moves."""
+        if getattr(self, "_retire_thread", None) and self._retire_thread.is_alive():
+            show_info("Retirement check already running...")
+            return
+        show_info("Finding fully-completed collages (scanning the pipeline, ~1-2 min)...")
+        worker = _BackfillWorker()
+        worker.done.connect(self._on_retire_dryrun_done)
+        self._retire_worker = worker
+
+        import threading
+
+        def job():
+            try:
+                from mousereach.video_prep.core.collage_provenance import (
+                    retire_completed_collages, build_downstream_index, build_complete_stems)
+                downstream = build_downstream_index()
+                complete = build_complete_stems()
+                res = retire_completed_collages(
+                    Paths.MULTI_ANIMAL_SOURCE, downstream,
+                    complete_stems=complete, dry_run=True)
+            except Exception as e:
+                res = {"error": str(e)}
+            worker.done.emit(res)
+
+        self._retire_thread = threading.Thread(target=job, daemon=True, name="retire-dryrun")
+        self._retire_thread.start()
+
+    def _on_retire_dryrun_done(self, res: dict):
+        if res.get("error"):
+            show_error(f"Could not check for completed collages: {res['error']}")
+            return
+        n = res.get("retired", 0)
+        if not n:
+            show_info("No collages are fully complete yet -- nothing to retire. "
+                      "(A collage retires only once every one of its single-mouse "
+                      "videos is in the final output, current, and review-clean.)")
+            return
+        from qtpy.QtWidgets import QMessageBox
+        dest = res.get("dest", "Analyzed/Multi-Animal")
+        kept = res.get("not_complete", 0)
+        ok = QMessageBox.question(
+            self,
+            "Retire completed collages",
+            f"{n} collage(s) have every single-mouse child fully through the "
+            f"pipeline.\n\nMove them (plus a completion manifest) to:\n{dest}\n\n"
+            f"The BACKUP_NAS backup picks them up automatically. {kept} cropped "
+            f"collage(s) with children still in flight will stay put. Nothing is "
+            f"deleted -- the move is reversible.\n\nProceed?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ok != QMessageBox.Yes:
+            return
+        show_info(f"Retiring {n} collage(s)...")
+        worker = _BackfillWorker()
+        worker.done.connect(self._on_retire_done)
+        self._retire_move_worker = worker
+
+        import threading
+
+        def job():
+            try:
+                from mousereach.video_prep.core.collage_provenance import (
+                    retire_completed_collages, build_downstream_index, build_complete_stems)
+                downstream = build_downstream_index()
+                complete = build_complete_stems()
+                r = retire_completed_collages(
+                    Paths.MULTI_ANIMAL_SOURCE, downstream,
+                    complete_stems=complete, dry_run=False)
+            except Exception as e:
+                r = {"error": str(e)}
+            worker.done.emit(r)
+
+        self._retire_move_thread = threading.Thread(target=job, daemon=True, name="retire-move")
+        self._retire_move_thread.start()
+
+    def _on_retire_done(self, res: dict):
+        if res.get("error"):
+            show_error(f"Retirement failed: {res['error']}")
+            return
+        show_info(f"Retired {res.get('retired', 0)} collage(s) to {res.get('dest', '')}. "
+                  f"The BACKUP_NAS backup will copy them on its next cycle.")
         self._refresh_data()
 
     def _import_archive(self):
