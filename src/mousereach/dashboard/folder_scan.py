@@ -140,6 +140,27 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
         for f in Path(analyzed).rglob(f"*{_REACHES}"):
             add(f.name[: -len(_REACHES)], "analyzed", f)
 
+    # Roll each collage's offspring state up to the collage: a "raw_collage" that
+    # already has its single-animal children downstream has in fact been cropped,
+    # even though its file still sits in the Multi-Animal folder. Derive that from
+    # the deterministic offspring names so the dashboard stops telling a collage it
+    # "needs cropping" when 8/8 children are already in the pipeline. Prefer a saved
+    # crop manifest for the offspring SET; read stages live from the scan.
+    if progress:
+        progress("Rolling collage offspring up to their collages...")
+    downstream_index = {s: st for s, (pr, st, p, m) in best.items()}
+    crop_rollup: Dict[str, Dict] = {}
+    try:
+        from mousereach.video_prep.core.collage_provenance import derive_offspring_status
+        for stem, (pr, state, path, mt) in best.items():
+            if state != "raw_collage":
+                continue
+            st = derive_offspring_status(stem, downstream_index)
+            if st["n_expected"]:
+                crop_rollup[stem] = st
+    except Exception:
+        pass
+
     if progress:
         progress(f"Building the list ({len(best)} videos)...")
     out: Dict[str, Dict] = {}
@@ -154,6 +175,7 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
             ts["updated"] = datetime.fromtimestamp(mt).isoformat()
         review = state if state in ("triage", "deep_review") else "none"
         steps = _STEPS_DONE.get(state, ())
+        roll = crop_rollup.get(stem)
         out[stem] = {
             "locations": [{"stage": state, "path": path}],
             "versions": {},
@@ -171,4 +193,13 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
             "tray_type": tray,
             "tray_supported": (tray not in ("E", "F")) if tray else True,
         }
+        if roll:
+            # crop_state in {cropped, partial, uncropped}; counts for the note.
+            out[stem]["crop_state"] = roll["crop_state"]
+            out[stem]["offspring_present"] = roll["n_present"]
+            out[stem]["offspring_expected"] = roll["n_expected"]
+            # A collage whose children are all downstream is done with cropping --
+            # don't flag it as needing attention.
+            if roll["crop_state"] == "cropped":
+                out[stem]["status"] = "in_progress"
     return out
