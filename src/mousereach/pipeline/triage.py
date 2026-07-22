@@ -434,20 +434,27 @@ def check_cross_step(
     for seg in outcome_data.get('segments', []):
         seg_num = seg.get('segment_num')
         outcome = seg.get('outcome', '')
-        confidence = seg.get('confidence') or 0.0
+        # None when the detector reports NO scalar confidence (the v6 cascade is a
+        # rule cascade -- it has no confidence field; its uncertainty is signaled
+        # by flagged_for_review, handled by the review gate's triage path). Do NOT
+        # coerce a missing confidence to 0.0 -- that flagged every v6 segment.
+        confidence = seg.get('confidence')
         n_reaches = reach_by_seg.get(seg_num, 0)
 
         # Detector said "I don't know"
         if outcome == 'uncertain':
+            conf_str = f' (conf={confidence:.2f})' if confidence is not None else ''
             flags.append(TriageFlag(
                 category='cross_step',
                 severity='critical',
-                description=f'Outcome detector reported uncertain (conf={confidence:.2f})',
+                description=f'Outcome detector reported uncertain{conf_str}',
                 segment_num=seg_num
             ))
 
-        # Very low confidence = detector failure
-        if confidence < 0.50:
+        # Very low confidence = detector failure. Only meaningful for a detector
+        # that actually REPORTS a scalar confidence (the legacy detector). Skipped
+        # for detectors that don't (v6) -- their uncertainty is flagged_for_review.
+        if confidence is not None and confidence < 0.50:
             flags.append(TriageFlag(
                 category='cross_step',
                 severity='critical',
