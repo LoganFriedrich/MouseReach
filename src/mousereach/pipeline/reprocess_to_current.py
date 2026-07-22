@@ -225,3 +225,51 @@ def reprocess_video_to_current(
             summary["db_synced"] = False
             logger.warning("db sync failed for %s: %s", video_id, e)
     return summary
+
+
+def build_reprocess_worklist(limit: Optional[int] = None):
+    """``[(video_id, pose_h5, video_file), ...]`` for videos that have a current
+    (Model 4.0) pose whose algo outputs still need to be brought current. Scans the
+    ``DLC Model 4`` tree (read-only). One entry per video."""
+    from ..config import Paths
+    an = Path(Paths.ANALYZED_OUTPUT) if Paths.ANALYZED_OUTPUT else None
+    if not an or not an.exists():
+        return []
+    dlc4 = an / "Connectome" / "DLC Model 4"
+    root = dlc4 if dlc4.exists() else an
+    work = []
+    seen = set()
+    for h5 in root.rglob("*resnet101*shuffle3*.h5"):
+        vid = h5.name.split("DLC")[0]
+        if vid in seen:
+            continue
+        seen.add(vid)
+        work.append((vid, h5, find_video_file(vid)))
+        if limit and len(work) >= limit:
+            break
+    return work
+
+
+def reprocess_batch(worklist=None, *, finalize: bool = False,
+                    limit: Optional[int] = None, progress=None) -> Dict:
+    """Reprocess a batch of already-DLC'd videos to the current algo stack.
+
+    ``worklist`` defaults to ``build_reprocess_worklist(limit)``. finalize=False is
+    a DRY run (nothing live touched). Returns ``{n, spread, results}`` where spread
+    is the gate-decision histogram (clean/triage/deep_review). ``progress(msg)`` is
+    called before each video."""
+    from collections import Counter
+    if worklist is None:
+        worklist = build_reprocess_worklist(limit=limit)
+    spread: Counter = Counter()
+    results = []
+    for i, (vid, pose, vf) in enumerate(worklist):
+        if progress:
+            progress(f"[{i + 1}/{len(worklist)}] {vid}")
+        try:
+            r = reprocess_video_to_current(vid, pose, video_file=vf, finalize=finalize)
+        except Exception as e:
+            r = {"video_id": vid, "error": str(e), "decision": None}
+        results.append(r)
+        spread[r.get("decision")] += 1
+    return {"n": len(results), "spread": dict(spread), "results": results}
