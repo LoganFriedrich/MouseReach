@@ -2349,8 +2349,19 @@ class CausalReviewWidget(QWidget):
                       if d.is_dir() and bundle_manifest_path(d).exists())
 
     def _bundle_reviewed(self, bundle_dir: Path) -> bool:
-        """True if this bundle already has a COMPLETE review (every segment
-        real-reviewed), in the bundle or next to its canonical video."""
+        """True if this bundle's review is COMPLETE.
+
+        In TRIAGE-ONLY mode "complete" means every *triaged* segment is resolved
+        -- the same rule the watcher's ``triage_status.fully_resolved`` uses --
+        NOT every segment. The triage walk only ever visits triaged segments, but
+        ``_save_review`` writes a ``reviewed: False`` placeholder for every
+        non-triaged segment; demanding all-segments-reviewed (the old behavior)
+        made a triage-only bundle NEVER register as done, so the random picker
+        kept re-surfacing already-reviewed videos. In full-review mode, every
+        segment must be reviewed. The review may live in the bundle or next to
+        the canonical video, so we gather resolved segments from both.
+        """
+        from .triage_status import triaged_segments, resolved_segments
         stem = bundle_dir.name
         dirs = [bundle_dir]
         try:
@@ -2360,6 +2371,32 @@ class CausalReviewWidget(QWidget):
                 dirs.append(Path(cvp).parent)
         except Exception:
             pass
+
+        # Human-resolved segment set, from wherever the review was saved.
+        resolved: set = set()
+        for d in dirs:
+            try:
+                doc, by_seg = load_causal_review(stem, d)
+            except Exception:
+                doc, by_seg = None, {}
+            if by_seg:
+                resolved |= resolved_segments(doc or {"segments": list(by_seg.values())})
+
+        if self._triage_only:
+            def _rj(p):
+                try:
+                    return json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    return None
+            od = _rj(bundle_dir / f"{stem}_pellet_outcomes.json")
+            ad = _rj(bundle_dir / f"{stem}_reach_assignments.json")
+            triaged = triaged_segments(od, ad)
+            # Done iff every triaged element is resolved (an empty triaged set is
+            # trivially done; such bundles are already filtered out earlier by
+            # _bundle_has_triage, but this keeps the predicate honest).
+            return triaged.issubset(resolved)
+
+        # Full-review mode: every segment must carry a real review.
         for d in dirs:
             try:
                 _, by_seg = load_causal_review(stem, d)
