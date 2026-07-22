@@ -518,17 +518,21 @@ class CausalReviewWidget(QWidget):
                 lazy, name=video_path.stem, rgb=True)
             self._progress.setValue(40)
 
-            # DLC overlay (all frames, once) + pillar overlay (per-frame callback)
+            # Load pose + algo/segments FIRST (both cheap) so the DLC overlay can
+            # be built only over the frames the reviewer will actually visit --
+            # on an over-long video the segments occupy a small slice of ~37k
+            # frames, and windowing the overlay is the biggest load-time win.
             self._load_dlc_data()
-            self._add_dlc_points_layer()
-            self._add_pillar_shapes_layer()
-            self._progress.setValue(70)
-
-            # Algo data + segment list
             self._load_algo_data()
             # Restore any prior manual re-segmentation before building segments.
             self._manual_boundaries = self._peek_manual_boundaries()
             self._build_segment_list()
+            self._progress.setValue(60)
+
+            # DLC overlay (windowed to the segment span) + pillar overlay
+            # (per-frame callback). Built once; navigation just moves the playhead.
+            self._add_dlc_points_layer(frame_span=self._segment_overlay_span())
+            self._add_pillar_shapes_layer()
             self._progress.setValue(85)
 
             self._enable_controls(True)
@@ -662,17 +666,52 @@ class CausalReviewWidget(QWidget):
                 pass
         self.dlc_df = None
 
-    def _add_dlc_points_layer(self):
-        """Add the DLC tracking-points overlay for the WHOLE video (built once).
+    def _segment_overlay_span(self, margin: int = 60) -> Optional[Tuple[int, int]]:
+        """The frame span the reviewer actually visits -- [min segment start, max
+        segment end] padded by ``margin`` frames -- used to window the DLC overlay
+        so an over-long video's junk tail isn't decorated needlessly. Returns None
+        (whole video) when there are no segments."""
+        segs = getattr(self, "_segment_list", None) or []
+        if not segs:
+            return None
+        # Only the segments the reviewer will actually open: triaged-only in
+        # triage mode (often a handful), every segment otherwise. On an over-long
+        # video whose segments span the whole recording, this is what makes the
+        # window narrow.
+        try:
+            vis = self._visible_indices()
+        except Exception:
+            vis = list(range(len(segs)))
+        visible = [segs[i] for i in vis] if vis else segs
+        starts = [int(s["start_frame"]) for s in visible if s.get("start_frame") is not None]
+        ends = [int(s["end_frame"]) for s in visible if s.get("end_frame") is not None]
+        if not starts or not ends:
+            return None
+        return (min(starts) - margin, max(ends) + margin)
 
-        Vectorized per bodypart so all ~37k frames build in well under a second.
-        napari only renders the points at the current frame, so a full-video
-        points layer is cheap to display and never needs rebuilding on nav.
+    def _add_dlc_points_layer(self, frame_span: Optional[Tuple[int, int]] = None):
+        """Add the DLC tracking-points overlay (built once).
+
+        Built ONLY over ``frame_span`` (inclusive) when given -- the reviewer only
+        ever visits the segment windows, which on an over-long (camera-kept-
+        rolling) video are a small fraction of the ~37k frames. Restricting the
+        overlay to that span is the single biggest load-time win: it slashes both
+        the point count and the per-point text-label cost, which together
+        dominate the load (measured ~5s -> ~1s on a 37k-frame video). None =
+        whole video (backward-compatible). napari renders only the current
+        frame, so nothing changes on nav; frames outside the span (the junk tail)
+        simply carry no overlay, which is fine -- there's nothing to review there.
         """
         if self.dlc_df is None:
             return
         df = self.dlc_df
         n = len(df)
+        lo, hi = (0, n - 1)
+        if frame_span is not None:
+            lo = max(0, int(frame_span[0]))
+            hi = min(n - 1, int(frame_span[1]))
+        in_span = np.zeros(n, dtype=bool)
+        in_span[lo:hi + 1] = True
         bodyparts = sorted({col[:-2] for col in df.columns if col.endswith('_x')})
         colors_base = [
             [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1],
@@ -689,7 +728,7 @@ class CausalReviewWidget(QWidget):
             xs = df[xcol].to_numpy(dtype=float)
             ys = df[ycol].to_numpy(dtype=float)
             lks = df[lcol].to_numpy(dtype=float) if lcol in df.columns else np.ones(n)
-            valid = ~(np.isnan(xs) | np.isnan(ys))
+            valid = ~(np.isnan(xs) | np.isnan(ys)) & in_span
             if not valid.any():
                 continue
             fv = frames_all[valid]
