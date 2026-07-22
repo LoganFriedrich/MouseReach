@@ -87,28 +87,112 @@ def find_file_sets(input_dir: Path, skip_if_exists: Optional[List[str]] = None) 
     return file_sets
 
 
+def _extract_boundaries(seg_data):
+    """Frame boundaries from the several segment-JSON shapes."""
+    if "segmentation" in seg_data:
+        return [int(b["frame"]) for b in seg_data["segmentation"]["boundaries"]]
+    if "boundaries" in seg_data:
+        return [int(b) for b in seg_data["boundaries"]]
+    if "segments" in seg_data and isinstance(seg_data["segments"], list):
+        bounds = set()
+        for s in seg_data["segments"]:
+            if "start" in s:
+                bounds.add(int(s["start"]))
+            if "end" in s:
+                bounds.add(int(s["end"]))
+        return sorted(bounds)
+    raise ValueError(f"Cannot parse segment boundaries (keys: {list(seg_data.keys())})")
+
+
+def _extract_reaches(reach_data):
+    """(start, end) reach windows from the reach JSON."""
+    reaches = []
+    if "reaches" in reach_data and isinstance(reach_data["reaches"], list):
+        for r in reach_data["reaches"]:
+            s = r.get("start_frame") or r.get("start")
+            e = r.get("end_frame") or r.get("end")
+            if s is not None and e is not None:
+                reaches.append((int(s), int(e)))
+    return reaches
+
+
+def _find_video_dir(search_dir: Path, video_name: str) -> Optional[Path]:
+    """Directory holding the source video (for v6 Stage 98 CV checks), or None."""
+    search_dir = Path(search_dir)
+    for ext in (".avi", ".mp4", ".mkv"):
+        if (search_dir / f"{video_name}{ext}").exists():
+            return search_dir
+    return None
+
+
 def process_single(
     dlc_path: Path,
     seg_path: Path,
     reach_path: Optional[Path] = None,
-    output_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None,
+    legacy: bool = False,
+    video_dir: Optional[Path] = None,
 ) -> Dict:
-    """Process a single video."""
+    """Detect pellet outcomes for one video.
+
+    Uses the v6 cascade (VERSION 6.1.0) by DEFAULT -- the current, DLC-4.0-
+    calibrated detector that pipeline_versions.json declares and that the review
+    tool + kinematics expect. Historically THIS entrypoint (the one the watcher /
+    reprocess path calls) still ran the legacy v2.4.4-era detector even though the
+    CLI had switched to v6 -- a production wiring gap that made the pipeline emit
+    stale-version outcomes. v6 is now the default here too. Pass ``legacy=True``
+    for the old detector. ``video_dir`` locates the source mp4 for the cascade's
+    CV stage (defaults to searching ``output_dir``)."""
     if output_dir is None:
         output_dir = dlc_path.parent
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    detector = PelletOutcomeDetector()
-    results = detector.detect(dlc_path, seg_path, reach_path)
-    
-    output_path = output_dir / f"{results.video_name}_pellet_outcomes.json"
-    detector.save_results(results, output_path)
-    
+
+    if legacy:
+        detector = PelletOutcomeDetector()
+        results = detector.detect(dlc_path, seg_path, reach_path)
+        output_path = output_dir / f"{results.video_name}_pellet_outcomes.json"
+        detector.save_results(results, output_path)
+        return {
+            'video_name': results.video_name,
+            'n_segments': results.n_segments,
+            **results.summary,
+            'output_file': str(output_path),
+        }
+
+    # v6 cascade (current production detector)
+    from mousereach.outcomes.v6_cascade import detect_outcomes_v6_cascade
+    from mousereach.reach.v8.features import load_dlc_h5
+
+    video_id = Path(dlc_path).stem.split("DLC")[0]
+    dlc_df = load_dlc_h5(dlc_path)
+    seg_data = json.loads(Path(seg_path).read_text(encoding="utf-8"))
+    boundaries = _extract_boundaries(seg_data)
+    segments = [(boundaries[j], boundaries[j + 1] - 1)
+                for j in range(len(boundaries) - 1)]
+    reaches = []
+    if reach_path and Path(reach_path).exists():
+        reaches = _extract_reaches(
+            json.loads(Path(reach_path).read_text(encoding="utf-8")))
+    if video_dir is None:
+        video_dir = _find_video_dir(output_dir, video_id)
+
+    result = detect_outcomes_v6_cascade(
+        dlc_df=dlc_df, segments=segments, reaches=reaches,
+        video_id=video_id, video_dir=video_dir)
+
+    output_path = output_dir / f"{video_id}_pellet_outcomes.json"
+    output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    counts: Dict[str, int] = {}
+    for s in result.get("segments", []):
+        oc = s.get("outcome")
+        counts[oc] = counts.get(oc, 0) + 1
     return {
-        'video_name': results.video_name,
-        'n_segments': results.n_segments,
-        **results.summary,
-        'output_file': str(output_path)
+        'video_name': video_id,
+        'n_segments': len(result.get("segments", [])),
+        **counts,
+        'output_file': str(output_path),
     }
 
 
