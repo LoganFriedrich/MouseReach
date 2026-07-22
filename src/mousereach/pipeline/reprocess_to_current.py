@@ -71,6 +71,7 @@ def reprocess_video_to_current(
     *,
     finalize: bool = False,
     archive_root=None,
+    sync_db: Optional[bool] = None,
 ) -> Dict:
     """Reprocess one video to the current algo stack. See module docstring.
 
@@ -87,6 +88,8 @@ def reprocess_video_to_current(
     from mousereach.watcher.review_gate import evaluate_gate, DECISION_CLEAN
     from mousereach.watcher.transfer import safe_copy
 
+    if sync_db is None:
+        sync_db = finalize  # live finalize syncs current kinematics to connectome.db
     dlc_h5 = Path(dlc_h5)
     video_file = Path(video_file) if video_file else find_video_file(video_id)
     video_dir = video_file.parent if video_file else None
@@ -208,4 +211,17 @@ def reprocess_video_to_current(
             moved.append(f.name)
     summary["finalized_moved"] = moved
     summary["decision_final"] = decision
+
+    # Clean video -> sync the current kinematics into connectome.db. The sync does
+    # an atomic per-video replace (DELETE old rows for this video, INSERT new), so
+    # re-syncing a reprocessed video swaps its old-version rows for the current
+    # ones -- no duplicates, no version blending.
+    if sync_db and decision == DECISION_CLEAN and f"{video_id}_features.json" in moved:
+        try:
+            from mousereach.sync.database import sync_file_to_database
+            summary["db_synced"] = bool(
+                sync_file_to_database(video_dir / f"{video_id}_features.json"))
+        except Exception as e:
+            summary["db_synced"] = False
+            logger.warning("db sync failed for %s: %s", video_id, e)
     return summary
