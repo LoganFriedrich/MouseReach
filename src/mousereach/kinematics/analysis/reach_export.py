@@ -50,7 +50,14 @@ STATIC_COLUMNS: List[str] = [
     "frames_low_confidence",
     "flagged_for_review",
     "flag_reason",
-    "source",
+    # Reconciliation provenance (final answer resolved GT > review > algo, per
+    # element). outcome_source in {algo, human_review, ground_truth}; reach_source
+    # in {algo, ground_truth}; algo_outcome is what the algo originally said when a
+    # human overrode it; human_corrected is the convenience bool.
+    "outcome_source",
+    "reach_source",
+    "reviewed_by",
+    "algo_outcome",
     "human_corrected",
 ]
 
@@ -91,10 +98,13 @@ def _row_from_features_reach(
         "frames_low_confidence": reach.get("frames_low_confidence"),
         "flagged_for_review": reach.get("flagged_for_review"),
         "flag_reason": reach.get("flag_reason"),
-        # `source` and `human_corrected` aren't part of ReachFeatures and
-        # would only come from the legacy reach-detector record. Leave blank.
-        "source": None,
-        "human_corrected": None,
+        # Reconciliation provenance: what the FINAL answer for this reach came from
+        # (GT > review > algo) and what the algo originally said if a human overrode.
+        "outcome_source": reach.get("outcome_source"),
+        "reach_source": reach.get("reach_source"),
+        "reviewed_by": reach.get("reviewed_by"),
+        "algo_outcome": reach.get("algo_outcome"),
+        "human_corrected": reach.get("outcome_source") in ("human_review", "ground_truth"),
     }
     extended = reach.get("extended") or {}
     if isinstance(extended, dict):
@@ -142,8 +152,11 @@ def _row_from_reaches_json(
         "frames_low_confidence": None,
         "flagged_for_review": None,
         "flag_reason": None,
-        "source": reach.get("source", "algorithm"),
-        "human_corrected": reach.get("human_corrected", False),
+        "outcome_source": reach.get("outcome_source", "algo"),
+        "reach_source": reach.get("reach_source", "algo"),
+        "reviewed_by": reach.get("reviewed_by"),
+        "algo_outcome": reach.get("algo_outcome"),
+        "human_corrected": reach.get("outcome_source") in ("human_review", "ground_truth"),
     }
 
 
