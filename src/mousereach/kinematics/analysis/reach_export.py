@@ -236,6 +236,59 @@ def write_csv(rows: List[Dict[str, Any]], output_csv: Path) -> List[str]:
     return fieldnames
 
 
+def write_video_results_csv(features_path: Path, out_dir: Optional[Path] = None) -> Optional[Path]:
+    """Write the per-video FINALIZED results CSV -- one row per reach -- next to the
+    video (or ``out_dir``). This is the video's 'ultimate result': the reconciled
+    kinematics + outcomes with provenance (what each reach came from: GT / review /
+    algo). Emitted as the last kinematics step so it lives with the video's current
+    outputs. Returns the CSV path, or None when there are no reaches."""
+    features_path = Path(features_path)
+    video = features_path.stem.replace("_features", "")
+    rows = _emit_features_video(features_path)
+    if not rows:
+        return None
+    out = Path(out_dir) if out_dir else features_path.parent
+    csv_path = out / f"{video}_results.csv"
+    write_csv(rows, csv_path)
+    return csv_path
+
+
+def _video_in_cohort(video: str, cohort: str) -> bool:
+    """True if ``video`` (e.g. 20250624_CNT0102_P1) belongs to ``cohort`` (e.g.
+    CNT01 / CNT_01) -- i.e. its mouse token starts with the project+cohort id."""
+    c = cohort.upper().replace("_", "")
+    for tok in video.upper().split("_"):
+        t = tok.replace("_", "")
+        if t.startswith(c) and any(ch.isdigit() for ch in t):
+            return True
+    return False
+
+
+def export_cohort(cohort: str, search_root: Optional[Path] = None,
+                  output_csv: Optional[Path] = None):
+    """Aggregate every reach of a cohort into ONE analysis-ready CSV.
+
+    Scans ``search_root`` (default the Analyzed final-output tree) for that cohort's
+    ``*_features.json``, concatenates one row per reach (with provenance), and writes
+    ``output_csv``. Returns ``(csv_path, n_rows, n_videos)`` or ``(None, 0, 0)``."""
+    search_root = Path(search_root) if search_root else Path(Paths.ANALYZED_OUTPUT)
+    rows: List[Dict[str, Any]] = []
+    vids = set()
+    for fp in search_root.rglob("*_features.json"):
+        video = fp.stem.replace("_features", "")
+        if _video_in_cohort(video, cohort):
+            r = _emit_features_video(fp)
+            if r:
+                rows.extend(r)
+                vids.add(video)
+    if not rows:
+        return None, 0, 0
+    if output_csv is None:
+        output_csv = search_root / f"{cohort}_reach_kinematics.csv"
+    write_csv(rows, Path(output_csv))
+    return Path(output_csv), len(rows), len(vids)
+
+
 def main() -> None:
     processing = Paths.PROCESSING
     output_csv = processing.parent / "reach_kinematics.csv"
