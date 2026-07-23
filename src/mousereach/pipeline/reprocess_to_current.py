@@ -181,6 +181,13 @@ def reprocess_video_to_current(
                                                review_path=review_path)
             (work_dir / f"{video_id}_features.json").write_text(
                 json.dumps(feats.to_dict(), indent=2))
+            # Per-video finalized results CSV -- the reconciled 'ultimate result'
+            # that lives with the video (moved into place on finalize).
+            try:
+                from mousereach.kinematics.analysis.reach_export import write_video_results_csv
+                write_video_results_csv(work_dir / f"{video_id}_features.json")
+            except Exception as _e:
+                logger.warning("results CSV failed for %s: %s", video_id, _e)
             summary["steps"]["kinematics"] = {"ok": True, "n_segments": feats.n_segments}
         except Exception as e:
             summary["steps"]["kinematics"] = {"ok": False, "err": str(e)}
