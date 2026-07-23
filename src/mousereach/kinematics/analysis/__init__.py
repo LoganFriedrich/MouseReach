@@ -10,13 +10,23 @@ Provides tools for aggregating and analyzing data across:
 """
 
 from .data_loader import DataLoader, VideoMetadata, SessionData
-from .aggregator import FeatureAggregator
-from .visualizer import MultiLevelVisualizer
+
+# aggregator/visualizer were never added to this package; importing them
+# unconditionally broke the whole analysis package (and the reach-export /
+# real-kinematics CLIs that live in it). Import optionally so the package loads.
+try:
+    from .aggregator import FeatureAggregator  # type: ignore
+except ImportError:
+    FeatureAggregator = None  # type: ignore
+try:
+    from .visualizer import MultiLevelVisualizer  # type: ignore
+except ImportError:
+    MultiLevelVisualizer = None  # type: ignore
 
 __all__ = [
     'DataLoader',
     'VideoMetadata',
     'SessionData',
     'FeatureAggregator',
-    'MultiLevelVisualizer'
+    'MultiLevelVisualizer',
 ]
