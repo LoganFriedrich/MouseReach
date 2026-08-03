@@ -63,6 +63,47 @@ def find_video_file(video_id: str):
     return None
 
 
+def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reason):
+    """HOLD a triaged/deep video: move its algo outputs into a bundle under the
+    right review queue and write a manifest pointing at the REAL canonical video
+    (Analyzed) + pose (DLC Model 4). Does NOT finalize / supersede -- the old
+    outputs stay put until the video clears review and re-runs clean. Never
+    clobbers an existing bundle (respects Colin's in-progress work). Returns a
+    summary dict."""
+    from mousereach.config import Paths
+    from mousereach.watcher.transfer import safe_move
+    dest_root = Paths.DEEP_REVIEW if decision == "deep_review" else Paths.TRIAGE_REVIEW
+    if not dest_root:
+        return {"held": False, "error": "no review-queue root configured"}
+    bundle = Path(dest_root) / video_id
+    if bundle.exists():
+        return {"held": True, "bundle": str(bundle), "note": "already queued -- left intact"}
+    bundle.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for f in sorted(work_dir.glob(f"{video_id}*")):
+        if f.name == Path(dlc_h5).name or f.suffix.lower() in (".h5", ".csv", ".pickle"):
+            continue  # pose artifacts stay in DLC Model 4/; bundle references them
+        if safe_move(f, bundle / f.name):
+            moved.append(f.name)
+    manifest = {
+        "type": "causal_review_bundle",
+        "schema_version": "1.0",
+        "video_stem": video_id,
+        "canonical_video_path": str(video_file) if video_file else None,
+        "canonical_dlc_h5_path": str(dlc_h5),
+        "provenance": {
+            "routed_reason": reason,
+            "staged_at": datetime.now().isoformat(),
+            "staged_by": "reprocess_to_current",
+            "self_contained": False,
+        },
+    }
+    (bundle / f"{video_id}_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8")
+    return {"held": True, "bundle": str(bundle),
+            "queue": Path(dest_root).name, "moved": moved}
+
+
 def reprocess_video_to_current(
     video_id: str,
     dlc_h5,
@@ -72,6 +113,7 @@ def reprocess_video_to_current(
     finalize: bool = False,
     archive_root=None,
     sync_db: Optional[bool] = None,
+    skip_if_current: bool = True,
 ) -> Dict:
     """Reprocess one video to the current algo stack. See module docstring.
 
@@ -105,6 +147,26 @@ def reprocess_video_to_current(
         "steps": {}, "decision": None, "versions": {}, "error": None,
     }
     t0 = time.time()
+
+    # Idempotency + the user's rule: if this video's CURRENT Analyzed output is
+    # already the current stack, do NOT reprocess it. (The worklist already skips
+    # queued/GT videos; this catches anything already finalized-current, e.g. a
+    # re-run.)
+    if skip_if_current and video_dir is not None:
+        try:
+            from mousereach.pipeline.versions import (
+                get_current_versions, compare_manifest_to_current)
+            from mousereach.config import Paths
+            man_p = Path(video_dir) / f"{video_id}_processing_manifest.json"
+            if man_p.is_file() and man_p.stat().st_size > 0:
+                man = json.loads(man_p.read_text(encoding="utf-8"))
+                if compare_manifest_to_current(
+                        man, get_current_versions(Paths.NAS_ROOT)).get("is_current"):
+                    summary["decision"] = "skipped_current"
+                    summary["note"] = "already current -- not reprocessed"
+                    return summary
+        except Exception:
+            pass
 
     # Pose copied read-only into the work dir (never touch DLC Model 4/).
     work_h5 = work_dir / dlc_h5.name
@@ -199,7 +261,15 @@ def reprocess_video_to_current(
         summary["note"] = "DRY: nothing live touched; outputs in work_dir"
         return summary
 
-    # --- FINALIZE: supersede old outputs beside the video, move new into place ---
+    # --- FINALIZE: obey the gate ---
+    # Triaged / deep-review videos must be HELD in the review queue, NOT finalized
+    # into Analyzed. Only a CLEAN video supersedes its old outputs + lands next to
+    # the video + syncs to the DB.
+    if decision != DECISION_CLEAN:
+        summary["held"] = _stage_review_bundle(
+            video_id, work_dir, video_file, dlc_h5, decision, reason)
+        return summary
+
     if video_dir is None:
         summary["error"] = "cannot finalize: video dir unknown"
         return summary
@@ -234,21 +304,47 @@ def reprocess_video_to_current(
     return summary
 
 
-def build_reprocess_worklist(limit: Optional[int] = None):
-    """``[(video_id, pose_h5, video_file), ...]`` for videos that have a current
-    (Model 4.0) pose whose algo outputs still need to be brought current. Scans the
-    ``DLC Model 4`` tree (read-only). One entry per video."""
+def build_reprocess_worklist(limit: Optional[int] = None, *,
+                             skip_queued: bool = True, skip_gt: bool = False):
+    """``[(video_id, pose_h5, video_file), ...]`` for videos that still need to be
+    brought current. Scans the ``DLC Model 4`` tree (read-only), one entry per
+    video, and EXCLUDES videos we must not reprocess:
+
+    - already in a review queue (Pending / Deep_Review) -- those were already
+      processed with the current stack and are held for human review; reprocessing
+      would clobber Colin's in-progress work.
+
+    GT'd videos are NOT excluded by default: reprocessing them is safe (the gate
+    treats an exhaustively-GT'd video as clean and the truth-resolver makes GT win
+    in the kinematics), and building a corpus-wide GT index is slow. Pass
+    ``skip_gt=True`` to exclude them anyway.
+
+    (Per-video version-currency is a second guard inside reprocess_video_to_current:
+    a video already carrying current Analyzed outputs is skipped there too.)"""
     from ..config import Paths
     an = Path(Paths.ANALYZED_OUTPUT) if Paths.ANALYZED_OUTPUT else None
     if not an or not an.exists():
         return []
     dlc4 = an / "Connectome" / "DLC Model 4"
-    root = dlc4 if dlc4.exists() else an
+    scan_root = dlc4 if dlc4.exists() else an
+
+    exclude = set()
+    if skip_queued:
+        for qroot in (Paths.TRIAGE_REVIEW, Paths.DEEP_REVIEW):
+            if qroot and Path(qroot).exists():
+                exclude |= {d.name for d in Path(qroot).iterdir() if d.is_dir()}
+    if skip_gt:
+        try:
+            from ..review.causal_review_io import gt_index
+            exclude |= set(gt_index().keys())
+        except Exception:
+            pass
+
     work = []
     seen = set()
-    for h5 in root.rglob("*resnet101*shuffle3*.h5"):
+    for h5 in scan_root.rglob("*resnet101*shuffle3*.h5"):
         vid = h5.name.split("DLC")[0]
-        if vid in seen:
+        if vid in seen or vid in exclude:
             continue
         seen.add(vid)
         work.append((vid, h5, find_video_file(vid)))
