@@ -504,5 +504,5 @@ def find_default_corpus_root() -> Optional[Path]:
             return p
     cr = os.environ.get("CONNECTOME_ROOT", r"Y:\LAB_ROOT")
     cand = (Path(cr) / "Behavior" / "MouseReach_Pipeline"
-            / "Model40_Review" / "Pending")
+            / "Processing" / "Review" / "triage")
     return cand if cand.is_dir() else None

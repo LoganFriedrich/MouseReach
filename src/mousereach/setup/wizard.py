@@ -424,20 +424,19 @@ def run_setup_wizard():
 
     # --- Step 4: Create pipeline directories ---
     if proc_root:
+        # Local compute working dirs (on the processing root, NOT the NAS pipe).
         dirs_to_create = [
             proc_root / "DLC_Queue",
             proc_root / "Processing",
-            proc_root / "Failed",
         ]
-        if watcher_config:
-            dirs_to_create.append(proc_root / "Quarantine")
         if nas_drive:
             nas_root = Path(nas_drive) / "! DLC Output" if str(nas_drive) != str(proc_root) else proc_root
-            dirs_to_create.extend([
-                nas_root / "Unanalyzed" / "Multi-Animal",
-                nas_root / "Unanalyzed" / "Single_Animal",
-                nas_root / "Analyzed",
-            ])
+            # The canonical NAS pipe tree -- single source of truth in
+            # pipeline.pipe_structure (Unanalyzed / Processing[Single_Animal,
+            # DLC_Complete, Review/{triage,flagged_for_review}, Quarantine, Failed]
+            # / Analyzed / Archive).
+            from mousereach.pipeline.pipe_structure import TARGET_DIRS
+            dirs_to_create.extend(nas_root / rel for rel in TARGET_DIRS)
 
         missing = [d for d in dirs_to_create if not d.exists()]
         if missing:

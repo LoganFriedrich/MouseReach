@@ -50,9 +50,15 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_CONNECTOME_ROOT = Path(
     r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome"
 )
-DEFAULT_PENDING_DIR = Path(
-    r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Model40_Review\Pending"
-)
+# Derive from the config constant so it follows the pipe layout (now
+# Processing/Review/triage) instead of drifting on a folder rename.
+try:
+    from mousereach.config import Paths as _Paths
+    DEFAULT_PENDING_DIR = _Paths.TRIAGE_REVIEW or Path(
+        r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing\Review\triage")
+except Exception:
+    DEFAULT_PENDING_DIR = Path(
+        r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing\Review\triage")
 DLC4_SUBDIR = "DLC Model 4"
 # 4.0 pose scorer signature (ResNet101, shuffle 3, snapshot 100000).
 DLC4_SCORER = "DLC_resnet101_MPSAOct27shuffle3_100000"
