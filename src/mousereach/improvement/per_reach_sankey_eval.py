@@ -70,7 +70,7 @@ LIVE_GT_RUN = Path(
     r"\2026-07-03_algo4_per_reach_sankey_v6.1_LIVE"
 )
 PENDING_DIR = Path(
-    r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Model40_Review\Pending"
+    r"Y:\2_Connectome\Behavior\MouseReach_Pipeline\Processing\Review\triage"
 )
 EVAL_ROOT = Path(
     r"Y:\2_Connectome\Behavior\MouseReach_Improvement\model40_eval"

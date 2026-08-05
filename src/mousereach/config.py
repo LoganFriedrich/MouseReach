@@ -103,15 +103,16 @@ class Paths:
     # Raw 8-camera collage videos (ARCHIVE - NEVER DELETE)
     MULTI_ANIMAL_SOURCE = NAS_ROOT / "Unanalyzed" / "Multi-Animal" if NAS_ROOT else None
 
-    # Cropped single-animal videos from Step 0
-    SINGLE_ANIMAL_OUTPUT = NAS_ROOT / "Unanalyzed" / "Single_Animal" if NAS_ROOT else None
+    # Cropped single-animal videos -- cropping counts as processing, so these live
+    # in the Processing zone (state rule: being-worked -> Processing).
+    SINGLE_ANIMAL_OUTPUT = NAS_ROOT / "Processing" / "Single_Animal" if NAS_ROOT else None
 
     # Unsupported tray types (E/F) that got into pipeline by mistake
     # These require different algorithms and should be returned to NAS
     UNSUPPORTED_TRAY_RETURN = NAS_ROOT / "Unanalyzed" / "Unsupported_Tray_Type" if NAS_ROOT else None
 
-    # DLC complete staging area (for processing PC to pick up)
-    DLC_STAGING = NAS_ROOT / "DLC_Complete" if NAS_ROOT else None
+    # Post-DLC staging: posed videos waiting for the MouseReach claim (being-worked).
+    DLC_STAGING = NAS_ROOT / "Processing" / "DLC_Complete" if NAS_ROOT else None
 
     # Final validated outputs, organized by project/cohort (Step 6 destination)
     ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" if NAS_ROOT else None
@@ -120,15 +121,14 @@ class Paths:
     # A video only reaches kinematics + connectome.db when it is CLEAN. Anything
     # the algo cannot commit is held OUT of the archive+DB as a self-contained
     # bundle here until a human clears it. Two queues:
-    #   TRIAGE_REVIEW -- per-element "which reach / what outcome" questions the
-    #     triage review tool answers quickly (<5s each). Reuses the existing
-    #     Model40_Review/Pending root the review tool already reads.
-    #   DEEP_REVIEW   -- segmentation FAILED, or a reviewer escalated a video
-    #     that needs the causal/GT deep tools. Clearing a deep-review flag
-    #     re-injects the video at the START of the pipeline (re-segment).
-    REVIEW_ROOT = NAS_ROOT / "Model40_Review" if NAS_ROOT else None
-    TRIAGE_REVIEW = REVIEW_ROOT / "Pending" if REVIEW_ROOT else None
-    DEEP_REVIEW = REVIEW_ROOT / "Deep_Review" if REVIEW_ROOT else None
+    #   TRIAGE_REVIEW (Processing/Review/triage) -- per-element "which reach / what
+    #     outcome" questions the triage review tool answers quickly (<5s each).
+    #   DEEP_REVIEW (Processing/Review/flagged_for_review) -- segmentation FAILED,
+    #     or a reviewer escalated a video that needs the causal/GT deep tools.
+    #     Clearing a deep-review flag re-injects the video at the START (re-segment).
+    REVIEW_ROOT = NAS_ROOT / "Processing" / "Review" if NAS_ROOT else None
+    TRIAGE_REVIEW = REVIEW_ROOT / "triage" if REVIEW_ROOT else None
+    DEEP_REVIEW = REVIEW_ROOT / "flagged_for_review" if REVIEW_ROOT else None
 
     # --- Processing Pipeline Paths (derived from MouseReach_PROCESSING_ROOT) ---
     # These will be None if PROCESSING_ROOT is not configured
@@ -146,8 +146,9 @@ class Paths:
     # Files have validation_status in their JSON: "needs_review", "auto_approved", "validated"
     PROCESSING = PROCESSING_ROOT / "Processing" if PROCESSING_ROOT else None
 
-    # Processing errors requiring investigation
-    FAILED = PROCESSING_ROOT / "Failed" if PROCESSING_ROOT else None
+    # Processing errors requiring investigation -- shared NAS zone (being-worked,
+    # cross-node visible), under the Processing zone.
+    FAILED = NAS_ROOT / "Processing" / "Failed" if NAS_ROOT else None
 
     # Performance tracking logs (algorithm vs human comparison metrics)
     PERFORMANCE_LOGS = PROCESSING_ROOT / "performance_logs" if PROCESSING_ROOT else None
@@ -701,12 +702,13 @@ class WatcherConfig:
         return d
 
     def get_quarantine_dir(self) -> Path:
-        """Get quarantine directory, defaulting to NAS_ROOT/Quarantine."""
+        """Get quarantine directory, defaulting to NAS_ROOT/Processing/Quarantine
+        (the Processing zone -- quarantined videos are being-worked)."""
         if self.quarantine_dir:
             return self.quarantine_dir
         if Paths.NAS_ROOT:
-            return Paths.NAS_ROOT / "Quarantine"
-        return require_processing_root() / "Quarantine"
+            return Paths.NAS_ROOT / "Processing" / "Quarantine"
+        return require_processing_root() / "Processing" / "Quarantine"
 
     def get_log_dir(self) -> Path:
         """Get log directory, defaulting to PROCESSING_ROOT/watcher_logs."""
