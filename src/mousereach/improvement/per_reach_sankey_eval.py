@@ -48,7 +48,7 @@ CLI
     python -m mousereach.improvement.per_reach_sankey_eval algo-vs-review
 
 Run ``--help`` on either subcommand for options. Sensible defaults point at the
-2026-07-03 LIVE run (GT) and the Model40_Review Pending queue (review), and write
+2026-07-03 LIVE run (GT) and the Processing/Review/triage queue (review), and write
 a dated snapshot under ``MouseReach_Improvement/model40_eval/``.
 """
 from __future__ import annotations
@@ -750,7 +750,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     r = sub.add_parser("algo-vs-review", help="algo vs human review (algo-left/review-right)")
     r.add_argument("--pending", type=Path, default=PENDING_DIR,
-                   help="Model40_Review Pending dir (reviewed bundles)")
+                   help="Processing/Review/triage dir (reviewed bundles)")
     r.add_argument("--out", type=Path, default=None, help="output snapshot dir")
 
     args = p.parse_args(argv)

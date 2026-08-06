@@ -252,7 +252,7 @@ def scan_corpus_root_for_triage(
 ):
     """Scan a ROOT that contains many per-video bundle subdirs.
 
-    Layout (e.g. ``MouseReach_Pipeline/Model40_Review/Pending/``)::
+    Layout (e.g. ``MouseReach_Pipeline/Processing/Review/triage/``)::
 
         <root>/<video_stem>/<video_stem>_pellet_outcomes.json
                             <video_stem>_reaches.json
@@ -492,7 +492,7 @@ def find_default_corpus_root() -> Optional[Path]:
 
     Resolution order:
       1. ``MOUSEREACH_ROUTINE_ROOT`` environment variable
-      2. ``CONNECTOME_ROOT / Behavior / MouseReach_Pipeline / Model40_Review / Pending``
+      2. ``CONNECTOME_ROOT / Behavior / MouseReach_Pipeline / Processing / Review / triage``
 
     This is the routine review queue: one subdir per video, each holding the
     four algo JSONs. Returns None if nothing is found.
