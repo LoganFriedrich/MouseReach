@@ -465,7 +465,7 @@ def _stage_one_result(stem: str, connectome_root: Path, pending_dir: Path,
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Stage 4.0 review bundles (seg->reach->outcome->assignment v2) "
-                    "into Model40_Review/Pending. Copy-free: reads canonical Y: paths, "
+                    "into Processing/Review/triage. Copy-free: reads canonical Y: paths, "
                     "writes only small JSONs + manifest. Never touches C:.",
     )
     src = parser.add_mutually_exclusive_group(required=True)

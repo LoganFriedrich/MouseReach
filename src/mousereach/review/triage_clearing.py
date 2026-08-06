@@ -685,7 +685,7 @@ def main():
              "four algo JSONs). Scans every bundle for unresolved problems and "
              "routes failed-segmentation videos to a separate re-seg lane. "
              "Defaults to the routine review queue "
-             "(CONNECTOME_ROOT/Behavior/MouseReach_Pipeline/Model40_Review/Pending) "
+             "(CONNECTOME_ROOT/Behavior/MouseReach_Pipeline/Processing/Review/triage) "
              "or MOUSEREACH_ROUTINE_ROOT. Ignored if --algo-dir is given.",
     )
     parser.add_argument(

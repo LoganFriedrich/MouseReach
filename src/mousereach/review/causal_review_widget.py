@@ -2357,7 +2357,7 @@ class CausalReviewWidget(QWidget):
         return Path(bd).parent if bd else None
 
     def _review_root(self) -> Path:
-        """Root of the review corpus (Model40_Review), where corpus-level files
+        """Root of the review corpus (Processing/Review/triage), where corpus-level files
         like flagged_sessions.json live -- the parent of Pending."""
         pd = self._pending_dir()
         return pd.parent if pd is not None else self.video_path.parent
@@ -2855,7 +2855,7 @@ def main():
                     "could not, over the routine Pending queue.")
     parser.add_argument("--pending-dir", type=Path, default=DEFAULT_PENDING_DIR,
                         help="Review queue root of per-video bundles. "
-                             "Default: MouseReach_Pipeline/Model40_Review/Pending.")
+                             "Default: MouseReach_Pipeline/Processing/Review/triage.")
     parser.add_argument("--all-segments", action="store_true",
                         help="Walk ALL segments, not just triaged ones (full review).")
     parser.add_argument("--cv", action="store_true",
