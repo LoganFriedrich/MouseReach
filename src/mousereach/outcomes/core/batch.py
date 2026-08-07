@@ -105,14 +105,40 @@ def _extract_boundaries(seg_data):
 
 
 def _extract_reaches(reach_data):
-    """(start, end) reach windows from the reach JSON."""
+    """(start, end) reach windows from the reach JSON.
+
+    The reach detector nests reaches PER SEGMENT under ``segments[].reaches``
+    (each reach carries ``start_frame``/``end_frame``); that is the authoritative
+    current format. A flat top-level ``reaches`` list is an older/alternate form.
+    Handle both. Historically this only read the flat form -- so against real
+    reach JSON it returned [], starving the v6 cascade of every reach and breaking
+    the reach-dependent outcome stages (e.g. retrieved-via-unique-vanish-reach),
+    which collapsed retrieved->0 and inflated triage. (Fixed 2026-08; verified to
+    reproduce the 2026-07-03 v6.1 LIVE per-reach Sankey outputs exactly.)
+    """
+    def _pair(r):
+        s = r.get("start_frame")
+        if s is None:
+            s = r.get("start")
+        e = r.get("end_frame")
+        if e is None:
+            e = r.get("end")
+        return (int(s), int(e)) if s is not None and e is not None else None
+
     reaches = []
-    if "reaches" in reach_data and isinstance(reach_data["reaches"], list):
+    # Nested per-segment form (current, authoritative).
+    if isinstance(reach_data.get("segments"), list):
+        for seg in reach_data["segments"]:
+            for r in (seg.get("reaches") or []):
+                p = _pair(r)
+                if p is not None:
+                    reaches.append(p)
+    # Flat top-level form (legacy) -- only if the nested form yielded nothing.
+    if not reaches and isinstance(reach_data.get("reaches"), list):
         for r in reach_data["reaches"]:
-            s = r.get("start_frame") or r.get("start")
-            e = r.get("end_frame") or r.get("end")
-            if s is not None and e is not None:
-                reaches.append((int(s), int(e)))
+            p = _pair(r)
+            if p is not None:
+                reaches.append(p)
     return reaches
 
 
