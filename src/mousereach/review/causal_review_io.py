@@ -432,12 +432,23 @@ def _flagged_sessions_path(review_root: Path) -> Path:
     return Path(review_root) / "flagged_sessions.json"
 
 
-def load_flagged_sessions(review_root: Path) -> Dict[str, Any]:
-    """Return {session_key: flag_record} for the review corpus."""
+_FLAGGED_SESSIONS_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def load_flagged_sessions(review_root: Path, use_cache: bool = True) -> Dict[str, Any]:
+    """Return {session_key: flag_record} for the review corpus.
+
+    PERF: cached per review_root for the process. This is read once per bundle
+    during the review-queue scan (via :func:`is_session_flagged`); without the
+    cache that re-reads the same small NAS file hundreds of times per scan. The
+    cache is invalidated by :func:`flag_session` (the only writer)."""
+    key = str(review_root)
+    if use_cache and key in _FLAGGED_SESSIONS_CACHE:
+        return _FLAGGED_SESSIONS_CACHE[key]
     p = _flagged_sessions_path(review_root)
-    if p.exists():
-        return _read_json(p).get("sessions", {})
-    return {}
+    data = _read_json(p).get("sessions", {}) if p.exists() else {}
+    _FLAGGED_SESSIONS_CACHE[key] = data
+    return data
 
 
 def is_session_flagged(video_stem: str, review_root: Path) -> bool:
@@ -467,6 +478,7 @@ def flag_session(video_stem: str, review_root: Path, reason: str = "",
     }
     doc["last_updated"] = _get_timestamp()
     _write_json(p, doc)
+    _FLAGGED_SESSIONS_CACHE.pop(str(review_root), None)  # invalidate read cache
     return key
 
 
