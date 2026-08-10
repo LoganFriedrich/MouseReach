@@ -2529,44 +2529,64 @@ class CausalReviewWidget(QWidget):
     def load_pending_queue(self, pending_dir: Path):
         """Enter the review queue on a RANDOM video that still needs review
         (skips flagged sessions and already-complete videos). Random sampling
-        keeps the reviewed set unbiased across cohorts/days."""
+        keeps the reviewed set unbiased across cohorts/days.
+
+        PERF: the needs-review pool is scanned over the NAS ONCE here and cached
+        on the widget (``self._pool_cache``). The per-video advance
+        (:meth:`_load_next_video`) then draws from that cache instead of
+        re-scanning every bundle each time -- a full re-scan per 'next' made the
+        tool freeze for minutes as the queue grew into the thousands. The cache is
+        refreshed only when exhausted, so newly-staged bundles are still picked up."""
         import random
         pending_dir = Path(pending_dir)
         root = pending_dir.parent
-        pool = self._needs_review_pool(pending_dir, root)
-        if not pool:
+        self._reviewed_this_session = set()
+        self._pool_cache = self._needs_review_pool(pending_dir, root)  # scan ONCE
+        if not self._pool_cache:
             show_info("Review queue: nothing left to review (all flagged or complete).")
             return
-        b = random.choice(pool)
+        b = random.choice(self._pool_cache)
         manifest = json.loads(bundle_manifest_path(b).read_text(encoding="utf-8"))
         self.load_from_manifest(manifest, b)
         self._status_label.setText(
-            self._status_label.text() + f"   [random pick -- {len(pool)} left to review]")
+            self._status_label.text() + f"   [random pick -- {len(self._pool_cache)} in queue]")
 
     def _load_next_video(self):
-        """Load a RANDOM next video from the pool that still NEEDS review,
-        skipping flagged sessions, already-complete videos, and the current one.
-        Random sampling keeps the reviewed set unbiased across cohorts/days."""
+        """Load a RANDOM next video that still NEEDS review, drawn from the pool
+        cached at launch minus the bundles already visited this session. Only when
+        that cache is exhausted do we pay for a fresh full NAS scan (which also
+        picks up bundles staged since launch). Random sampling keeps the reviewed
+        set unbiased across cohorts/days."""
         import random
         pending = self._pending_dir()
         if pending is None or not pending.exists():
             show_info("No review queue found (not loaded from a Pending bundle).")
             return
-        root = self._review_root()
-        pool = self._needs_review_pool(pending, root,
-                                       exclude=getattr(self, "_bundle_dir", None))
-        if not pool:
+        seen = getattr(self, "_reviewed_this_session", None)
+        if seen is None:
+            seen = self._reviewed_this_session = set()
+        cur = getattr(self, "_bundle_dir", None)
+        if cur is not None:
+            seen.add(str(cur))  # the video just reviewed -- don't hand it back
+        cache = getattr(self, "_pool_cache", None)
+        candidates = [b for b in cache if str(b) not in seen] if cache else []
+        if not candidates:
+            # Cache exhausted -> one fresh scan (also catches newly-staged bundles).
+            root = self._review_root()
+            self._pool_cache = self._needs_review_pool(pending, root)
+            candidates = [b for b in self._pool_cache if str(b) not in seen]
+        if not candidates:
             msg = "Queue complete -- nothing left to review."
             show_info(msg)
             self._status_label.setText(msg)
             return
-        nxt = random.choice(pool)
+        nxt = random.choice(candidates)
         try:
             manifest = json.loads(bundle_manifest_path(nxt).read_text(encoding="utf-8"))
             self.load_from_manifest(manifest, nxt)
             self._status_label.setText(
                 self._status_label.text()
-                + f"   [random pick -- {len(pool)} left to review]")
+                + f"   [random pick -- {len(candidates)} left this pass]")
         except Exception as e:
             show_error(f"Could not load next video ({nxt.name}): {e}")
 
