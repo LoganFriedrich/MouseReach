@@ -622,8 +622,15 @@ class DatabaseSyncer:
 
                 conn.commit()
 
-            # Update sync state
-            key = str(path.relative_to(self.processing_path) if self.processing_path else path)
+            # Update sync state. The key is the path relative to processing_path
+            # when the file lives there; FINALIZED features (bring-current) live in
+            # Analyzed/<cohort>/, which is NOT under processing_path -- fall back to
+            # the filename so relative_to() doesn't raise AFTER the rows are already
+            # committed (which silently dropped the return value + sync-state).
+            try:
+                key = str(path.relative_to(self.processing_path)) if self.processing_path else str(path)
+            except ValueError:
+                key = path.name
             self._sync_state[key] = file_hash(path)
 
             return len(rows)
