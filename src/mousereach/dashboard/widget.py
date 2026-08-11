@@ -24,7 +24,7 @@ from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea,
     QComboBox, QGroupBox, QProgressBar, QTabWidget, QTextEdit,
-    QCheckBox
+    QCheckBox, QDialog, QDialogButtonBox, QAbstractItemView
 )
 from qtpy.QtCore import Qt, QTimer, QObject, Signal
 from qtpy.QtGui import QColor, QBrush
@@ -640,15 +640,11 @@ class PipelineDashboard(QWidget):
         tabs = QTabWidget()
         main_layout.addWidget(tabs)
 
-        # --- Tab 1: Pipeline Overview ---
+        # --- Tab 1: Pipeline Overview (File Details opens from here, per-selection) ---
         overview_widget = self._build_overview_tab()
         tabs.addTab(overview_widget, "Pipeline Overview")
 
-        # --- Tab 2: File Details ---
-        details_widget = self._build_details_tab()
-        tabs.addTab(details_widget, "File Details")
-
-        # --- Tab 3: Statistics ---
+        # --- Tab 2: Statistics ---
         stats_widget = self._build_stats_tab()
         tabs.addTab(stats_widget, "Statistics")
 
@@ -701,10 +697,28 @@ class PipelineDashboard(QWidget):
 
         # Enable clicking on status cells to launch review tools
         self.overview_table.itemClicked.connect(self._on_status_cell_clicked)
-        layout.addWidget(self.overview_table)
+        # Pixel-wise scrolling so the LAST row's bottom border is always reachable
+        # (row-snap scrolling can leave the final row hidden under the horizontal
+        # scrollbar, so it can't be scrolled fully into view).
+        self.overview_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.overview_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        # Selecting a row gates the "File Details" button in the button row below.
+        self.overview_table.itemSelectionChanged.connect(self._on_overview_selection)
+        # Stretch=1 so the table takes all spare vertical space (the filter row,
+        # legend, and button row stay compact).
+        layout.addWidget(self.overview_table, 1)
 
         # Buttons row
         btn_layout = QHBoxLayout()
+
+        # File Details: greyed out until a file is selected in the table above.
+        self.details_btn = QPushButton("File Details")
+        self.details_btn.setToolTip(
+            "Show full details for the file selected in the table above. "
+            "Select a row to enable.")
+        self.details_btn.setEnabled(False)
+        self.details_btn.clicked.connect(self._show_file_details_dialog)
+        btn_layout.addWidget(self.details_btn)
 
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setToolTip("Reload from index (fast)")
@@ -1274,7 +1288,10 @@ class PipelineDashboard(QWidget):
             self.overview_table.setItem(row, 11, last_item)
 
     def _update_file_combo(self):
-        """Update file selector combo box."""
+        """Update file selector combo box (legacy File Details tab). No-op now that
+        File Details opens per-selection from the overview and the combo isn't built."""
+        if not hasattr(self, "file_combo"):
+            return
         self.file_combo.blockSignals(True)
         self.file_combo.clear()
         self.file_combo.addItems(sorted(self.all_files.keys()))
@@ -1288,6 +1305,36 @@ class PipelineDashboard(QWidget):
         if filename and filename in self.all_files:
             summary = self.adapter.get_file_summary(filename)
             self.details_text.setText(summary)
+
+    def _on_overview_selection(self):
+        """Selecting a row in the overview table enables the File Details button
+        and remembers which file it points at."""
+        row = self.overview_table.currentRow()
+        name_item = self.overview_table.item(row, 0) if row >= 0 else None
+        self._selected_file = name_item.text() if name_item else None
+        if hasattr(self, "details_btn"):
+            self.details_btn.setEnabled(bool(self._selected_file))
+
+    def _show_file_details_dialog(self):
+        """Open a dialog with the selected file's full details (was the old
+        'File Details' tab; now opened per-selection from the overview)."""
+        fn = getattr(self, "_selected_file", None)
+        if not fn or fn not in self.all_files:
+            return
+        summary = self.adapter.get_file_summary(fn)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"File Details -- {fn}")
+        dlg.resize(720, 520)
+        lay = QVBoxLayout(dlg)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setText(summary)
+        lay.addWidget(txt)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(dlg.reject)
+        bb.accepted.connect(dlg.accept)
+        lay.addWidget(bb)
+        dlg.exec_()
 
     def _update_statistics(self):
         """Update statistics: a meaningful by-stage / review / version breakdown
