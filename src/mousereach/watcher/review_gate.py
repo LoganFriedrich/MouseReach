@@ -88,11 +88,33 @@ def evaluate_gate(
         return DECISION_DEEP, "segmentation_failed", st
     if qc_verdict == "needs_review":
         return DECISION_DEEP, "qc_needs_review", st
-    unresolved = set(st.unresolved) - gt_segs  # GT-determined segments are resolved
+    # GT-determined segments are resolved; so are segments a human addressed in a
+    # review saved ANYWHERE the resolver looks (the Pending bundle, or next to the
+    # canonical video) -- not just the fresh work dir triage_status read. Honoring
+    # it lets a re-run of an already-reviewed video finalize CLEAN instead of
+    # re-triaging (and losing the reviewer's resolution).
+    review_resolved = _review_resolved_segments(video_id, processing_dir)
+    unresolved = set(st.unresolved) - gt_segs - review_resolved
     if unresolved:
         segs = ", ".join(str(s) for s in sorted(unresolved))
         return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
     return DECISION_CLEAN, "clean", st
+
+
+def _review_resolved_segments(video_id: str, processing_dir: Path):
+    """Resolved segment numbers from a saved human review found ANYWHERE the
+    resolver looks (processing dir, Pending bundle, next to the canonical video).
+    Empty set on any error -- never blocks the gate."""
+    try:
+        import json
+        from ..review.causal_review_io import resolve_review_path
+        from ..review.triage_status import resolved_segments
+        rp = resolve_review_path(video_id, processing_dir)
+        if rp is None or not rp.exists():
+            return set()
+        return resolved_segments(json.loads(rp.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
 
 
 def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
