@@ -77,6 +77,7 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
         return {"held": False, "error": "no review-queue root configured"}
     bundle = Path(dest_root) / video_id
     if bundle.exists():
+        _push_review_index(video_id, bundle, decision)  # keep index in sync even if re-seen
         return {"held": True, "bundle": str(bundle), "note": "already queued -- left intact"}
     bundle.mkdir(parents=True, exist_ok=True)
     moved = []
@@ -100,8 +101,24 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
     }
     (bundle / f"{video_id}_manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
+    _push_review_index(video_id, bundle, decision)
     return {"held": True, "bundle": str(bundle),
             "queue": Path(dest_root).name, "moved": moved}
+
+
+def _push_review_index(video_id, bundle, decision):
+    """Best-effort PUSH of a freshly-staged TRIAGE bundle into the scan-free
+    review queue index (mousereach.review.queue_index). The review tool reads that
+    index instead of scanning every bundle. Never raises -- staging must not depend
+    on the index. Deep-review bundles are a separate queue and are not indexed."""
+    if decision == "deep_review":
+        return
+    try:
+        from mousereach.review.queue_index import QueueIndex
+        QueueIndex().push(str(video_id), bundle,
+                          staged_at=datetime.now().isoformat())
+    except Exception:
+        pass
 
 
 def reprocess_video_to_current(

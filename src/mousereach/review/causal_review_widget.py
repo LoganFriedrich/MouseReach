@@ -2526,6 +2526,22 @@ class CausalReviewWidget(QWidget):
                 pool.append(b)
         return pool
 
+    def _review_pool_paths(self, pending_dir, root):
+        """Needs-review bundle paths. Reads the SCAN-FREE queue index
+        (mousereach.review.queue_index) when it is populated; otherwise falls back
+        to the full bundle scan (_needs_review_pool). The index is maintained by
+        PUSH (staging) + POP (full-review), so this stays current without ever
+        re-reading every bundle. Fallback keeps the tool working if the index is
+        missing/empty."""
+        try:
+            from mousereach.review.queue_index import QueueIndex
+            paths = [p for p in QueueIndex().all_paths() if p.is_dir()]
+            if paths:
+                return paths
+        except Exception:
+            pass
+        return self._needs_review_pool(pending_dir, root)
+
     def load_pending_queue(self, pending_dir: Path):
         """Enter the review queue on a RANDOM video that still needs review
         (skips flagged sessions and already-complete videos). Random sampling
@@ -2541,7 +2557,7 @@ class CausalReviewWidget(QWidget):
         pending_dir = Path(pending_dir)
         root = pending_dir.parent
         self._reviewed_this_session = set()
-        self._pool_cache = self._needs_review_pool(pending_dir, root)  # scan ONCE
+        self._pool_cache = self._review_pool_paths(pending_dir, root)  # index (scan-free) or scan fallback
         if not self._pool_cache:
             show_info("Review queue: nothing left to review (all flagged or complete).")
             return
@@ -2571,9 +2587,10 @@ class CausalReviewWidget(QWidget):
         cache = getattr(self, "_pool_cache", None)
         candidates = [b for b in cache if str(b) not in seen] if cache else []
         if not candidates:
-            # Cache exhausted -> one fresh scan (also catches newly-staged bundles).
+            # Cache exhausted -> refresh from the index (or scan fallback); this also
+            # catches bundles staged since launch and drops popped/reviewed ones.
             root = self._review_root()
-            self._pool_cache = self._needs_review_pool(pending, root)
+            self._pool_cache = self._review_pool_paths(pending, root)
             candidates = [b for b in self._pool_cache if str(b) not in seen]
         if not candidates:
             msg = "Queue complete -- nothing left to review."
@@ -2593,7 +2610,25 @@ class CausalReviewWidget(QWidget):
     def _save_and_next_video(self):
         """Save this video's review, then load the next video in the queue."""
         self._save_review()
+        self._pop_from_index_if_resolved()
         self._load_next_video()
+
+    def _pop_from_index_if_resolved(self):
+        """When the current video's triaged elements are ALL resolved, remove it
+        from the scan-free queue index so it is not offered again in future
+        sessions (this session already excludes it via _reviewed_this_session).
+        Best-effort -- the index is rebuildable, so a missed pop self-heals."""
+        stem = getattr(self, "_video_stem", None)
+        bundle = getattr(self, "_bundle_dir", None)
+        if not stem or bundle is None:
+            return
+        try:
+            from .triage_status import triage_status
+            from .queue_index import QueueIndex
+            if triage_status(Path(bundle), stem).fully_resolved:
+                QueueIndex().pop(str(stem))
+        except Exception:
+            pass
 
     def _save_review(self):
         """Save all accumulated review records to the per-video file + index."""
