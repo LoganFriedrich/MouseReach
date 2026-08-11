@@ -9,8 +9,9 @@ video appears in more than one folder -- keeps the furthest-along one.
 It is intentionally coarse + fast-ish: it identifies videos by cheap markers
 (media files, ``_reaches.json``, review-bundle dirs, quarantine notes) and does
 NOT open each video's JSONs. Per-step / version detail comes from the Version
-check and the File Details tab. The ``Analyzed`` rglob is the slow part, so the
-caller runs this on a background thread.
+check and the File Details dialog (the selection-gated button on Pipeline
+Overview). The ``Analyzed`` rglob is the slow part, so the caller runs this on a
+background thread.
 
 ASCII-only console output (Windows cp1252).
 """
@@ -121,7 +122,12 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
     for root, state in ((Paths.TRIAGE_REVIEW, "triage"), (Paths.DEEP_REVIEW, "deep_review")):
         if root and Path(root).exists():
             for d in Path(root).iterdir():
-                if d.is_dir():
+                # Every subdir here is taken to BE a review bundle (named for its
+                # video), so tool/OS scratch dirs would otherwise be listed as
+                # phantom videos awaiting review -- e.g. a stray ".omc/" (agent
+                # state) showed up in the dashboard as a triage entry. Dot-dirs
+                # are never review bundles; skip them.
+                if d.is_dir() and not d.name.startswith("."):
                     add(d.name, state, d)
 
     try:
