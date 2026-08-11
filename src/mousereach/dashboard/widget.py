@@ -329,35 +329,33 @@ class WatcherAdapter:
         if force or not hasattr(self, "_current_versions"):
             try:
                 from mousereach.pipeline.versions import get_current_versions
-                from .version_currency import build_manifest_index
+                from .version_currency import build_manifest_index, build_version_maps
                 self._current_versions = get_current_versions()
                 self._manifest_index = build_manifest_index(
                     [Paths.PROCESSING, Paths.ANALYZED_OUTPUT]
                 )
+                # Resolve every video's status + DLC model HERE (one manifest read
+                # each, in parallel) so the table's per-row questions are dict
+                # lookups. Asking per row re-read the manifest off the NAS ~22 ms
+                # a time and froze the GUI for minutes on every repaint.
+                self._version_status_map, self._dlc_model_map = build_version_maps(
+                    list(self.files.keys()), self._manifest_index, self._current_versions
+                )
             except Exception:
                 self._current_versions = {}
                 self._manifest_index = {}
+                self._version_status_map = {}
+                self._dlc_model_map = {}
 
     def version_status_for(self, video_id: str) -> str:
         """'current' / 'outdated' / 'unknown' -- 'unknown' until the version index
-        is built (Check versions)."""
-        from .version_currency import version_status
-        return version_status(
-            video_id, getattr(self, "_manifest_index", {}),
-            getattr(self, "_current_versions", None),
-        )
+        is built (Check versions). O(1): resolved by _ensure_version_data."""
+        return getattr(self, "_version_status_map", {}).get(video_id, "unknown")
 
     def dlc_model_for(self, video_id: str):
         """The DLC scorer/model from the video's manifest (None until the version
-        index is built via Check versions)."""
-        mp = getattr(self, "_manifest_index", {}).get(video_id)
-        if not mp:
-            return None
-        try:
-            m = json.loads(Path(mp).read_text(encoding="utf-8"))
-            return m.get("dlc_model", {}).get("dlc_scorer") or None
-        except Exception:
-            return None
+        index is built via Check versions). O(1): resolved by _ensure_version_data."""
+        return getattr(self, "_dlc_model_map", {}).get(video_id)
 
     def _status_bucket(self, state: str) -> str:
         if state in self._VALIDATED:
@@ -496,28 +494,29 @@ class FolderScanAdapter:
         if force or not hasattr(self, "_current_versions"):
             try:
                 from mousereach.pipeline.versions import get_current_versions
-                from .version_currency import build_manifest_index
+                from .version_currency import build_manifest_index, build_version_maps
                 self._current_versions = get_current_versions()
                 self._manifest_index = build_manifest_index([Paths.PROCESSING, Paths.ANALYZED_OUTPUT])
+                # One manifest read per video, in parallel, HERE -- so the table's
+                # per-row Version/DLC questions become dict lookups instead of a
+                # NAS read each (~22 ms x thousands of rows = a frozen GUI).
+                self._version_status_map, self._dlc_model_map = build_version_maps(
+                    list(self.files.keys()), self._manifest_index, self._current_versions
+                )
             except Exception:
                 self._current_versions = {}
                 self._manifest_index = {}
+                self._version_status_map = {}
+                self._dlc_model_map = {}
 
     def version_status_for(self, video_id: str) -> str:
-        from .version_currency import version_status
-        return version_status(video_id, getattr(self, "_manifest_index", {}),
-                              getattr(self, "_current_versions", None))
+        """O(1) -- resolved once by _ensure_version_data (Check versions)."""
+        return getattr(self, "_version_status_map", {}).get(video_id, "unknown")
 
     def dlc_model_for(self, video_id: str):
-        """The DLC scorer/model from the video's manifest (None until Check versions)."""
-        mp = getattr(self, "_manifest_index", {}).get(video_id)
-        if not mp:
-            return None
-        try:
-            m = json.loads(Path(mp).read_text(encoding="utf-8"))
-            return m.get("dlc_model", {}).get("dlc_scorer") or None
-        except Exception:
-            return None
+        """The DLC scorer/model from the video's manifest (None until Check
+        versions). O(1) -- resolved once by _ensure_version_data."""
+        return getattr(self, "_dlc_model_map", {}).get(video_id)
 
     def get_file_summary(self, filename: str) -> str:
         info = self.files.get(filename)
@@ -869,14 +868,20 @@ class PipelineDashboard(QWidget):
         def job():
             try:
                 adapter._ensure_version_data(force=True)
-            except Exception:
-                pass
+                self._version_error = None
+            except Exception as e:
+                # Don't swallow: a silent failure here leaves the Version column
+                # stuck at "?" with no hint as to why.
+                self._version_error = str(e)
             worker.done.emit()
 
         self._version_thread = threading.Thread(target=job, daemon=True, name="version-check")
         self._version_thread.start()
 
     def _on_versions_ready(self):
+        if getattr(self, "_version_error", None):
+            show_error(f"Version check failed: {self._version_error}")
+            return
         self._update_overview_table()
         try:
             statuses = [self.adapter.version_status_for(f) for f in self.all_files]

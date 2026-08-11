@@ -9,7 +9,9 @@ Pipeline status dashboard napari widget providing a complete overview of all fil
 ## Key Files
 | File | Description |
 |------|-------------|
-| `widget.py` | Main PipelineDashboard widget with three tabs: Pipeline Overview (filterable table), File Details (per-video info), and Statistics (validation status counts) |
+| `widget.py` | Main PipelineDashboard widget with two tabs: Pipeline Overview (filterable table) and Statistics (validation status counts). Per-video info opens from the selection-gated **File Details button** on Pipeline Overview, not a tab. |
+| `folder_scan.py` | Scans the whole pipeline tree; a video's stage = which folder it sits in. Skips dot-dirs (tool scratch like `.omc` is not a review bundle). |
+| `version_currency.py` | Is each video current with the shipped algo versions? Builds the manifest index and (via `build_version_maps`) resolves status + DLC model for every video in one pass. |
 | `__init__.py` | Package exports for PipelineDashboard and IndexAdapter |
 
 ## Subdirectories
@@ -18,6 +20,13 @@ None
 ## For AI Agents
 
 ### Working In This Directory
+- **NEVER do per-row file I/O in the table build.** `_update_overview_table` runs
+  once per video (~3,800 rows) on the GUI thread, so any NAS read inside that loop
+  is multiplied by the row count and freezes the dashboard. This actually happened:
+  `version_status_for` / `dlc_model_for` each re-read the video's manifest off the
+  NAS (~22 ms), costing ~168 s of frozen GUI per repaint. Resolve such data ONCE on
+  a worker thread into a dict (see `build_version_maps`) and make the per-row call
+  an O(1) lookup.
 - **Performance critical**: Always use PipelineIndex (via IndexAdapter) instead of scanning folders directly
 - Auto-refresh is **disabled** to prevent multi-hour freezes on network drives - users manually refresh when needed
 - The dashboard shows **individual validation status** for each step (seg_status, reach_status, outcome_status) in v2.3+ architecture
