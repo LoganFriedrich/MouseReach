@@ -348,3 +348,26 @@ def cli_status():
         for s, n in sorted(scorers.items(), key=lambda kv: -kv[1]):
             print(f"  {n:5d}  {s}")
     return 0
+
+
+# Also runnable as a module, so it works without re-installing the package:
+#   python -m mousereach.pipeline.version_index build
+#   python -m mousereach.pipeline.version_index status
+# (The console scripts cannot be (re)installed while a mousereach GUI is running
+# -- Windows locks the .exe shims in the env's Scripts dir.)
+if __name__ == "__main__":
+    import sys
+
+    _cmds = {"build": cli_build, "status": cli_status}
+    _cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if _cmd in _cmds:
+        sys.argv.pop(1)  # let the sub-command parse its own flags
+        sys.exit(_cmds[_cmd]())
+    print("Per-video version index -- what the dashboard reads.")
+    print("")
+    print("Usage:")
+    print("  python -m mousereach.pipeline.version_index build    # backfill/rebuild")
+    print("  python -m mousereach.pipeline.version_index status   # coverage + counts")
+    print("")
+    print("Add --help after a sub-command for its options.")
+    sys.exit(1 if _cmd else 0)
