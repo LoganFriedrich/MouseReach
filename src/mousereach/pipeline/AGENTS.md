@@ -11,6 +11,8 @@ Batch processing orchestration for the MouseReach analysis pipeline. Provides a 
 |------|-------------|
 | `core.py` | Core pipeline orchestration logic, includes UnifiedPipelineProcessor for running all stages and utilities for scanning pipeline status |
 | `batch_widget.py` | Napari widget (UnifiedPipelineWidget) for running the complete pipeline with progress tracking and visual feedback |
+| `manifest.py` | `create_processing_manifest()` -- the ONLY place a `_processing_manifest.json` is written. Also pushes a row to the version index (see below). |
+| `version_index.py` | Per-video version index (SQLite/WAL): which algo versions each video was processed with. Writers push, readers read. CLI: `mousereach-version-index-build` / `-status`. |
 | `__init__.py` | Package exports for UnifiedPipelineWidget, UnifiedPipelineProcessor, and pipeline status utilities |
 
 ## Subdirectories
@@ -26,6 +28,22 @@ None
 - The widget provides both automatic batch processing and targeted reprocessing of specific files
 - All processing is done in background threads to avoid blocking the napari UI
 - Progress callbacks use stage names: 'segmentation', 'outcomes', 'reaches', 'advancing'
+
+### Writers push, readers read (version index)
+- `create_processing_manifest()` is the single manifest writer, so it is also the
+  single place that pushes to `version_index.py`. Any new path that records what
+  versions processed a video must go through it, NOT write manifests directly.
+- The index stores **facts** (the video's own `pipeline_versions` + `dlc_scorer`),
+  never the derived "current/outdated" verdict -- the verdict depends on the
+  shipped `pipeline_versions.json`, which changes, so it is derived in memory at
+  read time and a version bump needs no index rewrite.
+- Index writes are **best-effort**: a bookkeeping index must never fail a video's
+  processing. The manifest JSON on disk stays the source of truth, and the index
+  is fully rebuildable (`mousereach-version-index-build`).
+- Rationale: the dashboard used to answer "is this video current?" by rglobbing
+  the archive and re-parsing every manifest off the NAS (~22 ms each, thousands of
+  videos), which froze the GUI. Data known at write time should be recorded at
+  write time.
 
 ### Key Patterns
 - **Scan before run**: Always call `scan_pipeline_status()` to determine what needs processing

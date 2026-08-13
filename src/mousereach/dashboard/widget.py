@@ -18,7 +18,10 @@ Uses PipelineIndex for fast startup. If index is stale, run: mousereach-index-re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -105,6 +108,39 @@ import napari
 from napari.utils.notifications import show_info, show_error
 
 from mousereach.config import Paths
+
+
+def _resolve_version_maps(video_ids):
+    """``(current_versions, {video: status}, {video: dlc_scorer})`` for the table.
+
+    Fast path: ONE query against the version index that the writers maintain
+    (``create_processing_manifest`` pushes a row per video). No archive rglob, no
+    per-video manifest reads.
+
+    Fallback: if that index holds nothing -- it was never built, or is
+    unreachable -- fall back to the old scan so the dashboard never regresses to
+    showing nothing. An index that merely LAGS (a few videos processed by an
+    older build) is not repaired here: repairing means scanning, which is the
+    cost we are removing. Those videos read as "?" and
+    ``mousereach-version-index-build`` fixes them; ``-status`` surfaces the count.
+    """
+    from mousereach.pipeline.versions import get_current_versions
+    current = get_current_versions()
+
+    try:
+        from mousereach.pipeline.version_index import status_maps
+        status_map, dlc_map = status_maps(current)
+    except Exception:
+        status_map, dlc_map = {}, {}
+
+    if status_map or dlc_map:
+        return current, status_map, dlc_map
+
+    logger.info("version index empty/unavailable -- falling back to the manifest scan")
+    from .version_currency import build_manifest_index, build_version_maps
+    manifest_index = build_manifest_index([Paths.PROCESSING, Paths.ANALYZED_OUTPUT])
+    status_map, dlc_map = build_version_maps(list(video_ids), manifest_index, current)
+    return current, status_map, dlc_map
 
 
 class IndexAdapter:
@@ -328,22 +364,14 @@ class WatcherAdapter:
         slow over the NAS."""
         if force or not hasattr(self, "_current_versions"):
             try:
-                from mousereach.pipeline.versions import get_current_versions
-                from .version_currency import build_manifest_index, build_version_maps
-                self._current_versions = get_current_versions()
-                self._manifest_index = build_manifest_index(
-                    [Paths.PROCESSING, Paths.ANALYZED_OUTPUT]
-                )
-                # Resolve every video's status + DLC model HERE (one manifest read
-                # each, in parallel) so the table's per-row questions are dict
-                # lookups. Asking per row re-read the manifest off the NAS ~22 ms
-                # a time and froze the GUI for minutes on every repaint.
-                self._version_status_map, self._dlc_model_map = build_version_maps(
-                    list(self.files.keys()), self._manifest_index, self._current_versions
-                )
+                # One query against the writer-maintained version index (scan only
+                # as a fallback). Resolved HERE, on the worker thread, so the
+                # table's per-row questions are dict lookups -- asking per row
+                # re-read the manifest off the NAS and froze the GUI.
+                (self._current_versions, self._version_status_map,
+                 self._dlc_model_map) = _resolve_version_maps(self.files.keys())
             except Exception:
                 self._current_versions = {}
-                self._manifest_index = {}
                 self._version_status_map = {}
                 self._dlc_model_map = {}
 
@@ -493,19 +521,14 @@ class FolderScanAdapter:
     def _ensure_version_data(self, force: bool = False):
         if force or not hasattr(self, "_current_versions"):
             try:
-                from mousereach.pipeline.versions import get_current_versions
-                from .version_currency import build_manifest_index, build_version_maps
-                self._current_versions = get_current_versions()
-                self._manifest_index = build_manifest_index([Paths.PROCESSING, Paths.ANALYZED_OUTPUT])
-                # One manifest read per video, in parallel, HERE -- so the table's
-                # per-row Version/DLC questions become dict lookups instead of a
-                # NAS read each (~22 ms x thousands of rows = a frozen GUI).
-                self._version_status_map, self._dlc_model_map = build_version_maps(
-                    list(self.files.keys()), self._manifest_index, self._current_versions
-                )
+                # One query against the writer-maintained version index (scan only
+                # as a fallback), resolved HERE on the worker thread so the table's
+                # per-row Version/DLC questions are dict lookups instead of a NAS
+                # read each (~22 ms x thousands of rows = a frozen GUI).
+                (self._current_versions, self._version_status_map,
+                 self._dlc_model_map) = _resolve_version_maps(self.files.keys())
             except Exception:
                 self._current_versions = {}
-                self._manifest_index = {}
                 self._version_status_map = {}
                 self._dlc_model_map = {}
 
@@ -1365,9 +1388,10 @@ class PipelineDashboard(QWidget):
             f"Ground truth files:      {has_gt}/{total}",
         ]
 
-        # Version currency -- only after 'Check versions' has built the index.
+        # Version currency -- only once version data has been resolved (from the
+        # version index, or the fallback scan behind 'Check versions').
         vs_fn = getattr(self.adapter, "version_status_for", None)
-        if vs_fn is not None and getattr(self.adapter, "_manifest_index", None):
+        if vs_fn is not None and getattr(self.adapter, "_version_status_map", None):
             vc = Counter(vs_fn(f) for f in self.all_files)
             lines += [
                 "",

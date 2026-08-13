@@ -11,7 +11,7 @@ Pipeline status dashboard napari widget providing a complete overview of all fil
 |------|-------------|
 | `widget.py` | Main PipelineDashboard widget with two tabs: Pipeline Overview (filterable table) and Statistics (validation status counts). Per-video info opens from the selection-gated **File Details button** on Pipeline Overview, not a tab. |
 | `folder_scan.py` | Scans the whole pipeline tree; a video's stage = which folder it sits in. Skips dot-dirs (tool scratch like `.omc` is not a review bundle). |
-| `version_currency.py` | Is each video current with the shipped algo versions? Builds the manifest index and (via `build_version_maps`) resolves status + DLC model for every video in one pass. |
+| `version_currency.py` | Is each video current with the shipped algo versions? The FALLBACK path: builds the manifest index and (via `build_version_maps`) resolves status + DLC model in one pass. Used only when the version index is empty/unavailable. |
 | `__init__.py` | Package exports for PipelineDashboard and IndexAdapter |
 
 ## Subdirectories
@@ -20,6 +20,12 @@ None
 ## For AI Agents
 
 ### Working In This Directory
+- **Version data comes from the index, not a scan.** `_resolve_version_maps()`
+  reads `mousereach.pipeline.version_index` in ONE query; the writers maintain it
+  (`create_processing_manifest` pushes a row per video). The manifest scan is only
+  the fallback for an empty/unavailable index. A LAGGING index is not repaired by
+  scanning -- that is the cost being removed; those videos read "?" and
+  `mousereach-version-index-build` fixes them.
 - **NEVER do per-row file I/O in the table build.** `_update_overview_table` runs
   once per video (~3,800 rows) on the GUI thread, so any NAS read inside that loop
   is multiplied by the row count and freezes the dashboard. This actually happened:
