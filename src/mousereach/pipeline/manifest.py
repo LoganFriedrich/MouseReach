@@ -172,6 +172,18 @@ def create_processing_manifest(
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
 
+    # Push the same versions to the version index, so readers (the dashboard)
+    # answer "is this video current?" from one query instead of re-scanning the
+    # archive and re-parsing every manifest off the NAS. This is the ONLY place
+    # manifests are written, so hooking here covers the watcher, reprocessing and
+    # bring-current paths alike. Best-effort: a bookkeeping index must never be
+    # able to fail a video's processing, and it is rebuildable from the manifests.
+    try:
+        from mousereach.pipeline.version_index import VersionIndex
+        VersionIndex().upsert_from_manifest(video_id, manifest, manifest_path)
+    except Exception:
+        pass
+
     return manifest
 
 
