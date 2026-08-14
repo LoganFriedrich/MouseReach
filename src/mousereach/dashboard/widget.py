@@ -54,12 +54,12 @@ class _FolderScanWorker(QObject):
 STAGE_INFO = {
     "discovered":   ("New, not started",           "Just found -- no processing has started yet.", "wait"),
     "quarantined":  ("Held: bad name",             "Set aside -- the filename/file could not be read. Fix it in the Quarantine tab.", "bad"),
-    "validated":    ("Ready to process",           "Filename checked -- waiting to be cropped / pose-tracked.", "wait"),
-    "dlc_queued":   ("Waiting for pose tracking",  "Queued for DeepLabCut pose estimation on a GPU machine.", "wait"),
-    "dlc_running":  ("Pose tracking (running)",    "DeepLabCut pose estimation is running.", "busy"),
-    "dlc_complete": ("Pose done, ready for MouseReach", "Pose tracking (DLC) finished -- ready for the MouseReach algorithms.", "wait"),
+    "validated":    ("Ready to process",           "Filename checked -- waiting to be cropped, then DLC.", "wait"),
+    "dlc_queued":   ("Waiting for DLC",            "Queued for DLC (DeepLabCut) on a GPU machine.", "wait"),
+    "dlc_running":  ("DLC (running)",              "DLC (DeepLabCut) is running.", "busy"),
+    "dlc_complete": ("DLC done, ready for MouseReach", "DLC finished -- ready for the MouseReach algorithms.", "wait"),
     "processing":   ("Running MouseReach algos",        "Running the MouseReach algorithms: segmentation, reach detection, outcomes, assignment, and kinematics.", "busy"),
-    "processed":    ("MouseReach done, not archived",   "Pose tracking + all 4 MouseReach algorithms + kinematics are done and saved to the database. Files are still in the working folder, not yet copied to the archive. (Human review, if any, is the Review column.)", "done"),
+    "processed":    ("MouseReach done, not archived",   "DLC + all 4 MouseReach algorithms + kinematics are done and saved to the database. Files are still in the working folder, not yet copied to the archive. (Human review, if any, is the Review column.)", "done"),
     "archiving":    ("Copying to archive",         "Copying the finished results to the archive.", "busy"),
     "archived":     ("Done (archived)",            "Fully finished -- results are analyzed and stored in the archive.", "done"),
     "outdated":     ("Out of date, reprocess",     "Was processed with older algorithm versions -- reprocess to bring it up to date.", "act"),
@@ -69,7 +69,7 @@ STAGE_INFO = {
     "failed":       ("Failed, needs a look",       "Processing errored out -- needs investigation.", "bad"),
     # Folder-scan stages (video's stage = which pipeline folder it sits in)
     "raw_collage":  ("Raw collage, needs cropping", "An 8-camera collage in the intake folder -- not yet cropped into single-mouse videos.", "wait"),
-    "cropped":      ("Cropped, waiting for pose",   "Cropped to a single-mouse video, waiting for pose tracking (DLC).", "wait"),
+    "cropped":      ("Cropped, waiting for DLC",   "Cropped to a single-mouse video, waiting for DLC (DeepLabCut).", "wait"),
     "analyzed":     ("Final output (done)",         "Fully processed -- DLC + all 4 MouseReach algorithms + saved to mousedb. This is the final data output.", "done"),
 }
 
@@ -848,9 +848,45 @@ class PipelineDashboard(QWidget):
         widget.setLayout(layout)
         return widget
 
+    def _rebuild_stage_filter(self):
+        """Keep 'Filter by stage' in sync with what the Stage column can show.
+
+        The menu is the meaningful GROUPS (Needs attention, In progress, ...) plus
+        one entry per stage actually present in the data, labelled with the SAME
+        words the Stage column uses. Generating that second half from the data is
+        the point: a hand-maintained list drifts, so a readout could appear in the
+        column with no way to filter to it -- and the group labels ("Done (final
+        output)") did not even match the column's wording ("Final output (done)").
+        Deriving both from stage_label() makes the mismatch impossible.
+        """
+        if not hasattr(self, "stage_filter"):
+            return
+        present = {}
+        for info in self.all_files.values():
+            s = info.get("current_stage")
+            if s:
+                present[s] = present.get(s, 0) + 1
+
+        mapping = {label: states for label, states in STAGE_FILTERS}
+        entries = [label for label, _ in STAGE_FILTERS]
+        for state in sorted(present, key=lambda s: -present[s]):
+            label = f"Only: {stage_label(state)[0]}"
+            if label not in mapping:
+                mapping[label] = {state}
+                entries.append(label)
+
+        self._stage_filter_map = mapping
+        prev = self.stage_filter.currentText()
+        self.stage_filter.blockSignals(True)
+        self.stage_filter.clear()
+        self.stage_filter.addItems(entries)
+        self.stage_filter.setCurrentIndex(entries.index(prev) if prev in entries else 0)
+        self.stage_filter.blockSignals(False)
+
     def _refresh_data(self):
         """Refresh data from index (fast)."""
         self.all_files = self.adapter.scan()
+        self._rebuild_stage_filter()
         self._update_overview_table()
         self._update_file_combo()
         self._update_statistics()
@@ -1125,7 +1161,9 @@ class PipelineDashboard(QWidget):
 
         # Apply stage filter (plain-language groups -> sets of raw states)
         stage_filter = self.stage_filter.currentText() if hasattr(self, 'stage_filter') else "All videos"
-        _states = _STAGE_FILTER_MAP.get(stage_filter)
+        # Instance map first: it carries the per-stage entries built from the data
+        # by _rebuild_stage_filter(); the module map only has the static groups.
+        _states = getattr(self, '_stage_filter_map', _STAGE_FILTER_MAP).get(stage_filter)
         if _states is not None:
             filtered_files = {k: v for k, v in filtered_files.items()
                               if v.get("current_stage") in _states}
@@ -1227,8 +1265,8 @@ class PipelineDashboard(QWidget):
             if info.get("dlc_status") == "validated":
                 dlc_model = getattr(self.adapter, "dlc_model_for", lambda v: None)(filename)
                 dlc_item.setToolTip(
-                    f"Pose tracking (DLC) done.  Model: {dlc_model}" if dlc_model
-                    else "Pose tracking (DLC) done.  (Run 'Check versions' to show the model.)"
+                    f"DLC done.  Model: {dlc_model}" if dlc_model
+                    else "DLC done.  (Run 'Check versions' to show the model.)"
                 )
             self.overview_table.setItem(row, 3, dlc_item)
 
