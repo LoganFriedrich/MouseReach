@@ -520,16 +520,24 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
-    def force_state(self, video_id: str, new_state: str, **kwargs):
+    def force_state(self, video_id: str, new_state: str, reason: str = None, **kwargs):
         """
         Set video state directly, bypassing transition validation.
 
         Used for intake scenarios where videos arrive at an intermediate state
-        (e.g., DLC already completed by another machine).
+        (e.g., DLC already completed by another machine), for cross-node recovery
+        where this node adopts another node's state, and to unlock 'crystallized'.
+
+        This is a deliberate escape hatch from the state machine, so every use is
+        logged at WARNING with the transition it bypassed and why. Without that,
+        a bypass is indistinguishable from a legal transition after the fact --
+        and the state machine's guarantees are only as good as the visibility of
+        the things that skip it.
 
         Args:
             video_id: Video identifier
             new_state: State to set
+            reason: Why validation is being bypassed (recorded in the log)
             **kwargs: Additional fields to update
         """
         with self._lock:
@@ -544,6 +552,17 @@ class WatcherDB:
                     raise ValueError(f"Video {video_id} not found")
 
                 current_state = row['state']
+
+                # Make the bypass visible. If this transition would have been legal
+                # anyway, say so -- that distinguishes "force_state used where
+                # update_state would have done" from a genuine override.
+                legal = new_state in VIDEO_TRANSITIONS.get(current_state, [])
+                logger.warning(
+                    "force_state: %s %s -> %s (bypassed validation%s)%s",
+                    video_id, current_state, new_state,
+                    "; transition was legal anyway" if legal else "",
+                    f" reason: {reason}" if reason else " reason: not given",
+                )
 
                 # Build update (same as update_state but no validation)
                 fields = ['state = ?', 'updated_at = ?']

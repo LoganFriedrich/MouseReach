@@ -159,7 +159,21 @@ def route_to_queue(
         try:
             db.update_state(video_id, db_state)
         except Exception as e:
-            logger.warning(f"Gate: could not set DB state {db_state} for {video_id}: {e}")
+            # The bundle has ALREADY been moved into the review queue above, so
+            # the filesystem is the ground truth here and the DB has to follow it.
+            # Previously this only warned, which left the video sitting in a review
+            # folder while the DB reported some other state -- a silent
+            # disagreement between disk and database, visible as one log line and
+            # nothing else. Reconcile deliberately instead of diverging.
+            try:
+                db.force_state(
+                    video_id, db_state,
+                    reason=f"review gate moved bundle to '{reason}'; "
+                           f"normal transition rejected ({e})")
+            except Exception as e2:
+                logger.error(
+                    f"Gate: {video_id} is in the '{db_state}' queue ON DISK but its "
+                    f"DB state could not be set ({e2}). Disk and DB now disagree.")
     return bundle
 
 
