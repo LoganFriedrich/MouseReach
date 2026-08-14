@@ -618,6 +618,16 @@ class PipelineDashboard(QWidget):
         def job():
             try:
                 self.adapter.refresh_scan(progress=lambda m: worker.progress.emit(m))
+                # Resolve version data on this same worker thread, so the Version
+                # column is already populated when the table first renders. This
+                # was deferred behind the 'Check versions' button back when it
+                # meant an archive-wide manifest scan; it is now a sub-second
+                # index read, so there is no reason to make the user ask for it.
+                # force=True because a re-scan can bring in new videos.
+                ensure = getattr(self.adapter, "_ensure_version_data", None)
+                if ensure:
+                    worker.progress.emit("Reading version index...")
+                    ensure(force=True)
             except Exception as e:
                 worker.progress.emit(f"Scan error: {e}")
             worker.done.emit()
@@ -754,9 +764,10 @@ class PipelineDashboard(QWidget):
 
         check_versions_btn = QPushButton("Check versions")
         check_versions_btn.setToolTip(
-            "Fill the Version column: compare each video against the shipped "
-            "algorithm versions (Current / Outdated). Scans the archive -- may "
-            "take a moment the first time."
+            "Re-read the Version column (Current / Outdated vs the shipped "
+            "algorithm versions). The column already fills in automatically when "
+            "the dashboard scans -- use this to refresh it after reprocessing, or "
+            "after running 'mousereach-version-index-build'."
         )
         check_versions_btn.clicked.connect(self._check_versions)
         btn_layout.addWidget(check_versions_btn)
