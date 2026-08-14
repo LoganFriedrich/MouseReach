@@ -35,7 +35,13 @@ VIDEO_TRANSITIONS = {
     'validated': ['dlc_queued'],
     'dlc_queued': ['dlc_running'],
     'dlc_running': ['dlc_complete', 'dlc_queued', 'failed'],  # dlc_queued = re-queue on interrupt
-    'dlc_complete': ['processing'],
+    # 'archived' here means "this NODE is done with it", not "fully analyzed" --
+    # the same idiom the collage table uses for 'cropped': ['archived']. A DLC PC
+    # running with also_process=false finishes DLC, stages the pose to the NAS
+    # (_stage_to_nas) and is done; the MouseReach algorithms run on whichever node
+    # claims it next. Without this, every DLC-PC hand-off raised on the transition
+    # and the video was marked failed even though DLC had succeeded.
+    'dlc_complete': ['processing', 'archived'],
     'processing': ['processed', 'failed', 'triage', 'deep_review'],  # triage/deep_review = human-review holds
     'processed': ['archiving'],
     'archiving': ['archived', 'failed'],
