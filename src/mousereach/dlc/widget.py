@@ -112,7 +112,7 @@ class DLCWidget(QWidget):
         # === Instructions ===
         instructions = QLabel(
             "<b>Batch Analysis</b>\n\n"
-            "Run pose estimation on multiple videos using a trained model.\n"
+            "Run DLC on multiple videos using a trained model.\n"
             "Input: .mp4 videos\n"
             "Output: .h5 tracking files"
         )
@@ -534,7 +534,7 @@ def main():
 
     print("\nStep 1: DLC Processing")
     print("=" * 40)
-    print("Run DeepLabCut pose estimation on videos.")
+    print("Run DLC (DeepLabCut) on videos.")
     print()
 
     napari.run()
