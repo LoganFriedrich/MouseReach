@@ -714,6 +714,23 @@ class DLCOrchestrator(BaseOrchestrator):
                     current_path=str(output_path)
                 )
 
+                # A collage can be re-claimed after its children have already been
+                # cropped and run -- e.g. the collage file is still sitting in the
+                # intake folder from a previous pass. Those children are finished
+                # work. Re-validating one raises on the transition (archived ->
+                # validated is not permitted), and PERMITTING that transition would
+                # be worse than the crash: it would silently reset finished videos
+                # and re-queue them for DLC. So leave any child that has already
+                # moved past discovery alone. 'failed' is the one prior state worth
+                # re-driving, and failed -> validated is already a legal retry.
+                prior_state = (self.db.get_video(video_id) or {}).get('state')
+                if prior_state and prior_state not in ('discovered', 'failed'):
+                    videos_skipped += 1
+                    logger.info(
+                        f"Skipping {video_id}: already at '{prior_state}' "
+                        f"(collage re-claimed; child already processed)")
+                    continue
+
                 self.db.update_state(video_id, 'validated', current_path=str(output_path))
 
                 # Move single to DLC_Queue on local drive (A:)
