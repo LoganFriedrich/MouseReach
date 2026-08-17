@@ -109,3 +109,7 @@ historical_manual_data/figures/learner_criterion_analysis.png
 
 # Agent/personal notes -- never published. See CLAUDE.md on notes placement.
 .notes/
+
+# Machine-specific profiles: hostnames + drive layout. Never published.
+# The sanitized lab_profiles.json.example IS tracked and is the fallback.
+src/mousereach/setup/lab_profiles.json
