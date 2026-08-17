@@ -124,7 +124,7 @@ class QuarantineWidget(QWidget):
         if mf.endswith(_META_SUFFIX):
             return Path(mf).name[: -len(_META_SUFFIX)]
         # fall back to the original path's basename
-        return Path(rec.get("original_path", "")).name
+        return Path(rec.get("original_path") or "").name
 
     def _release_selected(self):
         row = self._table.currentRow()
