@@ -893,7 +893,13 @@ class DLCOrchestrator(BaseOrchestrator):
         video_id = work['id']
         video_data = work['data']
 
-        dlc_path = Path(video_data.get('dlc_output_path', ''))
+        # NOTE: `or ''`, not a get() default. The default only applies when the KEY
+        # is missing; a NULL dlc_output_path column returns None, and Path(None)
+        # raises "expected str, bytes or os.PathLike object, not NoneType". That
+        # single line accounted for 950 of the 954 failed videos on the DLC PC --
+        # and it crashed BEFORE the DLC_Queue glob below, which would have
+        # recovered most of them.
+        dlc_path = Path(video_data.get('dlc_output_path') or '')
         if not dlc_path.exists():
             dlc_queue = Paths.DLC_QUEUE
             if dlc_queue:
@@ -1647,7 +1653,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         try:
             # Find all files in staging directory
-            source_dir = Path(video_data.get('current_path', '')).parent
+            source_dir = Path(video_data.get('current_path') or '').parent
             if not source_dir.exists():
                 # Try staging dir directly
                 source_dir = self.staging_dir
@@ -1718,7 +1724,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         video_id = work['id']
         video_data = work['data']
 
-        dlc_path = Path(video_data.get('dlc_output_path', ''))
+        # NOTE: `or ''`, not a get() default. The default only applies when the KEY
+        # is missing; a NULL dlc_output_path column returns None, and Path(None)
+        # raises "expected str, bytes or os.PathLike object, not NoneType". That
+        # single line accounted for 950 of the 954 failed videos on the DLC PC --
+        # and it crashed BEFORE the DLC_Queue glob below, which would have
+        # recovered most of them.
+        dlc_path = Path(video_data.get('dlc_output_path') or '')
         if not dlc_path.exists():
             # Try to find it in Processing/
             h5_files = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
