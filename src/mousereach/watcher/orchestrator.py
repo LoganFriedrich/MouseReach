@@ -723,8 +723,13 @@ class DLCOrchestrator(BaseOrchestrator):
                 # and re-queue them for DLC. So leave any child that has already
                 # moved past discovery alone. 'failed' is the one prior state worth
                 # re-driving, and failed -> validated is already a legal retry.
+                # 'validated' MUST be re-driven, not skipped. It means the child was
+                # cropped and registered but the DLC_Queue copy never succeeded --
+                # and the cleanup below deletes the working-dir crop regardless, so
+                # a 'validated' child has no file anywhere. Re-cropping is the only
+                # way to recover it. (Colin's DLC PC had 342 stuck exactly here.)
                 prior_state = (self.db.get_video(video_id) or {}).get('state')
-                if prior_state and prior_state not in ('discovered', 'failed'):
+                if prior_state and prior_state not in ('discovered', 'validated', 'failed'):
                     videos_skipped += 1
                     logger.info(
                         f"Skipping {video_id}: already at '{prior_state}' "
