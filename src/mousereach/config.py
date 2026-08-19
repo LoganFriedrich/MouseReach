@@ -652,6 +652,14 @@ class WatcherConfig:
             Path(cfg['dlc_config_path']) if cfg.get('dlc_config_path') else None
         )
         self.dlc_gpu_device: int = cfg.get('dlc_gpu_device', 0)
+        # Which trained shuffle in the DLC project to pose with. Left unset,
+        # the shuffle is taken from pipeline_versions.json's declared
+        # dlc_scorer so the producer and the version checker cannot disagree.
+        # Set it here only to deliberately pose with something other than the
+        # declared current model.
+        self.dlc_shuffle: Optional[int] = (
+            int(cfg['dlc_shuffle']) if cfg.get('dlc_shuffle') is not None else None
+        )
         self.auto_archive_approved: bool = cfg.get('auto_archive_approved', False)
         self.quarantine_dir: Optional[Path] = (
             Path(cfg['quarantine_dir']) if cfg.get('quarantine_dir') else None
@@ -689,6 +697,8 @@ class WatcherConfig:
             'max_local_pending': self.max_local_pending,
             'also_process': self.also_process,
         }
+        if self.dlc_shuffle is not None:
+            d['dlc_shuffle'] = self.dlc_shuffle
         if self.dlc_config_path:
             d['dlc_config_path'] = str(self.dlc_config_path)
         if self.quarantine_dir:

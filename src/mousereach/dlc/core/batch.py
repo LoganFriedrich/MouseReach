@@ -8,6 +8,7 @@ Set MouseReach_PROCESSING_ROOT to customize the location.
 
 from pathlib import Path
 from typing import List, Optional
+import re
 import shutil
 from mousereach.config import Paths
 
@@ -108,12 +109,106 @@ def find_videos_for_dlc(
     return sorted(needs_processing)
 
 
+def resolve_dlc_shuffle(shuffle: Optional[int] = None) -> tuple:
+    """Decide which DLC shuffle to pose with, and what scorer that should yield.
+
+    A DLC project holds several trained shuffles; in MPSAOct27, shuffle 1 is
+    the superseded resnet50 Model 3.1 and shuffle 3 is the resnet101 Model 4.0.
+    ``deeplabcut.analyze_videos`` silently defaults to shuffle 1, so leaving
+    this unspecified poses every video on whichever model happens to be first
+    -- which is how the DLC-PC watcher produced Model 3.1 pose while the whole
+    pipeline was calibrated for 4.0.
+
+    Resolution order:
+        1. explicit ``shuffle`` argument
+        2. ``watcher.dlc_shuffle`` in ~/.mousereach/config.json
+        3. the shuffle parsed from pipeline_versions.json's ``dlc_scorer``
+
+    Returns:
+        (shuffle, expected_scorer) -- expected_scorer is '' when the pipeline
+        has not declared one.
+
+    Raises:
+        ValueError: if no source names a shuffle. Never fall through to
+        DeepLabCut's default: a silent wrong model is far more expensive than
+        a stopped batch.
+    """
+    expected_scorer = ''
+    declared_shuffle = None
+
+    try:
+        from mousereach.pipeline.versions import get_current_versions
+        expected_scorer = (
+            get_current_versions().get('versions', {}).get('dlc_scorer', '') or ''
+        )
+        m = re.search(r'shuffle(\d+)', expected_scorer)
+        if m:
+            declared_shuffle = int(m.group(1))
+    except Exception as e:
+        print(f"Warning: could not read declared DLC scorer ({e})")
+
+    if shuffle is not None:
+        return int(shuffle), expected_scorer
+
+    try:
+        from mousereach.config import WatcherConfig
+        configured = WatcherConfig.load().dlc_shuffle
+    except Exception:
+        configured = None
+    if configured is not None:
+        return int(configured), expected_scorer
+
+    if declared_shuffle is not None:
+        return declared_shuffle, expected_scorer
+
+    raise ValueError(
+        "No DLC shuffle specified and none could be resolved.\n"
+        "DeepLabCut would default to shuffle 1, which is not necessarily the "
+        "current model -- refusing to guess.\n"
+        "Fix by either:\n"
+        "  - setting 'dlc_scorer' in pipeline_versions.json (preferred: it is "
+        "the same value the version checker compares against), or\n"
+        "  - setting watcher.dlc_shuffle in ~/.mousereach/config.json, or\n"
+        "  - passing shuffle= to run_dlc_batch()."
+    )
+
+
+def _verify_pose_model(dest_dir: Path, video_path: Path, expected_scorer: str) -> dict:
+    """Confirm the pose file just written carries the model we asked for.
+
+    Asking for a shuffle is not proof of getting it -- the project's shuffle
+    numbering could differ from what the pipeline declares. The filename DLC
+    writes names the model it actually used, so check it rather than trust it.
+    """
+    from mousereach.pipeline.manifest import extract_dlc_model_info
+
+    candidates = sorted(
+        dest_dir.glob(f"{video_path.stem}DLC*.h5"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not candidates:
+        return {'error': 'DLC reported success but wrote no pose file'}
+
+    scorer = extract_dlc_model_info(candidates[-1]).get('dlc_scorer', '')
+    if expected_scorer and scorer != expected_scorer:
+        return {
+            'scorer': scorer,
+            'error': (
+                f"pose came out as {scorer or 'an unparseable scorer'}, "
+                f"expected {expected_scorer} -- not passing a mismatched "
+                f"model downstream"
+            ),
+        }
+    return {'scorer': scorer}
+
+
 def run_dlc_batch(
     video_paths: List[Path],
     config_path: Path,
     output_dir: Path = None,
     gpu: int = 0,
-    save_as_csv: bool = True
+    save_as_csv: bool = True,
+    shuffle: Optional[int] = None
 ) -> List[dict]:
     """
     Run DeepLabCut batch inference.
@@ -127,11 +222,19 @@ def run_dlc_batch(
         output_dir: Output directory (default: same as video)
         gpu: GPU device number (None for CPU)
         save_as_csv: Also save CSV output
+        shuffle: Trained shuffle to pose with. Left None it is resolved from
+            config / pipeline_versions.json -- see resolve_dlc_shuffle. It is
+            never left to DeepLabCut's default.
 
     Returns:
-        List of result dicts
+        List of result dicts. A video whose pose comes out on an unexpected
+        model is reported 'failed' rather than passed downstream, since the
+        algorithms are calibrated per model.
     """
     config_path = Path(config_path)
+
+    shuffle, expected_scorer = resolve_dlc_shuffle(shuffle)
+    print(f"DLC shuffle {shuffle}" + (f" (expecting {expected_scorer})" if expected_scorer else ""))
     
     try:
         import deeplabcut
@@ -167,14 +270,25 @@ def run_dlc_batch(
                 destfolder=dest,
                 save_as_csv=save_as_csv,
                 gputouse=gpu,
-                shuffle=3
+                shuffle=shuffle
             )
-            
+
+            produced = _verify_pose_model(Path(dest), video_path, expected_scorer)
+            if produced.get('error'):
+                results.append({
+                    'video': str(video_path),
+                    'status': 'failed',
+                    'error': produced['error'],
+                })
+                print(f"  [FAIL] {produced['error']}")
+                continue
+
             results.append({
                 'video': str(video_path),
-                'status': 'success'
+                'status': 'success',
+                'dlc_scorer': produced.get('scorer', ''),
             })
-            print(f"  [OK] Complete")
+            print(f"  [OK] Complete ({produced.get('scorer', 'scorer unknown')})")
 
         except Exception as e:
             results.append({
