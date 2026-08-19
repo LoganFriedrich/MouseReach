@@ -337,7 +337,11 @@ class PipelineCoordinator:
                 try:
                     local_db.register_video(
                         video_id=video_id,
-                        source_path=remote.get('source_path', 'recovered'),
+                        # 'or', not a .get default: pipeline_videos rows carry the
+                        # key with a NULL value, which a default never replaces --
+                        # and videos.source_path is NOT NULL, so every such row was
+                        # silently dropped from cross-node recovery.
+                        source_path=remote.get('source_path') or 'recovered',
                         collage_id=remote.get('collage_id'),
                     )
                     if remote_state != 'discovered':
