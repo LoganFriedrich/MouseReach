@@ -99,6 +99,11 @@ class Paths:
     # (e.g. Y:\LAB_ROOT\Behavior\MouseReach_Pipeline instead of X:\! DLC Output)
     _nas_root = _config.get("nas_root")
     NAS_ROOT = Path(_nas_root) if _nas_root else (NAS_DRIVE / "! DLC Output" if NAS_DRIVE else None)
+    # Whether NAS_ROOT was declared or inherited from the legacy fallback above.
+    # An unset nas_root silently repoints EVERY derived path below -- staging,
+    # Analyzed, Review, Failed, intake -- at the old layout, which looks like a
+    # working node right up until you go looking for its output.
+    NAS_ROOT_ORIGIN = 'config' if _nas_root else ('fallback' if NAS_DRIVE else 'unset')
 
     # Raw 8-camera collage videos (ARCHIVE - NEVER DELETE)
     MULTI_ANIMAL_SOURCE = NAS_ROOT / "Unanalyzed" / "Multi-Animal" if NAS_ROOT else None
