@@ -75,6 +75,56 @@ def setup_logging(log_dir: Path, verbose: bool = False, quiet: bool = False):
 # MAIN WATCH COMMAND
 # =============================================================================
 
+def check_nas_root(nas_root, origin: str):
+    """Return a problem description if NAS_ROOT is not a real pipeline root.
+
+    ``pipeline_versions.json`` is the marker. It declares the current DLC model
+    and algorithm versions, so a NAS_ROOT without one is not a pipeline root --
+    it is a wrong turn that silently repoints every derived path (staging,
+    Analyzed, Review, Failed, intake) and leaves version currency dead. A node
+    can run for months in that state looking perfectly healthy, which is why
+    this is a refuse-to-start rather than a warning.
+
+    Args:
+        nas_root: the resolved Paths.NAS_ROOT (may be None)
+        origin: Paths.NAS_ROOT_ORIGIN -- 'config', 'fallback' or 'unset'
+
+    Returns:
+        A problem string, or None if the root looks like a pipeline.
+    """
+    if not nas_root:
+        return ("nas_root not configured and no nas_drive to fall back on -- "
+                "set nas_root in ~/.mousereach/config.json")
+    nas_root = Path(nas_root)
+    if not nas_root.exists():
+        return f"NAS root does not exist: {nas_root}"
+    if (nas_root / "pipeline_versions.json").exists():
+        return None
+
+    detail = (
+        f"NAS root has no pipeline_versions.json: {nas_root}\n"
+        f"      Everything NAS-side derives from this path -- staging, Analyzed, "
+        f"Review, Failed, intake -- so output would land here too."
+    )
+    if origin == 'fallback':
+        detail += (
+            "\n      This path was NOT configured: 'nas_root' is unset, so it fell "
+            "back to <nas_drive>\\! DLC Output (the pre-2026 layout).\n"
+            "      Set 'nas_root' in ~/.mousereach/config.json to the pipeline root, "
+            "e.g.\n"
+            '        "nas_root": "Y:\\\\2_Connectome\\\\Behavior\\\\MouseReach_Pipeline"\n'
+            "      or re-run mousereach-setup, which fills it in from this machine's "
+            "lab profile."
+        )
+    else:
+        detail += (
+            "\n      'nas_root' points here explicitly. Either repoint it at the "
+            "pipeline root, or initialize one here with "
+            "mousereach-version-check --init."
+        )
+    return detail
+
+
 def main_watch():
     """Start the automated pipeline watcher."""
     # Parse command line arguments
@@ -120,6 +170,8 @@ def main_watch():
     print(f"  Mode:            {mode_label}")
     print(f"  Processing Root: {Paths.PROCESSING_ROOT}")
     print(f"  NAS Drive:       {Paths.NAS_DRIVE or '(not configured)'}")
+    _origin = '' if Paths.NAS_ROOT_ORIGIN == 'config' else f'  [{Paths.NAS_ROOT_ORIGIN}]'
+    print(f"  NAS Root:        {Paths.NAS_ROOT or '(not configured)'}{_origin}")
     print(f"  Poll Interval:   {config.poll_interval_seconds}s")
     print(f"  Stability Wait:  {config.stability_wait_seconds}s")
     if config.mode == 'processing_server':
@@ -165,6 +217,10 @@ def main_watch():
             problems.append(f"Processing root does not exist: {root}")
     except Exception as e:
         problems.append(str(e))
+
+    nas_problem = check_nas_root(Paths.NAS_ROOT, Paths.NAS_ROOT_ORIGIN)
+    if nas_problem:
+        problems.append(nas_problem)
 
     if config.mode == 'processing_server':
         # Processing server needs: DLC_STAGING accessible, Processing/ writable
