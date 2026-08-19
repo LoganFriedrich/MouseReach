@@ -13,6 +13,7 @@ DLC model and algorithm versions.
 """
 
 import json
+import logging
 import socket
 import re
 from datetime import datetime
@@ -22,6 +23,8 @@ from typing import Dict, Optional
 import mousereach
 
 MANIFEST_VERSION = "1.0"
+
+logger = logging.getLogger(__name__)
 
 
 def extract_dlc_model_info(h5_path: Path) -> Dict[str, str]:
@@ -64,6 +67,72 @@ def extract_dlc_model_info(h5_path: Path) -> Dict[str, str]:
         info['dlc_snapshot'] = int(m.group(4))
 
     return info
+
+
+_DECLARED_SCORER: Optional[str] = None
+
+
+def declared_dlc_scorer() -> str:
+    """The DLC scorer pipeline_versions.json declares as current ('' if none)."""
+    global _DECLARED_SCORER
+    if _DECLARED_SCORER is None:
+        try:
+            from mousereach.pipeline.versions import get_current_versions
+            _DECLARED_SCORER = (
+                get_current_versions().get('versions', {}).get('dlc_scorer', '') or ''
+            )
+        except Exception:
+            _DECLARED_SCORER = ''
+    return _DECLARED_SCORER
+
+
+def select_pose_file(candidates, expected_scorer: str = None) -> Optional[Path]:
+    """Pick which pose file to use when a video has more than one.
+
+    The model is part of the filename, so re-posing a video on a new model
+    leaves the old pose file sitting beside the new one. A bare
+    ``glob(f"{video_id}DLC*.h5")[0]`` then returns whichever the filesystem
+    lists first -- which is how a video can be analyzed on one model while its
+    manifest records another, and the version checker then calls it current.
+
+    Prefers the declared model; failing that takes the newest file and says so.
+
+    Args:
+        candidates: iterable of candidate .h5 paths (a glob result is fine)
+        expected_scorer: scorer to prefer; defaults to the declared one
+
+    Returns:
+        The chosen path, or None if there were no candidates.
+    """
+    paths = [Path(p) for p in candidates]
+    if not paths:
+        return None
+    if len(paths) == 1:
+        return paths[0]
+
+    if expected_scorer is None:
+        expected_scorer = declared_dlc_scorer()
+
+    by_scorer: Dict[str, list] = {}
+    for p in paths:
+        by_scorer.setdefault(extract_dlc_model_info(p).get('dlc_scorer', ''), []).append(p)
+
+    if expected_scorer and expected_scorer in by_scorer:
+        return max(by_scorer[expected_scorer], key=lambda p: p.stat().st_mtime)
+
+    chosen = max(paths, key=lambda p: p.stat().st_mtime)
+    if len(by_scorer) > 1:
+        logger.warning(
+            "%s has pose from %d different models (%s) and none is the declared "
+            "%s; using the newest (%s). The algorithms are calibrated per model, "
+            "so this video should be re-posed.",
+            paths[0].stem.split('DLC_')[0],
+            len(by_scorer),
+            ', '.join(sorted(s or 'unparseable' for s in by_scorer)),
+            expected_scorer or '(none declared)',
+            chosen.name,
+        )
+    return chosen
 
 
 def read_validation_from_json(json_path: Path) -> Dict[str, str]:
@@ -116,7 +185,7 @@ def create_processing_manifest(
     if dlc_path is None:
         h5_files = list(processing_dir.glob(f"{video_id}DLC*.h5"))
         if h5_files:
-            dlc_path = h5_files[0]
+            dlc_path = select_pose_file(h5_files)
 
     # DLC model info
     dlc_info = extract_dlc_model_info(dlc_path) if dlc_path else {}

@@ -35,6 +35,7 @@ from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
 from mousereach.watcher.transfer import safe_copy, safe_move
+from mousereach.pipeline.manifest import select_pose_file
 from mousereach.config import (
     Paths, WatcherConfig, require_processing_root, parse_tray_type,
     get_video_id, AnimalID
@@ -615,7 +616,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 video_id = video['video_id']
                 h5_files = list(dlc_queue_dir.glob(f"{video_id}DLC*.h5"))
                 if h5_files:
-                    dlc_path = h5_files[0]
+                    dlc_path = select_pose_file(h5_files)
                     logger.info(f"DLC completion detected: {video_id} -> {dlc_path.name}")
 
                     if state == 'dlc_queued':
@@ -845,8 +846,8 @@ class DLCOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
 
             if results and results[0].get('status') == 'success':
-                h5_files = list(dlc_output_dir.glob(f"{video_id}DLC*.h5"))
-                dlc_output = str(h5_files[0]) if h5_files else None
+                chosen_h5 = select_pose_file(dlc_output_dir.glob(f"{video_id}DLC*.h5"))
+                dlc_output = str(chosen_h5) if chosen_h5 else None
 
                 self.db.update_state(
                     video_id, 'dlc_complete',
@@ -905,7 +906,7 @@ class DLCOrchestrator(BaseOrchestrator):
             if dlc_queue:
                 h5_files = list(dlc_queue.glob(f"{video_id}DLC*.h5"))
                 if h5_files:
-                    dlc_path = h5_files[0]
+                    dlc_path = select_pose_file(h5_files)
             if not dlc_path.exists():
                 self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
                 return
@@ -1459,7 +1460,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, f"DLC h5 not found in archive for reprocessing")
             return
 
-        source_h5 = h5_files[0]
+        source_h5 = select_pose_file(h5_files)
         source_dir = source_h5.parent
 
         # Copy needed files to local Processing/
@@ -1476,10 +1477,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             safe_copy(src_file, dest, verify=True)
 
         # Transition to processing state
-        local_h5 = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+        local_h5 = select_pose_file(self.processing_dir.glob(f"{video_id}DLC*.h5"))
         self.db.force_state(
             video_id, 'processing',
-            dlc_output_path=str(local_h5[0]) if local_h5 else '',
+            dlc_output_path=str(local_h5) if local_h5 else '',
             current_path=str(self.processing_dir / f"{video_id}.mp4")
         )
 
@@ -1491,7 +1492,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             'id': video_id,
             'data': {
                 'video_id': video_id,
-                'dlc_output_path': str(local_h5[0]) if local_h5 else '',
+                'dlc_output_path': str(local_h5) if local_h5 else '',
                 'current_path': str(self.processing_dir / f"{video_id}.mp4"),
                 'reprocess_start_stage': start_stage,
             }
@@ -1680,13 +1681,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
 
             # Find local DLC h5 path
-            local_h5 = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+            local_h5 = select_pose_file(self.processing_dir.glob(f"{video_id}DLC*.h5"))
             local_mp4 = self.processing_dir / f"{video_id}.mp4"
 
             # Advance to processing state
             self.db.update_state(
                 video_id, 'processing',
-                dlc_output_path=str(local_h5[0]) if local_h5 else video_data.get('dlc_output_path'),
+                dlc_output_path=str(local_h5) if local_h5 else video_data.get('dlc_output_path'),
                 current_path=str(local_mp4)
             )
             self.db.log_step(
@@ -1735,7 +1736,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # Try to find it in Processing/
             h5_files = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
             if h5_files:
-                dlc_path = h5_files[0]
+                dlc_path = select_pose_file(h5_files)
             else:
                 self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
                 return
