@@ -66,6 +66,27 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     processing_dir = Path(processing_dir)
     processing_dir.mkdir(parents=True, exist_ok=True)
 
+    # Make sure the DB can hold this video BEFORE touching the queue. A node
+    # that has never seen the video (fresh DB, or the review was cleared on a
+    # different machine) has no row to update -- and this function used to move
+    # the bundle's files out, delete the bundle, and only then discover it could
+    # not record the state. The clearance was consumed, the files landed in
+    # Processing with nothing referencing them, and the function returned True.
+    # 274 bundles went that way in one run before it was caught.
+    try:
+        if db.get_video(stem) is None:
+            db.register_video(
+                video_id=stem,
+                source_path=str(processing_dir / f"{stem}.mp4"),
+            )
+            logger.info(f"Return {stem}: registered (not previously known to this node)")
+    except Exception as e:
+        logger.error(
+            f"Return {stem}: cannot register video, leaving the bundle in the "
+            f"queue for a later attempt: {e}"
+        )
+        return False
+
     h5_dest: Optional[Path] = None
     moved = 0
     for f in list(bundle.iterdir()):
@@ -95,8 +116,22 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
             db.update_state(stem, "processing", dlc_output_path=str(h5_dest))
         else:
             db.update_state(stem, "processing")
-    except Exception as e:
-        logger.warning(f"Return {stem}: could not set 'processing' state: {e}")
+    except Exception:
+        # The row exists (registered above), so a legal-transition failure is
+        # what lands here. force_state is the documented escape hatch and logs
+        # the bypass; without it the video would sit in Processing unreferenced.
+        try:
+            kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
+            db.force_state(stem, "processing",
+                           reason="review cleared; returned to Processing", **kw)
+        except Exception as e2:
+            # Do NOT delete the bundle -- the files are already in Processing but
+            # the queue entry is the only remaining pointer to this work.
+            logger.error(
+                f"Return {stem}: could not set 'processing' state ({e2}). "
+                f"Bundle kept in the queue so the clearance is not lost."
+            )
+            return False
 
     # Remove the now-empty bundle dir so it leaves the queue.
     try:
