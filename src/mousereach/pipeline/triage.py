@@ -619,9 +619,10 @@ def triage_video(
     # --- Layer 1: DLC Coherence ---
     if not skip_dlc_check:
         if h5_path is None:
+            from mousereach.pipeline.manifest import select_pose_file
             h5_files = list(processing_dir.glob(f"{video_id}*DLC*.h5"))
             if h5_files:
-                h5_path = h5_files[0]
+                h5_path = select_pose_file(h5_files)
 
         if h5_path and h5_path.exists():
             # Need segment boundaries for mapping anomalies to segments

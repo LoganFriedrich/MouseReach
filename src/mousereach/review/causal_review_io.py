@@ -144,9 +144,10 @@ def collect_provenance(video_dir: Path, video_stem: str) -> Dict[str, Any]:
     # DLC model/scorer from HDF5 column header (best-effort)
     try:
         import pandas as pd
+        from mousereach.pipeline.manifest import select_pose_file
         h5_files = list(video_dir.glob(f"{video_stem}*.h5"))
         if h5_files:
-            df = pd.read_hdf(h5_files[0], stop=0)
+            df = pd.read_hdf(select_pose_file(h5_files), stop=0)
             if hasattr(df.columns, "levels"):
                 scorer = df.columns.get_level_values(0)[0]
                 prov["dlc_scorer"] = scorer
