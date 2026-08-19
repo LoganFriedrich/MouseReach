@@ -797,13 +797,28 @@ class DLCOrchestrator(BaseOrchestrator):
 
     def _process_single_dlc(self, work: dict):
         """Run DLC inference on a single video."""
-        from mousereach.dlc.core import run_dlc_batch
+        from mousereach.dlc.core import run_dlc_batch, resolve_dlc_shuffle
 
         video_id = work['id']
         video_data = work['data']
         current_path = Path(video_data['current_path'])
 
         logger.info(f"Running DLC on {video_id}")
+
+        # Resolve the model up front. An unresolvable shuffle is a problem with
+        # this NODE's configuration, not with this video, so it must not consume
+        # the video's retry budget -- leave it queued, exactly as an unset
+        # dlc_config_path does below.
+        try:
+            shuffle, _ = resolve_dlc_shuffle()
+        except ValueError as e:
+            logger.error(
+                f"{e}\n"
+                f"{video_id} stays in dlc_queued -- no video is marked failed for "
+                f"a node configuration problem. DLC is stopped on this node until "
+                f"this is fixed."
+            )
+            return
 
         if not self.config.dlc_config_path:
             logger.warning(
@@ -840,7 +855,8 @@ class DLCOrchestrator(BaseOrchestrator):
                 config_path=dlc_config,
                 output_dir=dlc_output_dir,
                 gpu=self.config.dlc_gpu_device,
-                save_as_csv=True
+                save_as_csv=True,
+                shuffle=shuffle
             )
 
             duration = time.time() - start_time

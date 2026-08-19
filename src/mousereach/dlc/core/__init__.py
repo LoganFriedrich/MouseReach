@@ -12,6 +12,7 @@ from .quality import (
 from .batch import (
     find_videos_for_dlc,
     run_dlc_batch,
+    resolve_dlc_shuffle,
     move_completed_to_output,
     run_dlc_workflow,
 )
@@ -25,6 +26,7 @@ __all__ = [
     'CRITICAL_POINTS',
     'find_videos_for_dlc',
     'run_dlc_batch',
+    'resolve_dlc_shuffle',
     'move_completed_to_output',
     'run_dlc_workflow',
 ]
