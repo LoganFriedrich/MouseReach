@@ -256,6 +256,163 @@ def create_processing_manifest(
     return manifest
 
 
+def record_kinematic_version(video_id: str, processing_dir: Path, version: str) -> bool:
+    """Stamp the kinematic extractor version onto a video's existing manifest.
+
+    Both pipelines compose the manifest BEFORE running feature extraction --
+    they have to, because the review gate decides whether kinematics run at all
+    and a triaged video must still get a manifest. So
+    read_version_from_json(features_path, ...) always found no features file and
+    recorded 'not_run', on every node, for every video ever processed. Kinematics
+    were the one stage whose version never reached the provenance record, which
+    left them permanently invisible to compare_manifest_to_current().
+
+    Rather than reorder the pipeline (which would break the "no kinematics until
+    review is cleared" gate), the extractor pushes its own version the moment it
+    succeeds -- the same writers-push model the version index already uses.
+
+    Best-effort by the same reasoning as the index upsert: bookkeeping must never
+    fail a video whose kinematics actually succeeded.
+
+    Returns:
+        True if the manifest was updated.
+    """
+    manifest_path = Path(processing_dir) / f"{video_id}_processing_manifest.json"
+    if not manifest_path.exists():
+        logger.debug("No manifest to stamp for %s", video_id)
+        return False
+    try:
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        manifest.setdefault('pipeline_versions', {})['kinematic_extractor'] = version
+        with open(manifest_path, 'w') as f:
+            json.dump(manifest, f, indent=2)
+        try:
+            from mousereach.pipeline.version_index import VersionIndex
+            VersionIndex().upsert_from_manifest(video_id, manifest, manifest_path)
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logger.warning("Could not record kinematic version for %s: %s", video_id, e)
+        return False
+
+
+def backfill_kinematic_versions(root: Path, apply: bool = False) -> Dict:
+    """Repair manifests that say kinematics never ran when the features exist.
+
+    Every manifest ever written records kinematic_extractor as 'not_run',
+    because the manifest is composed before feature extraction (see
+    record_kinematic_version). The features files sitting next to them carry the
+    version that actually produced them, so the true value is recoverable
+    without re-extracting anything.
+
+    Reads the version out of each ``*_features.json`` and stamps it onto the
+    sibling manifest. Videos with no features file are left alone: 'not_run' is
+    the correct answer there.
+
+    Args:
+        root: directory to walk (e.g. the Analyzed tree)
+        apply: False (default) reports what would change and writes nothing
+
+    Returns:
+        Counts by outcome, plus the version histogram found on disk.
+    """
+    from collections import Counter
+
+    stats = Counter()
+    versions = Counter()
+    root = Path(root)
+
+    for manifest_path in root.rglob("*_processing_manifest.json"):
+        stem = manifest_path.name[: -len("_processing_manifest.json")]
+        stats['manifests'] += 1
+        try:
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+        except Exception:
+            stats['unreadable'] += 1
+            continue
+
+        current = (manifest.get('pipeline_versions') or {}).get('kinematic_extractor', '')
+        features_path = manifest_path.parent / f"{stem}_features.json"
+        if not features_path.exists():
+            stats['no features -- not_run is correct'] += 1
+            continue
+
+        actual = read_version_from_json(features_path, 'extractor_version')
+        versions[actual] += 1
+        if current == actual:
+            stats['already correct'] += 1
+            continue
+
+        stats['would fix' if not apply else 'fixed'] += 1
+        if apply:
+            manifest.setdefault('pipeline_versions', {})['kinematic_extractor'] = actual
+            try:
+                with open(manifest_path, 'w') as f:
+                    json.dump(manifest, f, indent=2)
+                try:
+                    from mousereach.pipeline.version_index import VersionIndex
+                    VersionIndex().upsert_from_manifest(stem, manifest, manifest_path)
+                except Exception:
+                    pass
+            except Exception:
+                stats['write failed'] += 1
+
+    return {'counts': dict(stats), 'versions_found': dict(versions)}
+
+
+def main_backfill_kinematic_versions():
+    """CLI: mousereach-backfill-kinematic-versions [--apply] [--root PATH]"""
+    import argparse
+    from mousereach.config import Paths
+
+    p = argparse.ArgumentParser(
+        prog="mousereach-backfill-kinematic-versions",
+        description=(
+            "Stamp the real kinematic extractor version onto processing manifests. "
+            "Manifests are composed before feature extraction runs, so every one of "
+            "them records kinematic_extractor='not_run' even when kinematics "
+            "completed. This reads the version from each video's _features.json and "
+            "writes it to the sibling manifest, making version currency work for "
+            "kinematics without re-extracting anything."
+        ),
+        epilog=(
+            "Reports without changing anything unless --apply is given.\n"
+            "Example:\n"
+            "  mousereach-backfill-kinematic-versions            # report only\n"
+            "  mousereach-backfill-kinematic-versions --apply    # write the fix"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument('--apply', action='store_true',
+                   help="Write the corrections (default: report only)")
+    p.add_argument('--root', type=Path, default=None,
+                   help="Directory to walk (default: the Analyzed output tree)")
+    args = p.parse_args()
+
+    root = args.root or Paths.ANALYZED_OUTPUT
+    if not root:
+        print("ERROR: no --root given and ANALYZED_OUTPUT is not configured.")
+        raise SystemExit(1)
+    if not Path(root).exists():
+        print(f"ERROR: root does not exist: {root}")
+        raise SystemExit(1)
+
+    print(f"{'Applying' if args.apply else 'Checking'}: {root}")
+    result = backfill_kinematic_versions(root, apply=args.apply)
+    print()
+    for k, v in sorted(result['counts'].items(), key=lambda kv: -kv[1]):
+        print(f"  {v:6d}  {k}")
+    if result['versions_found']:
+        print("\n  extractor versions found on disk:")
+        for k, v in sorted(result['versions_found'].items(), key=lambda kv: -kv[1]):
+            print(f"    {v:6d}  {k}")
+    if not args.apply and result['counts'].get('would fix'):
+        print("\nRe-run with --apply to write these.")
+
+
 def check_provenance_consistency(
     manifests: list,
     strict: bool = False,
