@@ -1079,6 +1079,11 @@ class DLCOrchestrator(BaseOrchestrator):
                             json.dump(features.to_dict(), f, indent=2)
                         logger.info(f"Feature extraction complete: {video_id}")
 
+                        # The manifest was composed before this ran, so it still
+                        # says kinematics never happened. Stamp the truth.
+                        from mousereach.pipeline.manifest import record_kinematic_version
+                        record_kinematic_version(video_id, processing_dir, extractor.VERSION)
+
                         try:
                             from mousereach.sync.database import sync_file_to_database
                             sync_file_to_database(features_path)
@@ -1986,6 +1991,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     features_path = self.processing_dir / f"{video_id}_features.json"
                     with open(features_path, 'w') as f:
                         json.dump(features.to_dict(), f, indent=2)
+
+                    # The manifest was composed before this ran, so it still says
+                    # kinematics never happened. Stamp the truth.
+                    from mousereach.pipeline.manifest import record_kinematic_version
+                    record_kinematic_version(video_id, self.processing_dir, extractor.VERSION)
 
                     feat_duration = time.time() - step_start
                     self.db.log_step(
