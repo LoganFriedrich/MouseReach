@@ -166,7 +166,8 @@ def run_dlc_batch(
                 [str(video_path)],
                 destfolder=dest,
                 save_as_csv=save_as_csv,
-                gputouse=gpu
+                gputouse=gpu,
+                shuffle=3
             )
             
             results.append({
