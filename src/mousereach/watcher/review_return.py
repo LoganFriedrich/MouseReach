@@ -37,6 +37,64 @@ _QUEUE_METADATA_SUFFIXES = ("_manifest.json", "_routing.json")
 _QUEUE_METADATA_NAMES = ("manifest.json",)
 
 
+def _resolve_inputs(bundle: Path, stem: str):
+    """Find the mp4 and pose file for a bundle that is being returned.
+
+    Bundles are staged NOT self-contained: the mp4 and pose normally stay in
+    Analyzed and the bundle carries only the algo JSONs plus a ``_manifest.json``
+    naming the canonical paths. Returning a bundle without resolving those means
+    the pipeline re-runs the video with no pose at all -- which is how 723
+    videos ended up in the deep-review queue as "segmentation_failed" on
+    2026-08-19.
+
+    Note this must run BEFORE the bundle is emptied: ``_manifest.json`` is in
+    _QUEUE_METADATA_SUFFIXES, so the move loop deletes the very file that says
+    where the inputs live.
+
+    Looks in: the bundle itself -> the manifest's canonical paths -> Analyzed,
+    by stem. Nothing is copied; the returned paths are used as-is, so a pose
+    sitting in Analyzed is read from there rather than duplicated locally.
+
+    Returns:
+        (mp4_path_or_None, pose_path_or_None)
+    """
+    import json
+    from mousereach.pipeline.manifest import select_pose_file
+
+    def _first_file(paths):
+        for p in paths:
+            if p and Path(p).is_file():
+                return Path(p)
+        return None
+
+    mp4 = _first_file(bundle.glob(f"{stem}.mp4"))
+    pose_hits = [p for p in bundle.glob(f"{stem}DLC*.h5") if p.is_file()]
+    pose = select_pose_file(pose_hits) if pose_hits else None
+
+    if mp4 is None or pose is None:
+        manifest = bundle / f"{stem}_manifest.json"
+        if manifest.is_file():
+            try:
+                d = json.loads(manifest.read_text())
+                mp4 = mp4 or _first_file([d.get('canonical_video_path')])
+                pose = pose or _first_file([d.get('canonical_dlc_h5_path')])
+            except Exception as e:
+                logger.debug(f"{stem}: could not read bundle manifest: {e}")
+
+    if (mp4 is None or pose is None) and Paths.ANALYZED_OUTPUT:
+        root = Path(Paths.ANALYZED_OUTPUT)
+        try:
+            if mp4 is None:
+                mp4 = _first_file(root.rglob(f"{stem}.mp4"))
+            if pose is None:
+                hits = [p for p in root.rglob(f"{stem}DLC*.h5") if p.is_file()]
+                pose = select_pose_file(hits) if hits else None
+        except OSError as e:
+            logger.debug(f"{stem}: could not search Analyzed: {e}")
+
+    return mp4, pose
+
+
 def _bundles(queue_root: Optional[Path]) -> List[Path]:
     if not queue_root or not Path(queue_root).exists():
         return []
@@ -87,7 +145,20 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         )
         return False
 
-    h5_dest: Optional[Path] = None
+    # Resolve the inputs BEFORE emptying the bundle -- the move loop deletes
+    # _manifest.json, which is what names them. Returning a video whose pose
+    # cannot be found guarantees the pipeline fails on it, so refuse and leave
+    # the clearance in the queue rather than spend it on a doomed run.
+    mp4_src, pose_src = _resolve_inputs(bundle, stem)
+    if pose_src is None:
+        logger.error(
+            f"Return {stem}: no pose file found (bundle, manifest, or Analyzed). "
+            f"Leaving the bundle in the queue -- returning it would re-run the "
+            f"video with no pose."
+        )
+        return False
+
+    h5_dest: Optional[Path] = pose_src
     moved = 0
     for f in list(bundle.iterdir()):
         if not f.is_file():
