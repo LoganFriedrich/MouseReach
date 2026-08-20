@@ -214,12 +214,31 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     return True
 
 
-def scan_review_queues(db, processing_dir: Path) -> Dict[str, int]:
-    """Re-inject every human-cleared held bundle. Returns a summary dict."""
-    summary = {"triage_returned": 0, "deep_returned": 0}
+# How many bundles one scan may re-inject before yielding back to the work loop.
+# Unbounded, this starves everything else: each return moves 6 files across the
+# NAS (~10 s), so a 748-deep queue occupied the loop for ~2 hours while
+# 'processing' climbed and not one pipeline ran. Returning is not more important
+# than running -- interleave them.
+MAX_RETURNS_PER_SCAN = 10
+
+
+def scan_review_queues(db, processing_dir: Path,
+                       limit: int = MAX_RETURNS_PER_SCAN) -> Dict[str, int]:
+    """Re-inject human-cleared held bundles, at most ``limit`` per scan.
+
+    The remainder are picked up on subsequent cycles, so a deep queue drains
+    steadily instead of blocking the pipeline until it is empty.
+    """
+    summary = {"triage_returned": 0, "deep_returned": 0, "deferred": 0}
+
+    def _budget_left():
+        return summary["triage_returned"] + summary["deep_returned"] < limit
 
     # TRIAGE: every triaged element resolved (and segmentation sound).
     for bundle in _bundles(Paths.TRIAGE_REVIEW):
+        if not _budget_left():
+            summary["deferred"] += 1
+            continue
         stem = bundle.name
         try:
             st = triage_status(bundle, stem)
@@ -231,6 +250,9 @@ def scan_review_queues(db, processing_dir: Path) -> Dict[str, int]:
 
     # DEEP_REVIEW: an explicit clear marker or in-bundle GT.
     for bundle in _bundles(Paths.DEEP_REVIEW):
+        if not _budget_left():
+            summary["deferred"] += 1
+            continue
         stem = bundle.name
         if _deep_review_cleared(bundle, stem):
             if _return_to_processing(bundle, stem, processing_dir, db, "deep_review_cleared"):
@@ -240,5 +262,7 @@ def scan_review_queues(db, processing_dir: Path) -> Dict[str, int]:
         logger.info(
             f"Review-return scan: {summary['triage_returned']} triage + "
             f"{summary['deep_returned']} deep-review videos re-injected"
+            + (f" ({summary['deferred']} left for later cycles)"
+               if summary["deferred"] else "")
         )
     return summary
