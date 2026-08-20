@@ -17,6 +17,7 @@ system, DB tracking, and graceful shutdown.
 
 import json
 import os
+import re
 import time
 import random
 import socket
@@ -87,6 +88,33 @@ def resolve_pose_input(raw, video_id: str, *search_dirs):
             if chosen is not None and Path(chosen).is_file():
                 return Path(chosen)
     return None
+
+
+def segmentation_could_not_run(error, dlc_path) -> bool:
+    """True when segmentation never executed, as opposed to executing and failing.
+
+    These are different things and must not share a destination. The deep-review
+    queue means "an algorithm's judgment about this animal's behaviour needs a
+    human eye" -- a scientific queue. An unreadable input is not a judgment.
+    Routing it there spends the lab's scarcest resource on a file-handle error
+    and, worse, buries the real work: on 2026-08-19, 723 such bundles hid the 21
+    genuine review items sitting in the same folder.
+
+    A real seg failure (over-long recording, uniform-fallback boundaries) still
+    goes to deep review, because a human genuinely has to re-segment it.
+
+    Decided on a fact first -- can the input actually be read? -- and only then
+    on the error text, so this does not rest on matching library messages.
+    """
+    try:
+        if dlc_path is None or not Path(dlc_path).is_file():
+            return True
+        with open(dlc_path, 'rb') as fh:
+            fh.read(1)
+    except OSError:
+        return True
+    return bool(re.search(r"Errno \d+|Permission denied|No such file|cannot access|is a directory",
+                          str(error), re.IGNORECASE))
 
 
 # =============================================================================
@@ -955,12 +983,12 @@ class DLCOrchestrator(BaseOrchestrator):
         video_id = work['id']
         video_data = work['data']
 
-        # NOTE: `or ''`, not a get() default. The default only applies when the KEY
-        # is missing; a NULL dlc_output_path column returns None, and Path(None)
-        # raises "expected str, bytes or os.PathLike object, not NoneType". That
-        # single line accounted for 950 of the 954 failed videos on the DLC PC --
-        # and it crashed BEFORE the DLC_Queue glob below, which would have
-        # recovered most of them.
+        # dlc_output_path has bitten this pipeline twice, in opposite directions:
+        # Path(None) raised and failed 950 of 954 videos on the DLC PC, and the
+        # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
+        # missing-pose guard stopped firing and 723 videos were routed to human
+        # review with "[Errno 13] Permission denied: '.'". resolve_pose_input
+        # returns a real file or None and never a placeholder path.
         dlc_path = resolve_pose_input(
             video_data.get('dlc_output_path'), video_id, Paths.DLC_QUEUE
         )
@@ -990,16 +1018,26 @@ class DLCOrchestrator(BaseOrchestrator):
             else:
                 error = seg_result.get('error', 'segmentation failed')
                 self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
-                # Seg failure -> DEEP review, not a dead 'failed'. Move the whole
-                # bundle out of Processing so a human re-segments with the deep tools.
+                # Segmentation that COULD NOT RUN is an infrastructure failure, not
+                # something to put in front of a reviewer -- see
+                # segmentation_could_not_run().
+                if segmentation_could_not_run(error, dlc_path):
+                    logger.error(
+                        f"Segmentation could not run for {video_id} ({error}). "
+                        f"Marking failed -- not routing to human review."
+                    )
+                    self.db.mark_failed(video_id, f"Segmentation could not run: {error}")
+                    return
+                # A real seg failure -> DEEP review, not a dead 'failed'. Move the
+                # whole bundle out of Processing so a human re-segments it.
                 try:
                     route_deep_review(
                         video_id, processing_dir,
                         f"segmentation_failed: {error}", db=self.db,
                         extra_sources=[processing_dir / f"{video_id}.mp4"],
                     )
-                except Exception as re:
-                    logger.warning(f"Deep-review routing failed for {video_id}: {re}")
+                except Exception as route_err:
+                    logger.warning(f"Deep-review routing failed for {video_id}: {route_err}")
                     self.db.mark_failed(video_id, f"Segmentation failed: {error}")
                 return
 
@@ -1787,12 +1825,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
         video_id = work['id']
         video_data = work['data']
 
-        # NOTE: `or ''`, not a get() default. The default only applies when the KEY
-        # is missing; a NULL dlc_output_path column returns None, and Path(None)
-        # raises "expected str, bytes or os.PathLike object, not NoneType". That
-        # single line accounted for 950 of the 954 failed videos on the DLC PC --
-        # and it crashed BEFORE the DLC_Queue glob below, which would have
-        # recovered most of them.
+        # dlc_output_path has bitten this pipeline twice, in opposite directions:
+        # Path(None) raised and failed 950 of 954 videos on the DLC PC, and the
+        # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
+        # missing-pose guard stopped firing and 723 videos were routed to human
+        # review with "[Errno 13] Permission denied: '.'". resolve_pose_input
+        # returns a real file or None and never a placeholder path.
         dlc_path = resolve_pose_input(
             video_data.get('dlc_output_path'), video_id, self.processing_dir
         )
@@ -1837,7 +1875,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
             else:
                 error = seg_result.get('error', 'segmentation failed')
                 self.db.log_step(video_id, 'segmentation', 'failed', message=error, duration=seg_duration)
-                # Seg failure -> DEEP review, not a dead 'failed'. Over-long
+                # Segmentation that COULD NOT RUN is an infrastructure failure, not
+                # something to put in front of a reviewer -- see
+                # segmentation_could_not_run().
+                if segmentation_could_not_run(error, dlc_path):
+                    logger.error(
+                        f"Segmentation could not run for {video_id} ({error}). "
+                        f"Marking failed -- not routing to human review."
+                    )
+                    self.db.mark_failed(video_id, f"Segmentation could not run: {error}")
+                    return
+                # A real seg failure -> DEEP review, not a dead 'failed'. Over-long
                 # recordings / uniform-fallback boundaries need manual re-seg with
                 # the deep tools; move the whole bundle out of Processing so a
                 # human can clear it and re-inject the video.
@@ -1847,8 +1895,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         f"segmentation_failed: {error}", db=self.db,
                         extra_sources=[self.processing_dir / f"{video_id}.mp4"],
                     )
-                except Exception as re:
-                    logger.warning(f"Deep-review routing failed for {video_id}: {re}")
+                except Exception as route_err:
+                    logger.warning(f"Deep-review routing failed for {video_id}: {route_err}")
                     self.db.mark_failed(video_id, f"Segmentation failed: {error}")
                 return
 
