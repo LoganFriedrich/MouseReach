@@ -310,6 +310,7 @@ class FeatureExtractor:
                 )
 
                 # Set contextual flags
+                reach_features.segment_num = seg_num
                 reach_features.is_first_reach = (i == 0)
                 reach_features.is_last_reach = (i == n_reaches - 1)
                 reach_features.n_reaches_in_segment = n_reaches

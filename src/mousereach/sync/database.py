@@ -49,9 +49,14 @@ SYNC_STATE_FILE = ".mousereach_sync_state.json"
 # CSV dump location
 CSV_DUMP_PATH = DB_PATH.parent / "database_dump" / "reach_data.csv"
 
-# Columns extracted directly from each reach dict in features JSON
+# Columns extracted directly from each reach dict in features JSON.
+# NOTE: segment_num is deliberately NOT here. The extractor leaves it 0 on every
+# reach (see feature_extractor._extract_reach_features, "Will be set by caller"),
+# so reading it from the reach writes 0 for every row -- which is what happened to
+# all 160,141 rows imported from 2026-08-03 onward. It is taken from the enclosing
+# segment instead, where it has always been correct.
 REACH_JSON_COLUMNS = [
-    'reach_id', 'reach_num', 'segment_num',
+    'reach_id', 'reach_num',
     'outcome', 'causal_reach', 'interaction_frame', 'distance_to_interaction',
     'is_first_reach', 'is_last_reach', 'n_reaches_in_segment',
     'start_frame', 'apex_frame', 'end_frame', 'duration_frames',
@@ -555,6 +560,9 @@ class DatabaseSyncer:
             for segment in data.get('segments', []):
                 # Segment-level context
                 seg_context = {
+                    # Which pellet this is (1..20). Comes from the segment, never
+                    # from the reach -- the reach's copy is always 0.
+                    'segment_num': segment.get('segment_num'),
                     'segment_outcome': segment.get('outcome'),
                     'segment_outcome_confidence': segment.get('outcome_confidence'),
                     'segment_outcome_flagged': 1 if segment.get('outcome_flagged') else 0,
