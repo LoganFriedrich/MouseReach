@@ -44,6 +44,51 @@ from mousereach.config import (
 logger = logging.getLogger(__name__)
 
 
+def resolve_pose_input(raw, video_id: str, *search_dirs):
+    """Resolve a video's pose file, or None if it genuinely has none.
+
+    An absent path must stay absent. ``Path('')`` is ``Path('.')`` -- the current
+    directory -- which *exists*, so the obvious guard
+
+        dlc_path = Path(video_data.get('dlc_output_path') or '')
+        if not dlc_path.exists(): ...
+
+    can never fire for a video with no recorded pose. The algorithms are then
+    handed a DIRECTORY as their HDF5 file and fail with
+    ``PermissionError: [Errno 13] Permission denied: '.'`` -- an error that names
+    the current directory and says nothing about the actual problem. On
+    2026-08-19 that routed 723 videos into the human deep-review queue as
+    "segmentation_failed" in under two hours.
+
+    So: return a real file or None, and test ``is_file()`` rather than
+    ``exists()`` so a directory can never satisfy "is this my pose file".
+
+    Args:
+        raw: the recorded dlc_output_path (may be None/'')
+        video_id: stem used to glob the fallback directories
+        *search_dirs: directories to search, in order, if raw does not resolve
+
+    Returns:
+        Path to the pose file, or None.
+    """
+    if raw:
+        p = Path(raw)
+        if p.is_file():
+            return p
+    for d in search_dirs:
+        if not d:
+            continue
+        try:
+            hits = list(Path(d).glob(f"{video_id}DLC*.h5"))
+        except OSError:
+            continue
+        if hits:
+            chosen = select_pose_file(hits)
+            if chosen is not None and Path(chosen).is_file():
+                return Path(chosen)
+    return None
+
+
 # =============================================================================
 # BASE ORCHESTRATOR
 # =============================================================================
@@ -916,16 +961,12 @@ class DLCOrchestrator(BaseOrchestrator):
         # single line accounted for 950 of the 954 failed videos on the DLC PC --
         # and it crashed BEFORE the DLC_Queue glob below, which would have
         # recovered most of them.
-        dlc_path = Path(video_data.get('dlc_output_path') or '')
-        if not dlc_path.exists():
-            dlc_queue = Paths.DLC_QUEUE
-            if dlc_queue:
-                h5_files = list(dlc_queue.glob(f"{video_id}DLC*.h5"))
-                if h5_files:
-                    dlc_path = select_pose_file(h5_files)
-            if not dlc_path.exists():
-                self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
-                return
+        dlc_path = resolve_pose_input(
+            video_data.get('dlc_output_path'), video_id, Paths.DLC_QUEUE
+        )
+        if dlc_path is None:
+            self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
+            return
 
         processing_dir = dlc_path.parent
         logger.info(f"Running local pipeline on {video_id} (also_process mode)")
@@ -1752,15 +1793,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # single line accounted for 950 of the 954 failed videos on the DLC PC --
         # and it crashed BEFORE the DLC_Queue glob below, which would have
         # recovered most of them.
-        dlc_path = Path(video_data.get('dlc_output_path') or '')
-        if not dlc_path.exists():
-            # Try to find it in Processing/
-            h5_files = list(self.processing_dir.glob(f"{video_id}DLC*.h5"))
-            if h5_files:
-                dlc_path = select_pose_file(h5_files)
-            else:
-                self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
-                return
+        dlc_path = resolve_pose_input(
+            video_data.get('dlc_output_path'), video_id, self.processing_dir
+        )
+        if dlc_path is None:
+            self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
+            return
 
         logger.info(f"Running pipeline on {video_id}")
         pipeline_start = time.time()
