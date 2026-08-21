@@ -966,7 +966,11 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
         index.record_file_created(output_path, metadata={
             "seg_boundaries": len(boundaries),
             "seg_confidence": data.get("overall_confidence", 0),
-            "segmenter_version": SEGMENTER_VERSION,
+            # The version that actually ran, same as the JSON above. This line
+            # kept the module constant when the JSON stamp was fixed, so the
+            # index recorded 2.1.3 for files stamped 2.2.3 -- the same bug, half
+            # fixed, in the place nobody looks.
+            "segmenter_version": segmenter_version,
             "seg_validation": "needs_review" if anomaly_summary.get("warning", 0) > 0 else "auto_review",
         })
         index.save()
