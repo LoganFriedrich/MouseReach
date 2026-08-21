@@ -23,11 +23,14 @@ The syncer:
 
 import json
 import hashlib
+import logging
 import re
 import csv
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 
 try:
@@ -747,7 +750,7 @@ class DatabaseSyncer:
         """
         Export reach_data table to flat CSV for Excel/R/pandas.
 
-        Writes to Y:/LAB_ROOT/Unified_Data/database_dump/reach_data.csv
+        Writes to the path in CSV_DUMP_PATH (Databases/database_dump/).
         One row per reach with all columns - directly usable for analysis.
         """
         try:
@@ -779,18 +782,31 @@ class DatabaseSyncer:
                     FROM reach_data
                     ORDER BY subject_id, session_date, video_name, segment_num, reach_num
                 """))
+                # Take the header from the query itself. These used to be two
+                # independent lists -- the SELECT above and ALL_COLUMNS -- and on
+                # 2026-08-20 they drifted: segment_num was dropped from
+                # ALL_COLUMNS while the SELECT kept it, so the written header had
+                # 61 names over 57-value rows and every column from index 5 on
+                # was mislabelled. The column headed causal_reach held outcome
+                # strings. Every mousedb recipe reads this file.
+                header = list(result.keys())
                 rows = result.fetchall()
 
             CSV_DUMP_PATH.parent.mkdir(parents=True, exist_ok=True)
 
             with open(CSV_DUMP_PATH, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(ALL_COLUMNS)
+                writer.writerow(header)
                 for row in rows:
                     writer.writerow(list(row))
+            logger.info("Exported %d rows to %s", len(rows), CSV_DUMP_PATH)
 
-        except Exception:
-            pass  # Don't break sync if CSV export fails
+        except Exception as e:
+            # Never break a sync over the flat dump -- but say so. This was a
+            # bare pass, so a dump that failed every time would have looked
+            # exactly like one that succeeded.
+            logger.warning("CSV export failed (%s); %s may be stale",
+                           e, CSV_DUMP_PATH)
 
 
 def sync_file_to_database(output_path: Path) -> bool:
