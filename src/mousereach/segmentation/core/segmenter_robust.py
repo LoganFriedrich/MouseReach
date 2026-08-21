@@ -152,6 +152,19 @@ class SegmentationDiagnostics:
     interval_std: float
     interval_cv: float
 
+    # Every timepoint the video suggested a tray advance at, chosen or not.
+    # Each entry: frame, which corner proposers voted for it, how strongly they
+    # agreed, and whether it became a boundary. Kept so a person correcting a
+    # segmentation can see the alternatives the segmenter had rather than
+    # starting from a blank timeline.
+    candidates: List[dict] = field(default_factory=list)
+
+    # Why this segmentation should be looked at by a person. Empty means the
+    # boundaries were found rather than forced. Non-empty is the routing signal:
+    # the output always has exactly 21 boundaries, so the count can never be
+    # what tells you whether it worked.
+    needs_human: List[str] = field(default_factory=list)
+
 
 def load_dlc(filepath: Path) -> pd.DataFrame:
     """Load DLC file with flattened columns."""
@@ -912,6 +925,11 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
     data = {
         # Version tracking
         'segmenter_version': segmenter_version,
+        # Whether this segmentation was found or forced, and what else the video
+        # suggested. Downstream routing reads needs_human; a person correcting
+        # the boundaries reads candidates.
+        'needs_human': list(getattr(diagnostics, 'needs_human', []) or []),
+        'candidates': list(getattr(diagnostics, 'candidates', []) or []),
         'segmenter_algorithm': segmenter_algorithm,
         # When this ran. Without it, establishing which segmenter produced an
         # existing file meant falling back to the file's modification date.

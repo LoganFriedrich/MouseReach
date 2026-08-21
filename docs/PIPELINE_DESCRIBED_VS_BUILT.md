@@ -278,3 +278,27 @@ the same false alarms are not raised again.
 | D11 | FALSE | PARTIAL | The other reviewer read the mechanisms correctly but graded the claim too harshly, and mis-framed what the description actually claimed.  What the description says, in its own words, is a single numbered test: watcher 2 "looks to see: 1. If the video has a finished DLC output file (that it is not pr |
 | D13 | PARTIAL | TRUE | The code does what D13 says: the watcher checks that a video's pose was produced by the currently declared DeepLabCut model, and requeues it for a fresh pose when it wasn't. The other reviewer's two headline "gaps" do not hold. First, they claim the check is confined to the second watcher and runs e |
 | D20 | PARTIAL | TRUE | D20 says the video stays in triage until the watcher sees that a human updated the triage file. The code does this. (1) The hold: when the gate decides triage, the whole bundle is moved out of the local Processing folder into the shared triage queue, the state is set to 'triage', and the pipeline re |
+
+---
+
+## Update 2026-08-21: one gap partly closed
+
+**D19 (any algorithm failure or issue sends the video to triage)** was recorded
+as NOT MET, because triage is only for videos where the algorithms succeeded and
+left a question, while genuine failures set a database state nobody watches.
+
+Part of that is now addressed for segmentation specifically. The segmenter always
+emitted exactly 21 boundaries, so a forced segmentation was indistinguishable
+downstream from a measured one and nothing was ever routed anywhere. It now
+reports `needs_human` when it had to invent boundaries to reach that count,
+discard detected ones to fit it, interpolate or fall back rather than detect, or
+work from reference tracking that was not `good`. The review gate sends those
+videos to DEEP_REVIEW, and `TriageStatus.clean` is false while the flag is set,
+so they do not reach kinematics or the database first.
+
+`mousereach-fix-segmentation` works that queue.
+
+**Still not met:** the other failures under D19 are unchanged. A reach detector
+or outcome detector that throws still sets state `failed` with nothing watching
+it; a reach-assignment failure is still swallowed with a warning and lets the
+video pass as clean; a quality-check failure still defaults to approved.

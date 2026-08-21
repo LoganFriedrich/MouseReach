@@ -131,6 +131,10 @@ class TriageStatus:
     """The full triage/resolution picture for one video."""
     video_id: str
     seg_failed: bool
+    # The segmenter's own account of why its boundaries should be checked by a
+    # person. Distinct from seg_failed: the segmenter did not fail, it produced
+    # an answer it had to force. Empty means the boundaries were found.
+    seg_needs_human: List[str] = field(default_factory=list)
     triaged: Set[int] = field(default_factory=set)
     resolved: Set[int] = field(default_factory=set)
     unresolved: Set[int] = field(default_factory=set)
@@ -147,7 +151,7 @@ class TriageStatus:
     @property
     def clean(self) -> bool:
         """Ready for kinematics: segmentation sound AND nothing left unresolved."""
-        return (not self.seg_failed) and self.fully_resolved
+        return (not self.seg_failed) and (not self.seg_needs_human)             and self.fully_resolved
 
 
 def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:
@@ -175,6 +179,7 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     return TriageStatus(
         video_id=video_id,
         seg_failed=segmentation_failed(seg),
+        seg_needs_human=list((seg or {}).get("needs_human") or []),
         triaged=tri,
         resolved=res,
         unresolved=tri - res,
