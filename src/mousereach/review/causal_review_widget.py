@@ -70,6 +70,13 @@ OUTCOME_CHOICES = [
 # "not answered yet" -- we never fabricate an outcome the reviewer didn't pick.
 OUTCOME_PICK_SENTINEL = "-- select outcome --"
 
+# Outcomes that cannot have a causal reach, by their own definition. 'untouched'
+# means nothing reached the pellet, so naming the reach that caused it is a
+# statement that contradicts itself. When one of these is chosen the reach
+# picker is cleared and locked, rather than left holding a stale selection that
+# would be saved as fact.
+OUTCOMES_WITHOUT_A_REACH = ("untouched",)
+
 
 def _segment_span(seg) -> Optional[Dict[str, int]]:
     """The segment's frame range, stored on every review record.
@@ -1342,6 +1349,14 @@ class CausalReviewWidget(QWidget):
             self._questions_layout.addWidget(
                 self._make_outcome_picker(seg, require_pick=True))
 
+        # An outcome of 'untouched' says nothing reached the pellet, so it cannot
+        # also have a causal reach. Keep the two answers from contradicting each
+        # other instead of leaving it to the reviewer to notice.
+        combo = self._q_widgets.get("_outcome_combo")
+        if combo is not None and self._q_widgets.get("_reach_picker"):
+            combo.currentTextChanged.connect(self._sync_reach_picker_to_outcome)
+            self._sync_reach_picker_to_outcome(combo.currentText())
+
         # --- Ignore windows (abnormal non-reach events) -- on ANY non-boundary
         # segment, independent of the reach questions above ---
         self._questions_layout.addWidget(self._make_abnormal_ranges_widget(seg))
@@ -1835,6 +1850,20 @@ class CausalReviewWidget(QWidget):
         reach_group = QButtonGroup(w)
         reach_group.setExclusive(True)
 
+        # "No reach" has to be an option a reviewer can actually choose. Some
+        # outcomes cannot have a causal reach at all: 'untouched' means nothing
+        # reached the pellet, so naming a reach that caused it is a statement
+        # that contradicts itself. A radio group also cannot be un-checked by
+        # clicking, so without an explicit option here a reviewer who picked a
+        # reach and then decided none applied had no way to take it back.
+        # Its id is deliberately outside the range _read_reach_pick understands,
+        # so choosing it reads back as no reach at all.
+        none_rb = QRadioButton("No reach -- nothing acted on this pellet")
+        none_rb.setStyleSheet("color: #d88;")
+        NO_REACH_ID = len(all_reaches) + 2
+        reach_group.addButton(none_rb, NO_REACH_ID)
+        layout.addWidget(none_rb)
+
         # Likely causal reach = the shown reach nearest the known interaction
         # frame. Highlight it, don't auto-pick.
         ifr = seg.get("interaction_frame")
@@ -1870,11 +1899,24 @@ class CausalReviewWidget(QWidget):
             reach_group.addButton(rb, i)
             reaches_layout.addWidget(rb)
         # Default the selection to the highlighted (likely causal) reach so the
-        # reviewer confirms or overrides rather than starting from nothing.
-        if best_i is not None:
+        # reviewer confirms or overrides rather than starting from nothing --
+        # unless the outcome on record cannot have a causal reach, in which case
+        # pre-picking one would be asserting something impossible.
+        if seg.get("outcome") in OUTCOMES_WITHOUT_A_REACH:
+            none_rb.setChecked(True)
+        elif best_i is not None:
             btn = reach_group.button(best_i)
             if btn is not None:
                 btn.setChecked(True)
+
+        # Selecting a reach moves the viewer to its first frame. Reviewers were
+        # having to select, then reach for a separate button, to see the thing
+        # they had just selected.
+        def _on_reach_selected(button):
+            rid = reach_group.id(button)
+            if 0 <= rid < len(ordered):
+                self._goto_frame(ordered[rid]["start"])
+        reach_group.buttonClicked.connect(_on_reach_selected)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(reaches_box)
@@ -1928,13 +1970,51 @@ class CausalReviewWidget(QWidget):
 
         self._q_widgets["_reach_picker"] = {
             "reach_group": reach_group,
+            "none_button": none_rb,
+            "reach_radios": [reach_group.button(i) for i in range(len(ordered))],
             "all_reaches": ordered,        # radio ids index into THIS (candidates first, then ruled-out)
             "all_detected": all_reaches,   # every detected reach -- for snapping a manual entry
+            "manual_button": manual_rb,
             "start_spin": start_spin,
             "end_spin": end_spin,
         }
 
         return w
+
+    def _sync_reach_picker_to_outcome(self, outcome_text: str = "") -> None:
+        """Clear and lock the reach picker when the outcome cannot have a reach.
+
+        Without this a reviewer can leave a reach selected, switch the outcome to
+        'untouched', and save a record that says both that nothing touched the
+        pellet and that a particular reach is what touched it.
+        """
+        rp = self._q_widgets.get("_reach_picker") or {}
+        if not rp:
+            return
+        if not outcome_text:
+            combo = self._q_widgets.get("_outcome_combo")
+            outcome_text = combo.currentText() if combo is not None else ""
+        impossible = outcome_text in OUTCOMES_WITHOUT_A_REACH
+
+        if impossible:
+            none_btn = rp.get("none_button")
+            if none_btn is not None:
+                none_btn.setChecked(True)
+        for rb in (rp.get("reach_radios") or []):
+            if rb is not None:
+                rb.setEnabled(not impossible)
+        for key in ("manual_button", "start_spin", "end_spin"):
+            widget = rp.get(key)
+            if widget is not None:
+                widget.setEnabled(not impossible)
+
+    def _goto_frame(self, frame: int) -> None:
+        """Move the viewer to a frame, clamped to the video."""
+        try:
+            frame = max(0, min(self.n_frames - 1, int(frame)))
+            self.viewer.dims.set_current_step(0, frame)
+        except Exception:
+            pass
 
     def _jump_to_selected_reach(self, group, reaches, start_spin):
         """Jump viewer to the selected reach's start frame."""
