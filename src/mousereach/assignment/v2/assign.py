@@ -31,6 +31,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+# The one place this stage's version is written down. It is stamped into every
+# output file AND read back out by the processing manifest, so the number a
+# video is certified against is the number that actually produced it. Keeping a
+# second copy in __init__.py let the two drift: the constant said 2.0.0 while
+# every file this code wrote said 2.1.0, and the declared pipeline version
+# followed the wrong one.
+VERSION = "2.1.0"
+
 
 # ---------------------------------------------------------------------------
 # Helpers carried over from v1
@@ -444,7 +452,7 @@ def assign_reaches_v2(
     return {
         "video_id": video_id,
         "detector": "assignment_v2",
-        "version": "2.1.0",
+        "version": VERSION,
         "n_reaches": len(out_reaches),
         "reaches": out_reaches,
     }

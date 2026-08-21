@@ -18,8 +18,6 @@ Usage:
         video_id="20250626_CNT0102_P4",
     )
 """
-from .assign import assign_reaches_v2
-
-VERSION = "2.0.0"
+from .assign import assign_reaches_v2, VERSION
 
 __all__ = ["assign_reaches_v2", "VERSION"]
