@@ -177,6 +177,7 @@ def build_segment_record(
     answers: Dict[str, Any],
     notes: str = "",
     segment_span: Optional[Dict[str, int]] = None,
+    true_segment_num: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build a single segment's review record.
 
@@ -195,6 +196,14 @@ def build_segment_record(
     Optional because reviews written before this field existed do not have it;
     those were backfilled in place from the segmentation each was made against
     (see scripts/backfill_causal_review_spans.py).
+
+    ``true_segment_num`` is for when the segmentation is wrong about WHICH pellet
+    presentation this stretch is -- boundaries offset by one, so what it calls
+    segment 1 is really segment 2. That is a fact about the segmentation rather
+    than about the reach or the outcome, and a reviewer needs to be able to say
+    it in one action instead of writing prose nothing can read. It is recorded
+    only when it differs from what the segmenter said; the frame span still says
+    which footage was judged, so the review stays anchored either way.
     """
     rec: Dict[str, Any] = {
         "segment_num": segment_num,
@@ -214,6 +223,9 @@ def build_segment_record(
         "answers": answers,
         "notes": notes,
     }
+    if true_segment_num is not None and true_segment_num != segment_num:
+        rec["true_segment_num"] = int(true_segment_num)
+        rec["segmentation_wrong"] = True
     return rec
 
 
