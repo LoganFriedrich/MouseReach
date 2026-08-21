@@ -91,6 +91,7 @@ REFERENCES
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from datetime import datetime
 from typing import List, Tuple, Dict, Optional, Any
 from dataclasses import dataclass, field
 from scipy.ndimage import uniform_filter1d
@@ -837,8 +838,31 @@ def segment_video_robust(dlc_path: Path, fps: float = 60.0) -> Tuple[List[int], 
 
 
 def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostics,
-                      output_path: Path) -> None:
-    """Save segmentation results and diagnostics."""
+                      output_path: Path,
+                      segmenter_version: Optional[str] = None,
+                      segmenter_algorithm: Optional[str] = None) -> None:
+    """Save segmentation results and diagnostics.
+
+    The version stamped here has to be the version of the segmenter that
+    actually produced ``boundaries``. This function used to stamp its own module
+    constant, which is not what runs: every production path segments with
+    ``segment_video_multi`` from segmenter_multi, so every _segments.json on disk
+    claimed 2.1.3 while the code that made it was 2.2.x. The pellet-window gate
+    shipped in 2.2 was therefore invisible to the version check and no video was
+    ever marked outdated for it. staging.py had already noticed and worked around
+    it locally rather than fixing it here.
+
+    Defaults to segmenter_multi's constants, since that is what every production
+    path runs; pass them explicitly if you segment some other way.
+    """
+    if segmenter_version is None or segmenter_algorithm is None:
+        try:
+            from .segmenter_multi import (SEGMENTER_VERSION as _v,
+                                          SEGMENTER_ALGORITHM as _a)
+        except Exception:
+            _v, _a = SEGMENTER_VERSION, SEGMENTER_ALGORITHM
+        segmenter_version = segmenter_version or _v
+        segmenter_algorithm = segmenter_algorithm or _a
     # Convert numpy types to native Python for JSON serialization
     def to_native(obj):
         if isinstance(obj, (np.integer,)):
@@ -887,8 +911,11 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
 
     data = {
         # Version tracking
-        'segmenter_version': SEGMENTER_VERSION,
-        'segmenter_algorithm': SEGMENTER_ALGORITHM,
+        'segmenter_version': segmenter_version,
+        'segmenter_algorithm': segmenter_algorithm,
+        # When this ran. Without it, establishing which segmenter produced an
+        # existing file meant falling back to the file's modification date.
+        'segmented_at': datetime.now().isoformat(),
         
         'video_name': diagnostics.video_name,
         'total_frames': to_native(diagnostics.total_frames),
