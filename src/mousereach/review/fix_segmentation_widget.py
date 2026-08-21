@@ -197,12 +197,28 @@ class FixSegmentationWidget(QWidget):
             if not sp.is_file():
                 continue
             try:
-                if needs_fixing(read_segmentation(sp)):
-                    self._queue.append(bundle)
+                seg = read_segmentation(sp)
+                if not needs_fixing(seg):
+                    continue
+                cands = seg.get("candidates") or []
+                cuts = sorted(int(b) for b in (seg.get("boundaries") or []))
+                spare = sum(
+                    1 for c in cands
+                    if not any(abs(int(c["frame"]) - b) <= SAME_BOUNDARY_FRAMES
+                               for b in cuts))
+                self._queue.append((bundle, spare))
             except Exception:
                 continue
-        self.status.setText("%d video(s) in the queue need their cuts checked."
-                            % len(self._queue))
+        # Most alternatives first. A video where the segmenter bailed out has no
+        # candidates at all, so it has to be marked from scratch -- that is the
+        # slowest work and should not be what the tool opens on.
+        self._queue.sort(key=lambda t: -t[1])
+        n_blind = sum(1 for _, spare in self._queue if spare == 0)
+        self._queue = [b for b, _ in self._queue]
+        self.status.setText(
+            "%d video(s) need their cuts checked. %d of them have no candidate "
+            "timepoints at all (the segmenter bailed out) and have to be marked "
+            "by hand -- those are last." % (len(self._queue), n_blind))
         if self._queue:
             self._load_bundle(self._queue[0])
         else:
@@ -229,7 +245,13 @@ class FixSegmentationWidget(QWidget):
 
         reasons = needs_fixing(self.seg)
         self.header.setText("%s   --   %d frames" % (stem, self.n_frames))
-        self.why.setText("The segmenter says: " + "; ".join(reasons) if reasons else "")
+        note = "The segmenter says: " + "; ".join(reasons) if reasons else ""
+        if not self.candidates:
+            note += ("   |   No candidate timepoints for this video: the "
+                     "segmenter could not track the enclosure well enough to "
+                     "propose any, so its cuts are an even grid that means "
+                     "nothing. Mark the cuts by hand from the video.")
+        self.why.setText(note)
 
         self._load_video(bundle, stem)
         self._refresh_candidates()
@@ -241,12 +263,27 @@ class FixSegmentationWidget(QWidget):
         import cv2
         from mousereach.review.causal_review_widget import _LazyVideo
 
+        # Bundles are staged NOT self-contained: the mp4 normally stays in the
+        # finished-work tree and the bundle carries only the small JSONs plus a
+        # manifest naming where the real files are. Look in all three places, in
+        # the order that costs least.
         mp4 = bundle / ("%s.mp4" % stem)
         if not mp4.is_file():
             try:
                 man = json.loads((bundle / ("%s_manifest.json" % stem)).read_text())
                 cand = man.get("canonical_video_path")
-                mp4 = Path(cand) if cand and Path(cand).is_file() else mp4
+                if cand and Path(cand).is_file():
+                    mp4 = Path(cand)
+            except Exception:
+                pass
+        if not mp4.is_file():
+            try:
+                from mousereach.config import Paths
+                root = getattr(Paths, "ANALYZED_OUTPUT", None)
+                if root:
+                    hit = next(iter(Path(root).rglob("%s.mp4" % stem)), None)
+                    if hit is not None:
+                        mp4 = hit
             except Exception:
                 pass
         if not mp4.is_file():
