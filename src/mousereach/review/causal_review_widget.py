@@ -202,6 +202,7 @@ class CausalReviewWidget(QWidget):
         # kinematics in place of the algo's "triaged" call (existing bridge).
         self._triage_only = bool(triage_only) and not self._deep_review
         self._triaged_indices: List[int] = []
+        self._worklist: Optional[Dict[str, set]] = None
         self._has_triage_cache: Dict[str, bool] = {}
 
         # Video state
@@ -1112,8 +1113,12 @@ class CausalReviewWidget(QWidget):
             i for i, s in enumerate(self._segment_list) if self._is_triaged(s)]
 
     def _visible_indices(self) -> List[int]:
-        """Segment indices the reviewer walks: triaged-only in triage mode,
-        else every segment."""
+        """Segment indices the reviewer walks: the worklist's segments when a
+        worklist is loaded, else triaged-only in triage mode, else every
+        segment."""
+        wl = self._worklist_indices()
+        if wl is not None:
+            return wl
         if self._triage_only:
             return self._triaged_indices
         return list(range(len(self._segment_list)))
@@ -2541,7 +2546,7 @@ class CausalReviewWidget(QWidget):
                 pool.append(b)
         return pool
 
-    def _review_pool_paths(self, pending_dir, root):
+    def _review_pool_paths_unfiltered(self, pending_dir, root):
         """Needs-review bundle paths. Reads the SCAN-FREE queue index
         (mousereach.review.queue_index) when it is populated; otherwise falls back
         to the full bundle scan (_needs_review_pool). The index is maintained by
@@ -2556,6 +2561,54 @@ class CausalReviewWidget(QWidget):
         except Exception:
             pass
         return self._needs_review_pool(pending_dir, root)
+
+    def _review_pool_paths(self, pending_dir, root):
+        """Needs-review bundles, narrowed to the worklist when one is loaded.
+
+        Without a worklist this is every bundle in the queue. With one, the
+        reviewer only ever sees the videos the worklist names -- which is how a
+        targeted question ("check these 160 segments") gets asked without
+        editing anyone's data to make the tool walk them.
+        """
+        paths = self._review_pool_paths_unfiltered(pending_dir, root)
+        if not self._worklist:
+            return paths
+        return [q for q in paths if Path(q).name in self._worklist]
+
+    def load_worklist(self, path: Path) -> int:
+        """Restrict this session to specific segments of specific videos.
+
+        Accepts a CSV with ``vid`` and ``segment_num`` columns, or a JSON list
+        of {"vid": .., "segment_num": ..} records. Returns the segment count.
+        """
+        path = Path(path)
+        rows = []
+        if path.suffix.lower() == ".json":
+            doc = json.loads(path.read_text())
+            rows = doc if isinstance(doc, list) else doc.get("segments", [])
+        else:
+            import csv
+            with open(path, newline="") as fh:
+                rows = list(csv.DictReader(fh))
+        wl: Dict[str, set] = {}
+        for r in rows:
+            vid = str(r.get("vid") or r.get("video") or r.get("video_stem") or "").strip()
+            seg = r.get("segment_num")
+            if not vid or seg in (None, ""):
+                continue
+            wl.setdefault(vid, set()).add(int(seg))
+        self._worklist = wl or None
+        return sum(len(v) for v in wl.values())
+
+    def _worklist_indices(self) -> Optional[List[int]]:
+        """Indices this video is on the worklist for, or None if no worklist."""
+        if not self._worklist:
+            return None
+        wanted = self._worklist.get(getattr(self, "_video_stem", None) or "")
+        if not wanted:
+            return None
+        return [i for i, seg in enumerate(self._segment_list)
+                if seg.get("segment_num") in wanted]
 
     def load_pending_queue(self, pending_dir: Path):
         """Enter the review queue on a RANDOM video that still needs review
@@ -2929,6 +2982,11 @@ def main():
                              "Default: MouseReach_Pipeline/Processing/Review/triage.")
     parser.add_argument("--all-segments", action="store_true",
                         help="Walk ALL segments, not just triaged ones (full review).")
+    parser.add_argument("--worklist", type=Path, default=None,
+                        help="CSV/JSON naming specific videos and segment numbers. "
+                             "Only those videos are offered and only those segments "
+                             "are walked -- for asking a targeted question of the "
+                             "corpus without editing any video's data to force it.")
     parser.add_argument("--cv", action="store_true",
                         help="Use CV pellet localization for tighter narrowing "
                              "(slower: decodes each loaded video over the NAS).")
@@ -2942,11 +3000,17 @@ def main():
     triage_only = not args.all_segments
     tool_name = "Triage Review" if triage_only else "Causal Review"
     mode = "triaged-only" if triage_only else "full review"
+    if args.worklist:
+        mode = "worklist"
     print(f"Launching {tool_name} ({mode}) over {pending_dir} ...")
     print("Building queue (scanning bundles for triaged elements) ...", flush=True)
     viewer = napari.Viewer(title=f"MouseReach {tool_name} ({mode})")
     widget = CausalReviewWidget(viewer, triage_only=triage_only)
     widget._use_cv = bool(args.cv)
+    if args.worklist:
+        n = widget.load_worklist(args.worklist)
+        print(f"Worklist: {n} segments across "
+              f"{len(widget._worklist or {})} videos -- nothing else will be shown.")
     viewer.window.add_dock_widget(widget, name=tool_name, area="right")
     widget.load_pending_queue(pending_dir)
     napari.run()
