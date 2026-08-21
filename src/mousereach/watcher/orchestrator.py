@@ -1561,6 +1561,32 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return
 
         source_h5 = select_pose_file(h5_files)
+
+        # The pose file lives in its OWN per-model tree
+        # (Analyzed/Connectome/DLC Model 4/CNT01), not beside the video's results
+        # (Analyzed/Connectome/CNT01). Copying from the pose file's parent
+        # therefore brought over three files and nothing else, with two
+        # consequences that both looked like correct behaviour:
+        #
+        #   - no _segments.json arrived, so the stage-reuse checks further down
+        #     ("only re-run from the earliest stale stage") could never find
+        #     prior output. Every reprocess silently restarted from
+        #     segmentation, recutting boundaries and re-deciding outcomes even
+        #     when the only thing out of date was kinematics.
+        #   - no mp4 arrived, so a video the review gate held was moved into the
+        #     review queue with no video in it for the reviewer to open.
+        #
+        # get_archive_destination computes the results folder directly from the
+        # video id, so this also avoids a second full-tree walk.
+        from mousereach.archive.core import get_archive_destination
+        source_dirs = {source_h5.parent}
+        try:
+            results_dir = get_archive_destination(video_id)
+            if results_dir and Path(results_dir).is_dir():
+                source_dirs.add(Path(results_dir))
+        except Exception as e:
+            logger.warning("%s: could not resolve the results folder (%s); "
+                           "reprocessing from the pose folder alone", video_id, e)
         source_dir = source_h5.parent
 
         # Copy needed files to local Processing/
@@ -1571,7 +1597,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         self.processing_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy DLC h5 and video
-        all_files = [f for f in source_dir.iterdir() if f.stem.startswith(video_id)]
+        all_files = []
+        for d in source_dirs:
+            all_files.extend(f for f in Path(d).iterdir()
+                             if f.is_file() and f.stem.startswith(video_id))
         for src_file in all_files:
             dest = self.processing_dir / src_file.name
             safe_copy(src_file, dest, verify=True)
