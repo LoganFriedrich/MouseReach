@@ -403,9 +403,40 @@ def segment_video_multi(dlc_path: Path,
             f"rather than being detected")
     if ref_quality != "good":
         needs_human.append(f"reference tracking quality is {ref_quality}")
-    if n_unused >= 3:
-        needs_human.append(
-            f"{n_unused} detected candidate timepoints were not used")
+    # Deliberately NOT routing on unused candidates. The proposers over-propose
+    # and the selection picking 21 out of 60 is the algorithm working, not
+    # failing; on a random sample of finished videos, 3+ unused candidates
+    # occurs on 12% of videos whose boundaries are fine. Routing on it sends
+    # people to videos that do not need them.
+    #
+    # What DOES mean a tray advance was missed is the interval structure. The
+    # tray advances on a fixed cadence, so a missed advance leaves a segment
+    # about twice as long as its neighbours, and that is measurable against the
+    # apparatus rather than against a number somebody picked. This is the
+    # failure that shifts every segment number after it.
+    seg_lengths = list(np.diff(sorted(boundaries)))
+    if len(seg_lengths) >= 4:
+        med = float(np.median(seg_lengths))
+        if med > 0:
+            long_runs = [i for i, L in enumerate(seg_lengths) if L >= med * 1.6]
+            short_runs = [i for i, L in enumerate(seg_lengths) if L <= med * 0.5]
+            if long_runs:
+                needs_human.append(
+                    f"{len(long_runs)} segment(s) run about twice the usual "
+                    f"length, which is what a missed tray advance looks like")
+            if short_runs:
+                needs_human.append(
+                    f"{len(short_runs)} segment(s) are less than half the usual "
+                    f"length, which is what an extra cut looks like")
+            half = len(seg_lengths) // 2
+            if half >= 2:
+                a = float(np.median(seg_lengths[:half]))
+                b = float(np.median(seg_lengths[half:]))
+                if a > 0 and b > 0 and (max(a, b) / min(a, b)) >= 1.35:
+                    needs_human.append(
+                        f"the cadence changes through the video "
+                        f"({a:.0f} frames early vs {b:.0f} late), which is what "
+                        f"a missed advance part-way through looks like")
 
     diag = _diagnostics(
         dlc_path, total_frames, fps,
