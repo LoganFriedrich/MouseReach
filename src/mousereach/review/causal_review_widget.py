@@ -71,6 +71,19 @@ OUTCOME_CHOICES = [
 OUTCOME_PICK_SENTINEL = "-- select outcome --"
 
 
+def _segment_span(seg) -> Optional[Dict[str, int]]:
+    """The segment's frame range, stored on every review record.
+
+    The review has to survive re-segmentation: ``segment_num`` is an index the
+    segmenter reassigns, the frame range is what the human actually looked at.
+    Returns None rather than a half-filled span if either bound is missing.
+    """
+    start, end = seg.get("start_frame"), seg.get("end_frame")
+    if start is None or end is None:
+        return None
+    return {"start": int(start), "end": int(end)}
+
+
 class _LazyVideo:
     """Array-like view of a video that decodes frames on demand.
 
@@ -2149,6 +2162,7 @@ class CausalReviewWidget(QWidget):
                 agreed=True,
                 answers={"is_boundary": True},
                 notes="",
+                segment_span=_segment_span(seg),
             )
 
         answers: Dict[str, Any] = {}
@@ -2257,6 +2271,7 @@ class CausalReviewWidget(QWidget):
             agreed=agreed,
             answers=answers,
             notes=notes,
+            segment_span=_segment_span(seg),
         )
 
     def _get_toggle_answer(self, key: str) -> Optional[bool]:
@@ -2665,6 +2680,7 @@ class CausalReviewWidget(QWidget):
                     agreed=False,
                     answers={"reviewed": False},
                     notes="",
+                    segment_span=_segment_span(seg),
                 ))
 
         # Provenance from the algo JSONs (bundle dir in manifest mode); the

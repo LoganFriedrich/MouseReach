@@ -173,11 +173,30 @@ def build_segment_record(
     agreed: bool,
     answers: Dict[str, Any],
     notes: str = "",
+    segment_span: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
-    """Build a single segment's review record."""
+    """Build a single segment's review record.
+
+    ``segment_span`` is the segment's frame range ({"start": .., "end": ..}) as
+    it stood when the human looked at it, and it is what makes the record
+    durable. A human review is a fact about what happens in a stretch of video,
+    so it stays true no matter which algo or DLC version runs next. But the
+    record was anchored only to ``segment_num`` -- an index the segmenter
+    reassigns every time it re-cuts the video. Re-segment, and segment 7's
+    review silently starts describing a different stretch of footage.
+
+    With the span stored, a review can always be re-attached to the frames it
+    was actually about, and a reviewer's note like "this boundary is wrong"
+    survives the fix to that boundary instead of being invalidated by it.
+
+    Optional because reviews written before this field existed do not have it;
+    those were backfilled in place from the segmentation each was made against
+    (see scripts/backfill_causal_review_spans.py).
+    """
     rec: Dict[str, Any] = {
         "segment_num": segment_num,
         "pellet_num": pellet_num,
+        "segment_span": segment_span,
         "algo": {
             "outcome": algo_outcome,
             "causal_reach": algo_causal_reach,
@@ -231,7 +250,7 @@ def save_causal_review(
 
     doc: Dict[str, Any] = {
         "type": "causal_review",
-        "schema_version": "1.0",
+        "schema_version": "1.1",   # 1.1 adds segment_span to every record
         "video_stem": video_stem,
         "reviewer": reviewer,
         "reviewed_at": timestamp,
