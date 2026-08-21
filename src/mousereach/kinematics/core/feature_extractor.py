@@ -230,7 +230,11 @@ class FeatureExtractor:
                     from mousereach.review.causal_review_io import load_and_apply_review
                     outcomes_data = load_and_apply_review(
                         outcomes_data, review_path,
-                        video_stem=reaches_data.get('video_name'))
+                        video_stem=reaches_data.get('video_name'),
+                        # The segmentation being applied to, so a review is
+                        # matched to the frames the reviewer saw rather than to a
+                        # segment number the segmenter may have reassigned.
+                        current_segments=reaches_data.get('segments'))
                 except Exception as _e2:
                     print(f"[feature_extractor] review override skipped: {_e2}")
 

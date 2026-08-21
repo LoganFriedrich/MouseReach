@@ -91,15 +91,24 @@ def _review_doc(stem: str, base) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # per-segment OUTCOME layers
 # ---------------------------------------------------------------------------
-def _seg_overrides_from_review(doc: Optional[dict], source: str) -> Dict[int, dict]:
+def _seg_overrides_from_review(doc: Optional[dict], source: str,
+                               current_segments=None) -> Dict[int, dict]:
     """{segment_num: override} from a causal-review doc. An override carries the
     human outcome, the causal reach id (only for touched outcomes), any abnormal
-    ignore-ranges, and the provenance source label."""
+    ignore-ranges, and the provenance source label.
+
+    Keys are numbers in the CURRENT segmentation. Pass ``current_segments`` and
+    each review is matched to the frames the reviewer actually saw; without it,
+    matching falls back to the segment number the review was written against,
+    which a re-cut can have reassigned to different footage.
+    """
+    from mousereach.review.causal_review_io import index_review_by_segment
+
     out: Dict[int, dict] = {}
-    for rec in (doc or {}).get("segments", []):
-        sn = rec.get("segment_num")
-        if sn is None:
-            continue
+    matched, notes = index_review_by_segment(doc, current_segments)
+    for n in notes:
+        logger.warning("review re-anchoring: %s", n)
+    for sn, rec in matched.items():
         ans = rec.get("answers") or {}
         if ans.get("reviewed") is False:
             continue
@@ -297,15 +306,20 @@ def resolve_truth_layers(
     stem = (video_stem or reaches_data.get("video_name")
             or outcomes_data.get("video_name") or "")
 
+    # The segmentation these results were produced from. Reviews are matched
+    # against these frame ranges, so a human judgement follows the footage it
+    # was made about even when a re-cut renumbers the segments around it.
+    _cur_segs = reaches_data.get("segments") or []
+
     # ---- per-segment OUTCOME layers, low -> high --------------------------
     triage_doc = _review_doc(stem, getattr(Paths, "TRIAGE_REVIEW", None))
     causal_doc = _review_doc(stem, getattr(Paths, "DEEP_REVIEW", None))
     primary_doc = _review_doc(stem, primary_dir) if primary_dir else None
 
     layers: List[Dict[int, dict]] = [
-        _seg_overrides_from_review(triage_doc, "human_review"),   # triage tier
-        _seg_overrides_from_review(causal_doc, "human_review"),   # causal tier
-        _seg_overrides_from_review(primary_doc, "human_review"),  # causal tier (processing dir)
+        _seg_overrides_from_review(triage_doc, "human_review", _cur_segs),   # triage tier
+        _seg_overrides_from_review(causal_doc, "human_review", _cur_segs),   # causal tier
+        _seg_overrides_from_review(primary_doc, "human_review", _cur_segs),  # causal tier (processing dir)
     ]
 
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None
