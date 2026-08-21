@@ -1313,6 +1313,13 @@ class CausalReviewWidget(QWidget):
             lbl.setStyleSheet("font-weight: bold; margin-bottom: 4px;")
             self._questions_layout.addWidget(lbl)
 
+        # The segmentation can be wrong about WHICH pellet presentation this
+        # stretch is -- boundaries offset by one, so what it calls segment 1 is
+        # really segment 2. That is a fact about the segmentation, not about the
+        # reach or the outcome, and saying it should take one action rather than
+        # a written note nothing downstream can read.
+        self._questions_layout.addWidget(self._make_segment_number_fix(seg))
+
         if kind == "reach_uncertain":
             _hdr(f"The outcome is '<span style='color:#8f8'>{seg.get('outcome')}</span>' "
                  f"(algo-confirmed). Which reach caused it?")
@@ -1810,6 +1817,44 @@ class CausalReviewWidget(QWidget):
                 rp["start_spin"].value(), rp["end_spin"].value(),
                 rp.get("all_detected", reaches))
         return None
+
+    def _make_segment_number_fix(self, seg: Dict) -> QWidget:
+        """One control for "this is actually segment N".
+
+        Defaults to what the segmenter said, so leaving it alone records
+        nothing. Changing it marks the segmentation as wrong for this stretch
+        and stores the real number, which is what makes an offset segmentation
+        findable later instead of being buried in free text.
+        """
+        w = QWidget()
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        w.setLayout(row)
+
+        n = seg.get("segment_num")
+        algo_n = int(n) if n is not None else 0
+        row.addWidget(QLabel("Segmentation says this is segment"))
+
+        spin = QSpinBox()
+        spin.setRange(0, 60)
+        spin.setValue(algo_n)
+        spin.setMaximumWidth(70)
+        spin.setToolTip("If the segmentation has this stretch labelled as the "
+                        "wrong pellet presentation, set the real number here. "
+                        "Leave it alone if the number is right.")
+        row.addWidget(spin)
+
+        warn = QLabel("")
+        warn.setStyleSheet("color: #e08020; font-weight: bold;")
+        row.addWidget(warn)
+        row.addStretch()
+
+        def _changed(v):
+            warn.setText("  <- recorded as a segmentation error" if v != algo_n else "")
+        spin.valueChanged.connect(_changed)
+
+        self._q_widgets["_true_segment"] = {"spin": spin, "algo": algo_n}
+        return w
 
     def _make_reach_picker(self, seg: Dict) -> QWidget:
         """Inline reach picker: choose from detected reaches or draw a new one.
@@ -2344,6 +2389,9 @@ class CausalReviewWidget(QWidget):
 
         notes = self._notes_edit.toPlainText().strip() if hasattr(self, '_notes_edit') else ""
 
+        ts = self._q_widgets.get("_true_segment") or {}
+        true_seg = ts["spin"].value() if ts.get("spin") is not None else None
+
         return build_segment_record(
             segment_num=seg["segment_num"],
             pellet_num=seg["pellet_num"],
@@ -2357,6 +2405,7 @@ class CausalReviewWidget(QWidget):
             answers=answers,
             notes=notes,
             segment_span=_segment_span(seg),
+            true_segment_num=true_seg,
         )
 
     def _get_toggle_answer(self, key: str) -> Optional[bool]:
