@@ -14,6 +14,7 @@ DLC model and algorithm versions.
 
 import json
 import logging
+import os
 import socket
 import re
 from datetime import datetime
@@ -135,6 +136,33 @@ def select_pose_file(candidates, expected_scorer: str = None) -> Optional[Path]:
     return chosen
 
 
+# Every pipeline stage that must be version-tracked, and the file + key where
+# that stage records the version it actually ran at.
+#
+# This exists as ONE declaration because the alternative kept failing. The
+# manifest writer used to name its stages by hand and the currency check used
+# its own separate list, so a stage could exist in the pipeline and appear in
+# neither. That is exactly how kinematics went untracked until 2026-08-19, and
+# how assignment was still untracked after it -- every manifest ever written was
+# missing it, so no video could honestly be certified as current at every step.
+#
+# Both create_processing_manifest() and compare_manifest_to_current() read this
+# map, so adding a stage here is the only thing needed to make it tracked, and a
+# stage that is not here is visibly absent rather than silently skipped.
+TRACKED_STAGES = {
+    'segmenter':           ("_segments.json",          "segmenter_version"),
+    'reach_detector':      ("_reaches.json",           "detector_version"),
+    'outcome_detector':    ("_pellet_outcomes.json",   "detector_version"),
+    'assignment':          ("_reach_assignments.json", "version"),
+    'kinematic_extractor': ("_features.json",          "extractor_version"),
+}
+
+# Values read_version_from_json() returns when it could not find a real version.
+# A manifest carrying one of these has not recorded that stage, so the video
+# cannot be certified current no matter what the string comparison says.
+NOT_A_VERSION = ('not_run', 'unknown', 'error_reading', '')
+
+
 def read_validation_from_json(json_path: Path) -> Dict[str, str]:
     """Read validation_status and triage_reason from an output JSON."""
     result = {'validation_status': 'not_run', 'triage_reason': ''}
@@ -194,18 +222,18 @@ def create_processing_manifest(
     seg_path = processing_dir / f"{video_id}_segments.json"
     reach_path = processing_dir / f"{video_id}_reaches.json"
     outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
-    features_path = processing_dir / f"{video_id}_features.json"
 
     # Read validation statuses
     seg_val = read_validation_from_json(seg_path)
     reach_val = read_validation_from_json(reach_path)
     outcome_val = read_validation_from_json(outcome_path)
 
-    # Read algorithm versions from output files
-    seg_version = read_version_from_json(seg_path, 'segmenter_version')
-    reach_version = read_version_from_json(reach_path, 'detector_version')
-    outcome_version = read_version_from_json(outcome_path, 'detector_version')
-    kinematic_version = read_version_from_json(features_path, 'extractor_version')
+    # Read algorithm versions from output files, from the single declaration
+    # above so no stage can be left out by hand.
+    stage_versions = {
+        stage: read_version_from_json(processing_dir / f"{video_id}{suffix}", key)
+        for stage, (suffix, key) in TRACKED_STAGES.items()
+    }
 
     manifest = {
         'manifest_version': MANIFEST_VERSION,
@@ -217,13 +245,8 @@ def create_processing_manifest(
         'dlc_model': dlc_info,
 
         # Algorithm versions
-        'pipeline_versions': {
-            'mousereach': mousereach.__version__,
-            'segmenter': seg_version,
-            'reach_detector': reach_version,
-            'outcome_detector': outcome_version,
-            'kinematic_extractor': kinematic_version,
-        },
+        'pipeline_versions': dict(
+            {'mousereach': mousereach.__version__}, **stage_versions),
 
         # Validation statuses
         'validation': {
@@ -296,6 +319,169 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str) 
     except Exception as e:
         logger.warning("Could not record kinematic version for %s: %s", video_id, e)
         return False
+
+
+def backfill_manifest_versions(root: Path, apply: bool = False,
+                               archive_dir: Optional[Path] = None,
+                               stages=None) -> Dict:
+    """Fill in stage versions a manifest never recorded, from the stage's own output.
+
+    A manifest can be missing a stage's version for two reasons, and only one of
+    them is a problem. If the stage never ran, 'not_run' is the correct answer
+    and is left alone. If the stage DID run -- its output file is sitting right
+    there -- then the manifest is simply wrong, and the output file carries the
+    version that actually produced it. That value is recoverable without
+    recomputing anything.
+
+    This has happened twice now, for the same structural reason: kinematics
+    (fixed 2026-08-19) and assignment (never recorded in any manifest, on any
+    node, ever). So this is written once, over TRACKED_STAGES, rather than once
+    per stage -- whichever stage is missed next, this repairs it.
+
+    Originals are copied to ``archive_dir`` before anything is written. Nothing
+    is ever deleted.
+
+    Args:
+        root: directory to walk (e.g. the Analyzed tree)
+        apply: False (default) reports what would change and writes nothing
+        archive_dir: where to copy manifests before modifying them. Required
+            when apply is True.
+        stages: restrict to these stage names (default: every tracked stage)
+
+    Returns:
+        Counts by outcome, and the versions found on disk per stage.
+    """
+    import shutil
+    from collections import Counter
+
+    stages = list(stages or TRACKED_STAGES)
+    stats = Counter()
+    found = {s: Counter() for s in stages}
+    root = Path(root)
+
+    if apply and archive_dir is None:
+        raise ValueError("archive_dir is required when apply=True -- "
+                         "manifests are archived before they are modified")
+
+    for manifest_path in root.rglob("*_processing_manifest.json"):
+        stem = manifest_path.name[: -len("_processing_manifest.json")]
+        stats['manifests'] += 1
+        try:
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+        except Exception:
+            stats['unreadable'] += 1
+            continue
+
+        recorded = manifest.get('pipeline_versions') or {}
+        fixes = {}
+        for stage in stages:
+            suffix, key = TRACKED_STAGES[stage]
+            if recorded.get(stage, '') not in NOT_A_VERSION:
+                continue  # already has a real version
+            out_path = manifest_path.parent / f"{stem}{suffix}"
+            if not out_path.exists():
+                stats['%s: did not run -- left alone' % stage] += 1
+                continue
+            actual = read_version_from_json(out_path, key)
+            if actual in NOT_A_VERSION:
+                stats['%s: output has no version either' % stage] += 1
+                continue
+            found[stage][actual] += 1
+            fixes[stage] = actual
+
+        if not fixes:
+            continue
+
+        for stage in fixes:
+            stats['%s: %s' % (stage, 'fixed' if apply else 'would fix')] += 1
+
+        if not apply:
+            continue
+
+        try:
+            dest = Path(archive_dir) / manifest_path.name
+            Path(archive_dir).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(manifest_path, dest)
+        except Exception as e:
+            logger.warning("Could not archive %s, skipping it: %s", manifest_path.name, e)
+            stats['archive failed -- skipped'] += 1
+            continue
+
+        try:
+            manifest.setdefault('pipeline_versions', {}).update(fixes)
+            tmp = manifest_path.with_suffix('.json.tmp')
+            with open(tmp, 'w') as f:
+                json.dump(manifest, f, indent=2)
+            os.replace(tmp, manifest_path)
+            try:
+                from mousereach.pipeline.version_index import VersionIndex
+                VersionIndex().upsert_from_manifest(stem, manifest, manifest_path)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("Could not write %s: %s", manifest_path.name, e)
+            stats['write failed'] += 1
+
+    return {'stats': dict(stats), 'versions_found': {s: dict(c) for s, c in found.items() if c}}
+
+
+def main_backfill_manifest_versions():
+    """CLI: repair manifests that never recorded a stage's version.
+
+    Reports what it would change and writes nothing unless --apply is given.
+    Manifests are copied to an archive directory before being modified.
+    """
+    import argparse
+    from datetime import datetime as _dt
+
+    ap = argparse.ArgumentParser(
+        description="Fill in pipeline stage versions a manifest never recorded, "
+                    "reading each version from that stage's own output file.")
+    ap.add_argument("--root", type=Path, default=None,
+                    help="Directory to walk (default: the Analyzed tree)")
+    ap.add_argument("--stage", action="append", dest="stages", default=None,
+                    help="Repeatable. Restrict to these stages (default: all tracked).")
+    ap.add_argument("--archive-dir", type=Path, default=None,
+                    help="Where to copy manifests before modifying them "
+                         "(default: a dated directory under the pipeline's _archived)")
+    ap.add_argument("--apply", action="store_true",
+                    help="Actually write. Without this, nothing is modified.")
+    args = ap.parse_args()
+
+    from mousereach.config import Paths
+    root = args.root or Paths.ANALYZED_OUTPUT
+    if root is None:
+        print("[FAIL] No Analyzed directory configured; pass --root")
+        return 1
+
+    archive_dir = args.archive_dir
+    if archive_dir is None:
+        stamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        base = Path(root).parent / "_archived"
+        archive_dir = base / ("manifests_pre_version_backfill_%s" % stamp)
+
+    print("Walking %s" % root)
+    print("Stages : %s" % ", ".join(args.stages or list(TRACKED_STAGES)))
+    if args.apply:
+        print("Archive: %s" % archive_dir)
+    else:
+        print("DRY RUN -- nothing will be written")
+    print()
+
+    result = backfill_manifest_versions(root, apply=args.apply,
+                                        archive_dir=archive_dir if args.apply else None,
+                                        stages=args.stages)
+    for key, n in sorted(result['stats'].items(), key=lambda kv: -kv[1]):
+        print("  %6d  %s" % (n, key))
+    if result['versions_found']:
+        print("\nversions found in the stage output files:")
+        for stage, hist in result['versions_found'].items():
+            for ver, n in sorted(hist.items(), key=lambda kv: -kv[1]):
+                print("  %6d  %s = %s" % (n, stage, ver))
+    if not args.apply:
+        print("\nRe-run with --apply to write these.")
+    return 0
 
 
 def backfill_kinematic_versions(root: Path, apply: bool = False) -> Dict:
