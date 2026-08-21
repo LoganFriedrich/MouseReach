@@ -144,13 +144,17 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
 
     Returns:
         Dict with:
-            is_current: bool - True if all versions match
-            stale_components: list of component names that are outdated
+            is_current: bool - True only if every tracked stage recorded a
+                version AND every one matches the declared current version
+            stale_components: stages that ran at an outdated version
+            unrecorded_components: stages the manifest never recorded a version
+                for; these make the video uncertifiable, not merely outdated
             needs_full_reprocess: bool - True if DLC model changed (requires full re-run)
     """
     result = {
         'is_current': True,
         'stale_components': [],
+        'unrecorded_components': [],
         'needs_full_reprocess': False,
     }
 
@@ -169,20 +173,25 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
         result['stale_components'].append('dlc')
         result['needs_full_reprocess'] = True
 
-    # Check pipeline component versions
-    component_map = {
-        'segmenter': 'segmenter',
-        'reach_detector': 'reach_detector',
-        'outcome_detector': 'outcome_detector',
-        'kinematic_extractor': 'kinematic_extractor',
-    }
+    # Check every stage the manifest is supposed to record. The list comes from
+    # manifest.TRACKED_STAGES rather than a second copy kept here, because the
+    # two copies drifted: assignment ran on every video, was in neither list, and
+    # so was never checked. A stage the manifest does NOT record counts as stale
+    # rather than passing silently -- a video whose provenance has a hole in it
+    # cannot be certified as current at every step.
+    from mousereach.pipeline.manifest import TRACKED_STAGES, NOT_A_VERSION
 
-    for current_key, manifest_key in component_map.items():
-        current_v = current_versions.get(current_key, '')
-        manifest_v = manifest_versions.get(manifest_key, '')
-        if current_v and manifest_v and current_v != manifest_v:
+    for stage in TRACKED_STAGES:
+        current_v = current_versions.get(stage, '')
+        if not current_v:
+            continue  # nothing declared for this stage; nothing to enforce
+        manifest_v = manifest_versions.get(stage, '')
+        if manifest_v in NOT_A_VERSION:
             result['is_current'] = False
-            result['stale_components'].append(current_key)
+            result['unrecorded_components'].append(stage)
+        elif manifest_v != current_v:
+            result['is_current'] = False
+            result['stale_components'].append(stage)
 
     # Check mousereach version (informational, not always a trigger)
     current_mr = current_versions.get('mousereach', '')
