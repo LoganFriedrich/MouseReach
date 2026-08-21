@@ -16,10 +16,13 @@ overwrites the prior entry in both per-video file and index.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +298,151 @@ def load_causal_review(video_stem: str, output_dir: Path):
 _TOUCHED_OUTCOMES = ("retrieved", "displaced_sa", "displaced_outside")
 
 
+def _span_of(rec):
+    """The frames a reviewer actually looked at, or None."""
+    sp = rec.get("segment_span")
+    if not isinstance(sp, dict):
+        return None
+    a, b = sp.get("start"), sp.get("end")
+    if a is None or b is None:
+        return None
+    a, b = int(a), int(b)
+    return (a, b) if b >= a else (b, a)
+
+
+def _seg_span(seg):
+    """The frames a current segment covers, or None."""
+    a, b = seg.get("start_frame"), seg.get("end_frame")
+    if a is None or b is None:
+        return None
+    a, b = int(a), int(b)
+    return (a, b) if b >= a else (b, a)
+
+
+def _overlap(x, y):
+    lo, hi = max(x[0], y[0]), min(x[1], y[1])
+    return max(0, hi - lo + 1)
+
+
+# A review is only re-attached to a segment that covers most of the frames the
+# reviewer saw. Below this the two are different stretches of video and applying
+# the judgement would be inventing one.
+MIN_SPAN_OVERLAP = 0.5
+
+# How much the best candidate must beat the runner-up by. Below this the review
+# straddles two segments and there is no honest way to choose.
+MIN_MARGIN = 0.15
+
+
+def index_review_by_segment(review_doc, current_segments=None):
+    """Map each CURRENT segment number to the review record describing it.
+
+    Reviews used to be found by segment number alone. That number is an index
+    the segmenter hands out fresh on every re-cut, so after a re-segmentation
+    the review of "segment 7" was applied to whatever the new segment 7 happened
+    to be -- a human judgement stamped onto footage nobody looked at, recorded as
+    outcome_source "human_review" and indistinguishable from a real one.
+
+    Every record written since review schema 1.1 carries ``segment_span``: the
+    frames the reviewer was actually shown. When both sides carry frames this
+    matches on overlap and ignores the numbers entirely. A review whose frames
+    no longer correspond to any segment is DROPPED rather than guessed at, and
+    said so in the returned notes.
+
+    Records with no span -- written before 1.1, or ones whose original
+    segmentation could not be recovered -- fall back to matching by number,
+    which is all that has ever been available for them.
+
+    Args:
+        review_doc: a loaded causal review document
+        current_segments: the segments of the CURRENT segmentation, each with
+            start_frame / end_frame. When absent, behaviour is the old
+            number-matching, so callers that have no segmentation still work.
+
+    Returns:
+        (mapping, notes) -- mapping is {current segment_num: review record};
+        notes is a list of human-readable strings about anything that moved or
+        was dropped, for logging.
+    """
+    notes = []
+    records = [r for r in (review_doc or {}).get("segments", []) if isinstance(r, dict)]
+
+    by_num = {}
+    for rec in records:
+        sn = rec.get("segment_num")
+        if sn is not None:
+            by_num[int(sn)] = rec
+
+    if not current_segments:
+        return by_num, notes
+
+    spans = {}
+    for seg in current_segments:
+        sn, sp = seg.get("segment_num"), _seg_span(seg)
+        if sn is not None and sp is not None:
+            spans[int(sn)] = sp
+    if not spans:
+        return by_num, notes
+
+    mapping = {}
+    claimed = {}
+    for rec in records:
+        rspan = _span_of(rec)
+        old_num = rec.get("segment_num")
+        if rspan is None:
+            # No frames recorded; the number is the only handle there is.
+            if old_num is not None and int(old_num) in spans:
+                mapping.setdefault(int(old_num), rec)
+            continue
+
+        scored = []
+        for sn, sspan in spans.items():
+            ov = _overlap(rspan, sspan)
+            if not ov:
+                continue
+            frac = ov / max(1, min(rspan[1] - rspan[0] + 1, sspan[1] - sspan[0] + 1))
+            scored.append((frac, sn))
+        scored.sort(reverse=True)
+        best_frac, best_num = scored[0] if scored else (0.0, None)
+
+        # A re-cut can split the reviewed stretch across two new segments, and
+        # then "best" is a coin flip. Picking one silently is the same quiet
+        # guess this matching exists to stop, so an ambiguous match is dropped.
+        if len(scored) > 1 and (scored[0][0] - scored[1][0]) < MIN_MARGIN:
+            notes.append(
+                "segment %s review (frames %d-%d) splits across current segments "
+                "%d and %d (%.0f%% vs %.0f%%); dropped rather than assigned to "
+                "one of them"
+                % (old_num, rspan[0], rspan[1], scored[0][1], scored[1][1],
+                   scored[0][0] * 100, scored[1][0] * 100))
+            continue
+
+        if best_num is None or best_frac < MIN_SPAN_OVERLAP:
+            notes.append(
+                "segment %s review (frames %d-%d) matches no current segment; "
+                "dropped rather than applied to different footage"
+                % (old_num, rspan[0], rspan[1]))
+            continue
+
+        prev = claimed.get(best_num)
+        if prev is not None and prev >= best_frac:
+            notes.append(
+                "segment %s review (frames %d-%d) overlaps current segment %d "
+                "less than another review; dropped"
+                % (old_num, rspan[0], rspan[1], best_num))
+            continue
+
+        mapping[best_num] = rec
+        claimed[best_num] = best_frac
+        if old_num is not None and int(old_num) != best_num:
+            notes.append(
+                "review of segment %s now applies to segment %d "
+                "(frames %d-%d, %.0f%% overlap) -- the segmentation changed"
+                % (old_num, best_num, rspan[0], rspan[1], best_frac * 100))
+
+    return mapping, notes
+
+
 def apply_review_overrides(
     outcomes_data: Dict[str, Any],
     review_by_seg: Dict[int, Dict[str, Any]],
@@ -349,8 +497,14 @@ def load_and_apply_review(
     outcomes_data: Dict[str, Any],
     review_path: Path,
     video_stem: Optional[str] = None,
+    current_segments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Load a causal-review file and apply its corrections onto ``outcomes_data``.
+
+    Pass ``current_segments`` (the segments of the segmentation being applied to,
+    each with start_frame / end_frame) so reviews are matched to the frames the
+    reviewer actually saw rather than to a segment number the segmenter may have
+    reassigned. Without it the old number-matching is used.
 
     ``review_path`` may be the review JSON itself OR a directory containing
     ``{video_stem}_causal_review.json``. Returns ``outcomes_data`` unchanged if
@@ -366,11 +520,9 @@ def load_and_apply_review(
             doc = _read_json(cand)
     if not doc:
         return outcomes_data
-    by_seg = {}
-    for rec in doc.get("segments", []):
-        sn = rec.get("segment_num")
-        if sn is not None:
-            by_seg[int(sn)] = rec
+    by_seg, notes = index_review_by_segment(doc, current_segments)
+    for n in notes:
+        logger.warning("%s: %s", video_stem or "", n)
     return apply_review_overrides(outcomes_data, by_seg, reviewer=doc.get("reviewer"))
 
 
