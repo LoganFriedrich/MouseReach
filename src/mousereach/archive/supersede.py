@@ -50,6 +50,11 @@ _ALGO_SUFFIXES = (
     "_reaches.json", "_features.json", "_pellet_outcomes.json",
     "_segments.json", "_processing_manifest.json", "_triage.json",
     "_reach_assignments.json",
+    # The finalized per-video results table. Every entry above is .json, so this
+    # one fell through: it is not a pose file either (no "DLC" in the name), so
+    # _classify returned None and it was silently overwritten on every reprocess.
+    # 1,250 of these exist on disk.
+    "_results.csv",
 )
 # Human truth + the video: never archived by a reprocess.
 _NEVER_SUFFIXES = (
