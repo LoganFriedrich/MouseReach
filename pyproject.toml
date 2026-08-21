@@ -104,7 +104,13 @@ mousereach-review-pellet-outcomes = "mousereach.outcomes.cli:main_review"
 mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated: use mousereach-review-pellet-outcomes
 
 # Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue
-mousereach-review-tool = "mousereach.review.causal_review_widget:main"  # Causal review, triaged-only (walk only unresolved elements)
+mousereach-review-tool = "mousereach.review.causal_review_widget:main"
+
+# Provenance checks -- what the pipeline actually produces, and whether the
+# documents still describe the code.
+mousereach-field-audit = "mousereach.pipeline.field_audit:main"
+mousereach-doc-check = "mousereach.pipeline.doc_check:main"
+mousereach-backfill-manifest-versions = "mousereach.pipeline.manifest:main_backfill_manifest_versions"  # Causal review, triaged-only (walk only unresolved elements)
 mousereach-triage-clearing = "mousereach.review.triage_clearing:main"  # (legacy) GroundTruthWidget-based per-segment triage clearing
 mousereach-unified-review = "mousereach.review.ground_truth_widget:main"
 mousereach-gt = "mousereach.review.ground_truth_widget:main"  # GT scoring tool

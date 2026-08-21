@@ -1,5 +1,8 @@
 # Where the pipeline does not do what it is supposed to
 
+Describes: src/mousereach/watcher, src/mousereach/archive, src/mousereach/sync
+Verified against: 61d98b9 (2026-08-21)
+
 The intended process is recorded verbatim in `PIPELINE_PROCESS_AS_DESCRIBED.md`
 and broken into 24 numbered requirements. This document checks each one against
 the code as it stands on 2026-08-21.

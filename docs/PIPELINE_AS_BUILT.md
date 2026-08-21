@@ -1,5 +1,8 @@
 # How the MouseReach pipeline actually works
 
+Describes: src/mousereach/watcher, src/mousereach/archive, src/mousereach/config.py, src/mousereach/pipeline/
+Verified against: 61d98b9 (2026-08-21)
+
 Written 2026-08-21 by reading the code, not the documentation. Each section
 was traced against the source by a separate reviewer, and every statement
 that contradicted the intended process was then handed to a second reviewer
