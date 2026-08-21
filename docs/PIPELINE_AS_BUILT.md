@@ -325,3 +325,39 @@ BACKUPS
 A periodic job mirrors Behavior/MouseReach_Pipeline, Tissue/MouseBrain_Pipeline and Databases from the Y: drive to the X: drive using robocopy in add-only mode - newer files are copied over, deleted files are left in place on X: (watcher/backup.py:28-33, :133-150). That preserves a copy of the connectome.db file, but it is a whole-file disk backup on a timer, not a record of which rows a given sync replaced.
 
 ---
+
+---
+
+## Segmentation now says when it forced the answer (added 2026-08-21)
+
+The segmenter emits exactly 21 boundaries every time. That count is hard-coded
+and guaranteed by a safety net, so a forced segmentation and a measured one
+looked identical downstream, and the count was never evidence that anything
+worked. Reviewers hit the consequence directly: the algorithm's outcomes were
+right and the segment NUMBERING was wrong, drifting by one and then two through a
+single video, which made bench pellet 7 get compared against footage of pellet 8.
+
+Three changes:
+
+- `segment_video_multi` now keeps every candidate timepoint it considered, used
+  or not, in a `candidates` list in `{video}_segments.json` -- frame, which of
+  the four tray corners proposed it, how strongly they agreed, and whether it
+  became a boundary. These were previously discarded, so when the chosen
+  boundaries were wrong nobody could see what the alternatives had been.
+- It also writes `needs_human`: its own account of why the boundaries want
+  checking. It is non-empty when boundaries were invented at the median cadence
+  to reach 21, when real detections were discarded to fit that count, when
+  boundaries were interpolated or fell back rather than being detected, when
+  reference tracking was not `good`, or when three or more detected candidates
+  went unused. Empty means the boundaries were found rather than forced.
+- The review gate routes any video with a non-empty `needs_human` to DEEP_REVIEW,
+  alongside the existing `segmentation_failed` route. `TriageStatus.clean` is
+  false while it is set, so such a video does not reach kinematics or the
+  database until a person has looked at the cuts.
+
+`mousereach-fix-segmentation` is the tool for that queue. It does segmentation
+and nothing else: it lists the candidate timepoints, lets you take or drop cuts
+and add one at the current frame, shows the segment lengths so a missing cut is
+visible as an over-long segment, and on save archives the original, records the
+algorithm's cuts alongside the corrected ones, stamps who corrected it, and
+clears `needs_human` so the video moves on.

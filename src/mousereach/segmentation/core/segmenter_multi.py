@@ -297,9 +297,20 @@ def segment_video_multi(dlc_path: Path,
             f"Consensus mode: SABL={len(sabl_cands)} != {config.n_expected}"
         )
 
-    # Safety net: guarantee exactly n_expected
+    # Safety net: guarantee exactly n_expected.
+    #
+    # This is the step that makes the output LOOK fine no matter what happened.
+    # Downstream sees 21 boundaries every single time, so the count has never
+    # been evidence that segmentation worked. Record what it had to do, so a
+    # forced answer can be told apart from a found one.
+    n_discarded = 0
+    n_invented = 0
     if len(boundaries) > config.n_expected:
+        n_discarded = len(boundaries) - config.n_expected
         boundaries = sorted(boundaries)[:config.n_expected]
+        anomalies.append(
+            f"safety_net: discarded {n_discarded} boundary(ies) beyond "
+            f"{config.n_expected}")
     elif len(boundaries) < config.n_expected:
         if len(boundaries) >= 2:
             med_int = float(np.median(np.diff(boundaries)))
@@ -308,6 +319,11 @@ def segment_video_multi(dlc_path: Path,
         while len(boundaries) < config.n_expected:
             boundaries.append(min(total_frames - 1,
                                   int(boundaries[-1] + med_int)))
+            n_invented += 1
+        anomalies.append(
+            f"safety_net: invented {n_invented} boundary(ies) at the median "
+            f"cadence to reach {config.n_expected} -- these mark no observed "
+            f"tray movement")
     boundaries = sorted(boundaries)
 
     # Phase 3.5: tray-motion gate (Signal 27).
@@ -350,6 +366,47 @@ def segment_video_multi(dlc_path: Path,
         boundary_methods.append(method)
         boundary_confidences.append(float(conf))
 
+    # Keep every candidate that was considered, whether or not it was chosen.
+    # These are the timepoints the video itself suggests a tray advance happened
+    # at, and they were being thrown away -- so when the chosen boundaries are
+    # wrong, nobody could see what the alternatives had been. A person fixing a
+    # segmentation wants exactly this list.
+    chosen = set(boundaries)
+    candidate_records = []
+    for m in (merged or []):
+        candidate_records.append({
+            "frame": int(m.frame),
+            "proposers": sorted(m.proposers),
+            "n_proposers": int(m.n_proposers),
+            "consensus_score": round(float(m.consensus_score), 4),
+            "used": any(abs(m.frame - b) <= config.merge_window for b in chosen),
+        })
+    n_unused = sum(1 for c in candidate_records if not c["used"])
+
+    # Say plainly whether this segmentation was found or forced. A video whose
+    # boundaries were invented, gated away, or fell back to an even grid should
+    # be looked at by a person rather than shipped as though it were measured.
+    needs_human = []
+    if n_invented:
+        needs_human.append(
+            f"{n_invented} boundary(ies) were invented to reach "
+            f"{config.n_expected}, marking no observed tray movement")
+    if n_discarded:
+        needs_human.append(
+            f"{n_discarded} detected boundary(ies) were discarded to fit "
+            f"{config.n_expected}")
+    n_not_detected = sum(1 for m in boundary_methods
+                         if m in ("interpolated", "fallback"))
+    if n_not_detected:
+        needs_human.append(
+            f"{n_not_detected} boundary(ies) were interpolated or fell back "
+            f"rather than being detected")
+    if ref_quality != "good":
+        needs_human.append(f"reference tracking quality is {ref_quality}")
+    if n_unused >= 3:
+        needs_human.append(
+            f"{n_unused} detected candidate timepoints were not used")
+
     diag = _diagnostics(
         dlc_path, total_frames, fps,
         box_center, boxl_std, boxr_std, ref_quality,
@@ -360,6 +417,8 @@ def segment_video_multi(dlc_path: Path,
         boundary_confidences=boundary_confidences,
         anomalies=anomalies,
     )
+    diag.candidates = candidate_records
+    diag.needs_human = needs_human
     return boundaries, diag
 
 

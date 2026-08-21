@@ -86,6 +86,14 @@ def evaluate_gate(
         return DECISION_CLEAN, "ground_truth_exhaustive", st
     if st.seg_failed:
         return DECISION_DEEP, "segmentation_failed", st
+    # The segmenter always emits exactly 21 boundaries, so a video whose
+    # boundaries were invented, discarded or interpolated to reach that count
+    # looks identical downstream to one where they were measured. When it says
+    # it had to force the answer, that is a video for a person to cut, not one
+    # to ship as though it were measured.
+    if st.seg_needs_human:
+        why = "; ".join(st.seg_needs_human[:3])
+        return DECISION_DEEP, "segmentation_needs_human: %s" % why, st
     if qc_verdict == "needs_review":
         return DECISION_DEEP, "qc_needs_review", st
     # GT-determined segments are resolved; so are segments a human addressed in a
