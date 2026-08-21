@@ -65,6 +65,17 @@ STAGE_OUTPUTS = [
 # A value that is present but means "nothing here".
 EMPTY = (None, "", [], {})
 
+# Values that are present, not empty, and still carry no information: a boolean
+# that is always False, a count that is always 0. Counting these as "populated"
+# is how a field can look healthy while being useless -- causal_reach is False on
+# every reach in the corpus and would otherwise audit as 100% present. What
+# matters is whether a field ever VARIES.
+NO_INFORMATION = (False, 0, 0.0)
+
+# How many distinct values to remember per field before giving up counting; we
+# only need to know "one" from "more than one".
+_DISTINCT_CAP = 5
+
 
 def items_of(doc: dict, level: str) -> List[dict]:
     """Pull the per-reach or per-segment records out of a stage output file.
@@ -87,8 +98,15 @@ def items_of(doc: dict, level: str) -> List[dict]:
 
 
 def tally(items: List[dict], present: Dict[str, int], populated: Dict[str, int],
-          total: Dict[str, int]) -> None:
-    """Count, per field, how often the key exists and how often it holds a value."""
+          total: Dict[str, int], informative: Dict[str, int] = None,
+          distinct: Dict[str, set] = None) -> None:
+    """Count, per field, how often the key exists, holds a value, and says anything.
+
+    "Populated" is not enough. A boolean that is always False is populated on
+    every row and tells you nothing. "Informative" excludes those, and the
+    distinct-value set catches the rest: a field with exactly one distinct value
+    across the whole corpus is either genuinely constant or never filled in.
+    """
     seen_keys = set()
     for it in items:
         seen_keys.update(it.keys())
@@ -99,6 +117,15 @@ def tally(items: List[dict], present: Dict[str, int], populated: Dict[str, int],
             present[k] += 1
             if v not in EMPTY:
                 populated[k] += 1
+                if informative is not None and not any(
+                        v is n or (type(v) is type(n) and v == n) for n in NO_INFORMATION):
+                    informative[k] += 1
+            if distinct is not None and len(distinct[k]) < _DISTINCT_CAP:
+                try:
+                    distinct[k].add(v if isinstance(v, (str, int, float, bool, type(None)))
+                                    else "<complex>")
+                except TypeError:
+                    distinct[k].add("<unhashable>")
 
 
 def scan_files(root: Path, limit: Optional[int] = None,
@@ -108,6 +135,8 @@ def scan_files(root: Path, limit: Optional[int] = None,
     for stage, suffix, level in STAGE_OUTPUTS:
         present: Dict[str, int] = defaultdict(int)
         populated: Dict[str, int] = defaultdict(int)
+        informative: Dict[str, int] = defaultdict(int)
+        distinct: Dict[str, set] = defaultdict(set)
         total: Dict[str, int] = defaultdict(int)
         n_files = 0
         paths = sorted(root.rglob("*" + suffix))
@@ -122,11 +151,14 @@ def scan_files(root: Path, limit: Optional[int] = None,
             except Exception:
                 continue
             n_files += 1
-            tally(items_of(doc, level), present, populated, total)
+            tally(items_of(doc, level), present, populated, total,
+                  informative, distinct)
         result[stage] = {
             "suffix": suffix, "level": level, "files": n_files,
             "fields": {k: {"present": present[k], "populated": populated[k],
-                           "of": total[k]} for k in present},
+                           "informative": informative[k],
+                           "distinct": len(distinct[k]), "of": total[k]}
+                       for k in present},
         }
     return result
 
@@ -143,29 +175,48 @@ def scan_database(snapshot: Path, only: Optional[set] = None) -> dict:
         rd = rd[rd.video_name.isin(only)]
     out = {}
     for c in rd.columns:
-        s = rd[c]
-        nn = int(s.notna().sum())
-        if nn and s.dtype == object:
-            nn = int((s.notna() & (s.astype(str) != "")).sum())
-        out[c] = {"populated": nn, "of": int(len(rd)),
-                  "distinct": int(s.nunique(dropna=True))}
+        col = rd[c]
+        nn = int(col.notna().sum())
+        if nn and col.dtype == object:
+            nn = int((col.notna() & (col.astype(str) != "")).sum())
+        # Informative = present AND not one of the values that mean "nothing
+        # here" even though they are not null. A column of all False or all 0
+        # is fully populated and completely uninformative.
+        try:
+            inf = int((col.notna() & (col != 0) & (col != False)).sum())
+        except Exception:
+            inf = nn
+        out[c] = {"populated": nn, "informative": inf, "of": int(len(rd)),
+                  "distinct": int(col.nunique(dropna=True))}
     return out
 
 
 def classify(field: str, producers: List[tuple], in_features: Optional[dict],
              in_db: Optional[dict]) -> tuple:
     """Decide what happened to one field. Returns (verdict, explanation)."""
-    made = [(stage, d) for stage, d in producers if d["populated"] > 0]
-    declared = [(stage, d) for stage, d in producers if d["populated"] == 0]
+    def says_something(d):
+        """Does this field ever carry information, rather than merely exist?"""
+        if not d:
+            return False
+        if d.get("informative") is not None:
+            return d["informative"] > 0
+        return d["populated"] > 0
 
-    feat_ok = bool(in_features and in_features["populated"] > 0)
-    db_ok = bool(in_db and in_db["populated"] > 0)
+    made = [(stage, d) for stage, d in producers if says_something(d)]
+    declared = [(stage, d) for stage, d in producers if not says_something(d)]
+
+    feat_ok = says_something(in_features)
+    db_ok = says_something(in_db)
     known_to_db = in_db is not None
 
     if not made and declared:
         where = ", ".join(s for s, _ in declared)
-        return ("NEVER COMPUTED",
-                "the key is written by %s and left empty on every item" % where)
+        # Distinguish "the key is absent/null" from "the key is there and always
+        # says the same nothing" -- they need different fixes.
+        always_same = any(d.get("populated", 0) > 0 for _, d in declared)
+        how = ("written by %s and always carrying the same empty value "
+               "(False / 0)" % where) if always_same else               ("written by %s and left null on every item" % where)
+        return ("NEVER COMPUTED", "the key is " + how)
 
     if not made and not declared:
         # No upstream stage carries it. If the features file has it, kinematics
@@ -231,9 +282,13 @@ def audit(root: Path = ANALYZED, snapshot: Path = SNAPSHOT,
 
 
 def _pct(d: Optional[dict]) -> str:
+    """Percentage of items where the field says something, not merely exists."""
     if not d or not d.get("of"):
         return "    -"
-    return "%5.1f%%" % (d["populated"] / d["of"] * 100)
+    n = d.get("informative")
+    if n is None:
+        n = d.get("populated", 0)
+    return "%5.1f%%" % (n / d["of"] * 100)
 
 
 def main(argv=None) -> int:

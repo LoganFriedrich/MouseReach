@@ -175,6 +175,45 @@ def archive_video(
     # Create destination if needed
     dest.mkdir(parents=True, exist_ok=True)
 
+    # Anything already at the destination is the PREVIOUS generation's results,
+    # and the move below would replace it silently -- shutil.move overwrites. On
+    # a reprocess that destroyed the earlier segments, reaches, outcomes,
+    # assignments, manifest and kinematics with no copy kept, so there was no way
+    # afterwards to see what an earlier model produced or to reproduce a figure
+    # made from it.
+    #
+    # supersede_video_outputs sweeps that generation into the versioned Archive
+    # first, checksum-verified, reading the OLD manifest sitting there to decide
+    # which model generation and algorithm stack it belonged to. It deliberately
+    # leaves the video and any ground-truth or human-review file in place, so a
+    # review still travels with its video.
+    #
+    # Failing to archive must not cost the results: if the sweep reports failures
+    # we stop rather than move new files on top of the old ones.
+    superseded = None
+    if any(dest.glob(f"{video_id}*")):
+        try:
+            from mousereach.archive.supersede import supersede_video_outputs
+            superseded = supersede_video_outputs(video_id, dest)
+            if superseded.get("failed"):
+                result["error"] = (
+                    "refusing to archive: could not preserve the previous "
+                    "generation of %s (%s)"
+                    % (video_id, ", ".join(superseded["failed"])))
+                if verbose:
+                    print(f"  {result['error']}")
+                return result
+            n = len(superseded.get("algo", [])) + len(superseded.get("pose", []))
+            if n and verbose:
+                print(f"  Superseded {n} earlier file(s) -> "
+                      f"{superseded.get('generation')}/{superseded.get('stack')}")
+        except Exception as e:
+            result["error"] = f"refusing to archive: superseding failed ({e})"
+            if verbose:
+                print(f"  {result['error']}")
+            return result
+    result["superseded"] = superseded
+
     # Move files
     moved = []
     for f in files:
