@@ -2556,6 +2556,13 @@ class CausalReviewWidget(QWidget):
         try:
             from mousereach.review.queue_index import QueueIndex
             paths = [p for p in QueueIndex().all_paths() if p.is_dir()]
+            # The index is ONE global list -- it tracks whichever folder the
+            # pipeline pushes into (the triage queue). Trusting it blindly makes
+            # --pending-dir a no-op and silently hands back bundles from a
+            # different queue, so only use it when it describes the queue we
+            # were actually pointed at.
+            want = Path(pending_dir).resolve()
+            paths = [q for q in paths if q.parent.resolve() == want]
             if paths:
                 return paths
         except Exception:
@@ -2570,10 +2577,17 @@ class CausalReviewWidget(QWidget):
         targeted question ("check these 160 segments") gets asked without
         editing anyone's data to make the tool walk them.
         """
-        paths = self._review_pool_paths_unfiltered(pending_dir, root)
-        if not self._worklist:
-            return paths
-        return [q for q in paths if Path(q).name in self._worklist]
+        if self._worklist:
+            # Build straight from the worklist rather than filtering the
+            # needs-review pool. That pool drops anything already reviewed or
+            # ground-truthed, which is exactly backwards here: naming a video on
+            # a worklist means "I want another look at these segments", and most
+            # of them have been reviewed once already.
+            pending = Path(pending_dir)
+            pool = [pending / stem for stem in sorted(self._worklist)]
+            return [b for b in pool
+                    if b.is_dir() and bundle_manifest_path(b).exists()]
+        return self._review_pool_paths_unfiltered(pending_dir, root)
 
     def load_worklist(self, path: Path) -> int:
         """Restrict this session to specific segments of specific videos.
