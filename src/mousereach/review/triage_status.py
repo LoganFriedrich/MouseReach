@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 # Touched outcomes: a real reach moved/removed the pellet, so a causal reach
 # MUST be committed. A touched segment with no committed causal reach is an
