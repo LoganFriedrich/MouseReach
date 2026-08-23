@@ -151,7 +151,9 @@ class TriageStatus:
     @property
     def clean(self) -> bool:
         """Ready for kinematics: segmentation sound AND nothing left unresolved."""
-        return (not self.seg_failed) and (not self.seg_needs_human)             and self.fully_resolved
+        # seg_needs_human is deliberately NOT considered here -- see the note in
+        # watcher/review_gate.py. It is recorded, not acted on.
+        return (not self.seg_failed) and self.fully_resolved
 
 
 def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:

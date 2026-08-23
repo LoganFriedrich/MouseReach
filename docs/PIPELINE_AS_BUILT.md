@@ -350,10 +350,14 @@ Three changes:
   boundaries were interpolated or fell back rather than being detected, when
   reference tracking was not `good`, or when three or more detected candidates
   went unused. Empty means the boundaries were found rather than forced.
-- The review gate routes any video with a non-empty `needs_human` to DEEP_REVIEW,
-  alongside the existing `segmentation_failed` route. `TriageStatus.clean` is
-  false while it is set, so such a video does not reach kinematics or the
-  database until a person has looked at the cuts.
+- `needs_human` is RECORDED ONLY. Nothing routes on it. It was briefly wired
+  into the review gate and was switched off the same day: the rule fired on
+  about 10% of ordinary videos, and checked against the three videos a human had
+  actually judged mis-segmented it caught one. Two of those three had textbook
+  segmentation output, because they were offset rather than malformed, and
+  nothing measurable inside a single video can see that. It never routed a
+  video before being disabled. The established route remains a person noticing
+  during review and pressing "Flag Session", which works and is in use.
 
 `mousereach-fix-segmentation` is the tool for that queue. It does segmentation
 and nothing else: it lists the candidate timepoints, lets you take or drop cuts

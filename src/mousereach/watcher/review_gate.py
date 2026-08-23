@@ -86,14 +86,24 @@ def evaluate_gate(
         return DECISION_CLEAN, "ground_truth_exhaustive", st
     if st.seg_failed:
         return DECISION_DEEP, "segmentation_failed", st
-    # The segmenter always emits exactly 21 boundaries, so a video whose
-    # boundaries were invented, discarded or interpolated to reach that count
-    # looks identical downstream to one where they were measured. When it says
-    # it had to force the answer, that is a video for a person to cut, not one
-    # to ship as though it were measured.
-    if st.seg_needs_human:
-        why = "; ".join(st.seg_needs_human[:3])
-        return DECISION_DEEP, "segmentation_needs_human: %s" % why, st
+    # NOT routing on the segmenter's needs_human verdict. It was briefly wired
+    # up here and is deliberately switched off.
+    #
+    # The rule fired on about 10% of ordinary videos, and there was never
+    # evidence that was the right 10%. Checked against the three videos a human
+    # had actually judged mis-segmented, it caught one. Two of the three had
+    # textbook segmentation output -- even spacing, every boundary backed by a
+    # real detection -- because they were offset rather than malformed, and no
+    # measurement taken inside a single video can see that.
+    #
+    # The established route for this is a person noticing during review and
+    # pressing "Flag Session", which works and has been used. A heuristic that
+    # fills the deep-review queue with videos nobody has reason to doubt is
+    # worse than no heuristic.
+    #
+    # The segmenter still RECORDS needs_human in its output; nothing acts on it.
+    # If it is ever routed on again, validate it against videos a human has
+    # judged first, not against how many videos it routes.
     if qc_verdict == "needs_review":
         return DECISION_DEEP, "qc_needs_review", st
     # GT-determined segments are resolved; so are segments a human addressed in a
