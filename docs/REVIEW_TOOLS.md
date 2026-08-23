@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/review/`, plus the code outside it that decides when a person is asked and what happens to the answer — `src/mousereach/watcher/review_gate.py`, `src/mousereach/watcher/review_return.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/kinematics/core/feature_extractor.py`, `src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/triage/gt_resolve.py`, `src/mousereach/config.py`, `src/mousereach/launcher.py`, `src/mousereach/napari.yaml`, `pyproject.toml`, `scripts/backfill_causal_review_spans.py`.
 
-Verified against: 4c54e46 (2026-08-23)
+Verified against: b65fcf0 (2026-08-23)
 
 ---
 
@@ -474,3 +474,13 @@ opening the code yourself.** Everything not listed survived two passes.
 - **Verified against: 4c54e46 (master, 2026-08-23), working tree clean.**
   - disputed because: HEAD is 4c54e46 on branch master, but the working tree is not clean. Two files are modified. Neither is under any path this document describes, so no code claim is affected and every citation still resolves at this commit; the header's own assertion is simply false as written.
 
+---
+
+## Update 2026-08-23: frame-only causal picks are honoured
+
+Reviews written before the causal pick carried a reach id stored only the
+frames. The truth resolver now matches those frames to the reach they name
+(best overlap >=50%, within the reviewed segment), so those human answers reach
+the data instead of being silently dropped. Picks that match no detected reach
+-- hand-drawn reaches -- remain unresolvable by design: there is no features
+row for a reach the detector never emitted.

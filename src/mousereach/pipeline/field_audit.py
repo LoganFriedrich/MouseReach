@@ -307,7 +307,7 @@ VERDICT_NOTES = {
 }
 
 
-def to_markdown(res: dict, corpus: str) -> str:
+def to_markdown(res: dict, corpus: str, _doc_dir=None) -> str:
     """Render the audit as the document that goes in docs/.
 
     Generated rather than written by hand, for the same reason the figures'
@@ -320,13 +320,21 @@ def to_markdown(res: dict, corpus: str) -> str:
         by[f["verdict"]].append((field, f))
 
     import subprocess as _sp
-    try:
-        _sha = _sp.run(["git", "rev-parse", "--short", "HEAD"],
-                       capture_output=True, text=True, check=False).stdout.strip() or "unknown"
-        _when = _sp.run(["git", "log", "-1", "--format=%ad", "--date=short"],
-                        capture_output=True, text=True, check=False).stdout.strip()
-    except Exception:
-        _sha, _when = "unknown", ""
+
+    def _git(args, cwd=None):
+        try:
+            return _sp.run(["git", *args], cwd=cwd, capture_output=True,
+                           text=True, check=False).stdout.strip()
+        except Exception:
+            return ""
+
+    # Stamp the repository the DOCUMENT lives in, not whatever directory this
+    # happens to be run from. Run from mousedb, the old code stamped mousedb's
+    # commit -- so regenerating after a MouseReach change produced a
+    # byte-identical file and the documentation check read it as never updated.
+    _doc_repo = str(_doc_dir) if _doc_dir else None
+    _sha = _git(["rev-parse", "--short", "HEAD"], cwd=_doc_repo) or "unknown"
+    _when = _git(["log", "-1", "--format=%ad", "--date=short"], cwd=_doc_repo)
 
     L = ["# What the pipeline actually produces, field by field", "",
          # The stamp the documentation check reads. Emitted here because a
@@ -428,7 +436,9 @@ def main(argv=None) -> int:
         corpus = ("Read over **%d videos** that are finished and current at every "
                   "stage. The database side comes from the parquet snapshot, never "
                   "from connectome.db while a watcher is running." % n_files)
-        args.markdown.write_text(to_markdown(res, corpus), encoding="utf-8")
+        args.markdown.write_text(
+            to_markdown(res, corpus, _doc_dir=Path(args.markdown).resolve().parent),
+            encoding="utf-8")
         print("wrote %s" % args.markdown)
     return 0
 

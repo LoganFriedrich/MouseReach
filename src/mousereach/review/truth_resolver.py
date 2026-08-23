@@ -117,9 +117,31 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         if ho is None:
             continue
         hc = human.get("causal_reach") or {}
+        cid = hc.get("reach_id")
+        # Older reviews store the human's causal pick as FRAMES only -- the
+        # durable fact -- with no reach_id. The id-based match below then got
+        # None and the human's answer was silently dropped: 18 picks on one
+        # fully-reviewed video yielded zero causal reaches downstream. Resolve
+        # the frames to the reach they name, exactly as the reviewer meant.
+        if cid is None and hc.get("start") is not None and current_segments:
+            _hs, _he = int(hc["start"]), int(hc.get("end", hc["start"]))
+            best, best_ov = None, 0
+            for _seg in current_segments:
+                if int(_seg.get("segment_num", -1)) != int(sn):
+                    continue
+                for _r in (_seg.get("reaches") or []):
+                    _rs, _re = _r.get("start_frame"), _r.get("end_frame")
+                    if _rs is None or _re is None:
+                        continue
+                    ov = min(_he, int(_re)) - max(_hs, int(_rs)) + 1
+                    if ov > best_ov:
+                        best, best_ov = _r.get("reach_id"), ov
+            span = max(1, _he - _hs + 1)
+            if best is not None and best_ov >= 0.5 * span:
+                cid = best
         out[int(sn)] = {
             "outcome": ho,
-            "causal_reach_id": hc.get("reach_id") if ho in _TOUCHED_OUTCOMES else None,
+            "causal_reach_id": cid if ho in _TOUCHED_OUTCOMES else None,
             "abnormal_ranges": ans.get("abnormal_ranges"),
             "reviewer": (doc or {}).get("reviewer"),
             "source": source,

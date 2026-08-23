@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/outcomes/v6_cascade/` (all files), `src/mousereach/outcomes/core/` (`batch.py`, `pellet_outcome.py`, `triage.py`, `advance.py`, `geometry.py`, `__init__.py`), `src/mousereach/outcomes/cli.py`, `src/mousereach/outcomes/_review.py`, `src/mousereach/lib/pillar_geometry.py`
 
-Verified against: 4c54e46. Every file cited here is byte-identical between 61d98b9 and 4c54e46 (`git diff 61d98b9 4c54e46` over these paths is empty).
+Verified against: b65fcf0 (2026-08-23)
 
 ---
 
@@ -456,3 +456,11 @@ opening the code yourself.** Everything not listed survived two passes.
 - **Section 4, parenthetical: "grep -rn \"reach_detector_v8\\|ReachDetectorV8\" src/ returns only the file itself and one docstring mention."**
   - disputed because: That grep returns five hits, not four: three inside reach_detector_v8.py itself, the docstring mention in span_to_reaches.py:279, and a fifth in src/mousereach/improvement/reach_detection/README.md:13. The substantive claim the parenthetical supports -- that nothing imports the class -- is correct; only the stated grep result is incomplete.
 
+---
+
+## Update 2026-08-23
+
+Watcher-side only, no cascade behaviour changed: failures around the cascade's
+neighbours (assignment after it, feature extraction and database sync below it)
+now write `failed` rows to the step audit table instead of vanishing into
+warnings, so a run that half-happened is countable.

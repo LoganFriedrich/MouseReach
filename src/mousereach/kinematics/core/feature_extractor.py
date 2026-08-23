@@ -169,7 +169,15 @@ class VideoFeatures:
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.0.0"  # 2.0: extended kinematic feature set (nose-relative,
+    VERSION = "2.1.0"  # 2.1: the algorithm's causal reach finally reaches the
+                       # data. Reach assignment (algo-4) writes is_causal per
+                       # reach into {video}_reach_assignments.json; until now
+                       # nothing loaded that file, so causal_reach was False on
+                       # every algorithm-sourced row (0 of 129,997) while the
+                       # answers sat on disk (12,333 of them). Human review and
+                       # ground truth remain strictly authoritative -- see
+                       # extract().
+                       # 2.0: extended kinematic feature set (nose-relative,
                        # slit-anchored, per-paw trajectories, paw shape proxies,
                        # per-paw visibility profile, tray contact). See
                        # REACH_KINEMATIC_DATA_DICTIONARY.md.
@@ -185,6 +193,7 @@ class FeatureExtractor:
         reaches_path: Path,
         outcomes_path: Path,
         review_path: Optional[Path] = None,
+        assignments_path: Optional[Path] = None,
     ) -> VideoFeatures:
         """
         Extract features for all reaches in a video.
@@ -207,6 +216,31 @@ class FeatureExtractor:
         # Load outcomes
         with open(outcomes_path) as f:
             outcomes_data = json.load(f)
+
+        # Load reach assignment (algo-4), which names the causal reach per
+        # touched segment. Auto-discovered beside the outcomes file so every
+        # caller gets it without being changed; pass assignments_path to
+        # override. Its absence is legal -- videos processed before algo-4
+        # joined the pipeline have no such file.
+        if assignments_path is None:
+            _cand = Path(outcomes_path).parent / (
+                Path(outcomes_path).name.replace('_pellet_outcomes.json',
+                                                 '_reach_assignments.json'))
+            assignments_path = _cand if _cand.is_file() else None
+        assignment_by_segment: dict = {}
+        if assignments_path is not None and Path(assignments_path).is_file():
+            try:
+                with open(assignments_path) as f:
+                    _asn = json.load(f)
+                for _r in _asn.get('reaches', []):
+                    if _r.get('is_causal') and _r.get('segment_num') is not None:
+                        assignment_by_segment[int(_r['segment_num'])] = {
+                            'reach_id': _r.get('reach_id'),
+                            'segment_ifr': _r.get('segment_ifr'),
+                        }
+            except Exception as _e:
+                print(f"[feature_extractor] assignment file unreadable, "
+                      f"algo causality unavailable: {_e}")
 
         # HUMAN-TRUTH LAYERING: resolve every element by
         #     GT > causal review > triage review > algo
@@ -244,6 +278,33 @@ class FeatureExtractor:
 
         # Extract features for each segment
         segment_features = []
+
+        # Merge the algorithm's causal attribution into the segments that no
+        # higher authority has resolved. Strictly ordered:
+        #
+        #   1. A segment carrying a 'causal_reach_id' KEY is owned by a human
+        #      review, ground truth, or the pre-v6 detector (which attributed
+        #      causality itself). It is left alone. The test is key-presence,
+        #      not value: a reviewer marking a segment untouched writes
+        #      causal_reach_id = None, which MEANS "no reach did this" and must
+        #      not be overridden by the algorithm's opinion.
+        #   2. Everything else gets algo-4's answer, if it has one.
+        #
+        # This runs AFTER the human-truth layering above, which is what makes
+        # order 1 hold. On human-owned segments the algorithm's original pick is
+        # still recorded under algo_causal_reach_id, so an override remains
+        # visible as an override.
+        for _seg in outcomes_data.get('segments', []):
+            _asn = assignment_by_segment.get(int(_seg.get('segment_num', -1)))
+            if _asn is None:
+                continue
+            if 'causal_reach_id' in _seg:
+                if _seg.get('algo_causal_reach_id') is None:
+                    _seg['algo_causal_reach_id'] = _asn['reach_id']
+                continue
+            _seg['causal_reach_id'] = _asn['reach_id']
+            if _seg.get('interaction_frame') is None:
+                _seg['interaction_frame'] = _asn.get('segment_ifr')
 
         for seg_data, outcome_data in zip(reaches_data['segments'], outcomes_data['segments']):
             seg_num = seg_data['segment_num']

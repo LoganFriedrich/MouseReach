@@ -1,7 +1,7 @@
 # How the MouseReach pipeline actually works
 
 Describes: src/mousereach/watcher, src/mousereach/archive, src/mousereach/config.py, src/mousereach/pipeline/
-Verified against: 4c54e46 (2026-08-23)
+Verified against: b65fcf0 (2026-08-23)
 
 Written 2026-08-21 by reading the code, not the documentation. Each section
 was traced against the source by a separate reviewer, and every statement
@@ -365,3 +365,16 @@ and add one at the current frame, shows the segment lengths so a missing cut is
 visible as an over-long segment, and on save archives the original, records the
 algorithm's cuts alongside the corrected ones, stamps who corrected it, and
 clears `needs_human` so the video moves on.
+
+---
+
+## Update 2026-08-23: every watcher command reads the same database
+
+The daemon honoured the node's `db_path` config override; the seven other
+commands -- status, reprocess, quarantine, process-animal, version-check,
+crystallize, uncrystallize -- hardcoded the fallback and, on this machine,
+silently read a database last written in February. Crystallize, the brake that
+protects published videos from reprocessing, would have found no videos and
+protected nothing. All eight sites now resolve through one helper that loads
+the node config and prints the path it chose, so a wrong database is loud.
+Verified: the commands now see 1,330 videos instead of February's 282.

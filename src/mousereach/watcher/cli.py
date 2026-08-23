@@ -25,6 +25,32 @@ logger = logging.getLogger(__name__)
 # LOGGING SETUP
 # =============================================================================
 
+
+def _resolve_db_path():
+    """The ONE way any command in this file picks the watcher database.
+
+    The daemon honoured the node's config override (db_path in
+    ~/.mousereach/config.json, set because SQLite over a network share loses
+    writes); every other command hardcoded the fallback. On this machine that
+    meant seven commands -- status, reprocess, quarantine, process-animal,
+    version-check, crystallize, uncrystallize -- silently read a database last
+    written in February while the daemon wrote to a different file.
+    Crystallize, the brake that protects published videos from reprocessing,
+    would therefore find no videos and protect nothing.
+
+    Prints the resolved path so a wrong database is loud instead of silent.
+    """
+    from mousereach.config import WatcherConfig, require_processing_root
+    try:
+        cfg = WatcherConfig.load()
+        override = cfg.db_path
+    except Exception:
+        override = None
+    path = override or (require_processing_root() / "watcher.db")
+    print(f"[watcher db] {path}")
+    return path
+
+
 def setup_logging(log_dir: Path, verbose: bool = False, quiet: bool = False):
     """
     Setup logging to console and rotating file.
@@ -280,7 +306,7 @@ def main_watch():
     # Create database
     try:
         # Use local DB path if configured (avoids SQLite-over-SMB issues)
-        db_path = config.db_path or (require_processing_root() / "watcher.db")
+        db_path = _resolve_db_path()
         db = WatcherDB(db_path)
         logger.info(f"Database initialized at {db_path}")
     except Exception as e:
@@ -389,7 +415,7 @@ def main_status():
         from mousereach.config import require_processing_root
         from mousereach.watcher.db import WatcherDB
 
-        db_path = require_processing_root() / "watcher.db"
+        db_path = _resolve_db_path()
         if not db_path.exists():
             print("ERROR: Watcher database not found. Run 'mousereach-watch' first.", file=sys.stderr)
             sys.exit(1)
@@ -578,7 +604,7 @@ def main_reprocess():
         from mousereach.config import require_processing_root
         from mousereach.watcher.db import WatcherDB
 
-        db_path = require_processing_root() / "watcher.db"
+        db_path = _resolve_db_path()
         if not db_path.exists():
             print("ERROR: Watcher database not found. Run 'mousereach-watch' first.", file=sys.stderr)
             sys.exit(1)
@@ -677,7 +703,7 @@ def main_quarantine():
         from mousereach.config import require_processing_root, WatcherConfig
         from mousereach.watcher.db import WatcherDB
 
-        db_path = require_processing_root() / "watcher.db"
+        db_path = _resolve_db_path()
         if not db_path.exists():
             print("ERROR: Watcher database not found. Run 'mousereach-watch' first.", file=sys.stderr)
             sys.exit(1)
@@ -1030,7 +1056,7 @@ def main_process_animal():
         sys.exit(0)
 
     # Initialize database
-    db_path = require_processing_root() / "watcher.db"
+    db_path = _resolve_db_path()
     db = WatcherDB(db_path)
 
     dlc_queue = Paths.DLC_QUEUE
@@ -1259,7 +1285,7 @@ def main_version_check():
 
     # Load database
     try:
-        db_path = require_processing_root() / "watcher.db"
+        db_path = _resolve_db_path()
         if not db_path.exists():
             print("ERROR: Watcher database not found. Run 'mousereach-watch' first.", file=sys.stderr)
             sys.exit(1)
@@ -1338,7 +1364,7 @@ def main_crystallize():
     from mousereach.watcher.db import WatcherDB
 
     try:
-        db_path = require_processing_root() / "watcher.db"
+        db_path = _resolve_db_path()
         if not db_path.exists():
             print("ERROR: Watcher database not found.", file=sys.stderr)
             sys.exit(1)
@@ -1434,7 +1460,7 @@ def main_uncrystallize():
     from mousereach.pipeline.versions import uncrystallize_videos
 
     try:
-        db_path = require_processing_root() / "watcher.db"
+        db_path = _resolve_db_path()
         db = WatcherDB(db_path)
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)

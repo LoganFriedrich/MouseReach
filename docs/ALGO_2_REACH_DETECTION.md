@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mousereach/reach/cli.py`, `src/mousereach/reach/review_widget.py`, `compute_reach_apex` in `src/mousereach/lib/causal_attribution.py`, and the three places that call reach detection (`src/mousereach/reach/core/batch.py`, `src/mousereach/pipeline/core.py`, `src/mousereach/review/staging.py`)
 
-Verified against: 4c54e46 (2026-08-23, branch `master`). Every file described here is unchanged from 61d98b9 — `git diff 61d98b9 HEAD` over these paths is empty — so the line numbers hold for both commits.
+Verified against: b65fcf0 (2026-08-23)
 
 Counts in this document were measured on the live working folder `C:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing` (947 reach files stamped `8.1.0`, 179,220 reaches) unless another source is named.
 
@@ -339,3 +339,12 @@ opening the code yourself.** Everything not listed survived two passes.
 - citation could not be resolved: `pyproject.toml:106 - cited for the `mousereach-review-tool` command name (twice: 'Command names come from pyproject.toml:106...' and 'that name has pointed at t`
 - citation could not be resolved: `review/__init__.py:116-119 - cited for the base.py re-export. The import statement spans :117-120; :116 is blank. Separately, the bullet lists AlgoGTReviewMixin`
 
+---
+
+## Update 2026-08-23
+
+No detector behaviour changed. Downstream of this document's subject: the
+kinematics extractor (2.1.0) now consumes the reach-assignment file, so the
+per-reach `causal_reach` field it emits is populated by the algorithm rather
+than only by human review -- see KINEMATICS_FIELDS.md. Watcher failure logging
+around extraction and sync is now countable.

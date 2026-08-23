@@ -1079,6 +1079,12 @@ class DLCOrchestrator(BaseOrchestrator):
                 try:
                     assign_reaches_for_video(processing_dir, video_id, dlc_path)
                 except Exception as e:
+                    # Countable, like every other stage. Without this row the only trace of a
+                    # failure was a started/completed count mismatch -- and a failed assignment
+                    # writes no file, which silently switches off the gate's "touched pellet
+                    # with no credited reach" hold. State deliberately NOT changed here; see
+                    # docs/UNFINISHED.md before making this fail-closed.
+                    self.db.log_step(video_id, 'assignment', 'failed', message=str(e))
                     logger.warning(f"Assignment (algo-4) failed for {video_id}: {e}")
 
             # Generate provenance manifest (travels with the bundle if held)
@@ -1165,10 +1171,17 @@ class DLCOrchestrator(BaseOrchestrator):
 
                         try:
                             from mousereach.sync.database import sync_file_to_database
-                            sync_file_to_database(features_path)
+                            if sync_file_to_database(features_path):
+                                self.db.log_step(video_id, 'db_sync', 'completed')
+                            else:
+                                self.db.log_step(video_id, 'db_sync', 'failed',
+                                                 message="results did not reach connectome.db")
+                                logger.warning(f"Database sync DID NOT HAPPEN for {video_id}")
                         except Exception as e:
+                            self.db.log_step(video_id, 'db_sync', 'failed', message=str(e))
                             logger.warning(f"Database sync failed for {video_id}: {e}")
                     except Exception as e:
+                        self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e))
                         logger.warning(f"Feature extraction failed for {video_id}: {e}")
 
             self.db.update_state(video_id, 'processed')
@@ -2013,6 +2026,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 self.db.log_step(video_id, 'assignment', 'completed',
                                  duration=time.time() - step_start)
             except Exception as e:
+                # Countable, like every other stage. Without this row the only trace of a
+                # failure was a started/completed count mismatch -- and a failed assignment
+                # writes no file, which silently switches off the gate's "touched pellet
+                # with no credited reach" hold. State deliberately NOT changed here; see
+                # docs/UNFINISHED.md before making this fail-closed.
+                self.db.log_step(video_id, 'assignment', 'failed', message=str(e))
                 logger.warning(f"Assignment (algo-4) failed for {video_id}: {e}")
 
         # --- Provenance manifest (travels with the bundle if the video is held) ---
@@ -2127,8 +2146,18 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             self.db.log_step(video_id, 'db_sync', 'completed', message="Synced to connectome.db")
                             logger.info(f"Database sync complete: {video_id}")
                         else:
-                            logger.debug(f"Database sync skipped for {video_id} (subject not in DB or DB unavailable)")
+                            # A False return means this video's results are NOT
+                            # in connectome.db. At debug level that was
+                            # invisible: the audit table showed 65 sync
+                            # successes against 1229 completed extractions
+                            # before anyone noticed.
+                            self.db.log_step(video_id, 'db_sync', 'failed',
+                                             message="results did not reach connectome.db "
+                                                     "(subject unknown or DB unavailable)")
+                            logger.warning(f"Database sync DID NOT HAPPEN for {video_id} "
+                                           f"(subject not in DB or DB unavailable)")
                     except Exception as e:
+                        self.db.log_step(video_id, 'db_sync', 'failed', message=str(e))
                         logger.warning(f"Database sync failed for {video_id}: {e}")
 
                 except Exception as e:

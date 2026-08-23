@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/sync/` (`database.py`, `watcher.py`, `cli.py`, `__init__.py`, `AGENTS.md`), the seven places in the pipeline that call it, and `src/mousereach/pipeline/manifest.py` for the values it copies into the provenance columns.
 
-Verified against: 4c54e46 (2026-08-23)
+Verified against: b65fcf0 (2026-08-23)
 
 ---
 
@@ -359,3 +359,14 @@ opening the code yourself.** Everything not listed survived two passes.
   - disputed because: The formula is not applied to the raw per-frame SABL/SABR positions. `compute_pillar_geometry_series` first smooths both corners with a 3-frame centered moving average by default, and every cascade stage calls it with that default. So no stage -- including 1 and 2 -- works from "raw positions", and the described geometry recipe is missing a step that changes the numbers.
 - citation could not be resolved: ``core/pellet_outcome.py:135` for the `causal_reach_frame` field -- line 135 is blank. The field is declared at line 134 (`causal_reach_frame: Optional[int] = No`
 
+---
+
+## Update 2026-08-23: a sync that does not happen is now loud
+
+`sync_file_to_database` returning False -- the video's results did NOT reach
+connectome.db -- was logged at debug level and treated as a normal skip; the
+audit table showed 65 successes against 1,229 completed extractions before
+anyone noticed. Both watcher paths now write a `db_sync` `failed` row to the
+step audit table and log a warning naming the video. The DLC-machine local
+path, which never even checked the return value, checks it now. Feature
+extraction failures on that path also write a `failed` audit row.

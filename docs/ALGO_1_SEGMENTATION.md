@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/segmentation/` (all of it), plus the places outside it that run segmentation or read its output: `src/mousereach/pipeline/core.py`, `src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/watcher/review_gate.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/fix_segmentation_widget.py`, `scripts/backfill_segmentation_candidates.py`
 
-Verified against: 4c54e46 (2026-08-23). Working tree clean apart from an unrelated draft document.
+Verified against: b65fcf0 (2026-08-23)
 
 ---
 
@@ -477,3 +477,12 @@ opening the code yourself.** Everything not listed survived two passes.
 - citation could not be resolved: `segmentation/core/triage.py:438-443, :445-450 and :404 - these lines exist and their text matches the claims, but they are inside classify_segments_graduated, w`
 - citation could not be resolved: `reach/v8/features.py:44-53 (minor) - cited for the 18 tracked points. Line 44 is blank; the comment is at 45 and the BODYPARTS list runs 46-54.`
 
+---
+
+## Update 2026-08-23: the review widget compares against the right version
+
+The napari boundary-review widget imported segmenter_robust's stale constant as
+"the current version", so every correctly stamped file was flagged OUTDATED
+against a version older than itself, and the warning told the user to run
+`batch_segment.py`, which does not exist. It now imports the constant from the
+segmenter that runs and names the real command.

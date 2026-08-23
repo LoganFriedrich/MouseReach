@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/assignment/` (`run.py`, `cli.py`, `v1/assign.py`, `v2/assign.py`, `v2/triage_reduction.py`), plus the callers that write and read its output file (`src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/triage_queue.py`, `src/mousereach/review/qc_pool.py`, `src/mousereach/review/queue_index.py`, `src/mousereach/review/causal_review_widget.py`, `src/mousereach/pipeline/manifest.py`, `src/mousereach/archive/supersede.py`)
 
-Verified against: 4c54e46 (2026-08-23)
+Verified against: b65fcf0 (2026-08-23)
 
 ---
 
@@ -300,3 +300,17 @@ opening the code yourself.** Everything not listed survived two passes.
 - **"**`outcome_known_frame` is merged and then never read by v2** — grep it in `v2/assign.py` and there are no hits."**
   - disputed because: The bolded claim is right — nothing in the executable code reads it — but the verification instruction handed to the reader is wrong. A grep returns one hit. A reader who follows the instruction, gets a hit, and cannot immediately tell it is a docstring will lose confidence in the whole document. It should say the only mention is in the function's docstring at line 230, and that no code line reads
 
+---
+
+## Update 2026-08-23: is_causal is consumed now
+
+The headline defect this document described -- nothing downstream reads
+`is_causal` -- is fixed at extractor 2.1.0: kinematics loads the assignment
+file and carries the credited reach into the features (and from there the
+database), beneath the human-review and ground-truth layers. An assignment
+failure in the watcher now also writes a `failed` row to the step audit table
+on both machine roles, so it is countable; it previously left only a
+started/completed count mismatch. The gate still does not hold a video whose
+assignment never ran -- deliberately, because 1,233 older videos have no
+assignment file and would flood triage on their next re-gate. That decision is
+recorded in UNFINISHED.md.

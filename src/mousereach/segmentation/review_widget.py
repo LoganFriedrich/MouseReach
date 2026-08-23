@@ -776,9 +776,13 @@ class BoundaryReviewWidget(QWidget):
     def _load_algorithm_boundaries(self):
         """Load pre-computed boundaries or run robust segmenter."""
         
-        # Get current segmenter version
+        # Get current segmenter version -- from the segmenter that RUNS
+        # (segmenter_multi), not segmenter_robust's own constant. Importing the
+        # robust one compared every correctly stamped file against a stale
+        # version, so every current file was flagged OUTDATED against a "current
+        # version" older than itself.
         try:
-            from mousereach.segmentation.core.segmenter_robust import SEGMENTER_VERSION
+            from mousereach.segmentation.core.segmenter_multi import SEGMENTER_VERSION
             current_version = SEGMENTER_VERSION
         except ImportError:
             current_version = None
@@ -835,7 +839,7 @@ class BoundaryReviewWidget(QWidget):
                 # Check if outdated
                 if current_version and file_version != current_version:
                     from napari.utils.notifications import show_warning
-                    show_warning(f"Segments file is outdated (v{file_version} vs v{current_version}). Consider re-running batch_segment.py")
+                    show_warning(f"Segments file is outdated (v{file_version} vs v{current_version}). Re-run with: mousereach-segment -i <dir>")
                     self.status_label.setText(f"⚠ OUTDATED v{file_version} - {seg_file.name}")
                 else:
                     conf = data.get('overall_confidence', 0)

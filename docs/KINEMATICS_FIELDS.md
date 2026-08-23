@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/kinematics/core/feature_extractor.py`, `src/mousereach/kinematics/cli.py`, `src/mousereach/kinematics/analysis/reach_export.py`, `src/mousereach/export/features_csv.py`, `src/mousereach/sync/database.py`, `src/mousereach/review/truth_resolver.py`, `REACH_KINEMATIC_DATA_DICTIONARY.md`
 
-Verified against: 4c54e46 (2026-08-23)
+Verified against: b65fcf0 (2026-08-23)
 
 ---
 
@@ -507,3 +507,28 @@ opening the code yourself.** Everything not listed survived two passes.
   - disputed because: Stated as an absolute, and one place does read it. The substantive point survives (that reader is itself never called), but as written the sentence is contradicted by a one-line grep — exactly what a reference document cannot afford.
 - citation could not be resolved: ``reach_detector_v8.py:20-52`, cited as "its performance table" — does not resolve. Lines 20-52 are the Phase-2 algorithm description and the KEY PARAMETERS tabl`
 
+---
+
+## Update 2026-08-23: the algorithm's causal reach now reaches the data
+
+Extractor 2.1.0. The extractor loads `{video}_reach_assignments.json`
+(auto-discovered beside the outcomes file; `assignments_path` overrides) and
+marks `causal_reach`, `outcome` and `interaction_frame` on the reach algo-4
+credited -- for segments no higher authority has resolved. The ordering is
+strict and tested: a segment carrying a `causal_reach_id` KEY is owned by human
+review, ground truth or the pre-v6 detector and is never overridden; a
+reviewer's `causal_reach_id: None` means "no reach did this" and stands. On the
+algo-only test video the features now name exactly the 4 reaches the assignment
+file names; on a fully human-reviewed video all causal marks are
+`human_review`-sourced and none land on human-untouched segments.
+
+Older reviews that stored the human's causal pick as frames only (no reach id)
+are also recovered now: the resolver matches the frames to the reach they name
+(>=50% overlap, within the reviewed segment). 16 of 18 picks on the test video
+resolve; the other 2 are hand-drawn reaches that exist in no reaches file and so
+have no row to mark.
+
+`distance_to_interaction` remains never-computed -- its definition is unclear
+and inventing one was worse than leaving it empty. Corpus backfill and the
+2.1.0 declaration in pipeline_versions.json are deliberately deferred; until
+declared, newly processed videos will read as version-stale. See UNFINISHED.md.
