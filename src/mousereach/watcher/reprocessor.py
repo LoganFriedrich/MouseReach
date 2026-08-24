@@ -42,11 +42,34 @@ def earliest_stale_stage(stale_components) -> str:
     return min(stages, key=_POST_DLC_ORDER.index)
 
 
+def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
+    """{video_id: set of DLC scorers whose pose file is in the archive}.
+
+    One walk of the archive tree, not one per video. Pose files do NOT live
+    beside a video's results -- results are in Analyzed/{project}/{cohort}/ and
+    pose is in Analyzed/{project}/DLC Model N/{cohort}/ -- so there is no cheap
+    per-video path to check, and 2,600 separate globs over the NAS is not a scan
+    anyone would wait for.
+    """
+    from mousereach.pipeline.manifest import extract_dlc_model_info
+
+    index: Dict[str, set] = {}
+    archive_dir = Path(archive_dir)
+    if not archive_dir.exists():
+        return index
+    for h5 in archive_dir.rglob("*DLC*.h5"):
+        video_id = h5.name.split("DLC")[0].rstrip("_")
+        scorer = extract_dlc_model_info(h5).get('dlc_scorer', '')
+        if scorer:
+            index.setdefault(video_id, set()).add(scorer)
+    return index
+
+
 class ReprocessingScanner:
     """Scan archived videos for outdated tool versions."""
 
     def __init__(self, db, nas_root: Path):
-        """
+        r"""
         Args:
             db: WatcherDB instance
             nas_root: NAS root path (e.g. Y:\LAB_ROOT\Behavior\MouseReach_Pipeline)
@@ -73,18 +96,24 @@ class ReprocessingScanner:
         from mousereach.pipeline.versions import (
             get_current_versions, compare_manifest_to_current
         )
+        from mousereach.config import is_supported_tray_type
 
         summary = {
             'scanned': 0,
             'current': 0,
             'outdated': 0,
-            'outdated_full': 0,    # Need full reprocess (DLC changed)
+            'outdated_full': 0,    # Need a genuine re-pose (no current pose on disk)
             'outdated_partial': 0, # Only need seg/reach/outcomes rerun
+            'pose_already_current': 0,  # manifest says an old model, but the
+                                        # declared model's pose is already on
+                                        # disk -- downstream re-run, no GPU
+            'unsupported_tray': 0,      # E/F tray videos: not this pipeline's work
             'crystallized_skipped': 0,
             'no_manifest': 0,
             'review_triggered': 0,  # version-current but a newer human review to apply
             'errors': 0,
             'outdated_videos': [],
+            'unsupported_tray_videos': [],
         }
 
         # Load current versions
@@ -97,9 +126,28 @@ class ReprocessingScanner:
         archived = self.db.get_videos_in_state('archived')
         logger.info(f"Scanning {len(archived)} archived videos for version compliance")
 
+        # Built on first need only: a scan where nothing is DLC-stale never walks
+        # the archive tree at all.
+        pose_index = None
+
         for video in archived:
             video_id = video['video_id']
             summary['scanned'] += 1
+
+            # E (Easy) and F (Flat) tray sessions do not belong in this pipeline
+            # -- the algorithms are calibrated for the pillar tray, and the pellet
+            # and tray landmarks are not reliably tracked on the others
+            # (config.FilePatterns.UNSUPPORTED_TRAY_TYPES; router.SKIP_STEPS
+            # already drops outcome detection for them). Scheduling reprocessing
+            # work for them spends real machine time on sessions nobody is going
+            # to analyse: all 31 videos in the Y: archive that would genuinely
+            # need a new pose are E-tray. They are counted and named, not
+            # silently dropped, because they should not be in the archive at all
+            # and that is a separate decision.
+            if not is_supported_tray_type(f"{video_id}.mp4"):
+                summary['unsupported_tray'] += 1
+                summary['unsupported_tray_videos'].append(video_id)
+                continue
 
             try:
                 # Load manifest
@@ -122,7 +170,37 @@ class ReprocessingScanner:
                     summary['outdated'] += 1
                     if not comparison['is_current']:
                         if comparison['needs_full_reprocess']:
-                            scope = 'full'  # DLC changed -> re-run everything
+                            # The manifest names an older DLC model. That does
+                            # NOT always mean the video has to go back on a GPU.
+                            # The bulk re-pose already ran: 1,233 of the 1,264
+                            # videos whose manifests say shuffle1 have the
+                            # declared shuffle3 pose sitting in the archive. What
+                            # is stale about them is the ANALYSIS -- segments,
+                            # reaches and outcomes were computed from the old
+                            # pose -- so every post-DLC stage must re-run, but
+                            # inference must not. At roughly 14 minutes of GPU
+                            # each, re-posing them would burn about 288 GPU-hours
+                            # to produce files that already exist.
+                            #
+                            # The manifest is not corrected here. It is telling
+                            # the truth about what produced the current results;
+                            # the reprocess run rewrites it with the pose that
+                            # actually ran, which is the only honest way for it
+                            # to change.
+                            if pose_index is None:
+                                pose_index = pose_scorers_in_archive(self.archive_dir)
+                            declared = (current.get('versions') or {}).get('dlc_scorer', '')
+                            if declared and declared in pose_index.get(video_id, ()):
+                                scope = 'segmentation'
+                                summary['pose_already_current'] += 1
+                                logger.info(
+                                    "%s: manifest records %s but the declared pose "
+                                    "is already on disk -- re-running from "
+                                    "segmentation, no re-pose",
+                                    video_id,
+                                    (manifest.get('dlc_model') or {}).get('dlc_scorer', '?'))
+                            else:
+                                scope = 'full'  # genuinely needs a new pose
                         else:
                             scope = earliest_stale_stage(comparison['stale_components'])
                         stale = list(comparison['stale_components'])
@@ -244,9 +322,13 @@ class ReprocessingScanner:
         lines.append(f"  Current (up-to-date): {summary['current']}")
         lines.append(f"  Outdated:           {summary['outdated']}")
         if summary['outdated'] > 0:
-            lines.append(f"    Full reprocess:   {summary['outdated_full']} (DLC model changed)")
+            lines.append(f"    Needs re-pose:    {summary['outdated_full']} (no current pose on disk)")
             lines.append(f"    Partial reprocess: {summary['outdated_partial']} (seg/reach/outcomes only)")
+            lines.append(f"      of which pose was already current: {summary['pose_already_current']} "
+                         f"(manifest named an old model; no GPU needed)")
         lines.append(f"  Crystallized:       {summary['crystallized_skipped']}")
+        lines.append(f"  Unsupported tray:   {summary['unsupported_tray']} "
+                     f"(E/F sessions -- not this pipeline's work)")
         lines.append(f"  No manifest:        {summary['no_manifest']}")
         lines.append(f"  Errors:             {summary['errors']}")
         lines.append("")

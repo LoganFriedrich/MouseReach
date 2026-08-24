@@ -660,16 +660,41 @@ class TestOrchestratorIntegration:
 
     @pytest.fixture
     def mock_orchestrator(self, temp_db, watcher_config, tmp_path):
-        """Create orchestrator with mocked dependencies."""
-        with patch('mousereach.watcher.orchestrator.require_processing_root') as mock_root:
+        """Create orchestrator with mocked dependencies.
+
+        Two live-data doors are shut. The orchestrator's constructor restores
+        this node's watcher.db from the NAS backup whenever the local file is
+        small (which a fresh temp database always is), and then runs cross-node
+        recovery out of the real connectome.db. Without both patches the "temp"
+        database is filled with every video in the lab, which made this class
+        depend on live data, take five minutes, and fail the priority-order test
+        because thousands of imported videos outranked the collage the test had
+        just registered.
+        """
+        with patch('mousereach.watcher.orchestrator.require_processing_root') as mock_root, \
+             patch('mousereach.watcher.coordination.PipelineCoordinator') as mock_coord, \
+             patch('mousereach.watcher.coordination.restore_db', return_value=False):
             mock_root.return_value = tmp_path / "processing"
+            mock_coord.return_value.recover_local_db.return_value = {}
 
             from mousereach.watcher.orchestrator import WatcherOrchestrator
             orch = WatcherOrchestrator(config=watcher_config, db=temp_db)
+            orch.coordinator = None
             return orch
 
     def test_get_next_work_item_returns_correct_priority_order(self, mock_orchestrator, temp_db):
-        """_get_next_work_item returns items in priority order."""
+        """_get_next_work_item returns items in priority order.
+
+        Finish-what-is-started first: a video whose pose is already made is
+        staged before any new work is begun, and a queued video is posed before
+        another collage is cut into eight more. Cropping is LAST on purpose --
+        it is the only step that creates work rather than clearing it, so
+        putting it first would let the queue grow without bound.
+
+        This test asserted the opposite for a long time and was passing for the
+        wrong reason: the fixture used to import the whole lab's real database,
+        so the assertion never reached the ordering it claimed to check.
+        """
         # Create work in different states
         # Priority 1: Stable collages
         temp_db.register_collage("collage.mkv", "/path")
@@ -688,9 +713,21 @@ class TestOrchestratorIntegration:
         temp_db.update_state("video2", "dlc_running")
         temp_db.update_state("video2", "dlc_complete")
 
-        # Get next work item - should be collage (highest priority)
+        # DLC-complete outranks everything: finish what is already posed.
         work = mock_orchestrator._get_next_work_item()
         assert work is not None
+        assert work['type'] == 'stage_to_nas'
+        assert work['id'] == 'video2'
+
+        # With that staged, the queued single is posed before a new collage is cut.
+        temp_db.force_state('video2', 'archived', reason='test: staged')
+        work = mock_orchestrator._get_next_work_item()
+        assert work['type'] == 'single_dlc'
+        assert work['id'] == 'video1'
+
+        # Only with nothing in flight is another collage cropped.
+        temp_db.force_state('video1', 'archived', reason='test: posed')
+        work = mock_orchestrator._get_next_work_item()
         assert work['type'] == 'collage'
 
     def test_dry_run_does_not_process_anything(self, mock_orchestrator, temp_db, capsys):
@@ -942,3 +979,248 @@ class TestMachineIdentity:
 
                         assert profile is None
                         assert method is None
+
+
+# =============================================================================
+# PATHLESS ROWS: videos and collages this node has no file for
+# =============================================================================
+#
+# One root cause behind three reported failures on the DLC node (2026-08-24):
+#
+#   _stage_to_nas crashed with TypeError on Path(None)
+#   42 rows sat in a working state with no file and churned forever
+#   collages could not enter the pipeline at all
+#
+# All three come from cross-node recovery inventing rows out of connectome.db's
+# pipeline_videos / pipeline_collages, which carry state but no usable file path.
+# These tests pin the fix: a row is never given a state that claims a file this
+# node does not have.
+
+
+@pytest.fixture
+def scratch_paths(tmp_path, monkeypatch):
+    """Point every configured pipeline path at a temp tree."""
+    from mousereach.config import Paths
+
+    layout = {
+        "PROCESSING_ROOT": "proc",
+        "PROCESSING": "proc/Processing",
+        "DLC_QUEUE": "proc/DLC_Queue",
+        "NAS_ROOT": "nas",
+        "DLC_STAGING": "nas/DLC_Complete",
+        "SINGLE_ANIMAL_OUTPUT": "nas/Single_Animal",
+        "MULTI_ANIMAL_SOURCE": "nas/Multi_Animal",
+        "ANALYZED_OUTPUT": "nas/Analyzed",
+    }
+    made = {}
+    for name, sub in layout.items():
+        d = tmp_path / sub
+        d.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(Paths, name, d, raising=False)
+        made[name] = d
+    return made
+
+
+class TestPathlessVideoRows:
+    """A row must never claim a file this node does not have."""
+
+    def test_register_without_source_path_does_not_raise(self, temp_db, scratch_paths):
+        """The reported 'NOT NULL constraint failed: videos.source_path'."""
+        temp_db.register_video(video_id="20251225_CNT0405_P4")
+        assert temp_db.get_video("20251225_CNT0405_P4") is not None
+
+    def test_register_without_a_file_lands_in_unresolvable(self, temp_db, scratch_paths):
+        temp_db.register_video(video_id="20251225_CNT0405_P4")
+        row = temp_db.get_video("20251225_CNT0405_P4")
+        assert row["state"] == "unresolvable"
+        assert row["source_path"] == temp_db.NO_FILE_HERE
+        assert "no source_path" in (row["error_message"] or "")
+
+    def test_register_without_source_path_finds_the_file_if_it_is_here(
+            self, temp_db, scratch_paths):
+        (scratch_paths["DLC_QUEUE"] / "20250101_CNT0101_P1.mp4").write_bytes(b"x")
+        temp_db.register_video(video_id="20250101_CNT0101_P1")
+        row = temp_db.get_video("20250101_CNT0101_P1")
+        assert row["state"] == "discovered"
+        assert row["source_path"].endswith("20250101_CNT0101_P1.mp4")
+
+    def test_unresolvable_is_terminal_for_the_work_loop(self):
+        """No handler selects it, and it is not a retry state."""
+        assert "unresolvable" in VIDEO_TRANSITIONS
+        assert "failed" not in VIDEO_TRANSITIONS["unresolvable"]
+        assert "unresolvable" in VIDEO_TRANSITIONS["dlc_complete"]
+
+    def test_mark_unresolvable_does_not_count_as_an_error(self, temp_db, scratch_paths):
+        """Nothing was attempted, so nothing failed -- error_count must not move."""
+        temp_db.register_video(video_id="20250102_CNT0102_P1",
+                               source_path=temp_db.NO_FILE_HERE)
+        before = temp_db.get_video("20250102_CNT0102_P1")["error_count"] or 0
+        temp_db.mark_unresolvable("20250102_CNT0102_P1", "OTHERPC has it")
+        row = temp_db.get_video("20250102_CNT0102_P1")
+        assert row["state"] == "unresolvable"
+        assert (row["error_count"] or 0) == before
+
+
+class TestLocateHelpers:
+    """Path(None) raises and Path('') is the current directory. Neither may leak."""
+
+    def test_none_and_empty_never_resolve(self, scratch_paths):
+        from mousereach.watcher.locate import locate_video_file
+        assert locate_video_file("20250101_CNT0199_P1", raw=None) is None
+        assert locate_video_file("20250101_CNT0199_P1", raw="") is None
+
+    def test_a_directory_is_never_a_pose_file(self, tmp_path, scratch_paths):
+        from mousereach.watcher.locate import resolve_pose_input
+        assert resolve_pose_input(str(tmp_path), "20250101_CNT0199_P1") is None
+
+    def test_archive_copy_is_hidden_from_handlers_that_move_files(self, scratch_paths):
+        """Staging MOVES what it finds; an archive hit would empty the archive."""
+        from mousereach.watcher.locate import locate_video_file
+        arch = scratch_paths["ANALYZED_OUTPUT"] / "Connectome" / "CNT01"
+        arch.mkdir(parents=True, exist_ok=True)
+        (arch / "20250101_CNT0101_P9.mp4").write_bytes(b"x")
+        assert locate_video_file("20250101_CNT0101_P9") is not None
+        assert locate_video_file("20250101_CNT0101_P9", search_archive=False) is None
+
+
+class TestCrossNodeRecovery:
+    """Adopting another node's state must not invent files."""
+
+    @pytest.fixture
+    def coordinator(self, tmp_path):
+        pytest.importorskip("sqlalchemy")
+        from mousereach.watcher.coordination import PipelineCoordinator
+        db_file = tmp_path / "central.db"
+        import sqlite3
+        sqlite3.connect(str(db_file)).close()
+        c = PipelineCoordinator(db_path=db_file)
+        c.ensure_tables()
+        return c
+
+    def test_in_flight_state_is_not_adopted_without_a_file(
+            self, coordinator, temp_db, scratch_paths):
+        coordinator.sync_video_state("20251225_CNT0405_P4", "OTHERPC", "dlc_complete")
+        coordinator.recover_local_db(temp_db, "THISPC")
+        row = temp_db.get_video("20251225_CNT0405_P4")
+        assert row["state"] == "unresolvable", (
+            "a pathless dlc_complete row is what crashed _stage_to_nas")
+        assert "OTHERPC" in (row["error_message"] or "")
+
+    def test_in_flight_state_is_adopted_when_the_file_is_here(
+            self, coordinator, temp_db, scratch_paths):
+        (scratch_paths["DLC_QUEUE"] / "20250101_CNT0101_P1.mp4").write_bytes(b"x")
+        coordinator.sync_video_state("20250101_CNT0101_P1", "OTHERPC", "dlc_complete")
+        coordinator.recover_local_db(temp_db, "THISPC")
+        row = temp_db.get_video("20250101_CNT0101_P1")
+        assert row["state"] == "dlc_complete"
+        assert row["source_path"].endswith("20250101_CNT0101_P1.mp4")
+
+    def test_sync_does_not_erase_columns_it_does_not_name(self, coordinator):
+        """INSERT OR REPLACE nulled source_path on every sync; UPSERT must not."""
+        coordinator.sync_video_state("20250101_CNT0101_P1", "PC", "dlc_queued",
+                                     source_path=r"D:\videos\20250101_CNT0101_P1.mp4")
+        coordinator.sync_video_state("20250101_CNT0101_P1", "PC", "dlc_complete")
+        rows = coordinator.get_all_video_states()
+        assert rows["20250101_CNT0101_P1"]["state"] == "dlc_complete"
+        assert rows["20250101_CNT0101_P1"]["source_path"] is not None
+
+    def test_a_collage_not_visible_here_is_left_for_the_intake_scan(
+            self, coordinator, temp_db, scratch_paths):
+        """Registering it with a junk path blocked it from the pipeline forever."""
+        name = ("20250704_CNT0101,CNT0102,CNT0103,CNT0104,CNT0105,CNT0106,"
+                "CNT0107,CNT0108_P1.mkv")
+        coordinator.try_claim_collage(name, "OTHERPC")
+        coordinator.update_collage_state(name, "cropped")
+        coordinator.recover_local_db(temp_db, "THISPC")
+        assert not temp_db.collage_exists(name)
+
+
+class TestCollagePathRepair:
+    """A collage row pointing at a non-path must not lock the file out."""
+
+    def test_discovery_corrects_a_row_whose_path_is_not_a_file(
+            self, state_manager, temp_db, scratch_paths, sample_collage_name):
+        src_dir = scratch_paths["MULTI_ANIMAL_SOURCE"]
+        collage = src_dir / sample_collage_name
+        collage.write_bytes(b"x")
+
+        # exactly what older cross-node recovery wrote: a hostname, not a path
+        temp_db.register_collage(filename=sample_collage_name,
+                                 source_path="EXAMPLE-HOST-1")
+
+        state_manager.discover_new_collages(src_dir)
+
+        row = temp_db.get_collage(sample_collage_name)
+        assert Path(row["source_path"]).is_file()
+        assert row["source_path"] == str(collage)
+
+
+class TestDLCStaleScope:
+    """A manifest naming an old model does not always mean a GPU re-run."""
+
+    def _archived_video(self, temp_db, scratch_paths, video_id, manifest_scorer,
+                        pose_scorer=None):
+        results = scratch_paths["ANALYZED_OUTPUT"] / "Connectome" / "CNT01"
+        results.mkdir(parents=True, exist_ok=True)
+        (results / f"{video_id}_processing_manifest.json").write_text(json.dumps({
+            "video_id": video_id,
+            "dlc_model": {"dlc_scorer": manifest_scorer},
+            "pipeline_versions": {"segmenter": "2.2.3"},
+        }))
+        if pose_scorer:
+            pose_dir = (scratch_paths["ANALYZED_OUTPUT"] / "Connectome"
+                        / "DLC Model 4" / "CNT01")
+            pose_dir.mkdir(parents=True, exist_ok=True)
+            (pose_dir / f"{video_id}{pose_scorer}.h5").write_bytes(b"x")
+        temp_db.register_video(video_id=video_id, source_path=str(results / f"{video_id}.mp4"))
+        temp_db.force_state(video_id, "archived", reason="test")
+
+    def _scan(self, temp_db, scratch_paths, monkeypatch):
+        from mousereach.watcher.reprocessor import ReprocessingScanner
+        versions = {"versions": {
+            "dlc_scorer": "DLC_resnet101_MPSAOct27shuffle3_100000",
+            "segmenter": "2.2.3",
+        }}
+        (scratch_paths["NAS_ROOT"] / "pipeline_versions.json").write_text(
+            json.dumps(versions))
+        scanner = ReprocessingScanner(temp_db, scratch_paths["NAS_ROOT"])
+        return scanner.scan(mark_outdated=True)
+
+    def test_declared_pose_already_on_disk_means_no_gpu(
+            self, temp_db, scratch_paths, monkeypatch):
+        self._archived_video(
+            temp_db, scratch_paths, "20250626_CNT0107_P3",
+            manifest_scorer="DLC_resnet50_MPSAOct27shuffle1_100000",
+            pose_scorer="DLC_resnet101_MPSAOct27shuffle3_100000")
+        summary = self._scan(temp_db, scratch_paths, monkeypatch)
+        assert summary["pose_already_current"] == 1
+        row = temp_db.get_video("20250626_CNT0107_P3")
+        assert row["state"] == "outdated"
+        assert row["reprocess_scope"] == "segmentation"
+
+    def test_no_declared_pose_still_needs_a_real_repose(
+            self, temp_db, scratch_paths, monkeypatch):
+        self._archived_video(
+            temp_db, scratch_paths, "20250626_CNT0107_P4",
+            manifest_scorer="DLC_resnet50_MPSAOct27shuffle1_100000",
+            pose_scorer="DLC_resnet50_MPSAOct27shuffle1_100000")
+        summary = self._scan(temp_db, scratch_paths, monkeypatch)
+        assert summary["pose_already_current"] == 0
+        assert temp_db.get_video("20250626_CNT0107_P4")["reprocess_scope"] == "full"
+
+    def test_easy_tray_sessions_are_not_scheduled_at_all(
+            self, temp_db, scratch_paths, monkeypatch):
+        """E tray does not belong in this pipeline, so it is never GPU work.
+
+        Every video in the Y: archive that would genuinely need a new pose is
+        E tray -- 31 of them. Scheduling those was the whole remaining cost.
+        """
+        self._archived_video(
+            temp_db, scratch_paths, "20251211_CNT0406_E2",
+            manifest_scorer="DLC_resnet50_MPSAOct27shuffle1_100000",
+            pose_scorer="DLC_resnet50_MPSAOct27shuffle1_100000")
+        summary = self._scan(temp_db, scratch_paths, monkeypatch)
+        assert summary["unsupported_tray"] == 1
+        assert "20251211_CNT0406_E2" in summary["unsupported_tray_videos"]
+        assert summary["outdated"] == 0
+        assert temp_db.get_video("20251211_CNT0406_E2")["state"] == "archived"

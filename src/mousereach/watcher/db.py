@@ -32,21 +32,21 @@ COLLAGE_TRANSITIONS = {
 VIDEO_TRANSITIONS = {
     'discovered': ['validated', 'quarantined'],
     'quarantined': ['validated'],
-    'validated': ['dlc_queued'],
-    'dlc_queued': ['dlc_running'],
-    'dlc_running': ['dlc_complete', 'dlc_queued', 'failed'],  # dlc_queued = re-queue on interrupt
+    'validated': ['dlc_queued', 'unresolvable'],
+    'dlc_queued': ['dlc_running', 'unresolvable'],
+    'dlc_running': ['dlc_complete', 'dlc_queued', 'failed', 'unresolvable'],  # dlc_queued = re-queue on interrupt
     # 'archived' here means "this NODE is done with it", not "fully analyzed" --
     # the same idiom the collage table uses for 'cropped': ['archived']. A DLC PC
     # running with also_process=false finishes DLC, stages the pose to the NAS
     # (_stage_to_nas) and is done; the MouseReach algorithms run on whichever node
     # claims it next. Without this, every DLC-PC hand-off raised on the transition
     # and the video was marked failed even though DLC had succeeded.
-    'dlc_complete': ['processing', 'archived'],
-    'processing': ['processed', 'failed', 'triage', 'deep_review'],  # triage/deep_review = human-review holds
-    'processed': ['archiving'],
-    'archiving': ['archived', 'failed'],
-    'archived': ['outdated', 'crystallized'],  # Version-aware reprocessing
-    'outdated': ['dlc_queued', 'processing', 'failed'],  # Re-enters pipeline
+    'dlc_complete': ['processing', 'archived', 'unresolvable'],
+    'processing': ['processed', 'failed', 'triage', 'deep_review', 'unresolvable'],  # triage/deep_review = human-review holds
+    'processed': ['archiving', 'unresolvable'],
+    'archiving': ['archived', 'failed', 'unresolvable'],
+    'archived': ['outdated', 'crystallized', 'unresolvable'],  # Version-aware reprocessing
+    'outdated': ['dlc_queued', 'processing', 'failed', 'unresolvable'],  # Re-enters pipeline
     'crystallized': [],  # Locked against reprocessing (use force_state to unlock)
     # --- Human-review holds: the video is held OUT of the archive + connectome.db
     # until a human clears it. Kinematics NEVER run on a held video. ---
@@ -60,7 +60,22 @@ VIDEO_TRANSITIONS = {
     #   START of the pipeline (re-segment): -> 'outdated'/'processing' (re-seg) or
     #   'dlc_queued' (only if the deep fix changed the pose h5).
     'deep_review': ['outdated', 'processing', 'dlc_queued', 'failed'],
-    'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed'],  # Retry from any prior state
+    'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed', 'unresolvable'],  # Retry from any prior state
+    # --- 'unresolvable': this NODE has no file for this video. ---
+    # Not a failure and not a scientific hold: nothing went wrong with the video,
+    # it simply is not here. Cross-node recovery reads state out of connectome.db,
+    # which carries no file paths, so it can learn about videos whose files live
+    # on another machine entirely. Registering those as 'dlc_complete' or
+    # 'dlc_queued' made the work loop pick them up every cycle and crash on
+    # Path(None), or mark them failed -- which retries forever.
+    #
+    # 'failed' is wrong for them twice over: it is a retry state, and it puts an
+    # infrastructure fact into a column people read as a scientific verdict.
+    # 'unresolvable' is terminal for the work loop (no handler selects it) and
+    # self-healing: _recover_local_dlc_queue re-drives one the moment its file
+    # actually appears on this node.
+    'unresolvable': ['validated', 'dlc_queued', 'dlc_complete', 'processing',
+                     'processed', 'archived'],
 }
 
 
@@ -392,15 +407,40 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    # Stored in source_path when a video is registered with no file on this node.
+    # Deliberately not path-shaped: the previous placeholder was 'recovered',
+    # which reads as a relative path and was passed to Path() by four handlers.
+    NO_FILE_HERE = '(no file on this node)'
+
     @_retry_network_errors
-    def register_video(self, video_id: str, source_path: str,
+    def register_video(self, video_id: str, source_path: str = None,
                       collage_id: str = None, **metadata) -> str:
         """
         Register new video.
 
+        ``source_path`` may be omitted, and the row is still created -- but then
+        it is created honestly. Two things happen in that case:
+
+          1. The video's .mp4 is looked for on this node (working folders, NAS
+             staging, this video's archive folder). If it is found, that real
+             path is recorded and the row is ordinary.
+          2. If it is not found anywhere, the row is created in the terminal
+             'unresolvable' state with the reason in error_message.
+
+        This exists because the alternative was tried and it broke the pipeline
+        twice. Cross-node recovery reads pipeline_videos out of connectome.db, a
+        table that carries state but no file paths -- every one of its 2,899 rows
+        has source_path NULL, because sync_video_state writes with INSERT OR
+        REPLACE and only ever passes the columns it knows about. Passing that
+        NULL straight through raised "NOT NULL constraint failed:
+        videos.source_path" on every scan; substituting a placeholder instead
+        minted rows in working states for videos this node has no files for,
+        which the work loop then picked up and crashed on (Path(None)) or marked
+        failed, forever. Neither of those is better than saying "not here".
+
         Args:
             video_id: Unique video identifier
-            source_path: Full path to source file
+            source_path: Full path to source file. Optional -- see above.
             collage_id: Optional collage filename this came from
             **metadata: Additional fields (date, animal_id, experiment, cohort,
                        subject, tray_type, tray_position, etc.)
@@ -408,6 +448,27 @@ class WatcherDB:
         Returns:
             video_id (unchanged)
         """
+        unresolved_reason = None
+        if not source_path:
+            found = None
+            try:
+                from mousereach.watcher.locate import locate_video_file
+                found = locate_video_file(video_id)
+            except Exception as e:
+                logger.debug(f"Could not search for {video_id} on this node: {e}")
+            if found is not None:
+                source_path = str(found)
+                logger.info(
+                    f"Registering {video_id} with no source_path given; found its "
+                    f"file on this node at {found}")
+            else:
+                source_path = self.NO_FILE_HERE
+                unresolved_reason = (
+                    "registered with no source_path and no file for it anywhere on "
+                    "this node -- recorded as unresolvable rather than given a "
+                    "working state it cannot act on")
+                logger.warning(f"{video_id}: {unresolved_reason}")
+
         with self._lock:
             conn = self._get_connection()
             try:
@@ -438,6 +499,12 @@ class WatcherDB:
                     f"INSERT INTO videos ({field_list}) VALUES ({placeholders})",
                     values
                 )
+
+                if unresolved_reason:
+                    conn.execute(
+                        "UPDATE videos SET state = 'unresolvable', error_message = ?, "
+                        "updated_at = ? WHERE video_id = ?",
+                        (unresolved_reason, self._now(), video_id))
 
                 conn.commit()
                 logger.info(f"Registered video {video_id}")
@@ -659,6 +726,29 @@ class WatcherDB:
             except Exception as e:
                 logger.error(f"Failed to force-set collage {filename}: {e}")
                 raise
+            finally:
+                conn.close()
+
+    @_retry_network_errors
+    def set_collage_source_path(self, filename: str, source_path: str):
+        """Correct where a collage's file actually is, without touching its state.
+
+        Cross-node recovery used to write the OWNING HOSTNAME into this column,
+        because pipeline_collages has a hostname and no path. _process_collage
+        then did Path('EXAMPLE-HOST-1').exists() -> False and raised
+        FileNotFoundError, and because the row existed, discover_new_collages
+        skipped the file forever: the collage could never enter the pipeline
+        again even with the .mkv sitting in the intake folder.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute(
+                    "UPDATE collages SET source_path = ?, updated_at = ? "
+                    "WHERE filename = ?",
+                    (source_path, self._now(), filename))
+                conn.commit()
+                logger.info(f"Collage {filename}: source_path -> {source_path}")
             finally:
                 conn.close()
 
@@ -1011,6 +1101,52 @@ class WatcherDB:
 
             except Exception as e:
                 logger.error(f"Failed to mark {video_id} as failed: {e}")
+                raise
+            finally:
+                conn.close()
+
+    @_retry_network_errors
+    def mark_unresolvable(self, video_id: str, reason: str):
+        """Record that this NODE has no file for this video, and stop working it.
+
+        Use this, not mark_failed, whenever a handler cannot find the video's
+        input. The difference is not cosmetic:
+
+          - mark_failed is a RETRY state. Every reset puts the video back in the
+            work loop, where it fails on the same missing file. One video in this
+            pipeline reached 271,199 failures that way.
+          - 'failed' is also read by people as "something went wrong with this
+            animal's data". A file that lives on another machine is not that.
+
+        error_count is deliberately NOT incremented: nothing was attempted and
+        nothing failed. The row keeps whatever it already knows, and
+        _recover_local_dlc_queue puts it straight back into the pipeline if the
+        file ever turns up here.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT state FROM videos WHERE video_id = ?", (video_id,)
+                ).fetchone()
+                if not row:
+                    raise ValueError(f"Video {video_id} not found")
+
+                conn.execute("""
+                    UPDATE videos
+                    SET state = 'unresolvable',
+                        error_message = ?,
+                        updated_at = ?
+                    WHERE video_id = ?
+                """, (reason, self._now(), video_id))
+
+                conn.commit()
+                logger.warning(
+                    f"{video_id}: no file on this node ({row['state']} -> "
+                    f"unresolvable): {reason}")
+
+            except Exception as e:
+                logger.error(f"Failed to mark {video_id} unresolvable: {e}")
                 raise
             finally:
                 conn.close()

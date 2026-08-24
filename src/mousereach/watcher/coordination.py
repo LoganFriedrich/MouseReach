@@ -19,6 +19,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, TYPE_CHECKING
 
+from mousereach.watcher.locate import locate_video_file
+
 if TYPE_CHECKING:
     from mousereach.watcher.db import WatcherDB
 
@@ -39,6 +41,19 @@ VIDEO_STATE_ORDER = [
     'dlc_complete', 'processing', 'processed', 'archiving', 'archived',
     'crystallized',
 ]
+
+# States that mean "this node holds the files and is working on it". Adopting one
+# of these from another node's record, for a video whose files are not here, is
+# what created the phantom rows: pathless videos sitting in dlc_complete, picked
+# up by the work loop every cycle, crashing on Path(None) forever.
+#
+# 'archived', 'crystallized', 'triage' and 'deep_review' are NOT in this list.
+# Those live on the NAS, are visible to every node, and no work-loop handler
+# selects them -- adopting them is how a node learns not to redo finished work.
+NODE_LOCAL_STATES = {
+    'discovered', 'validated', 'dlc_queued', 'dlc_running',
+    'dlc_complete', 'processing', 'processed', 'archiving', 'outdated',
+}
 
 COLLAGE_STATE_ORDER = [
     'discovered', 'quarantined', 'validated', 'stable', 'cropping', 'cropped', 'archived',
@@ -84,6 +99,23 @@ def _state_index(state: str, order: list) -> int:
     except ValueError:
         return -1
 
+
+
+def _collage_source(filename: str):
+    """Where this collage's file actually is on this node, or None.
+
+    Only the intake folder counts: that is the one place a collage can be picked
+    up from and cropped.
+    """
+    from mousereach.config import Paths
+    src_dir = Paths.MULTI_ANIMAL_SOURCE
+    if not src_dir:
+        return None
+    try:
+        candidate = Path(src_dir) / filename
+        return candidate if candidate.is_file() else None
+    except OSError:
+        return None
 
 # =============================================================================
 # DB FILE BACKUP / RESTORE
@@ -200,8 +232,17 @@ class PipelineCoordinator:
     def sync_video_state(self, video_id: str, hostname: str, state: str, **kwargs):
         """Upsert video state to connectome.db.
 
-        Called after each local DB state change. INSERT OR REPLACE — last
-        writer wins, which is correct since only one PC works a video at a time.
+        Called after each local DB state change. Last writer wins, which is
+        correct since only one PC works a video at a time -- but only for the
+        columns that writer actually supplies.
+
+        This used to be INSERT OR REPLACE, which is a DELETE followed by an
+        INSERT: every column the caller did not name was reset to NULL. Callers
+        name state and a timestamp, never source_path, so every sync erased the
+        path again. The result was a coordination table where all 2,899 rows had
+        source_path NULL -- and cross-node recovery, which reads exactly this
+        table, could therefore never give a recovered video a real file to work
+        on. UPSERT updates the named columns and leaves the rest alone.
         """
         self.ensure_tables()
 
@@ -215,10 +256,12 @@ class PipelineCoordinator:
 
         columns = ', '.join(fields.keys())
         placeholders = ', '.join(f':{k}' for k in fields.keys())
+        updates = ', '.join(f'{k} = excluded.{k}' for k in fields if k != 'video_id')
 
         with self.engine.connect() as conn:
             conn.execute(text(
-                f"INSERT OR REPLACE INTO pipeline_videos ({columns}) VALUES ({placeholders})"
+                f"INSERT INTO pipeline_videos ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT(video_id) DO UPDATE SET {updates}"
             ), fields)
             conn.commit()
 
@@ -311,7 +354,9 @@ class PipelineCoordinator:
         stats = {
             'videos_recovered': 0,
             'videos_advanced': 0,
+            'videos_elsewhere': 0,
             'collages_recovered': 0,
+            'collages_not_here': 0,
             'mousedb_confirmed': 0,
         }
 
@@ -333,19 +378,63 @@ class PipelineCoordinator:
                 local_row = None
 
             if local_row is None:
-                # Not in local DB — register and set state
+                # Not in local DB -- register, then adopt the remote state only
+                # as far as this node can actually act on it.
+                #
+                # pipeline_videos carries state but no usable file path: it is
+                # written by sync_video_state, which for most of this pipeline's
+                # life was an INSERT OR REPLACE that nulled every column it did
+                # not name. So a recovered video's source_path is almost always
+                # NULL, and the previous code substituted the string 'recovered'
+                # and adopted the remote state anyway. That is how a video whose
+                # files sit on another machine ended up in this node's
+                # dlc_complete queue, where _stage_to_nas called Path(None),
+                # raised TypeError, marked it failed, and met it again next cycle.
                 try:
+                    # The search costs a handful of network stats per video, so it
+                    # is done only where its answer changes something: an in-flight
+                    # state. For 'archived' and the review holds -- 2,886 of the
+                    # 2,899 rows -- the file lives on the NAS, every node can reach
+                    # it, and the row exists only to stop this node redoing
+                    # finished work, so searching would add minutes to startup and
+                    # decide nothing.
+                    #
+                    # For a working state the file has to be in a WORKING folder.
+                    # A hit in the archive would mean the video is finished, which
+                    # is the opposite of what the remote state claims -- adopting
+                    # 'dlc_complete' on the strength of an archived copy would send
+                    # the stager to move files out of the archive.
+                    claims_in_flight = remote_state in NODE_LOCAL_STATES
+                    local_file = locate_video_file(
+                        video_id, raw=remote.get('source_path'),
+                        search_archive=False) if claims_in_flight else None
+
+                    if local_file is None and claims_in_flight:
+                        # Another node owns the work and holds the files. Say so
+                        # once, in the row, and never pick it up here.
+                        local_db.register_video(
+                            video_id=video_id,
+                            source_path=local_db.NO_FILE_HERE,
+                            collage_id=remote.get('collage_id'),
+                        )
+                        local_db.mark_unresolvable(
+                            video_id,
+                            "no file on this node; %s has it at state '%s'" % (
+                                remote.get('hostname') or 'another node', remote_state))
+                        stats['videos_elsewhere'] += 1
+                        continue
+
                     local_db.register_video(
                         video_id=video_id,
-                        # 'or', not a .get default: pipeline_videos rows carry the
-                        # key with a NULL value, which a default never replaces --
-                        # and videos.source_path is NOT NULL, so every such row was
-                        # silently dropped from cross-node recovery.
-                        source_path=remote.get('source_path') or 'recovered',
+                        source_path=(str(local_file) if local_file
+                                     else local_db.NO_FILE_HERE),
                         collage_id=remote.get('collage_id'),
                     )
                     if remote_state != 'discovered':
-                        local_db.force_state(video_id, remote_state)
+                        local_db.force_state(
+                            video_id, remote_state,
+                            reason="cross-node recovery from %s" % (
+                                remote.get('hostname') or '?'))
                     stats['videos_recovered'] += 1
                     logger.debug(f"Recovered video {video_id} as {remote_state}")
                 except Exception as e:
@@ -374,10 +463,29 @@ class PipelineCoordinator:
         for filename, remote in all_collages.items():
             remote_state = remote.get('state', 'discovered')
             if not local_db.collage_exists(filename):
+                # pipeline_collages records who claimed the collage, not where it
+                # is. The previous code put the HOSTNAME in source_path, which
+                # _process_collage passes to Path().exists() -- always False, so
+                # every recovered collage failed on the first crop attempt. Worse,
+                # the row's mere existence made discover_new_collages skip the
+                # file, so a collage sitting in the intake folder could never get
+                # back in.
+                #
+                # A collage this node cannot see is not registered at all. The
+                # intake scan will register it properly, with a real path, the
+                # moment it can see it.
+                source = _collage_source(filename)
+                if source is None:
+                    stats['collages_not_here'] += 1
+                    logger.debug(
+                        f"Collage {filename} is {remote_state} on "
+                        f"{remote.get('hostname', '?')} and is not visible here; "
+                        f"leaving it for the intake scan")
+                    continue
                 try:
                     local_db.register_collage(
                         filename=filename,
-                        source_path=remote.get('hostname', 'recovered'),
+                        source_path=str(source),
                     )
                     if remote_state != 'discovered':
                         local_db.force_collage_state(filename, remote_state)
@@ -400,13 +508,27 @@ class PipelineCoordinator:
                 local_row = None
 
             if local_row is None:
-                # Video in mousedb but not in local DB — register as archived
+                # Video in mousedb but not in local DB. Its reach data is in the
+                # central database, so it is finished -- the row exists purely to
+                # stop this node redoing it. 'archived' is truthful whether or not
+                # the file is on this machine, because the archive is on the NAS
+                # and every node can reach it; the placeholder path that used to
+                # be written here ('recovered_from_mousedb') was not, and four
+                # handlers passed it to Path().
                 try:
+                    # No file search here on purpose. This row's only job is to
+                    # say "finished, do not redo"; nothing reads its path, and the
+                    # reprocess route finds a video's files by searching the
+                    # archive itself. Searching here would cost a few network
+                    # stats for each of ~2,600 videos on a cold node's first
+                    # start, to fill in a column no code consults.
                     local_db.register_video(
                         video_id=video_name,
-                        source_path='recovered_from_mousedb',
+                        source_path=local_db.NO_FILE_HERE,
                     )
-                    local_db.force_state(video_name, 'archived')
+                    local_db.force_state(
+                        video_name, 'archived',
+                        reason="reach data already in connectome.db")
                     stats['mousedb_confirmed'] += 1
                 except Exception as e:
                     logger.debug(f"Could not register mousedb video {video_name}: {e}")
@@ -428,6 +550,7 @@ class PipelineCoordinator:
             logger.info(
                 f"Startup recovery: {stats['videos_recovered']} videos recovered, "
                 f"{stats['videos_advanced']} advanced, "
+                f"{stats['videos_elsewhere']} left to the node that holds them, "
                 f"{stats['collages_recovered']} collages recovered, "
                 f"{stats['mousedb_confirmed']} confirmed from mousedb"
             )
