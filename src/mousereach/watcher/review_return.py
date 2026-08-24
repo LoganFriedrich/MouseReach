@@ -22,6 +22,7 @@ ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
 from __future__ import annotations
 
+import shutil
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -115,6 +116,34 @@ def _deep_review_cleared(bundle: Path, stem: str) -> bool:
     return False
 
 
+def _ensure_durable_review(bundle: Path, stem: str) -> None:
+    """Copy this bundle's human review to the durable store before the bundle is
+    emptied. Never raises; a failure is logged and the return still proceeds,
+    because refusing to return the video would strand the reviewer's clearance.
+    """
+    src = Path(bundle) / f"{stem}_causal_review.json"
+    if not src.is_file():
+        return
+    try:
+        from mousereach.review.causal_review_io import durable_review_path
+        dest = durable_review_path(stem)
+        if dest is None:
+            logger.warning(
+                "Return %s: no durable review store configured; the review is "
+                "about to move to this node's local disk only.", stem)
+            return
+        if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        logger.info(f"Return {stem}: human review copied to the durable store")
+    except Exception as e:
+        logger.error(
+            "Return %s: could NOT make a durable copy of the human review (%s). "
+            "After this return its only copy is on this node's local disk.",
+            stem, e)
+
+
 def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                           reason: str) -> bool:
     """Move a cleared bundle's data files into ``processing_dir`` and set the
@@ -157,6 +186,17 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
             f"video with no pose."
         )
         return False
+
+    # This function is where a review leaves shared storage: every bundle file is
+    # MOVED onto this node's local processing dir and the bundle directory is then
+    # removed. That is the moment a reviewer's answers stop being visible to any
+    # other machine, and if this node's processing dir is later cleared -- or the
+    # video never reaches the canonical results dir -- the review is gone.
+    #
+    # Kinematics reads the review AFTER this point, so losing it here means the
+    # human's outcome and causal reach never reach the data product. Make the
+    # durable copy before touching anything.
+    _ensure_durable_review(bundle, stem)
 
     h5_dest: Optional[Path] = pose_src
     moved = 0

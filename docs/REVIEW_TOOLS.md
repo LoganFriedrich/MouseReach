@@ -103,7 +103,7 @@ The consequence: clicking past a `reach_uncertain` segment without touching anyt
 
 ### What is written
 
-`_save_review` (`:2844`) writes `{stem}_causal_review.json` into the bundle directory (`_review_dir`, `:880`). It contains **one record per segment in the video**, not per reviewed segment: segments the reviewer never visited get a placeholder with `answers: {"reviewed": false}` (`:2867-2880`). It also calls `update_corpus_index` (`causal_review_io.py:690`), which appends to `{NAS}/review_records/causal_review_index.json`; failures there are printed and swallowed (`:2910-2911`).
+`_save_review` (`:2844`) writes `{stem}_causal_review.json` into the bundle directory (`_review_dir`, `:880`) **and, since 2026-08-24, a durable copy at `{NAS}/review_records/reviews/{stem}_causal_review.json` first**. The bundle copy is the one the reviewer edits; the durable copy is the one nothing regenerates. Before this, a bundle-resident review was destroyed by any reprocess that recreated the bundle, and 41 reviewed videos had no other copy anywhere. It contains **one record per segment in the video**, not per reviewed segment: segments the reviewer never visited get a placeholder with `answers: {"reviewed": false}` (`:2867-2880`). It also calls `update_corpus_index` (`causal_review_io.py:690`), which appends to `{NAS}/review_records/causal_review_index.json`; failures there are printed and swallowed (`:2910-2911`).
 
 On reopening, `_load_saved_review` (`:892`) drops the placeholders (`:920-923`) and jumps to the first segment that is either unscored or whose **algorithm outcome has changed since the review** (`:925-937`) — a changed algorithm call is treated as needing another look. Note that this restore matches records to segments **by segment number** (`load_causal_review`, `causal_review_io.py:283-300`), not by frames.
 
@@ -257,6 +257,7 @@ This is the most important thing in this document.
 
 `resolve_truth_layers` looks for a review in exactly three places (`truth_resolver.py:315-317`):
 
+0. `review_records/reviews/<stem>_causal_review.json` (the durable copy -- always written, belongs to no bundle)
 1. `Processing/Review/triage/<stem>/<stem>_causal_review.json`
 2. `Processing/Review/flagged_for_review/<stem>/<stem>_causal_review.json`
 3. whatever the caller passes as `primary_dir`

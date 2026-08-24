@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 import traceback
 from datetime import datetime
@@ -210,6 +211,33 @@ def _neutralize_pipeline_side_effects() -> None:
 # ---------------------------------------------------------------------------
 # The stager
 # ---------------------------------------------------------------------------
+def _restore_review_into_bundle(stem: str, bundle: Path, log) -> None:
+    """Put this video's human review into ``bundle`` if it is not already there.
+
+    Never raises and never overwrites a newer review already in the bundle: the
+    bundle copy is the one a reviewer may be actively editing.
+    """
+    try:
+        from mousereach.review.causal_review_io import resolve_review_path
+    except Exception:
+        return
+    target = bundle / f"{stem}_causal_review.json"
+    try:
+        found = resolve_review_path(stem, primary_dir=bundle)
+        if found is None:
+            return
+        if target.exists() and target.stat().st_mtime >= found.stat().st_mtime:
+            return
+        if found.resolve() == target.resolve():
+            return
+        shutil.copy2(found, target)
+        log(f"carried the human review forward into the bundle (from {found.parent})")
+    except Exception as e:
+        # A staging run that cannot copy the review must still say so -- silence
+        # here is how a review goes missing without anyone noticing.
+        log(f"WARNING could not carry the human review forward: {e}")
+
+
 def stage_video(
     stem: str,
     *,
@@ -258,11 +286,45 @@ def stage_video(
         return bundle
     bundle.mkdir(parents=True, exist_ok=True)
 
+    # A human review is not the algorithms' output and staging must never be
+    # able to lose one. The bundle is transient -- this function regenerates it,
+    # and returning a cleared bundle moves its files away and removes the
+    # directory -- so a review that lives only here disappears on the next
+    # reprocess. Measured 2026-08-24: 41 reviewed videos had their only surviving
+    # copy inside a Y: triage bundle.
+    #
+    # So: find the review wherever it survives (this bundle, the durable store,
+    # the canonical results dir) and make sure the regenerated bundle has it.
+    _restore_review_into_bundle(stem, bundle, log)
+
     # Clear-guard: capture any human triage-clears BEFORE the fresh run
     # overwrites the JSONs, so they can be re-applied afterwards. Skipped when
     # boundaries change (manual re-seg renumbers segments -> can't map clears).
     _old_outcome = _load_json(outcome_out) if (preserve_clears and outcome_out.exists()) else None
     _old_reach = _load_json(reach_out) if (preserve_clears and reach_out.exists()) else None
+
+    # A reviewer's own cuts are human-authored work with the same standing as a
+    # review, and the same exposure: they live in the bundle's segments.json, and
+    # a restage without boundaries would silently re-run the auto-segmenter over
+    # them. The result still looks like a valid segmentation, so nothing would
+    # ever report that a person's boundaries had been thrown away.
+    #
+    # Carry them forward instead. Passing them back in as boundaries_override
+    # takes the manual branch below, which is exactly what the reviewer chose.
+    # (Nothing on disk is in this state today -- checked 2026-08-24, zero manual
+    # re-segmentations across Y: and the review server -- so this is a guard put
+    # in before the first one is lost, not a repair.)
+    if boundaries_override is None and seg_out.exists():
+        try:
+            _prev = _load_json(seg_out)
+            if _prev.get("manual_resegmentation") or _prev.get("segmenter_algorithm") == "manual":
+                _kept = _prev.get("boundaries")
+                if _kept:
+                    boundaries_override = list(_kept)
+                    log("keeping the reviewer's manual boundaries (a restage would "
+                        "otherwise re-cut the video with the auto-segmenter)")
+        except Exception as e:
+            log(f"WARNING could not check for a manual re-segmentation: {e}")
 
     # 1. SEGMENTATION (v2.2.2) -- OR a manual re-segmentation: when the reviewer
     # supplies boundaries, skip auto-segmentation and write a minimal manual
