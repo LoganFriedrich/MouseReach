@@ -98,6 +98,35 @@ class BaseOrchestrator:
     # has no file for it. So the scan is gated on being able to finish the job.
     handles_reprocessing = False
 
+    # How long to wait before trying to archive a video again, per consecutive
+    # failure. Caps at an hour: long enough that a stuck video costs nothing,
+    # short enough that fixing whatever blocked it takes effect the same session.
+    _ARCHIVE_BACKOFF_SECONDS = (60, 300, 900, 3600)
+
+    def _note_archive_failure(self, video_id: str) -> int:
+        """Record a failed archive attempt and return the delay before the next."""
+        if not hasattr(self, "_archive_backoff"):
+            self._archive_backoff = {}
+        n, _ = self._archive_backoff.get(video_id, (0, 0.0))
+        n += 1
+        delay = self._ARCHIVE_BACKOFF_SECONDS[
+            min(n - 1, len(self._ARCHIVE_BACKOFF_SECONDS) - 1)]
+        self._archive_backoff[video_id] = (n, time.time() + delay)
+        return delay
+
+    def _clear_archive_backoff(self, video_id: str) -> None:
+        """Forget a video's failure history once it archives."""
+        getattr(self, "_archive_backoff", {}).pop(video_id, None)
+
+    def _archive_backoff_active(self, video_id: str) -> bool:
+        """True while this video is waiting out a previous archive failure."""
+        if not hasattr(self, "_archive_backoff"):
+            self._archive_backoff = {}
+            return False
+        entry = self._archive_backoff.get(video_id)
+        return bool(entry) and time.time() < entry[1]
+
+
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         self.config = config
         self.db = db
@@ -498,7 +527,8 @@ class DLCOrchestrator(BaseOrchestrator):
 
         # Priority 1a: Archive locally processed videos (also_process mode)
         if self.config.also_process:
-            processed = self.db.get_videos_in_state('processed')
+            processed = [v for v in self.db.get_videos_in_state('processed')
+                         if not self._archive_backoff_active(v['video_id'])]
             if processed:
                 if priority_animal:
                     preferred = [v for v in processed if self._matches_priority(v, priority_animal, 'animal_id')]
@@ -1224,6 +1254,7 @@ class DLCOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
 
             if result.get('success'):
+                self._clear_archive_backoff(video_id)
                 self.db.update_state(video_id, 'archived')
                 self.db.log_step(video_id, 'archive', 'completed',
                                 message=f"Archived {len(result.get('files_moved', []))} files",
@@ -1244,8 +1275,10 @@ class DLCOrchestrator(BaseOrchestrator):
                             pass
             else:
                 error = result.get('error', 'archive failed')
+                delay = self._note_archive_failure(video_id)
                 self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
-                logger.warning(f"Archive failed for {video_id}: {error}")
+                logger.warning(f"Archive failed for {video_id}: {error} "
+                               f"(retrying in {delay // 60}m)")
 
         except Exception as e:
             duration = time.time() - start_time
@@ -1520,7 +1553,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             }
 
         # Priority 3: Archive — move processed videos to NAS
-        videos = self.db.get_videos_in_state('processed')
+        videos = [v for v in self.db.get_videos_in_state('processed')
+                  if not self._archive_backoff_active(v['video_id'])]
         if videos:
             if priority_animal:
                 preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
@@ -2268,6 +2302,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
                 # Release multi-node claim
                 self._release_claim(video_id)
+                self._clear_archive_backoff(video_id)
 
                 # Remove from staging on NAS (the DLC PC's copy)
                 if self.staging_dir:
@@ -2280,9 +2315,19 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             pass
             else:
                 error = result.get('error', 'archive failed')
-                # Not a fatal error — video stays in processed, will retry
+                # Not a fatal error -- the video stays in 'processed' and is
+                # retried. But it must not be retried on EVERY cycle: a video
+                # that cannot be archived usually cannot be archived a second
+                # later either, and the loop ran at roughly one attempt per
+                # second from February to August, logging 326,235 failures
+                # against a handful of videos and burying everything else in the
+                # log. Back off, and say so once per escalation rather than once
+                # per attempt.
+                delay = self._note_archive_failure(video_id)
                 self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
-                logger.warning(f"Archive failed for {video_id}: {error} (will retry)")
+                logger.warning(
+                    f"Archive failed for {video_id}: {error} "
+                    f"(retrying in {delay // 60}m)")
 
         except Exception as e:
             duration = time.time() - start_time
