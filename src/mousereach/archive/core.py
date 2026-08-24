@@ -289,6 +289,50 @@ def archive_video(
     return result
 
 
+def record_archived(video_id: str) -> bool:
+    """Tell this node's watcher database that the video has been filed.
+
+    archive_video MOVES the files. Without this the row still says 'processed',
+    so the watcher picks the video up again, finds nothing left in Processing,
+    and reads 'not ready' forever -- a video correctly filed and permanently
+    recorded as unfiled, invisible to the version checker that only looks at
+    'archived'. Ten videos went that way in 45 seconds when filing first started
+    working; running the bulk command would have done it to the whole backlog.
+
+    'processed' cannot go straight to 'archived'; the state machine routes
+    through 'archiving'. Best-effort and never raises: the files are already
+    where they belong, and a bookkeeping failure must not look like a data
+    failure. Returns True if the state was recorded.
+    """
+    try:
+        from mousereach.watcher.db import WatcherDB
+        from mousereach.config import WatcherConfig
+        # The node's db_path override, not the default. Getting this wrong is
+        # how seven commands spent months reading a database last written in
+        # February while the daemon wrote to a different file (fixed 2026-08-23);
+        # writing to the wrong one would be worse than reading it.
+        try:
+            override = WatcherConfig.load().db_path
+        except Exception:
+            override = None
+        db = WatcherDB(override) if override else WatcherDB()
+        row = db.get_video(video_id)
+        if row is None:
+            return False                      # not this node's video
+        if row["state"] == "archived":
+            return True
+        if row["state"] == "processed":
+            db.update_state(video_id, "archiving")
+        db.update_state(video_id, "archived")
+        return True
+    except Exception as e:
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("%s: archived on disk but the state could not be "
+                       "recorded (%s). Run mousereach-watch-status to check.",
+                       video_id, e)
+        return False
+
+
 def archive_all(
     dry_run: bool = False,
     verbose: bool = True
@@ -320,6 +364,8 @@ def archive_all(
 
     for video_id in archivable:
         result = archive_video(video_id, dry_run=dry_run, verbose=verbose)
+        if result.get("success") and not dry_run:
+            record_archived(video_id)
         results["videos"].append(result)
         if result["success"]:
             results["success"] += 1

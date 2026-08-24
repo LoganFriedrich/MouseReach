@@ -15,7 +15,8 @@ Usage:
 import argparse
 import sys
 
-from .core import archive_video, archive_all, get_archivable_videos, check_archive_ready
+from .core import (archive_video, archive_all, get_archivable_videos,
+                   check_archive_ready, record_archived)
 
 
 def main():
@@ -112,6 +113,10 @@ Requirements:
             dry_run=args.dry_run,
             verbose=verbose
         )
+
+        # Keep this node's record in step with the disk -- see record_archived.
+        if result["success"] and not args.dry_run:
+            record_archived(args.video_id)
 
         if not result["success"] and not args.dry_run:
             sys.exit(1)
