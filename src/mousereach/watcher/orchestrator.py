@@ -1255,6 +1255,13 @@ class DLCOrchestrator(BaseOrchestrator):
 
             if result.get('success'):
                 self._clear_archive_backoff(video_id)
+                # 'processed' cannot go straight to 'archived' -- the state
+                # machine routes through 'archiving' (db.py VIDEO_TRANSITIONS).
+                # Jumping it raised, and because the files had ALREADY moved the
+                # video stayed in 'processed' with nothing left in Processing to
+                # archive: the next pass then read 'not ready' forever. Filing had
+                # never actually run before today, so this had never fired.
+                self.db.update_state(video_id, 'archiving')
                 self.db.update_state(video_id, 'archived')
                 self.db.log_step(video_id, 'archive', 'completed',
                                 message=f"Archived {len(result.get('files_moved', []))} files",
@@ -2289,6 +2296,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
 
             if result.get('success'):
+                # 'processed' cannot go straight to 'archived' -- the state
+                # machine routes through 'archiving' (db.py VIDEO_TRANSITIONS).
+                # Jumping it raised, and because the files had ALREADY moved the
+                # video stayed in 'processed' with nothing left in Processing to
+                # archive: the next pass then read 'not ready' forever. Filing had
+                # never actually run before today, so this had never fired.
+                self.db.update_state(video_id, 'archiving')
                 self.db.update_state(video_id, 'archived')
                 self.db.log_step(
                     video_id, 'archive', 'completed',
