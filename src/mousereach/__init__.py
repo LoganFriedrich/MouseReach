@@ -34,7 +34,19 @@ for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
              "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
     _os.environ.setdefault(_var, "8")
 
-__version__ = "2.4.0"
+# Keep in step with pyproject.toml -- tests/test_version.py fails if they drift.
+# This is the number stamped into every video processing manifest, so it is the
+# pipeline's provenance record of which code produced a result. It read 2.4.0
+# while pyproject said 2.16.0-dev, so every manifest named a version that had
+# not existed since February.
+#
+# Deliberately NOT importlib.metadata.version("mousereach"): a stale
+# mousereach.egg-info sits in src/ in both the Y: and C: trees, left over from
+# an old setuptools install, and it shadows the real dist-info -- metadata
+# reports 2.3.0 there while pip reports 2.16.0.dev0. A literal cannot be fooled
+# by that.
+__version__ = "2.16.0-dev"
+
 __author__ = "Logan Friedrich"
 
 # Convenience imports for common config access
