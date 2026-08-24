@@ -88,6 +88,32 @@ def _review_doc(stem: str, base) -> Optional[dict]:
     return None
 
 
+def _durable_review_doc(stem: str) -> Optional[dict]:
+    """Read this video's review from the durable store, or None.
+
+    The three lookups above search places a review can DISAPPEAR from: the two
+    NAS review queues, whose bundles are regenerated and torn down, and the
+    caller's processing dir, which is one node's local disk. A review that
+    outlived its bundle but whose video has not been archived yet exists in
+    none of them -- it is exactly the case the durable store was added for, and
+    without this the extractor would quietly fall back to the algorithm's answer
+    while a human answer sat on disk unread.
+
+    Lowest priority of the review layers: any live copy wins, because a reviewer
+    may have edited it since.
+    """
+    if not stem:
+        return None
+    try:
+        from mousereach.review.causal_review_io import durable_review_path
+        p = durable_review_path(stem)
+        if p is not None and p.is_file():
+            return _read_json(p) or None
+    except Exception:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # per-segment OUTCOME layers
 # ---------------------------------------------------------------------------
@@ -334,11 +360,13 @@ def resolve_truth_layers(
     _cur_segs = reaches_data.get("segments") or []
 
     # ---- per-segment OUTCOME layers, low -> high --------------------------
+    durable_doc = _durable_review_doc(stem)
     triage_doc = _review_doc(stem, getattr(Paths, "TRIAGE_REVIEW", None))
     causal_doc = _review_doc(stem, getattr(Paths, "DEEP_REVIEW", None))
     primary_doc = _review_doc(stem, primary_dir) if primary_dir else None
 
     layers: List[Dict[int, dict]] = [
+        _seg_overrides_from_review(durable_doc, "human_review", _cur_segs),  # copy of record (fallback)
         _seg_overrides_from_review(triage_doc, "human_review", _cur_segs),   # triage tier
         _seg_overrides_from_review(causal_doc, "human_review", _cur_segs),   # causal tier
         _seg_overrides_from_review(primary_doc, "human_review", _cur_segs),  # causal tier (processing dir)
