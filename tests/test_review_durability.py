@@ -279,6 +279,44 @@ class TestCorpusIndex:
 class TestKinematicsBridge:
     """The review must still be there when kinematics goes looking."""
 
+    def test_the_extractor_layer_reads_the_durable_store(
+            self, tmp_path, nas, a_review, monkeypatch):
+        """resolve_truth_layers is what the extractor actually calls.
+
+        It looks in the two NAS review queues and the caller's processing dir --
+        all three of which a review can vanish from. A review that outlived its
+        bundle but whose video is not archived yet is in none of them, so without
+        the durable store in the layer stack the extractor would fall back to the
+        algorithm's answer while the human's sat on disk unread.
+        """
+        from mousereach.config import Paths
+        from mousereach.review.truth_resolver import resolve_truth_layers
+
+        stem = "20250624_CNT0104_P3"
+        # the review exists ONLY in the durable store
+        save_causal_review(stem, tmp_path / "gone", a_review, provenance={})
+        import shutil
+        shutil.rmtree(tmp_path / "gone")
+        monkeypatch.setattr(Paths, "TRIAGE_REVIEW", tmp_path / "no-triage", raising=False)
+        monkeypatch.setattr(Paths, "DEEP_REVIEW", tmp_path / "no-deep", raising=False)
+
+        reaches = {"video_name": stem,
+                   "segments": [{"segment_num": 7, "start_frame": 12000,
+                                 "end_frame": 12600, "reaches": []}]}
+        outcomes = {"video_name": stem,
+                    "segments": [{"segment_num": 7, "outcome": "untouched"}]}
+
+        _, resolved = resolve_truth_layers(reaches, outcomes, video_stem=stem)
+
+        seg = resolved["segments"][0]
+        assert seg["outcome"] == "displaced_sa", (
+            "the human's answer must reach kinematics even when every live copy "
+            "of the review is gone")
+        assert seg.get("outcome_source") == "human_review"
+
+
+    """The review must still be there when kinematics goes looking."""
+
     def test_kinematics_finds_the_review_after_the_bundle_is_gone(
             self, tmp_path, nas, a_review):
         import shutil
