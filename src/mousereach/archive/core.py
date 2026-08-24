@@ -7,6 +7,7 @@ This is the only way files leave the Processing/ folder.
 
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
+import json
 import shutil
 from datetime import datetime
 
@@ -53,29 +54,65 @@ def get_video_files(video_id: str) -> List[Path]:
     return files
 
 
-def check_archive_ready(video_id: str) -> Tuple[bool, Dict[str, str]]:
+# The three stage outputs, and where each records the verdict triage gave it.
+_STAGE_FILES = {
+    "seg": "_segments.json",
+    "reach": "_reaches.json",
+    "outcome": "_pellet_outcomes.json",
+}
+
+_ACCEPTED = {"validated", "auto_approved"}
+
+
+def _status_from_files(video_id: str, source_dir: Path) -> Dict[str, str]:
+    """Read each stage's validation_status straight out of its output file."""
+    status: Dict[str, str] = {}
+    for stage, suffix in _STAGE_FILES.items():
+        f = Path(source_dir) / f"{video_id}{suffix}"
+        try:
+            if not f.is_file():
+                status[stage] = "not_started"
+                continue
+            with open(f) as fh:
+                status[stage] = json.load(fh).get("validation_status") or "not_started"
+        except Exception:
+            # Unreadable is not approved. Saying "not_started" here is honest:
+            # we cannot show that a human or the triage step cleared this stage.
+            status[stage] = "unreadable"
+    return status
+
+
+def check_archive_ready(video_id: str, source_dir: Path = None) -> Tuple[bool, Dict[str, str]]:
     """Check if a video is ready for archiving.
+
+    Reads the verdict out of the stage output files. It used to ask the pipeline
+    index -- a cache whose whole purpose is to save a folder scan for the
+    dashboard -- and that cache is allowed to be stale. It was, comprehensively:
+    on 2026-08-24 this node had 1,084 videos held in 'processed' of which 1,083
+    were marked approved by every stage ON DISK, while the index said otherwise
+    for the large majority (segmentation reading 'auto_review', a spelling only
+    the index ever uses, and reach and outcome missing entirely for 39 of every
+    60 sampled). Nothing had archived since February and the retry loop had
+    logged 326,235 failures.
+
+    A cache is the wrong authority for an irreversible decision. The files carry
+    validation_status; that is the fact. The index stays what it is good at --
+    making the dashboard fast.
 
     Args:
         video_id: Video identifier
+        source_dir: Where the outputs live. Defaults to the local Processing dir.
 
     Returns:
         (is_ready, status_dict) - status_dict has keys seg, reach, outcome
     """
-    from mousereach.index import PipelineIndex
+    if source_dir is None:
+        source_dir = Paths.PROCESSING
+    if source_dir is None:
+        return False, {k: "no processing dir configured" for k in _STAGE_FILES}
 
-    index = PipelineIndex()
-    index.load()
-
-    status = index.get_pipeline_status(video_id)
-
-    accepted = {"validated", "auto_approved"}
-    is_ready = (
-        status["seg"] in accepted and
-        status["reach"] in accepted and
-        status["outcome"] in accepted
-    )
-
+    status = _status_from_files(video_id, Path(source_dir))
+    is_ready = all(status.get(k) in _ACCEPTED for k in _STAGE_FILES)
     return is_ready, status
 
 
@@ -132,7 +169,7 @@ def archive_video(
 
     # Check if ready
     if not skip_ready_check:
-        is_ready, status = check_archive_ready(video_id)
+        is_ready, status = check_archive_ready(video_id, source_dir=source_dir)
 
         if not is_ready:
             not_validated = [k for k, v in status.items() if v not in ("validated", "auto_approved")]
