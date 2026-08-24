@@ -20,6 +20,12 @@ and the corpus index could not rebuild any of them, because it stored a file
 path plus two summary fields and neither the frames the reviewer looked at nor
 the reach they picked.
 
+The video id used throughout is deliberately synthetic. An earlier draft used a
+real stem, and the test that asserts a wiped review is unfindable started failing
+the moment that video was genuinely filed -- resolve_review_path searches the
+canonical results dir, which is a real path on the NAS, so a real id makes the
+test depend on the state of the corpus.
+
 These tests pin the three properties that fix: the review is written somewhere
 nothing regenerates, it is found from anywhere afterwards, and regenerating a
 bundle carries it forward instead of dropping it.
@@ -74,23 +80,23 @@ class TestDurableCopy:
 
     def test_save_writes_a_durable_copy_as_well_as_the_working_one(
             self, tmp_path, nas, a_review):
-        bundle = tmp_path / "triage" / "20250624_CNT0104_P3"
+        bundle = tmp_path / "triage" / "19990101_TEST0001_P1"
         bundle.mkdir(parents=True)
 
         working = save_causal_review(
-            "20250624_CNT0104_P3", bundle, a_review, provenance={}, reviewer="tester")
+            "19990101_TEST0001_P1", bundle, a_review, provenance={}, reviewer="tester")
 
         assert working.is_file(), "the working copy is still written where the reviewer is"
-        durable = durable_review_path("20250624_CNT0104_P3")
+        durable = durable_review_path("19990101_TEST0001_P1")
         assert durable.is_file(), "and a durable copy exists outside the bundle"
         assert durable.parent != bundle, "which is NOT inside the transient bundle"
 
     def test_the_durable_copy_holds_the_full_payload(self, tmp_path, nas, a_review):
-        bundle = tmp_path / "triage" / "20250624_CNT0104_P3"
+        bundle = tmp_path / "triage" / "19990101_TEST0001_P1"
         bundle.mkdir(parents=True)
-        save_causal_review("20250624_CNT0104_P3", bundle, a_review, provenance={})
+        save_causal_review("19990101_TEST0001_P1", bundle, a_review, provenance={})
 
-        doc = json.loads(durable_review_path("20250624_CNT0104_P3").read_text())
+        doc = json.loads(durable_review_path("19990101_TEST0001_P1").read_text())
         rec = doc["segments"][0]
         assert rec["segment_span"] == {"start": 12000, "end": 12600}, (
             "the frames the reviewer looked at")
@@ -102,13 +108,13 @@ class TestDurableCopy:
     def test_review_survives_the_bundle_being_wiped(self, tmp_path, nas, a_review):
         """The exact loss: the directory the review lived in is regenerated."""
         import shutil
-        bundle = tmp_path / "triage" / "20250624_CNT0104_P3"
+        bundle = tmp_path / "triage" / "19990101_TEST0001_P1"
         bundle.mkdir(parents=True)
-        save_causal_review("20250624_CNT0104_P3", bundle, a_review, provenance={})
+        save_causal_review("19990101_TEST0001_P1", bundle, a_review, provenance={})
 
         shutil.rmtree(bundle)                      # reprocess regenerates the bundle
 
-        found = resolve_review_path("20250624_CNT0104_P3")
+        found = resolve_review_path("19990101_TEST0001_P1")
         assert found is not None, "the review is still findable with its bundle gone"
         assert json.loads(found.read_text())["segments"][0]["human"]["outcome"] == "displaced_sa"
 
@@ -121,7 +127,7 @@ class TestDurableCopy:
         find, and the corpus index cannot rebuild it. This is the 41-video case.
         """
         import shutil
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         bundle = tmp_path / "triage" / stem
         bundle.mkdir(parents=True)
         (bundle / f"{stem}_causal_review.json").write_text(json.dumps(
@@ -139,7 +145,7 @@ class TestDurableCopy:
         monkeypatch.setattr(Paths, "PROCESSING_ROOT", None, raising=False)
         out = tmp_path / "somewhere"
         out.mkdir()
-        written = save_causal_review("20250624_CNT0104_P3", out, a_review, provenance={})
+        written = save_causal_review("19990101_TEST0001_P1", out, a_review, provenance={})
         assert written.is_file()
         assert durable_review_dir() is None
 
@@ -152,7 +158,7 @@ class TestBundleRegeneration:
         from mousereach.review.staging import _restore_review_into_bundle
         import shutil
 
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         bundle = tmp_path / "triage" / stem
         bundle.mkdir(parents=True)
         save_causal_review(stem, bundle, a_review, provenance={})
@@ -174,7 +180,7 @@ class TestBundleRegeneration:
         from mousereach.review.staging import _restore_review_into_bundle
         import os, time
 
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         bundle = tmp_path / "triage" / stem
         bundle.mkdir(parents=True)
         save_causal_review(stem, bundle, a_review, provenance={})
@@ -218,7 +224,7 @@ class TestReturnToProcessing:
             self, tmp_path, nas, a_review):
         from mousereach.watcher.review_return import _ensure_durable_review
 
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         bundle = tmp_path / "triage" / stem
         bundle.mkdir(parents=True)
         # a review that exists ONLY in the bundle -- the 41-video case
@@ -233,9 +239,9 @@ class TestReturnToProcessing:
 
     def test_no_review_in_the_bundle_is_not_an_error(self, tmp_path, nas):
         from mousereach.watcher.review_return import _ensure_durable_review
-        bundle = tmp_path / "triage" / "20250624_CNT0104_P3"
+        bundle = tmp_path / "triage" / "19990101_TEST0001_P1"
         bundle.mkdir(parents=True)
-        _ensure_durable_review(bundle, "20250624_CNT0104_P3")   # must not raise
+        _ensure_durable_review(bundle, "19990101_TEST0001_P1")   # must not raise
 
     def test_return_calls_it(self):
         import inspect
@@ -249,7 +255,7 @@ class TestCorpusIndex:
 
     def test_index_entries_carry_what_a_re_review_would_have_to_redo(
             self, tmp_path, nas, a_review):
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         out = tmp_path / "b"
         out.mkdir()
         path = save_causal_review(stem, out, a_review, provenance={})
@@ -266,7 +272,7 @@ class TestCorpusIndex:
         assert idx["schema_version"] == "1.1"
 
     def test_index_records_where_the_durable_copy_is(self, tmp_path, nas, a_review):
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         out = tmp_path / "b"
         out.mkdir()
         path = save_causal_review(stem, out, a_review, provenance={})
@@ -292,7 +298,7 @@ class TestKinematicsBridge:
         from mousereach.config import Paths
         from mousereach.review.truth_resolver import resolve_truth_layers
 
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         # the review exists ONLY in the durable store
         save_causal_review(stem, tmp_path / "gone", a_review, provenance={})
         import shutil
@@ -320,7 +326,7 @@ class TestKinematicsBridge:
     def test_kinematics_finds_the_review_after_the_bundle_is_gone(
             self, tmp_path, nas, a_review):
         import shutil
-        stem = "20250624_CNT0104_P3"
+        stem = "19990101_TEST0001_P1"
         bundle = tmp_path / "triage" / stem
         bundle.mkdir(parents=True)
         save_causal_review(stem, bundle, a_review, provenance={})

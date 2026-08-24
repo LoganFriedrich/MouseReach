@@ -176,3 +176,69 @@ class TestArchivedStateTransition:
                    o.DLCOrchestrator._archive_locally_processed):
             src = inspect.getsource(fn)
             assert "update_state(video_id, 'archiving')" in src, fn.__qualname__
+
+
+class TestFilingIsRecorded:
+    """Moving the files and recording the move must not come apart.
+
+    archive_video MOVES files. If the node's row is not updated the watcher picks
+    the video up again, finds nothing left in Processing, and reads 'not ready'
+    forever -- correctly filed, permanently recorded as unfiled, and invisible to
+    the version checker, which only looks at 'archived'. The bulk command
+    (mousereach-archive) did exactly this, so draining a backlog with it would
+    have stranded every video it filed.
+    """
+
+    @pytest.fixture
+    def node_db(self, tmp_path, monkeypatch):
+        from mousereach.watcher.db import WatcherDB
+        import mousereach.config as cfg
+
+        db_path = tmp_path / "watcher_local.db"
+        db = WatcherDB(db_path=db_path)
+
+        class FakeCfg:
+            db_path = None
+        FakeCfg.db_path = db_path
+        monkeypatch.setattr(cfg.WatcherConfig, "load", staticmethod(lambda: FakeCfg()))
+        return db
+
+    def _make(self, db, vid, state):
+        db.register_video(video_id=vid, source_path="x")
+        for st in ("validated", "dlc_queued", "dlc_running", "dlc_complete",
+                   "processing", "processed"):
+            db.update_state(vid, st)
+            if st == state:
+                return
+
+    def test_a_filed_video_is_recorded_archived(self, node_db):
+        from mousereach.archive.core import record_archived
+        self._make(node_db, "v1", "processed")
+        assert record_archived("v1") is True
+        assert node_db.get_video("v1")["state"] == "archived"
+
+    def test_it_is_idempotent(self, node_db):
+        from mousereach.archive.core import record_archived
+        self._make(node_db, "v1", "processed")
+        record_archived("v1")
+        assert record_archived("v1") is True
+        assert node_db.get_video("v1")["state"] == "archived"
+
+    def test_a_video_this_node_does_not_know_is_not_an_error(self, node_db):
+        from mousereach.archive.core import record_archived
+        assert record_archived("never_seen_00000_P1") is False
+
+    def test_it_writes_to_the_configured_database(self, node_db, tmp_path):
+        """Not the default path -- this node overrides db_path, and writing to
+        the wrong file would be worse than the read-the-wrong-file bug of
+        2026-08-23."""
+        import inspect
+        from mousereach.archive import core
+        src = inspect.getsource(core.record_archived)
+        assert "WatcherConfig" in src and "db_path" in src
+
+    def test_both_bulk_paths_record(self):
+        import inspect
+        from mousereach.archive import core, cli
+        assert "record_archived" in inspect.getsource(core.archive_all)
+        assert "record_archived" in inspect.getsource(cli.main)
