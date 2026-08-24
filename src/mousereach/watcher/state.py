@@ -77,8 +77,22 @@ class WatcherStateManager:
 
             filename = file_path.name
 
-            # Skip if already in database
+            # Skip if already in database -- but first make sure the row points
+            # at this file. A row whose source_path is not a real path (older
+            # cross-node recovery wrote the owning hostname there) blocks the
+            # collage permanently: it is skipped here because the row exists, and
+            # it fails in _process_collage because the path does not.
             if self.db.collage_exists(filename):
+                try:
+                    known = self.db.get_collage(filename) or {}
+                    recorded = (known.get('source_path') or '').strip()
+                    if not recorded or not Path(recorded).is_file():
+                        self.db.set_collage_source_path(filename, str(file_path))
+                        logger.info(
+                            f"Collage {filename}: recorded path was not a file "
+                            f"({recorded!r}); corrected to {file_path}")
+                except Exception as e:
+                    logger.debug(f"Could not check collage path for {filename}: {e}")
                 continue
 
             # Validate filename

@@ -1470,3 +1470,153 @@ def main_uncrystallize():
     print(f"Uncrystallized {count} videos.")
     if count > 0:
         print("These videos can now be reprocessed when tool versions change.")
+
+
+# =============================================================================
+# UNRESOLVABLE: videos this node has no file for
+# =============================================================================
+
+# Placeholders written by older versions of cross-node recovery. They are not
+# paths; four handlers passed them to Path() anyway.
+_LEGACY_PLACEHOLDERS = ('recovered', 'recovered_from_mousedb', '')
+
+# States that mean "this node holds the files and is working on it".
+_WORKING_STATES = (
+    'discovered', 'validated', 'dlc_queued', 'dlc_running',
+    'dlc_complete', 'processing', 'processed', 'archiving', 'outdated',
+)
+
+
+def _pathless_working_rows(db):
+    """Rows sitting in a working state with no usable file recorded.
+
+    These are the phantoms: videos this node was told about by another node
+    through connectome.db, which carries state but no file paths. The work loop
+    picks them up every cycle and there is nothing there to work on.
+    """
+    marker = getattr(db, 'NO_FILE_HERE', '(no file on this node)')
+    out = []
+    for state in _WORKING_STATES:
+        for row in db.get_videos_in_state(state):
+            src = (row.get('source_path') or '').strip()
+            cur = (row.get('current_path') or '').strip()
+            if (src in _LEGACY_PLACEHOLDERS or src == marker) and not cur:
+                out.append(row)
+    return out
+
+
+def main_unresolvable():
+    """List, sweep, or retry videos this node has no file for."""
+    args = sys.argv[1:]
+    do_list = '--list' in args
+    do_sweep = '--sweep' in args
+    do_retry = '--retry' in args
+    dry_run = '--dry-run' in args
+
+    if not (do_list or do_sweep or do_retry):
+        print("Usage: mousereach-watch-unresolvable [options]", file=sys.stderr)
+        print()
+        print("A video is 'unresolvable' when THIS machine has no file for it.")
+        print("That is not a failure -- usually another node holds it -- so it is")
+        print("kept out of the work loop instead of being retried forever.")
+        print()
+        print("Options:")
+        print("  --list      Show unresolvable videos, and any pathless rows still")
+        print("              sitting in a working state (the old phantom rows)")
+        print("  --sweep     Move those pathless rows to 'unresolvable' so the")
+        print("              watcher stops picking them up. Nothing is deleted.")
+        print("  --retry     Put back into the pipeline any unresolvable video")
+        print("              whose file has since appeared on this node")
+        print("  --dry-run   Show what --sweep or --retry would do, and change nothing")
+        print()
+        print("Examples:")
+        print("  mousereach-watch-unresolvable --list")
+        print("  mousereach-watch-unresolvable --sweep --dry-run")
+        print("  mousereach-watch-unresolvable --sweep")
+        sys.exit(1)
+
+    from mousereach.watcher.db import WatcherDB
+    from mousereach.watcher.locate import locate_video_file
+
+    try:
+        db_path = _resolve_db_path()
+        if not db_path.exists():
+            print("ERROR: Watcher database not found. Run 'mousereach-watch' first.",
+                  file=sys.stderr)
+            sys.exit(1)
+        db = WatcherDB(db_path)
+    except Exception as e:
+        print(f"ERROR: Failed to load database: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Database: {db_path}")
+    print()
+
+    unresolvable = db.get_videos_in_state('unresolvable')
+    phantoms = _pathless_working_rows(db)
+
+    if do_list:
+        print("=" * 70)
+        print("Videos with no file on this node")
+        print("=" * 70)
+        print()
+        print(f"Already marked unresolvable: {len(unresolvable)}")
+        for row in unresolvable[:40]:
+            print(f"  {row['video_id']:32s} {row.get('error_message') or ''}")
+        if len(unresolvable) > 40:
+            print(f"  ... and {len(unresolvable) - 40} more")
+        print()
+        print(f"Pathless rows still in a working state: {len(phantoms)}")
+        for row in phantoms[:40]:
+            print(f"  {row['video_id']:32s} state={row['state']:14s} "
+                  f"source_path={row.get('source_path')!r}")
+        if len(phantoms) > 40:
+            print(f"  ... and {len(phantoms) - 40} more")
+        if phantoms:
+            print()
+            print("Run 'mousereach-watch-unresolvable --sweep' to take these out of")
+            print("the work loop. They are kept, not deleted.")
+        print()
+
+    if do_sweep:
+        moved = kept = 0
+        for row in phantoms:
+            video_id = row['video_id']
+            found = locate_video_file(video_id)
+            if found is not None:
+                # Not a phantom after all: the file is here, the row just never
+                # recorded where. Fill the path in and leave the state alone.
+                print(f"  {video_id}: file IS here ({found}) -- recording the path, "
+                      f"state stays '{row['state']}'")
+                if not dry_run:
+                    db.force_state(video_id, row['state'],
+                                   reason="sweep: recording the file this node holds",
+                                   source_path=str(found), current_path=str(found))
+                kept += 1
+                continue
+            print(f"  {video_id}: {row['state']} -> unresolvable")
+            if not dry_run:
+                db.mark_unresolvable(
+                    video_id,
+                    "swept: sat in '%s' with no file on this node" % row['state'])
+            moved += 1
+        print()
+        print(f"{'Would move' if dry_run else 'Moved'} {moved} row(s) to unresolvable; "
+              f"{kept} turned out to have a file here.")
+
+    if do_retry:
+        back = 0
+        for row in unresolvable:
+            video_id = row['video_id']
+            found = locate_video_file(video_id)
+            if found is None:
+                continue
+            print(f"  {video_id}: file found at {found} -> dlc_queued")
+            if not dry_run:
+                db.force_state(video_id, 'dlc_queued',
+                               reason="file has since appeared on this node",
+                               source_path=str(found), current_path=str(found),
+                               error_message=None)
+            back += 1
+        print()
+        print(f"{'Would return' if dry_run else 'Returned'} {back} video(s) to the pipeline.")

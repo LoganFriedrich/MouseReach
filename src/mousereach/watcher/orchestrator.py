@@ -36,6 +36,9 @@ from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
 from mousereach.watcher.transfer import safe_copy, safe_move
+from mousereach.watcher.locate import (
+    resolve_pose_input, locate_pose_file, locate_video_file, node_search_dirs,
+)
 from mousereach.pipeline.manifest import select_pose_file
 from mousereach.config import (
     Paths, WatcherConfig, require_processing_root, parse_tray_type,
@@ -43,51 +46,6 @@ from mousereach.config import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def resolve_pose_input(raw, video_id: str, *search_dirs):
-    """Resolve a video's pose file, or None if it genuinely has none.
-
-    An absent path must stay absent. ``Path('')`` is ``Path('.')`` -- the current
-    directory -- which *exists*, so the obvious guard
-
-        dlc_path = Path(video_data.get('dlc_output_path') or '')
-        if not dlc_path.exists(): ...
-
-    can never fire for a video with no recorded pose. The algorithms are then
-    handed a DIRECTORY as their HDF5 file and fail with
-    ``PermissionError: [Errno 13] Permission denied: '.'`` -- an error that names
-    the current directory and says nothing about the actual problem. On
-    2026-08-19 that routed 723 videos into the human deep-review queue as
-    "segmentation_failed" in under two hours.
-
-    So: return a real file or None, and test ``is_file()`` rather than
-    ``exists()`` so a directory can never satisfy "is this my pose file".
-
-    Args:
-        raw: the recorded dlc_output_path (may be None/'')
-        video_id: stem used to glob the fallback directories
-        *search_dirs: directories to search, in order, if raw does not resolve
-
-    Returns:
-        Path to the pose file, or None.
-    """
-    if raw:
-        p = Path(raw)
-        if p.is_file():
-            return p
-    for d in search_dirs:
-        if not d:
-            continue
-        try:
-            hits = list(Path(d).glob(f"{video_id}DLC*.h5"))
-        except OSError:
-            continue
-        if hits:
-            chosen = select_pose_file(hits)
-            if chosen is not None and Path(chosen).is_file():
-                return Path(chosen)
-    return None
 
 
 def segmentation_could_not_run(error, dlc_path) -> bool:
@@ -131,6 +89,14 @@ class BaseOrchestrator:
     - DB tracking and logging
     - Graceful shutdown
     """
+
+    # Whether this role can actually re-run an archived video. Only the
+    # processing role has a handler for the 'outdated' state; the DLC role's work
+    # loop never selects it. Marking videos outdated on a node that cannot act on
+    # them is not harmless bookkeeping -- the state syncs to connectome.db, other
+    # nodes adopt it in recovery, and the video ends up queued on a machine that
+    # has no file for it. So the scan is gated on being able to finish the job.
+    handles_reprocessing = False
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         self.config = config
@@ -219,6 +185,15 @@ class BaseOrchestrator:
         applies reviews automatically -- no manual 'mousereach-version-check' step.
         Runs at startup then on an interval; fully guarded so it can never break
         the main loop."""
+        if not self.handles_reprocessing:
+            if not getattr(self, '_logged_no_reprocess_role', False):
+                self._logged_no_reprocess_role = True
+                logger.info(
+                    "%s does not reprocess archived videos -- skipping the version "
+                    "and review scan. The processing node does this work.",
+                    self.__class__.__name__)
+            return
+
         interval = getattr(self.config, 'reprocess_scan_interval_seconds', 1800)
         now = time.time()
         if not force and (now - getattr(self, '_last_reprocess_scan', 0.0)) < interval:
@@ -443,6 +418,18 @@ class DLCOrchestrator(BaseOrchestrator):
                 existing = None
 
             if existing is not None:
+                # 'unresolvable' means a previous pass could find no file for
+                # this video here. The file is here now, so the reason is gone:
+                # put it back in the pipeline. Without this the terminal state
+                # would be a one-way door and a video that arrived late would sit
+                # in the database forever with its file on disk beside it.
+                if existing.get('state') == 'unresolvable':
+                    self.db.force_state(
+                        video_id, 'dlc_queued',
+                        reason="file has since appeared in DLC_Queue",
+                        current_path=str(mp4), source_path=str(mp4),
+                        error_message=None)
+                    logger.info(f"{video_id}: file found in DLC_Queue; requeued")
                 continue  # Already tracked
 
             # Determine state from sibling files
@@ -874,7 +861,20 @@ class DLCOrchestrator(BaseOrchestrator):
 
         video_id = work['id']
         video_data = work['data']
-        current_path = Path(video_data['current_path'])
+
+        # Same pathless-row hazard as _stage_to_nas, and the same reason for
+        # search_archive=False: DLC writes its .h5 beside its input, so resolving
+        # to the archived copy would drop new pose files into the archive.
+        current_path = locate_video_file(
+            video_id, raw=video_data.get('current_path'),
+            extra_dirs=[Paths.DLC_QUEUE], search_archive=False)
+
+        if current_path is None:
+            self.db.mark_unresolvable(
+                video_id,
+                "queued for DLC but no video file for it on this node "
+                "(recorded path: %r)" % (video_data.get('current_path'),))
+            return
 
         logger.info(f"Running DLC on {video_id}")
 
@@ -1272,12 +1272,44 @@ class DLCOrchestrator(BaseOrchestrator):
 
         logger.info(f"Staging {video_id} to NAS: {self.staging_dir}")
 
+        # A row can reach here with no path at all. Cross-node recovery adopts
+        # another machine's state out of connectome.db, which carries no file
+        # paths, so this node can be told "20251225_CNT0405_P4 is dlc_complete"
+        # about a video it has never held. Path(None) then raises TypeError, the
+        # video is marked failed, and the next cycle picks it up again.
+        #
+        # search_archive is off deliberately: the loop below MOVES what it finds.
+        # A hit in the archive is the finished copy of this video, and moving it
+        # into the staging folder would empty the archive to feed a queue.
+        current_path = locate_video_file(
+            video_id, raw=video_data.get('current_path'),
+            extra_dirs=[Paths.DLC_QUEUE], search_archive=False)
+
+        if current_path is None:
+            self.db.mark_unresolvable(
+                video_id,
+                "nothing to stage: no video file for it on this node "
+                "(recorded path: %r)" % (video_data.get('current_path'),))
+            self.db.log_step(video_id, 'stage_to_nas', 'skipped',
+                             message="no file on this node")
+            return
+
+        if current_path.parent == self.staging_dir:
+            # Already where staging would put it -- a re-run after an interrupted
+            # move. Record the end state instead of moving a file onto itself.
+            logger.info(f"{video_id} is already in NAS staging; marking archived")
+            self.db.force_state(video_id, 'archived',
+                                reason="already present in NAS staging",
+                                current_path=str(current_path))
+            self.db.log_step(video_id, 'stage_to_nas', 'completed',
+                             message="already staged")
+            return
+
         self.db.log_step(video_id, 'stage_to_nas', 'started')
         start_time = time.time()
 
         try:
-            # Find all files for this video in DLC_Queue (mp4, h5, csv)
-            current_path = Path(video_data['current_path'])
+            # Find all files for this video (mp4, h5, csv)
             source_dir = current_path.parent
             all_files = self._get_associated_files(source_dir, video_id)
 
@@ -1335,6 +1367,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     After processing, auto-approved videos are archived to NAS.
     """
+
+    handles_reprocessing = True
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)
@@ -1502,16 +1536,39 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Priority 4: Reprocess outdated videos
         outdated = self.db.get_videos_in_state('outdated')
         if outdated:
-            pick = self._pick_from_pool(outdated, priority_animal, 'animal_id')
-            scope = pick.get('reprocess_scope', 'full')
+            # 'full' means the video needs a genuinely NEW pose, which this node
+            # cannot make -- it has no CUDA. It used to be pushed into
+            # 'dlc_queued' here, and that went nowhere useful: this node's work
+            # loop never selects dlc_queued, the DLC PC's DLC_Queue is a LOCAL
+            # folder it cannot see, and the only thing that crossed machines was
+            # the state itself, through connectome.db -- where cross-node
+            # recovery turned it into a pathless row on the GPU node that
+            # crashed on Path(None) and came back every cycle.
+            #
+            # So: hold them, name them, and let the ones that CAN be done here
+            # through. The scanner has already been taught not to call a video
+            # DLC-stale when the declared pose is sitting in the archive, so this
+            # pool should be small; anything left in it needs a person to put the
+            # video back in front of a GPU.
+            needs_pose = [v for v in outdated
+                          if (v.get('reprocess_scope') or '') == 'full']
+            actionable = [v for v in outdated
+                          if (v.get('reprocess_scope') or '') != 'full']
 
-            if scope == 'full':
-                # Needs DLC re-run — can't do it here (no CUDA), stage back to DLC queue
-                self.db.force_state(pick['video_id'], 'dlc_queued')
-                logger.info(f"Outdated {pick['video_id']} queued for full reprocess (DLC changed)")
-                return None  # Let next cycle pick it up via DLC orchestrator
-            else:
+            if needs_pose and not getattr(self, '_logged_repose_hold', False):
+                self._logged_repose_hold = True
+                logger.warning(
+                    "%d outdated video(s) need a new DLC pose and are held on this "
+                    "node, which has no GPU: %s%s. Run them on a DLC node "
+                    "(mousereach-watch there) or re-queue them by hand; they are "
+                    "not lost and nothing is retrying them.",
+                    len(needs_pose),
+                    ', '.join(v['video_id'] for v in needs_pose[:5]),
+                    '' if len(needs_pose) <= 5 else ' and %d more' % (len(needs_pose) - 5))
+
+            if actionable:
                 # post_dlc: re-run seg/reach/outcomes from existing DLC output
+                pick = self._pick_from_pool(actionable, priority_animal, 'animal_id')
                 return {
                     'type': 'reprocess',
                     'id': pick['video_id'],
@@ -1795,11 +1852,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
         start_time = time.time()
 
         try:
-            # Find all files in staging directory
-            source_dir = Path(video_data.get('current_path') or '').parent
-            if not source_dir.exists():
-                # Try staging dir directly
-                source_dir = self.staging_dir
+            # Find all files in staging directory.
+            #
+            # This used to be Path(current_path or '').parent, which for a
+            # pathless row is Path('.').parent -- the current working directory.
+            # It exists, so the fallback below never fired, and intake went
+            # looking for the video among whatever files happen to sit in the
+            # directory the watcher was started from.
+            staged = locate_video_file(
+                video_id, raw=video_data.get('current_path'),
+                extra_dirs=[self.staging_dir], search_archive=False)
+            source_dir = staged.parent if staged is not None else self.staging_dir
 
             all_files = self._get_associated_files(source_dir, video_id)
             if not all_files:
