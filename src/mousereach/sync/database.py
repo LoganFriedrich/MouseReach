@@ -228,29 +228,47 @@ class SyncResult:
 
 def parse_subject_id(video_name: str) -> Optional[str]:
     """
-    Extract subject ID from video name and convert to database format.
+    Extract subject ID from a video name and convert it to database format.
 
-    Video format: YYYYMMDD_CNTxxxx_[Type][Run]
-    Example: 20250624_CNT0115_P2 -> CNT0115 -> CNT_01_15
+    Video format: YYYYMMDD_{PROJECT}{CCSS}_[Type][Run]
+    Examples:
+        20250624_CNT0115_P2  -> CNT0115  -> CNT_01_15
+        20220811_ASPA1011_P3 -> ASPA1011 -> ASPA_10_11
 
-    Database format: CNT_CC_SS (project_cohort_subject)
+    Database format: {PROJECT}_CC_SS (project_cohort_subject)
     - CC = cohort (2 digits)
     - SS = subject within cohort (2 digits)
+
+    This used to match ``CNT(\d{4})`` and nothing else, so every non-CNT video
+    returned None and sync_file_to_database gave up before it had even asked
+    whether the subject was known. ASPA is a project in exactly the way CNT is a
+    project -- mousedb models projects, and ASPA videos are analysed by the same
+    pipeline and filed to Analyzed/ASPA -- so hardcoding one project's prefix
+    quietly excluded a whole project's results from the database. 61 ASPA videos
+    on this node had been processed, filed, and silently skipped.
+
+    Parsing is delegated to AnimalID.parse, the same decomposition the rest of
+    the pipeline uses to route a video to its project folder, so the sync and the
+    filing cannot disagree about which animal a video belongs to.
     """
     clean_name = video_name
     for suffix in ['_features', '_reaches', '_pellet_outcomes', '_segments']:
         clean_name = clean_name.replace(suffix, '')
 
-    match = re.search(r'CNT(\d{4})', clean_name)
-    if match:
-        digits = match.group(1)
-        cohort = digits[:2]
-        subject = digits[2:]
-        return f"CNT_{cohort}_{subject}"
-
-    match = re.search(r'(CNT_\d{2}_\d{2})', clean_name)
+    # Already in database form (PROJECT_CC_SS)
+    match = re.search(r'([A-Za-z]+_\d{2}_\d{2})', clean_name)
     if match:
         return match.group(1)
+
+    # Video form: the middle field is the animal id
+    from mousereach.config import AnimalID
+    for token in clean_name.split('_'):
+        if not token or not token[0].isalpha() or not any(c.isdigit() for c in token):
+            continue
+        parsed = AnimalID.parse(token)
+        if not parsed.get('valid'):
+            continue
+        return "%s_%s_%s" % (parsed['experiment'], parsed['cohort'], parsed['subject'])
 
     return None
 
