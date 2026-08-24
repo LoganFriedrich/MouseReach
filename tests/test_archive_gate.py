@@ -140,3 +140,39 @@ class TestRetryBackoff:
         for fn in (o.ProcessingOrchestrator._get_next_work_item,
                    o.DLCOrchestrator._get_next_work_item):
             assert "_archive_backoff_active" in inspect.getsource(fn)
+
+
+class TestArchivedStateTransition:
+    """Filing a video must be able to record that it was filed.
+
+    'processed' cannot go straight to 'archived' -- the state machine routes
+    through 'archiving'. Both roles jumped it, which raised. That had never
+    mattered because filing had never actually succeeded; the moment it did, the
+    files moved and the row stayed in 'processed' with nothing left in Processing,
+    so the next pass read 'not ready' forever. Ten videos went that way in the
+    first 45 seconds.
+    """
+
+    def test_the_route_to_archived_is_legal(self):
+        from mousereach.watcher.db import VIDEO_TRANSITIONS
+        assert 'archived' not in VIDEO_TRANSITIONS['processed'], (
+            'if this ever becomes legal, the two-hop below is merely redundant')
+        assert 'archiving' in VIDEO_TRANSITIONS['processed']
+        assert 'archived' in VIDEO_TRANSITIONS['archiving']
+
+    def test_a_real_video_can_walk_it(self, tmp_path):
+        from mousereach.watcher.db import WatcherDB
+        db = WatcherDB(db_path=tmp_path / 'w.db')
+        db.register_video(video_id='v1', source_path=str(tmp_path / 'v1.mp4'))
+        for st in ('validated', 'dlc_queued', 'dlc_running', 'dlc_complete',
+                   'processing', 'processed', 'archiving', 'archived'):
+            db.update_state('v1', st)
+        assert db.get_video('v1')['state'] == 'archived'
+
+    def test_both_roles_hop_through_archiving(self):
+        import inspect
+        from mousereach.watcher import orchestrator as o
+        for fn in (o.ProcessingOrchestrator._archive_to_nas,
+                   o.DLCOrchestrator._archive_locally_processed):
+            src = inspect.getsource(fn)
+            assert "update_state(video_id, 'archiving')" in src, fn.__qualname__
