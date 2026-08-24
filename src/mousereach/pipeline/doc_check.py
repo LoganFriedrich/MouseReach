@@ -132,12 +132,35 @@ def covers(entry: dict, changed: List[str]) -> List[str]:
     return hit
 
 
-def commits_since(stamp: str, paths: List[str]) -> List[str]:
-    """Commits touching these paths since the document was verified."""
+def commits_since(stamp: str, paths: List[str], doc_path: Optional[str] = None) -> List[str]:
+    """Commits touching these paths since the document was verified.
+
+    Excludes any commit that ALSO touched the document itself in the same
+    commit. The stamp is a hash typed into the document before it is
+    committed, so it can never equal the hash of the commit that writes it --
+    "git commit" has not run yet and the hash does not exist. Without this
+    exclusion, a commit that updates the code AND its document together would
+    permanently flag as drift against itself: the stamp is one parent behind
+    forever, since HEAD can never again equal a hash that predates it. That
+    is not drift, it is exactly the compliance the stamp exists to detect --
+    so a commit only counts as real drift if it changed covered code WITHOUT
+    touching the document in the same breath.
+    """
     if not stamp or not paths:
         return []
     out = git("log", "--oneline", "%s..HEAD" % stamp, "--", *paths)
-    return [l for l in out.splitlines() if l.strip()]
+    commits = [l for l in out.splitlines() if l.strip()]
+    if not doc_path or not commits:
+        return commits
+    real = []
+    for line in commits:
+        sha = line.split(" ", 1)[0]
+        touched = git("show", "--name-only", "--format=", sha).splitlines()
+        touched = {t.strip().replace("\\", "/") for t in touched if t.strip()}
+        if doc_path.replace("\\", "/") in touched:
+            continue  # updated together with the doc -- not drift
+        real.append(line)
+    return real
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +241,7 @@ def report() -> int:
         if not stamp:
             unstamped.append(e)
             continue
-        commits = commits_since(stamp, e.get("covers", []))
+        commits = commits_since(stamp, e.get("covers", []), doc_path=e["doc"])
         (stale if commits else fine).append((e, stamp, commits))
 
     print("Documents: %d" % len(entries))
