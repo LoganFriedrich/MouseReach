@@ -1,14 +1,26 @@
 """
 Causal Review I/O -- save format and corpus index for the causal review tool.
 
-Two outputs per reviewed video:
-  1. Per-video ``{video}_causal_review.json`` -- standalone review record
-  2. Corpus index (append/update) at
+Three outputs per reviewed video:
+  1. DURABLE copy at ``{NAS_ROOT}/review_records/reviews/{video}_causal_review.json``
+  2. Working copy ``{video}_causal_review.json`` beside whatever the reviewer
+     had open (a triage bundle, a processing dir, the canonical results dir)
+  3. Corpus index (append/update) at
      ``{NAS_ROOT}/review_records/causal_review_index.json``
 
-The per-video file is the primary artifact. The corpus index is a
-lookup table so the active-learning loop can bulk-read all reviews
-without scanning every video directory.
+The durable copy exists because the working copy is not durable and was, for a
+long time, the only copy. A review is written into a triage bundle; the bundle
+is transient -- reprocessing regenerates it, and returning a cleared bundle
+MOVES its files onto one node's local disk and removes the bundle. A review only
+reached shared storage that survives when its video was archived, so whether a
+reviewer's work outlived a reprocess came down to timing. Measured on
+2026-08-24: of 1,686 reviewed videos, 662 had a durable copy, 983 existed only
+on one machine's local disk, and 41 existed only inside a Y: triage bundle -- one
+reprocess away from gone, and not reconstructable from the index.
+
+So the durable copy is written FIRST and never depends on the bundle's
+lifecycle. The working copy may still be written wherever the reviewer is; it
+must never be the only one.
 
 The save is idempotent: re-reviewing a (video, segment) pair
 overwrites the prior entry in both per-video file and index.
@@ -52,6 +64,24 @@ def bundle_manifest_path(bundle_dir, video_stem: Optional[str] = None) -> Path:
     return named
 
 
+def durable_review_dir() -> Optional[Path]:
+    """The directory that holds the copy of record for every review.
+
+    Beside the corpus index, on shared storage: the index is already the one
+    place every node agrees to look, and the X: backup mirrors the NAS. Returns
+    None only when neither a NAS nor a processing root is configured, in which
+    case the caller keeps its working copy and says so.
+    """
+    base = _default_index_dir()
+    return None if base is None else base / "reviews"
+
+
+def durable_review_path(video_stem: str) -> Optional[Path]:
+    """Where this video's copy of record lives, or None if unconfigured."""
+    d = durable_review_dir()
+    return None if d is None else d / f"{video_stem}_causal_review.json"
+
+
 def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
     """Locate a saved ``{video_stem}_causal_review.json`` across the canonical
     save locations, NEWEST first: an explicit ``primary_dir`` (e.g. a processing
@@ -62,7 +92,12 @@ def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
     manifest mode, Pending/<stem>/) or next to the video -- neither of which is
     the pipeline's processing dir. This resolver lets any (re)processing find and
     auto-apply the reviewer's resolution wherever it was saved. It NEVER raises;
-    a missing review yields None and the extractor no-ops."""
+    a missing review yields None and the extractor no-ops.
+
+    The durable store is searched too, and it is the reason a reprocess can no
+    longer strand kinematics without the reviewer's answers: the bundle can be
+    regenerated, the local processing dir cleared, the video not yet archived,
+    and the review is still found."""
     candidates: List[Path] = []
     if primary_dir is not None:
         candidates.append(Path(primary_dir))
@@ -75,6 +110,12 @@ def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
                 resolve_canonical_paths(video_stem, DEFAULT_CONNECTOME_ROOT)["mp4"]).parent)
         except Exception:
             pass
+    except Exception:
+        pass
+    try:
+        d = durable_review_dir()
+        if d is not None:
+            candidates.append(d)
     except Exception:
         pass
     found: List[Path] = []
@@ -248,7 +289,9 @@ def save_causal_review(
     video_stem : str
         Video identifier (without extension).
     output_dir : Path
-        Directory to write the review file into.
+        Directory to write the WORKING copy into -- normally wherever the
+        reviewer is looking. This may be a transient triage bundle, so it is
+        never the only copy written (see ``durable_review_dir``).
     segments : list of dict
         Per-segment review records (from ``build_segment_record``).
     provenance : dict
@@ -258,7 +301,8 @@ def save_causal_review(
 
     Returns
     -------
-    Path to the written file.
+    Path to the working copy (the durable copy is written first, and its
+    location is available from ``durable_review_path``).
     """
     reviewer = reviewer or _get_username()
     timestamp = _get_timestamp()
@@ -274,6 +318,27 @@ def save_causal_review(
     }
     if manual_segmentation:
         doc["manual_segmentation"] = manual_segmentation
+
+    # The durable copy first. If the process dies between the two writes, the
+    # surviving one is the copy nothing else can delete -- the working copy sits
+    # in a directory the pipeline regenerates.
+    durable = durable_review_path(video_stem)
+    if durable is None:
+        logger.warning(
+            "%s: no NAS or processing root configured, so this review has only "
+            "the copy in %s. That directory is not durable -- a reprocess can "
+            "regenerate it. Configure a root (mousereach-setup) so reviews are "
+            "kept.", video_stem, output_dir)
+    else:
+        try:
+            _write_json(durable, doc)
+        except Exception as e:
+            # Loud, and not fatal: refusing to save would lose the reviewer's
+            # work outright, which is worse than saving it in one place.
+            logger.error(
+                "%s: DURABLE review copy could not be written to %s (%s). The "
+                "review is saved only at %s, which a reprocess can destroy. "
+                "Copy it somewhere safe.", video_stem, durable, e, output_dir)
 
     out_path = output_dir / f"{video_stem}_causal_review.json"
     _write_json(out_path, doc)
@@ -732,7 +797,10 @@ def update_corpus_index(
     # Ensure top-level structure
     if "type" not in index:
         index["type"] = "causal_review_index"
-        index["schema_version"] = "1.0"
+    # 1.1 carries the full per-segment payload, not just a pointer plus two
+    # summary fields. Entries written under 1.0 keep their shape until the
+    # segment is reviewed again; read them defensively.
+    index["schema_version"] = "1.1"
     if "entries" not in index:
         index["entries"] = {}
 
@@ -741,16 +809,35 @@ def update_corpus_index(
     for seg in segments:
         seg_num = seg.get("segment_num")
         key = f"{video_stem}__seg{seg_num}"
-        entries[key] = {
+        human = seg.get("human", {}) or {}
+        entry = {
             "video_stem": video_stem,
             "segment_num": seg_num,
             "pellet_num": seg.get("pellet_num"),
             "review_file": str(review_file_path),
+            "durable_file": str(durable_review_path(video_stem) or ""),
             "reviewer": reviewer,
             "reviewed_at": reviewed_at,
-            "human_outcome": seg.get("human", {}).get("outcome"),
-            "agreed": seg.get("human", {}).get("agreed", False),
+            "human_outcome": human.get("outcome"),
+            "agreed": human.get("agreed", False),
+            # --- everything below is what makes a lost review recoverable ---
+            # The index used to hold only the two fields above plus a path. When
+            # the file at that path was destroyed, what the reviewer actually
+            # decided -- which frames they looked at, which reach they picked --
+            # was gone, and the index could not rebuild it. A pointer to a file
+            # that no longer exists is not a record.
+            "segment_span": seg.get("segment_span"),
+            "human_causal_reach": human.get("causal_reach"),
+            "human_is_phantom": human.get("is_phantom"),
+            "algo_outcome": (seg.get("algo", {}) or {}).get("outcome"),
+            "algo_causal_reach": (seg.get("algo", {}) or {}).get("causal_reach"),
+            "answers": seg.get("answers"),
+            "notes": seg.get("notes", ""),
         }
+        if seg.get("true_segment_num") is not None:
+            entry["true_segment_num"] = seg["true_segment_num"]
+            entry["segmentation_wrong"] = True
+        entries[key] = entry
 
     index["last_updated"] = _get_timestamp()
     _write_json(index_path, index)
