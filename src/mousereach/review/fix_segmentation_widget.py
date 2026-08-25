@@ -170,10 +170,13 @@ add/drop-cut buttons are manual controls; the segment table just shows what
 the current boundaries produce -- red rows hint at a missing boundary. If
 you never need them, Confirm + Save is the whole job.
 
-NAVIGATION (identical to the other review tools): Play/Rev/Stop with speed
-buttons; step buttons for 1/10/100 frames; "Go to" jumps to a typed frame.
-Keyboard: Space = play/pause, b = reverse, arrows = 1 frame, Shift-arrows =
-10, Ctrl-arrows = 100, keys 1-6 = speed.
+NAVIGATION (identical to the other review tools, plus segment jumps):
+Play/Rev/Stop with speed buttons; step buttons for 1/10/100 frames; <seg and
+seg> jump ONE SEGMENT LENGTH (this video's median boundary spacing) -- the
+fast way to chase an offset that shifted every later segment; "Go to" jumps
+to a typed frame. Keyboard: Space = play/pause, b = reverse, arrows = 1
+frame, Shift-arrows = 10, Ctrl-arrows = 100, Alt-arrows = 1 segment,
+keys 1-6 = speed.
 
 FINISHING: saving cuts does NOT release the video from the deep-review
 queue. When its cuts are right, open Deep Review on it and press
@@ -244,6 +247,14 @@ automatic.
         layout.addLayout(play_row)
 
         step_row = QHBoxLayout()
+        segb = QPushButton("<seg")
+        segb.setMaximumWidth(42)
+        segb.setToolTip("Jump ONE SEGMENT LENGTH backwards (the median "
+                        "boundary-to-boundary interval of this video, "
+                        "~30s of tray cadence). Keyboard: Alt-Left. For "
+                        "chasing an offset that shifted every later segment.")
+        segb.clicked.connect(lambda: self._jump_frames(-self._segment_length()))
+        step_row.addWidget(segb)
         for delta, label in [(-100, "<<"), (-10, "<"), (-1, "-1"),
                              (1, "+1"), (10, ">"), (100, ">>")]:
             b = QPushButton(label)
@@ -252,6 +263,13 @@ automatic.
                          "Shift-arrows = 10, Ctrl-arrows = 100)" % delta)
             b.clicked.connect(lambda _=False, d=delta: self._jump_frames(d))
             step_row.addWidget(b)
+        segf = QPushButton("seg>")
+        segf.setMaximumWidth(42)
+        segf.setToolTip("Jump ONE SEGMENT LENGTH forwards (the median "
+                        "boundary-to-boundary interval of this video). "
+                        "Keyboard: Alt-Right.")
+        segf.clicked.connect(lambda: self._jump_frames(self._segment_length()))
+        step_row.addWidget(segf)
         self._frame_label = QLabel("Frame: -- / --")
         step_row.addWidget(self._frame_label)
         self._time_label = QLabel("Time: --:--")
@@ -887,6 +905,16 @@ automatic.
     def _fps_play(self) -> float:
         return float(self.seg.get("fps") or 60.0)
 
+    def _segment_length(self) -> int:
+        """This video's typical segment length in frames: the median interval
+        between the current boundaries. Falls back to 30s of video when there
+        are not enough boundaries to measure."""
+        import numpy as np
+        b = sorted(self.boundaries)
+        if len(b) >= 3:
+            return int(np.median(np.diff(b)))
+        return int(30 * self._fps_play)
+
     def _jump_frames(self, delta: int):
         try:
             cur = int(self.viewer.dims.current_step[0])
@@ -931,6 +959,13 @@ automatic.
                            ('Control-Right', 100)]:
             v.bind_key(key, (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
                        overwrite=True)
+        # One segment length at a time -- for chasing a shifted-by-one video.
+        v.bind_key('Alt-Left',
+                   lambda viewer: self._jump_frames(-self._segment_length()),
+                   overwrite=True)
+        v.bind_key('Alt-Right',
+                   lambda viewer: self._jump_frames(self._segment_length()),
+                   overwrite=True)
         for key, spd in zip('123456', [0.25, 0.5, 1, 2, 4, 8]):
             v.bind_key(key, (lambda s: (lambda viewer: self._set_speed(s)))(spd),
                        overwrite=True)
