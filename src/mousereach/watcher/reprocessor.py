@@ -111,6 +111,8 @@ class ReprocessingScanner:
             'crystallized_skipped': 0,
             'no_manifest': 0,
             'review_triggered': 0,  # version-current but a newer human review to apply
+            'review_mislabel': 0,   # pending review declares a segment mislabel -> deep review
+            'review_mislabel_videos': [],
             'errors': 0,
             'outdated_videos': [],
             'unsupported_tray_videos': [],
@@ -162,7 +164,21 @@ class ReprocessingScanner:
                 # kinematics must also be applied -- re-run so the reviewer's
                 # triage resolution flows into features/DB (the extractor applies
                 # it; see orchestrator + resolve_review_path).
-                review_pending = self._review_pending(video_id)
+                review_path = self._pending_review_path(video_id)
+                review_pending = review_path is not None
+
+                # EXCEPTION: a pending review that declares a segment mislabel
+                # (true_segment_num set) must NOT drive a kinematics-only re-run
+                # -- that would apply the reviewer's outcomes against the very
+                # boundaries the reviewer said are wrong. The video needs manual
+                # re-segmentation, so it goes to the DEEP_REVIEW queue instead,
+                # mirroring the triage-return divert in review_return.py.
+                if review_pending and self._review_declares_mislabel(review_path):
+                    summary['review_mislabel'] += 1
+                    summary['review_mislabel_videos'].append(video_id)
+                    if mark_outdated:
+                        self._divert_mislabel_to_deep_review(video_id)
+                    continue
 
                 if comparison['is_current'] and not review_pending:
                     summary['current'] += 1
@@ -250,23 +266,60 @@ class ReprocessingScanner:
 
         return summary
 
-    def _review_pending(self, video_id: str) -> bool:
-        """True if a saved human review exists and is NEWER than the archived
+    def _pending_review_path(self, video_id: str):
+        """Path of a saved human review that is NEWER than the archived
         kinematics -- i.e. the reviewer's triage resolution has not yet been
-        applied to the features/DB product. Such videos are re-run (post_dlc
-        scope); the feature extractor then substitutes the human calls. Never
-        raises; any error yields False (no spurious reprocessing)."""
+        applied to the features/DB product -- else None. Such videos are re-run
+        (post_dlc scope); the feature extractor then substitutes the human
+        calls. Never raises; any error yields None (no spurious reprocessing)."""
         try:
             from mousereach.review.causal_review_io import resolve_review_path
             review = resolve_review_path(video_id)
             if review is None:
-                return False
+                return None
             feats = next(self.archive_dir.rglob(f"{video_id}_features.json"), None)
             if feats is None:
-                return True  # reviewed but no kinematics yet -> needs a run
-            return review.stat().st_mtime > feats.stat().st_mtime
+                return review  # reviewed but no kinematics yet -> needs a run
+            return review if review.stat().st_mtime > feats.stat().st_mtime else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _review_declares_mislabel(review_path) -> bool:
+        """True if the review carries any segmentation_wrong record (a reviewer
+        set true_segment_num). Never raises; unreadable review yields False."""
+        try:
+            import json
+            from mousereach.review.triage_status import segmentation_corrected
+            doc = json.loads(Path(review_path).read_text(encoding="utf-8"))
+            return bool(segmentation_corrected(doc))
         except Exception:
             return False
+
+    def _divert_mislabel_to_deep_review(self, video_id: str) -> None:
+        """Move the video's bundle out of Analyzed into the DEEP_REVIEW queue so
+        a human re-segments it. Never raises; a failure is logged and the video
+        stays where it is (it will be retried on the next scan)."""
+        try:
+            from mousereach.watcher.review_gate import route_deep_review
+            outcomes = next(
+                self.archive_dir.rglob(f"{video_id}_pellet_outcomes.json"), None)
+            if outcomes is None:
+                logger.warning(
+                    "%s: pending review declares a segment mislabel but no "
+                    "pellet_outcomes.json found in the archive to route from",
+                    video_id)
+                return
+            route_deep_review(
+                video_id, outcomes.parent,
+                reason="pending human review declares segment mislabel "
+                       "(true_segment_num set) -- needs re-segmentation",
+                db=self.db)
+            logger.info(
+                "%s: pending review declares a segment mislabel -- routed to "
+                "deep review instead of a kinematics-only re-run", video_id)
+        except Exception as e:
+            logger.error("%s: could not divert to deep review: %s", video_id, e)
 
     def _load_manifest(self, video_id: str) -> Optional[dict]:
         """Find and load processing manifest for an archived video.
