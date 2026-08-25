@@ -43,8 +43,34 @@ class ReviewQueuesWidget(QWidget):
         self._build_ui()
         QTimer.singleShot(150, self._refresh_counts)
 
+    QUICK_GUIDE = """
+The pipeline holds videos it cannot finish on its own in two queues; this
+tab is where a person clears them. Counts refresh on open and via the
+Refresh button.
+
+* Open Triage Review -- per-segment questions (which reach, what outcome,
+  bench-sheet disagreements). Resolving every flagged segment releases the
+  video automatically.
+* Open Deep Review -- full-video walk for held-out videos; its
+  "Clear -> re-enter pipeline" button is what releases a deep-review video.
+* Open Re-segmentation -- fix WHERE the segment cuts are, guided
+  segment-by-segment. Use for boundary/numbering problems. After fixing
+  cuts, the video still needs Deep Review's Clear to release.
+
+Each tool opens in its own window and has its own ? guide.
+"""
+
     def _build_ui(self):
         root = QVBoxLayout(self)
+
+        head = QHBoxLayout()
+        head.addStretch()
+        try:
+            from mousereach.review.help_button import attach_help
+            attach_help(head, "Review Queues", self.QUICK_GUIDE, self)
+        except Exception:
+            pass
+        root.addLayout(head)
 
         intro = QLabel(
             "Clear the pipeline's human-review queues. Each opens in its own "

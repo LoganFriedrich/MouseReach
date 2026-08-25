@@ -48,7 +48,7 @@ from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QGroupBox, QMessageBox,
-    QCheckBox, QSplitter, QSpinBox,
+    QCheckBox, QSplitter, QSpinBox, QRadioButton, QButtonGroup,
 )
 
 # How close a proposed boundary has to be to an existing one to count as "the
@@ -128,19 +128,93 @@ class FixSegmentationWidget(QWidget):
 
     # ---------------------------------------------------------------- ui
 
+    QUICK_GUIDE = """
+This tool fixes ONE thing: where a video's segment cuts are. A cut is the
+first frame after the scoring area jumps (the tray finishing an advance);
+segment N is everything from cut N to the frame before cut N+1, and contains
+pellet N. The DLC points are drawn on the video -- watch the scoring-area
+points jump to see where a segment really begins.
+
+THE WORKFLOW:
+
+* Answer the three questions for the current segment (Yes is pre-selected;
+  click No and give the frame only when the algorithm is wrong).
+* To answer a boundary question, use the candidate chips (click one to jump
+  there AND use it as the answer), or scrub to the right frame and press
+  "Use current frame", or type the frame number.
+* Press "Confirm answers -> next segment". Repeat until the walk says it is
+  finished.
+* Then press "Save these cuts". Saving stamps the cuts as human-made; the
+  pipeline keeps them on the re-run.
+
+EVERYTHING BELOW THE QUESTIONS IS OPTIONAL. The candidate table and the
+add/drop-cut buttons are manual controls for fixes the walk cannot express
+(a missing cut, an extra cut, a numbering offset). The segment table just
+shows what the current cuts produce -- red rows hint at a missing cut. If
+you never need them, Confirm + Save is the whole job.
+
+NAVIGATION: the arrow buttons step the video by 1/10/100/1000 frames;
+"Go to" jumps to a typed frame. Keyboard: comma/period = 1 frame back/fwd,
+left/right bracket = 10 frames, semicolon/quote = 100 frames.
+
+FINISHING: saving cuts does NOT release the video from the deep-review
+queue. When its cuts are right, open Deep Review on it and press
+"Clear -> re-enter pipeline" -- that is the release; everything after is
+automatic.
+
+"Skip this video" moves on without saving anything.
+"""
+
     def _build_ui(self):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
+        head_row = QHBoxLayout()
         self.header = QLabel("No video loaded")
         self.header.setStyleSheet("font-weight: bold; font-size: 13px;")
         self.header.setWordWrap(True)
-        layout.addWidget(self.header)
+        head_row.addWidget(self.header, 1)
+        from mousereach.review.help_button import attach_help
+        attach_help(head_row, "Re-segmentation", self.QUICK_GUIDE, self)
+        layout.addLayout(head_row)
+
+        intro = QLabel(
+            "Fix WHERE this video's segment cuts are -- nothing else. Answer "
+            "the three questions per segment, Confirm, repeat, then 'Save "
+            "these cuts'. Everything below the questions is optional manual "
+            "control. Click the ? for the full guide.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #888;")
+        layout.addWidget(intro)
 
         self.why = QLabel("")
         self.why.setWordWrap(True)
         self.why.setStyleSheet("color: #e08020;")
         layout.addWidget(self.why)
+
+        # --- video navigation ---------------------------------------------
+        nav_row = QHBoxLayout()
+        for delta, label in [(-1000, "<<<"), (-100, "<<"), (-10, "<"), (-1, "-1"),
+                             (1, "+1"), (10, ">"), (100, ">>"), (1000, ">>>")]:
+            b = QPushButton(label)
+            b.setMaximumWidth(40)
+            b.setToolTip("Step the video %+d frame(s)" % delta)
+            b.clicked.connect(lambda _=False, d=delta: self._jump_frames(d))
+            nav_row.addWidget(b)
+        self._frame_label = QLabel("Frame: -- / --")
+        nav_row.addWidget(self._frame_label)
+        nav_row.addStretch()
+        nav_row.addWidget(QLabel("Go to:"))
+        self._goto_spin = QSpinBox()
+        self._goto_spin.setRange(0, 10_000_000)
+        self._goto_spin.setToolTip("Type a frame number and press Go")
+        nav_row.addWidget(self._goto_spin)
+        gb = QPushButton("Go")
+        gb.setMaximumWidth(36)
+        gb.setToolTip("Jump the video to the typed frame")
+        gb.clicked.connect(lambda: self._goto(int(self._goto_spin.value())))
+        nav_row.addWidget(gb)
+        layout.addLayout(nav_row)
 
         split = QSplitter(Qt.Vertical)
         layout.addWidget(split, 1)
@@ -160,7 +234,18 @@ class FixSegmentationWidget(QWidget):
         self.gw_q1 = QLabel("")
         self.gw_q1.setWordWrap(True)
         r1.addWidget(self.gw_q1, 1)
-        self.gw_id_no = QCheckBox("No, it is actually segment:")
+        self.gw_id_yes = QRadioButton("Yes")
+        self.gw_id_yes.setChecked(True)
+        self.gw_id_yes.setToolTip("The number is right -- nothing to change.")
+        self.gw_id_no = QRadioButton("No, it is actually segment:")
+        self.gw_id_no.setToolTip(
+            "The footage shows a different pellet presentation than the "
+            "number claims. Set the real number; the fix itself is a cut "
+            "added/removed earlier (manual controls below).")
+        g1 = QButtonGroup(self)
+        g1.addButton(self.gw_id_yes); g1.addButton(self.gw_id_no)
+        self._gw_groups = [g1]
+        r1.addWidget(self.gw_id_yes)
         r1.addWidget(self.gw_id_no)
         self.gw_id_spin = QSpinBox()
         self.gw_id_spin.setRange(0, 60)
@@ -174,7 +259,17 @@ class FixSegmentationWidget(QWidget):
         self.gw_q2 = QLabel("")
         self.gw_q2.setWordWrap(True)
         r2.addWidget(self.gw_q2, 1)
-        self.gw_start_no = QCheckBox("No, it starts at frame:")
+        self.gw_start_yes = QRadioButton("Yes")
+        self.gw_start_yes.setChecked(True)
+        self.gw_start_yes.setToolTip("The start frame is right (within 10 frames).")
+        self.gw_start_no = QRadioButton("No, it starts at frame:")
+        self.gw_start_no.setToolTip(
+            "The segment really starts elsewhere. Give the frame AFTER the "
+            "scoring-area jump -- via a candidate chip, the playhead, or typing.")
+        g2 = QButtonGroup(self)
+        g2.addButton(self.gw_start_yes); g2.addButton(self.gw_start_no)
+        self._gw_groups.append(g2)
+        r2.addWidget(self.gw_start_yes)
         r2.addWidget(self.gw_start_no)
         self.gw_start_spin = QSpinBox()
         self.gw_start_spin.setRange(0, 10_000_000)
@@ -205,7 +300,17 @@ class FixSegmentationWidget(QWidget):
         self.gw_q3 = QLabel("")
         self.gw_q3.setWordWrap(True)
         r3.addWidget(self.gw_q3, 1)
-        self.gw_end_no = QCheckBox("No, it ends at frame:")
+        self.gw_end_yes = QRadioButton("Yes")
+        self.gw_end_yes.setChecked(True)
+        self.gw_end_yes.setToolTip("The end frame is right (within 10 frames).")
+        self.gw_end_no = QRadioButton("No, it ends at frame:")
+        self.gw_end_no.setToolTip(
+            "The segment really ends elsewhere. Give the frame BEFORE the "
+            "next scoring-area jump -- via a candidate chip, the playhead, or typing.")
+        g3 = QButtonGroup(self)
+        g3.addButton(self.gw_end_yes); g3.addButton(self.gw_end_no)
+        self._gw_groups.append(g3)
+        r3.addWidget(self.gw_end_yes)
         r3.addWidget(self.gw_end_no)
         self.gw_end_spin = QSpinBox()
         self.gw_end_spin.setRange(0, 10_000_000)
@@ -247,12 +352,15 @@ class FixSegmentationWidget(QWidget):
         split.addWidget(gw_box)
 
         # --- candidates ---------------------------------------------------
-        cand_box = QGroupBox("Candidate tray advances the video suggests")
+        cand_box = QGroupBox("Manual cut editing (OPTIONAL -- for fixes the "
+                             "questions above cannot express)")
         cv = QVBoxLayout()
         cand_box.setLayout(cv)
         cv.addWidget(QLabel(
-            "Every timepoint the corner trackers proposed. Ticked ones are cuts. "
-            "Click a row to jump there."))
+            "Every timepoint the corner trackers proposed; 'yes' rows are the "
+            "current cuts. Click a row to jump the video there. Use this when "
+            "a cut is MISSING or EXTRA (e.g. a segment-number offset) -- the "
+            "questions above only move existing cuts."))
         self.cand_table = QTableWidget(0, 5)
         self.cand_table.setHorizontalHeaderLabels(
             ["cut?", "frame", "time", "corners agreeing", "agreement"])
@@ -263,13 +371,21 @@ class FixSegmentationWidget(QWidget):
         cv.addWidget(self.cand_table)
 
         row = QHBoxLayout()
-        for text, slot in (("Use this candidate", self._use_selected),
-                           ("Drop this cut", self._drop_selected),
-                           ("Add a cut at the current frame", self._add_here)):
+        for text, slot, tip in (
+                ("Use this candidate", self._use_selected,
+                 "Add the selected table row's timepoint as a new cut."),
+                ("Drop this cut", self._drop_selected,
+                 "Remove the cut at/near the selected table row's timepoint."),
+                ("Add a cut at the current frame", self._add_here,
+                 "Add a cut exactly where the video playhead is now -- for a "
+                 "tray advance the segmenter never proposed.")):
             b = QPushButton(text)
+            b.setToolTip(tip)
             b.clicked.connect(slot)
             row.addWidget(b)
         self.only_unused = QCheckBox("Hide candidates already used")
+        self.only_unused.setToolTip(
+            "Show only proposed timepoints that are NOT currently cuts.")
         self.only_unused.toggled.connect(lambda _: self._refresh_candidates())
         row.addWidget(self.only_unused)
         row.addStretch()
@@ -277,7 +393,8 @@ class FixSegmentationWidget(QWidget):
         split.addWidget(cand_box)
 
         # --- resulting segments -------------------------------------------
-        seg_box = QGroupBox("Segments these cuts produce")
+        seg_box = QGroupBox("Segments these cuts produce (READ-ONLY check -- "
+                            "nothing to fill in)")
         sv = QVBoxLayout()
         seg_box.setLayout(sv)
         sv.addWidget(QLabel(
@@ -307,11 +424,19 @@ class FixSegmentationWidget(QWidget):
         self.count_label.setStyleSheet("font-weight: bold;")
         act.addWidget(self.count_label)
         act.addStretch()
-        for text, slot, style in (
-                ("Back to the algorithm's cuts", self._reset, ""),
-                ("Save these cuts", self._save, "font-weight: bold;"),
-                ("Skip this video", self._next_video, "")):
+        for text, slot, style, tip in (
+                ("Back to the algorithm's cuts", self._reset, "",
+                 "Throw away every change on this video and restore the "
+                 "algorithm's original cuts."),
+                ("Save these cuts", self._save, "font-weight: bold;",
+                 "Write the corrected cuts (stamped human-made, kept by the "
+                 "pipeline) and load the next video. Does NOT release the "
+                 "video from deep review -- that is Deep Review's Clear button."),
+                ("Skip this video", self._next_video, "",
+                 "Move on WITHOUT saving anything on this video; it stays in "
+                 "the queue.")):
             b = QPushButton(text)
+            b.setToolTip(tip)
             b.clicked.connect(slot)
             b.setStyleSheet(style)
             act.addWidget(b)
@@ -465,11 +590,11 @@ class FixSegmentationWidget(QWidget):
         self.gw_q3.setText(
             "Q3: Does this segment end within %d frames of frame %d?"
             % (GUIDED_TOLERANCE_FRAMES, e))
-        self.gw_id_no.setChecked(False)
+        self.gw_id_yes.setChecked(True)
         self.gw_id_spin.setValue(num)
-        self.gw_start_no.setChecked(False)
+        self.gw_start_yes.setChecked(True)
         self.gw_start_spin.setValue(s)
-        self.gw_end_no.setChecked(False)
+        self.gw_end_yes.setChecked(True)
         self.gw_end_spin.setValue(e)
         self.gw_status.setText("")
         self._gw_fill_candidate_row(self.gw_start_cands, s,
@@ -630,9 +755,114 @@ class FixSegmentationWidget(QWidget):
             self._video_layer = self.viewer.add_image(
                 _LazyVideo(mp4, n, h, w), name=stem, rgb=True)
             self.n_frames = self.n_frames or n
+            self._goto_spin.setRange(0, max(0, self.n_frames - 1))
         except Exception as e:
             self.status.setText("Could not open the video (%s); the candidate "
                                 "list still works." % e)
+        self._add_dlc_overlay(bundle, stem, mp4)
+        self._bind_nav_keys()
+        try:
+            self.viewer.dims.events.current_step.connect(self._on_frame_change)
+        except Exception:
+            pass
+
+    def _add_dlc_overlay(self, bundle: Path, stem: str, mp4: Path):
+        """Draw the DLC tracking points on the video -- the scoring-area
+        points jumping IS how a human sees a segment boundary, so re-seg is
+        blind without them. Pose found like the mp4: bundle -> manifest ->
+        next to the canonical video."""
+        import numpy as np
+        try:
+            import pandas as pd
+            pose = next(iter(bundle.glob("%sDLC*.h5" % stem)), None)
+            if pose is None:
+                try:
+                    man = json.loads(
+                        (bundle / ("%s_manifest.json" % stem)).read_text())
+                    cand = man.get("canonical_dlc_h5_path")
+                    if cand and Path(cand).is_file():
+                        pose = Path(cand)
+                except Exception:
+                    pass
+            if pose is None:
+                pose = next(iter(mp4.parent.glob("%sDLC*.h5" % stem)), None)
+            if pose is None:
+                self.status.setText(
+                    "No DLC pose file found -- video loads without tracking "
+                    "points (boundary checking is much harder without them).")
+                return
+            df = pd.read_hdf(pose)
+            df.columns = ['_'.join(str(c) for c in col[1:]) for col in df.columns]
+            n = len(df)
+            bodyparts = sorted({c[:-2] for c in df.columns if c.endswith('_x')})
+            colors_base = [
+                [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1],
+                [0, 1, 1], [1, 0.5, 0], [0.5, 0, 1], [0, 1, 0.5], [1, 0, 0.5]]
+            frames_all = np.arange(n)
+            pts, cols, bps = [], [], []
+            for i, bp in enumerate(bodyparts):
+                xc, yc, lc = bp + '_x', bp + '_y', bp + '_likelihood'
+                if xc not in df.columns or yc not in df.columns:
+                    continue
+                xs = df[xc].to_numpy(dtype=float)
+                ys = df[yc].to_numpy(dtype=float)
+                lks = (df[lc].to_numpy(dtype=float)
+                       if lc in df.columns else np.ones(n))
+                valid = ~(np.isnan(xs) | np.isnan(ys))
+                if not valid.any():
+                    continue
+                fv = frames_all[valid]
+                lv = np.clip(lks[valid], 0.0, 1.0)
+                alpha = np.where(lv < 0.5, 0.05,
+                                 0.10 + 0.90 * (((lv - 0.5) / 0.5) ** 2))
+                base = np.array(colors_base[i % len(colors_base)], dtype=float)
+                pts.append(np.column_stack([fv, ys[valid], xs[valid]]))
+                cols.append(np.column_stack([np.tile(base, (len(fv), 1)), alpha]))
+                bps.extend([bp] * len(fv))
+            if not pts:
+                return
+            if (getattr(self, "_points_layer", None) is not None
+                    and self._points_layer in self.viewer.layers):
+                self.viewer.layers.remove(self._points_layer)
+            self._points_layer = self.viewer.add_points(
+                np.vstack(pts), name='DLC Points', size=3,
+                face_color=np.vstack(cols),
+                features={'bp': bps},
+                text={'string': '{bp}', 'size': 7, 'color': 'white',
+                      'translation': [0, -7, 0]},
+            )
+        except Exception as e:
+            self.status.setText("DLC points could not be drawn (%s); the "
+                                "video still works." % e)
+
+    def _jump_frames(self, delta: int):
+        try:
+            cur = int(self.viewer.dims.current_step[0])
+        except Exception:
+            return
+        self._goto(cur + int(delta))
+
+    def _on_frame_change(self, event=None):
+        try:
+            f = int(self.viewer.dims.current_step[0])
+            self._frame_label.setText("Frame: %d / %d" % (f, self.n_frames))
+        except Exception:
+            pass
+
+    def _bind_nav_keys(self):
+        """Same step keys the causal review tool uses, bound through napari."""
+        if getattr(self, "_nav_keys_bound", False):
+            return
+        self._nav_keys_bound = True
+        v = self.viewer
+        for key, delta in ((',', -1), ('.', 1), ('[', -10), (']', 10),
+                           (';', -100), ("'", 100)):
+            try:
+                v.bind_key(key,
+                           (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
+                           overwrite=True)
+            except Exception:
+                pass
 
     # -------------------------------------------------------------- tables
 

@@ -254,6 +254,43 @@ class CausalReviewWidget(QWidget):
     # UI construction
     # ===================================================================
 
+    def _quick_guide_text(self) -> str:
+        if self._deep_review:
+            return """
+Walks EVERY segment of a deep-review video, asking what the outcome was and
+which reach caused it. Use it for videos held out for reasons other than
+boundaries. If the problem IS the boundaries, close this and use the
+Re-segmentation tool instead (Review Queues tab).
+
+* Answer each segment's outcome and causal reach, or confirm the algo's.
+* Navigation: play/speed buttons, frame steps (also comma/period, brackets,
+  semicolon/quote on the keyboard), segment prev/next.
+* When the whole video is judged (and its cuts are right), press
+  "Clear -> re-enter pipeline". THAT is what releases the video: the watcher
+  re-runs it and results flow to the database automatically.
+
+The notes box travels with the video -- say what you saw.
+"""
+        return """
+Walks ONLY the flagged/triaged segments across the review queue -- the
+questions the algorithm could not answer itself (including bench-sheet
+disagreements: the paper score says one thing, the algorithm another; watch
+and settle it).
+
+* Each segment shows the algo's answer; confirm it or set the real outcome
+  and pick the causal reach (candidates are offered -- click to jump there).
+* "Save Segment + Next" records the answer and moves on. Answers save into
+  the video's review file; when every flagged segment is answered, the
+  watcher re-injects the video automatically -- no further action.
+* If the SEGMENTATION is wrong: either set the true segment number on that
+  question (the video will divert to re-segmentation on return), or press
+  "Escalate: bad segmentation" to send the whole video there now.
+* "Flag Session" marks the whole mouse+day session for mandatory review.
+
+Navigation: play/speed buttons and frame steps (comma/period = 1 frame,
+brackets = 10, semicolon/quote = 100). The notes box travels with the video.
+"""
+
     def _build_ui(self):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(5, 5, 5, 5)
@@ -265,11 +302,19 @@ class CausalReviewWidget(QWidget):
         header_layout = QVBoxLayout()
         header.setLayout(header_layout)
 
-        title = QLabel("<b>"
-                       + ("Triage Review Tool" if self._triage_only else "Causal Review Tool")
-                       + "</b>")
+        tool_name = ("Triage Review Tool" if self._triage_only
+                     else ("Deep Review Tool" if self._deep_review
+                           else "Causal Review Tool"))
+        title_row = QHBoxLayout()
+        title = QLabel("<b>" + tool_name + "</b>")
         title.setStyleSheet("font-size: 14px;")
-        header_layout.addWidget(title)
+        title_row.addWidget(title, 1)
+        try:
+            from mousereach.review.help_button import attach_help
+            attach_help(title_row, tool_name, self._quick_guide_text(), self)
+        except Exception:
+            pass
+        header_layout.addLayout(title_row)
 
         vid_row = QHBoxLayout()
         browse_btn = QPushButton("Load Video...")
