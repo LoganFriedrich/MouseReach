@@ -193,6 +193,12 @@ class FixSegmentationWidget(QWidget):
         n2.setStyleSheet("color: #888;")
         n2.setWordWrap(True)
         gv.addWidget(n2)
+        # Nearby candidate tray advances the segmenter itself proposed --
+        # click one to jump the playhead there AND fill it in as the answer.
+        self.gw_start_cands = QHBoxLayout()
+        self.gw_start_cands.addWidget(QLabel("Segmenter's nearby candidates:"))
+        self.gw_start_cands.addStretch()
+        gv.addLayout(self.gw_start_cands)
 
         # Q3: end boundary
         r3 = QHBoxLayout()
@@ -218,6 +224,10 @@ class FixSegmentationWidget(QWidget):
         n3.setStyleSheet("color: #888;")
         n3.setWordWrap(True)
         gv.addWidget(n3)
+        self.gw_end_cands = QHBoxLayout()
+        self.gw_end_cands.addWidget(QLabel("Segmenter's nearby candidates:"))
+        self.gw_end_cands.addStretch()
+        gv.addLayout(self.gw_end_cands)
 
         nav = QHBoxLayout()
         bb = QPushButton("< Back a segment")
@@ -462,7 +472,63 @@ class FixSegmentationWidget(QWidget):
         self.gw_end_no.setChecked(False)
         self.gw_end_spin.setValue(e)
         self.gw_status.setText("")
+        self._gw_fill_candidate_row(self.gw_start_cands, s,
+                                    self.gw_start_spin, self.gw_start_no,
+                                    is_end=False)
+        self._gw_fill_candidate_row(self.gw_end_cands, e + 1,
+                                    self.gw_end_spin, self.gw_end_no,
+                                    is_end=True)
         self._goto(s)
+
+    def _gw_candidates_near(self, frame: int, limit: int = 5) -> List[dict]:
+        """The segmenter's candidate tray advances nearest ``frame``, closest
+        first. Excludes only candidates within the question's own tolerance
+        of the boundary -- those are the same answer as 'yes'. Candidates
+        just outside it (11-30 frames off) are exactly the alternatives the
+        question exists to surface, so they stay."""
+        cands = [c for c in self.candidates
+                 if abs(int(c["frame"]) - frame) > GUIDED_TOLERANCE_FRAMES]
+        cands.sort(key=lambda c: abs(int(c["frame"]) - frame))
+        return cands[:limit]
+
+    def _gw_fill_candidate_row(self, row: QHBoxLayout, boundary_frame: int,
+                               spin: QSpinBox, checkbox: QCheckBox,
+                               is_end: bool):
+        """Rebuild one question's candidate chips. Clicking a chip jumps the
+        playhead to the frame it implies for THIS question (cut frame for a
+        start, cut-1 for an end) and fills it in as the answer -- same
+        pick-from-what-the-algo-saw flow as the review tool's reach picker."""
+        # drop previous chips (everything after the leading label, before stretch)
+        while row.count() > 2:
+            item = row.takeAt(1)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        cands = self._gw_candidates_near(boundary_frame)
+        if not cands:
+            lbl = QLabel("(none nearby)")
+            lbl.setStyleSheet("color: #666;")
+            row.insertWidget(1, lbl)
+            return
+        for i, c in enumerate(cands):
+            cut = int(c["frame"])
+            answer = cut - 1 if is_end else cut
+            btn = QPushButton("f=%d  (%d/4, %.2f)" % (
+                answer, int(c.get("n_proposers") or 0),
+                float(c.get("consensus_score") or 0.0)))
+            btn.setToolTip(
+                "Tray advance the segmenter saw at frame %d (proposed by %s). "
+                "Click: jump there and use it as the answer." % (
+                    cut, ", ".join(c.get("proposers") or []) or "?"))
+            btn.clicked.connect(
+                lambda _=False, f=answer: self._gw_pick_candidate(
+                    f, spin, checkbox))
+            row.insertWidget(1 + i, btn)
+
+    def _gw_pick_candidate(self, frame: int, spin: QSpinBox, checkbox: QCheckBox):
+        self._goto(frame)
+        checkbox.setChecked(True)
+        spin.setValue(int(frame))
 
     def _gw_use_playhead(self, spin, checkbox):
         try:
