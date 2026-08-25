@@ -159,8 +159,14 @@ class TriageStatus:
     unresolved: Set[int] = field(default_factory=set)
     # Segments where a reviewer set true_segment_num: the human says the
     # segmentation is wrong about WHICH pellet this is. Non-empty means the
-    # video needs re-segmentation before it can be trusted again.
+    # video needs re-segmentation before it can be trusted again -- UNLESS the
+    # boundaries have since been fixed by hand (seg_human_fixed below).
     seg_corrected: Set[int] = field(default_factory=set)
+    # True when the segments file carries boundary_source == "human": the
+    # fix-segmentation tool's stamp that a person set the cuts. A review's old
+    # segmentation_wrong record describes a problem that no longer exists once
+    # this is True, so it must stop blocking the video.
+    seg_human_fixed: bool = False
 
     @property
     def has_triage(self) -> bool:
@@ -180,7 +186,15 @@ class TriageStatus:
         though the segmenter reported success."""
         # seg_needs_human is deliberately NOT considered here -- see the note in
         # watcher/review_gate.py. It is recorded, not acted on.
-        return (not self.seg_failed) and (not self.seg_corrected) and self.fully_resolved
+        return ((not self.seg_failed)
+                and self.fully_resolved
+                and (not self.seg_pending_reseg))
+
+    @property
+    def seg_pending_reseg(self) -> bool:
+        """A reviewer declared a segment mislabel and nobody has hand-fixed the
+        boundaries yet -- the video must go through manual re-segmentation."""
+        return bool(self.seg_corrected) and not self.seg_human_fixed
 
 
 def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:
@@ -213,4 +227,5 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
         resolved=res,
         unresolved=tri - res,
         seg_corrected=segmentation_corrected(review),
+        seg_human_fixed=(seg or {}).get("boundary_source") == "human",
     )

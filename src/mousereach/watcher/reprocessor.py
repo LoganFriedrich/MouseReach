@@ -173,7 +173,9 @@ class ReprocessingScanner:
                 # boundaries the reviewer said are wrong. The video needs manual
                 # re-segmentation, so it goes to the DEEP_REVIEW queue instead,
                 # mirroring the triage-return divert in review_return.py.
-                if review_pending and self._review_declares_mislabel(review_path):
+                if (review_pending
+                        and self._review_declares_mislabel(review_path)
+                        and not self._segments_human_fixed(video_id)):
                     summary['review_mislabel'] += 1
                     summary['review_mislabel_videos'].append(video_id)
                     if mark_outdated:
@@ -293,6 +295,20 @@ class ReprocessingScanner:
             from mousereach.review.triage_status import segmentation_corrected
             doc = json.loads(Path(review_path).read_text(encoding="utf-8"))
             return bool(segmentation_corrected(doc))
+        except Exception:
+            return False
+
+    def _segments_human_fixed(self, video_id: str) -> bool:
+        """True if the archived segments file carries boundary_source == 'human'
+        -- the fix-segmentation tool already corrected the boundaries, so an
+        old segmentation_wrong record in the review describes a fixed problem
+        and must not re-divert the video. Never raises; unreadable -> False."""
+        try:
+            seg = next(self.archive_dir.rglob(f"{video_id}_segments.json"), None)
+            if seg is None:
+                return False
+            return json.loads(seg.read_text(
+                encoding="utf-8")).get("boundary_source") == "human"
         except Exception:
             return False
 

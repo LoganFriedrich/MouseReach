@@ -74,7 +74,32 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
     # Extract video ID
     video_id = dlc_path.stem.split("DLC")[0]
     output_path = output_dir / f"{video_id}_segments.json"
-    
+
+    # A human-corrected segmentation is a fact about the video, not a stale
+    # algo output. The fix-segmentation tool (deep review) writes
+    # boundary_source: "human" when a person set the cuts by hand; re-running
+    # the segmenter over it would throw the correction away and regenerate the
+    # very boundaries the human just fixed. Boundaries are frame indices, so
+    # they stay valid across pose-model changes too -- preserve unconditionally.
+    if output_path.exists():
+        try:
+            with open(output_path, 'r') as f:
+                existing = json.load(f)
+            if existing.get('boundary_source') == 'human':
+                return {
+                    'video_name': video_id,
+                    'status': 'good',
+                    'n_boundaries': len(existing.get('boundaries', [])),
+                    'interval_cv': 0.0,
+                    'anomalies': [],
+                    'output_file': str(output_path),
+                    'dlc_path': dlc_path,
+                    'success': True,
+                    'preserved_human_boundaries': True,
+                }
+        except Exception:
+            pass  # unreadable file -> fall through and re-segment
+
     try:
         boundaries, diag = segment_video_multi(dlc_path)
         save_segmentation(boundaries, diag, output_path)

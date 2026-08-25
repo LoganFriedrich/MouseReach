@@ -293,7 +293,7 @@ def scan_review_queues(db, processing_dir: Path,
             continue
         if not (st.has_triage and st.fully_resolved and not st.seg_failed):
             continue
-        if st.seg_corrected:
+        if st.seg_pending_reseg:
             # The reviewer answered everything BUT also declared at least one
             # segment mislabeled (true_segment_num set). The boundaries cannot
             # be trusted, so re-injecting would re-run kinematics over the wrong
