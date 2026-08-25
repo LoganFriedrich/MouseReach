@@ -699,6 +699,29 @@ class FixSegmentationWidget(QWidget):
                                 "At least two cuts are needed to make a segment.")
             return
 
+        # Saying "this is really segment Y" in the walk RECORDS the mismatch;
+        # only the cuts fix it. If any identity was denied but the cuts still
+        # produce the same numbering (same count, no cut added or removed),
+        # the mislabel is still in the data -- make the operator decide
+        # explicitly rather than save a contradiction silently.
+        denied = [r for r in self._gw_records.values()
+                  if not r.get("identity_confirmed", True)]
+        if denied and sorted(self.boundaries) == sorted(self.original_boundaries):
+            claims = "; ".join(
+                "what the algo calls segment %d you called segment %s"
+                % (r["segment_num"], r.get("true_segment_num", "?"))
+                for r in denied)
+            resp = QMessageBox.question(
+                self, "Numbering still wrong",
+                "You denied a segment identity (%s), but the cuts are unchanged "
+                "-- the numbering these cuts produce is exactly what you said "
+                "is wrong. Add or remove the offending cut (manual controls) "
+                "before saving.\n\nSave anyway, recording the conflict without "
+                "fixing it?" % claims,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if resp != QMessageBox.Yes:
+                return
+
         archive = (Path(self.seg_path).parents[3] / "_archived"
                    / ("segmentation_before_human_fix_%s"
                       % datetime.now().strftime("%Y%m%d_%H%M%S")))
