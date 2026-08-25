@@ -185,16 +185,21 @@ reasons, and each has its tool:
 - **The segmentation is the problem** (the boundaries between pellet
   presentations are wrong -- this is most of the queue, and every video the
   triage escalate button or a corrected segment number sent here). Press
-  **Open Re-segmentation**. The tool loads a video, parks the playback on the
-  first segment, and asks three questions per segment: is this really segment
-  N; does it start where the algorithm says (within 10 frames); does it end
-  where the algorithm says. Answer yes with a click, or answer no by clicking
-  one of the offered candidate frames (each click shows you that exact frame
-  in the video), by scrubbing to the right frame yourself and pressing "Use
-  current frame", or by typing the frame number. The on-screen notes say
-  which frame to pick: a segment STARTS on the frame after the scoring area
-  jumps, and ENDS on the frame before the next jump. Press *Confirm answers ->
-  next segment* each time; press *Save these cuts* when the video is done.
+  **Open Re-segmentation**. The tool walks the video one BOUNDARY at a time:
+  it parks the playback ON each boundary and asks "Is this the boundary?" --
+  is this frame the first one after the scoring-area jump. The header states
+  explicitly which pellet is BEFORE the boundary and which is AFTER it
+  (boundary 1 has the pre-roll before it and pellet 1 after; the last
+  boundary has the post-roll after it) -- check the footage on both sides
+  matches. The DLC tracking points are drawn on the video; the scoring-area
+  points jumping is the tell. Answer Yes with a click, or answer No by
+  clicking one of the offered candidate frames (each click shows you that
+  exact frame), by scrubbing there and pressing "Use current frame", or by
+  typing the frame number. If there is no tray advance near the claimed
+  boundary at all, press *No advance here -- remove this boundary* (the two
+  segments merge and everything renumbers); if a boundary was MISSED, add a
+  cut with the manual controls below the questions. Press *Confirm -> next
+  boundary* each time; press *Save these cuts* when the video is done.
   Saving marks the cuts as human-made -- the pipeline will keep them.
 - **Something else is wrong with the whole video** (escalated for a reason
   that is not boundaries, or you need to re-judge every segment's outcome).
@@ -246,31 +251,35 @@ hand-fixed, and the bundle is not offered again. Videos with the most unused
 candidate cuts are offered first; videos with no candidates at all are last,
 because those have to be marked from scratch.
 
-**The guided walk** (added 2026-08-25) is how the tool opens: one segment at a
-time, playhead parked at the segment's algo start, three questions --
+**The guided walk** (added 2026-08-25, redesigned boundary-centric the same
+day) is how the tool opens: one BOUNDARY at a time, playhead parked on it. A
+segment-based draft asked three questions per segment and thereby asked about
+every interior cut twice (segment k's end and segment k+1's start are the
+same cut) and never visited the pre-roll; the boundary framing fixes both.
+Per boundary:
 
-1. *Is this segment number N (= pellet number N)?* Yes, or "No, it is actually
-   segment __". A no is recorded in the saved `guided_walk` answers; the
-   numbering itself only changes when a cut is added or removed, and Save
-   refuses (with an explicit override) while a denied identity stands with the
-   cuts unchanged.
-2. *Does this segment start within 10 frames of {algo start}?* Yes, or the real
-   frame -- typed, taken from the playhead ("Use current frame"), or picked
-   from the **candidate chips**: the segmenter's own nearby candidate tray
-   advances, each labelled with the frame it implies plus its evidence
-   (`n_proposers`/4, consensus score). Clicking a chip jumps the playhead there
-   and fills it in as the answer. Operator note shown in the tool: the start is
-   the frame AFTER the scoring-area jump.
-3. *Does this segment end within 10 frames of {algo end}?* Same controls; the
-   end is the frame BEFORE the next jump (the tool moves the following cut to
-   frame+1 itself).
+- The header states the boundary's role explicitly: which pellet (or
+  pre-roll/post-roll) is BEFORE it and which is AFTER it.
+- *Is this the boundary?* -- is this frame the first one after the
+  scoring-area jump, within 10 frames. Yes (pre-selected), or the real frame
+  -- typed, taken from the playhead ("Use current frame"), or picked from the
+  **candidate chips**: the segmenter's own nearby candidate tray advances,
+  each labelled with its frame plus its evidence (`n_proposers`/4, consensus
+  score). Clicking a chip jumps the playhead there and fills it in as the
+  answer. Chips within the question's 10-frame tolerance are hidden (same
+  answer as Yes).
+- *No advance here -- remove this boundary* deletes an invented cut in one
+  click: the two segments it separated merge, and every later segment
+  renumbers automatically.
 
-Corrections apply to the cuts immediately; the per-segment answers are saved
-into the segments file as `guided_walk`. Below the walk, the full candidate
-table and manual add/drop-cut controls remain for work the walk cannot express,
-with a legend stating what a boundary means (boundary 1 = start of segment 1
-and end of the pre-pellet setup frames; each cut sits on the first frame after
-a scoring-area jump).
+Corrections apply to the cuts immediately; the per-boundary answers are saved
+into the segments file as `guided_walk` records ({boundary_num, algo_frame,
+confirmed, corrected_frame?/removed?}). Below the walk, the full candidate
+table and manual add/drop-cut controls remain -- adding a MISSED boundary
+happens there ("Add a cut at the current frame"), and the walk picks it up
+immediately. The DLC tracking points are drawn on the video, and video
+navigation (play/reverse/speeds, frame steps, go-to-frame, and the causal
+review tool's exact keyboard scheme) is identical to the other review tools.
 
 Saving copies the original aside, then rewrites `{stem}_segments.json` with
 `boundaries`, `algo_boundaries` (what the algorithm had), `boundary_source:
