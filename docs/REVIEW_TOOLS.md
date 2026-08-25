@@ -156,21 +156,23 @@ This section is for the person doing the work, no codebase knowledge assumed.
 Everything below it in this document is the engineering detail behind these
 steps.
 
-**Opening the queue.** The launcher is NOT on the PATH of a plain PowerShell,
-cmd, or VS Code terminal -- typing `mousereach` there says "not recognized".
-Three ways that actually work, pick one:
+**Opening the queue.** Open an **Anaconda Prompt** (Start menu -> "Anaconda
+Prompt"), activate the mousereach environment, and launch:
 
-- **Desktop shortcut** (processing server): double-click **MouseReach** on the
-  desktop.
-- **Any terminal, no setup** -- run the executable by its full path. On the
-  processing server:
-  `C:\LAB_ROOT\envs\mousereach\Scripts\mousereach.exe`
-  (On another lab machine, the same path under wherever that machine keeps its
-  mousereach conda environment -- e.g. `A:\...` on the DLC PCs. If unsure, ask
-  or search for `mousereach.exe` under the machine's conda `envs` folder.)
-- **Anaconda Prompt** (Start menu -> "Anaconda Prompt"): activate the
-  environment first, then the short command works:
-  `conda activate C:\LAB_ROOT\envs\mousereach` then `mousereach`.
+```
+conda activate C:\LAB_ROOT\envs\mousereach
+mousereach
+```
+
+On another lab machine, activate that machine's own mousereach environment
+(the path after `conda activate` differs -- e.g. under `A:\` on the DLC PCs;
+`conda env list` shows what the machine has). Note the bare `mousereach`
+command only exists AFTER activation -- a plain PowerShell/cmd/VS Code
+terminal without the activation says "not recognized". (Fallbacks if conda is
+unavailable: the **MouseReach** desktop shortcut on the processing server, or
+the executable's full path,
+`C:\LAB_ROOT\envs\mousereach\Scripts\mousereach.exe`, which works from any
+terminal.)
 
 When napari opens, find the **Review Queues** tab in the right-hand dock. It
 shows how many videos are waiting in each queue and has three buttons: *Open
