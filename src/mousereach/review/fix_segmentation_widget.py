@@ -136,28 +136,38 @@ class FixSegmentationWidget(QWidget):
     # ---------------------------------------------------------------- ui
 
     QUICK_GUIDE = """
-This tool fixes ONE thing: where a video's segment cuts are. A cut is the
-first frame after the scoring area jumps (the tray finishing an advance);
-segment N is everything from cut N to the frame before cut N+1, and contains
-pellet N. The DLC points are drawn on the video -- watch the scoring-area
-points jump to see where a segment really begins.
+This tool fixes ONE thing: where a video's segment boundaries are. A
+boundary is the first frame after the scoring area jumps (the tray finishing
+an advance). Boundary 1 ends the pre-roll (the pre-pellet setup footage) and
+begins segment 1 / pellet 1; boundary N ends segment N-1 and begins segment
+N. The DLC points are drawn on the video -- watch the scoring-area points
+jump to see where a boundary really is. The WHOLE video is loaded, pre-roll
+and post-roll included: step backwards from boundary 1 to watch the pre-roll
+end.
 
-THE WORKFLOW:
+THE WORKFLOW -- one question per boundary:
 
-* Answer the three questions for the current segment (Yes is pre-selected;
-  click No and give the frame only when the algorithm is wrong).
-* To answer a boundary question, use the candidate chips (click one to jump
-  there AND use it as the answer), or scrub to the right frame and press
-  "Use current frame", or type the frame number.
-* Press "Confirm answers -> next segment". Repeat until the walk says it is
-  finished.
-* Then press "Save these cuts". Saving stamps the cuts as human-made; the
-  pipeline keeps them on the re-run.
+* The walk parks the video on each boundary in turn and asks: "Is this the
+  boundary?" (is this frame the first one after the jump, within 10 frames).
+  The header states explicitly which pellet is BEFORE this boundary and
+  which is AFTER it -- check the footage on both sides matches that claim.
+* Yes is pre-selected -- just press Confirm when it is right.
+* If it is elsewhere: click a candidate chip (jumps there AND uses it as the
+  answer), or scrub to the right frame and press "Use current frame", or
+  type the frame number.
+* If there is NO tray advance anywhere near here, press "No advance here --
+  remove this boundary". Every later segment renumbers automatically.
+* Press "Confirm -> next boundary". Repeat to the end, then "Save these
+  cuts". Saving stamps the boundaries as human-made; the pipeline keeps
+  them on the re-run.
 
-EVERYTHING BELOW THE QUESTIONS IS OPTIONAL. The candidate table and the
-add/drop-cut buttons are manual controls for fixes the walk cannot express
-(a missing cut, an extra cut, a numbering offset). The segment table just
-shows what the current cuts produce -- red rows hint at a missing cut. If
+IF A BOUNDARY WAS MISSED (a segment looks double-length in the table, or
+you saw an extra jump): add it with "Add a cut at the current frame" in the
+manual controls below -- the walk picks it up immediately.
+
+EVERYTHING BELOW THE QUESTION IS OPTIONAL. The candidate table and the
+add/drop-cut buttons are manual controls; the segment table just shows what
+the current boundaries produce -- red rows hint at a missing boundary. If
 you never need them, Confirm + Save is the whole job.
 
 NAVIGATION (identical to the other review tools): Play/Rev/Stop with speed
@@ -262,8 +272,8 @@ automatic.
         split = QSplitter(Qt.Vertical)
         layout.addWidget(split, 1)
 
-        # --- guided walk ---------------------------------------------------
-        gw_box = QGroupBox("Guided walk (one segment at a time)")
+        # --- guided walk: one question per BOUNDARY ------------------------
+        gw_box = QGroupBox("Guided walk (one boundary at a time)")
         gv = QVBoxLayout()
         gw_box.setLayout(gv)
 
@@ -272,118 +282,66 @@ automatic.
         self.gw_header.setWordWrap(True)
         gv.addWidget(self.gw_header)
 
-        # Q1: identity
-        r1 = QHBoxLayout()
-        self.gw_q1 = QLabel("")
-        self.gw_q1.setWordWrap(True)
-        r1.addWidget(self.gw_q1, 1)
-        self.gw_id_yes = QRadioButton("Yes")
-        self.gw_id_yes.setChecked(True)
-        self.gw_id_yes.setToolTip("The number is right -- nothing to change.")
-        self.gw_id_no = QRadioButton("No, it is actually segment:")
-        self.gw_id_no.setToolTip(
-            "The footage shows a different pellet presentation than the "
-            "number claims. Set the real number; the fix itself is a cut "
-            "added/removed earlier (manual controls below).")
-        g1 = QButtonGroup(self)
-        g1.addButton(self.gw_id_yes); g1.addButton(self.gw_id_no)
-        self._gw_groups = [g1]
-        r1.addWidget(self.gw_id_yes)
-        r1.addWidget(self.gw_id_no)
-        self.gw_id_spin = QSpinBox()
-        self.gw_id_spin.setRange(0, 60)
-        self.gw_id_spin.setEnabled(False)
-        self.gw_id_no.toggled.connect(self.gw_id_spin.setEnabled)
-        r1.addWidget(self.gw_id_spin)
-        gv.addLayout(r1)
-
-        # Q2: start boundary
-        r2 = QHBoxLayout()
-        self.gw_q2 = QLabel("")
-        self.gw_q2.setWordWrap(True)
-        r2.addWidget(self.gw_q2, 1)
-        self.gw_start_yes = QRadioButton("Yes")
-        self.gw_start_yes.setChecked(True)
-        self.gw_start_yes.setToolTip("The start frame is right (within 10 frames).")
-        self.gw_start_no = QRadioButton("No, it starts at frame:")
-        self.gw_start_no.setToolTip(
-            "The segment really starts elsewhere. Give the frame AFTER the "
-            "scoring-area jump -- via a candidate chip, the playhead, or typing.")
-        g2 = QButtonGroup(self)
-        g2.addButton(self.gw_start_yes); g2.addButton(self.gw_start_no)
-        self._gw_groups.append(g2)
-        r2.addWidget(self.gw_start_yes)
-        r2.addWidget(self.gw_start_no)
-        self.gw_start_spin = QSpinBox()
-        self.gw_start_spin.setRange(0, 10_000_000)
-        self.gw_start_spin.setEnabled(False)
-        self.gw_start_no.toggled.connect(self.gw_start_spin.setEnabled)
-        r2.addWidget(self.gw_start_spin)
+        r = QHBoxLayout()
+        self.gw_q = QLabel("")
+        self.gw_q.setWordWrap(True)
+        r.addWidget(self.gw_q, 1)
+        self.gw_yes = QRadioButton("Yes")
+        self.gw_yes.setChecked(True)
+        self.gw_yes.setToolTip("This frame IS the boundary (the first frame "
+                               "after the jump, within 10 frames).")
+        self.gw_no = QRadioButton("No, it is at frame:")
+        self.gw_no.setToolTip(
+            "The jump is elsewhere. Give the first frame AFTER it -- via a "
+            "candidate chip, the playhead, or typing.")
+        g = QButtonGroup(self)
+        g.addButton(self.gw_yes); g.addButton(self.gw_no)
+        r.addWidget(self.gw_yes)
+        r.addWidget(self.gw_no)
+        self.gw_spin = QSpinBox()
+        self.gw_spin.setRange(0, 10_000_000)
+        self.gw_spin.setEnabled(False)
+        self.gw_no.toggled.connect(self.gw_spin.setEnabled)
+        r.addWidget(self.gw_spin)
         b = QPushButton("Use current frame")
-        b.setToolTip("Copy the playhead's frame into the box. Pick the frame "
-                     "AFTER the scoring-area jump.")
-        b.clicked.connect(lambda: self._gw_use_playhead(self.gw_start_spin,
-                                                        self.gw_start_no))
-        r2.addWidget(b)
-        gv.addLayout(r2)
-        n2 = QLabel("Operator note: the start is the frame AFTER the "
-                    "scoring-area jump (the tray has finished advancing).")
-        n2.setStyleSheet("color: #888;")
-        n2.setWordWrap(True)
-        gv.addWidget(n2)
+        b.setToolTip("Copy the playhead's frame into the box. Pick the first "
+                     "frame AFTER the scoring-area jump.")
+        b.clicked.connect(lambda: self._gw_use_playhead(self.gw_spin, self.gw_no))
+        r.addWidget(b)
+        gv.addLayout(r)
+
+        note = QLabel("A boundary is the FIRST frame AFTER the scoring-area "
+                      "jump (the tray has finished advancing). Step backwards "
+                      "to watch the jump happen.")
+        note.setStyleSheet("color: #888;")
+        note.setWordWrap(True)
+        gv.addWidget(note)
+
         # Nearby candidate tray advances the segmenter itself proposed --
         # click one to jump the playhead there AND fill it in as the answer.
-        self.gw_start_cands = QHBoxLayout()
-        self.gw_start_cands.addWidget(QLabel("Segmenter's nearby candidates:"))
-        self.gw_start_cands.addStretch()
-        gv.addLayout(self.gw_start_cands)
-
-        # Q3: end boundary
-        r3 = QHBoxLayout()
-        self.gw_q3 = QLabel("")
-        self.gw_q3.setWordWrap(True)
-        r3.addWidget(self.gw_q3, 1)
-        self.gw_end_yes = QRadioButton("Yes")
-        self.gw_end_yes.setChecked(True)
-        self.gw_end_yes.setToolTip("The end frame is right (within 10 frames).")
-        self.gw_end_no = QRadioButton("No, it ends at frame:")
-        self.gw_end_no.setToolTip(
-            "The segment really ends elsewhere. Give the frame BEFORE the "
-            "next scoring-area jump -- via a candidate chip, the playhead, or typing.")
-        g3 = QButtonGroup(self)
-        g3.addButton(self.gw_end_yes); g3.addButton(self.gw_end_no)
-        self._gw_groups.append(g3)
-        r3.addWidget(self.gw_end_yes)
-        r3.addWidget(self.gw_end_no)
-        self.gw_end_spin = QSpinBox()
-        self.gw_end_spin.setRange(0, 10_000_000)
-        self.gw_end_spin.setEnabled(False)
-        self.gw_end_no.toggled.connect(self.gw_end_spin.setEnabled)
-        r3.addWidget(self.gw_end_spin)
-        b = QPushButton("Use current frame")
-        b.setToolTip("Copy the playhead's frame into the box. Pick the frame "
-                     "BEFORE the scoring-area jump.")
-        b.clicked.connect(lambda: self._gw_use_playhead(self.gw_end_spin,
-                                                        self.gw_end_no))
-        r3.addWidget(b)
-        gv.addLayout(r3)
-        n3 = QLabel("Operator note: the end is the frame BEFORE the next "
-                    "scoring-area jump (the tray has not started moving yet).")
-        n3.setStyleSheet("color: #888;")
-        n3.setWordWrap(True)
-        gv.addWidget(n3)
-        self.gw_end_cands = QHBoxLayout()
-        self.gw_end_cands.addWidget(QLabel("Segmenter's nearby candidates:"))
-        self.gw_end_cands.addStretch()
-        gv.addLayout(self.gw_end_cands)
+        self.gw_cands = QHBoxLayout()
+        self.gw_cands.addWidget(QLabel("Segmenter's nearby candidates:"))
+        self.gw_cands.addStretch()
+        gv.addLayout(self.gw_cands)
 
         nav = QHBoxLayout()
-        bb = QPushButton("< Back a segment")
+        bb = QPushButton("< Back a boundary")
+        bb.setToolTip("Revisit the previous boundary.")
         bb.clicked.connect(self._gw_back)
         nav.addWidget(bb)
+        rmb = QPushButton("No advance here -- remove this boundary")
+        rmb.setStyleSheet("background: #5a1616; color: white;")
+        rmb.setToolTip(
+            "There is no tray advance anywhere near this frame: the "
+            "segmenter invented this boundary. Removing it merges the two "
+            "segments it separated, and every later segment renumbers.")
+        rmb.clicked.connect(self._gw_remove_boundary)
+        nav.addWidget(rmb)
         nav.addStretch()
-        cb = QPushButton("Confirm answers -> next segment")
+        cb = QPushButton("Confirm -> next boundary")
         cb.setStyleSheet("font-weight: bold;")
+        cb.setToolTip("Record the answer (moving the boundary if you said "
+                      "No) and load the next one.")
         cb.clicked.connect(self._gw_confirm)
         nav.addWidget(cb)
         gv.addLayout(nav)
@@ -607,46 +565,39 @@ automatic.
 
     # ------------------------------------------------------------ guided walk
 
-    def _gw_segments(self) -> List[tuple]:
-        return segments_from(self.boundaries, self.n_frames)
-
     def _gw_load(self):
-        """Show the three questions for the current segment and park the
-        playhead at its algo start so the operator is looking at the right
-        footage immediately."""
-        segs = self._gw_segments()
-        if not segs:
-            self.gw_header.setText("No segments to walk (no cuts yet) -- use "
-                                   "the manual controls below.")
+        """Show the question for the current boundary and park the playhead
+        ON it, so stepping backwards shows the jump (and, for boundary 1,
+        the pre-roll) immediately."""
+        b = sorted(self.boundaries)
+        if not b:
+            self.gw_header.setText("No boundaries to walk (no cuts yet) -- "
+                                   "use the manual controls below.")
             return
-        self._gw_idx = max(0, min(self._gw_idx, len(segs) - 1))
-        num, s, e = segs[self._gw_idx]
+        self._gw_idx = max(0, min(self._gw_idx, len(b) - 1))
+        i = self._gw_idx
+        frame = int(b[i])
+        num = i + 1
+        n = len(b)
+        left = "the PRE-ROLL (no pellet yet -- setup footage)" if i == 0 \
+            else "pellet %d (segment %d)" % (num - 1, num - 1)
+        right = "the POST-ROLL (no pellet -- session over)" if i == n - 1 \
+            else "pellet %d (segment %d)" % (num, num)
         self.gw_header.setText(
-            "Segment %d of %d  --  the algorithm thinks frames %d-%d contain "
-            "pellet %d (and thus that this is segment %d)."
-            % (num, len(segs), s, e, num, num))
-        self.gw_q1.setText(
-            "Q1: Is this segment number %d (= pellet number %d)?" % (num, num))
-        self.gw_q2.setText(
-            "Q2: Does this segment start within %d frames of frame %d?"
-            % (GUIDED_TOLERANCE_FRAMES, s))
-        self.gw_q3.setText(
-            "Q3: Does this segment end within %d frames of frame %d?"
-            % (GUIDED_TOLERANCE_FRAMES, e))
-        self.gw_id_yes.setChecked(True)
-        self.gw_id_spin.setValue(num)
-        self.gw_start_yes.setChecked(True)
-        self.gw_start_spin.setValue(s)
-        self.gw_end_yes.setChecked(True)
-        self.gw_end_spin.setValue(e)
+            "Boundary %d of %d -- the algorithm put it at frame %d.\n"
+            "BEFORE this boundary (earlier frames): %s.\n"
+            "AFTER this boundary (later frames): %s."
+            % (num, n, frame, left, right))
+        self.gw_q.setText(
+            "Is this the boundary? (is frame %d the first frame after the "
+            "scoring-area jump, within %d frames)"
+            % (frame, GUIDED_TOLERANCE_FRAMES))
+        self.gw_yes.setChecked(True)
+        self.gw_spin.setValue(frame)
         self.gw_status.setText("")
-        self._gw_fill_candidate_row(self.gw_start_cands, s,
-                                    self.gw_start_spin, self.gw_start_no,
-                                    is_end=False)
-        self._gw_fill_candidate_row(self.gw_end_cands, e + 1,
-                                    self.gw_end_spin, self.gw_end_no,
-                                    is_end=True)
-        self._goto(s)
+        self._gw_fill_candidate_row(self.gw_cands, frame,
+                                    self.gw_spin, self.gw_no, is_end=False)
+        self._goto(frame)
 
     def _gw_candidates_near(self, frame: int, limit: int = 5) -> List[dict]:
         """The segmenter's candidate tray advances nearest ``frame``, closest
@@ -707,47 +658,54 @@ automatic.
         spin.setValue(f)
 
     def _gw_confirm(self):
-        """Apply this segment's answers to the cuts, record them, advance."""
-        segs = self._gw_segments()
-        if not segs:
+        """Record this boundary's answer (moving it if denied), advance."""
+        b = sorted(self.boundaries)
+        if not b:
             return
-        num, s, e = segs[self._gw_idx]
-        rec = {"segment_num": num, "algo_start": s, "algo_end": e,
-               "identity_confirmed": not self.gw_id_no.isChecked(),
-               "start_confirmed": not self.gw_start_no.isChecked(),
-               "end_confirmed": not self.gw_end_no.isChecked()}
-        notes = []
-        if self.gw_id_no.isChecked():
-            rec["true_segment_num"] = int(self.gw_id_spin.value())
-            notes.append(
-                "identity: you say this is really segment %d -- numbering is "
-                "set only by the cuts, so add or remove the missing/extra cut "
-                "EARLIER in the video (manual controls below) until the "
-                "numbers line up." % rec["true_segment_num"])
-        if self.gw_start_no.isChecked():
-            f = int(self.gw_start_spin.value())
-            rec["corrected_start"] = f
-            self.boundaries = move_segment_start(self.boundaries, self._gw_idx, f)
-            notes.append("start moved to frame %d." % f)
-        if self.gw_end_no.isChecked():
-            f = int(self.gw_end_spin.value())
-            rec["corrected_end"] = f
-            self.boundaries = move_segment_end(self.boundaries, self._gw_idx, f)
-            notes.append("end moved to frame %d (cut at %d)." % (f, f + 1))
-        self._gw_records[num] = rec
+        i = self._gw_idx
+        frame = int(b[i])
+        rec = {"boundary_num": i + 1, "algo_frame": frame,
+               "confirmed": not self.gw_no.isChecked()}
+        note = ""
+        if self.gw_no.isChecked():
+            f = int(self.gw_spin.value())
+            rec["corrected_frame"] = f
+            b[i] = f
+            self.boundaries = sorted(b)
+            note = "boundary %d moved to frame %d." % (i + 1, f)
+        self._gw_records[i + 1] = rec
         self._refresh_candidates(); self._refresh_segments()
-        done = len(self._gw_records)
-        total = len(self._gw_segments())
+        total = len(self.boundaries)
         if self._gw_idx < total - 1:
             self._gw_idx += 1
             self._gw_load()
-            if notes:
-                self.gw_status.setText(" ".join(notes))
+            if note:
+                self.gw_status.setText(note)
         else:
             self.gw_status.setText(
-                ("%s  " % " ".join(notes) if notes else "")
-                + "Walk finished (%d/%d segments answered). Check the segment "
-                  "table, then 'Save these cuts'." % (done, total))
+                ("%s  " % note if note else "")
+                + "Walk finished (%d/%d boundaries answered). Check the "
+                  "segment table for double-length rows (a missed boundary), "
+                  "then 'Save these cuts'." % (len(self._gw_records), total))
+
+    def _gw_remove_boundary(self):
+        """The segmenter invented this boundary: remove the cut entirely."""
+        b = sorted(self.boundaries)
+        if not b:
+            return
+        i = self._gw_idx
+        frame = int(b[i])
+        self._gw_records[i + 1] = {"boundary_num": i + 1, "algo_frame": frame,
+                                   "confirmed": False, "removed": True}
+        del b[i]
+        self.boundaries = b
+        self._refresh_candidates(); self._refresh_segments()
+        self.gw_status.setText(
+            "Boundary at frame %d removed -- the two segments it separated "
+            "are now one, and later segments renumbered." % frame)
+        self._gw_idx = min(self._gw_idx, len(self.boundaries) - 1)
+        if self.boundaries:
+            self._gw_load()
 
     def _gw_back(self):
         if self._gw_idx > 0:
@@ -1107,29 +1065,6 @@ automatic.
             QMessageBox.warning(self, "Too few cuts",
                                 "At least two cuts are needed to make a segment.")
             return
-
-        # Saying "this is really segment Y" in the walk RECORDS the mismatch;
-        # only the cuts fix it. If any identity was denied but the cuts still
-        # produce the same numbering (same count, no cut added or removed),
-        # the mislabel is still in the data -- make the operator decide
-        # explicitly rather than save a contradiction silently.
-        denied = [r for r in self._gw_records.values()
-                  if not r.get("identity_confirmed", True)]
-        if denied and sorted(self.boundaries) == sorted(self.original_boundaries):
-            claims = "; ".join(
-                "what the algo calls segment %d you called segment %s"
-                % (r["segment_num"], r.get("true_segment_num", "?"))
-                for r in denied)
-            resp = QMessageBox.question(
-                self, "Numbering still wrong",
-                "You denied a segment identity (%s), but the cuts are unchanged "
-                "-- the numbering these cuts produce is exactly what you said "
-                "is wrong. Add or remove the offending cut (manual controls) "
-                "before saving.\n\nSave anyway, recording the conflict without "
-                "fixing it?" % claims,
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if resp != QMessageBox.Yes:
-                return
 
         archive = (Path(self.seg_path).parents[3] / "_archived"
                    / ("segmentation_before_human_fix_%s"
