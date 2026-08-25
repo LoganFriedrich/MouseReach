@@ -12,6 +12,11 @@ Clear signals:
   TRIAGE      -- every triaged element resolved (``triage_status.fully_resolved``
                  and segmentation not failed). Works with the existing review
                  tool today: resolve all elements -> next scan re-injects.
+                 EXCEPTION: if the reviewer set ``true_segment_num`` anywhere
+                 (declared a segment mislabeled), the video is DIVERTED to the
+                 DEEP_REVIEW queue for manual re-segmentation instead of being
+                 re-injected -- re-running with the wrong boundaries would
+                 compute kinematics over the wrong frames.
   DEEP_REVIEW -- an explicit ``{stem}_deep_review_cleared.json`` marker (written
                  by the deep tools when a reviewer clears the flag) OR a
                  co-located ``{stem}_unified_ground_truth.json`` (the deep GT
@@ -269,10 +274,12 @@ def scan_review_queues(db, processing_dir: Path,
     The remainder are picked up on subsequent cycles, so a deep queue drains
     steadily instead of blocking the pipeline until it is empty.
     """
-    summary = {"triage_returned": 0, "deep_returned": 0, "deferred": 0}
+    summary = {"triage_returned": 0, "deep_returned": 0, "deferred": 0,
+               "diverted_to_deep": 0}
 
     def _budget_left():
-        return summary["triage_returned"] + summary["deep_returned"] < limit
+        return (summary["triage_returned"] + summary["deep_returned"]
+                + summary["diverted_to_deep"]) < limit
 
     # TRIAGE: every triaged element resolved (and segmentation sound).
     for bundle in _bundles(Paths.TRIAGE_REVIEW):
@@ -284,9 +291,35 @@ def scan_review_queues(db, processing_dir: Path,
             st = triage_status(bundle, stem)
         except Exception:
             continue
-        if st.has_triage and st.fully_resolved and not st.seg_failed:
-            if _return_to_processing(bundle, stem, processing_dir, db, "triage_cleared"):
-                summary["triage_returned"] += 1
+        if not (st.has_triage and st.fully_resolved and not st.seg_failed):
+            continue
+        if st.seg_corrected:
+            # The reviewer answered everything BUT also declared at least one
+            # segment mislabeled (true_segment_num set). The boundaries cannot
+            # be trusted, so re-injecting would re-run kinematics over the wrong
+            # frame windows and archive the video as finished with the
+            # segmentation error intact. Divert to DEEP_REVIEW for manual
+            # re-segmentation instead; the review file travels with the bundle
+            # and re-attaches by frame span after the boundaries are fixed.
+            try:
+                from .review_gate import route_to_queue
+                route_to_queue(
+                    stem, bundle, Paths.DEEP_REVIEW,
+                    reason="reviewer declared segment mislabel "
+                           f"(true_segment_num on segments {sorted(st.seg_corrected)}) "
+                           "-- needs re-segmentation",
+                    db=db, db_state="deep_review",
+                )
+                summary["diverted_to_deep"] += 1
+                logger.info(
+                    "Return scan: %s diverted triage -> deep review; reviewer "
+                    "corrected segment number(s) %s", stem, sorted(st.seg_corrected))
+            except Exception as e:
+                logger.error("Return scan: could not divert %s to deep review: %s",
+                             stem, e)
+            continue
+        if _return_to_processing(bundle, stem, processing_dir, db, "triage_cleared"):
+            summary["triage_returned"] += 1
 
     # DEEP_REVIEW: an explicit clear marker or in-bundle GT.
     for bundle in _bundles(Paths.DEEP_REVIEW):
@@ -298,10 +331,11 @@ def scan_review_queues(db, processing_dir: Path,
             if _return_to_processing(bundle, stem, processing_dir, db, "deep_review_cleared"):
                 summary["deep_returned"] += 1
 
-    if summary["triage_returned"] or summary["deep_returned"]:
+    if summary["triage_returned"] or summary["deep_returned"] or summary["diverted_to_deep"]:
         logger.info(
             f"Review-return scan: {summary['triage_returned']} triage + "
-            f"{summary['deep_returned']} deep-review videos re-injected"
+            f"{summary['deep_returned']} deep-review videos re-injected, "
+            f"{summary['diverted_to_deep']} diverted to deep review (segment mislabel)"
             + (f" ({summary['deferred']} left for later cycles)"
                if summary["deferred"] else "")
         )

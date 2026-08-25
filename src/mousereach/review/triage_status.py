@@ -56,6 +56,25 @@ def segmentation_failed(seg_doc: Optional[Dict[str, Any]]) -> bool:
     return any("reference quality" in str(a).lower() for a in anoms)
 
 
+def segmentation_corrected(review_doc: Optional[Dict[str, Any]]) -> Set[int]:
+    """Segment numbers where a REVIEWER declared the segmentation wrong.
+
+    A review record carries ``true_segment_num`` + ``segmentation_wrong: True``
+    when the human said "this stretch is not the pellet presentation the
+    segmenter thinks it is" (causal_review_io.make_segment_record). That is a
+    fact about the segmentation, not about the reach or outcome -- so a video
+    with any such record must be re-segmented, not returned to the pipeline
+    with its boundaries intact. Distinct from :func:`segmentation_failed`,
+    which is the segmenter's OWN account; this is the human overruling it."""
+    if not review_doc:
+        return set()
+    return {
+        int(rec["segment_num"])
+        for rec in review_doc.get("segments", [])
+        if rec.get("segmentation_wrong") and rec.get("segment_num") is not None
+    }
+
+
 def _committed_causal_segments(assign_doc: Optional[Dict[str, Any]]) -> Set[int]:
     """Segment numbers that have a committed causal reach (is_causal)."""
     if not assign_doc:
@@ -138,6 +157,10 @@ class TriageStatus:
     triaged: Set[int] = field(default_factory=set)
     resolved: Set[int] = field(default_factory=set)
     unresolved: Set[int] = field(default_factory=set)
+    # Segments where a reviewer set true_segment_num: the human says the
+    # segmentation is wrong about WHICH pellet this is. Non-empty means the
+    # video needs re-segmentation before it can be trusted again.
+    seg_corrected: Set[int] = field(default_factory=set)
 
     @property
     def has_triage(self) -> bool:
@@ -150,10 +173,14 @@ class TriageStatus:
 
     @property
     def clean(self) -> bool:
-        """Ready for kinematics: segmentation sound AND nothing left unresolved."""
+        """Ready for kinematics: segmentation sound AND nothing left unresolved.
+
+        "Sound" includes the reviewer's verdict: a human-declared segment
+        mislabel (seg_corrected) means the boundaries cannot be trusted even
+        though the segmenter reported success."""
         # seg_needs_human is deliberately NOT considered here -- see the note in
         # watcher/review_gate.py. It is recorded, not acted on.
-        return (not self.seg_failed) and self.fully_resolved
+        return (not self.seg_failed) and (not self.seg_corrected) and self.fully_resolved
 
 
 def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:
@@ -185,4 +212,5 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
         triaged=tri,
         resolved=res,
         unresolved=tri - res,
+        seg_corrected=segmentation_corrected(review),
     )
