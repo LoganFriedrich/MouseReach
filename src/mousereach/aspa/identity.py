@@ -101,6 +101,59 @@ def is_encoded(animal_id: str) -> bool:
     return bool(_ENCODED_ID.match((animal_id or "").strip()))
 
 
+def lab_animal_id(name: str) -> Optional[str]:
+    """The lab's own animal id for anything carrying an encoded ASPA one.
+
+    ``'20220811_ASPA1011_P3' -> 'J11'``, ``'ASPA1011' -> 'J11'``,
+    ``'ASPA_10_11' -> 'J11'``. Returns None for a non-ASPA name (a CNT video,
+    say), so a caller can use it unconditionally.
+
+    Encoding exists so the pipeline sees one id shape everywhere; it is not what
+    anyone in the lab calls the animal. Nothing decoded on the way out, so every
+    result surfaced as ASPA1011 and a person reading it had to know the alphabet
+    rule to get back to J11. This is that missing half.
+    """
+    tok = (name or "").strip()
+    m = _ENCODED_ID.match(tok)
+    if m:
+        return decode_animal(tok)
+    # database form: ASPA_10_11
+    m = re.match(r"^" + ASPA_PREFIX + r"_(\d{2})_(\d{2})$", tok)
+    if m:
+        return decode_animal("%s%s%s" % (ASPA_PREFIX, m.group(1), m.group(2)))
+    # a video/file stem: {date}_{animal}_{tray}{pos}, plus any suffix
+    for part in tok.split("_"):
+        if _ENCODED_ID.match(part):
+            return decode_animal(part)
+    return None
+
+
+def decode_video_stem(stem: str) -> str:
+    """``'20220811_ASPA1011_P3' -> '20220811_J11_P3'``.
+
+    The inverse of the encoding applied at import, for one single-animal video.
+    A stem with no encoded ASPA id is returned unchanged, so this is safe to call
+    on every row of a mixed export.
+
+    The stem is NOT rewritten anywhere the pipeline uses it as a key -- file
+    names, database rows and manifests all keep the encoded form, because that is
+    what ties a result back to the file it came from. This is for the human-facing
+    end: a column someone reads.
+    """
+    tok = (stem or "").strip()
+    if not tok:
+        return stem
+    parts = tok.split("_")
+    out, changed = [], False
+    for part in parts:
+        if _ENCODED_ID.match(part):
+            out.append(decode_animal(part))
+            changed = True
+        else:
+            out.append(part)
+    return "_".join(out) if changed else stem
+
+
 def encode_collage_stem(stem: str) -> Optional[str]:
     """Encode a full ASPA collage stem into pipeline form.
 
