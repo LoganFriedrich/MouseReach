@@ -263,8 +263,9 @@ boundaries. If the problem IS the boundaries, close this and use the
 Re-segmentation tool instead (Review Queues tab).
 
 * Answer each segment's outcome and causal reach, or confirm the algo's.
-* Navigation: play/speed buttons, frame steps (also comma/period, brackets,
-  semicolon/quote on the keyboard), segment prev/next.
+* Navigation: play/speed buttons, frame steps (keyboard: Space play/pause,
+  b reverse, arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speed),
+  segment prev/next.
 * When the whole video is judged (and its cuts are right), press
   "Clear -> re-enter pipeline". THAT is what releases the video: the watcher
   re-runs it and results flow to the database automatically.
@@ -287,8 +288,9 @@ and settle it).
   "Escalate: bad segmentation" to send the whole video there now.
 * "Flag Session" marks the whole mouse+day session for mandatory review.
 
-Navigation: play/speed buttons and frame steps (comma/period = 1 frame,
-brackets = 10, semicolon/quote = 100). The notes box travels with the video.
+Navigation: play/speed buttons and frame steps (keyboard: Space play/pause,
+b reverse, arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speed).
+The notes box travels with the video.
 """
 
     def _build_ui(self):

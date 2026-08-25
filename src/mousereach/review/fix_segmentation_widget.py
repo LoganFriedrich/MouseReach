@@ -123,6 +123,13 @@ class FixSegmentationWidget(QWidget):
         self._gw_idx: int = 0
         self._gw_records: Dict[int, dict] = {}
 
+        from qtpy.QtCore import QTimer
+        self.is_playing = False
+        self.playback_direction = 1
+        self.playback_speed = 1.0
+        self.playback_timer = QTimer()
+        self.playback_timer.timeout.connect(self._playback_step)
+
         self._build_ui()
         self._load_queue()
 
@@ -153,9 +160,10 @@ add/drop-cut buttons are manual controls for fixes the walk cannot express
 shows what the current cuts produce -- red rows hint at a missing cut. If
 you never need them, Confirm + Save is the whole job.
 
-NAVIGATION: the arrow buttons step the video by 1/10/100/1000 frames;
-"Go to" jumps to a typed frame. Keyboard: comma/period = 1 frame back/fwd,
-left/right bracket = 10 frames, semicolon/quote = 100 frames.
+NAVIGATION (identical to the other review tools): Play/Rev/Stop with speed
+buttons; step buttons for 1/10/100 frames; "Go to" jumps to a typed frame.
+Keyboard: Space = play/pause, b = reverse, arrows = 1 frame, Shift-arrows =
+10, Ctrl-arrows = 100, keys 1-6 = speed.
 
 FINISHING: saving cuts does NOT release the video from the deep-review
 queue. When its cuts are right, open Deep Review on it and press
@@ -192,29 +200,64 @@ automatic.
         self.why.setStyleSheet("color: #e08020;")
         layout.addWidget(self.why)
 
-        # --- video navigation ---------------------------------------------
-        nav_row = QHBoxLayout()
-        for delta, label in [(-1000, "<<<"), (-100, "<<"), (-10, "<"), (-1, "-1"),
-                             (1, "+1"), (10, ">"), (100, ">>"), (1000, ">>>")]:
+        # --- video navigation: SAME controls and keys as the causal/triage
+        # review tool, so operators never re-learn navigation between tools.
+        play_row = QHBoxLayout()
+        self._play_rev_btn = QPushButton("Rev")
+        self._play_rev_btn.setToolTip("Play backwards (keyboard: b)")
+        self._play_rev_btn.setMaximumWidth(40)
+        self._play_rev_btn.clicked.connect(self._play_reverse)
+        play_row.addWidget(self._play_rev_btn)
+        self._play_btn = QPushButton("Play")
+        self._play_btn.setToolTip("Play forwards (keyboard: Space toggles)")
+        self._play_btn.setMaximumWidth(40)
+        self._play_btn.clicked.connect(self._play_forward)
+        play_row.addWidget(self._play_btn)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Stop playback")
+        self._stop_btn.setMaximumWidth(40)
+        self._stop_btn.clicked.connect(self._stop_play)
+        play_row.addWidget(self._stop_btn)
+        play_row.addStretch()
+        play_row.addWidget(QLabel("Speed:"))
+        self._speed_buttons = {}
+        for speed in [0.25, 0.5, 1, 2, 4, 8]:
+            label = ("%sx" % speed) if speed < 1 else ("%dx" % int(speed))
             b = QPushButton(label)
-            b.setMaximumWidth(40)
-            b.setToolTip("Step the video %+d frame(s)" % delta)
+            b.setCheckable(True)
+            b.setMaximumWidth(35)
+            b.setToolTip("Playback speed (keyboard: 1-6)")
+            b.clicked.connect(lambda _=False, s=speed: self._set_speed(s))
+            self._speed_buttons[speed] = b
+            play_row.addWidget(b)
+        self._speed_buttons[1].setChecked(True)
+        layout.addLayout(play_row)
+
+        step_row = QHBoxLayout()
+        for delta, label in [(-100, "<<"), (-10, "<"), (-1, "-1"),
+                             (1, "+1"), (10, ">"), (100, ">>")]:
+            b = QPushButton(label)
+            b.setMaximumWidth(35)
+            b.setToolTip("Step %+d frame(s) (keyboard: arrows = 1, "
+                         "Shift-arrows = 10, Ctrl-arrows = 100)" % delta)
             b.clicked.connect(lambda _=False, d=delta: self._jump_frames(d))
-            nav_row.addWidget(b)
+            step_row.addWidget(b)
         self._frame_label = QLabel("Frame: -- / --")
-        nav_row.addWidget(self._frame_label)
-        nav_row.addStretch()
-        nav_row.addWidget(QLabel("Go to:"))
+        step_row.addWidget(self._frame_label)
+        self._time_label = QLabel("Time: --:--")
+        step_row.addWidget(self._time_label)
+        step_row.addStretch()
+        step_row.addWidget(QLabel("Go to:"))
         self._goto_spin = QSpinBox()
         self._goto_spin.setRange(0, 10_000_000)
         self._goto_spin.setToolTip("Type a frame number and press Go")
-        nav_row.addWidget(self._goto_spin)
+        step_row.addWidget(self._goto_spin)
         gb = QPushButton("Go")
         gb.setMaximumWidth(36)
         gb.setToolTip("Jump the video to the typed frame")
         gb.clicked.connect(lambda: self._goto(int(self._goto_spin.value())))
-        nav_row.addWidget(gb)
-        layout.addLayout(nav_row)
+        step_row.addWidget(gb)
+        layout.addLayout(step_row)
 
         split = QSplitter(Qt.Vertical)
         layout.addWidget(split, 1)
@@ -835,6 +878,57 @@ automatic.
             self.status.setText("DLC points could not be drawn (%s); the "
                                 "video still works." % e)
 
+    # -- playback: byte-for-byte the causal review tool's machinery, so the
+    # two tools can never feel different to drive.
+
+    def _play_forward(self):
+        self.playback_direction = 1
+        self._start_playback()
+
+    def _play_reverse(self):
+        self.playback_direction = -1
+        self._start_playback()
+
+    def _stop_play(self):
+        self.is_playing = False
+        self.playback_timer.stop()
+        self._play_btn.setText("Play")
+        self._play_rev_btn.setText("Rev")
+
+    def _start_playback(self):
+        if self.is_playing:
+            self._stop_play()
+            return
+        self.is_playing = True
+        interval = max(1, int(1000 / (self._fps_play * self.playback_speed)))
+        self.playback_timer.start(interval)
+        if self.playback_direction == 1:
+            self._play_btn.setText("||")
+        else:
+            self._play_rev_btn.setText("||")
+
+    def _playback_step(self):
+        current = self.viewer.dims.current_step[0]
+        skip = max(1, int(self.playback_speed))
+        new_frame = current + (skip * self.playback_direction)
+        if 0 <= new_frame < self.n_frames:
+            self.viewer.dims.set_current_step(0, new_frame)
+        else:
+            self._stop_play()
+
+    def _set_speed(self, speed: float):
+        self.playback_speed = speed
+        for s, btn in self._speed_buttons.items():
+            btn.setChecked(s == speed)
+        if self.is_playing:
+            interval = max(1, int(1000 / (self._fps_play * self.playback_speed)))
+            self.playback_timer.stop()
+            self.playback_timer.start(interval)
+
+    @property
+    def _fps_play(self) -> float:
+        return float(self.seg.get("fps") or 60.0)
+
     def _jump_frames(self, delta: int):
         try:
             cur = int(self.viewer.dims.current_step[0])
@@ -846,23 +940,42 @@ automatic.
         try:
             f = int(self.viewer.dims.current_step[0])
             self._frame_label.setText("Frame: %d / %d" % (f, self.n_frames))
+            t = f / self._fps_play
+            self._time_label.setText("Time: %d:%05.2f" % (int(t // 60), t % 60))
         except Exception:
             pass
 
     def _bind_nav_keys(self):
-        """Same step keys the causal review tool uses, bound through napari."""
+        """The causal review tool's exact keyboard scheme, bound through
+        napari so it fires in a docked widget: Space play/pause, b reverse,
+        arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speeds."""
         if getattr(self, "_nav_keys_bound", False):
             return
         self._nav_keys_bound = True
         v = self.viewer
-        for key, delta in ((',', -1), ('.', 1), ('[', -10), (']', 10),
-                           (';', -100), ("'", 100)):
-            try:
-                v.bind_key(key,
-                           (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
-                           overwrite=True)
-            except Exception:
-                pass
+
+        @v.bind_key('Space', overwrite=True)
+        def _toggle_play(viewer):
+            if self.is_playing:
+                self._stop_play()
+            else:
+                self._play_forward()
+
+        @v.bind_key('b', overwrite=True)
+        def _toggle_reverse(viewer):
+            if self.is_playing:
+                self._stop_play()
+            else:
+                self._play_reverse()
+
+        for key, delta in [('Left', -1), ('Right', 1), ('Shift-Left', -10),
+                           ('Shift-Right', 10), ('Control-Left', -100),
+                           ('Control-Right', 100)]:
+            v.bind_key(key, (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
+                       overwrite=True)
+        for key, spd in zip('123456', [0.25, 0.5, 1, 2, 4, 8]):
+            v.bind_key(key, (lambda s: (lambda viewer: self._set_speed(s)))(spd),
+                       overwrite=True)
 
     # -------------------------------------------------------------- tables
 
