@@ -156,11 +156,26 @@ This section is for the person doing the work, no codebase knowledge assumed.
 Everything below it in this document is the engineering detail behind these
 steps.
 
-**Opening the queue.** Type `mousereach` in a terminal (any machine with the
-mousereach environment). When napari opens, find the **Review Queues** tab in
-the right-hand dock. It shows how many videos are waiting in each queue and has
-three buttons: *Open Triage Review*, *Open Deep Review*, and *Open
-Re-segmentation*. Each opens in its own window.
+**Opening the queue.** The launcher is NOT on the PATH of a plain PowerShell,
+cmd, or VS Code terminal -- typing `mousereach` there says "not recognized".
+Three ways that actually work, pick one:
+
+- **Desktop shortcut** (processing server): double-click **MouseReach** on the
+  desktop.
+- **Any terminal, no setup** -- run the executable by its full path. On the
+  processing server:
+  `C:\LAB_ROOT\envs\mousereach\Scripts\mousereach.exe`
+  (On another lab machine, the same path under wherever that machine keeps its
+  mousereach conda environment -- e.g. `A:\...` on the DLC PCs. If unsure, ask
+  or search for `mousereach.exe` under the machine's conda `envs` folder.)
+- **Anaconda Prompt** (Start menu -> "Anaconda Prompt"): activate the
+  environment first, then the short command works:
+  `conda activate C:\LAB_ROOT\envs\mousereach` then `mousereach`.
+
+When napari opens, find the **Review Queues** tab in the right-hand dock. It
+shows how many videos are waiting in each queue and has three buttons: *Open
+Triage Review*, *Open Deep Review*, and *Open Re-segmentation*. Each opens in
+its own window.
 
 **Which button to press.** Deep-review videos are there for one of two broad
 reasons, and each has its tool:
