@@ -92,6 +92,24 @@ Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Cl
 
 Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and speed keys 1-6 (`_setup_keybindings`, `:2963`). There is no key for next/previous segment; those are buttons.
 
+### Escalating out of triage (since 2026-08-25)
+
+Two ways a triage reviewer sends a video to deep review instead of finishing
+it here:
+
+- **The corrected segment number.** The per-segment question "Segmentation
+  says this is segment N. If that's wrong, which segment is this actually?"
+  writes `true_segment_num` + `segmentation_wrong` into the record. The
+  reviewer keeps answering normally; at return time the watcher sees the
+  correction and diverts the whole video to the deep-review queue for manual
+  re-segmentation rather than re-injecting it (`review_return.py`,
+  `TriageStatus.seg_pending_reseg`). Once the cuts are hand-fixed
+  (`boundary_source: "human"`), the old correction stops blocking the video.
+- **The escalate button.** *Escalate: bad segmentation -> deep review* saves
+  the answers given so far (they re-attach by frame span after the boundary
+  fix), moves the bundle to the deep-review queue with the notes text as the
+  routing reason, and loads the next video (`_escalate_to_deep_review`).
+
 ### Two ways an unanswered question becomes an answer
 
 Both matter before trusting `outcome_source: "human_review"` in the data.
@@ -132,6 +150,53 @@ New saves stamp the document `schema_version: "1.1"` (`causal_review_io.py:268`)
 
 ---
 
+## Working the deep-review queue: the operator's walkthrough
+
+This section is for the person doing the work, no codebase knowledge assumed.
+Everything below it in this document is the engineering detail behind these
+steps.
+
+**Opening the queue.** Type `mousereach` in a terminal (any machine with the
+mousereach environment). When napari opens, find the **Review Queues** tab in
+the right-hand dock. It shows how many videos are waiting in each queue and has
+three buttons: *Open Triage Review*, *Open Deep Review*, and *Open
+Re-segmentation*. Each opens in its own window.
+
+**Which button to press.** Deep-review videos are there for one of two broad
+reasons, and each has its tool:
+
+- **The segmentation is the problem** (the boundaries between pellet
+  presentations are wrong -- this is most of the queue, and every video the
+  triage escalate button or a corrected segment number sent here). Press
+  **Open Re-segmentation**. The tool loads a video, parks the playback on the
+  first segment, and asks three questions per segment: is this really segment
+  N; does it start where the algorithm says (within 10 frames); does it end
+  where the algorithm says. Answer yes with a click, or answer no by clicking
+  one of the offered candidate frames (each click shows you that exact frame
+  in the video), by scrubbing to the right frame yourself and pressing "Use
+  current frame", or by typing the frame number. The on-screen notes say
+  which frame to pick: a segment STARTS on the frame after the scoring area
+  jumps, and ENDS on the frame before the next jump. Press *Confirm answers ->
+  next segment* each time; press *Save these cuts* when the video is done.
+  Saving marks the cuts as human-made -- the pipeline will keep them.
+- **Something else is wrong with the whole video** (escalated for a reason
+  that is not boundaries, or you need to re-judge every segment's outcome).
+  Press **Open Deep Review**. It walks every segment of the video asking the
+  same outcome/causal-reach questions as triage review.
+
+**Finishing a video.** Fixing the cuts does NOT release the video by itself.
+After the cuts are right (or after a full deep review), open **Deep Review**
+on that video and press **Clear -> re-enter pipeline**. That is the release:
+the watcher then re-runs the video from segmentation onward -- keeping any
+human-made cuts -- and the results flow to the database automatically. Nothing
+else needs to be done.
+
+**If you get a video that is not actually broken**, press *Skip this video* in
+the re-segmentation tool (it stays in the queue), or clear it through Deep
+Review if you have judged every segment and all is well.
+
+---
+
 ## Deep Review
 
 The same widget with `deep_review=True` (`causal_review_widget.py:198-203`). Differences:
@@ -146,20 +211,61 @@ It has no console command. It opens from the "Review Queues" launcher tab (`queu
 
 ---
 
-## Segmentation Fixer
+## Segmentation Fixer (the re-segmentation tool)
 
-`mousereach-fix-segmentation` -> `fix_segmentation_widget.py:473`. Segment cuts only: no outcomes, no reaches, no causal attribution.
+`mousereach-fix-segmentation`, or the **Open Re-segmentation** button on the
+Review Queues tab (`queue_launcher_widget._open_reseg`). Segment cuts only: no
+outcomes, no reaches, no causal attribution.
 
-It walks the deep-review queue (or `--queue-dir`) and offers only bundles whose `{stem}_segments.json` carries a non-empty `needs_human` list (`needs_fixing`, `:64-66`; `_load_queue`, `:187-211`). That list is the segmenter's own record of having had to force its answer, written by `save_segmentation` (`segmentation/core/segmenter_robust.py:931`). Videos with the most unused candidate cuts are offered first; videos with no candidates at all are last, because those have to be marked from scratch (`:212-221`).
+It walks the deep-review queue (or `--queue-dir`) and offers bundles that need a
+human's cuts, three ways in (`_needs_reseg`): the segmenter's own non-empty
+`needs_human` list (its record of having had to force its answer, written by
+`save_segmentation`, `segmentation/core/segmenter_robust.py:931`); a
+reviewer-declared segment mislabel (`segmentation_wrong` in the bundle's
+travelling causal review); or a routing reason naming segmentation (the triage
+escalate button, or the watcher's mislabel diverts). One way out:
+`boundary_source: "human"` in the segments file means the cuts were already
+hand-fixed, and the bundle is not offered again. Videos with the most unused
+candidate cuts are offered first; videos with no candidates at all are last,
+because those have to be marked from scratch.
 
-The reviewer accepts, rejects or adds cuts, and saving copies the original aside, then rewrites `{stem}_segments.json` with `boundaries`, `algo_boundaries` (what the algorithm had), `boundary_source: "human"`, `corrected_by`/`corrected_at`, and `needs_human` emptied (`_save`, `:431-470`).
+**The guided walk** (added 2026-08-25) is how the tool opens: one segment at a
+time, playhead parked at the segment's algo start, three questions --
+
+1. *Is this segment number N (= pellet number N)?* Yes, or "No, it is actually
+   segment __". A no is recorded in the saved `guided_walk` answers; the
+   numbering itself only changes when a cut is added or removed, and Save
+   refuses (with an explicit override) while a denied identity stands with the
+   cuts unchanged.
+2. *Does this segment start within 10 frames of {algo start}?* Yes, or the real
+   frame -- typed, taken from the playhead ("Use current frame"), or picked
+   from the **candidate chips**: the segmenter's own nearby candidate tray
+   advances, each labelled with the frame it implies plus its evidence
+   (`n_proposers`/4, consensus score). Clicking a chip jumps the playhead there
+   and fills it in as the answer. Operator note shown in the tool: the start is
+   the frame AFTER the scoring-area jump.
+3. *Does this segment end within 10 frames of {algo end}?* Same controls; the
+   end is the frame BEFORE the next jump (the tool moves the following cut to
+   frame+1 itself).
+
+Corrections apply to the cuts immediately; the per-segment answers are saved
+into the segments file as `guided_walk`. Below the walk, the full candidate
+table and manual add/drop-cut controls remain for work the walk cannot express,
+with a legend stating what a boundary means (boundary 1 = start of segment 1
+and end of the pre-pellet setup frames; each cut sits on the first frame after
+a scoring-area jump).
+
+Saving copies the original aside, then rewrites `{stem}_segments.json` with
+`boundaries`, `algo_boundaries` (what the algorithm had), `boundary_source:
+"human"`, `corrected_by`/`corrected_at`, `needs_human` emptied, and
+`guided_walk` (`_save`).
 
 Two things it does not do:
 
-- **It does not release the video.** It writes no `{stem}_deep_review_cleared.json` and no ground-truth file, which are the only two things the return scan accepts as a deep-review clearance (`review_return.py:108-115`). A video whose cuts have been fixed sits in the deep-review queue until someone opens the Deep Review tool on it and presses Clear.
-- **It does not re-run anything.** The bundle's reaches, outcomes and assignments still describe the old cuts until the video goes back through the pipeline.
+- **It does not release the video.** It writes no `{stem}_deep_review_cleared.json` and no ground-truth file, which are the only two things the return scan accepts as a deep-review clearance (`review_return.py`). A video whose cuts have been fixed sits in the deep-review queue until someone opens the Deep Review tool on it and presses Clear.
+- **It does not re-run anything.** The bundle's reaches, outcomes and assignments still describe the old cuts until the video goes back through the pipeline. The re-run keeps the human cuts: segmentation preserves a `boundary_source: "human"` segments file instead of overwriting it (`segmentation/core/batch.py::process_single`).
 
-Nothing routes videos here on the strength of `needs_human`. That routing was added and then deliberately switched off — the gate now records the verdict and ignores it, with the reasoning written out in full at `review_gate.py:89-105`, and `TriageStatus.clean` carries the same note (`triage_status.py:154-156`). 49 of the 120 bundles currently in the deep-review queue carry a `needs_human` list, but they got there for other reasons.
+Nothing routes videos here on the strength of `needs_human` alone. That routing was added and then deliberately switched off — the gate records the verdict and ignores it, with the reasoning written out in full at `review_gate.py:89-105`. What DOES route videos here (since 2026-08-25): a reviewer setting a corrected segment number in triage (the return scan diverts the video instead of re-injecting it, `review_return.py`), the triage tool's "Escalate: bad segmentation" button, and the ReprocessingScanner's divert when a pending review declares a mislabel (`reprocessor.py`).
 
 ---
 
