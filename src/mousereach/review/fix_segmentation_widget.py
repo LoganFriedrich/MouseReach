@@ -184,8 +184,46 @@ class FixSegmentationWidget(QWidget):
 
     # ------------------------------------------------------------- queue
 
+    def _needs_reseg(self, bundle: Path, seg: dict) -> bool:
+        """Does this bundle belong in the re-segmentation queue?
+
+        Three ways in, one way out:
+          * the segmenter's own needs_human verdict (the original criterion);
+          * a reviewer declared a segment mislabel (true_segment_num in the
+            travelling causal review);
+          * the bundle was ROUTED here for a segmentation reason (the triage
+            escalate button, or the watcher's mislabel diverts -- their
+            routing reasons all name segmentation).
+        The way out: boundary_source == "human" means the cuts were already
+        hand-fixed, so nothing here is pending regardless of the above."""
+        if seg.get("boundary_source") == "human":
+            return False
+        if needs_fixing(seg):
+            return True
+        stem = bundle.name
+        try:
+            from mousereach.review.triage_status import segmentation_corrected
+            rp = bundle / ("%s_causal_review.json" % stem)
+            if rp.is_file() and segmentation_corrected(
+                    json.loads(rp.read_text(encoding="utf-8"))):
+                return True
+        except Exception:
+            pass
+        try:
+            rj = bundle / ("%s_routing.json" % stem)
+            if rj.is_file():
+                reason = str(json.loads(rj.read_text(
+                    encoding="utf-8")).get("routed_reason", "")).lower()
+                if "segment" in reason or "re-seg" in reason:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _load_queue(self):
-        """Videos whose segmenter said it had to force the answer."""
+        """Videos needing a human's cuts: the segmenter's own needs_human
+        verdict, a reviewer-declared segment mislabel, or a
+        segmentation-reason routing (see _needs_reseg)."""
         self._queue = []
         if not self.queue_dir.is_dir():
             self.header.setText("Queue not found: %s" % self.queue_dir)
@@ -198,7 +236,7 @@ class FixSegmentationWidget(QWidget):
                 continue
             try:
                 seg = read_segmentation(sp)
-                if not needs_fixing(seg):
+                if not self._needs_reseg(bundle, seg):
                     continue
                 cands = seg.get("candidates") or []
                 cuts = sorted(int(b) for b in (seg.get("boundaries") or []))

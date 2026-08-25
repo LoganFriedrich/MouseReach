@@ -425,6 +425,23 @@ class CausalReviewWidget(QWidget):
         self._flag_session_btn.setEnabled(False)
         footer_layout.addWidget(self._flag_session_btn)
 
+        # Triage only: the reviewer noticed the SEGMENTATION is wrong (not just
+        # one element) -- the whole video needs manual re-segmentation, so it
+        # moves to the deep-review queue right now instead of waiting for the
+        # per-element answers to finish.
+        self._escalate_btn = QPushButton("Escalate: bad segmentation -> deep review")
+        self._escalate_btn.setStyleSheet("background: #5a1616; color: white;")
+        self._escalate_btn.setToolTip(
+            "The segment boundaries themselves are wrong (offset, missing, or "
+            "misplaced cuts). Saves what you have answered so far and moves the "
+            "whole video to the deep-review queue for manual re-segmentation. "
+            "Put what you saw in the notes first -- it becomes the routing reason."
+        )
+        self._escalate_btn.clicked.connect(self._escalate_to_deep_review)
+        self._escalate_btn.setVisible(not self._deep_review)
+        self._escalate_btn.setEnabled(False)
+        footer_layout.addWidget(self._escalate_btn)
+
         # Deep-review only: mark this video cleared so the watcher re-injects it.
         self._clear_deep_btn = QPushButton("Clear -> re-enter pipeline")
         self._clear_deep_btn.setStyleSheet("background: #3a5a16; color: white; font-weight: bold;")
@@ -2529,6 +2546,41 @@ class CausalReviewWidget(QWidget):
         except Exception as e:
             show_error(f"Could not flag session: {e}")
 
+    def _escalate_to_deep_review(self):
+        """The reviewer says the SEGMENTATION is wrong: move the whole video to
+        the deep-review queue for manual re-segmentation, right now.
+
+        Saves the review first so any per-element answers already given travel
+        with the bundle (they re-attach by frame span after the boundaries are
+        fixed). The notes text becomes the routing reason so the person doing
+        the re-seg knows what was seen."""
+        bundle = getattr(self, "_bundle_dir", None)
+        if not self._video_stem or not bundle:
+            show_error("No bundle loaded -- escalation only works on a queue bundle.")
+            return
+        try:
+            self._save_review()
+        except Exception as e:
+            logger.warning("escalate: could not save review first: %s", e)
+        note = (self._notes_edit.toPlainText().strip()
+                if hasattr(self, "_notes_edit") else "")
+        reason = ("reviewer escalated from triage: bad segmentation"
+                  + (f" -- {note}" if note else ""))
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.review_gate import route_to_queue
+            route_to_queue(self._video_stem, Path(bundle), Paths.DEEP_REVIEW,
+                           reason=reason, db=None)
+            show_info(f"{self._video_stem} moved to the deep-review queue "
+                      "(re-segmentation).")
+            self._status_label.setText(
+                f"[ESCALATED] {self._video_stem} -> deep review (bad segmentation).")
+        except Exception as e:
+            show_error(f"Could not escalate {self._video_stem}: {e}")
+            logger.exception("escalate to deep review failed")
+            return
+        self._load_next_video()
+
     def _list_queue(self) -> List[Path]:
         """Sorted per-video bundle dirs in the Pending queue (a bundle is a dir
         containing a manifest.json)."""
@@ -3066,6 +3118,7 @@ class CausalReviewWidget(QWidget):
         self._save_advance_btn.setEnabled(enabled)
         self._save_next_video_btn.setEnabled(enabled)
         self._flag_session_btn.setEnabled(enabled)
+        self._escalate_btn.setEnabled(enabled and not self._deep_review)
         self._clear_deep_btn.setEnabled(enabled and self._deep_review)
 
     def _clear_deep_review(self):

@@ -77,6 +77,16 @@ class ReviewQueuesWidget(QWidget):
         dbtn.setStyleSheet("background:#3a5a16; color:white; font-weight:bold;")
         dbtn.clicked.connect(self._open_deep)
         dl.addWidget(dbtn)
+        sbtn = QPushButton("Open Re-segmentation")
+        sbtn.setStyleSheet("background:#5a3a16; color:white; font-weight:bold;")
+        sbtn.setToolTip(
+            "Fix segment boundaries by hand for deep-review videos whose "
+            "problem is the segmentation (segmenter needs_human, "
+            "reviewer-declared mislabels, triage escalations). Saving stamps "
+            "the cuts as human-made so the pipeline keeps them on re-run."
+        )
+        sbtn.clicked.connect(self._open_reseg)
+        dl.addWidget(sbtn)
         root.addWidget(deep)
 
         rbtn = QPushButton("Refresh counts")
@@ -124,6 +134,28 @@ class ReviewQueuesWidget(QWidget):
         from mousereach.config import Paths
         self._open_queue(getattr(Paths, "DEEP_REVIEW", None),
                          triage_only=False, deep_review=True, title="Deep Review")
+
+    def _open_reseg(self):
+        """Open the fix-segmentation tool over the deep-review queue in its own
+        window -- manual boundary cuts for videos whose problem is the
+        segmentation itself."""
+        from mousereach.config import Paths
+        queue_root = getattr(Paths, "DEEP_REVIEW", None)
+        if not queue_root or not Path(queue_root).exists():
+            show_error(f"Re-segmentation: queue folder not found ({queue_root}).")
+            return
+        try:
+            import napari
+            from mousereach.review.fix_segmentation_widget import FixSegmentationWidget
+            v = napari.Viewer(title="Re-segmentation")
+            w = FixSegmentationWidget(v, Path(queue_root))
+            v.window.add_dock_widget(w, name="Re-segmentation", area="right")
+            self._open_windows.append((v, w))
+            show_info("Opened Re-segmentation.")
+        except Exception as e:
+            show_error(f"Could not open Re-segmentation: {e}")
+            logger.exception("open re-segmentation failed")
+        self._refresh_counts()
 
     def _open_queue(self, queue_root, triage_only, deep_review, title):
         if not queue_root or not Path(queue_root).exists():
