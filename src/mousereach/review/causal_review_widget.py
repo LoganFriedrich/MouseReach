@@ -1833,7 +1833,9 @@ class CausalReviewWidget(QWidget):
 
         n = seg.get("segment_num")
         algo_n = int(n) if n is not None else 0
-        row.addWidget(QLabel("Segmentation says this is segment"))
+        row.addWidget(QLabel(
+            f"Segmentation says this is segment {algo_n}. "
+            "If that's wrong, which segment is this actually?"))
 
         spin = QSpinBox()
         spin.setRange(0, 60)
