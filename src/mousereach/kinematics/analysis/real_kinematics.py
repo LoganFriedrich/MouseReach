@@ -117,6 +117,13 @@ def get_hand_trajectory(dlc_df, start_frame, end_frame):
 
 
 def main():
+    import sys
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        print("usage: mousereach-real-kinematics\n\n"
+              "Compute kinematics from the DLC pose for every _reaches.json in "
+              "the local Processing folder, writing real_kinematics.csv next "
+              "to Processing. Takes no options; runs immediately.")
+        return
     PROCESSING = Paths.PROCESSING
     OUTPUT_CSV = PROCESSING.parent / "real_kinematics.csv"
 

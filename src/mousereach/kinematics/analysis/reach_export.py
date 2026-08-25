@@ -290,6 +290,13 @@ def export_cohort(cohort: str, search_root: Optional[Path] = None,
 
 
 def main() -> None:
+    import sys
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        print("usage: mousereach-reach-export\n\n"
+              "Export every reach in the local Processing folder to "
+              "reach_kinematics.csv (one row per reach, next to Processing). "
+              "Takes no options; runs immediately.")
+        return
     processing = Paths.PROCESSING
     output_csv = processing.parent / "reach_kinematics.csv"
     rows = collect_rows(processing)

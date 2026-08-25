@@ -172,6 +172,14 @@ class BackupWatcher:
 
 def main():
     """CLI entry point for mousereach-backup."""
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        print("usage: mousereach-backup [--once] [--dry-run] [--verbose]\n\n"
+              "Backup watcher: mirrors Y: pipeline data to the X: BACKUP_NAS NAS "
+              "via robocopy (add-only).\n\n"
+              "  --once      One sync cycle, then exit (default: run as a daemon).\n"
+              "  --dry-run   Show what would be synced without copying.\n"
+              "  --verbose   Debug-level logging.")
+        return 0
     args = sys.argv[1:]
     once = '--once' in args
     dry_run_mode = '--dry-run' in args

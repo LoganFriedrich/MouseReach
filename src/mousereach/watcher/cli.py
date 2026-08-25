@@ -151,8 +151,31 @@ def check_nas_root(nas_root, origin: str):
     return detail
 
 
+def _maybe_print_help(usage: str):
+    """Print usage and exit 0 when -h/--help is asked for.
+
+    These entry points parse sys.argv by hand (deliberately -- no argparse
+    rewrite of running production commands), which left them with no --help
+    at all. This gate is the smallest possible fix: behavior is unchanged for
+    every other invocation."""
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        print(usage.strip())
+        sys.exit(0)
+
+
 def main_watch():
     """Start the automated pipeline watcher."""
+    _maybe_print_help("""
+usage: mousereach-watch [--once] [--dry-run] [--verbose] [--quiet]
+
+Start the automated pipeline watcher daemon for this node (role and paths
+from ~/.mousereach/config.json; run mousereach-setup to configure).
+
+  --once      Run one full scan+process cycle, then exit.
+  --dry-run   Show what would be processed without doing it.
+  --verbose   Debug-level logging.
+  --quiet     Warnings and errors only.
+""")
     # Parse command line arguments
     args = sys.argv[1:]
     once = '--once' in args
@@ -569,6 +592,15 @@ def main_status():
 
 def main_reprocess():
     """Reset failed videos for reprocessing."""
+    _maybe_print_help("""
+usage: mousereach-watch-reprocess [video_id ...] [--all-failed] [--from-step STEP]
+
+Reset failed videos so the watcher picks them up again.
+
+  video_id ...       Specific video id(s) to reset.
+  --all-failed       Reset every video currently in the failed state.
+  --from-step STEP   Restart from this pipeline step instead of the beginning.
+""")
     # Parse args
     args = sys.argv[1:]
     all_failed = '--all-failed' in args
@@ -673,6 +705,15 @@ def main_reprocess():
 
 def main_quarantine():
     """Manage quarantined files."""
+    _maybe_print_help("""
+usage: mousereach-watch-quarantine [--list] [--release FILE] [--purge]
+
+Manage files the watcher quarantined instead of processing.
+
+  --list          Show what is quarantined and why.
+  --release FILE  Move one file back into the normal flow.
+  --purge         Permanently delete everything quarantined (confirm first).
+""")
     # Parse args
     args = sys.argv[1:]
     list_files = '--list' in args
@@ -897,6 +938,16 @@ def main_process_animal():
         mousereach-watch-process-animal CNT0107 --dry-run
         mousereach-watch-process-animal CNT0107 --tray P   # Only pillar trays
     """
+    _maybe_print_help("""
+usage: mousereach-watch-process-animal ANIMAL_ID [--dry-run] [--tray T]
+
+Queue every video for one animal through the pipeline (searches both
+Single_Animal pre-cropped videos and Multi-Animal collages).
+
+  ANIMAL_ID   e.g. CNT0107
+  --dry-run   Show what would be queued without queueing it.
+  --tray T    Only this tray type (e.g. P for pillar).
+""")
     args = sys.argv[1:]
     dry_run = '--dry-run' in args
     positional = [a for a in args if not a.startswith('--')]
@@ -1188,6 +1239,12 @@ def main_process_animal():
 
 def main_info():
     """Show drives, configured paths, and watcher readiness."""
+    _maybe_print_help("""
+usage: mousereach-watch-info
+
+Show this machine's drives, configured mousereach paths, detected lab role,
+and whether the watcher could run here. Takes no options.
+""")
     from mousereach.watcher.roles import print_machine_info
 
     print_machine_info()
@@ -1328,6 +1385,17 @@ def main_crystallize():
         mousereach-crystallize --videos "vid1,vid2" --label "prelim"
         mousereach-crystallize --list                 Show crystallized videos
     """
+    _maybe_print_help("""
+usage: mousereach-crystallize (--cohort C | --videos "v1,v2") --label NAME
+       mousereach-crystallize --list
+
+Lock archived videos against automatic reprocessing (for publications).
+
+  --cohort C    Every archived video of this cohort (e.g. CNT01).
+  --videos LIST Comma-separated video ids.
+  --label NAME  Required label naming the lock (e.g. "PNAS_2026").
+  --list        Show what is crystallized, by label.
+""")
     args = sys.argv[1:]
 
     # Parse arguments
@@ -1434,6 +1502,14 @@ def main_uncrystallize():
         mousereach-uncrystallize --label "PNAS_2026"
         mousereach-uncrystallize --videos "vid1,vid2"
     """
+    _maybe_print_help("""
+usage: mousereach-uncrystallize (--label NAME | --videos "v1,v2")
+
+Unlock crystallized videos so reprocessing can touch them again.
+
+  --label NAME   Unlock every video crystallized under this label.
+  --videos LIST  Comma-separated video ids.
+""")
     args = sys.argv[1:]
     label = None
     video_ids = None
@@ -1507,6 +1583,16 @@ def _pathless_working_rows(db):
 
 def main_unresolvable():
     """List, sweep, or retry videos this node has no file for."""
+    _maybe_print_help("""
+usage: mousereach-watch-unresolvable [--list | --sweep | --retry] [--dry-run]
+
+Handle DB rows whose video file this node cannot find anywhere.
+
+  --list      Show the pathless rows.
+  --sweep     Mark them unresolvable so they leave the work loop.
+  --retry     Put previously-swept rows back into the work loop.
+  --dry-run   With --sweep/--retry: show what would change, change nothing.
+""")
     args = sys.argv[1:]
     do_list = '--list' in args
     do_sweep = '--sweep' in args

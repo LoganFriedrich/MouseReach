@@ -9,18 +9,18 @@ ARCHITECTURE OVERVIEW
 ---------------------
 This launcher creates a napari viewer and loads multiple widgets as dock tabs:
 
-    ┌────────────────────────────────────────────────────────────────┐
-    │  napari Viewer Window                                          │
-    │  ┌──────────────────────┬─────────────────────────────────────┐│
-    │  │                      │  Dock Area (right side)             ││
-    │  │   Video Display      │  ┌─────────────────────────────────┐││
-    │  │   (shared by all     │  │ [Dashboard][0-Crop][1-DLC]...   │││
-    │  │    widgets)          │  │                                 │││
-    │  │                      │  │   Currently Active Widget       │││
-    │  │                      │  │                                 │││
-    │  │                      │  └─────────────────────────────────┘││
-    │  └──────────────────────┴─────────────────────────────────────┘│
-    └────────────────────────────────────────────────────────────────┘
+    +----------------------------------------------------------------+
+    |  napari Viewer Window                                          |
+    |  +----------------------+-------------------------------------+|
+    |  |                      |  Dock Area (right side)             ||
+    |  |   Video Display      |  +---------------------------------+||
+    |  |   (shared by all     |  | [Dashboard][0-Crop][1-DLC]...   |||
+    |  |    widgets)          |  |                                 |||
+    |  |                      |  |   Currently Active Widget       |||
+    |  |                      |  |                                 |||
+    |  |                      |  +---------------------------------+||
+    |  +----------------------+-------------------------------------+|
+    +----------------------------------------------------------------+
 
 KEY DESIGN DECISIONS
 --------------------
@@ -31,10 +31,10 @@ KEY DESIGN DECISIONS
 2. STATE MANAGER: MouseReachStateManager coordinates between widgets:
    - Tracks which video is currently active
    - Broadcasts video changes to all widgets
-   - Handles cross-widget communication (e.g., "segments validated" → refresh reaches)
+   - Handles cross-widget communication (e.g., "segments validated" -> refresh reaches)
 
 3. TAB ORDER: Widgets load in pipeline order:
-   Dashboard → Step 0 → Step 1 → Step 2 → Step 3 (Review) → Step 4 → GT Tool
+   Dashboard -> Step 0 -> Step 1 -> Step 2 -> Step 3 (Review) -> Step 4 -> GT Tool
 
 4. TWO REVIEW TOOLS:
    - "3 - Review Tool" (review_mode=True): Edits algorithm JSON files directly
@@ -57,7 +57,7 @@ PIPELINE STEPS
 --------------
     0   - Video Prep (crop 8-camera collages to single animals)
     1   - DLC Analysis (run DeepLabCut pose estimation)
-    2   - Run Pipeline (batch: Segmentation → Reaches → Outcomes)
+    2   - Run Pipeline (batch: Segmentation -> Reaches -> Outcomes)
     3   - Review Tool (fix algorithm mistakes in JSON files)
     4   - View Features (visualize extracted kinematics)
     GT  - Ground Truth Tool (create evaluation datasets)
