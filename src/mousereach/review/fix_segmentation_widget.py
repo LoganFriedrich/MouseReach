@@ -48,7 +48,7 @@ from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QGroupBox, QMessageBox,
-    QCheckBox, QSplitter,
+    QCheckBox, QSplitter, QSpinBox,
 )
 
 # How close a proposed boundary has to be to an existing one to count as "the
@@ -75,6 +75,34 @@ def segments_from(boundaries: List[int], total_frames: int) -> List[tuple]:
     return out
 
 
+# How far the algo's boundary may be from the human's judgment before the
+# guided walk counts it as wrong and asks for the real frame.
+GUIDED_TOLERANCE_FRAMES = 10
+
+
+def move_segment_start(boundaries: List[int], seg_idx: int, frame: int) -> List[int]:
+    """New boundary list with segment ``seg_idx`` (0-based) STARTING at
+    ``frame``. A segment's start IS its opening boundary, so this moves
+    boundary[seg_idx]. Pure -- returns a new sorted list."""
+    b = sorted(int(x) for x in boundaries)
+    if not (0 <= seg_idx < len(b) - 1):
+        return b
+    b[seg_idx] = int(frame)
+    return sorted(b)
+
+
+def move_segment_end(boundaries: List[int], seg_idx: int, frame: int) -> List[int]:
+    """New boundary list with segment ``seg_idx`` (0-based) ENDING at
+    ``frame``. A segment ends one frame before the NEXT boundary, so this
+    moves boundary[seg_idx + 1] to frame + 1. Pure -- returns a new sorted
+    list."""
+    b = sorted(int(x) for x in boundaries)
+    if not (0 <= seg_idx < len(b) - 1):
+        return b
+    b[seg_idx + 1] = int(frame) + 1
+    return sorted(b)
+
+
 class FixSegmentationWidget(QWidget):
     """Accept or reject the segmenter's candidate timepoints, and save the cuts."""
 
@@ -92,6 +120,8 @@ class FixSegmentationWidget(QWidget):
         self.n_frames: int = 0
         self._video_layer = None
         self._queue: List[Path] = []
+        self._gw_idx: int = 0
+        self._gw_records: Dict[int, dict] = {}
 
         self._build_ui()
         self._load_queue()
@@ -114,6 +144,97 @@ class FixSegmentationWidget(QWidget):
 
         split = QSplitter(Qt.Vertical)
         layout.addWidget(split, 1)
+
+        # --- guided walk ---------------------------------------------------
+        gw_box = QGroupBox("Guided walk (one segment at a time)")
+        gv = QVBoxLayout()
+        gw_box.setLayout(gv)
+
+        self.gw_header = QLabel("")
+        self.gw_header.setStyleSheet("font-weight: bold;")
+        self.gw_header.setWordWrap(True)
+        gv.addWidget(self.gw_header)
+
+        # Q1: identity
+        r1 = QHBoxLayout()
+        self.gw_q1 = QLabel("")
+        self.gw_q1.setWordWrap(True)
+        r1.addWidget(self.gw_q1, 1)
+        self.gw_id_no = QCheckBox("No, it is actually segment:")
+        r1.addWidget(self.gw_id_no)
+        self.gw_id_spin = QSpinBox()
+        self.gw_id_spin.setRange(0, 60)
+        self.gw_id_spin.setEnabled(False)
+        self.gw_id_no.toggled.connect(self.gw_id_spin.setEnabled)
+        r1.addWidget(self.gw_id_spin)
+        gv.addLayout(r1)
+
+        # Q2: start boundary
+        r2 = QHBoxLayout()
+        self.gw_q2 = QLabel("")
+        self.gw_q2.setWordWrap(True)
+        r2.addWidget(self.gw_q2, 1)
+        self.gw_start_no = QCheckBox("No, it starts at frame:")
+        r2.addWidget(self.gw_start_no)
+        self.gw_start_spin = QSpinBox()
+        self.gw_start_spin.setRange(0, 10_000_000)
+        self.gw_start_spin.setEnabled(False)
+        self.gw_start_no.toggled.connect(self.gw_start_spin.setEnabled)
+        r2.addWidget(self.gw_start_spin)
+        b = QPushButton("Use current frame")
+        b.setToolTip("Copy the playhead's frame into the box. Pick the frame "
+                     "AFTER the scoring-area jump.")
+        b.clicked.connect(lambda: self._gw_use_playhead(self.gw_start_spin,
+                                                        self.gw_start_no))
+        r2.addWidget(b)
+        gv.addLayout(r2)
+        n2 = QLabel("Operator note: the start is the frame AFTER the "
+                    "scoring-area jump (the tray has finished advancing).")
+        n2.setStyleSheet("color: #888;")
+        n2.setWordWrap(True)
+        gv.addWidget(n2)
+
+        # Q3: end boundary
+        r3 = QHBoxLayout()
+        self.gw_q3 = QLabel("")
+        self.gw_q3.setWordWrap(True)
+        r3.addWidget(self.gw_q3, 1)
+        self.gw_end_no = QCheckBox("No, it ends at frame:")
+        r3.addWidget(self.gw_end_no)
+        self.gw_end_spin = QSpinBox()
+        self.gw_end_spin.setRange(0, 10_000_000)
+        self.gw_end_spin.setEnabled(False)
+        self.gw_end_no.toggled.connect(self.gw_end_spin.setEnabled)
+        r3.addWidget(self.gw_end_spin)
+        b = QPushButton("Use current frame")
+        b.setToolTip("Copy the playhead's frame into the box. Pick the frame "
+                     "BEFORE the scoring-area jump.")
+        b.clicked.connect(lambda: self._gw_use_playhead(self.gw_end_spin,
+                                                        self.gw_end_no))
+        r3.addWidget(b)
+        gv.addLayout(r3)
+        n3 = QLabel("Operator note: the end is the frame BEFORE the next "
+                    "scoring-area jump (the tray has not started moving yet).")
+        n3.setStyleSheet("color: #888;")
+        n3.setWordWrap(True)
+        gv.addWidget(n3)
+
+        nav = QHBoxLayout()
+        bb = QPushButton("< Back a segment")
+        bb.clicked.connect(self._gw_back)
+        nav.addWidget(bb)
+        nav.addStretch()
+        cb = QPushButton("Confirm answers -> next segment")
+        cb.setStyleSheet("font-weight: bold;")
+        cb.clicked.connect(self._gw_confirm)
+        nav.addWidget(cb)
+        gv.addLayout(nav)
+
+        self.gw_status = QLabel("")
+        self.gw_status.setWordWrap(True)
+        self.gw_status.setStyleSheet("color: #e08020;")
+        gv.addWidget(self.gw_status)
+        split.addWidget(gw_box)
 
         # --- candidates ---------------------------------------------------
         cand_box = QGroupBox("Candidate tray advances the video suggests")
@@ -152,6 +273,14 @@ class FixSegmentationWidget(QWidget):
         sv.addWidget(QLabel(
             "A tray advance comes about every 30 seconds. A segment far from "
             "that is where a cut is missing or wrong."))
+        legend = QLabel(
+            "What a boundary means: boundary 1 is the START of segment 1 (= "
+            "pellet 1) and the end of the pre-pellet setup frames; boundary 2 "
+            "is the end of segment 1 and the start of segment 2; and so on -- "
+            "each cut sits on the first frame AFTER a scoring-area jump.")
+        legend.setStyleSheet("color: #888;")
+        legend.setWordWrap(True)
+        sv.addWidget(legend)
         self.seg_table = QTableWidget(0, 4)
         self.seg_table.setHorizontalHeaderLabels(
             ["segment", "starts at frame", "length (s)", ""])
@@ -294,6 +423,102 @@ class FixSegmentationWidget(QWidget):
         self._load_video(bundle, stem)
         self._refresh_candidates()
         self._refresh_segments()
+        self._gw_idx = 0
+        self._gw_records = {}
+        self._gw_load()
+
+    # ------------------------------------------------------------ guided walk
+
+    def _gw_segments(self) -> List[tuple]:
+        return segments_from(self.boundaries, self.n_frames)
+
+    def _gw_load(self):
+        """Show the three questions for the current segment and park the
+        playhead at its algo start so the operator is looking at the right
+        footage immediately."""
+        segs = self._gw_segments()
+        if not segs:
+            self.gw_header.setText("No segments to walk (no cuts yet) -- use "
+                                   "the manual controls below.")
+            return
+        self._gw_idx = max(0, min(self._gw_idx, len(segs) - 1))
+        num, s, e = segs[self._gw_idx]
+        self.gw_header.setText(
+            "Segment %d of %d  --  the algorithm thinks frames %d-%d contain "
+            "pellet %d (and thus that this is segment %d)."
+            % (num, len(segs), s, e, num, num))
+        self.gw_q1.setText(
+            "Q1: Is this segment number %d (= pellet number %d)?" % (num, num))
+        self.gw_q2.setText(
+            "Q2: Does this segment start within %d frames of frame %d?"
+            % (GUIDED_TOLERANCE_FRAMES, s))
+        self.gw_q3.setText(
+            "Q3: Does this segment end within %d frames of frame %d?"
+            % (GUIDED_TOLERANCE_FRAMES, e))
+        self.gw_id_no.setChecked(False)
+        self.gw_id_spin.setValue(num)
+        self.gw_start_no.setChecked(False)
+        self.gw_start_spin.setValue(s)
+        self.gw_end_no.setChecked(False)
+        self.gw_end_spin.setValue(e)
+        self.gw_status.setText("")
+        self._goto(s)
+
+    def _gw_use_playhead(self, spin, checkbox):
+        try:
+            f = int(self.viewer.dims.current_step[0])
+        except Exception:
+            return
+        checkbox.setChecked(True)
+        spin.setValue(f)
+
+    def _gw_confirm(self):
+        """Apply this segment's answers to the cuts, record them, advance."""
+        segs = self._gw_segments()
+        if not segs:
+            return
+        num, s, e = segs[self._gw_idx]
+        rec = {"segment_num": num, "algo_start": s, "algo_end": e,
+               "identity_confirmed": not self.gw_id_no.isChecked(),
+               "start_confirmed": not self.gw_start_no.isChecked(),
+               "end_confirmed": not self.gw_end_no.isChecked()}
+        notes = []
+        if self.gw_id_no.isChecked():
+            rec["true_segment_num"] = int(self.gw_id_spin.value())
+            notes.append(
+                "identity: you say this is really segment %d -- numbering is "
+                "set only by the cuts, so add or remove the missing/extra cut "
+                "EARLIER in the video (manual controls below) until the "
+                "numbers line up." % rec["true_segment_num"])
+        if self.gw_start_no.isChecked():
+            f = int(self.gw_start_spin.value())
+            rec["corrected_start"] = f
+            self.boundaries = move_segment_start(self.boundaries, self._gw_idx, f)
+            notes.append("start moved to frame %d." % f)
+        if self.gw_end_no.isChecked():
+            f = int(self.gw_end_spin.value())
+            rec["corrected_end"] = f
+            self.boundaries = move_segment_end(self.boundaries, self._gw_idx, f)
+            notes.append("end moved to frame %d (cut at %d)." % (f, f + 1))
+        self._gw_records[num] = rec
+        self._refresh_candidates(); self._refresh_segments()
+        done = len(self._gw_records)
+        total = len(self._gw_segments())
+        if self._gw_idx < total - 1:
+            self._gw_idx += 1
+            self._gw_load()
+            if notes:
+                self.gw_status.setText(" ".join(notes))
+        else:
+            self.gw_status.setText(
+                ("%s  " % " ".join(notes) if notes else "")
+                + "Walk finished (%d/%d segments answered). Check the segment "
+                  "table, then 'Save these cuts'." % (done, total))
+
+    def _gw_back(self):
+        if self._gw_idx > 0:
+            self._gw_idx -= 1
+            self._gw_load()
 
     def _load_video(self, bundle: Path, stem: str):
         """Decode-on-demand layer, added once (swapping layers crashes the
@@ -495,6 +720,11 @@ class FixSegmentationWidget(QWidget):
         # send the video straight back here on the next pass.
         seg["needs_human_resolved"] = needs_fixing(self.seg)
         seg["needs_human"] = []
+        # The guided walk's per-segment answers: which identities/boundaries
+        # the human confirmed vs corrected, with the algo's original numbers.
+        if self._gw_records:
+            seg["guided_walk"] = [self._gw_records[k]
+                                  for k in sorted(self._gw_records)]
 
         tmp = self.seg_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(seg, indent=2))
