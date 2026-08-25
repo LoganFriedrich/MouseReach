@@ -21,6 +21,25 @@ def load_all_results(input_dir: Path) -> List[dict]:
     return results
 
 
+def _lab_ids(video_name):
+    """(animal_id, session) as the LAB names them, for a human-facing export.
+
+    ASPA animals are re-encoded on the way into the pipeline (J11 -> ASPA1011) so
+    every stage sees one id shape. Nothing decoded on the way out, so results
+    surfaced as ASPA1011 and a reader had to know the alphabet rule to get back to
+    J11. These two columns are that missing half.
+
+    video_name itself is left alone -- it is the key that ties a row back to the
+    file it came from. Returns (None, video_name) for a non-ASPA video, so every
+    project can go through the same call.
+    """
+    try:
+        from mousereach.aspa import lab_animal_id, decode_video_stem
+        return lab_animal_id(video_name), decode_video_stem(video_name)
+    except Exception:
+        return None, video_name
+
+
 def results_to_dataframe(results: List[dict]) -> pd.DataFrame:
     """Convert results to a flat DataFrame."""
     rows = []
@@ -28,9 +47,13 @@ def results_to_dataframe(results: List[dict]) -> pd.DataFrame:
     for video_data in results:
         video_name = video_data.get('video_name', '')
         
+        animal_id, session = _lab_ids(video_name)
+
         for segment in video_data.get('segments', []):
             row = {
                 'video_name': video_name,
+                'animal_id': animal_id,
+                'session': session,
                 'segment_num': segment.get('segment_num'),
                 'outcome': segment.get('outcome'),
                 'confidence': segment.get('confidence'),

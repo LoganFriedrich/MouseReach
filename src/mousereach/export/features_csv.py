@@ -8,6 +8,25 @@ import csv
 from mousereach.config import Paths
 
 
+def _lab_ids(video_name):
+    """(animal_id, session) as the LAB names them, for a human-facing export.
+
+    ASPA animals are re-encoded on the way into the pipeline (J11 -> ASPA1011) so
+    every stage sees one id shape. Nothing decoded on the way out, so results
+    surfaced as ASPA1011 and a reader had to know the alphabet rule to get back to
+    J11. These two columns are that missing half.
+
+    video_name itself is left alone -- it is the key that ties a row back to the
+    file it came from. Returns (None, video_name) for a non-ASPA video, so every
+    project can go through the same call.
+    """
+    try:
+        from mousereach.aspa import lab_animal_id, decode_video_stem
+        return lab_animal_id(video_name), decode_video_stem(video_name)
+    except Exception:
+        return None, video_name
+
+
 def main():
     PROCESSING = Paths.PROCESSING
     OUTPUT_CSV = PROCESSING.parent / "grasp_features.csv"
@@ -30,6 +49,8 @@ def main():
 
         video_name = data.get("video_name", fpath.stem.replace("_grasp_features", ""))
 
+        animal_id, session = _lab_ids(video_name)
+
         for seg in data.get("segments", []):
             seg_num = seg.get("segment_num")
             outcome = seg.get("outcome")
@@ -37,6 +58,8 @@ def main():
             for reach in seg.get("reaches", []):
                 row = {
                     "video": video_name,
+                    "animal_id": animal_id,
+                    "session": session,
                     "segment": seg_num,
                     "reach_id": reach.get("reach_id"),
                     "reach_num": reach.get("reach_num"),

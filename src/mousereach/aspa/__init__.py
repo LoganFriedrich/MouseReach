@@ -17,6 +17,8 @@ from .identity import (  # noqa: F401
     cohort_letter,
     cohort_number,
     decode_animal,
+    decode_video_stem,
+    lab_animal_id,
     encode_animal,
     encode_collage_stem,
     is_encoded,
