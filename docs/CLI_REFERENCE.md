@@ -8,7 +8,7 @@ does not. **Do not edit by hand; rerun the generator.**
 All commands exist only inside the mousereach conda environment:
 
 ```
-conda activate C:\LAB_ROOT\envs\mousereach
+conda activate mousereach    # or the full path of the env if it was created with --prefix
 mousereach-<command> --help
 ```
 
@@ -28,8 +28,7 @@ walkthroughs of the review tools themselves.
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
-- [Tracking Sheets tab on its own (import / status of the lab's spreadsheets)](#tracking-sheets-tab-on-its-own-import-status-of-the-lab-s-spreadsheets) -- `mousereach-sheets`
-- [Where Is My Data tab on its own (per-cohort status + current export folder)](#where-is-my-data-tab-on-its-own-per-cohort-status-current-export-folder) -- `mousereach-data-status`
+- [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
 - [Triage auto-resolve (pre-check before human review): if a triaged segment has a matching unified GT entry, lift the flag and copy the GT outcome. Runs as a step in the normal processing pipeline; only segments without GT remain triaged for the napari review tool.](#triage-auto-resolve-pre-check-before-human-review-if-a-triaged-segment-has-a-matching-unified-gt-entry-lift-the-flag-and-copy-the-gt-outcome-runs-as-a-step-in-the-normal-processing-pipeline-only-segments-without-gt-remain-triaged-for-the-napari-review-tool) -- `mousereach-resolve-triage-from-gt`
 - [Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes into per-reach permanent output for kinematic analysis)](#step-4b-reach-assignment-joins-v8-reaches-v6-cascade-outcomes-into-per-reach-permanent-output-for-kinematic-analysis) -- `mousereach-assign-reaches`
@@ -42,7 +41,7 @@ walkthroughs of the review tools themselves.
 - [Kinematic Analysis Utilities](#kinematic-analysis-utilities) -- `mousereach-reach-export`, `mousereach-real-kinematics`
 - [Performance Tracking](#performance-tracking) -- `mousereach-perf`, `mousereach-perf-eval`, `mousereach-perf-report`
 - [Algorithm Documentation](#algorithm-documentation) -- `mousereach-docs`
-- [Database Build](#analysis-dashboard) -- `mousereach-build-database`
+- [Analysis Dashboard](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
 - [Database Sync - Automatic sync to central connectome database](#database-sync-automatic-sync-to-central-connectome-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
 - [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`
@@ -163,9 +162,9 @@ Machine identification priority:
 When a role is identified, the wizard pre-fills defaults from the
 matching lab profile. You can override any default during setup.
 
-Configuration is saved to: C:\Users\labuser\.mousereach\config.json
-Identity file: C:\Users\labuser\.mousereach\machine_role.json
-Lab profiles file: C:\LAB_ROOT\Behavior\MouseReach\src\mousereach\setup\lab_profiles.json
+Configuration is saved to: ~\.mousereach\config.json
+Identity file: ~\.mousereach\machine_role.json
+Lab profiles file: <path>
 ```
 
 ### `mousereach-fix-powershell`
@@ -199,7 +198,7 @@ options:
 ============================================================
 MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
 ============================================================
-Index file: C:\LAB_ROOT\Behavior\MouseReach_Pipeline\pipeline_index.json
+Index file: <processing_root>\pipeline_index.json
 Exists: True
 Version: 2.0
 Generated: 2026-08-27T17:12:34.025930
@@ -244,10 +243,10 @@ Crop 8-camera collages into single-animal videos
 options:
   -h, --help            show this help message and exit
   -i INPUT, --input INPUT
-                        Input file or directory (default: Y:\LAB_ROOT\Beha
+                        Input file or directory (default: <path>
                         vior\MouseReach_Pipeline\Unanalyzed\Multi-Animal)
   -o OUTPUT, --output OUTPUT
-                        Output directory (default: Y:\LAB_ROOT\Behavior\Mo
+                        Output directory (default: <path>
                         useReach_Pipeline\Processing\Single_Animal)
   --queue               Also copy outputs to DLC_Queue
   -q, --quiet
@@ -650,21 +649,60 @@ options:
                         (slower: decodes each loaded video over the NAS).
 ```
 
-## Tracking Sheets tab on its own (import / status of the lab's spreadsheets)
+## Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)
 
-### `mousereach-sheets`
+### `mousereach-route-to-queue`
 
-**No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
+```
+usage: mousereach-route-to-queue [-h] [--worklist WORKLIST] --queue
+                                 {triage,deep_review} --reason REASON
+                                 [--flag-segments FLAG_SEGMENTS] [--json]
+                                 [video_id]
 
-Entry point: `mousereach.sheets_widget:main`. Read its module docstring for usage.
+mousereach-route-to-queue -- put an archived video into a review queue.
 
-## Where Is My Data tab on its own (per-cohort status + current export folder)
+WHY THIS IS A PUBLIC COMMAND
+----------------------------
+MouseReach decides on its own when a video needs a person (segmentation
+failed, an element it could not commit to). But OTHER systems can have
+reasons too -- for example a database tool that compares the pipeline's
+pellet outcomes with hand-scored bench sheets and finds a disagreement. Such
+a tool must not reach into MouseReach's internals or its files; it asks
+through this command. MouseReach stays independent (it knows nothing about
+who asked or why beyond the reason text it records), and the integrator
+gets exactly the same routing the pipeline uses itself.
 
-### `mousereach-data-status`
+What it does, in order:
+  1. finds the video's results in the configured Analyzed tree,
+  2. optionally flags specific segments (flagged_for_review=True with the
+     given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
+     that is what the triage review tool walks,
+  3. moves the video's bundle into the queue with a routing manifest
+     (review_gate.route_to_queue), updating the local watcher database.
 
-**No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
+Usage:
+    mousereach-route-to-queue VIDEO_ID --queue triage --reason "bench disagreement" --flag-segments 3,7
+    mousereach-route-to-queue VIDEO_ID --queue deep_review --reason "segmentation wrong"
+    mousereach-route-to-queue --worklist worklist.json --queue triage --reason "..."
+        worklist.json: [{"video_id": "...", "segment_nums": [3, 7]}, ...]
 
-Entry point: `mousereach.data_status_widget:main`. Read its module docstring for usage.
+Exit code 0 if every requested video was routed (or was already not in
+Analyzed), 1 otherwise. ASCII-only output.
+
+positional arguments:
+  video_id              e.g. 20250624_CNT0115_P2
+
+options:
+  -h, --help            show this help message and exit
+  --worklist WORKLIST   JSON list of {"video_id", "segment_nums"} to route in
+                        one go
+  --queue {triage,deep_review}
+  --reason REASON       Recorded in the routing manifest
+  --flag-segments FLAG_SEGMENTS
+                        Comma-separated segment numbers to flag (single-video
+                        mode)
+  --json                Machine-readable results
+```
 
 ## Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.
 
@@ -1270,7 +1308,7 @@ OUTCOME BREAKDOWN:
 
 OVERALL SUCCESS RATE: 3.9%
 
-CSV saved to: C:\LAB_ROOT\Behavior\MouseReach_Pipeline\summary_for_PI.csv
+CSV saved to: <processing_root>\summary_for_PI.csv
 ============================================================
 ```
 
@@ -1561,7 +1599,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 ### `mousereach-watch-status`
 
 ```
-[watcher db] C:\LAB_ROOT\Behavior\MouseReach_Pipeline\watcher_local.db
+[watcher db] <processing_root>\watcher_local.db
 ======================================================================
 MouseReach Watcher Status
 ======================================================================
@@ -1687,7 +1725,7 @@ and whether the watcher could run here. Takes no options.
 ### `mousereach-version-check`
 
 ```
-[watcher db] C:\LAB_ROOT\Behavior\MouseReach_Pipeline\watcher_local.db
+[watcher db] <processing_root>\watcher_local.db
 ======================================================================
 Pipeline Version Compliance Report
 ======================================================================
@@ -1821,7 +1859,7 @@ Unlock crystallized videos so reprocessing can touch them again.
 ```
 usage: mousereach-backup [--once] [--dry-run] [--verbose]
 
-Backup watcher: mirrors Y: pipeline data to the X: BACKUP_NAS NAS via robocopy (add-only).
+Backup watcher: mirrors pipeline data to the backup NAS via robocopy (add-only).
 
   --once      One sync cycle, then exit (default: run as a daemon).
   --dry-run   Show what would be synced without copying.
@@ -1857,7 +1895,7 @@ options:
 Examples:
   mousereach-migrate-archive              # Dry run - show plan
   mousereach-migrate-archive --execute    # Actually move files
-  mousereach-migrate-archive --nas-root X:/DLC_Output
+  mousereach-migrate-archive --nas-root <path>
 ```
 
 ## ASPA reprocessing tools
@@ -1875,7 +1913,7 @@ options:
   --cohort COHORT  Import single cohort (e.g. H)
   --all            Import all cohorts found under Analyzed/
   --db-path PATH   Override ASPA.db path (default: ASPA_DB_PATH env or
-                   Y:/LAB_ROOT/Behavior/MouseReach_Pipeline/ASPA.db)
+                   <configured NAS root>/ASPA.db)
   --dry-run        Parse xlsx files but do not write to database
 ```
 

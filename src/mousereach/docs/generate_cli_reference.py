@@ -72,6 +72,39 @@ def parse_scripts(pyproject: Path):
     return sections
 
 
+
+def _mask_machine_paths(text: str) -> str:
+    """Replace this machine's own locations in harvested help text with placeholders.
+
+    WHY: some commands print where THEIR configuration lives (home directory,
+    the repository, the configured NAS/processing roots) in --help. The generated
+    reference goes into a public repository, and a username or a share path is
+    not part of the tool. Order matters: the most specific strings first, then a
+    generic sweep of any remaining drive-letter path.
+    """
+    import json
+    import re
+    repl = []
+    try:
+        repl.append((str(find_repo_root()), "<repo>"))
+    except Exception:
+        pass
+    try:
+        cfg = json.loads((Path.home() / ".mousereach" / "config.json").read_text(encoding="utf-8"))
+        for key, val in cfg.items():
+            if isinstance(val, str) and len(val) > 3 and (":" in val or val.startswith("/")):
+                repl.append((val, "<%s>" % key))
+    except Exception:
+        pass
+    repl.append((str(Path.home()), "~"))
+    for old, new in repl:
+        for variant in (old, old.replace("\\", "/"), old.replace("\\", "\\\\")):
+            text = text.replace(variant, new)
+    # generic sweep: any drive-letter path that survived
+    text = re.sub(r"[A-Z]:[\\/][^\s\"'<>|]+", "<path>", text)
+    return text
+
+
 def capture_help(exe_dir: Path, name: str) -> tuple:
     """(status, text). status in {ok, no_help, timeout, missing, error}."""
     for suffix in (".exe", ".cmd", ""):
@@ -93,7 +126,7 @@ def capture_help(exe_dir: Path, name: str) -> tuple:
     text = (r.stdout or "").strip() or (r.stderr or "").strip()
     if r.returncode not in (0, 2) or not text:
         return ("no_help", (text or "no output") [:2000])
-    return ("ok", text)
+    return ("ok", _mask_machine_paths(text))
 
 
 def generate(out_path: Path) -> dict:
