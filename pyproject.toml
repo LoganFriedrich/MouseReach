@@ -108,6 +108,8 @@ mousereach-review-tool = "mousereach.review.causal_review_widget:main"
 
 # Tracking Sheets tab on its own (import / status of the lab's spreadsheets)
 mousereach-sheets = "mousereach.sheets_widget:main"
+# Where Is My Data tab on its own (per-cohort status + current export folder)
+mousereach-data-status = "mousereach.data_status_widget:main"
 
 # Provenance checks -- what the pipeline actually produces, and whether the
 # documents still describe the code.
