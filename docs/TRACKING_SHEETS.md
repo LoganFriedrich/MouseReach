@@ -103,6 +103,24 @@ in as the cohort runs; import whenever you like.
   cannot import; the processing server can. Importing from any one machine
   updates the shared database for everyone.
 
+## ASPA cohorts (a second project, a second folder)
+
+ASPA's animals live in one frozen workbook per cohort letter (`I.xlsx`,
+`J.xlsx`, `K - Contusion 70kd.xlsx` ...) in a different SharePoint folder,
+and their manual tray scores sit in a wide tab called `1 - ENTER DATA HERE`.
+They appear in the same table as the CNT cohorts (project ASPA, ids like
+`ASPA_10` for cohort J) with the same status words. Importing them uses
+`Import selected` on their rows, or from a terminal:
+
+```
+mousedb-import-aspa-scores --cohort J --apply     # one cohort
+mousedb-import-aspa-scores --apply                # every ASPA cohort
+```
+
+(Without `--apply` it is a dry run that reports what it would import.)
+The ASPA workbooks are frozen; if one ever shows *Sheet edited since last
+import*, someone changed a finished record, which is worth knowing.
+
 ## Where the import history lives
 
 Every import attempt -- from this tab or the hourly job, success or failure
