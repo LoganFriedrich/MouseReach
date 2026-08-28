@@ -16,9 +16,32 @@ Both destination paths are hard-coded module constants (`database.py:44`, `datab
 
 ---
 
-## Read this first: at this commit, no write can succeed
+## FIXED 2026-08-27: writes work again
 
-**Every attempt to write a row fails, and the failure is not reported anywhere.**
+`'segment_num'` is back in `ALL_COLUMNS`, so the `INSERT` no longer omits a
+`NOT NULL` column. Verified against a scratch table built from the source's own
+`CREATE_REACH_DATA_SQL`, driving the real `sync_features_file` with a shipped
+features file (20 segments / 105 reaches): 105 rows inserted, 15 distinct
+`segment_num`, 0 rows with `segment_num = 0`.
+
+**The gap in the data is still there and has to be filled by hand.** Nothing
+reached `reach_data` between `2026-08-20T14:25:47` and this fix. Every video
+processed in that window wrote a correct `{video}_features.json` to disk but no
+database row. Those files are the recovery path -- `sync_file_to_database`
+accepts any path, so they can be re-synced from wherever they were archived to,
+without reprocessing anything. `mousereach-sync` alone will not find them: it
+globs one folder non-recursively (`database.py:511`) and archived videos live
+under `Analyzed/<project>/<cohort>/`.
+
+The account of the bug below is kept because the shape of it is the lesson: a
+failure that is caught, re-raised, caught again, and finally logged at debug
+level under a message naming two causes that were not the cause.
+
+---
+
+### What was wrong
+
+**Every attempt to write a row failed, and the failure was not reported anywhere.**
 
 The table has a column `segment_num` — which pellet, 1 through 20, the reach was aimed at. It is declared `INTEGER NOT NULL` with no default, both in the `CREATE TABLE` in the source (`database.py:107`) and in the live table on disk.
 
@@ -43,7 +66,7 @@ Consequences when reading the current data:
 - The record of which files have been synced (`.mousereach_sync_state.json`) is not updated, because the hash is recorded only after a successful commit (`database.py:641-645`). So `mousereach-sync-status` keeps reporting the same files as pending forever.
 - **No data was lost.** The `DELETE` and the `INSERT`s share one transaction; the first `INSERT` raises, the connection closes without committing, and the delete is rolled back. Verified: a pre-existing row for the video being re-synced was still present after the failed sync.
 
-Restoring `'segment_num'` to the insert list is the whole fix.
+Restoring `'segment_num'` to the insert list was the whole fix, applied 2026-08-27.
 
 ---
 

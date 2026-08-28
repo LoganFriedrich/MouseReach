@@ -81,8 +81,20 @@ REACH_JSON_COLUMNS = [
 BOOL_COLUMNS = {'causal_reach', 'is_first_reach', 'is_last_reach', 'flagged_for_review'}
 
 # All columns in reach_data table (for INSERT)
+#
+# 'segment_num' is listed HERE and not in REACH_JSON_COLUMNS. It has to be in
+# both places to work: the row dict gets it from the enclosing segment (the only
+# place it is correct -- see the note above REACH_JSON_COLUMNS), and the INSERT
+# statement is built from THIS list. 5bac3b0 moved it out of REACH_JSON_COLUMNS
+# and into the row dict but never added it here, so every INSERT omitted a column
+# declared INTEGER NOT NULL and raised
+#     sqlite3.IntegrityError: NOT NULL constraint failed: reach_data.segment_num
+# The failure was swallowed at three levels (RuntimeError -> return False ->
+# logged at debug as "subject not in DB or DB unavailable"), so nothing reached
+# reach_data between 2026-08-20T14:25:47 and this fix, silently.
 ALL_COLUMNS = (
     ['subject_id', 'video_name', 'session_date', 'tray_type', 'run_number']
+    + ['segment_num']
     + REACH_JSON_COLUMNS
     + ['segment_outcome', 'segment_outcome_confidence', 'segment_outcome_flagged',
        'attention_score', 'pellet_position_idealness']
