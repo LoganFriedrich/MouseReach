@@ -710,21 +710,23 @@ options:
 
 ```
 usage: mousereach-field-audit [-h] [--root ROOT] [--snapshot SNAPSHOT]
-                              [--limit LIMIT] [--finished-only] [--json JSON]
-                              [--markdown MARKDOWN]
+                              [--limit LIMIT] [--only-videos ONLY_VIDEOS]
+                              [--json JSON] [--markdown MARKDOWN]
 
 Follow every pipeline field from the stage that produces it into the database,
 and report the ones that vanish.
 
 options:
-  -h, --help           show this help message and exit
-  --root ROOT          Tree of finished videos to read (default: Analyzed)
-  --snapshot SNAPSHOT  Directory holding reach_data.parquet
-  --limit LIMIT        Only read this many files per stage (quick pass)
-  --finished-only      Restrict to videos that are finished and current at
-                       every stage (needs mousedb)
-  --json JSON          Also write the full result as JSON
-  --markdown MARKDOWN  Also write the report as a markdown document
+  -h, --help            show this help message and exit
+  --root ROOT           Tree of finished videos to read (default: Analyzed)
+  --snapshot SNAPSHOT   Directory holding reach_data.parquet
+  --limit LIMIT         Only read this many files per stage (quick pass)
+  --only-videos ONLY_VIDEOS
+                        Restrict to the video ids listed in this text file
+                        (one per line); an integrator can produce such a list,
+                        MouseReach does not depend on one
+  --json JSON           Also write the full result as JSON
+  --markdown MARKDOWN   Also write the report as a markdown document
 ```
 
 ### `mousereach-doc-check`
