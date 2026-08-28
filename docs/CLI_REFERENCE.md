@@ -29,6 +29,7 @@ walkthroughs of the review tools themselves.
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
 - [Tracking Sheets tab on its own (import / status of the lab's spreadsheets)](#tracking-sheets-tab-on-its-own-import-status-of-the-lab-s-spreadsheets) -- `mousereach-sheets`
+- [Where Is My Data tab on its own (per-cohort status + current export folder)](#where-is-my-data-tab-on-its-own-per-cohort-status-current-export-folder) -- `mousereach-data-status`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
 - [Triage auto-resolve (pre-check before human review): if a triaged segment has a matching unified GT entry, lift the flag and copy the GT outcome. Runs as a step in the normal processing pipeline; only segments without GT remain triaged for the napari review tool.](#triage-auto-resolve-pre-check-before-human-review-if-a-triaged-segment-has-a-matching-unified-gt-entry-lift-the-flag-and-copy-the-gt-outcome-runs-as-a-step-in-the-normal-processing-pipeline-only-segments-without-gt-remain-triaged-for-the-napari-review-tool) -- `mousereach-resolve-triage-from-gt`
 - [Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes into per-reach permanent output for kinematic analysis)](#step-4b-reach-assignment-joins-v8-reaches-v6-cascade-outcomes-into-per-reach-permanent-output-for-kinematic-analysis) -- `mousereach-assign-reaches`
@@ -656,6 +657,14 @@ options:
 **No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
 
 Entry point: `mousereach.sheets_widget:main`. Read its module docstring for usage.
+
+## Where Is My Data tab on its own (per-cohort status + current export folder)
+
+### `mousereach-data-status`
+
+**No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
+
+Entry point: `mousereach.data_status_widget:main`. Read its module docstring for usage.
 
 ## Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.
 
@@ -1770,9 +1779,8 @@ and whether the watcher could run here. Takes no options.
 
 ```
 ==================================================
-  Watcher PAUSED -- filming mode active
-  DLC processing is suspended.
-  Toggle again when filming is done.
+  Watcher RESUMED — processing mode active
+  DLC and cropping will run during downtime.
 ==================================================
 ```
 
