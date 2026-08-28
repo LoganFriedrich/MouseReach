@@ -2,9 +2,6 @@
 CLI entry points for MouseReach analysis.
 
 Commands:
-    mousereach-analyze                    # Launch Streamlit dashboard
-    mousereach-analyze --export data.csv  # Export all data to CSV
-    mousereach-analyze --tracking-dir DIR # Include experimental metadata
 
     mousereach-build-database             # Build unified reach database (wide format)
 """
@@ -262,101 +259,7 @@ Examples:
         print(f"Days post injury: {valid_dpi}/{len(df)} reaches have this computed")
 
 
-def main():
-    """Main entry point for mousereach-analyze command."""
-    parser = argparse.ArgumentParser(
-        description="MouseReach Analysis Dashboard",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    mousereach-analyze
-        Launch interactive dashboard
-
-    mousereach-analyze --export results.csv
-        Export all data to CSV
-
-    mousereach-analyze --tracking-dir /path/to/Animal_Tracking
-        Include experimental metadata (Test_Phase, Weight, etc.) from tracking spreadsheets
-        """
-    )
-
-    parser.add_argument(
-        '--data-dir', '-d',
-        type=Path,
-        help="Directory containing pipeline output files (default: Processing)"
-    )
-
-    parser.add_argument(
-        '--tracking-dir', '-t',
-        type=Path,
-        help="Directory with Connectome_XX_Animal_Tracking.xlsx files for experimental metadata"
-    )
-
-    parser.add_argument(
-        '--export',
-        type=Path,
-        metavar='OUTPUT',
-        help="Export all data to CSV/Excel file instead of launching dashboard"
-    )
-
-    parser.add_argument(
-        '--port',
-        type=int,
-        default=8501,
-        help="Port for Streamlit server (default: 8501)"
-    )
-
-    args = parser.parse_args()
-
-    if args.export:
-        # Export mode - no GUI
-        from mousereach.analysis.data import load_all_data, load_data_with_metadata
-        from mousereach.config import Paths
-
-        data_dir = args.data_dir or Paths.PROCESSING
-
-        print(f"Loading data from: {data_dir}")
-
-        if args.tracking_dir:
-            data = load_data_with_metadata(
-                data_dir,
-                tracking_dir=args.tracking_dir,
-                use_features=True,
-                exclude_flagged=True
-            )
-        else:
-            data = load_all_data(data_dir, use_features=True, exclude_flagged=True)
-
-        output_path = args.export
-        if output_path.suffix == '.xlsx':
-            data.to_excel(output_path)
-        else:
-            data.to_csv(output_path.with_suffix('.csv'))
-
-        print(f"Exported {len(data)} reaches to {output_path}")
-
-    else:
-        # Dashboard mode - launch Streamlit
-        import subprocess
-
-        dashboard_path = Path(__file__).parent / "dashboard.py"
-
-        cmd = [
-            sys.executable, "-m", "streamlit", "run",
-            str(dashboard_path),
-            "--server.port", str(args.port),
-            "--browser.gatherUsageStats", "false"
-        ]
-
-        print("Launching MouseReach Analysis Dashboard...")
-        print(f"Open http://localhost:{args.port} in your browser")
-        print("Press Ctrl+C to stop\n")
-
-        try:
-            subprocess.run(cmd)
-        except KeyboardInterrupt:
-            print("\nDashboard stopped.")
 
 
 if __name__ == "__main__":
-    main()
+    main_build_database()

@@ -495,7 +495,7 @@ opening the code yourself.** Everything not listed survived two passes.
   - disputed because: It has an importer.
 - **"Also dead: `boundary_refiner.py` and `boundary_polisher.py`, whose only importer is the dead `reach_detector.py` (`:101-102`)."**
   - disputed because: True for boundary_polisher.py, false for boundary_refiner.py, which has two other importers.
-- **"[v8/eval.py] is called by `v8/train.py:123`, by `improvement/reach_detection/v8_figures.py`, and by one-off scripts under `scripts/`."**
+- **"[v8/eval.py] is called by `v8/train.py:123`."**
   - disputed because: v8_figures.py does not call or import v8/eval.py. It consumes eval output that has already been serialised to plain dicts.
 - **"In a typical file the first boundary is near frame 2000, so the first ~2000 frames are outside every segment."**
   - disputed because: Off by more than an order of magnitude. The structural point (frames before the first boundary belong to no segment) is right, but the size of that region is wrong.

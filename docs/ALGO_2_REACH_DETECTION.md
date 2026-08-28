@@ -304,15 +304,15 @@ Treat these as wrong, not as history:
 
 **No test exercises the v8 detector, its feature builder, or its post-processing.** There is no test for `extract_features`, `probabilities_to_reaches`, either trim, `apex_split_at_trough`, `build_video_reaches`, or the segment-filing rules.
 
-The repository is not untested in general: `src/mousereach/improvement/reach_detection/test_metrics.py` is a pytest suite for the reach-matching logic used in *evaluation* (`match_reaches`, `compute_kinematic_completeness`), and there are similar suites for outcomes, segmentation, tray motion and the version simulator. The `tests/` directory itself holds one file, `test_watcher_integration.py`. None of them touch the detector.
+The repository is not untested in general: there are suites for outcomes, segmentation, tray motion and the version simulator. The `tests/` directory itself holds one file, `test_watcher_integration.py`. None of them touch the detector. (The reach-matching evaluation suite lived under the improvement subsystem, which has moved out of this repo as an accessory.)
 
 ## How performance is measured, when it is measured
 
 `v8/eval.py` is the scoring code for this detector. A detected reach counts as correct only if its start is within 2 frames of a human-marked start **and** its length is within `max(0.5 × human length, 5 frames)` (`eval.py:67-91`). Matching is greedy, closest start first then closest length; each human reach and each detected reach matches at most once (`:93-126`). The summary reports counts of correct / spurious / missed plus the distribution of start and length errors, and deliberately does not report precision, recall or F1 (`:129-166`).
 
-It is called by `v8/train.py:123`, by `improvement/reach_detection/v8_figures.py`, and by one-off scripts under `scripts/`. It is not part of the production run — nothing in the pipeline scores a reach file against ground truth.
+It is called by `v8/train.py:123`. It is not part of the production run — nothing in the pipeline scores a reach file against ground truth.
 
-Note that `improvement/reach_detection/metrics.py` contains a *different* matcher, with its own tolerances, used by the improvement framework. The two are not interchangeable; check which one a reported number came from.
+Note that the improvement framework (now a separate accessory tool) carries a *different* matcher with its own tolerances. The two are not interchangeable; check which one a reported number came from.
 
 ---
 

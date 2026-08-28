@@ -51,10 +51,6 @@ contributions:
       python_name: mousereach.review.causal_review_widget:CausalReviewWidget
       title: "Results Review (Causal)"
 
-    # Performance Tracking
-    - id: mousereach.performance_widget
-      python_name: mousereach.performance.feedback_dashboard:PerformanceViewerWidget
-      title: "Algorithm Performance & Feedback"
 
   widgets:
     - command: mousereach.dashboard_widget
@@ -89,7 +85,4 @@ contributions:
       autogenerate: false
     - command: mousereach.causal_review_widget
       display_name: "Results Review (Causal)"
-      autogenerate: false
-    - command: mousereach.performance_widget
-      display_name: "Algorithm Performance & Feedback"
       autogenerate: false

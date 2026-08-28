@@ -37,12 +37,12 @@ walkthroughs of the review tools themselves.
 - [Step 6 - Export](#step-6-export) -- `mousereach-export`, `mousereach-summary`
 - [Archive - Move validated videos to NAS](#archive-move-validated-videos-to-nas) -- `mousereach-archive`
 - [Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture](#migration-one-time-migration-from-old-multi-folder-to-v2-3-single-folder-architecture) -- `mousereach-migrate`
-- [Algorithm Evaluation](#algorithm-evaluation) -- `mousereach-eval-all`, `mousereach-eval-registry`, `mousereach-eval`, `mousereach-eval-direct`, `mousereach-eval-report`, `mousereach-update-algo-ref`, `mousereach-algo-vs-human`
+- [Algorithm Evaluation](#algorithm-evaluation) -- `mousereach-eval`, `mousereach-eval-direct`, `mousereach-update-algo-ref`, `mousereach-algo-vs-human`
 - [Export Utilities](#export-utilities) -- `mousereach-quick-summary`, `mousereach-features-csv`
 - [Kinematic Analysis Utilities](#kinematic-analysis-utilities) -- `mousereach-reach-export`, `mousereach-real-kinematics`
 - [Performance Tracking](#performance-tracking) -- `mousereach-perf`, `mousereach-perf-eval`, `mousereach-perf-report`
 - [Algorithm Documentation](#algorithm-documentation) -- `mousereach-docs`
-- [Analysis Dashboard](#analysis-dashboard) -- `mousereach-analyze`, `mousereach-build-database`
+- [Database Build](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
 - [Database Sync - Automatic sync to central connectome database](#database-sync-automatic-sync-to-central-connectome-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
 - [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`
@@ -1075,56 +1075,6 @@ After migration:
 
 ## Algorithm Evaluation
 
-### `mousereach-eval-all`
-
-```
-usage: mousereach-eval-all [-h]
-                           [--only {assign,assignment,outcome,reach,reach_detection,seg,segmentation}]
-                           [--no-gt-resolve] [--gt-dir GT_DIR] [--no-open]
-                           snapshot_dir
-
-Run every algo evaluator on a snapshot (segmentation, reach detection, outcome
-detection, reach assignment). Default is all four; --only restricts to one. GT
-auto-resolve is invoked up front so outcome two-level metrics populate.
-
-positional arguments:
-  snapshot_dir          Snapshot / quarantine directory.
-
-options:
-  -h, --help            show this help message and exit
-  --only {assign,assignment,outcome,reach,reach_detection,seg,segmentation}
-                        Run a single step only.
-  --no-gt-resolve       Skip GT auto-resolve pre-step.
-  --gt-dir GT_DIR       GT directory (defaults to <snapshot>/gt/).
-  --no-open             Do not open the rendered figures in VS Code (default:
-                        open them -- the figures ARE the report).
-```
-
-### `mousereach-eval-registry`
-
-```
-usage: mousereach-eval-registry [-h] [--db DB]
-                                {list,show,latest,verify,backfill} ...
-
-Algo Eval Registry: a git-recoverable SQLite record of how each algo-element
-version performed, with a runtime code fingerprint that makes stale-runtime
-evals impossible to miss.
-
-positional arguments:
-  {list,show,latest,verify,backfill}
-    list                List recorded eval runs as a table
-    show                Show one run with full metrics JSON
-    latest              Show the most recent run for an element
-    verify              Check a run's fingerprint vs the current runtime
-    backfill            Import historical Improvement_Snapshots into the
-                        registry
-
-options:
-  -h, --help            show this help message and exit
-  --db DB               Path to the registry SQLite DB (default: Y:\2_Connecto
-                        me\Behavior\MouseReach_Improvement\algo_eval.db)
-```
-
 ### `mousereach-eval`
 
 ```
@@ -1264,26 +1214,6 @@ EVALUATING: 20251224_CNT0403_P3_unified_ground_truth.json
 EVALUATING: 20251224_CNT0413_P2_unified_ground_truth.json
 ======================================================================
   WARNING: No algorithm file found: 20251224_CNT0413_P2_reaches.json
-```
-
-### `mousereach-eval-report`
-
-```
-usage: mousereach-eval-report [-h] [--output-dir OUTPUT_DIR] [--no-plots]
-                              [path]
-
-Generate MouseReach eval report with plots
-
-positional arguments:
-  path                  Processing directory (default: auto-detect from
-                        config)
-
-options:
-  -h, --help            show this help message and exit
-  --output-dir OUTPUT_DIR, -o OUTPUT_DIR
-                        Output directory for plots (default:
-                        eval_reports/YYYY-MM-DD_HHMMSS/)
-  --no-plots            Skip plot generation, print text summary only
 ```
 
 ### `mousereach-update-algo-ref`
@@ -1466,38 +1396,6 @@ Examples:
 ```
 
 ## Analysis Dashboard
-
-### `mousereach-analyze`
-
-```
-usage: mousereach-analyze [-h] [--data-dir DATA_DIR]
-                          [--tracking-dir TRACKING_DIR] [--export OUTPUT]
-                          [--port PORT]
-
-MouseReach Analysis Dashboard
-
-options:
-  -h, --help            show this help message and exit
-  --data-dir DATA_DIR, -d DATA_DIR
-                        Directory containing pipeline output files (default:
-                        Processing)
-  --tracking-dir TRACKING_DIR, -t TRACKING_DIR
-                        Directory with Connectome_XX_Animal_Tracking.xlsx
-                        files for experimental metadata
-  --export OUTPUT       Export all data to CSV/Excel file instead of launching
-                        dashboard
-  --port PORT           Port for Streamlit server (default: 8501)
-
-Examples:
-    mousereach-analyze
-        Launch interactive dashboard
-
-    mousereach-analyze --export results.csv
-        Export all data to CSV
-
-    mousereach-analyze --tracking-dir /path/to/Animal_Tracking
-        Include experimental metadata (Test_Phase, Weight, etc.) from tracking spreadsheets
-```
 
 ### `mousereach-build-database`
 

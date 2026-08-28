@@ -336,19 +336,6 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
-    # Load Performance & Feedback dashboard (tracks algorithm improvement over time)
-    tprint("  Performance & Feedback...", end=" ")
-    try:
-        from mousereach.performance.feedback_dashboard import PerformanceViewerWidget
-        perf_widget = PerformanceViewerWidget(viewer)
-        dw = viewer.window.add_dock_widget(perf_widget, name="Performance", area="right")
-        widgets_loaded.append(("performance", perf_widget))
-        dock_widgets.append(dw)
-        print("OK")
-    except ImportError as e:
-        print(f"SKIP ({e})")
-    except Exception as e:
-        print(f"ERROR ({e})")
 
     # Load Watcher Control (start/stop/monitor/configure the auto-processor)
     tprint("  Watcher Control...", end=" ")

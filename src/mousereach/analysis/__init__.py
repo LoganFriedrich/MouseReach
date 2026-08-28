@@ -32,20 +32,6 @@ from .data import (
 )
 from .stats import compare_groups, run_pca, compute_effect_size
 
-# Plotting functions require seaborn - make import optional
-try:
-    from .plots import (
-        plot_comparison,
-        plot_pca_scores,
-        plot_learning_curve,
-        save_publication_figure
-    )
-except ImportError:
-    # seaborn not installed - plotting functions unavailable
-    plot_comparison = None
-    plot_pca_scores = None
-    plot_learning_curve = None
-    save_publication_figure = None
 
 __all__ = [
     # Data loading
@@ -69,8 +55,4 @@ __all__ = [
     'run_pca',
     'compute_effect_size',
     # Plotting
-    'plot_comparison',
-    'plot_pca_scores',
-    'plot_learning_curve',
-    'save_publication_figure',
 ]

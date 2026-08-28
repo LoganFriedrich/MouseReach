@@ -62,7 +62,6 @@ from .confidence_analyzer import (
     get_priority_videos,
 )
 from .collect_results import collect_all, CorpusResults
-from .plot_results import generate_all_plots
 from .version_simulator import (
     evaluate_all_versions,
     print_version_comparison,
@@ -116,5 +115,4 @@ __all__ = [
     # Report generation
     "collect_all",
     "CorpusResults",
-    "generate_all_plots",
 ]
