@@ -1,6 +1,6 @@
 # MouseReach CLI Reference
 
-Generated 2026-08-25 by `python -m mousereach.docs.generate_cli_reference` --
+Generated 2026-08-28 by `python -m mousereach.docs.generate_cli_reference` --
 every entry below is the command's own `--help` output, harvested from
 the installed executables, so this file cannot say something the code
 does not. **Do not edit by hand; rerun the generator.**
@@ -28,6 +28,7 @@ walkthroughs of the review tools themselves.
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
+- [Tracking Sheets tab on its own (import / status of the lab's spreadsheets)](#tracking-sheets-tab-on-its-own-import-status-of-the-lab-s-spreadsheets) -- `mousereach-sheets`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
 - [Triage auto-resolve (pre-check before human review): if a triaged segment has a matching unified GT entry, lift the flag and copy the GT outcome. Runs as a step in the normal processing pipeline; only segments without GT remain triaged for the napari review tool.](#triage-auto-resolve-pre-check-before-human-review-if-a-triaged-segment-has-a-matching-unified-gt-entry-lift-the-flag-and-copy-the-gt-outcome-runs-as-a-step-in-the-normal-processing-pipeline-only-segments-without-gt-remain-triaged-for-the-napari-review-tool) -- `mousereach-resolve-triage-from-gt`
 - [Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes into per-reach permanent output for kinematic analysis)](#step-4b-reach-assignment-joins-v8-reaches-v6-cascade-outcomes-into-per-reach-permanent-output-for-kinematic-analysis) -- `mousereach-assign-reaches`
@@ -200,16 +201,16 @@ MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
 Index file: C:\LAB_ROOT\Behavior\MouseReach_Pipeline\pipeline_index.json
 Exists: True
 Version: 2.0
-Generated: 2026-08-25T15:07:16.384499
-Total videos: 1582
+Generated: 2026-08-27T17:12:34.025930
+Total videos: 675
 
 Videos by folder:
-  Processing: 496
+  Processing: 407
 
 Validation status:
-  SEG: 0 validated, 331 need review, 46 not started
-  REACH: 0 validated, 280 need review, 1302 not started
-  OUTCOME: 0 validated, 280 need review, 1302 not started
+  SEG: 0 validated, 112 need review, 36 not started
+  REACH: 0 validated, 82 need review, 593 not started
+  OUTCOME: 0 validated, 82 need review, 593 not started
 
 Stale folders (need refresh): ['Processing']
 ============================================================
@@ -647,6 +648,14 @@ options:
   --cv                  Use CV pellet localization for tighter narrowing
                         (slower: decodes each loaded video over the NAS).
 ```
+
+## Tracking Sheets tab on its own (import / status of the lab's spreadsheets)
+
+### `mousereach-sheets`
+
+**No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
+
+Entry point: `mousereach.sheets_widget:main`. Read its module docstring for usage.
 
 ## Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.
 
@@ -1153,7 +1162,7 @@ specified directory or the MouseReach processing root.
 ======================================================================
 GT FILES FOUND
 ======================================================================
-Unified GT: 19
+Unified GT: 18
   - 20250625_CNT0102_P4_unified_ground_truth.json
   - 20250625_CNT0106_P2_unified_ground_truth.json
   - 20250711_CNT0216_P1_unified_ground_truth.json
@@ -1166,7 +1175,6 @@ Unified GT: 19
   - 20250819_CNT0104_P4_unified_ground_truth.json
   - 20250912_CNT0210_P2_unified_ground_truth.json
   - 20250919_CNT0311_P2_unified_ground_truth.json
-  - 20251008_CNT0303_P2_unified_ground_truth.json
   - 20251022_CNT0402_P4_unified_ground_truth.json
   - 20251023_CNT0407_P3_unified_ground_truth.json
   - 20251027_CNT0404_P4_unified_ground_truth.json
@@ -1223,81 +1231,6 @@ EVALUATING: 20250912_CNT0210_P2_unified_ground_truth.json
 EVALUATING: 20250919_CNT0311_P2_unified_ground_truth.json
 ======================================================================
   WARNING: No algorithm file found: 20250919_CNT0311_P2_reaches.json
-======================================================================
-EVALUATING: 20251008_CNT0303_P2_unified_ground_truth.json
-======================================================================
-----------------------------------------------------------------------
-SEGMENT BOUNDARIES
-----------------------------------------------------------------------
-  No segments file found: 20251008_CNT0303_P2_segments.json
-
-----------------------------------------------------------------------
-OUTCOMES
-----------------------------------------------------------------------
-  GT outcomes: 20
-  Algorithm outcomes: 20
-  Correct: 17/20 (85.0%)
-  Misclassified (3):
-    Segment 4: GT=retrieved, Algo=untouched
-    Segment 6: GT=displaced_outside, Algo=retrieved
-    Segment 7: GT=retrieved, Algo=displaced_sa
-
-----------------------------------------------------------------------
-REACHES
-----------------------------------------------------------------------
-  GT reaches: 171
-  Algorithm reaches: 179
-
-  RESULTS (tolerance=10 frames):
-    True Positives (matches): 160
-    False Negatives (missed): 11
-    False Positives (extra): 19
-
-    Precision: 89.4%
-    Recall:    93.6%
-    F1 Score:  0.91
-
-  TIMING ACCURACY:
-    Start frame accuracy:
-      Exact:    129/160 (80.6%)
-      +/-1 frame: 132/160 (82.5%)
-      +/-2 frame: 154/160 (96.2%)
-      +/-5 frame: 157/160 (98.1%)
-    End frame accuracy:
-      Exact:    97/160 (60.6%)
-      +/-1 frame: 106/160 (66.2%)
-      +/-2 frame: 134/160 (83.8%)
-      +/-5 frame: 156/160 (97.5%)
-    Average start error: +0.4 frames
-    Average end error:   -1.1 frames
-
-  MISSED REACHES (algorithm didn't detect):
-    Reach 6: frames 464-499 (duration=35, extent=?)
-    Reach 15: frames 1884-1915 (duration=31, extent=?)
-    Reach 31: frames 3949-3953 (duration=4, extent=?)
-    Reach 184: frames 6484-6485 (duration=1, extent=?)
-    Reach 62: frames 6675-6739 (duration=64, extent=?)
-    Reach 185: frames 9720-9721 (duration=1, extent=?)
-    Reach 186: frames 16955-16956 (duration=1, extent=?)
-    Reach 93: frames 16974-16979 (duration=5, extent=?)
-    Reach 187: frames 18095-18097 (duration=2, extent=?)
-    Reach 147: frames 24278-24294 (duration=16, extent=?)
-    ... and 1 more
-    Missed reach durations: avg=14.6, min=1, max=64
-
-  FALSE POSITIVES (algorithm detected, not in GT):
-    Reach 6: frames 464-467
-    Reach 7: frames 468-472
-    Reach 9: frames 558-562
-    Reach 17: frames 1884-1892
-    Reach 31: frames 2791-2794
-    Reach 37: frames 4064-4068
-    Reach 39: frames 4094-4097
-    Reach 41: frames 4132-4137
-    Reach 64: frames 6675-6699
-    Reach 74: frames 9524-9532
-    ... and 9 more
-
 ======================================================================
 EVALUATING: 20251022_CNT0402_P4_unified_ground_truth.json
 ======================================================================
@@ -1383,20 +1316,20 @@ OUTPUT FILES:
 MOUSEREACH SUMMARY
 ============================================================
 
-Processed 1192 videos
-Total segments (trials): 23840
-Total reaches detected: 212838
+Processed 53 videos
+Total segments (trials): 1060
+Total reaches detected: 4935
 
 OUTCOME BREAKDOWN:
 ----------------------------------------
-  displaced_outside   :    3 (  0.0%)
-  displaced_sa        : 12973 ( 54.4%)
-  retrieved           : 2928 ( 12.3%)
-  triaged             : 2383 ( 10.0%)
-  uncertain           :   10 (  0.0%)
-  untouched           : 5543 ( 23.3%)
+  displaced_outside   :    1 (  0.1%)
+  displaced_sa        :  346 ( 32.6%)
+  retrieved           :   41 (  3.9%)
+  triaged             :   10 (  0.9%)
+  uncertain           :    1 (  0.1%)
+  untouched           :  661 ( 62.4%)
 
-OVERALL SUCCESS RATE: 12.3%
+OVERALL SUCCESS RATE: 3.9%
 
 CSV saved to: C:\LAB_ROOT\Behavior\MouseReach_Pipeline\summary_for_PI.csv
 ============================================================
@@ -1737,31 +1670,31 @@ Collages:
   Failed:       0
 
 Videos:
-  Total:        1422
-  Discovered:   1
+  Total:        1532
+  Discovered:   0
   Validated:    0
   DLC Queued:   0
   DLC Running:  0
   DLC Complete: 0
-  Processing:   0
-  Processed:    1021
-  Archived:     2
-  Outdated:     364
+  Processing:   5
+  Processed:    294
+  Archived:     0
+  Outdated:     1199
   Crystallized: 0
   Quarantined:  0
   Failed:       0
 
 Recent Activity (last 10 entries):
-  [2026-08-25 20:07:16] 20250813_CNT0301_P4 - archive: completed (Archived 8 files to Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome\CNT03) [5.8s]
-  [2026-08-25 20:07:10] 20250813_CNT0301_P4 - archive: started
-  [2026-08-25 20:07:07] 20251008_CNT0302_P1 - archive: completed (Archived 8 files to Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome\CNT03) [5.3s]
-  [2026-08-25 20:07:02] 20251008_CNT0302_P1 - archive: started
-  [2026-08-25 20:06:13] 20251224_CNT0406_P1 - archive: completed (Archived 8 files to Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome\CNT04) [6.4s]
-  [2026-08-25 20:06:06] 20251224_CNT0406_P1 - archive: started
-  [2026-08-25 20:06:02] 20250808_CNT0311_P3 - archive: completed (Archived 8 files to Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome\CNT03) [6.3s]
-  [2026-08-25 20:05:55] 20250808_CNT0311_P3 - archive: started
-  [2026-08-25 20:05:52] 20250624_CNT0105_P4 - archive: completed (Archived 10 files to Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome\CNT01) [2.6s]
-  [2026-08-25 20:05:49] 20250624_CNT0105_P4 - archive: started
+  [2026-08-26 21:36:21] 20251024_CNT0408_P3 - archive: started
+  [2026-08-26 21:36:21] 20251024_CNT0408_P3 - archive: failed (Not ready: seg, reach, outcome not validated)
+  [2026-08-26 21:36:21] 20260721_CNT0501_P4 - archive: started
+  [2026-08-26 21:36:21] 20260721_CNT0501_P4 - archive: failed (Not ready: seg, reach, outcome not validated)
+  [2026-08-26 21:36:19] 20250708_CNT0211_P2 - assignment: completed [0.3s]
+  [2026-08-26 21:36:18] 20250708_CNT0211_P2 - outcome_detection: completed (segments=20) [3.3s]
+  [2026-08-26 21:36:18] 20250708_CNT0211_P2 - assignment: started
+  [2026-08-26 21:36:15] 20250708_CNT0211_P2 - reach_detection: completed (reaches=140) [0.7s]
+  [2026-08-26 21:36:15] 20250708_CNT0211_P2 - outcome_detection: started
+  [2026-08-26 21:36:14] 20250708_CNT0211_P2 - segmentation: started
 ```
 
 ### `mousereach-watch-reprocess`
@@ -1837,8 +1770,9 @@ and whether the watcher could run here. Takes no options.
 
 ```
 ==================================================
-  Watcher RESUMED — processing mode active
-  DLC and cropping will run during downtime.
+  Watcher PAUSED -- filming mode active
+  DLC processing is suspended.
+  Toggle again when filming is done.
 ==================================================
 ```
 
@@ -1863,23 +1797,13 @@ Current pipeline versions:
   Last updated: 2026-08-21T14:26:25.720879
 
 Archived video status:
-  Total archived:     2
+  Total archived:     0
   Current (up-to-date): 0
-  Outdated:           2
-    Needs re-pose:    0 (no current pose on disk)
-    Partial reprocess: 2 (seg/reach/outcomes only)
-      of which pose was already current: 0 (manifest named an old model; no GPU needed)
+  Outdated:           0
   Crystallized:       0
   Unsupported tray:   0 (E/F sessions -- not this pipeline's work)
   No manifest:        0
   Errors:             0
-
-Outdated videos:
-  20251008_CNT0302_P1                      [partial] stale: segmenter, human_review
-  20250813_CNT0301_P4                      [partial] stale: segmenter, human_review
-
-To mark these for reprocessing, run:
-  mousereach-version-check --mark
 ```
 
 ### `mousereach-aspa-import-collages`
