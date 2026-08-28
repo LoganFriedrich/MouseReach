@@ -15,16 +15,16 @@ REM --- Auto-detect the mousereach-watch executable ---
 REM Check common environment locations in order of preference
 set "WATCH_EXE="
 for %%P in (
-    "A:\envs\MouseReach\Scripts\mousereach-watch.exe"
-    "Y:\envs\MouseReach\Scripts\mousereach-watch.exe"
-    "C:\envs\MouseReach\Scripts\mousereach-watch.exe"
+    "%MOUSEREACH_ENV%\Scripts\mousereach-watch.exe"
+    "%USERPROFILE%\miniconda3\envs\mousereach\Scripts\mousereach-watch.exe"
+    "%USERPROFILE%\anaconda3\envs\mousereach\Scripts\mousereach-watch.exe"
 ) do (
     if exist %%P if not defined WATCH_EXE set "WATCH_EXE=%%~P"
 )
 
 if not defined WATCH_EXE (
     echo ERROR: Could not find mousereach-watch.exe
-    echo Searched: A:\envs, Y:\envs, C:\envs
+    echo Searched: %%MOUSEREACH_ENV%%\Scripts and the default conda env locations
     echo Run 'pip install -e .' in the MouseReach repo to install.
     pause
     exit /b 1
@@ -36,22 +36,16 @@ set "STATUS_EXE=%SCRIPTS_DIR%mousereach-watch-status.exe"
 
 echo Found MouseReach at: %SCRIPTS_DIR%
 
-REM Wait for network drives to be available (Y: is NAS)
-echo Waiting for NAS drive (Y:\)...
-:wait_nas
-if not exist "Y:\LAB_ROOT" (
-    timeout /t 5 /nobreak >nul
-    goto wait_nas
-)
-echo NAS drive found.
-
-REM Keep Y: repo on master and up to date
-if exist "Y:\LAB_ROOT\Behavior\MouseReach\.git" (
-    echo Updating NAS repo (Y:\LAB_ROOT\Behavior\MouseReach)...
-    pushd "Y:\LAB_ROOT\Behavior\MouseReach"
-    git checkout master >nul 2>&1
-    git pull >nul 2>&1 && echo   NAS repo updated. || echo   WARNING: NAS repo pull failed (check network/auth)
-    popd
+REM Wait for the shared pipeline folder (nas_root in ~/.mousereach/config.json).
+REM Set MOUSEREACH_NAS_ROOT in this script or the system environment to enable the wait.
+if defined MOUSEREACH_NAS_ROOT (
+    echo Waiting for the NAS folder %MOUSEREACH_NAS_ROOT% ...
+    :wait_nas
+    if not exist "%MOUSEREACH_NAS_ROOT%" (
+        timeout /t 5 /nobreak >nul
+        goto wait_nas
+    )
+    echo NAS folder found.
 )
 
 REM Launch the watcher daemon in its own window

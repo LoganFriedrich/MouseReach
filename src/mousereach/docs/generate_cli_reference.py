@@ -121,7 +121,7 @@ def generate(out_path: Path) -> dict:
     add("All commands exist only inside the mousereach conda environment:")
     add("")
     add("```")
-    add("conda activate C:\\LAB_ROOT\\envs\\mousereach")
+    add("conda activate mousereach    # or the full path of the env if it was created with --prefix")
     add("mousereach-<command> --help")
     add("```")
     add("")

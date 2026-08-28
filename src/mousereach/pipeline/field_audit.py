@@ -48,8 +48,19 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-ANALYZED = Path(r"Y:/LAB_ROOT/Behavior/MouseReach_Pipeline/Analyzed")
-SNAPSHOT = Path(r"C:/LAB_ROOT/_analysis_snapshot")
+def _analyzed_default():
+    try:
+        from mousereach.config import Paths
+        return Path(Paths.ANALYZED_OUTPUT) if Paths.ANALYZED_OUTPUT else None
+    except Exception:
+        return None
+
+
+ANALYZED = _analyzed_default()  # configured Analyzed tree (mousereach-setup); --root overrides
+# An external database snapshot (parquet) is OPTIONAL and belongs to whatever
+# integrator produced it; point at it with MOUSEREACH_SNAPSHOT_DIR or --snapshot.
+import os as _os
+SNAPSHOT = Path(_os.environ["MOUSEREACH_SNAPSHOT_DIR"]) if _os.environ.get("MOUSEREACH_SNAPSHOT_DIR") else None
 
 # Which stage output holds which level of thing, and how to reach the items.
 # "reach" level items end up as rows in reach_data; "segment" level items

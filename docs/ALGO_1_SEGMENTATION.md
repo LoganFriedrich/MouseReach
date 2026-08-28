@@ -59,7 +59,7 @@ Seven call sites, in three groups.
 
 7. The review-bundle stager calls `segment_video_multi` and `save_segmentation` directly (`review/staging.py:299-300`). Because it skips `process_single`, it also skips the grading of section 9 and never calls `add_validation_status`. The same function instead writes a **hand-built** segments JSON when a reviewer supplies their own boundaries (`staging.py:284-296`): that file has `segmenter_version: "manual_resegmentation"`, and no `detection` block, no `intervals`, no `sa_coverage`, no `candidates` and no `needs_human`.
 
-One more script re-runs the segmenter without using its boundaries: `scripts/backfill_segmentation_candidates.py:95` calls `segment_video_multi` purely to regenerate the candidate list for an old file, and deliberately leaves the stored boundaries alone.
+One more script re-runs the segmenter without using its boundaries: `the lab's backfill script (removed from this repo 2026-08-28; it lived at scripts/backfill_segmentation_candidates.py)` calls `segment_video_multi` purely to regenerate the candidate list for an old file, and deliberately leaves the stored boundaries alone.
 
 ### Who sets `validation_status`
 
@@ -263,7 +263,7 @@ Recomputing the parts derivable from an archived file -- reasons 3, 4 and 5; the
 
 The one thing that reads it and changes behaviour is the correction tool, `mousereach-fix-segmentation` (`review/fix_segmentation_widget.py`). It walks the deep-review queue, skips any bundle whose `needs_human` is empty (`:201`), sorts what remains so videos with the most unused candidates come first and videos with none come last (`:212-217`), shows the reasons to the reviewer (`:246-248`), and on save writes the new boundary list, copies `needs_human` into `needs_human_resolved`, and empties `needs_human` (`:451-459`). Since nothing puts videos into that queue *because of* `needs_human`, the tool only sees videos that landed there for some other reason: of 120 bundles in the deep-review queue today, 119 have a segments file and 49 of those carry a non-empty `needs_human`.
 
-`scripts/backfill_segmentation_candidates.py` adds `candidates` and `needs_human` to already-segmented files without moving any boundary. It has one defect: it reads the boundary methods from `seg.get("boundary_methods")` (`:188`), a key that exists in no segments file -- the real path is `seg["detection"]["methods"]` -- so reason 3 can never fire in a backfilled file. It has been run on 114 files under `Y:\...\Processing`.
+The lab's backfill script (removed from this repo 2026-08-28) added `candidates` and `needs_human` to already-segmented files without moving any boundary. It has one defect: it reads the boundary methods from `seg.get("boundary_methods")` (`:188`), a key that exists in no segments file -- the real path is `seg["detection"]["methods"]` -- so reason 3 can never fire in a backfilled file. It has been run on 114 files under `Y:\...\Processing`.
 
 No file under `Analyzed/` has `needs_human` or `candidates`.
 
@@ -377,7 +377,7 @@ Written by `save_segmentation` (`segmenter_robust.py:853-996`). Everything below
 - `validation_status` (`auto_approved` / `needs_review` / `validated`) and `validation_timestamp` are added by `add_validation_status` (`core/batch.py:30-39`), called only from `process_batch` and from `pipeline/core.py`. Section 2 lists the paths that never set them.
 - Human review in the napari boundary tool (`segmentation/review_widget.py:1229-1252`) overwrites `boundaries` in place and adds `n_boundaries`, `boundary_corrections` (per boundary: was it moved, from what frame, by whom, when), `validation_status: "validated"`, and `validation_record` (an audit trail with the original boundary list and the deltas). It also rewrites `video_name` to the plain video id. **It does not recompute `intervals`, `detection`, `anomalies` or `overall_confidence`, and it does not clear `needs_human`** -- after a human moves a boundary, those fields still describe the algorithm's original answer. No file in the archive has been through this path: `n_boundaries` appears in zero of 3423.
 - The correction tool (`review/fix_segmentation_widget.py:450-459`) overwrites `boundaries` and adds `algo_boundaries`, `boundary_source: "human"`, `corrected_by`, `corrected_at`, `needs_human_resolved`, and an emptied `needs_human`. It archives the original first and refuses to save if it cannot (`:439-448`). It does not recompute `intervals`, `detection`, `anomalies`, `overall_confidence` or `n_boundaries` either, and it does not re-run reach or outcome detection -- those files still describe the old cuts until the video goes back through the pipeline.
-- `candidates_backfilled_at` and `candidates_backfill_note` are added by `scripts/backfill_segmentation_candidates.py:135-142`.
+- `candidates_backfilled_at` and `candidates_backfill_note` are added by `the lab's backfill script (removed 2026-08-28)`.
 - `triage_reason` appears in the 1264 older files, from `core/triage.py`.
 - `segmenter_version_provenance` appears in the 2159 files whose version stamps were corrected.
 - **`_seg_validation.json` has no writer.** A dozen modules glob for `{video_id}_seg_validation.json` as a higher-priority alternative to `_segments.json`, and `advance_videos` (`core/advance.py:120`) does nothing unless it finds one. Nothing in the tree creates that file.
@@ -452,7 +452,7 @@ Do not trust these. All were checked against the code at 4c54e46.
 
 ## Note on the corpus figures
 
-Every count above that refers to "the corpus" or "the archive" comes from reading all 3423 `*_segments.json` files under `Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\` on 2026-08-23. 2159 carry `segmenter_version: 2.2.3` (the current segmenter); 1264 carry `2.1.0`. Figures attributed to "the current segmenter" are restricted to the 2159. Counts about queues and in-flight work come from `Y:\...\MouseReach_Pipeline\Processing\` (637 segments files, 120 deep-review bundles) on the same date.
+Every count above that refers to "the corpus" or "the archive" comes from reading all 3423 `*_segments.json` files under `<nas_root>\Analyzed\` on 2026-08-23. 2159 carry `segmenter_version: 2.2.3` (the current segmenter); 1264 carry `2.1.0`. Figures attributed to "the current segmenter" are restricted to the 2159. Counts about queues and in-flight work come from `Y:\...\MouseReach_Pipeline\Processing\` (637 segments files, 120 deep-review bundles) on the same date.
 
 ---
 
@@ -472,8 +472,8 @@ opening the code yourself.** Everything not listed survived two passes.
   - disputed because: Only 2159 of the 3423 were corrected. A full scan of Analyzed/ gives exactly ('2.2.3', has segmenter_version_provenance): 2159 and ('2.1.0', no provenance key): 1264 - the older 1264 files were never touched by the correction pass. The document's own field table says 'the 2159 corrected files under Analyzed/', so the sentence also contradicts the rest of the document. (The 637-at-2.1.3 half is cor
 - **"triage_reason appears in the 1264 older files, from core/triage.py."**
   - disputed because: segmentation/core/triage.py contains no write of a triage_reason key, and never has: grep finds the string nowhere in that module, and 'git log -S"triage_reason" -- src/mousereach/segmentation' returns no commits. triage_results (:584-700) only moves files and prints; it never opens a segments JSON for writing. The only triage_reason writer in the tree is outcomes/core/triage.py:203, which patches
-- citation could not be resolved: `scripts/backfill_segmentation_candidates.py:95 - cited as the segment_video_multi call. Line 95 is a why.append(...) string inside verdict_for(). The import is `
-- citation could not be resolved: `scripts/backfill_segmentation_candidates.py:135-142 - cited as where candidates_backfilled_at and candidates_backfill_note are added. Those keys are set at :214`
+- citation could not be resolved: `the lab's backfill script (removed from this repo 2026-08-28; it lived at scripts/backfill_segmentation_candidates.py) - cited as the segment_video_multi call. Line 95 is a why.append(...) string inside verdict_for(). The import is `
+- citation could not be resolved: `the lab's backfill script (removed 2026-08-28) - cited as where candidates_backfilled_at and candidates_backfill_note are added. Those keys are set at :214`
 - citation could not be resolved: `segmentation/core/triage.py:438-443, :445-450 and :404 - these lines exist and their text matches the claims, but they are inside classify_segments_graduated, w`
 - citation could not be resolved: `reach/v8/features.py:44-53 (minor) - cited for the 18 tracked points. Line 44 is blank; the comment is at 45 and the BODYPARTS list runs 46-54.`
 

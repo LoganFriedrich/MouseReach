@@ -3,7 +3,8 @@
 Database Syncer for MouseReach Pipeline
 
 Syncs _features.json (Step 5) outputs to the central connectome database
-at Y:/LAB_ROOT/MouseDB/connectome.db as flattened per-reach records.
+at the OPTIONAL configured central database (central_db in ~/.mousereach/config.json)
+as flattened per-reach records. No central database configured = no sync.
 
 Each reach becomes one row in the reach_data table with:
 - Session context (subject, date, tray type, run number)
@@ -40,8 +41,17 @@ except ImportError:
     HAS_SQLALCHEMY = False
 
 
-# Central database location
-DB_PATH = Path("Y:/LAB_ROOT/Databases/connectome.db")
+# Central database location: OPTIONAL, from configuration, no built-in default
+# (see mousereach.config.central_db_path for why). None = sync disabled.
+def _central_db():
+    try:
+        from mousereach.config import central_db_path
+        return central_db_path()
+    except Exception:
+        return None
+
+
+DB_PATH = _central_db()
 
 # Only sync features files (Step 5 output with joined reach+outcome data)
 FEATURES_SUFFIX = "_features.json"
@@ -49,8 +59,8 @@ FEATURES_SUFFIX = "_features.json"
 # Local sync state file (tracks what's been synced)
 SYNC_STATE_FILE = ".mousereach_sync_state.json"
 
-# CSV dump location
-CSV_DUMP_PATH = DB_PATH.parent / "database_dump" / "reach_data.csv"
+# CSV dump location (beside the central database; None when no central db)
+CSV_DUMP_PATH = (DB_PATH.parent / "database_dump" / "reach_data.csv") if DB_PATH else None
 
 # Columns extracted directly from each reach dict in features JSON.
 # NOTE: segment_num is deliberately NOT here. The extractor leaves it 0 on every
@@ -500,6 +510,9 @@ class DatabaseSyncer:
         Returns:
             (success, message) tuple
         """
+        if self.db_path is None:
+            return False, ("no central database configured (set central_db in "
+                           "~/.mousereach/config.json to enable sync)")
         try:
             with self.engine.connect() as conn:
                 # Check subjects table exists (for foreign key)
@@ -885,6 +898,8 @@ class DatabaseSyncer:
                 header = list(result.keys())
                 rows = result.fetchall()
 
+            if CSV_DUMP_PATH is None:
+                return
             CSV_DUMP_PATH.parent.mkdir(parents=True, exist_ok=True)
 
             with open(CSV_DUMP_PATH, 'w', newline='') as f:

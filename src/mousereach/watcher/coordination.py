@@ -1,7 +1,7 @@
 """
 mousereach.watcher.coordination - Cross-PC pipeline coordination via connectome.db.
 
-Uses the central connectome database (Y:/LAB_ROOT/Databases/connectome.db) as a
+Uses MouseReach's own shared database (<NAS root>/watcher_central.db) as a
 shared coordination layer. Each DLC PC syncs its pipeline state here so that:
 
 1. On startup, any PC can recover its local watcher.db from shared state
@@ -32,8 +32,22 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Central database — same as mousereach.sync.database.DB_PATH
-CONNECTOME_DB_PATH = Path("Y:/LAB_ROOT/Databases/connectome.db")
+# Cross-node coordination lives in MouseReach's OWN shared database on the NAS
+# root (watcher_central.db), never inside another tool's database. Until
+# 2026-08-28 these tables were created inside the lab database file of a
+# separate tool at a hardcoded lab path -- the tool owned tables in a database
+# it did not own, and could not run anywhere else.
+def _coordination_db_path():
+    try:
+        from mousereach.config import Paths
+        if Paths.NAS_ROOT:
+            return Path(Paths.NAS_ROOT) / "watcher_central.db"
+    except Exception:
+        pass
+    return None
+
+
+CONNECTOME_DB_PATH = None  # kept as a name for old imports; resolved lazily
 
 # State ordering for "only advance, never regress" logic
 VIDEO_STATE_ORDER = [
@@ -199,7 +213,7 @@ class PipelineCoordinator:
     """
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or CONNECTOME_DB_PATH
+        self.db_path = db_path or _coordination_db_path()
         self._engine = None
         self._tables_ensured = False
 
@@ -209,8 +223,9 @@ class PipelineCoordinator:
         if self._engine is None:
             if not HAS_SQLALCHEMY:
                 raise ImportError("sqlalchemy required for pipeline coordination")
-            if not self.db_path.exists():
-                raise FileNotFoundError(f"Connectome DB not found: {self.db_path}")
+            if self.db_path is None:
+                raise FileNotFoundError("coordination database: NAS root not configured")
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)  # our own file; create it
             self._engine = create_engine(f"sqlite:///{self.db_path}")
         return self._engine
 
@@ -558,8 +573,18 @@ class PipelineCoordinator:
         return stats
 
     def _get_mousedb_video_names(self) -> set:
-        """Query DISTINCT video_name from reach_data table."""
-        with self.engine.connect() as conn:
+        """DISTINCT video_name from an OPTIONAL external central database's
+        reach_data table (mousereach.config.central_db_path). Empty set when
+        no such database is configured -- recovery then relies on disk alone."""
+        try:
+            from mousereach.config import central_db_path
+            cdb = central_db_path()
+        except Exception:
+            cdb = None
+        if cdb is None or not Path(cdb).exists():
+            return set()
+        ext = create_engine(f"sqlite:///{cdb}")
+        with ext.connect() as conn:
             # Check if reach_data table exists
             result = conn.execute(text(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='reach_data'"

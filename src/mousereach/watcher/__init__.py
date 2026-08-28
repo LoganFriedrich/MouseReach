@@ -41,7 +41,7 @@ DLC PC (PROCESSING_ROOT on local drive, e.g. A:\\MouseReach_Pipeline):
     ├── watcher_working/       ← temporary crop workspace
     └── watcher.db             ← state database
 
-Processing Server (PROCESSING_ROOT on local drive, e.g. Y:\\...\\MouseReach_Pipeline):
+Processing Server (PROCESSING_ROOT on local drive, e.g. <drive>:\\...\\MouseReach_Pipeline):
 
     <PROCESSING_ROOT>/
     ├── Processing/            ← post-DLC analysis (segments, reaches, outcomes)

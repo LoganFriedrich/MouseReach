@@ -138,7 +138,7 @@ def check_nas_root(nas_root, origin: str):
             "back to <nas_drive>\\! DLC Output (the pre-2026 layout).\n"
             "      Set 'nas_root' in ~/.mousereach/config.json to the pipeline root, "
             "e.g.\n"
-            '        "nas_root": "Y:\\\\LAB_ROOT\\\\Behavior\\\\MouseReach_Pipeline"\n'
+            '        "nas_root": "<NAS>\\\\MouseReach_Pipeline"\n'
             "      or re-run mousereach-setup, which fills it in from this machine's "
             "lab profile."
         )

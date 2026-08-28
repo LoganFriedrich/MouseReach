@@ -72,7 +72,7 @@ class ReprocessingScanner:
         r"""
         Args:
             db: WatcherDB instance
-            nas_root: NAS root path (e.g. Y:\LAB_ROOT\Behavior\MouseReach_Pipeline)
+            nas_root: NAS root path (e.g. <NAS>\MouseReach_Pipeline)
         """
         self.db = db
         self.nas_root = Path(nas_root)

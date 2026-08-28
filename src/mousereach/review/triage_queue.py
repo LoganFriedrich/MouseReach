@@ -477,7 +477,9 @@ def find_default_algo_dir() -> Optional[Path]:
         p = Path(env)
         if p.is_dir():
             return p
-    cr = os.environ.get("CONNECTOME_ROOT", r"Y:\LAB_ROOT")
+    cr = os.environ.get("CONNECTOME_ROOT")
+    if not cr:
+        return None
     valid = Path(cr) / "Behavior" / "MouseReach_Improvement" / "validation_runs"
     if not valid.is_dir():
         return None
@@ -502,7 +504,9 @@ def find_default_corpus_root() -> Optional[Path]:
         p = Path(env)
         if p.is_dir():
             return p
-    cr = os.environ.get("CONNECTOME_ROOT", r"Y:\LAB_ROOT")
+    cr = os.environ.get("CONNECTOME_ROOT")
+    if not cr:
+        return None
     cand = (Path(cr) / "Behavior" / "MouseReach_Pipeline"
             / "Processing" / "Review" / "triage")
     return cand if cand.is_dir() else None

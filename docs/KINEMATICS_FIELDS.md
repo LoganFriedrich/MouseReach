@@ -10,7 +10,7 @@ Verified against: b65fcf0 (2026-08-23)
 
 Three sources, always named where used.
 
-* **Processing corpus** — the 1,146 videos in `C:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing` that have a `_features.json`: 22,920 segments, 199,690 reaches. 947 of those videos were produced by the current detectors; 199 by older ones.
+* **Processing corpus** — the 1,146 videos in `<nas_root>\Processing` that have a `_features.json`: 22,920 segments, 199,690 reaches. 947 of those videos were produced by the current detectors; 199 by older ones.
 * **Analyzed archive** — a 150-file random sample of the 2,610 `_features.json` files under `Y:\...\MouseReach_Pipeline\Analyzed`: 3,000 segments, 21,953 reaches.
 * **`docs/FIELD_AUDIT.md`** — the repository's own generated audit over 1,377 videos. Its database column comes from a parquet snapshot taken 2026-08-20 12:20, so it cannot show anything that changed after that.
 

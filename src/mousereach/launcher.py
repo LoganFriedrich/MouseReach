@@ -365,34 +365,6 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
-    # Load Tracking Sheets (import the lab's spreadsheets from a button)
-    tprint("  Tracking Sheets...", end=" ")
-    try:
-        from mousereach.sheets_widget import TrackingSheetsWidget
-        sheets_widget = TrackingSheetsWidget(viewer)
-        dw = viewer.window.add_dock_widget(sheets_widget, name="Tracking Sheets", area="right")
-        widgets_loaded.append(("sheets", sheets_widget))
-        dock_widgets.append(dw)
-        print("OK")
-    except ImportError as e:
-        print(f"SKIP ({e})")
-    except Exception as e:
-        print(f"ERROR ({e})")
-
-    # Load Where Is My Data (per-cohort status + the current export folder)
-    tprint("  Where Is My Data...", end=" ")
-    try:
-        from mousereach.data_status_widget import DataStatusWidget
-        ds_widget = DataStatusWidget(viewer)
-        dw = viewer.window.add_dock_widget(ds_widget, name="Where Is My Data", area="right")
-        widgets_loaded.append(("data_status", ds_widget))
-        dock_widgets.append(dw)
-        print("OK")
-    except ImportError as e:
-        print(f"SKIP ({e})")
-    except Exception as e:
-        print(f"ERROR ({e})")
-
     # Load Quarantine (fix + release held-back files)
     tprint("  Quarantine...", end=" ")
     try:

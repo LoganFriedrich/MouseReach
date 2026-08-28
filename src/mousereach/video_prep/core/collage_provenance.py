@@ -376,7 +376,7 @@ def retire_completed_collages(source_dir, downstream: Mapping[str, str],
     still processing, or held in a review queue, keep the collage in the active
     intake folder. Retired collages (and a completion-stamped crop manifest) move
     to ``dest_dir`` (default ``Analyzed/Multi-Animal``), which the backup watcher
-    already mirrors to the BACKUP_NAS -- so "ultimate storage + copied to the BACKUP_NAS"
+    already mirrors to the backup NAS -- so "ultimate storage + copied to the backup"
     happens without a special copy. NEVER deletes; a move is fully reversible.
 
     ``downstream`` must be a fresh stem->furthest-stage index. ``complete_stems``

@@ -547,7 +547,7 @@ mousereach-export -i Processing/ -o results.xlsx
 ## File Organization (v2.3+ Single-Folder Architecture)
 
 ```
-Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\
+<nas_root>\
 ├── Raw_Videos\
 │   └── Multi-Animal\           # Original collages (archive)
 │

@@ -206,7 +206,7 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
             out[stem]["offspring_expected"] = roll["n_expected"]
             out[stem]["offspring_complete"] = roll.get("n_complete", 0)
             # all_complete == every offspring reached the final Analyzed output ->
-            # the collage is retirement-eligible (move to cold storage + BACKUP_NAS).
+            # the collage is retirement-eligible (move to cold storage + the backup NAS).
             out[stem]["offspring_all_complete"] = roll.get("all_complete", False)
             # A collage whose children are all downstream is done with cropping --
             # don't flag it as needing attention.

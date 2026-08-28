@@ -170,8 +170,6 @@ class BaseOrchestrator:
 
                 # Periodically pick up freshly-saved reviews / version staleness.
                 self._maybe_review_reprocess_scan()
-                self._maybe_snapshot_refresh()
-                self._maybe_bench_disagreement_scan()
 
                 # Phase A: Scan for new work
                 self._scan_phase()
@@ -198,8 +196,6 @@ class BaseOrchestrator:
         logger.info(f"{self.__class__.__name__} running once")
 
         self._maybe_review_reprocess_scan(force=True)
-        self._maybe_snapshot_refresh(force=True)
-        self._maybe_bench_disagreement_scan(force=True)
         self._scan_phase()
 
         processed = 0
@@ -247,72 +243,6 @@ class BaseOrchestrator:
                     f"-- watcher will reprocess them")
         except Exception as e:
             logger.warning(f"Reprocess scan skipped: {e}")
-
-    def _maybe_snapshot_refresh(self, force: bool = False):
-        """Periodically refresh the local analysis snapshot (and pull current
-        cohort sheets into connectome.db first) FROM the watcher's own loop.
-
-        The standalone mousedb-refresh-snapshot task refuses to touch the db
-        while a watcher is running -- the right call for an outside process,
-        but it means a continuously-running watcher starves the snapshot into
-        permanent staleness. From inside this single-threaded loop the race
-        cannot happen: the loop blocks on the subprocess, so THIS watcher is
-        provably not writing while the refresh reads. Passing --force tells
-        the refresher to skip its process check for exactly that reason."""
-        if not self.handles_reprocessing:
-            return
-        interval = getattr(self.config, 'snapshot_refresh_interval_seconds', 3600)
-        now = time.time()
-        if not force and (now - getattr(self, '_last_snapshot_refresh', 0.0)) < interval:
-            return
-        self._last_snapshot_refresh = now
-        try:
-            import subprocess
-            from mousereach.watcher.bench_disagreement import DEFAULT_MOUSEDB_PYTHON
-            if not DEFAULT_MOUSEDB_PYTHON.exists():
-                return  # no MouseDB env on this node -- nothing to refresh with
-            r = subprocess.run(
-                [str(DEFAULT_MOUSEDB_PYTHON), "-m",
-                 "mousedb.exporters.refresh_snapshot", "--import-sheets", "--force"],
-                capture_output=True, text=True, timeout=2700,
-            )
-            if r.returncode == 0:
-                tail = (r.stdout or "").strip().splitlines()[-1:]
-                logger.info("Snapshot refresh: %s", tail[0] if tail else "done")
-            else:
-                logger.warning("Snapshot refresh exited %d: %s",
-                               r.returncode, (r.stderr or "").strip()[-500:])
-        except Exception as e:
-            logger.warning(f"Snapshot refresh skipped: {e}")
-
-    def _maybe_bench_disagreement_scan(self, force: bool = False):
-        """Periodically route archived videos to triage when the bench sheet says
-        'missed' but the pipeline says the pellet moved and no human has ever
-        reviewed that segment (outcome_source still 'algo'). The comparison runs
-        in the MouseDB env against the analysis snapshot -- see
-        bench_disagreement.py's module docstring for the full design. Same role
-        gate, interval gate, and never-break-the-loop guard as the reprocess scan."""
-        if not self.handles_reprocessing:
-            return
-
-        interval = getattr(self.config, 'bench_disagreement_scan_interval_seconds', 3600)
-        now = time.time()
-        if not force and (now - getattr(self, '_last_bench_disagreement_scan', 0.0)) < interval:
-            return
-        self._last_bench_disagreement_scan = now
-        try:
-            from mousereach.config import Paths
-            nas_root = Paths.NAS_ROOT
-            if not nas_root:
-                return
-            from mousereach.watcher.bench_disagreement import BenchDisagreementScanner
-            summary = BenchDisagreementScanner(self.db, nas_root).scan(route=True)
-            if summary.get('routed'):
-                logger.info(
-                    f"Bench disagreement scan: {summary['routed']} videos "
-                    f"({summary['flagged_segments']} segments) routed to triage")
-        except Exception as e:
-            logger.warning(f"Bench disagreement scan skipped: {e}")
 
     # =========================================================================
     # ABSTRACT METHODS (subclasses must implement)
@@ -1555,7 +1485,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         # Periodic collage retirement: move any collage whose offspring have ALL
         # made it through the pipeline (version-current + review-clean) to ultimate
-        # storage (Analyzed/Multi-Animal, BACKUP_NAS-synced). Slow cadence.
+        # storage (Analyzed/Multi-Animal, backup-synced). Slow cadence.
         if self._scan_cycle_count % self._reprocess_scan_interval == 0:
             self._retire_cycle_count += 1
             if self._retire_cycle_count % self._retire_scan_every == 0:
@@ -1578,7 +1508,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             if summ.get("retired"):
                 logger.info(
                     f"Collage retirement: moved {summ['retired']} fully-complete "
-                    f"collage(s) to {summ['dest']} (BACKUP_NAS-synced by the backup watcher)")
+                    f"collage(s) to {summ['dest']} (mirrored by the backup watcher)")
         except Exception as e:
             logger.warning(f"Collage retirement scan failed: {e}")
 

@@ -302,7 +302,7 @@ from collections import defaultdict
 
 
 class ManualScoreLoader:
-    """Load manual pellet scores from Excel files (SharePoint format)."""
+    """Load manual pellet scores from the lab's tracking workbooks (Excel)."""
 
     def __init__(self, excel_path: Path, sheet_name: str = '3b_Manual_Tray'):
         """
@@ -323,7 +323,7 @@ class ManualScoreLoader:
         """
         Get manual scores for a video.
 
-        Manual score encoding (from SharePoint Excel):
+        Manual score encoding (from the tracking workbooks):
             2 = retrieved
             1 = displaced
             0 = untouched

@@ -60,7 +60,7 @@ class MultiProposerConfig:
 
     Defaults are LOO-validated on the 47-video corpus and stable across
     180 sweep combinations -- see
-    Y:\\LAB_ROOT\\Behavior\\MouseReach_Improvement\\validation_runs\\DLC_2026_03_27\\exploration\\multi_proposer\\FINAL_DESIGN.md
+    <validation runs>/DLC_.../
     """
     # SA proposer params (shared across all 4 corners)
     sa_vel_threshold: float = 0.8

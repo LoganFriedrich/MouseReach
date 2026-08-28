@@ -4,7 +4,7 @@ Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mouser
 
 Verified against: b65fcf0 (2026-08-23)
 
-Counts in this document were measured on the live working folder `C:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing` (947 reach files stamped `8.1.0`, 179,220 reaches) unless another source is named.
+Counts in this document were measured on the live working folder `<nas_root>\Processing` (947 reach files stamped `8.1.0`, 179,220 reaches) unless another source is named.
 
 ---
 

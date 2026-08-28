@@ -327,7 +327,7 @@ def main():
                        help="Import all cohorts found under Analyzed/")
 
     parser.add_argument("--db-path", metavar="PATH",
-                        help="Override ASPA.db path (default: ASPA_DB_PATH env or Y:/LAB_ROOT/Behavior/MouseReach_Pipeline/ASPA.db)")
+                        help="Override ASPA.db path (default: ASPA_DB_PATH env or <configured NAS root>/ASPA.db)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Parse xlsx files but do not write to database")
 

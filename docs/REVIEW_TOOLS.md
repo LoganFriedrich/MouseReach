@@ -160,7 +160,7 @@ steps.
 Prompt"), activate the mousereach environment, and launch:
 
 ```
-conda activate C:\LAB_ROOT\envs\mousereach
+conda activate <mousereach env>
 mousereach
 ```
 
@@ -171,7 +171,7 @@ command only exists AFTER activation -- a plain PowerShell/cmd/VS Code
 terminal without the activation says "not recognized". (Fallbacks if conda is
 unavailable: the **MouseReach** desktop shortcut on the processing server, or
 the executable's full path,
-`C:\LAB_ROOT\envs\mousereach\Scripts\mousereach.exe`, which works from any
+`<mousereach env>\Scripts\mousereach.exe`, which works from any
 terminal.)
 
 When napari opens, find the **Review Queues** tab in the right-hand dock. It
@@ -596,7 +596,7 @@ Stated here so nobody rediscovers it the hard way:
 | `nas_root` | `~/.mousereach/config.json` | Root of both queues. Unset falls back to the legacy `<NAS drive>/! DLC Output` layout rather than to `None` (`config.py:100-106`); queues are `None` only when the NAS drive is unset too. |
 | `MOUSEREACH_ROUTINE_ROOT` | environment | Overrides the corpus root the clearing tool's worklist scans (`triage_queue.py:490`). |
 | `MOUSEREACH_TRIAGE_ALGO_DIR` | environment | Overrides the flat algorithm directory fallback (`triage_queue.py:465`). |
-| `CONNECTOME_ROOT` | environment | Base for the two lookups above; defaults to `Y:\LAB_ROOT`. |
+| `CONNECTOME_ROOT` | environment | Base for the two lookups above; no default -- unset means both lookups are skipped (since 2026-08-28). |
 | `--pending-dir` | `mousereach-review-tool` | Which queue folder to review. Defaults to the triage queue (`causal_review_widget.py:3123`). |
 | `--all-segments` | `mousereach-review-tool` | Walk every segment instead of only triaged ones (`:3126`). |
 | `--worklist FILE` | `mousereach-review-tool` | CSV or JSON of `vid` + `segment_num`. Only those videos are offered and only those segments walked — and unlike the normal pool, already-reviewed and ground-truthed videos are included (`:2709-2718`). |

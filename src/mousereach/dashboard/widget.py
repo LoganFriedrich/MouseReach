@@ -800,7 +800,7 @@ class PipelineDashboard(QWidget):
             "Move every raw collage whose single-mouse videos have ALL made it "
             "through the entire pipeline (in the final Analyzed output, processed "
             "with the currently-shipped versions, and with no review pending) to "
-            "ultimate storage (Analyzed/Multi-Animal, backed up to the BACKUP_NAS). "
+            "ultimate storage (Analyzed/Multi-Animal, backed up to the backup NAS). "
             "Collages with any child still processing or held in review stay put. "
             "Nothing is deleted; the move is reversible."
         )
@@ -1058,7 +1058,7 @@ class PipelineDashboard(QWidget):
             "Retire completed collages",
             f"{n} collage(s) have every single-mouse child fully through the "
             f"pipeline.\n\nMove them (plus a completion manifest) to:\n{dest}\n\n"
-            f"The BACKUP_NAS backup picks them up automatically. {kept} cropped "
+            f"The backup watcher picks them up automatically. {kept} cropped "
             f"collage(s) with children still in flight will stay put. Nothing is "
             f"deleted -- the move is reversible.\n\nProceed?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -1092,7 +1092,7 @@ class PipelineDashboard(QWidget):
             show_error(f"Retirement failed: {res['error']}")
             return
         show_info(f"Retired {res.get('retired', 0)} collage(s) to {res.get('dest', '')}. "
-                  f"The BACKUP_NAS backup will copy them on its next cycle.")
+                  f"The backup watcher will copy them on its next cycle.")
         self._refresh_data()
 
     def _import_archive(self):
@@ -1226,7 +1226,7 @@ class PipelineDashboard(QWidget):
                     _tip = ("Every single-mouse child of this collage has made it "
                             "through the entire pipeline into the final Analyzed "
                             "output. The raw collage is ready to retire to ultimate "
-                            "storage (and the BACKUP_NAS). Its file still sits in intake.")
+                            "storage (and the backup NAS). Its file still sits in intake.")
                     _cat = "done"
                 elif _crop == "cropped":
                     _label = f"Cropped ({_done}/{_m} done, {_n}/{_m} in pipeline)"

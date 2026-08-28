@@ -610,10 +610,25 @@ def load_and_apply_review(
 # bundle), so we index them by stem across the known roots.
 # ---------------------------------------------------------------------------
 
-GT_INDEX_ROOTS = [
-    Path(r"Y:\LAB_ROOT\Behavior\MouseReach_Improvement"),
-    Path(r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing"),
-]
+def _gt_index_roots():
+    """Where ground-truth files may live: the configured Processing tree, plus
+    any extra roots in MOUSEREACH_GT_ROOTS (path-separator-joined). No
+    lab-specific default -- an unconfigured install indexes nothing."""
+    import os
+    roots = []
+    try:
+        from mousereach.config import Paths
+        if Paths.PROCESSING:
+            roots.append(Path(Paths.PROCESSING))
+    except Exception:
+        pass
+    for extra in (os.environ.get("MOUSEREACH_GT_ROOTS") or "").split(os.pathsep):
+        if extra.strip():
+            roots.append(Path(extra.strip()))
+    return roots
+
+
+GT_INDEX_ROOTS = _gt_index_roots()
 
 _GT_INDEX_CACHE: Optional[Dict[str, Path]] = None
 

@@ -1,7 +1,7 @@
 """
 mousereach.aspa.database - ASPA.db schema and connection helpers.
 
-Database lives at Y:/LAB_ROOT/Behavior/MouseReach_Pipeline/ASPA.db
+Database lives at <NAS root>/ASPA.db (NAS root from mousereach-setup)
 by default, overridable with ASPA_DB_PATH environment variable.
 """
 
@@ -14,7 +14,16 @@ from pathlib import Path
 # Path resolution
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DB = Path("Y:/LAB_ROOT/Behavior/MouseReach_Pipeline/ASPA.db")
+def _default_db():
+    """ASPA.db sits at the configured NAS root (mousereach-setup); no lab default."""
+    try:
+        from mousereach.config import Paths
+        return Path(Paths.NAS_ROOT) / "ASPA.db" if Paths.NAS_ROOT else None
+    except Exception:
+        return None
+
+
+_DEFAULT_DB = _default_db()
 
 
 def get_db_path() -> Path:
@@ -22,7 +31,7 @@ def get_db_path() -> Path:
 
     Priority:
         1. ASPA_DB_PATH environment variable
-        2. Default: Y:/LAB_ROOT/Behavior/MouseReach_Pipeline/ASPA.db
+        2. Default: <NAS root>/ASPA.db (configured NAS root; none = not available)
     """
     env_path = os.environ.get("ASPA_DB_PATH")
     if env_path:

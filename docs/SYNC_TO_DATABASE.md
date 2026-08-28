@@ -8,7 +8,7 @@ Verified against: b65fcf0 (2026-08-23)
 
 ## What this subsystem is
 
-One thing is written: a table called `reach_data`, in the SQLite database file at `Y:\LAB_ROOT\Databases\connectome.db`. One row per reach. Alongside it, a flat comma-separated file — a full dump of that table — at `Y:\LAB_ROOT\Databases\database_dump\reach_data.csv`.
+One thing is written: a table called `reach_data`, in an OPTIONAL external SQLite database whose location is configuration -- `central_db` in `~/.mousereach/config.json` or the environment variable `MOUSEREACH_CENTRAL_DB` (since 2026-08-28; there is no built-in default, and with no value set the sync does nothing and says so). Why optional: MouseReach must produce complete, usable output standing alone; pushing rows into a central database is an integration a lab may or may not run. One row per reach. Alongside it, a flat comma-separated file — a full dump of that table — as `database_dump/reach_data.csv` in the folder of the configured database.
 
 The input is always one file: `{video}_features.json`, the last thing the pipeline writes for a video. Nothing else is ever read into the table. The reach detector's own output, the outcome detector's own output, the reach-assignment file — none of them are read here. Whatever did not make it into the features file cannot reach the database through this path.
 
@@ -287,7 +287,7 @@ Measured over all 361,284 rows of the table, split by which kinematics extractor
 
 ## The flat CSV dump
 
-Path: `Y:\LAB_ROOT\Databases\database_dump\reach_data.csv`.
+Path: `<central_db's folder>/database_dump/reach_data.csv` -- beside the configured central database; not written when no central database is configured.
 
 `CSV_DUMP_PATH` is derived from the module-level `DB_PATH` (`database.py:53`), *not* from the syncer's `db_path`. Point a `DatabaseSyncer` at a different database and it will still overwrite this one shared CSV.
 
@@ -313,9 +313,9 @@ It will not regenerate through the normal path while the `segment_num` defect st
 
 | Setting | Where | Effect |
 |---|---|---|
-| `processing_root` | `~/.mousereach/config.json`, or the environment variable `MouseReach_PROCESSING_ROOT` (`config.py:56`) | the folder scanned and watched is `<processing_root>/Processing` (`config.py:152`). On this machine `C:\LAB_ROOT\Behavior\MouseReach_Pipeline`. If unset, the syncer's `processing_path` is `None`, the batch scan finds nothing, and the sync-state file is neither read nor written — but the per-video path still works, because it is handed an explicit file. |
-| database location | constructor argument `db_path` only | no configuration key, no environment variable. Defaults to the hard-coded `Y:\LAB_ROOT\Databases\connectome.db`. |
-| CSV location | none | hard-coded, and not affected by `db_path`. |
+| `processing_root` | `~/.mousereach/config.json`, or the environment variable `MouseReach_PROCESSING_ROOT` (`config.py:56`) | the folder scanned and watched is `<processing_root>/Processing` (`config.py:152`). On this machine `<nas_root>`. If unset, the syncer's `processing_path` is `None`, the batch scan finds nothing, and the sync-state file is neither read nor written — but the per-video path still works, because it is handed an explicit file. |
+| database location | `central_db` in `~/.mousereach/config.json`, or `MOUSEREACH_CENTRAL_DB`, or the constructor argument `db_path` | no default. Unset = `check_database()` returns (False, "no central database configured ...") and every sync command reports that and exits cleanly. |
+| CSV location | none | derived from the configured central database's folder; not affected by a constructor-passed `db_path`. |
 | `dry_run` | constructor argument, `mousereach-sync --dry-run` | builds and counts rows, inserts nothing, does not save sync state (`database.py:355-356`). Can still create the table and add columns. |
 | `force` | `mousereach-sync --force` | ignores the file-hash check and re-syncs every eligible file. |
 | `debounce_seconds` | `mousereach-sync-watch --debounce` | **no effect** — the command crashes before reaching the watcher. `PipelineWatcher` accepts the value if driven from Python, but `start_watcher` never passes it on. |
@@ -349,7 +349,7 @@ Collected in one place, because these are the reasons a write can produce nothin
 
 It is dated 2026-01-26 and has not kept up. Do not rely on it:
 
-- It puts the database at `PROCESSING_ROOT/../MouseDB/connectome.db` (line 24). It is at `Y:\LAB_ROOT\Databases\connectome.db`.
+- It puts the database at `PROCESSING_ROOT/../MouseDB/connectome.db` (line 24). The location is the `central_db` configuration value, nothing else.
 - It documents flags `--status`, `--export` and `--watch` on `mousereach-sync` (lines 32-34). None exist. The real flags are `--force`, `--dry-run` and `--verbose`; status and watching are separate commands.
 - It says five columns are always null (line 26). Those five really are always null, but the list is short — see the section above.
 - It says "Sync is atomic per video: DELETE all rows for video_name, then INSERT new rows in a transaction" (line 23). That description of the mechanism is accurate, but at this commit the transaction always rolls back.

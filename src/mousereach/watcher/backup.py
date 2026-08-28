@@ -1,7 +1,7 @@
 """
 mousereach.watcher.backup - Y: to X: backup synchronization.
 
-Monitors Y: pipeline directories for changes and syncs to X: (BACKUP_NAS NAS)
+Monitors the pipeline directories for changes and syncs them to the backup NAS
 via robocopy. Runs on the processing server where Y: is local storage.
 
 Usage:
@@ -36,8 +36,8 @@ class BackupWatcher:
                  stability_seconds=300, sync_dirs=None):
         """
         Args:
-            source_root: Root directory to sync from (e.g. Y:\LAB_ROOT)
-            backup_root: Root directory to sync to (e.g. X:\LAB_ROOT_Backup)
+            source_root: Root directory to sync from (e.g. the NAS root)
+            backup_root: Root directory to sync to (e.g. <backup root>)
             poll_interval: Seconds between sync checks (default 10 min)
             stability_seconds: Wait this long after last change before syncing (default 5 min)
             sync_dirs: List of subdirectories to sync (relative to source_root)
@@ -174,7 +174,7 @@ def main():
     """CLI entry point for mousereach-backup."""
     if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
         print("usage: mousereach-backup [--once] [--dry-run] [--verbose]\n\n"
-              "Backup watcher: mirrors Y: pipeline data to the X: BACKUP_NAS NAS "
+              "Backup watcher: mirrors pipeline data to the backup NAS "
               "via robocopy (add-only).\n\n"
               "  --once      One sync cycle, then exit (default: run as a daemon).\n"
               "  --dry-run   Show what would be synced without copying.\n"
@@ -206,8 +206,8 @@ def main():
         print("Add to ~/.mousereach/config.json:")
         print('  "backup": {')
         print('    "enabled": true,')
-        print('    "source_root": "Y:\\\\LAB_ROOT",')
-        print('    "backup_root": "X:\\\\LAB_ROOT_Backup"')
+        print('    "source_root": "<NAS root>",')
+        print('    "backup_root": "<backup root>"')
         print('  }')
         sys.exit(1)
 

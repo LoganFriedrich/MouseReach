@@ -44,8 +44,8 @@ if /i "%HOSTNAME%"=="EXAMPLE-HOST-3" (
     echo Role:    Vid^&DLC2PC ^(filming + DLC^)
 )
 if "%MACHINE_ROLE%"=="Unknown" (
-    REM Check for Processing Server signature: Y local + G present
-    if exist "G:\" if exist "Y:\LAB_ROOT" (
+    REM Processing Server: the machine that hosts the shared pipeline folder locally
+    if defined MOUSEREACH_NAS_ROOT if exist "%MOUSEREACH_NAS_ROOT%" (
         set "MACHINE_ROLE=Processing Server"
         set "NEEDS_WATCHER=1"
         set "NEEDS_TOGGLE=0"

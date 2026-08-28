@@ -106,10 +106,9 @@ mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated
 # Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue
 mousereach-review-tool = "mousereach.review.causal_review_widget:main"
 
-# Tracking Sheets tab on its own (import / status of the lab's spreadsheets)
-mousereach-sheets = "mousereach.sheets_widget:main"
-# Where Is My Data tab on its own (per-cohort status + current export folder)
-mousereach-data-status = "mousereach.data_status_widget:main"
+# Put a video into a review queue with a reason (generic; the way an external
+# integrator such as a database tool asks MouseReach to hold a video for a person)
+mousereach-route-to-queue = "mousereach.watcher.route_cli:main"
 
 # Provenance checks -- what the pipeline actually produces, and whether the
 # documents still describe the code.

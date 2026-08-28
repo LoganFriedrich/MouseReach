@@ -96,7 +96,7 @@ class Paths:
     # --- NAS/Archive Paths (derived from MouseReach_NAS_DRIVE) ---
     # These will be None if NAS_DRIVE is not configured
     # nas_root config override allows pointing at a different folder structure
-    # (e.g. Y:\LAB_ROOT\Behavior\MouseReach_Pipeline instead of X:\! DLC Output)
+    # (e.g. <NAS>\MouseReach_Pipeline instead of the DLC output share)
     _nas_root = _config.get("nas_root")
     NAS_ROOT = Path(_nas_root) if _nas_root else (NAS_DRIVE / "! DLC Output" if NAS_DRIVE else None)
     # Whether NAS_ROOT was declared or inherited from the legacy fallback above.
@@ -734,3 +734,20 @@ class WatcherConfig:
 
 if __name__ == "__main__":
     print_config()
+
+
+def central_db_path():
+    """Path of an OPTIONAL external (integrator) database, or None.
+
+    MouseReach produces complete results on its own: per-video JSON under
+    Analyzed plus its own CSV exports. Pushing reach rows into a central
+    database is an INTEGRATION a lab may or may not run, so its location is
+    configuration -- ``central_db`` in ~/.mousereach/config.json or the
+    ``MOUSEREACH_CENTRAL_DB`` environment variable -- and there is NO built-in
+    default. Unset means: no sync, no error, one log line saying so. (Until
+    2026-08-28 a lab-specific absolute path was hardcoded here, which made
+    the tool unusable elsewhere and tied it to a database it does not own.)
+    """
+    import os
+    raw = os.environ.get("MOUSEREACH_CENTRAL_DB") or _load_config().get("central_db")
+    return Path(raw) if raw else None

@@ -32,7 +32,7 @@ C: editable install is intentionally frozen at the pre-4.0 versions until the
 coordinated activation flip, invoke with ``PYTHONPATH`` pinned to the Y: master
 ``src`` so ``import mousereach`` resolves to the shipped-best tree:
 
-    $env:PYTHONPATH = "Y:\\LAB_ROOT\\Behavior\\MouseReach\\src"
+    $env:PYTHONPATH = "<path to the shipped-best MouseReach src>"
     <mousereach-env-python> -m mousereach.review.staging --cnt CNT01 --limit 3
 """
 from __future__ import annotations
@@ -47,19 +47,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Canonical roots (Y: NAS). Everything read/written lives under here; never C:.
-DEFAULT_CONNECTOME_ROOT = Path(
-    r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Analyzed\Connectome"
-)
-# Derive from the config constant so it follows the pipe layout (now
-# Processing/Review/triage) instead of drifting on a folder rename.
+# Roots come from the configured pipeline layout (mousereach-setup); there is
+# no lab-specific default. --root / --pending-dir override them explicitly.
 try:
     from mousereach.config import Paths as _Paths
-    DEFAULT_PENDING_DIR = _Paths.TRIAGE_REVIEW or Path(
-        r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing\Review\triage")
+    DEFAULT_CONNECTOME_ROOT = _Paths.ANALYZED_OUTPUT
+    DEFAULT_PENDING_DIR = _Paths.TRIAGE_REVIEW
 except Exception:
-    DEFAULT_PENDING_DIR = Path(
-        r"Y:\LAB_ROOT\Behavior\MouseReach_Pipeline\Processing\Review\triage")
+    DEFAULT_CONNECTOME_ROOT = None
+    DEFAULT_PENDING_DIR = None
 DLC4_SUBDIR = "DLC Model 4"
 # 4.0 pose scorer signature (ResNet101, shuffle 3, snapshot 100000).
 DLC4_SCORER = "DLC_resnet101_MPSAOct27shuffle3_100000"
