@@ -106,6 +106,9 @@ mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated
 # Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue
 mousereach-review-tool = "mousereach.review.causal_review_widget:main"
 
+# Tracking Sheets tab on its own (import / status of the lab's spreadsheets)
+mousereach-sheets = "mousereach.sheets_widget:main"
+
 # Provenance checks -- what the pipeline actually produces, and whether the
 # documents still describe the code.
 mousereach-field-audit = "mousereach.pipeline.field_audit:main"
