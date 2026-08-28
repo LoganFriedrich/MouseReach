@@ -525,6 +525,65 @@ class DatabaseSyncer:
         except Exception:
             return []
 
+    AUTO_CREATED_MARK = "auto-created from video"
+
+    def ensure_subject_exists(self, subject_id: str, video_name: str) -> bool:
+        """Make sure ``subject_id`` (and its cohort and project) exist, creating
+        them from the video name if they do not. Returns True if the subject
+        exists afterwards.
+
+        WHY THE PIPELINE CREATES ANIMALS
+        --------------------------------
+        In the lab, videos are recorded and shipped every day; the tracking
+        spreadsheet that names the animals is filled in "eventually" -- days
+        or weeks later. Until 2026-08-28 this sync refused any video whose
+        animal the spreadsheet import had not yet created, and dropped the
+        results SILENTLY (a debug-level "subject not in DB"). One failing
+        sheet import made an entire cohort's processed data vanish for weeks
+        (CNT_05, 179 sessions), and every ASPA session ever processed had
+        nowhere to land. The machine data must never wait on the hand data.
+        The video filename already says who the animal is, so the animal is
+        created from its first mention here, and the sheet import ENRICHES
+        the record later (weights, surgery, real start date). Rows created
+        this way carry ``notes`` starting with AUTO_CREATED_MARK so the sheet
+        import knows it may overwrite the placeholder cohort start date.
+        """
+        try:
+            parts = subject_id.split('_')
+            if len(parts) != 3:
+                return False
+            project_code = parts[0]
+            cohort_id = "%s_%s" % (parts[0], parts[1])
+            meta = parse_video_metadata(video_name)
+            # cohorts.start_date is NOT NULL: the earliest fact we have is
+            # this video's date; the sheet import replaces it with the real one.
+            start_date = meta.get('session_date') or datetime.now().date().isoformat()
+            note = "%s %s by mousereach sync; tracking-sheet import fills in the rest" % (
+                self.AUTO_CREATED_MARK, video_name)
+            now = datetime.now().isoformat(sep=' ')
+            with self.engine.connect() as conn:
+                conn.execute(text(
+                    "INSERT OR IGNORE INTO projects (project_code, project_name, created_at) "
+                    "VALUES (:p, :p, :now)"), {"p": project_code, "now": now})
+                conn.execute(text(
+                    "INSERT OR IGNORE INTO cohorts (cohort_id, project_code, start_date, "
+                    "notes, is_archived, created_at) "
+                    "VALUES (:c, :p, :d, :n, 0, :now)"),
+                    {"c": cohort_id, "p": project_code, "d": start_date, "n": note, "now": now})
+                created = conn.execute(text(
+                    "INSERT OR IGNORE INTO subjects (subject_id, cohort_id, notes, is_active, created_at) "
+                    "VALUES (:s, :c, :n, 1, :now)"),
+                    {"s": subject_id, "c": cohort_id, "n": note, "now": now}).rowcount
+                conn.commit()
+            if created:
+                logger.info("Created subject %s from video %s (cohort %s); the "
+                            "tracking sheet import will fill in its details",
+                            subject_id, video_name, cohort_id)
+            return True
+        except Exception as e:
+            logger.warning("Could not ensure subject %s exists: %s", subject_id, e)
+            return False
+
     def find_syncable_files(self) -> List[Tuple[Path, str]]:
         """
         Find all _features.json files in Processing that can be synced.
@@ -536,13 +595,13 @@ class DatabaseSyncer:
             return []
 
         syncable = []
-        known_subjects = set(self.get_known_subjects())
-
+        # Every parseable video is syncable: unknown animals are CREATED at
+        # sync time (ensure_subject_exists) -- see that method for why a
+        # video must never wait on the tracking sheet.
         for json_file in self.processing_path.glob(f"*{FEATURES_SUFFIX}"):
             video_name = json_file.stem.replace('_features', '')
             subject_id = parse_subject_id(video_name)
-
-            if subject_id and subject_id in known_subjects:
+            if subject_id:
                 syncable.append((json_file, subject_id))
 
         return syncable
@@ -705,6 +764,10 @@ class DatabaseSyncer:
                 continue
 
             try:
+                video_name = path.stem.replace('_features', '')
+                if not self.ensure_subject_exists(subject_id, video_name):
+                    raise RuntimeError(
+                        "subject %s could not be created for %s" % (subject_id, video_name))
                 n_reaches = self.sync_features_file(path, subject_id)
                 result.synced += 1
                 result.reaches_inserted += n_reaches
@@ -874,9 +937,11 @@ def sync_file_to_database(output_path: Path) -> bool:
         if not ok:
             return False
 
-        # Check subject exists in database
-        known = syncer.get_known_subjects()
-        if subject_id not in known:
+        # The animal exists from its first mention -- create it if the
+        # tracking sheet has not been imported yet (see ensure_subject_exists).
+        if not syncer.ensure_subject_exists(subject_id, video_name):
+            logger.warning("Sync of %s skipped: subject %s could not be created",
+                           video_name, subject_id)
             return False
 
         syncer.sync_features_file(path, subject_id)
@@ -884,5 +949,8 @@ def sync_file_to_database(output_path: Path) -> bool:
         syncer.export_csv()
         return True
 
-    except Exception:
-        return False  # Never break the pipeline
+    except Exception as e:
+        # Never break the pipeline -- but never be silent about it either.
+        # "Silently does nothing" is how 1,666 videos went unsynced for weeks.
+        logger.warning("Sync of %s failed: %s", output_path, e)
+        return False
