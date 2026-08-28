@@ -132,6 +132,46 @@ def resolved_segments(review_doc: Optional[Dict[str, Any]]) -> Set[int]:
     return out
 
 
+def gt_resolved_segments(video_id: str) -> "tuple[bool, Set[int]]":
+    """What ground truth has already determined for this video.
+
+    GROUND TRUTH IS AN ANSWER. ``evaluate_gate`` has always known that -- it
+    subtracts GT-determined segments before deciding, so a GT'd video passes as
+    clean. The RELEASE side did not: ``triage_status`` built its resolved set
+    from the causal-review document alone, so a bundle whose questions GT had
+    answered could never satisfy ``fully_resolved`` and never left the queue.
+    The review tool skipped it too (``has_gt`` -> nothing to ask), so nobody
+    asked and nobody released. Measured 2026-08-28: 7 bundles stuck exactly
+    there, indefinitely.
+
+    Returns ``(fully_certified, determined_segment_nums)``, the same shape the
+    gate's own ``_gt_certification`` returns, so the two sides cannot drift.
+    ``fully_certified`` means GT marks the whole video complete
+    (``completion_status.all_complete``, or reaches AND outcomes both
+    exhaustive) -- such a video has no unanswered element by definition.
+
+    Never raises: no GT, unreadable GT, or a missing index all yield
+    ``(False, set())``, which leaves the previous behaviour exactly as it was."""
+    try:
+        from .causal_review_io import find_gt
+        p = find_gt(video_id)
+        if not p:
+            return False, set()
+        gt = json.loads(Path(p).read_text(encoding="utf-8"))
+    except Exception:
+        return False, set()
+    cs = gt.get("completion_status") or {}
+    rr = (gt.get("reaches") or {}).get("exhaustive")
+    oo = (gt.get("outcomes") or {}).get("exhaustive")
+    full = bool(cs.get("all_complete")) or bool(rr and oo)
+    out: Set[int] = set()
+    for seg in ((gt.get("outcomes") or {}).get("segments") or []):
+        sn = seg.get("segment_num")
+        if sn is not None and seg.get("determined") is not False:
+            out.add(int(sn))
+    return full, out
+
+
 def unresolved_triaged(
     outcome_doc: Optional[Dict[str, Any]],
     assign_doc: Optional[Dict[str, Any]] = None,
@@ -219,6 +259,15 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
 
     tri = triaged_segments(outcome, assign)
     res = resolved_segments(review)
+
+    # Ground truth counts as an answer here, exactly as it does in evaluate_gate.
+    # Without this the release side is narrower than the admission side: a bundle
+    # whose questions GT had determined could never satisfy fully_resolved, while
+    # the review tool skipped it because has_gt() said there was nothing to ask.
+    # Nobody asked, nobody released, and it sat in the queue forever.
+    gt_full, gt_segs = gt_resolved_segments(video_id)
+    res = tri if gt_full else (res | gt_segs)
+
     return TriageStatus(
         video_id=video_id,
         seg_failed=segmentation_failed(seg),

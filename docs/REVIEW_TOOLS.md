@@ -473,7 +473,9 @@ On a hold, `route_to_queue` (`:159`) moves the whole bundle out of the processin
 
 Only `scan_review_queues` (`review_return.py:225`) moves a bundle out. It runs inside the watcher every 10th poll cycle (`orchestrator.py:1345`, `:1391-1395`) and handles at most **10 bundles per scan** (`MAX_RETURNS_PER_SCAN`, `review_return.py:222`) so returning does not starve the pipeline.
 
-- **Triage**: the bundle leaves when it has triaged elements, all of them are resolved by a saved review, and segmentation has not failed (`:247`).
+- **Triage**: the bundle leaves when it has triaged elements, all of them are resolved, and segmentation has not failed (`:247`). "Resolved" means a saved review answered the segment **or ground truth determined it** — `triage_status` folds in `gt_resolved_segments` since 2026-08-28, and treats a fully certified video (`completion_status.all_complete`, or reaches and outcomes both exhaustive) as resolved outright.
+
+  Before that fix the release side was narrower than the admission side. `evaluate_gate` had always subtracted GT-determined segments, but `triage_status.resolved_segments` read the causal-review document alone, so a bundle whose questions GT had answered could never satisfy `fully_resolved`. The review tool skipped the same bundle because `has_gt()` said there was nothing to ask. Nobody asked and nobody released: measured 2026-08-28, 7 bundles were stuck exactly there, one of them since July.
 - **Deep review**: the bundle leaves when `{stem}_deep_review_cleared.json` exists, or a ground-truth file sits in the bundle (`:108-115`).
 
 Returning moves the bundle's data files, including the review file, into the local processing directory, drops the queue-only manifest, deletes the now-empty bundle directory, and sets the video back to `processing` so the pipeline re-runs it and the gate re-checks (`_return_to_processing`, `:118-214`). It refuses and leaves the bundle alone if the database row cannot be created (`:141-146`), if the pose file cannot be found (`:152-159`), or if the state cannot be set (`:198-205`) — a clearance is never spent on a run that would fail.
@@ -490,18 +492,35 @@ Returning moves the bundle's data files, including the review file, into the loc
 
 `seed_from_folder` (`queue_index.py:120`) exists to rebuild the index from the folder and **is not called anywhere in the codebase**.
 
-### The session flag button does the opposite of what it says
+### The session flag button (FIXED 2026-08-28 -- it used to do the opposite of what it says)
 
-The button is labelled "Flag Session (needs review)", its tooltip says it marks every video of that mouse+day as must-be-human-reviewed, and after clicking it the tool says "all its videos need human review" (`causal_review_widget.py:417-426`, `:2514-2528`). `flag_session` writes the session key into `Processing/Review/flagged_sessions.json` (`causal_review_io.py:642`).
+**Now:** pressing "Flag Session (needs review)" saves the current review, records the
+session in `Processing/Review/flagged_sessions.json` as provenance, and **routes the
+video to the deep-review queue** via `route_to_queue`, then advances to the next video.
+The flag is a note about the session; the divert is the action. Nothing filters on the
+flag any more.
 
-Two pieces of code read that file: `_bundle_needs_review` (`causal_review_widget.py:2602-2603`) and the never-called `seed_from_folder` (`queue_index.py:160`). What the first one does is:
+**What it used to do.** The button is labelled "Flag Session (needs review)", its tooltip
+said it marks every video of that mouse+day as must-be-human-reviewed, and the toast said
+"all its videos need human review". `flag_session` wrote the session key to
+`flagged_sessions.json` and that was the entire effect. Two pieces of code read that file:
+`_bundle_needs_review` and the never-called `seed_from_folder` (`queue_index.py:160`).
+The first one did this:
 
 ```python
 if is_session_flagged(stem, root):
     return False   # this bundle does NOT need review
 ```
 
-Flagging a session **removes** every one of that mouse+day's unreviewed videos from the review queue. Nothing in the gate, the return scan, the kinematics step or the database reads the flag. There is no path by which a flagged session gets more human attention.
+So flagging a session **removed** every one of that mouse+day's unreviewed videos from the
+queue, and nothing in the gate, the return scan, kinematics or the database read the flag
+to compensate. There was no path by which a flagged session got more attention.
+
+Measured on 2026-08-28, before the fix: of 40 reviewable bundles in the triage queue, 33
+were invisible for this reason, across 18 sessions -- 14 of them flagged in a single
+afternoon by an operator working through the queue. The queue read as empty and the flag
+was the cause. Removing the filter put 24 videos back in front of the reviewer (the other
+9 were legitimately resolved by ground truth).
 
 ### Automatic release from ground truth
 

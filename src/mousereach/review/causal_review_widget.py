@@ -2578,20 +2578,59 @@ The notes box travels with the video.
         return pd.parent if pd is not None else self.video_path.parent
 
     def _flag_session(self):
-        """Flag this video's whole mouse+day session for mandatory human review
-        (e.g. a cage artifact that day affecting every P# of this mouse)."""
+        """Flag this video's whole mouse+day session, and DIVERT this video to
+        the deep-review queue.
+
+        The flag alone used to be the whole action, and it did the opposite of
+        what the button promises: the only reader of flagged_sessions.json was
+        the pool filter, which EXCLUDED flagged sessions -- so pressing "needs
+        review" made the video disappear from the review queue. Nothing else in
+        the pipeline reads that file: not the gate, not the return scan, not
+        kinematics, not the database.
+
+        So the flag is now provenance ("a human said this whole session is
+        suspect, here is who and why") and the video moves somewhere a human
+        will actually meet it. Same mechanism as _escalate_to_deep_review; the
+        difference is the reason recorded, and that the session is marked too so
+        the note survives for its other P#s."""
         if not self._video_stem:
             return
         reason = (self._notes_edit.toPlainText().strip()
                   if hasattr(self, "_notes_edit") else "")
         try:
             key = flag_session(self._video_stem, self._review_root(), reason=reason)
-            show_info(f"Flagged session {key} -- all its videos need human review.")
-            self._status_label.setText(
-                f"[FLAG] Session {key} flagged for mandatory human review "
-                f"(every P# of this mouse+day).")
         except Exception as e:
             show_error(f"Could not flag session: {e}")
+            return
+
+        bundle = getattr(self, "_bundle_dir", None)
+        if not bundle:
+            # Not walking a queue bundle (e.g. a --worklist run): record the flag
+            # and say plainly that nothing moved, rather than implying it did.
+            show_info(f"Flagged session {key}. No bundle loaded, so nothing was moved.")
+            self._status_label.setText(f"[FLAG] Session {key} flagged (no bundle to divert).")
+            return
+        try:
+            self._save_review()
+        except Exception as e:
+            logger.warning("flag session: could not save review first: %s", e)
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.review_gate import route_to_queue
+            route_to_queue(
+                self._video_stem, Path(bundle), Paths.DEEP_REVIEW,
+                reason=(f"reviewer flagged session {key}"
+                        + (f" -- {reason}" if reason else "")),
+                db=None)
+        except Exception as e:
+            show_error(f"Flagged session {key}, but could not divert "
+                       f"{self._video_stem} to deep review: {e}")
+            logger.exception("flag session: divert to deep review failed")
+            return
+        show_info(f"Session {key} flagged; {self._video_stem} moved to deep review.")
+        self._status_label.setText(
+            f"[FLAG] Session {key} flagged -- {self._video_stem} -> deep review.")
+        self._load_next_video()
 
     def _escalate_to_deep_review(self):
         """The reviewer says the SEGMENTATION is wrong: move the whole video to
@@ -2697,11 +2736,21 @@ The notes box travels with the video.
         return False
 
     def _bundle_needs_review(self, bundle_dir: Path, root: Path) -> bool:
-        """A bundle needs review iff it is NOT flagged, NOT already ground-truthed
-        (GT IS the answer -- it stands in for a review), and NOT already reviewed."""
+        """A bundle needs review iff it is NOT already ground-truthed (GT IS the
+        answer -- it stands in for a review) and NOT already reviewed.
+
+        A SESSION FLAG NO LONGER SUPPRESSES ANYTHING. It used to: the button says
+        "Flag Session (needs review)", the toast said every video in the session
+        needs review, and this method then returned False for exactly those
+        videos -- so pressing it removed them from the queue. Measured 2026-08-28:
+        33 of the 40 reviewable bundles were invisible for that reason, across 18
+        sessions, 14 of them flagged in a single afternoon. The queue read as
+        empty and the flag was the cause.
+
+        Flagging now DIVERTS the video to the deep-review queue (see
+        ``_flag_session``), which is a real action with a real destination. The
+        flag record is kept as provenance; nothing filters on it."""
         stem = bundle_dir.name
-        if is_session_flagged(stem, root):
-            return False
         if has_gt(stem, extra_dirs=[bundle_dir]):
             return False  # already ground-truthed -> GT is the correct answer
         if self._bundle_reviewed(bundle_dir):
