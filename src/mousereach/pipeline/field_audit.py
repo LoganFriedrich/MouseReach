@@ -392,9 +392,10 @@ def main(argv=None) -> int:
                     help="Directory holding reach_data.parquet")
     ap.add_argument("--limit", type=int, default=None,
                     help="Only read this many files per stage (quick pass)")
-    ap.add_argument("--finished-only", action="store_true",
-                    help="Restrict to videos that are finished and current at "
-                         "every stage (needs mousedb)")
+    ap.add_argument("--only-videos", type=Path, default=None,
+                    help="Restrict to the video ids listed in this text file (one per "
+                         "line); an integrator can produce such a list, MouseReach "
+                         "does not depend on one")
     ap.add_argument("--json", type=Path, default=None,
                     help="Also write the full result as JSON")
     ap.add_argument("--markdown", type=Path, default=None,
@@ -402,13 +403,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     only = None
-    if args.finished_only:
-        try:
-            from mousedb.analyzable import finished_videos
-            only = finished_videos()
-            print("restricting to %d finished, current videos" % len(only))
-        except Exception as e:
-            print("[!] could not load the finished-video list (%s); reading everything" % e)
+    if args.only_videos:
+        only = {ln.strip() for ln in args.only_videos.read_text(encoding="utf-8").splitlines() if ln.strip()}
+        print("restricting to %d listed videos" % len(only))
 
     res = audit(args.root, args.snapshot, limit=args.limit, only=only)
 
