@@ -227,10 +227,15 @@ def process_batch(
     output_dir: Optional[Path] = None,
     copy_sources: bool = True,
     verbose: bool = True,
-    skip_if_exists: Optional[List[str]] = None
+    skip_if_exists: Optional[List[str]] = None,
+    legacy: bool = False,
 ) -> Dict:
     """
     Process all videos in a directory.
+
+    This is what ``mousereach-detect-outcomes`` runs. Per video it calls the
+    same ``process_single`` the watcher / run_all / reprocess paths call, so
+    a command-line run and a pipeline run of one video produce the same file.
 
     Args:
         input_dir: Input directory
@@ -239,6 +244,7 @@ def process_batch(
         verbose: Print progress
         skip_if_exists: List of glob patterns - skip videos with matching files
                        (e.g., ["*outcome_ground_truth.json"])
+        legacy: Run the old geometric detector instead of the v6 cascade.
     """
     if output_dir is None:
         output_dir = input_dir
@@ -270,8 +276,18 @@ def process_batch(
             print(f"[{i}/{len(file_sets)}] {video_name}...", end=" ")
         
         try:
+            # ``legacy`` is passed BY NAME: it is the fifth parameter of
+            # process_single, and the old four-positional call here left it
+            # False -- which is why ``--legacy`` used to announce the legacy
+            # detector and then run v6 anyway. ``video_dir`` is looked up in
+            # the INPUT dir (where the source video sits when -o differs from
+            # -i); process_single falls back to searching the output dir when
+            # this is None. The video is what the cascade's pixel-based
+            # artefact guard and stage 98 read.
             video_result = process_single(
-                fs['dlc_file'], fs['seg_file'], fs['reach_file'], output_dir
+                fs['dlc_file'], fs['seg_file'], fs['reach_file'], output_dir,
+                legacy=legacy,
+                video_dir=_find_video_dir(input_dir, video_name),
             )
             
             if copy_sources and output_dir != input_dir:
@@ -286,7 +302,13 @@ def process_batch(
             if verbose:
                 s = video_result
                 disp = s.get('displaced_sa', 0) + s.get('displaced_outside', 0)
-                print(f"OK (R={s.get('retrieved', 0)}/D={disp}/U={s.get('untouched', 0)})")
+                line = f"OK (R={s.get('retrieved', 0)}/D={disp}/U={s.get('untouched', 0)}"
+                # v6 also emits 'triaged' (segments it declined to score). Show
+                # it, so a run that triaged everything is visible at a glance
+                # instead of reading as a clean R=0/D=0/U=0.
+                if s.get('triaged'):
+                    line += f"/T={s['triaged']}"
+                print(line + ")")
                 
         except Exception as e:
             results['failed'] += 1

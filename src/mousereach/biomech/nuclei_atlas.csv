@@ -1,0 +1,22 @@
+muscle,gilmer_id,segment_start,segment_end,peak_segment,confidence,source,notes
+Deltoid Medial,1,C3,C7,C5,high,Tosolini 2013,acromiodeltoideus
+Deltoid Posterior,2,C3,C6,C4.5,high,Tosolini 2013,spinodeltoideus
+Infraspinatus,3,C4,C7,C5.5,medium,interpolated from supraspinatus (Bacskai 2012),rotator cuff
+Subscapularis,4,C4,C7,C5.5,medium,interpolated from supraspinatus,rotator cuff
+Pectoralis Major Anterior,5,C6,T2,C8,medium,Bacskai 2012,pec major group
+Pectoralis Major Posterior,6,C6,T2,C8,medium,Bacskai 2012,pec major group
+Pectoralis Minor Clavicular,7,C5,T1,C7,low,cross-species interpolation,medial pectoral nerve
+Latissimus Dorsi Caudal,8,C6,T1,C7.5,medium,McKenna 2000 (rat) + topographic rules,thoracodorsal nerve
+Latissimus Dorsi Rostral,9,C5,C8,C6.5,low,shifted from caudal estimate,thoracodorsal nerve rostral
+Biceps Long Head,10,C3,C7,C5,high,Tosolini 2013,musculocutaneous nerve
+Biceps Short Head,11,C3,C7,C5,high,Tosolini 2013,musculocutaneous nerve
+Brachialis Proximal,12,C4,C7,C5.5,medium,interpolated from biceps,musculocutaneous nerve
+Brachialis Distal,13,C4,C8,C6,low,interpolated from biceps + caudal shift,musculocutaneous nerve
+Triceps Long Head,14,C4,T1,C5,high,Tosolini 2013 selective MEP,anterior MEP peak C4-C5
+Triceps Lateral Head,15,C4,T1,C7,high,Tosolini 2013 selective MEP,central MEP peak C7
+Triceps Medial Head,16,C4,T1,C7.5,high,Tosolini 2013 selective MEP,posterior MEP peak C7-C8
+Anconeus,17,C6,C8,C7,medium,interpolated from triceps distal,radial nerve
+Anconeus Short Head,18,C6,C8,C7,medium,interpolated from triceps distal,radial nerve
+Brachioradialis,19,C4,C8,C6,medium,interpolated from ECR (Tosolini/Lu),radial nerve forearm
+Pronator Teres,20,C5,C7,C6,low,cross-species interpolation,median nerve
+Flexor Carpi Radialis,21,C5,C8,C6.5,high,Lu/Qi 2022 direct mouse data,median nerve

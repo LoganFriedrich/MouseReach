@@ -1,16 +1,35 @@
 """
-CLI for reach assignment (v1).
+CLI for reach assignment (algo-4).
 
 Production usage:
     mousereach-assign-reaches -i Processing/
 
-For each video directory under the input root that has both a
-``*_reaches.json`` (from the v8 reach detector) and a
-``*_pellet_outcomes.json`` (from the v6 cascade outcome detector) AND
-a segments file (``*_segments.json`` or ``*_segmentation.json``), this
-command writes ``*_reach_assignments.json`` next to them: a permanent
-per-reach output table where each reach has its outcome label already
-stamped. Downstream kinematic analysis reads this directly.
+For each video under the input root that has ``*_segments.json`` (from the
+segmenter), ``*_reaches.json`` (from the v8 reach detector),
+``*_pellet_outcomes.json`` (from the v6 cascade outcome detector) AND its
+DLC pose ``*DLC*.h5`` side by side, this command writes
+``*_reach_assignments.json`` next to them: a permanent per-reach output
+table where each reach has its outcome label and causal-reach decision
+already stamped. Downstream kinematic analysis reads this directly.
+
+This command runs the SAME code path as the automatic pipeline:
+``mousereach.assignment.run.assign_reaches_for_video`` (assignment v2, the
+two-signal agreement gate), which the watcher, ``pipeline/run_all.py`` and
+``pipeline/reprocess_to_current.py`` all call. It has no assignment logic
+of its own.
+
+WHY: until 2026-08 this command called assignment v1 (a single-signal IFR
+join, ``1.0.0``) while everything automatic ran v2 (``2.1.0``). Running it
+by hand over a processing folder silently overwrote the v2 file the
+pipeline had written with a weaker v1 file at the same path, and the
+processing manifest kept saying 2.1.0. v1 is retained under
+``assignment/v1`` for provenance but is no longer reachable from any
+command.
+
+The input readers ``_segment_bounds_from_segmentation``,
+``_segments_with_outcomes`` and ``_reaches_list`` live here because
+``assignment/run.py`` and ``review/staging.py`` import them; they are the
+one shared reading of the three input files.
 """
 from __future__ import annotations
 
@@ -20,8 +39,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from mousereach.assignment.v1 import VERSION as V1_VERSION
-from mousereach.assignment.v1 import assign_reaches_v1
+from mousereach.assignment.run import assign_reaches_for_video
+from mousereach.assignment.v2 import VERSION
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -59,8 +78,8 @@ def _segments_with_outcomes(
     segments_doc: Dict[str, Any],
     outcomes_doc: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Merge segment bounds with cascade outcomes into the shape
-    `assign_reaches_v1` expects."""
+    """Merge segment bounds with cascade outcomes into the shape the
+    assignment algorithms expect."""
     seg_bounds = _segment_bounds_from_segmentation(segments_doc)
     out_segs_by_num = {
         s["segment_num"]: s
@@ -88,8 +107,11 @@ def _reaches_list(reaches_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Extract a flat list of reach dicts from a reach detector output.
 
     Handles two schemas:
-      - v8+ (flat): top-level ``reaches: [...]``
-      - v7.x (nested): top-level ``segments: [{reaches: [...]}, ...]``
+      - nested (what the v8 reach detector writes, and what every file in
+        the Analyzed tree carries): top-level ``segments: [{reaches: [...]}]``
+      - flat (older / alternate form): top-level ``reaches: [...]``
+    The flat form is honoured first only because a file carrying both would
+    be declaring the flat list authoritative; no current file carries both.
     """
     if isinstance(reaches_doc.get("reaches"), list):
         return list(reaches_doc["reaches"])
@@ -106,142 +128,99 @@ def _reaches_list(reaches_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     return flat
 
 
-def _find_video_inputs(video_dir: Path) -> Optional[Tuple[Path, Path, Path]]:
-    """Resolve the (segments_json, reaches_json, outcomes_json) trio
-    in `video_dir`. Returns None if any are missing.
+# ---------------------------------------------------------------------------
+# Finding videos to assign
+# ---------------------------------------------------------------------------
 
-    Picks the first matching candidate of each type. Use ``_find_inputs_for_stem``
-    when the dir contains multiple videos and the caller knows which stem
-    to resolve.
+def _stems_in(directory: Path) -> List[str]:
+    """Video stems in ``directory`` that carry all three assignment inputs.
+
+    The file names are exactly the ones ``assign_reaches_for_video`` reads
+    (``{stem}_segments.json`` etc.), so anything listed here is something the
+    production step can actually run on.
     """
-    seg_candidates = list(video_dir.glob("*_segmentation.json")) + list(video_dir.glob("*_segments.json"))
-    reach_candidates = list(video_dir.glob("*_reaches.json"))
-    outcome_candidates = list(video_dir.glob("*_pellet_outcomes.json"))
-    if not seg_candidates or not reach_candidates or not outcome_candidates:
-        return None
-    return seg_candidates[0], reach_candidates[0], outcome_candidates[0]
-
-
-def _find_inputs_for_stem(root: Path, stem: str) -> Optional[Tuple[Path, Path, Path]]:
-    """Resolve inputs for a specific video stem in a flat-layout dir."""
-    seg = root / f"{stem}_segments.json"
-    if not seg.exists():
-        seg = root / f"{stem}_segmentation.json"
-    reach = root / f"{stem}_reaches.json"
-    out = root / f"{stem}_pellet_outcomes.json"
-    if not seg.exists() or not reach.exists() or not out.exists():
-        return None
-    return seg, reach, out
-
-
-def _process_inputs(seg_path: Path, reach_path: Path, outcome_path: Path,
-                     output_dir: Path, video_id_hint: str) -> Optional[Path]:
-    """Run assignment v1 on a single resolved input triple. Returns output path."""
-    segments_doc = _load_json(seg_path)
-    reaches_doc = _load_json(reach_path)
-    outcomes_doc = _load_json(outcome_path)
-
-    video_id = (
-        outcomes_doc.get("video_id")
-        or reaches_doc.get("video_id")
-        or video_id_hint
-    )
-
-    merged_segs = _segments_with_outcomes(segments_doc, outcomes_doc)
-    reaches = _reaches_list(reaches_doc)
-
-    result = assign_reaches_v1(
-        reaches=reaches,
-        segments_with_outcomes=merged_segs,
-        video_id=video_id,
-    )
-
-    out_path = output_dir / f"{video_id}_reach_assignments.json"
-    out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    return out_path
-
-
-def _process_video_dir(video_dir: Path) -> Optional[Path]:
-    """Single-video-dir processing. Kept for the legacy per-video-subdir layout."""
-    inputs = _find_video_inputs(video_dir)
-    if inputs is None:
-        return None
-    return _process_inputs(*inputs, output_dir=video_dir, video_id_hint=video_dir.name)
-
-
-def _walk_input_root(root: Path) -> Iterable[Path]:
-    """Yield directories that look like per-video processing dirs.
-
-    Three layouts are supported:
-      1. ``root`` itself has exactly one video's worth of files.
-      2. ``root`` contains per-video subdirectories.
-      3. ``root`` contains MANY videos' files flat (e.g., an improvement
-         quarantine's ``algo_outputs_*``/ folder). In this case we yield
-         ``root`` once per video stem so ``_process_video_dir_for_stem``
-         can pick the right files.
-    """
-    if not root.exists():
-        return
-    # Count videos in flat layout: number of distinct stems with all 3 files
-    flat_stems = _flat_layout_stems(root)
-    if len(flat_stems) > 1:
-        # Flat layout with multiple videos. Yield root once per stem.
-        for stem in flat_stems:
-            yield (root, stem)
-        return
-    # Single-video at root
-    if _find_video_inputs(root) is not None:
-        yield root
-        return
-    # Per-video subdirectories
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and _find_video_inputs(child) is not None:
-            yield child
-
-
-def _flat_layout_stems(root: Path) -> list:
-    """Return sorted list of video stems where root has segs+reaches+outcomes."""
     stems = []
-    for seg in sorted(root.glob("*_segments.json")):
-        stem = seg.stem[: -len("_segments")]
-        if (root / f"{stem}_reaches.json").exists() and (root / f"{stem}_pellet_outcomes.json").exists():
+    for seg in sorted(directory.glob("*_segments.json")):
+        stem = seg.name[: -len("_segments.json")]
+        if ((directory / f"{stem}_reaches.json").exists()
+                and (directory / f"{stem}_pellet_outcomes.json").exists()):
             stems.append(stem)
     return stems
 
 
+def _pose_for(directory: Path, stem: str) -> Optional[Path]:
+    """The DLC pose h5 for ``stem`` in ``directory``, or None if there is none.
+
+    Assignment v2 needs the pose for its pellet-displacement signal, so a
+    video without one cannot be assigned by the production path. When more
+    than one pose file matches (two DLC models analysed the same video) the
+    first in sorted order is used -- the rule ``pipeline/run_all.py`` applies
+    -- and the choice is printed so a wrong pick can never be silent.
+    """
+    h5s = sorted(directory.glob(f"{stem}DLC*.h5"))
+    if not h5s:
+        return None
+    if len(h5s) > 1:
+        print(f"  [!] {stem}: {len(h5s)} pose files match, using {h5s[0].name}")
+    return h5s[0]
+
+
+def _candidate_dirs(root: Path) -> Iterable[Path]:
+    """Directories to look in: ``root`` itself when it holds the files of
+    one or many videos side by side (the flat Processing/ layout), otherwise
+    its immediate subdirectories (the legacy one-folder-per-video layout)."""
+    if not root.exists():
+        return
+    if _stems_in(root):
+        yield root
+        return
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and _stems_in(child):
+            yield child
+
+
 def main_batch():
     parser = argparse.ArgumentParser(
-        description=("Stamp per-reach outcome labels by joining v6 cascade "
-                     "outcomes onto v8 reach detector outputs (assignment v1)."),
+        description=("Stamp per-reach outcome labels and the causal reach by "
+                     "joining v6 cascade outcomes onto v8 reach detector "
+                     f"outputs (assignment v{VERSION}, the same code path the "
+                     "automatic pipeline runs)."),
     )
     parser.add_argument("-i", "--input", type=Path, required=True,
                         help="Processing root or single video dir.")
     args = parser.parse_args()
 
-    print(f"mousereach-assign-reaches v{V1_VERSION}")
+    print(f"mousereach-assign-reaches (assignment v{VERSION})")
     print(f"  input: {args.input}")
 
-    written = []
-    for item in _walk_input_root(args.input):
-        # _walk_input_root yields either a Path (per-video dir layout) or
-        # a (root, stem) tuple (flat layout with multiple videos).
-        if isinstance(item, tuple):
-            root, stem = item
-            inputs = _find_inputs_for_stem(root, stem)
-            if inputs is None:
+    written: List[Path] = []
+    skipped = 0
+    for directory in _candidate_dirs(args.input):
+        for stem in _stems_in(directory):
+            pose = _pose_for(directory, stem)
+            if pose is None:
+                print(f"  [!] {stem}: no DLC pose (*DLC*.h5) beside the inputs; "
+                      "skipped (assignment v2 needs the pose)")
+                skipped += 1
                 continue
-            out = _process_inputs(*inputs, output_dir=root, video_id_hint=stem)
-        else:
-            out = _process_video_dir(item)
-        if out is not None:
-            print(f"  wrote {out}")
+            result = assign_reaches_for_video(directory, stem, pose)
+            if result is None:
+                # The runner logs which input it could not read.
+                print(f"  [!] {stem}: assignment did not run (missing input)")
+                skipped += 1
+                continue
+            out = directory / f"{stem}_reach_assignments.json"
+            reaches = result.get("reaches", [])
+            n_causal = sum(1 for r in reaches if r.get("is_causal"))
+            print(f"  wrote {out} ({n_causal} causal / {len(reaches)} reaches)")
             written.append(out)
 
     if not written:
-        print("  no per-video inputs found (need *_segmentation.json + "
-              "*_reaches.json + *_pellet_outcomes.json)")
+        print("  no per-video inputs found (need *_segments.json + *_reaches.json + "
+              "*_pellet_outcomes.json + *DLC*.h5 side by side)")
         sys.exit(1)
-    print(f"Done. {len(written)} reach-assignment files written.")
+    print(f"Done. {len(written)} reach-assignment files written"
+          + (f", {skipped} skipped" if skipped else "") + ".")
 
 
 if __name__ == "__main__":

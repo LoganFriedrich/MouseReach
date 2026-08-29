@@ -555,7 +555,8 @@ options:
   -q, --quiet           Minimal output (no per-file progress)
   -s SKIP_IF_EXISTS [SKIP_IF_EXISTS ...], --skip-if-exists SKIP_IF_EXISTS [SKIP_IF_EXISTS ...]
                         Skip videos with files matching patterns
-  --legacy              Use legacy v2.4.4 detector instead of v6 cascade
+  --legacy              Run the legacy geometric detector
+                        (core/pellet_outcome.py) instead of the v6 cascade
 
 Examples: mousereach-detect-outcomes -i Processing/ mousereach-detect-outcomes
 -i Processing/ --legacy mousereach-detect-outcomes -i Processing/ -s
@@ -719,7 +720,9 @@ and report the ones that vanish.
 options:
   -h, --help            show this help message and exit
   --root ROOT           Tree of finished videos to read (default: Analyzed)
-  --snapshot SNAPSHOT   Directory holding reach_data.parquet
+  --snapshot SNAPSHOT   Directory holding reach_data.parquet (optional;
+                        without one the database side is reported as not
+                        compared)
   --limit LIMIT         Only read this many files per stage (quick pass)
   --only-videos ONLY_VIDEOS
                         Restrict to the video ids listed in this text file
@@ -956,8 +959,9 @@ options:
 ```
 usage: mousereach-assign-reaches [-h] -i INPUT
 
-Stamp per-reach outcome labels by joining v6 cascade outcomes onto v8 reach
-detector outputs (assignment v1).
+Stamp per-reach outcome labels and the causal reach by joining v6 cascade
+outcomes onto v8 reach detector outputs (assignment v2.1.0, the same code path
+the automatic pipeline runs).
 
 options:
   -h, --help            show this help message and exit
