@@ -203,8 +203,14 @@ def scan_database(snapshot: Path, only: Optional[set] = None) -> dict:
 
 
 def classify(field: str, producers: List[tuple], in_features: Optional[dict],
-             in_db: Optional[dict]) -> tuple:
-    """Decide what happened to one field. Returns (verdict, explanation)."""
+             in_db: Optional[dict], db_known: bool = True) -> tuple:
+    """Decide what happened to one field. Returns (verdict, explanation).
+
+    ``db_known`` is False when no database snapshot was available. Then a
+    field that reaches the features file must NOT be called "not in the
+    database" -- nothing was looked at -- so it gets its own verdict saying
+    the database side was not compared.
+    """
     def says_something(d):
         """Does this field ever carry information, rather than merely exist?"""
         if not d:
@@ -217,8 +223,8 @@ def classify(field: str, producers: List[tuple], in_features: Optional[dict],
     declared = [(stage, d) for stage, d in producers if not says_something(d)]
 
     feat_ok = says_something(in_features)
-    db_ok = says_something(in_db)
-    known_to_db = in_db is not None
+    db_ok = db_known and says_something(in_db)
+    known_to_db = db_known and in_db is not None
 
     if not made and declared:
         where = ", ".join(s for s, _ in declared)
@@ -233,6 +239,10 @@ def classify(field: str, producers: List[tuple], in_features: Optional[dict],
         # No upstream stage carries it. If the features file has it, kinematics
         # computed it itself -- that is normal, not a defect.
         if feat_ok:
+            if not db_known:
+                return ("DATABASE NOT COMPARED",
+                        "kinematics computes it; no snapshot, so the database "
+                        "side was not checked")
             if known_to_db and not db_ok:
                 return ("LOST IN TRANSIT",
                         "kinematics computes it, the database column is empty")
@@ -254,6 +264,10 @@ def classify(field: str, producers: List[tuple], in_features: Optional[dict],
     if not feat_ok and any(s != "kinematics" for s, _ in made):
         return ("LOST IN TRANSIT",
                 "%s produces it, the features file does not carry it" % src)
+    if not db_known:
+        return ("DATABASE NOT COMPARED",
+                "produced by %s and carried by the features file; no snapshot, "
+                "so the database side was not checked" % src)
     if feat_ok and known_to_db and not db_ok:
         return ("LOST IN TRANSIT",
                 "the features file carries it, the database column is empty")
@@ -268,7 +282,24 @@ def classify(field: str, producers: List[tuple], in_features: Optional[dict],
 def audit(root: Path = ANALYZED, snapshot: Path = SNAPSHOT,
           limit: Optional[int] = None, only: Optional[set] = None) -> dict:
     files = scan_files(root, limit=limit, only=only)
-    db = scan_database(snapshot, only=only)
+    # The database side is OPTIONAL: the parquet snapshot belongs to whatever
+    # integrator produced it, and most machines have none. The file-side audit
+    # is still worth running without it, so say so once and carry on. Before
+    # this guard, an unset MOUSEREACH_SNAPSHOT_DIR reached scan_database as
+    # None and died with TypeError on ``None / "reach_data.parquet"`` -- the
+    # command could not run anywhere but the integrator's machine.
+    db_known = True
+    if snapshot is None:
+        print("[!] no snapshot configured (MOUSEREACH_SNAPSHOT_DIR or --snapshot): "
+              "database columns not compared")
+        db = {}
+        db_known = False
+    else:
+        db = scan_database(snapshot, only=only)
+        if not db:
+            print("[!] no reach_data.parquet under %s: database columns not compared"
+                  % snapshot)
+            db_known = False
 
     feature_fields = files.get("kinematics", {}).get("fields", {})
     producers_by_field: Dict[str, List[tuple]] = defaultdict(list)
@@ -282,14 +313,15 @@ def audit(root: Path = ANALYZED, snapshot: Path = SNAPSHOT,
     findings = {}
     for field in sorted(names):
         verdict, why = classify(field, producers_by_field.get(field, []),
-                                feature_fields.get(field), db.get(field))
+                                feature_fields.get(field), db.get(field),
+                                db_known=db_known)
         findings[field] = {
             "verdict": verdict, "why": why,
             "producers": {s: d for s, d in producers_by_field.get(field, [])},
             "features": feature_fields.get(field),
             "database": db.get(field),
         }
-    return {"files": files, "findings": findings}
+    return {"files": files, "findings": findings, "database_compared": db_known}
 
 
 def _pct(d: Optional[dict]) -> str:
@@ -315,6 +347,10 @@ VERDICT_NOTES = {
         "Computed and written to the features file, but no database column "
         "holds it. Fine if deliberate -- a problem if you expected to query it.",
     "OK": "Populated end to end.",
+    "DATABASE NOT COMPARED":
+        "Reaches the features file. No database snapshot was available when "
+        "this was generated, so whether it survives into the database is not "
+        "known; re-run with --snapshot to find out.",
 }
 
 
@@ -364,7 +400,8 @@ def to_markdown(res: dict, corpus: str, _doc_dir=None) -> str:
          "at the stage that should produce it, in the features file, and in the "
          "database.", ""]
 
-    for verdict in ["NEVER COMPUTED", "LOST IN TRANSIT", "NOT IN THE DATABASE", "OK"]:
+    for verdict in ["NEVER COMPUTED", "LOST IN TRANSIT", "NOT IN THE DATABASE",
+                    "DATABASE NOT COMPARED", "OK"]:
         rows = by.get(verdict)
         if not rows:
             continue
@@ -374,7 +411,7 @@ def to_markdown(res: dict, corpus: str, _doc_dir=None) -> str:
               "|---|---|---|---|---|"]
         for field, f in sorted(rows):
             prod = next(iter(f["producers"].values()), None)
-            note = "" if verdict == "OK" else f["why"]
+            note = "" if verdict in ("OK", "DATABASE NOT COMPARED") else f["why"]
             L.append("| `%s` | %s | %s | %s | %s |"
                      % (field, _pct(prod).strip(), _pct(f["features"]).strip(),
                         _pct(f["database"]).strip(), note))
@@ -389,7 +426,8 @@ def main(argv=None) -> int:
     ap.add_argument("--root", type=Path, default=ANALYZED,
                     help="Tree of finished videos to read (default: Analyzed)")
     ap.add_argument("--snapshot", type=Path, default=SNAPSHOT,
-                    help="Directory holding reach_data.parquet")
+                    help="Directory holding reach_data.parquet (optional; without "
+                         "one the database side is reported as not compared)")
     ap.add_argument("--limit", type=int, default=None,
                     help="Only read this many files per stage (quick pass)")
     ap.add_argument("--only-videos", type=Path, default=None,
@@ -401,6 +439,13 @@ def main(argv=None) -> int:
     ap.add_argument("--markdown", type=Path, default=None,
                     help="Also write the report as a markdown document")
     args = ap.parse_args(argv)
+
+    if args.root is None:
+        # Same class of failure as the missing snapshot: an unconfigured
+        # Analyzed tree used to surface as a TypeError inside rglob.
+        print("[!] no Analyzed tree configured and no --root given: nothing to read. "
+              "Run mousereach-setup, or pass --root <directory>.")
+        return 2
 
     only = None
     if args.only_videos:
@@ -414,7 +459,7 @@ def main(argv=None) -> int:
         print("   %-18s %-26s %6d files" % (stage, info["suffix"], info["files"]))
 
     order = ["NEVER COMPUTED", "LOST IN TRANSIT", "NOT IN THE DATABASE",
-             "NOT PRODUCED", "UNCLEAR", "OK"]
+             "DATABASE NOT COMPARED", "NOT PRODUCED", "UNCLEAR", "OK"]
     by_verdict = defaultdict(list)
     for field, f in res["findings"].items():
         by_verdict[f["verdict"]].append((field, f))
@@ -431,7 +476,8 @@ def main(argv=None) -> int:
             prod = next(iter(f["producers"].values()), None)
             print("   %-34s %7s %7s %7s   %s"
                   % (field[:34], _pct(prod), _pct(f["features"]),
-                     _pct(f["database"]), f["why"] if verdict != "OK" else ""))
+                     _pct(f["database"]),
+                     f["why"] if verdict not in ("OK", "DATABASE NOT COMPARED") else ""))
 
     counts = {v: len(by_verdict.get(v, [])) for v in order if by_verdict.get(v)}
     print("\nsummary: " + ", ".join("%s %d" % (k.lower(), n) for k, n in counts.items()))
@@ -444,6 +490,9 @@ def main(argv=None) -> int:
         corpus = ("Read over **%d videos** that are finished and current at every "
                   "stage. The database side comes from the parquet snapshot, never "
                   "from connectome.db while a watcher is running." % n_files)
+        if not res.get("database_compared", True):
+            corpus += (" No snapshot was available for this run, so the database "
+                       "column was not compared.")
         args.markdown.write_text(
             to_markdown(res, corpus, _doc_dir=Path(args.markdown).resolve().parent),
             encoding="utf-8")

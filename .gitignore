@@ -86,9 +86,15 @@ util_Tools/
 !src/mousereach/improvement/lib/vault_template/.obsidian/*.json
 # But track production model metadata sidecars (v8 reach detector etc.)
 !src/mousereach/reach/v8/models/*.meta.json
+# But track the documentation coverage map. mousereach-doc-check reads it, and
+# an ignored copy is missing from every clone and git-archive, which turned the
+# check into a silent no-op everywhere except the one working copy holding it.
+!docs/DOC_COVERAGE.json
 *.npz
 *.zip
 *.csv
+# the biomech module loads this small anatomy table at runtime; it is part of the tool, not lab data
+!src/mousereach/biomech/nuclei_atlas.csv
 *.xlsx
 historical_manual_data/figures/behavior_ABS3.png
 historical_manual_data/figures/behavior_all_groups_overview.png

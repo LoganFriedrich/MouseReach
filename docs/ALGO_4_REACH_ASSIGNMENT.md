@@ -25,11 +25,11 @@ There are two implementations in the tree and they are not both live.
 | Path | Version | Where it runs |
 |---|---|---|
 | `assignment/v2/assign.py` → `assign_reaches_v2` | `2.1.0` (`v2/assign.py:40`) | **Everything in production.** |
-| `assignment/v1/assign.py` → `assign_reaches_v1` | `1.0.0` (`v1/__init__.py:25`) | Only from the `mousereach-assign-reaches` command line tool. |
+| `assignment/v1/assign.py` → `assign_reaches_v1` | `1.0.0` (`v1/__init__.py:25`) | Nothing. Retained for provenance; the command line tool stopped calling it in 2026-08. |
 
-The command line tool `mousereach-assign-reaches` (declared at `pyproject.toml:129`, implemented at `assignment/cli.py:212`) still calls **v1** (`cli.py:153`). Nothing in the automatic pipeline uses it. If someone runs that command over a processing folder by hand, it overwrites the v2 file at the same path (`cli.py:159-160`) with a v1 file carrying `"detector": "assignment_v1"` and a weaker set of decisions — v1 has no agreement test, commits whichever reach contains the interaction frame, and labels every reach in a triaged segment `triaged`.
+The command line tool `mousereach-assign-reaches` (declared in `pyproject.toml`, implemented at `assignment/cli.py` `main_batch`) calls the same `assign_reaches_for_video` the pipeline calls, so it also runs **v2** — verified 2026-08-29 by re-running it on an archived video and getting the identical per-reach table. Until 2026-08 it called **v1** instead: running it over a processing folder by hand overwrote the v2 file at the same path with a v1 file carrying `"detector": "assignment_v1"` and a weaker set of decisions — v1 has no agreement test, commits whichever reach contains the interaction frame, and labels every reach in a triaged segment `triaged`. Any `_reach_assignments.json` stamped `1.0.0` dates from that.
 
-Nothing warns about this at the time, and version tracking will not catch it either: the processing manifest records each stage's version when the manifest is written (`pipeline/manifest.py:233-236`), and the repair pass that reads versions back off disk only fills in blanks — it never corrects a version already recorded (`manifest.py:376-391`). A manifest saying `2.1.0` can therefore sit next to a file saying `1.0.0`.
+Nothing warned about that overwrite at the time, and version tracking would not have caught it either: the processing manifest records each stage's version when the manifest is written (`pipeline/manifest.py:233-236`), and the repair pass that reads versions back off disk only fills in blanks — it never corrects a version already recorded (`manifest.py:376-391`). A manifest saying `2.1.0` can therefore sit next to a file saying `1.0.0`.
 
 Production entry points, all of which run v2:
 
@@ -49,11 +49,11 @@ Production entry points, all of which run v2:
 
 If any of the first three is missing it logs a warning and returns `None` (`run.py:52-59`). No output file is written. See "How failure behaves" for why that is worse than it sounds.
 
-Two helper functions from the v1 command line module do the joining, and v2 reuses them (`run.py:62-63`):
+Three helper functions in the command line module (`assignment/cli.py`, which since 2026-08 itself calls `assign_reaches_for_video`) do the joining, and `run.py:62-63` uses them:
 
-- `cli.py:31` `_segment_bounds_from_segmentation` turns the segments file into `(start_frame, end_frame)` pairs. It accepts two shapes; production files carry a `boundaries` list of frame numbers and no `segments` key, so the second branch runs (`cli.py:48-55`): segment *i* runs from `boundaries[i]` to `boundaries[i+1] - 1`, and segment numbers start at 1 (`cli.py:73`).
-- `cli.py:87` `_reaches_list` flattens the reaches file. Production reaches files are nested (`segments: [{reaches: [...]}]`), so the second branch runs (`cli.py:97-105`) and stamps each reach with the `segment_num` of the block it came from.
-- `cli.py:58` `_segments_with_outcomes` merges the two by segment number, keeping `outcome`, `interaction_frame`, `outcome_known_frame` and `flagged_for_review`. **`outcome_known_frame` is merged and then never read by v2** — grep it in `v2/assign.py` and there are no hits.
+- `cli.py:50` `_segment_bounds_from_segmentation` turns the segments file into `(start_frame, end_frame)` pairs. It accepts two shapes; production files carry a `boundaries` list of frame numbers and no `segments` key, so the second branch runs (`cli.py:67-74`): segment *i* runs from `boundaries[i]` to `boundaries[i+1] - 1`, and segment numbers start at 1 (`cli.py:92`).
+- `cli.py:106` `_reaches_list` flattens the reaches file. Production reaches files are nested (`segments: [{reaches: [...]}]`), so the second branch runs (`cli.py:119-128`) and stamps each reach with the `segment_num` of the block it came from.
+- `cli.py:77` `_segments_with_outcomes` merges the two by segment number, keeping `outcome`, `interaction_frame`, `outcome_known_frame` and `flagged_for_review`. **`outcome_known_frame` is merged and then never read by v2** — grep it in `v2/assign.py` and there are no hits.
 
 ## Assigning each reach to a segment
 
@@ -229,7 +229,7 @@ One optional key:
 
 **No kinematic values appear here.** No velocity, no extent, no apex. This file is a labelling table only.
 
-**Human review never edits this file.** Reviewer answers go into `{video}_causal_review.json` (`review/causal_review_io.py:278`). The only writers of `_reach_assignments.json` anywhere in `src/` are `run.py:73`, `staging.py:333` and the v1 command line tool at `cli.py:160`. Rebuilding a review bundle re-runs the whole chain and overwrites it (`staging.py:298-333`).
+**Human review never edits this file.** Reviewer answers go into `{video}_causal_review.json` (`review/causal_review_io.py:278`). The only writers of `_reach_assignments.json` anywhere in `src/` are `run.py:73` and `staging.py:333` (the command line tool writes through `run.py`). Rebuilding a review bundle re-runs the whole chain and overwrites it (`staging.py:298-333`).
 
 ## Who reads it — and who does not
 

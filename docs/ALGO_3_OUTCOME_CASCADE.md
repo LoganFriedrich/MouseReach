@@ -23,13 +23,13 @@ There are two detectors in this directory.
 **v6 cascade** (`v6_cascade/`, version string `6.1.0` at `v6_cascade/__init__.py:16`). This is what the batch pipeline and the watcher run:
 
 - `outcomes/core/batch.py:154` `process_single()` runs v6 unless the caller passes `legacy=True`. Every caller of it uses the default: `watcher/orchestrator.py:1068` and `:1981`, `pipeline/run_all.py:91`, `pipeline/reprocess_to_current.py:213`.
-- `mousereach-detect-outcomes` runs v6 (`outcomes/cli.py:124-216`).
+- `mousereach-detect-outcomes` runs v6 through the same `process_batch` -> `process_single` path (`outcomes/cli.py` `main_batch`). Since 2026-08 it has no detection or input-reading code of its own.
 
 **Legacy detector** (`core/pellet_outcome.py`; its `VERSION` constant is `"4.0.0_step2"` at line 110). Its output has a completely different shape (see "What is not in the file").
 
-### `--legacy` does not run the legacy detector
+### `--legacy` reaches the legacy detector (since 2026-08; it did not before)
 
-`mousereach-detect-outcomes --legacy` prints `[outcome detector] Using legacy v2.4.4 detector` (`cli.py:112`) and then runs v6 anyway. The `--legacy` branch calls `process_batch` (`cli.py:113-118`), and `process_batch` calls `process_single(dlc, seg, reach, output_dir)` with four positional arguments (`core/batch.py:273-275`). `legacy` is the fifth parameter (`core/batch.py:159`), so it stays `False`. The file that comes out is v6-shaped and stamped `6.1.0`. The flag's only real effects are the misleading message and a different progress format.
+`mousereach-detect-outcomes --legacy` passes `legacy=True` by name through `process_batch` (`core/batch.py`) into `process_single`, whose `legacy` branch is the only place that constructs `PelletOutcomeDetector`. Before 2026-08 the flag printed a legacy banner and ran v6 anyway: `process_batch` called `process_single(dlc, seg, reach, output_dir)` with four positional arguments and `legacy` is the fifth parameter, so it stayed `False`. Any file from that era stamped `6.1.0` was produced by v6 whatever flag was typed.
 
 ### The path that does run the legacy detector
 
@@ -67,11 +67,11 @@ It is not true that everything then triages. Stages differ:
 
 So the effect is a systematic shift toward `untouched` and toward triage, not uniform triage.
 
-### The reach-loading bug that still exists in the CLI
+### The reach-loading bug that used to exist in the CLI (fixed 2026-08)
 
-`core/batch.py:107-142` `_extract_reaches()` reads the current reach-file format, where reaches are nested per segment under `segments[].reaches`, and falls back to an older flat top-level `reaches` list.
+`core/batch.py:107-142` `_extract_reaches()` reads the current reach-file format, where reaches are nested per segment under `segments[].reaches`, and falls back to an older flat top-level `reaches` list. It is now the only reader: `mousereach-detect-outcomes` calls `process_batch`, which calls `process_single`, which calls it.
 
-**`outcomes/cli.py:242-252` has a second copy of `_extract_reaches` that reads only the flat top-level `reaches` key.** Current reach files have no top-level `reaches` key at all — a scan of 200 `_reaches.json` files under `MouseReach_Pipeline/Analyzed` found the key absent from all 200, and per-segment nested reaches present in 172. So this function returns `[]` on every real reach file, and `mousereach-detect-outcomes` produces materially different (and worse) outcomes than the pipeline does on the same inputs. It also uses `r.get("start_frame") or r.get("start")` (`cli.py:248`), so a reach starting at frame 0 would be dropped even if the format matched.
+**Until 2026-08 `outcomes/cli.py` carried a second, private copy of `_extract_reaches` that read only the flat top-level `reaches` key.** Current reach files have no top-level `reaches` key at all — a scan of 200 `_reaches.json` files under `MouseReach_Pipeline/Analyzed` found the key absent from all 200, and per-segment nested reaches present in 172. So that copy returned `[]` on every real reach file, and `mousereach-detect-outcomes` produced materially different (and worse) outcomes than the pipeline did on the same inputs: on one archived video re-run 2026-08-29, 14 of 20 segments differed and 11 of them fell through to `triaged`. It also used `r.get("start_frame") or r.get("start")`, so a reach starting at frame 0 would have been dropped even if the format had matched. The copy is gone; after the fix the same re-run reproduced every per-segment field of the archived file exactly.
 
 ---
 
@@ -390,7 +390,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `mousereach-advance-outcomes` crashes immediately. `cli.py:340` calls `advance_videos(args.input, require_validation=not args.force)`; the function signature is `advance_videos(input_dir, output_dir, verbose=True)` (`core/advance.py:38`). There is no `require_validation` parameter and `output_dir` has no default. Every invocation raises `TypeError`.
 - `mousereach-review-pellet-outcomes` crashes on any v6 file. `_review.py:84` does `data['summary']` on the raw JSON; v6 files have no `summary` key. It also offers `displaced_outside`, `no_pellet` and `uncertain` as corrections, which the detector never produces.
 - `mousereach-triage-outcomes` does not crash, and it is not harmless. `core/triage.py:77-84` requires `data['n_segments']` and `data['summary']`; on a v6 file the `KeyError` is caught at `:85-90` and stored as the video's `error`. `triage_results` then counts the video as `failed` and **writes into the file** `validation_status: "needs_review"` and `triage_reason: "'n_segments'"` (`core/triage.py:184-186`, `:199-205`). Every v6 video, always. The function also raises a `DeprecationWarning` when called (`:153-160`).
-- `mousereach-detect-outcomes` runs, but silently loads zero reaches from current reach files (see "Inputs" above), and its `--legacy` flag does not do what it says.
+- `mousereach-detect-outcomes` works (since 2026-08): it runs the pipeline path (`process_batch` -> `process_single`), so it reads reaches the way the watcher does and its `--legacy` flag reaches the legacy detector. Before that it silently loaded zero reaches from current reach files (see "Inputs" above) and `--legacy` did nothing.
 
 **Docstrings and names that describe something other than what the code does.** Each checked individually against the code at this commit:
 
@@ -425,7 +425,7 @@ The only things that vary at runtime:
 
 | What | Where | Effect |
 |---|---|---|
-| `legacy=True` | `core/batch.py:159`, branch at `:177` | Runs the old geometric detector: different algorithm, different output shape, different version string. Reachable only by calling `process_single(..., legacy=True)` from Python. Nothing in the repository does. The `--legacy` CLI flag does **not** reach it |
+| `legacy=True` | `core/batch.py` `process_single`, passed through by `process_batch` | Runs the old geometric detector: different algorithm, different output shape, different version string. Reached by `process_single(..., legacy=True)` from Python or by `mousereach-detect-outcomes --legacy` (since 2026-08; before that the flag did not reach it) |
 | The napari "Step 2 - Run Pipeline" widget | `pipeline/core.py:566-569` | A separate code path that does run the legacy detector, on every video it processes, with no reach file |
 | `video_dir` | `core/batch.py:145-151`, defaults to searching the output directory | If no video file is found, the pixel-based artefact guard and stage 98 both become no-ops. Displaced commits that would have been triaged are committed instead. Nothing reports that this happened |
 | Tray type | `pipeline/run_all.py:87-95`, `watcher/orchestrator.py:1062`, `:1971` | Tray `E` or `F` → the whole step is skipped, no file written |
