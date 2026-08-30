@@ -52,6 +52,11 @@ contributions:
       title: "Results Review (Causal)"
 
 
+    # DLC Model Comparison (standalone tool)
+    - id: mousereach.dlc_compare_widget
+      python_name: mousereach.dlc_compare.widget:DLCCompareWidget
+      title: "DLC Model Comparison"
+
   widgets:
     - command: mousereach.dashboard_widget
       display_name: "Pipeline Dashboard"
@@ -85,4 +90,7 @@ contributions:
       autogenerate: false
     - command: mousereach.causal_review_widget
       display_name: "Results Review (Causal)"
+      autogenerate: false
+    - command: mousereach.dlc_compare_widget
+      display_name: "DLC Model Comparison"
       autogenerate: false
