@@ -335,7 +335,15 @@ def setup_gpu_env(conda_prefix: str = None):
 # =============================================================================
 
 def print_gpu_info():
-    """Print a formatted GPU diagnostic summary."""
+    """Print a formatted GPU diagnostic summary.
+
+    Runs setup_gpu_env() first. WHY: the watcher always sets the environment up
+    before checking (cuDNN lives in the env's Library/bin; TF_USE_LEGACY_KERAS
+    must be set), so a bare diagnostic run from a shell that has not activated
+    the env reported "TensorFlow GPU: No" on a perfectly healthy node
+    (2026-08-30). The diagnostic must see the same environment the watcher does.
+    """
+    setup_gpu_env()
     status = check_gpu()
 
     print("\nGPU / CUDA Status:")
