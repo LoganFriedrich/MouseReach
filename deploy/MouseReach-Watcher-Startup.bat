@@ -37,7 +37,8 @@ set "STATUS_EXE=%SCRIPTS_DIR%mousereach-watch-status.exe"
 echo Found MouseReach at: %SCRIPTS_DIR%
 
 REM Wait for the shared pipeline folder (nas_root in ~/.mousereach/config.json).
-REM Set MOUSEREACH_NAS_ROOT in this script or the system environment to enable the wait.
+REM Set MOUSEREACH_NAS_ROOT, MOUSEREACH_PROCESSING_ROOT and MOUSEREACH_ENV as user environment
+REM variables on each machine (they mirror ~/.mousereach/config.json).
 if defined MOUSEREACH_NAS_ROOT (
     echo Waiting for the NAS folder %MOUSEREACH_NAS_ROOT% ...
     :wait_nas
@@ -54,12 +55,13 @@ start "MouseReach Watcher" cmd /k "%WATCH_EXE%"
 REM Give the watcher a moment to initialize and create the log file
 timeout /t 10 /nobreak >nul
 
-REM Find the watcher log file (PROCESSING_ROOT/watcher_logs/watcher.log)
+REM Find the watcher log file (<processing root>\watcher_logs\watcher.log). The roots come
+REM from the environment (MOUSEREACH_PROCESSING_ROOT = this machine's local pipeline folder,
+REM MOUSEREACH_NAS_ROOT = the shared one) -- no drive letters live in this script.
 set "LOG_FILE="
 for %%D in (
-    "A:\MouseReach_Pipeline\watcher_logs\watcher.log"
-    "Y:\MouseReach_Pipeline\watcher_logs\watcher.log"
-    "G:\MouseReach_Pipeline\watcher_logs\watcher.log"
+    "%MOUSEREACH_PROCESSING_ROOT%\watcher_logs\watcher.log"
+    "%MOUSEREACH_NAS_ROOT%\watcher_logs\watcher.log"
 ) do (
     if exist %%D if not defined LOG_FILE set "LOG_FILE=%%~D"
 )

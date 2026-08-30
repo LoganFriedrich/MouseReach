@@ -17,6 +17,14 @@ def main_batch():
     parser.add_argument('--cpu', action='store_true', help="Use CPU instead of GPU")
     
     args = parser.parse_args()
+
+    # Same GPU environment setup the watcher path performs (orchestrator, roles,
+    # watcher/cli). WHY: without it the standalone command found no CUDA on the
+    # lab's DLC machines and silently ran on CPU; one machine carried a local
+    # patch for months that never reached the repo.
+    if not args.cpu:
+        from mousereach.gpu import setup_gpu_env
+        setup_gpu_env()
     
     # Auto-append config.yaml if directory passed
     config_path = args.config
