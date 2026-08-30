@@ -1,6 +1,6 @@
 # MouseReach CLI Reference
 
-Generated 2026-08-28 by `python -m mousereach.docs.generate_cli_reference` --
+Generated 2026-08-30 by `python -m mousereach.docs.generate_cli_reference` --
 every entry below is the command's own `--help` output, harvested from
 the installed executables, so this file cannot say something the code
 does not. **Do not edit by hand; rerun the generator.**
@@ -23,7 +23,7 @@ walkthroughs of the review tools themselves.
 - [Configuration and setup](#configuration-and-setup) -- `mousereach-setup`, `mousereach-fix-powershell`
 - [Pipeline Index (fast startup)](#pipeline-index-fast-startup) -- `mousereach-index-rebuild`, `mousereach-index-status`, `mousereach-index-refresh`
 - [Step 0 - Video Prep](#step-0-video-prep) -- `mousereach-crop`, `mousereach-convert`, `mousereach-prep`, `mousereach-compress`
-- [Step 1 - DLC](#step-1-dlc) -- `mousereach-dlc-batch`, `mousereach-dlc-quality`
+- [Step 1 - DLC](#step-1-dlc) -- `mousereach-dlc-batch`, `mousereach-dlc-quality`, `mousereach-dlc-compare`
 - [Step 2 - Segmentation](#step-2-segmentation) -- `mousereach-segment`, `mousereach-triage`, `mousereach-advance`, `mousereach-segment-review`, `mousereach-review`, `mousereach-reject-tray`
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
@@ -201,14 +201,14 @@ MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
 Index file: <processing_root>\pipeline_index.json
 Exists: True
 Version: 2.0
-Generated: 2026-08-27T17:12:34.025930
+Generated: 2026-08-29T08:38:02.893665
 Total videos: 675
 
 Videos by folder:
-  Processing: 407
+  Processing: 406
 
 Validation status:
-  SEG: 0 validated, 112 need review, 36 not started
+  SEG: 0 validated, 113 need review, 36 not started
   REACH: 0 validated, 82 need review, 593 not started
   OUTCOME: 0 validated, 82 need review, 593 not started
 
@@ -342,6 +342,27 @@ options:
   -h, --help            show this help message and exit
   -o OUTPUT, --output OUTPUT
                         Output directory for reports
+```
+
+### `mousereach-dlc-compare`
+
+```
+usage: mousereach-dlc-compare [-h] [--model-a MODEL_A] [--model-b MODEL_B]
+                              [--split]
+                              [video]
+
+DLC Model Comparison Viewer
+
+positional arguments:
+  video                 Video file to load
+
+options:
+  -h, --help            show this help message and exit
+  --model-a MODEL_A, -a MODEL_A
+                        DLC H5 file for Model A
+  --model-b MODEL_B, -b MODEL_B
+                        DLC H5 file for Model B
+  --split               Start in split view mode
 ```
 
 ## Step 2 - Segmentation
@@ -1721,8 +1742,9 @@ and whether the watcher could run here. Takes no options.
 
 ```
 ==================================================
-  Watcher RESUMED — processing mode active
-  DLC and cropping will run during downtime.
+  Watcher PAUSED -- filming mode active
+  DLC processing is suspended.
+  Toggle again when filming is done.
 ==================================================
 ```
 
@@ -1737,14 +1759,14 @@ Pipeline Version Compliance Report
 ======================================================================
 
 Current pipeline versions:
-  mousereach          : 2.14.0-dev
+  mousereach          : 2.16.0-dev
   dlc_scorer          : DLC_resnet101_MPSAOct27shuffle3_100000
   segmenter           : 2.2.3
   reach_detector      : 8.1.0
   outcome_detector    : 6.1.0
   assignment          : 2.1.0
-  kinematic_extractor : 2.0.0
-  Last updated: 2026-08-21T14:26:25.720879
+  kinematic_extractor : 2.1.0
+  Last updated: 2026-08-29T08:31:26.610748
 
 Archived video status:
   Total archived:     0
