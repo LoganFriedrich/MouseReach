@@ -407,6 +407,22 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
+    # Load DLC Model Comparison viewer (standalone tool, not a pipeline step)
+    tprint("  DLC Model Compare...", end=" ")
+    try:
+        from mousereach.dlc_compare.widget import DLCCompareWidget
+        dlc_cmp_widget = DLCCompareWidget(viewer)
+        dw = viewer.window.add_dock_widget(dlc_cmp_widget, name="DLC Compare", area="right")
+        widgets_loaded.append(("dlc_compare", dlc_cmp_widget))
+        dock_widgets.append(dw)
+        # Defer keybinding setup until widget is docked
+        dlc_cmp_widget._setup_keybindings()
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
     # Tabify all dock widgets together (stack as tabs)
     if len(dock_widgets) > 1:
         main_window = viewer.window._qt_window
