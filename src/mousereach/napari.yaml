@@ -57,6 +57,11 @@ contributions:
       python_name: mousereach.dlc_compare.widget:DLCCompareWidget
       title: "DLC Model Comparison"
 
+    # FP/FN Reach Review (standalone tool)
+    - id: mousereach.fpfn_review_widget
+      python_name: mousereach.fpfn_review.widget:FPFNReviewWidget
+      title: "FP/FN Reach Review"
+
   widgets:
     - command: mousereach.dashboard_widget
       display_name: "Pipeline Dashboard"
@@ -93,4 +98,7 @@ contributions:
       autogenerate: false
     - command: mousereach.dlc_compare_widget
       display_name: "DLC Model Comparison"
+      autogenerate: false
+    - command: mousereach.fpfn_review_widget
+      display_name: "FP/FN Reach Review"
       autogenerate: false
