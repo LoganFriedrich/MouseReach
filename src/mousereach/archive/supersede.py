@@ -171,6 +171,7 @@ def supersede_video_outputs(
     manifest: Optional[dict] = None,
     extra_files: Optional[List[Path]] = None,
     dry_run: bool = False,
+    only: Optional[set] = None,
 ) -> Dict:
     """Move ``video_id``'s current (about-to-be-superseded) outputs from
     ``source_dir`` into the versioned Archive, checksum-verified, leaving the
@@ -202,6 +203,15 @@ def supersede_video_outputs(
     candidates = sorted(source_dir.glob(f"{video_id}*"))
     for f in candidates:
         if not f.is_file():
+            continue
+        # ``only``: sweep nothing the caller is not about to replace. WHY: a
+        # RETRY of a partially-failed archive arrives with few local files, and
+        # an unscoped sweep then treats the just-archived outputs as a previous
+        # generation and guts the bundle -- observed 2026-08-30, two videos
+        # archived with their fresh outputs swept away (recovered from here,
+        # because this move never clobbers). The manual bring-current tool
+        # passes no ``only`` and keeps the sweep-everything behaviour.
+        if only is not None and f.name not in only:
             continue
         cat = _classify(f, video_id, scorer)
         if cat is None:

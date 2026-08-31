@@ -231,7 +231,11 @@ def archive_video(
     if any(dest.glob(f"{video_id}*")):
         try:
             from mousereach.archive.supersede import supersede_video_outputs
-            superseded = supersede_video_outputs(video_id, dest)
+            # only=: sweep just the destination files this archive is about to
+            # replace. Without the scope, a retry after a partial move sweeps
+            # the files its own first attempt archived (2026-08-30).
+            superseded = supersede_video_outputs(
+                video_id, dest, only={f.name for f in files})
             if superseded.get("failed"):
                 result["error"] = (
                     "refusing to archive: could not preserve the previous "
