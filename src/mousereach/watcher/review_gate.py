@@ -105,7 +105,20 @@ def evaluate_gate(
     # If it is ever routed on again, validate it against videos a human has
     # judged first, not against how many videos it routes.
     if qc_verdict == "needs_review":
-        return DECISION_DEEP, "qc_needs_review", st
+        # A human's completed deep review outranks the machine's self-check
+        # (Logan's rule, 2026-08-31: "if a human completed all that needed to
+        # be reviewed, then it moves on"). Without this, a deterministic QC
+        # flag -- e.g. an unstable landmark ruler, a property of the tracking
+        # that every re-run re-raises identically -- ping-ponged cleared
+        # videos between deep review and reprocessing forever (one video
+        # cycled 16 times). The flag still travels with the outputs in
+        # _triage.json, so flagged kinematics stay identifiable downstream.
+        if _deep_review_cleared(video_id, processing_dir):
+            logger.info(
+                f"Gate: {video_id} QC verdict is needs_review but a human's "
+                f"deep-review clear exists -- honoring the clear.")
+        else:
+            return DECISION_DEEP, "qc_needs_review", st
     # GT-determined segments are resolved; so are segments a human addressed in a
     # review saved ANYWHERE the resolver looks (the Pending bundle, or next to the
     # canonical video) -- not just the fresh work dir triage_status read. Honoring
@@ -117,6 +130,19 @@ def evaluate_gate(
         segs = ", ".join(str(s) for s in sorted(unresolved))
         return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
     return DECISION_CLEAN, "clean", st
+
+
+def _deep_review_cleared(video_id: str, processing_dir: Path) -> bool:
+    """True when a human's deep-review clear marker exists for this video.
+
+    The clear marker (``{video_id}_deep_review_cleared.json``) is written when a
+    person clears a video in the deep-review tools, and review-return moves it
+    into the processing dir with the rest of the bundle -- so at gate time it
+    sits beside the fresh outputs. Never raises."""
+    try:
+        return (Path(processing_dir) / f"{video_id}_deep_review_cleared.json").is_file()
+    except Exception:
+        return False
 
 
 def _review_resolved_segments(video_id: str, processing_dir: Path):
