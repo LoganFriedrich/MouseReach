@@ -1521,13 +1521,35 @@ class ProcessingOrchestrator(BaseOrchestrator):
         Get next work item for the processing server.
 
         Priority:
-        1. Intake: DLC-complete videos on NAS → copy to local Processing/
-        2. Pipeline: Videos in Processing/ that need seg/reach/outcomes
-        3. Archive: Processed videos → archive to NAS
+        1. Archive: Processed videos → archive to NAS (finish what's done)
+        2. Intake: DLC-complete videos on NAS → copy to local Processing/
+        3. Pipeline: Videos in Processing/ that need seg/reach/outcomes
         """
         priority_animal = self._get_priority_animal()
 
-        # Priority 1: Intake — videos discovered in staging, not yet copied locally
+        # Priority 1: Archive — move processed videos to NAS, before taking on
+        # new work. WHY: archive used to be below pipeline, and intake keeps
+        # the pipeline pool topped up, so completed results piled up locally and
+        # never reached the NAS (or the database that pulls from it) until the
+        # staged supply ran dry -- days, during a backlog. Archiving is quick
+        # file moves; doing it first keeps results flowing without measurably
+        # starving the pipeline. Same finish-what's-done ordering the DLC-node
+        # orchestrator has always used.
+        videos = [v for v in self.db.get_videos_in_state('processed')
+                  if not self._archive_backoff_active(v['video_id'])]
+        if videos:
+            if priority_animal:
+                preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
+                pick = preferred[0] if preferred else videos[0]
+            else:
+                pick = videos[0]
+            return {
+                'type': 'archive',
+                'id': pick['video_id'],
+                'data': pick
+            }
+
+        # Priority 2: Intake — videos discovered in staging, not yet copied locally
         videos = self.db.get_videos_in_state('dlc_complete')
         if videos:
             # Check disk space cap
@@ -1549,27 +1571,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     'data': pick
                 }
 
-        # Priority 2: Pipeline — run seg/reach/outcomes on locally staged videos
+        # Priority 3: Pipeline — run seg/reach/outcomes on locally staged videos
         videos = self.db.get_videos_in_state('processing')
         if videos:
             pick = self._pick_from_pool(videos, priority_animal, 'animal_id')
             return {
                 'type': 'pipeline',
-                'id': pick['video_id'],
-                'data': pick
-            }
-
-        # Priority 3: Archive — move processed videos to NAS
-        videos = [v for v in self.db.get_videos_in_state('processed')
-                  if not self._archive_backoff_active(v['video_id'])]
-        if videos:
-            if priority_animal:
-                preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
-                pick = preferred[0] if preferred else videos[0]
-            else:
-                pick = videos[0]
-            return {
-                'type': 'archive',
                 'id': pick['video_id'],
                 'data': pick
             }
