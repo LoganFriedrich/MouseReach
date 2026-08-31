@@ -23,7 +23,7 @@ walkthroughs of the review tools themselves.
 - [Configuration and setup](#configuration-and-setup) -- `mousereach-setup`, `mousereach-fix-powershell`
 - [Pipeline Index (fast startup)](#pipeline-index-fast-startup) -- `mousereach-index-rebuild`, `mousereach-index-status`, `mousereach-index-refresh`
 - [Step 0 - Video Prep](#step-0-video-prep) -- `mousereach-crop`, `mousereach-convert`, `mousereach-prep`, `mousereach-compress`
-- [Step 1 - DLC](#step-1-dlc) -- `mousereach-dlc-batch`, `mousereach-dlc-quality`, `mousereach-dlc-compare`
+- [Step 1 - DLC](#step-1-dlc) -- `mousereach-dlc-batch`, `mousereach-dlc-quality`, `mousereach-dlc-compare`, `mousereach-fpfn-review`
 - [Step 2 - Segmentation](#step-2-segmentation) -- `mousereach-segment`, `mousereach-triage`, `mousereach-advance`, `mousereach-segment-review`, `mousereach-review`, `mousereach-reject-tray`
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
@@ -201,16 +201,16 @@ MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
 Index file: <processing_root>\pipeline_index.json
 Exists: True
 Version: 2.0
-Generated: 2026-08-29T08:38:02.893665
-Total videos: 675
+Generated: 2026-08-30T20:34:07.447678
+Total videos: 939
 
 Videos by folder:
-  Processing: 406
+  Processing: 670
 
 Validation status:
-  SEG: 0 validated, 113 need review, 36 not started
-  REACH: 0 validated, 82 need review, 593 not started
-  OUTCOME: 0 validated, 82 need review, 593 not started
+  SEG: 0 validated, 144 need review, 31 not started
+  REACH: 0 validated, 82 need review, 857 not started
+  OUTCOME: 0 validated, 82 need review, 857 not started
 
 Stale folders (need refresh): ['Processing']
 ============================================================
@@ -364,6 +364,12 @@ options:
                         DLC H5 file for Model B
   --split               Start in split view mode
 ```
+
+### `mousereach-fpfn-review`
+
+**No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
+
+Entry point: `mousereach.fpfn_review.widget:main`. Read its module docstring for usage.
 
 ## Step 2 - Segmentation
 
@@ -1218,11 +1224,142 @@ EVALUATING: 20250625_CNT0106_P2_unified_ground_truth.json
 ======================================================================
 EVALUATING: 20250711_CNT0216_P1_unified_ground_truth.json
 ======================================================================
-  WARNING: No algorithm file found: 20250711_CNT0216_P1_reaches.json
+----------------------------------------------------------------------
+SEGMENT BOUNDARIES
+----------------------------------------------------------------------
+  GT boundaries: 21
+  Algorithm boundaries: 21
+  Matched: 20/21 (95.2%)
+  Timing: 10/20 exact, 14 +/-1fr, 14 +/-2fr
+  Average error: -1.2 frames
+
+----------------------------------------------------------------------
+OUTCOMES
+----------------------------------------------------------------------
+  GT outcomes: 20
+  Algorithm outcomes: 20
+  Correct: 16/20 (80.0%)
+  Misclassified (4):
+    Segment 1: GT=displaced_sa, Algo=retrieved
+    Segment 10: GT=displaced_sa, Algo=triaged
+    Segment 17: GT=displaced_sa, Algo=triaged
+    Segment 18: GT=displaced_sa, Algo=retrieved
+
+----------------------------------------------------------------------
+REACHES
+----------------------------------------------------------------------
+  GT reaches: 351
+  Algorithm reaches: 358
+
+  RESULTS (tolerance=10 frames):
+    True Positives (matches): 350
+    False Negatives (missed): 1
+    False Positives (extra): 8
+
+    Precision: 97.8%
+    Recall:    99.7%
+    F1 Score:  0.99
+
+  TIMING ACCURACY:
+    Start frame accuracy:
+      Exact:    254/350 (72.6%)
+      +/-1 frame: 323/350 (92.3%)
+      +/-2 frame: 340/350 (97.1%)
+      +/-5 frame: 350/350 (100.0%)
+    End frame accuracy:
+      Exact:    264/350 (75.4%)
+      +/-1 frame: 299/350 (85.4%)
+      +/-2 frame: 330/350 (94.3%)
+      +/-5 frame: 348/350 (99.4%)
+    Average start error: -0.3 frames
+    Average end error:   +0.5 frames
+
+  MISSED REACHES (algorithm didn't detect):
+    Reach 359: frames 9845-9846 (duration=1, extent=?)
+    Missed reach durations: avg=1.0, min=1, max=1
+
+  FALSE POSITIVES (algorithm detected, not in GT):
+    Reach 36: frames 2940-2943
+    Reach 98: frames 9764-9766
+    Reach 99: frames 9856-9860
+    Reach 114: frames 11234-11236
+    Reach 155: frames 13995-14000
+    Reach 165: frames 15187-15191
+    Reach 191: frames 17577-17580
+    Reach 237: frames 21616-21620
+
 ======================================================================
 EVALUATING: 20250715_CNT0209_P2_unified_ground_truth.json
 ======================================================================
-  WARNING: No algorithm file found: 20250715_CNT0209_P2_reaches.json
+----------------------------------------------------------------------
+SEGMENT BOUNDARIES
+----------------------------------------------------------------------
+  GT boundaries: 21
+  Algorithm boundaries: 21
+  Matched: 21/21 (100.0%)
+  Timing: 0/21 exact, 7 +/-1fr, 13 +/-2fr
+  Average error: -2.3 frames
+
+----------------------------------------------------------------------
+OUTCOMES
+----------------------------------------------------------------------
+  GT outcomes: 20
+  Algorithm outcomes: 20
+  Correct: 17/20 (85.0%)
+  Misclassified (3):
+    Segment 4: GT=retrieved, Algo=triaged
+    Segment 17: GT=displaced_outside, Algo=retrieved
+    Segment 19: GT=displaced_sa, Algo=triaged
+
+----------------------------------------------------------------------
+REACHES
+----------------------------------------------------------------------
+  GT reaches: 316
+  Algorithm reaches: 323
+
+  RESULTS (tolerance=10 frames):
+    True Positives (matches): 312
+    False Negatives (missed): 4
+    False Positives (extra): 11
+
+    Precision: 96.6%
+    Recall:    98.7%
+    F1 Score:  0.98
+
+  TIMING ACCURACY:
+    Start frame accuracy:
+      Exact:    170/312 (54.5%)
+      +/-1 frame: 235/312 (75.3%)
+      +/-2 frame: 298/312 (95.5%)
+      +/-5 frame: 312/312 (100.0%)
+    End frame accuracy:
+      Exact:    241/312 (77.2%)
+      +/-1 frame: 274/312 (87.8%)
+      +/-2 frame: 300/312 (96.2%)
+      +/-5 frame: 311/312 (99.7%)
+    Average start error: -0.7 frames
+    Average end error:   +0.4 frames
+
+  MISSED REACHES (algorithm didn't detect):
+    Reach 2: frames 238-241 (duration=3, extent=?)
+    Reach 72: frames 5861-5862 (duration=1, extent=?)
+    Reach 338: frames 11391-11392 (duration=1, extent=?)
+    Reach 339: frames 21427-21428 (duration=1, extent=?)
+    Missed reach durations: avg=1.5, min=1, max=3
+
+  FALSE POSITIVES (algorithm detected, not in GT):
+    Reach 51: frames 3976-3979
+    Reach 54: frames 5233-5239
+    Reach 63: frames 5843-5862
+    Reach 84: frames 8361-8364
+    Reach 104: frames 10430-10434
+    Reach 165: frames 17209-17211
+    Reach 193: frames 22507-22510
+    Reach 205: frames 25672-25679
+    Reach 219: frames 26309-26311
+    Reach 220: frames 26318-26320
+    ... and 1 more
+
 ======================================================================
 EVALUATING: 20250718_CNT0206_P1_unified_ground_truth.json
 ======================================================================
@@ -1246,7 +1383,70 @@ EVALUATING: 20250812_CNT0314_P2_unified_ground_truth.json
 ======================================================================
 EVALUATING: 20250819_CNT0104_P4_unified_ground_truth.json
 ======================================================================
-  WARNING: No algorithm file found: 20250819_CNT0104_P4_reaches.json
+----------------------------------------------------------------------
+SEGMENT BOUNDARIES
+----------------------------------------------------------------------
+  GT boundaries: 21
+  Algorithm boundaries: 21
+  Matched: 21/21 (100.0%)
+  Timing: 11/21 exact, 15 +/-1fr, 19 +/-2fr
+  Average error: -0.8 frames
+
+----------------------------------------------------------------------
+OUTCOMES
+----------------------------------------------------------------------
+  GT outcomes: 20
+  Algorithm outcomes: 20
+  Correct: 19/20 (95.0%)
+  Misclassified (1):
+    Segment 1: GT=displaced_sa, Algo=triaged
+
+----------------------------------------------------------------------
+REACHES
+----------------------------------------------------------------------
+  GT reaches: 47
+  Algorithm reaches: 64
+
+  RESULTS (tolerance=10 frames):
+    True Positives (matches): 46
+    False Negatives (missed): 1
+    False Positives (extra): 18
+
+    Precision: 71.9%
+    Recall:    97.9%
+    F1 Score:  0.83
+
+  TIMING ACCURACY:
+    Start frame accuracy:
+      Exact:    29/46 (63.0%)
+      +/-1 frame: 34/46 (73.9%)
+      +/-2 frame: 41/46 (89.1%)
+      +/-5 frame: 46/46 (100.0%)
+    End frame accuracy:
+      Exact:    41/46 (89.1%)
+      +/-1 frame: 43/46 (93.5%)
+      +/-2 frame: 46/46 (100.0%)
+      +/-5 frame: 46/46 (100.0%)
+    Average start error: -0.8 frames
+    Average end error:   +0.2 frames
+
+  MISSED REACHES (algorithm didn't detect):
+    Reach 53: frames 17911-17912 (duration=1, extent=?)
+    Missed reach durations: avg=1.0, min=1, max=1
+
+  FALSE POSITIVES (algorithm detected, not in GT):
+    Reach 7: frames 2015-2021
+    Reach 8: frames 2060-2066
+    Reach 10: frames 2735-2741
+    Reach 13: frames 3952-3956
+    Reach 14: frames 3979-3981
+    Reach 18: frames 4618-4620
+    Reach 22: frames 4782-4784
+    Reach 24: frames 5836-5838
+    Reach 28: frames 7985-7989
+    Reach 34: frames 10251-10256
+    ... and 8 more
+
 ======================================================================
 EVALUATING: 20250912_CNT0210_P2_unified_ground_truth.json
 ======================================================================
@@ -1270,7 +1470,72 @@ EVALUATING: 20251027_CNT0404_P4_unified_ground_truth.json
 ======================================================================
 EVALUATING: 20251222_CNT0414_P4_unified_ground_truth.json
 ======================================================================
-  WARNING: No algorithm file found: 20251222_CNT0414_P4_reaches.json
+----------------------------------------------------------------------
+SEGMENT BOUNDARIES
+----------------------------------------------------------------------
+  GT boundaries: 21
+  Algorithm boundaries: 21
+  Matched: 21/21 (100.0%)
+  Timing: 5/21 exact, 12 +/-1fr, 19 +/-2fr
+  Average error: -1.1 frames
+
+----------------------------------------------------------------------
+OUTCOMES
+----------------------------------------------------------------------
+  GT outcomes: 20
+  Algorithm outcomes: 20
+  Correct: 18/20 (90.0%)
+  Misclassified (2):
+    Segment 7: GT=retrieved, Algo=triaged
+    Segment 17: GT=retrieved, Algo=triaged
+
+----------------------------------------------------------------------
+REACHES
+----------------------------------------------------------------------
+  GT reaches: 133
+  Algorithm reaches: 108
+
+  RESULTS (tolerance=10 frames):
+    True Positives (matches): 106
+    False Negatives (missed): 27
+    False Positives (extra): 2
+
+    Precision: 98.1%
+    Recall:    79.7%
+    F1 Score:  0.88
+
+  TIMING ACCURACY:
+    Start frame accuracy:
+      Exact:    42/106 (39.6%)
+      +/-1 frame: 57/106 (53.8%)
+      +/-2 frame: 90/106 (84.9%)
+      +/-5 frame: 103/106 (97.2%)
+    End frame accuracy:
+      Exact:    44/106 (41.5%)
+      +/-1 frame: 55/106 (51.9%)
+      +/-2 frame: 96/106 (90.6%)
+      +/-5 frame: 105/106 (99.1%)
+    Average start error: +1.2 frames
+    Average end error:   -1.2 frames
+
+  MISSED REACHES (algorithm didn't detect):
+    Reach 3: frames 231-239 (duration=8, extent=?)
+    Reach 141: frames 547-551 (duration=4, extent=?)
+    Reach 11: frames 1380-1388 (duration=8, extent=?)
+    Reach 14: frames 1704-1710 (duration=6, extent=?)
+    Reach 16: frames 1762-1769 (duration=7, extent=?)
+    Reach 22: frames 2054-2079 (duration=25, extent=?)
+    Reach 25: frames 2416-2427 (duration=11, extent=?)
+    Reach 37: frames 3920-3930 (duration=10, extent=?)
+    Reach 42: frames 4393-4399 (duration=6, extent=?)
+    Reach 142: frames 5690-5698 (duration=8, extent=?)
+    ... and 17 more
+    Missed reach durations: avg=9.1, min=1, max=25
+
+  FALSE POSITIVES (algorithm detected, not in GT):
+    Reach 17: frames 2060-2062
+    Reach 18: frames 2066-2070
+
 ======================================================================
 EVALUATING: 20251224_CNT0403_P3_unified_ground_truth.json
 ======================================================================
@@ -1320,20 +1585,20 @@ OUTPUT FILES:
 MOUSEREACH SUMMARY
 ============================================================
 
-Processed 53 videos
-Total segments (trials): 1060
-Total reaches detected: 4935
+Processed 119 videos
+Total segments (trials): 2380
+Total reaches detected: 11646
 
 OUTCOME BREAKDOWN:
 ----------------------------------------
-  displaced_outside   :    1 (  0.1%)
-  displaced_sa        :  346 ( 32.6%)
-  retrieved           :   41 (  3.9%)
-  triaged             :   10 (  0.9%)
-  uncertain           :    1 (  0.1%)
-  untouched           :  661 ( 62.4%)
+  displaced_outside   :    1 (  0.0%)
+  displaced_sa        :  852 ( 35.8%)
+  retrieved           :  145 (  6.1%)
+  triaged             :   65 (  2.7%)
+  uncertain           :    1 (  0.0%)
+  untouched           : 1316 ( 55.3%)
 
-OVERALL SUCCESS RATE: 3.9%
+OVERALL SUCCESS RATE: 6.1%
 
 CSV saved to: <processing_root>\summary_for_PI.csv
 ============================================================
@@ -1642,31 +1907,31 @@ Collages:
   Failed:       0
 
 Videos:
-  Total:        1532
+  Total:        1862
   Discovered:   0
   Validated:    0
   DLC Queued:   0
   DLC Running:  0
   DLC Complete: 0
-  Processing:   5
-  Processed:    294
-  Archived:     0
+  Processing:   64
+  Processed:    341
+  Archived:     39
   Outdated:     1199
   Crystallized: 0
   Quarantined:  0
   Failed:       0
 
 Recent Activity (last 10 entries):
-  [2026-08-26 21:36:21] 20251024_CNT0408_P3 - archive: started
-  [2026-08-26 21:36:21] 20251024_CNT0408_P3 - archive: failed (Not ready: seg, reach, outcome not validated)
-  [2026-08-26 21:36:21] 20260721_CNT0501_P4 - archive: started
-  [2026-08-26 21:36:21] 20260721_CNT0501_P4 - archive: failed (Not ready: seg, reach, outcome not validated)
-  [2026-08-26 21:36:19] 20250708_CNT0211_P2 - assignment: completed [0.3s]
-  [2026-08-26 21:36:18] 20250708_CNT0211_P2 - outcome_detection: completed (segments=20) [3.3s]
-  [2026-08-26 21:36:18] 20250708_CNT0211_P2 - assignment: started
-  [2026-08-26 21:36:15] 20250708_CNT0211_P2 - reach_detection: completed (reaches=140) [0.7s]
-  [2026-08-26 21:36:15] 20250708_CNT0211_P2 - outcome_detection: started
-  [2026-08-26 21:36:14] 20250708_CNT0211_P2 - segmentation: started
+  [2026-08-31 01:39:32] 20260728_CNT0516_P2 - archive: completed (Archived 11 files to <nas_root>\Analyzed\Connectome\CNT05) [2.7s]
+  [2026-08-31 01:39:30] 20260728_CNT0516_P2 - archive: started
+  [2026-08-31 01:39:26] 20260731_CNT0511_P1 - archive: completed (Archived 11 files to <nas_root>\Analyzed\Connectome\CNT05) [1.4s]
+  [2026-08-31 01:39:24] 20260731_CNT0511_P1 - archive: started
+  [2026-08-31 01:39:21] 20220811_ASPA1013_P2 - archive: completed (Archived 11 files to <nas_root>\Analyzed\ASPA\ASPA) [1.4s]
+  [2026-08-31 01:39:20] 20220811_ASPA1013_P2 - archive: started
+  [2026-08-31 01:39:17] 20260723_CNT0504_P4 - archive: completed (Archived 11 files to <nas_root>\Analyzed\Connectome\CNT05) [1.4s]
+  [2026-08-31 01:39:15] 20260723_CNT0504_P4 - archive: started
+  [2026-08-31 01:39:12] 20220815_ASPA1006_P1 - archive: completed (Archived 11 files to <nas_root>\Analyzed\ASPA\ASPA) [1.6s]
+  [2026-08-31 01:39:10] 20220815_ASPA1006_P1 - archive: started
 ```
 
 ### `mousereach-watch-reprocess`
@@ -1769,8 +2034,8 @@ Current pipeline versions:
   Last updated: 2026-08-29T08:31:26.610748
 
 Archived video status:
-  Total archived:     0
-  Current (up-to-date): 0
+  Total archived:     40
+  Current (up-to-date): 40
   Outdated:           0
   Crystallized:       0
   Unsupported tray:   0 (E/F sessions -- not this pipeline's work)
