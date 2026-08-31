@@ -251,21 +251,39 @@ def archive_video(
             return result
     result["superseded"] = superseded
 
-    # Move files
+    # Move files. Idempotent and loud:
+    #  - A file already at the destination with identical content counts as
+    #    moved (the local copy is dropped). WHY: a partially-failed attempt
+    #    leaves most files already archived, so without this a retry can
+    #    never converge -- observed 2026-08-30, when one silent per-file
+    #    failure left a video's retry loop failing forever.
+    #  - A per-file failure is named in result["error"], never swallowed
+    #    into a bare success=False with error=None.
+    from mousereach.watcher.transfer import verify_file_hash
     moved = []
+    failed = []
     for f in files:
+        dest_path = dest / f.name
         try:
-            dest_path = dest / f.name
+            if dest_path.exists() and verify_file_hash(f, dest_path, "sha256"):
+                f.unlink()  # identical copy already archived
+                moved.append(f.name)
+                if verbose:
+                    print(f"    Already archived (identical): {f.name}")
+                continue
             shutil.move(str(f), str(dest_path))
             moved.append(f.name)
             if verbose:
                 print(f"    Moved: {f.name}")
         except Exception as e:
+            failed.append(f"{f.name} ({e})")
             if verbose:
                 print(f"    FAILED: {f.name} - {e}")
 
     result["files_moved"] = moved
     result["success"] = len(moved) == len(files)
+    if failed and not result["success"]:
+        result["error"] = "failed to move: " + "; ".join(failed)
 
     # Update index - remove video
     if result["success"]:
