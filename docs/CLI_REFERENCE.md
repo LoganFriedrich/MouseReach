@@ -201,16 +201,16 @@ MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
 Index file: <processing_root>\pipeline_index.json
 Exists: True
 Version: 2.0
-Generated: 2026-08-30T20:34:07.447678
-Total videos: 939
+Generated: 2026-08-30T20:42:42.205717
+Total videos: 882
 
 Videos by folder:
-  Processing: 670
+  Processing: 613
 
 Validation status:
-  SEG: 0 validated, 144 need review, 31 not started
-  REACH: 0 validated, 82 need review, 857 not started
-  OUTCOME: 0 validated, 82 need review, 857 not started
+  SEG: 0 validated, 135 need review, 31 not started
+  REACH: 0 validated, 82 need review, 800 not started
+  OUTCOME: 0 validated, 82 need review, 800 not started
 
 Stale folders (need refresh): ['Processing']
 ============================================================
@@ -1192,7 +1192,7 @@ specified directory or the MouseReach processing root.
 ======================================================================
 GT FILES FOUND
 ======================================================================
-Unified GT: 18
+Unified GT: 17
   - 20250625_CNT0102_P4_unified_ground_truth.json
   - 20250625_CNT0106_P2_unified_ground_truth.json
   - 20250711_CNT0216_P1_unified_ground_truth.json
@@ -1208,7 +1208,6 @@ Unified GT: 18
   - 20251022_CNT0402_P4_unified_ground_truth.json
   - 20251023_CNT0407_P3_unified_ground_truth.json
   - 20251027_CNT0404_P4_unified_ground_truth.json
-  - 20251222_CNT0414_P4_unified_ground_truth.json
   - 20251224_CNT0403_P3_unified_ground_truth.json
   - 20251224_CNT0413_P2_unified_ground_truth.json
 Reach GT: 0
@@ -1468,75 +1467,6 @@ EVALUATING: 20251027_CNT0404_P4_unified_ground_truth.json
 ======================================================================
   WARNING: No algorithm file found: 20251027_CNT0404_P4_reaches.json
 ======================================================================
-EVALUATING: 20251222_CNT0414_P4_unified_ground_truth.json
-======================================================================
-----------------------------------------------------------------------
-SEGMENT BOUNDARIES
-----------------------------------------------------------------------
-  GT boundaries: 21
-  Algorithm boundaries: 21
-  Matched: 21/21 (100.0%)
-  Timing: 5/21 exact, 12 +/-1fr, 19 +/-2fr
-  Average error: -1.1 frames
-
-----------------------------------------------------------------------
-OUTCOMES
-----------------------------------------------------------------------
-  GT outcomes: 20
-  Algorithm outcomes: 20
-  Correct: 18/20 (90.0%)
-  Misclassified (2):
-    Segment 7: GT=retrieved, Algo=triaged
-    Segment 17: GT=retrieved, Algo=triaged
-
-----------------------------------------------------------------------
-REACHES
-----------------------------------------------------------------------
-  GT reaches: 133
-  Algorithm reaches: 108
-
-  RESULTS (tolerance=10 frames):
-    True Positives (matches): 106
-    False Negatives (missed): 27
-    False Positives (extra): 2
-
-    Precision: 98.1%
-    Recall:    79.7%
-    F1 Score:  0.88
-
-  TIMING ACCURACY:
-    Start frame accuracy:
-      Exact:    42/106 (39.6%)
-      +/-1 frame: 57/106 (53.8%)
-      +/-2 frame: 90/106 (84.9%)
-      +/-5 frame: 103/106 (97.2%)
-    End frame accuracy:
-      Exact:    44/106 (41.5%)
-      +/-1 frame: 55/106 (51.9%)
-      +/-2 frame: 96/106 (90.6%)
-      +/-5 frame: 105/106 (99.1%)
-    Average start error: +1.2 frames
-    Average end error:   -1.2 frames
-
-  MISSED REACHES (algorithm didn't detect):
-    Reach 3: frames 231-239 (duration=8, extent=?)
-    Reach 141: frames 547-551 (duration=4, extent=?)
-    Reach 11: frames 1380-1388 (duration=8, extent=?)
-    Reach 14: frames 1704-1710 (duration=6, extent=?)
-    Reach 16: frames 1762-1769 (duration=7, extent=?)
-    Reach 22: frames 2054-2079 (duration=25, extent=?)
-    Reach 25: frames 2416-2427 (duration=11, extent=?)
-    Reach 37: frames 3920-3930 (duration=10, extent=?)
-    Reach 42: frames 4393-4399 (duration=6, extent=?)
-    Reach 142: frames 5690-5698 (duration=8, extent=?)
-    ... and 17 more
-    Missed reach durations: avg=9.1, min=1, max=25
-
-  FALSE POSITIVES (algorithm detected, not in GT):
-    Reach 17: frames 2060-2062
-    Reach 18: frames 2066-2070
-
-======================================================================
 EVALUATING: 20251224_CNT0403_P3_unified_ground_truth.json
 ======================================================================
   WARNING: No algorithm file found: 20251224_CNT0403_P3_reaches.json
@@ -1585,20 +1515,20 @@ OUTPUT FILES:
 MOUSEREACH SUMMARY
 ============================================================
 
-Processed 119 videos
-Total segments (trials): 2380
-Total reaches detected: 11646
+Processed 69 videos
+Total segments (trials): 1380
+Total reaches detected: 7677
 
 OUTCOME BREAKDOWN:
 ----------------------------------------
-  displaced_outside   :    1 (  0.0%)
-  displaced_sa        :  852 ( 35.8%)
-  retrieved           :  145 (  6.1%)
-  triaged             :   65 (  2.7%)
-  uncertain           :    1 (  0.0%)
-  untouched           : 1316 ( 55.3%)
+  displaced_outside   :    1 (  0.1%)
+  displaced_sa        :  481 ( 34.9%)
+  retrieved           :   90 (  6.5%)
+  triaged             :   63 (  4.6%)
+  uncertain           :    1 (  0.1%)
+  untouched           :  744 ( 53.9%)
 
-OVERALL SUCCESS RATE: 6.1%
+OVERALL SUCCESS RATE: 6.5%
 
 CSV saved to: <processing_root>\summary_for_PI.csv
 ============================================================
@@ -1907,31 +1837,31 @@ Collages:
   Failed:       0
 
 Videos:
-  Total:        1862
+  Total:        1863
   Discovered:   0
   Validated:    0
   DLC Queued:   0
   DLC Running:  0
-  DLC Complete: 0
+  DLC Complete: 1
   Processing:   64
-  Processed:    341
-  Archived:     39
+  Processed:    295
+  Archived:     85
   Outdated:     1199
   Crystallized: 0
   Quarantined:  0
   Failed:       0
 
 Recent Activity (last 10 entries):
-  [2026-08-31 01:39:32] 20260728_CNT0516_P2 - archive: completed (Archived 11 files to <nas_root>\Analyzed\Connectome\CNT05) [2.7s]
-  [2026-08-31 01:39:30] 20260728_CNT0516_P2 - archive: started
-  [2026-08-31 01:39:26] 20260731_CNT0511_P1 - archive: completed (Archived 11 files to <nas_root>\Analyzed\Connectome\CNT05) [1.4s]
-  [2026-08-31 01:39:24] 20260731_CNT0511_P1 - archive: started
-  [2026-08-31 01:39:21] 20220811_ASPA1013_P2 - archive: completed (Archived 11 files to <nas_root>\Analyzed\ASPA\ASPA) [1.4s]
-  [2026-08-31 01:39:20] 20220811_ASPA1013_P2 - archive: started
-  [2026-08-31 01:39:17] 20260723_CNT0504_P4 - archive: completed (Archived 11 files to <nas_root>\Analyzed\Connectome\CNT05) [1.4s]
-  [2026-08-31 01:39:15] 20260723_CNT0504_P4 - archive: started
-  [2026-08-31 01:39:12] 20220815_ASPA1006_P1 - archive: completed (Archived 11 files to <nas_root>\Analyzed\ASPA\ASPA) [1.6s]
-  [2026-08-31 01:39:10] 20220815_ASPA1006_P1 - archive: started
+  [2026-08-31 01:48:43] 20260721_CNT0506_P4 - archive: started
+  [2026-08-31 01:48:43] 20260721_CNT0506_P4 - archive: failed (Not ready: seg, reach, outcome not validated)
+  [2026-08-31 01:48:42] 20260721_CNT0507_P4 - archive: started
+  [2026-08-31 01:48:42] 20260721_CNT0507_P4 - archive: failed (Not ready: seg, reach, outcome not validated)
+  [2026-08-31 01:48:41] 20260721_CNT0505_P4 - archive: started
+  [2026-08-31 01:48:41] 20260721_CNT0505_P4 - archive: failed (Not ready: seg, reach, outcome not validated) [0.0s]
+  [2026-08-31 01:48:40] 20260724_CNT0508_P2 - archive: started
+  [2026-08-31 01:48:40] 20260724_CNT0508_P2 - archive: failed (Not ready: seg, reach, outcome not validated)
+  [2026-08-31 01:48:39] 20260724_CNT0504_P2 - archive: started
+  [2026-08-31 01:48:39] 20260724_CNT0504_P2 - archive: failed (Not ready: seg, reach, outcome not validated)
 ```
 
 ### `mousereach-watch-reprocess`
@@ -2006,11 +1936,14 @@ and whether the watcher could run here. Takes no options.
 ### `mousereach-watch-toggle`
 
 ```
-==================================================
-  Watcher PAUSED -- filming mode active
-  DLC processing is suspended.
-  Toggle again when filming is done.
-==================================================
+Toggle the watcher between filming (paused) and processing (active) modes.
+
+    When paused, the running watcher skips all work and waits.
+    When active, normal processing resumes.
+
+    Usage:
+        mousereach-watch-toggle          Toggle current state
+        mousereach-watch-toggle --status  Show current state only
 ```
 
 ## Version tracking and reprocessing
@@ -2034,8 +1967,8 @@ Current pipeline versions:
   Last updated: 2026-08-29T08:31:26.610748
 
 Archived video status:
-  Total archived:     40
-  Current (up-to-date): 40
+  Total archived:     85
+  Current (up-to-date): 85
   Outdated:           0
   Crystallized:       0
   Unsupported tray:   0 (E/F sessions -- not this pipeline's work)
