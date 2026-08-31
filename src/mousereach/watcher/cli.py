@@ -1271,6 +1271,20 @@ def main_toggle():
         mousereach-watch-toggle --status  Show current state only
     """
     args = sys.argv[1:]
+
+    # -h/--help must never ACT. The CLI reference generator runs every command
+    # with --help; before this guard, that silently toggled the LIVE watcher
+    # into filming mode (it paused production twice on 2026-08-30). Unknown
+    # flags likewise refuse to toggle instead of toggling by accident.
+    if '-h' in args or '--help' in args:
+        print(main_toggle.__doc__)
+        return
+    unknown = [a for a in args if a not in ('--status',)]
+    if unknown:
+        print(main_toggle.__doc__)
+        print(f"Unknown argument(s): {' '.join(unknown)}", file=sys.stderr)
+        sys.exit(2)
+
     status_only = '--status' in args
 
     try:
