@@ -423,6 +423,23 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
+    # Load FP/FN Reach Review viewer (standalone tool, not a pipeline step)
+    tprint("  FP/FN Review...", end=" ")
+    try:
+        from mousereach.fpfn_review.widget import FPFNReviewWidget
+        fpfn_widget = FPFNReviewWidget(viewer)
+        dw = viewer.window.add_dock_widget(fpfn_widget, name="FP/FN Review", area="right")
+        widgets_loaded.append(("fpfn_review", fpfn_widget))
+        dock_widgets.append(dw)
+        # Defer keybinding setup until widget is docked. NOTE: binds Space/S/E
+        # with overwrite=True, same as the review tools -- last loaded wins.
+        fpfn_widget._setup_keybindings()
+        print("OK")
+    except ImportError as e:
+        print(f"SKIP ({e})")
+    except Exception as e:
+        print(f"ERROR ({e})")
+
     # Tabify all dock widgets together (stack as tabs)
     if len(dock_widgets) > 1:
         main_window = viewer.window._qt_window
