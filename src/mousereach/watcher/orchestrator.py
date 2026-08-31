@@ -2294,6 +2294,25 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         video_id = work['id']
 
+        # Disk truth first: the bench-disagreement router (a mousedb job) moves
+        # a video's whole bundle into a review queue while this watcher runs,
+        # and by design it cannot write this DB then -- so the state stays
+        # 'processed' while the outputs are already in the queue. Archiving the
+        # leftovers then entombs a lone mp4 in Analyzed and stamps the video
+        # 'archived' (2026-08-31: 19 videos reconciled by hand). If the bundle
+        # is in a queue on disk, adopt that as the state and skip the archive.
+        for qdir, qstate in ((Paths.TRIAGE_REVIEW, 'triage'),
+                             (Paths.DEEP_REVIEW, 'deep_review')):
+            if qdir and (qdir / video_id).is_dir():
+                logger.info(
+                    f"Not archiving {video_id}: its bundle is in the {qstate} "
+                    f"queue on disk -- reconciling state instead.")
+                self.db.force_state(
+                    video_id, qstate,
+                    reason=f"bundle found in {qstate} queue on disk at archive time")
+                self._clear_archive_backoff(video_id)
+                return
+
         logger.info(f"Archiving {video_id} to NAS")
         self.db.log_step(video_id, 'archive', 'started')
         start_time = time.time()
