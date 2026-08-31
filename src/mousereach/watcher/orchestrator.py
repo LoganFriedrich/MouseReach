@@ -2299,7 +2299,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
         start_time = time.time()
 
         try:
-            result = archive_video(video_id, dry_run=False, verbose=False)
+            # skip_ready_check: state='processed' already encodes what the
+            # readiness gate re-derives from files on disk -- and a retry
+            # after a partially-failed attempt MUST skip it, because the
+            # outputs it checks for are already at the destination (the
+            # 2026-08-30 stuck-retry loop). The DLC-node archive path has
+            # always passed it for the same reason.
+            result = archive_video(video_id, dry_run=False, verbose=False,
+                                   skip_ready_check=True)
             duration = time.time() - start_time
 
             if result.get('success'):
