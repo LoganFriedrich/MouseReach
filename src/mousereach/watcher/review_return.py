@@ -167,9 +167,31 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # 274 bundles went that way in one run before it was caught.
     try:
         if db.get_video(stem) is None:
+            # Parse the stem's own metadata into the row. Rows registered here
+            # used to carry only the id and path -- no tray_type/date/animal --
+            # and tray-aware work selection silently degrades to a random pick
+            # on a NULL tray_type. This stops NEW metadata-less rows; rows that
+            # already exist with NULLs are handled by the orchestrator's
+            # read-side filename fallback -- both halves are required.
+            meta = {}
+            try:
+                from .validator import validate_single_filename
+                result = validate_single_filename(f"{stem}.mp4")
+                if result.valid and result.parsed:
+                    meta = {
+                        'date': result.parsed['date'],
+                        'animal_id': result.parsed['animal_id'],
+                        'experiment': result.parsed['experiment'],
+                        'cohort': result.parsed['cohort'],
+                        'subject': result.parsed['subject'],
+                        'tray_type': result.parsed['tray_type'],
+                    }
+            except Exception:
+                meta = {}
             db.register_video(
                 video_id=stem,
                 source_path=str(processing_dir / f"{stem}.mp4"),
+                **meta,
             )
             logger.info(f"Return {stem}: registered (not previously known to this node)")
     except Exception as e:
@@ -227,17 +249,32 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     if moved == 0:
         return False
 
+    kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
     try:
-        if h5_dest is not None:
-            db.update_state(stem, "processing", dlc_output_path=str(h5_dest))
+        # A cleared review routinely returns a video whose row has no legal
+        # path to 'processing' (typically 'archived': the bundle sat in a
+        # review queue while the row was closed out). That is exactly what
+        # force_state exists for -- go straight there instead of letting
+        # update_state log an ERROR first and then forcing anyway. The WARNING
+        # force_state writes is the honest audit line; the ERROR was noise
+        # that fired on every legitimate return.
+        state = None
+        try:
+            row = db.get_video(stem)
+            state = row['state'] if row else None
+        except Exception:
+            state = None
+        from .db import VIDEO_TRANSITIONS
+        if state is not None and "processing" not in VIDEO_TRANSITIONS.get(state, []):
+            db.force_state(stem, "processing",
+                           reason="review cleared; returned to Processing", **kw)
         else:
-            db.update_state(stem, "processing")
+            db.update_state(stem, "processing", **kw)
     except Exception:
         # The row exists (registered above), so a legal-transition failure is
         # what lands here. force_state is the documented escape hatch and logs
         # the bypass; without it the video would sit in Processing unreferenced.
         try:
-            kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
             db.force_state(stem, "processing",
                            reason="review cleared; returned to Processing", **kw)
         except Exception as e2:
