@@ -35,6 +35,55 @@ def _get_versions_path(nas_root: Path = None) -> Path:
     return Path(nas_root) / "pipeline_versions.json"
 
 
+def code_stamped_versions() -> dict:
+    """The version each stage's RUNNING code stamps into its outputs, imported
+    from the constants themselves. Stages whose module cannot be imported are
+    simply absent (never raises)."""
+    out = {}
+    try:
+        from mousereach.segmentation.core.segmenter_multi import SEGMENTER_VERSION
+        out["segmenter"] = SEGMENTER_VERSION
+    except Exception:
+        pass
+    try:
+        from mousereach.reach.v8 import VERSION as _reach_v
+        out["reach_detector"] = _reach_v
+    except Exception:
+        pass
+    try:
+        from mousereach.outcomes.v6_cascade import VERSION as _out_v
+        out["outcome_detector"] = _out_v
+    except Exception:
+        pass
+    try:
+        from mousereach.assignment.v2.assign import VERSION as _asn_v
+        out["assignment"] = _asn_v
+    except Exception:
+        pass
+    try:
+        from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+        out["kinematic_extractor"] = FeatureExtractor.VERSION
+    except Exception:
+        pass
+    return out
+
+
+def declaration_drift(declared: dict) -> list:
+    """[(stage, declared, code_stamps)] wherever pipeline_versions.json disagrees
+    with what the installed code actually stamps.
+
+    WHY: this drift has gone invisible twice -- the declaration said segmenter
+    2.1.3 while 2.2.3 ran (so the pellet-window gate never marked one video
+    outdated), and kinematic_extractor stayed declared 2.0.0 until 2026-08-29
+    (so 1,700+ videos kept causal-reach-less features and nobody was told).
+    Both times a human census found it months later. A machine can find it in
+    milliseconds, so it does."""
+    code = code_stamped_versions()
+    versions = (declared or {}).get("versions") or declared or {}
+    return [(k, versions.get(k), v) for k, v in sorted(code.items())
+            if versions.get(k) is not None and str(versions.get(k)) != str(v)]
+
+
 def get_current_versions(nas_root: Path = None) -> dict:
     """Load current pipeline versions from NAS.
 

@@ -1343,6 +1343,24 @@ def main_version_check():
     from mousereach.config import require_processing_root, Paths
     from mousereach.watcher.db import WatcherDB
 
+    # Declaration drift first: if pipeline_versions.json disagrees with what
+    # the installed code stamps, every compliance number below is built on a
+    # lie -- and this exact silence has burned the lab twice.
+    if not init:
+        try:
+            from mousereach.pipeline.versions import get_current_versions, declaration_drift
+            _drift = declaration_drift(get_current_versions(Paths.NAS_ROOT))
+            if _drift:
+                print("=" * 60)
+                print("[!] DECLARATION DRIFT -- pipeline_versions.json does not match the code:")
+                for stage, decl, code in _drift:
+                    print("    %-20s declared %-10s code stamps %s" % (stage, decl, code))
+                print("    Staleness scanning is BLIND to these stages until the declaration")
+                print("    is corrected (edit pipeline_versions.json or re-run --init).")
+                print("=" * 60)
+        except Exception as _e:
+            print(f"[!] declaration-drift check unavailable: {_e}")
+
     if init:
         from mousereach.pipeline.versions import initialize_versions
         try:
