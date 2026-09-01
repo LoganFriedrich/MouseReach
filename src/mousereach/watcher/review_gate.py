@@ -85,7 +85,17 @@ def evaluate_gate(
     if gt_full:
         return DECISION_CLEAN, "ground_truth_exhaustive", st
     if st.seg_failed:
-        return DECISION_DEEP, "segmentation_failed", st
+        # Same honour-the-human rule as qc_needs_review below: a completed
+        # deep review outranks the machine's self-check. A soft segmentation
+        # failure is re-raised identically by every re-run, so without this a
+        # human-cleared video ping-pongs between deep review and reprocessing
+        # exactly like the QC case did.
+        if _deep_review_cleared(video_id, processing_dir):
+            logger.info(
+                f"Gate: {video_id} segmentation flagged as failed but a "
+                f"human's deep-review clear exists -- honoring the clear.")
+        else:
+            return DECISION_DEEP, "segmentation_failed", st
     # NOT routing on the segmenter's needs_human verdict. It was briefly wired
     # up here and is deliberately switched off.
     #
