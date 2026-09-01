@@ -50,7 +50,43 @@ from .consensus import (
 )
 from .tray_motion import apply_tray_motion_gate
 
-SEGMENTER_VERSION = "2.2.3"
+SEGMENTER_VERSION = "2.2.4"
+
+
+def _dedupe_boundaries(boundaries: List[int], n_expected: int,
+                       expected_interval: float) -> Tuple[List[int], int]:
+    """Strictly-increasing repair: drop duplicate boundary values, then re-insert
+    replacements at the median cadence inside the largest gaps.
+
+    A duplicate boundary becomes a zero-length segment downstream: no reaches,
+    nan ruler calibration, and an automatic residual-triage flag -- review work
+    about footage that does not exist (21 videos across the corpus as of
+    2026-09-01; e.g. boundary 35108 emitted twice). Three producers can emit
+    one: two SABL slots snapping to the same merged cluster, the invented-
+    boundary padding clamping at the final frame (which duplicates it on every
+    further iteration), and a tray-gate projection landing on an existing
+    value. So this runs once, after all of them. Replacements go into the
+    largest gap because a missed tray advance leaves a double-length segment --
+    the gap is itself the evidence of where the boundary belongs.
+    """
+    n_dup = len(boundaries) - len(set(boundaries))
+    if not n_dup:
+        return sorted(boundaries), 0
+    out = sorted(set(boundaries))
+    med_int = (float(np.median(np.diff(out))) if len(out) >= 2
+               else float(expected_interval))
+    for _ in range(n_expected):
+        if len(out) >= n_expected:
+            break
+        gaps = np.diff(out)
+        if len(gaps) == 0 or int(gaps.max()) < 2:
+            break  # nowhere left to insert; a short count is at least honest
+        gi = int(np.argmax(gaps))
+        cand = int(out[gi] + med_int)
+        if not (out[gi] < cand < out[gi + 1]):
+            cand = (out[gi] + out[gi + 1]) // 2
+        out.insert(gi + 1, cand)
+    return out, n_dup
 SEGMENTER_ALGORITHM = "multi_proposer_sabl_primary_v1+tray_motion_gate+pellet_window_gate"
 
 
@@ -344,6 +380,18 @@ def segment_video_multi(dlc_path: Path,
                 f"tray_motion_gate_rejected b{idx}@{original}: {','.join(reasons)}"
             )
 
+    # Last-line dedupe: every phase above can emit a duplicate boundary, and a
+    # duplicate becomes a zero-length segment downstream (no reaches, nan
+    # calibration, automatic residual triage). Runs after the tray gate so the
+    # gate's own projections are covered too.
+    boundaries, n_dup = _dedupe_boundaries(
+        boundaries, config.n_expected, config.expected_interval)
+    if n_dup:
+        anomalies.append(
+            f"safety_net: removed {n_dup} duplicate boundary(ies); "
+            f"replacement(s) projected at the median cadence into the "
+            f"largest gap(s)")
+
     # Phase 4: anomaly detection
     boundary_anomalies = detect_anomalies(boundaries, fps)
     anomalies.extend(boundary_anomalies)
@@ -391,6 +439,10 @@ def segment_video_multi(dlc_path: Path,
         needs_human.append(
             f"{n_invented} boundary(ies) were invented to reach "
             f"{config.n_expected}, marking no observed tray movement")
+    if n_dup:
+        needs_human.append(
+            f"{n_dup} boundary(ies) were duplicates and their replacements "
+            f"were projected rather than detected")
     if n_discarded:
         needs_human.append(
             f"{n_discarded} detected boundary(ies) were discarded to fit "

@@ -39,7 +39,7 @@ There are two segmenters in the tree.
 
 | File | Status |
 |---|---|
-| `core/segmenter_multi.py` -- `segment_video_multi()` | Every production path runs this. Version string `2.2.3` (`segmenter_multi.py:53`). |
+| `core/segmenter_multi.py` -- `segment_video_multi()` | Every production path runs this. Version string `2.2.4` (`segmenter_multi.py:53`); 2.2.4 differs from 2.2.3 only in the duplicate-boundary dedupe (see "Zero-length segments ship", now fixed), and `pipeline_versions.json` declares 2.2.3 compatible so the corpus is not mass-staled by the bump. |
 | `core/segmenter_robust.py` -- `segment_video_robust()` | Mostly a library of helper functions (signal loading, quality checks, anomaly text, and the function that writes the JSON file). Version string `2.1.3` (`segmenter_robust.py:103`). **It is still called in one place**: the napari boundary-review widget runs it live when it can find no precomputed segments file for the video it is opening (`segmentation/review_widget.py:867-870`). Its result is shown in the window; it reaches disk only if the reviewer saves. |
 
 ### Everything that runs a segmenter
@@ -306,6 +306,17 @@ The clearest live example is `20251205_CNT0405_P1`: ten of its 21 boundaries are
 The `failed` branch at `core/batch.py:93-95` is unreachable: it fires only when the boundary count is not 21, and the safety net guarantees it is. The only way `process_single` returns `failed` is through its exception handler.
 
 ### Zero-length segments ship
+
+**FIXED in 2.2.4 (2026-09-01):** `_dedupe_boundaries` (`segmenter_multi.py`, run
+after the tray-motion gate so every producer below is covered) removes duplicate
+boundary values and re-inserts replacements at the median cadence inside the
+largest gap -- which is where the missed tray advance actually is, since a miss
+leaves a double-length segment. The repair is recorded in `anomalies`
+(`safety_net: removed N duplicate boundary(ies) ...`) and routes to
+`needs_human`. A corpus sweep on 2026-09-01 found 23 degenerate segments across
+21 archived videos (13 of them sitting in triage as phantom review work);
+those are re-run individually rather than staling the corpus. The paragraphs
+below describe the 2.2.3-and-earlier behaviour that produced them.
 
 **12 of the 2159 files the current segmenter produced contain two identical adjacent boundary frames**, i.e. a segment of length zero. Nothing rejects them. Ten of the twelve have an interval coefficient of variation of 0.229, comfortably under the 0.3 threshold.
 
