@@ -251,6 +251,14 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
 
     kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
     try:
+        # NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a
+        # SECOND ENTRY POINT into 'processing', beside intake. Any guard or
+        # invariant of the form "videos in processing got there through
+        # intake, so a check at intake is sufficient" is wrong because of
+        # this path -- a human-cleared review re-enters here, bypassing
+        # intake entirely. (An orchestrator work-selection guard was designed
+        # on that assumption and had to be redone; hence this sign.)
+        #
         # A cleared review routinely returns a video whose row has no legal
         # path to 'processing' (typically 'archived': the bundle sat in a
         # review queue while the row was closed out). That is exactly what
