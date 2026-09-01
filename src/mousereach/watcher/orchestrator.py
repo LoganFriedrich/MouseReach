@@ -1421,7 +1421,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Reprocessing scanner (runs every N poll cycles)
         self._reprocess_scanner = None
         self._scan_cycle_count = 0
-        self._reprocess_scan_interval = 10  # Every 10th poll cycle (~5 min at 30s interval)
+        # WHY two intervals instead of one: the version-compliance scan walks
+        # the whole archive and takes ~10 minutes at current corpus size, so
+        # firing it every ~5 minutes left the node scanning back-to-back and
+        # processing only ~25% of the time (measured 2026-09-01: scan 16:38->
+        # 16:50, three minutes of work, next scan 16:53). The review-return
+        # scan, by contrast, is a cheap listdir over two queue folders and is
+        # how human-cleared work re-enters the pipeline -- coupling it to the
+        # heavy scan's cadence made reviewers wait tens of minutes for a
+        # release to take effect. Heavy scan: rare. Cheap return scan: often.
+        self._reprocess_scan_interval = 60  # heavy archive scan, ~every 30 min at 30s cycles
+        self._review_return_interval = 4    # cheap queue-return scan, ~every 2 min
         # Collage retirement runs on a slower cadence (it does two full pipeline-tree
         # scans); every Nth reprocess-scan cycle.
         self._retire_scan_every = 6  # ~30 min at the interval above
@@ -1467,7 +1477,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Periodic review-return scan: re-inject human-cleared held videos
         # (triage fully resolved / deep-review flag cleared) back into Processing
         # so the pipeline re-runs them and the gate re-checks.
-        if (self._scan_cycle_count % self._reprocess_scan_interval == 0
+        if (self._scan_cycle_count % self._review_return_interval == 0
                 and self.processing_dir):
             try:
                 from mousereach.watcher.review_return import scan_review_queues
