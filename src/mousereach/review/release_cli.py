@@ -74,8 +74,9 @@ def _bundle_dirs(queue_root: Optional[Path]) -> List[Path]:
 def classify_queue(queue_root: Optional[Path]) -> dict:
     """Classify every bundle in a deep-review queue by how (and whether) it
     can be released. SHARED ENGINE: the napari Review Queues tab's release
-    button is the primary interface (the lab's reviewer works only through
-    napari); the CLI below is its terminal mirror. Keys:
+    button is the primary interface -- the target user has no computing
+    background and nothing may exist CLI-only; the CLI below is the button's
+    terminal mirror for power users and scripting. Keys:
       complete        [(stem, answered, total)]   every segment has a human outcome
       fixed_release   [(stem, reason)]            cuts hand-fixed AND routed for segmentation
       fixed_held      [(stem, reason)]            cuts hand-fixed but routed for something else

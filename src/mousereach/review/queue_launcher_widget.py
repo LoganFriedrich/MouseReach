@@ -121,9 +121,10 @@ Each tool opens in its own window and has its own ? guide.
         sbtn.clicked.connect(self._open_reseg)
         dl.addWidget(sbtn)
 
-        # Release panel. The reviewer works ONLY through this GUI, and the
-        # button's label must state its effect outright -- it releases
-        # finished videos out of this queue and back into the pipeline.
+        # Release panel. The target user has no computing background -- the
+        # GUI is the product, and a button's label must state its effect
+        # outright: this one releases finished videos out of this queue and
+        # back into the pipeline, and says so.
         self._release_info = QLabel("")
         self._release_info.setWordWrap(True)
         self._release_info.setStyleSheet("color:#888;")
