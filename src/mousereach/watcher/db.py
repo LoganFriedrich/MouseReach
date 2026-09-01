@@ -205,11 +205,19 @@ class WatcherDB:
         )
         conn.row_factory = sqlite3.Row
 
-        # Use DELETE journal mode for network drives (WAL not safe)
-        if self._is_network_drive:
-            conn.execute("PRAGMA journal_mode=DELETE")
-        else:
-            conn.execute("PRAGMA journal_mode=WAL")
+        # DELETE journal mode EVERYWHERE, not just network drives. WAL was
+        # used on local drives until 2026-09-01, when Windows shm handling
+        # under multi-process access (watcher + external read-only probes +
+        # force-killed deploys) twice degraded the database to
+        # SQLITE_READONLY for every writer -- the whole node stalled until
+        # all holders were stopped and the -shm/-wal sidecars deleted. DELETE
+        # mode has no sidecars to poison, is what the shared-NAS databases
+        # already use by design, and this db's write volume is tiny (state
+        # rows and log lines); brief reader/writer blocking is a non-issue at
+        # this scale. Do not switch back to WAL without solving the shm
+        # poisoning: the failure is silent until the first write and then
+        # total.
+        conn.execute("PRAGMA journal_mode=DELETE")
 
         # Enable foreign keys
         conn.execute("PRAGMA foreign_keys=ON")
