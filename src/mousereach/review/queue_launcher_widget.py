@@ -25,6 +25,7 @@ from typing import List, Optional
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox,
+    QMessageBox,
 )
 from qtpy.QtCore import QTimer
 
@@ -54,8 +55,14 @@ Refresh button.
 * Open Deep Review -- full-video walk for held-out videos; its
   "Clear -> re-enter pipeline" button is what releases a deep-review video.
 * Open Re-segmentation -- fix WHERE the segment cuts are, guided
-  segment-by-segment. Use for boundary/numbering problems. After fixing
-  cuts, the video still needs Deep Review's Clear to release.
+  segment-by-segment. Use for boundary/numbering problems. Saving now
+  releases the video by itself IF it was routed here for segmentation;
+  otherwise the status bar says why it stays.
+* Release finished videos -- one button that removes every FINISHED
+  video from the deep-review queue and sends it back through the
+  pipeline (fully answered reviews + hand-fixed segmentations routed
+  for segmentation). It never touches videos held for other reasons;
+  those say so and release via Clear inside Deep Review.
 
 Each tool opens in its own window and has its own ? guide.
 """
@@ -113,6 +120,29 @@ Each tool opens in its own window and has its own ? guide.
         )
         sbtn.clicked.connect(self._open_reseg)
         dl.addWidget(sbtn)
+
+        # Release panel. The reviewer works ONLY through this GUI, and the
+        # button's label must state its effect outright -- it releases
+        # finished videos out of this queue and back into the pipeline.
+        self._release_info = QLabel("")
+        self._release_info.setWordWrap(True)
+        self._release_info.setStyleSheet("color:#888;")
+        dl.addWidget(self._release_info)
+        self._release_btn = QPushButton("Release finished videos -> back into pipeline")
+        self._release_btn.setStyleSheet("background:#0f5a2e; color:white; font-weight:bold;")
+        self._release_btn.setToolTip(
+            "Removes every FINISHED video from this queue and sends it back "
+            "through the pipeline: reviews with every segment answered, and "
+            "hand-fixed segmentations on videos that were routed here FOR a "
+            "segmentation problem. The watcher picks them up within about two "
+            "minutes and re-runs from the reach stage on the existing pose; "
+            "hand-set cuts are preserved. Videos held for other reasons (a QC "
+            "hold, no routing reason recorded) are NOT touched by this button "
+            "-- open Deep Review and use 'Clear -> re-enter pipeline' on those "
+            "once their real concern is addressed.")
+        self._release_btn.setEnabled(False)
+        self._release_btn.clicked.connect(self._release_finished_clicked)
+        dl.addWidget(self._release_btn)
         root.addWidget(deep)
 
         rbtn = QPushButton("Refresh counts")
@@ -149,6 +179,92 @@ Each tool opens in its own window and has its own ? guide.
                 lbl.setText(f"{name}: (queue not configured -- NAS root unset)")
             else:
                 lbl.setText(f"{name}: {n} video(s) waiting")
+        self._refresh_release_info()
+
+    def _refresh_release_info(self):
+        """Populate the release panel: how many videos this button would
+        release, and how many it deliberately will not (with why)."""
+        from mousereach.config import Paths
+        queue = getattr(Paths, "DEEP_REVIEW", None)
+        try:
+            from mousereach.review.release_cli import classify_queue
+            self._release_cls = classify_queue(queue)
+        except Exception as e:
+            self._release_info.setText(f"(release check failed: {e})")
+            self._release_btn.setEnabled(False)
+            return
+        c = self._release_cls
+        n = len(c["complete"]) + len(c["fixed_release"])
+        held = len(c["fixed_held"])
+        pw = len(c["partial_walk"])
+        bits = []
+        if n:
+            bits.append(f"{n} finished and releasable "
+                        f"({len(c['complete'])} fully answered, "
+                        f"{len(c['fixed_release'])} segmentation fixed by hand)")
+        else:
+            bits.append("nothing finished to release")
+        if held:
+            bits.append(f"{held} held back -- routed for something a cut-fix "
+                        f"does not address; release those with Clear inside "
+                        f"Deep Review")
+        if pw:
+            bits.append(f"{pw} answered for every triaged segment -- open "
+                        f"Deep Review to judge and Clear them")
+        if c["already"]:
+            bits.append(f"{len(c['already'])} already released, awaiting "
+                        f"pickup (~2 min)")
+        self._release_info.setText("; ".join(bits) + ".")
+        if n:
+            self._release_btn.setText(
+                f"Release {n} finished video(s) -> back into pipeline")
+            self._release_btn.setEnabled(True)
+        else:
+            self._release_btn.setText(
+                "Release finished videos -> back into pipeline (none right now)")
+            self._release_btn.setEnabled(False)
+
+    def _release_finished_clicked(self):
+        """Confirm, then write the release marker for every finished video.
+        Never touches held-back or partial bundles."""
+        from mousereach.config import Paths
+        queue = getattr(Paths, "DEEP_REVIEW", None)
+        c = getattr(self, "_release_cls", None)
+        if not queue or not c:
+            show_error("Release: queue not available.")
+            return
+        n = len(c["complete"]) + len(c["fixed_release"])
+        if not n:
+            show_info("Nothing finished to release.")
+            return
+        held = len(c["fixed_held"])
+        msg = (f"Release {n} finished video(s) OUT of the deep-review queue "
+               f"and back into the pipeline?\n\n"
+               f"  {len(c['complete'])} with every segment answered\n"
+               f"  {len(c['fixed_release'])} with segmentation fixed by hand "
+               f"(routed here for segmentation)\n\n"
+               f"They re-enter automatically within ~2 minutes; hand-set cuts "
+               f"are preserved.")
+        if held:
+            msg += (f"\n\n{held} video(s) will NOT be touched (routed for "
+                    f"something a cut-fix does not address) -- they stay in "
+                    f"the queue until cleared inside Deep Review.")
+        if QMessageBox.question(
+                self, "Release finished videos?", msg,
+                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return
+        try:
+            from mousereach.review.release_cli import release_finished
+            done, failures = release_finished(Path(queue), c)
+            if failures:
+                show_error(f"Released {done}; {len(failures)} failed -- "
+                           f"first: {failures[0]}")
+            else:
+                show_info(f"Released {done} video(s) back into the pipeline. "
+                          f"The watcher picks them up within ~2 minutes.")
+        except Exception as e:
+            show_error(f"Release failed: {e}")
+        self._refresh_counts()
 
     # -------------------------------------------------------------- open
     def _open_triage(self):

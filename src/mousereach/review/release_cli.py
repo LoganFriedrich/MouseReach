@@ -71,6 +71,102 @@ def _bundle_dirs(queue_root: Optional[Path]) -> List[Path]:
                   if d.is_dir() and not d.name.startswith("."))
 
 
+def classify_queue(queue_root: Optional[Path]) -> dict:
+    """Classify every bundle in a deep-review queue by how (and whether) it
+    can be released. SHARED ENGINE: the napari Review Queues tab's release
+    button is the primary interface (the lab's reviewer works only through
+    napari); the CLI below is its terminal mirror. Keys:
+      complete        [(stem, answered, total)]   every segment has a human outcome
+      fixed_release   [(stem, reason)]            cuts hand-fixed AND routed for segmentation
+      fixed_held      [(stem, reason)]            cuts hand-fixed but routed for something else
+      partial_walk    [(stem, a, t, n_asked)]     every TRIAGED segment answered (human judges)
+      partial         [(stem, answered, total)]
+      unreviewed      [stem]
+      already         [stem]                      marker present, awaiting the return scan
+    """
+    out = {"complete": [], "fixed_release": [], "fixed_held": [],
+           "partial_walk": [], "partial": [], "unreviewed": [], "already": []}
+    for bundle in _bundle_dirs(queue_root):
+        stem = bundle.name
+        if (bundle / f"{stem}_deep_review_cleared.json").is_file():
+            out["already"].append(stem)
+            continue
+        if _boundary_source_human(bundle, stem):
+            reason = _routing_reason(bundle, stem)
+            if _names_segmentation(reason):
+                out["fixed_release"].append((stem, reason))
+            else:
+                out["fixed_held"].append(
+                    (stem, reason or "(no routing reason recorded)"))
+            continue
+        answered, total = _completeness(bundle, stem)
+        if total and answered == total:
+            out["complete"].append((stem, answered, total))
+        elif answered:
+            # Partial by full coverage; maybe complete for every segment that
+            # was actually ASKED (a triage-style walk). Listed for a human --
+            # never auto-released, because the review file does not record
+            # which unanswered segments were skipped vs never shown.
+            try:
+                from mousereach.review.triage_status import triage_status
+                st = triage_status(bundle, stem)
+                asked = set(st.triaged)
+                doc = json.loads((bundle / f"{stem}_causal_review.json")
+                                 .read_text(encoding="utf-8"))
+                got = {r.get("segment_num") for r in doc.get("segments", [])
+                       if isinstance(r, dict)
+                       and (r.get("human") or {}).get("outcome") is not None}
+                if asked and asked <= got:
+                    out["partial_walk"].append((stem, answered, total, len(asked)))
+                    continue
+            except Exception:
+                pass
+            out["partial"].append((stem, answered, total))
+        else:
+            out["unreviewed"].append(stem)
+    return out
+
+
+def release_finished(queue_root: Path, cls: Optional[dict] = None):
+    """Write the release marker for every releasable bundle (complete +
+    fixed_release). Returns (n_released, failures) where failures is a list of
+    'stem: error' strings. Held-back and partial bundles are never touched."""
+    from mousereach.review.causal_review_io import (
+        _get_username, _get_timestamp, _write_json,
+    )
+    if cls is None:
+        cls = classify_queue(queue_root)
+    n, failures = 0, []
+    for stem, a, t in cls["complete"]:
+        try:
+            _write_json(Path(queue_root) / stem / f"{stem}_deep_review_cleared.json", {
+                "type": "deep_review_cleared",
+                "video_stem": stem,
+                "cleared_by": _get_username(),
+                "cleared_at": _get_timestamp(),
+                "reason": "bulk release: every segment carries a human outcome",
+                "gated_on": "human.outcome",
+            })
+            n += 1
+        except Exception as e:
+            failures.append(f"{stem}: {e}")
+    for stem, r in cls["fixed_release"]:
+        try:
+            _write_json(Path(queue_root) / stem / f"{stem}_deep_review_cleared.json", {
+                "type": "deep_review_cleared",
+                "video_stem": stem,
+                "cleared_by": _get_username(),
+                "cleared_at": _get_timestamp(),
+                "reason": "segmentation corrected by hand",
+                "gated_on": "boundary_source",
+                "routing_reason": r,
+            })
+            n += 1
+        except Exception as e:
+            failures.append(f"{stem}: {e}")
+    return n, failures
+
+
 def _completeness(bundle: Path, stem: str) -> Tuple[int, int]:
     """(answered, total) segments for the bundle's causal review, by
     human.outcome. (0, 0) when no review file exists."""
@@ -111,45 +207,11 @@ def main(argv=None) -> int:
         print(f"Deep-review queue is empty or missing: {queue}")
         return 0
 
-    complete, partial, unreviewed, already = [], [], [], []
-    fixed_release, fixed_held, partial_walk = [], [], []
-    for bundle in bundles:
-        stem = bundle.name
-        if (bundle / f"{stem}_deep_review_cleared.json").is_file():
-            already.append(stem)
-            continue
-        if _boundary_source_human(bundle, stem):
-            reason = _routing_reason(bundle, stem)
-            if _names_segmentation(reason):
-                fixed_release.append((stem, reason))
-            else:
-                fixed_held.append((stem, reason or "(no routing reason recorded)"))
-            continue
-        answered, total = _completeness(bundle, stem)
-        if total and answered == total:
-            complete.append((stem, answered, total))
-        elif answered:
-            # Partial by full-coverage; maybe complete for every segment that
-            # was actually ASKED (a triage-style walk). Listed for a human --
-            # never auto-released, because the review file does not record
-            # which unanswered segments were skipped vs never shown.
-            try:
-                from mousereach.review.triage_status import triage_status
-                st = triage_status(bundle, stem)
-                asked = set(st.triaged)
-                doc = json.loads((bundle / f"{stem}_causal_review.json")
-                                 .read_text(encoding="utf-8"))
-                got = {r.get("segment_num") for r in doc.get("segments", [])
-                       if isinstance(r, dict)
-                       and (r.get("human") or {}).get("outcome") is not None}
-                if asked and asked <= got:
-                    partial_walk.append((stem, answered, total, len(asked)))
-                    continue
-            except Exception:
-                pass
-            partial.append((stem, answered, total))
-        else:
-            unreviewed.append(stem)
+    cls = classify_queue(queue)
+    complete, partial = cls["complete"], cls["partial"]
+    unreviewed, already = cls["unreviewed"], cls["already"]
+    fixed_release, fixed_held = cls["fixed_release"], cls["fixed_held"]
+    partial_walk = cls["partial_walk"]
 
     print(f"Deep-review queue: {len(bundles)} bundle(s)")
     print(f"  complete (every segment has a human outcome): {len(complete)}")
@@ -182,39 +244,9 @@ def main(argv=None) -> int:
                   "re-injects them over the following cycles.")
         return 0
 
-    n = 0
-    for stem, a, t in complete:
-        bundle = Path(queue) / stem
-        try:
-            _write_json(bundle / f"{stem}_deep_review_cleared.json", {
-                "type": "deep_review_cleared",
-                "video_stem": stem,
-                "cleared_by": _get_username(),
-                "cleared_at": _get_timestamp(),
-                "reason": "bulk release: every segment carries a human "
-                          "outcome",
-                "gated_on": "human.outcome",
-            })
-            n += 1
-            print(f"[OK] released {stem} ({a}/{t})")
-        except Exception as e:
-            print(f"[FAIL] {stem}: {e}")
-    for stem, r in fixed_release:
-        bundle = Path(queue) / stem
-        try:
-            _write_json(bundle / f"{stem}_deep_review_cleared.json", {
-                "type": "deep_review_cleared",
-                "video_stem": stem,
-                "cleared_by": _get_username(),
-                "cleared_at": _get_timestamp(),
-                "reason": "segmentation corrected by hand",
-                "gated_on": "boundary_source",
-                "routing_reason": r,
-            })
-            n += 1
-            print(f"[OK] released {stem} (hand-fixed segmentation)")
-        except Exception as e:
-            print(f"[FAIL] {stem}: {e}")
+    n, failures = release_finished(Path(queue), cls)
+    for f in failures:
+        print(f"[FAIL] {f}")
     print(f"\nReleased {n} of {len(complete) + len(fixed_release)} "
           f"releasable bundle(s).")
     return 0

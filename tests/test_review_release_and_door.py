@@ -83,3 +83,50 @@ def test_routing_reason_gates_segmentation_release(tmp_path):
     assert not _names_segmentation("qc_needs_review")
     assert not _names_segmentation("")
     assert _names_segmentation("bench_disagreement_segment_mislabel")
+
+
+def test_classify_and_release_shared_engine(tmp_path):
+    """The GUI button and the CLI share classify_queue/release_finished; the
+    release must touch exactly the finished bundles and nothing else."""
+    from mousereach.review.release_cli import classify_queue, release_finished
+
+    def mk(stem, review_segments=None, seg_doc=None, routing=None):
+        b = tmp_path / stem
+        b.mkdir()
+        if review_segments is not None:
+            (b / f"{stem}_causal_review.json").write_text(
+                json.dumps({"segments": review_segments}), encoding="utf-8")
+        if seg_doc is not None:
+            (b / f"{stem}_segments.json").write_text(
+                json.dumps(seg_doc), encoding="utf-8")
+        if routing is not None:
+            (b / f"{stem}_routing.json").write_text(
+                json.dumps({"routed_reason": routing}), encoding="utf-8")
+        return b
+
+    mk("20990101_ABC9901_P1",
+       review_segments=[{"segment_num": 1, "human": {"outcome": "retrieved"}}])
+    mk("20990101_ABC9902_P1", seg_doc={"boundary_source": "human"},
+       routing="escalated: bad segmentation")
+    mk("20990101_ABC9903_P1", seg_doc={"boundary_source": "human"},
+       routing="qc_needs_review")
+    mk("20990101_ABC9904_P1",
+       review_segments=[{"segment_num": 1, "human": {"outcome": None}},
+                        {"segment_num": 2, "human": {"outcome": "missed"}}])
+
+    c = classify_queue(tmp_path)
+    assert [s for s, *_ in c["complete"]] == ["20990101_ABC9901_P1"]
+    assert [s for s, *_ in c["fixed_release"]] == ["20990101_ABC9902_P1"]
+    assert [s for s, *_ in c["fixed_held"]] == ["20990101_ABC9903_P1"]
+
+    n, failures = release_finished(tmp_path, c)
+    assert n == 2 and not failures
+    assert (tmp_path / "20990101_ABC9901_P1"
+            / "20990101_ABC9901_P1_deep_review_cleared.json").is_file()
+    assert (tmp_path / "20990101_ABC9902_P1"
+            / "20990101_ABC9902_P1_deep_review_cleared.json").is_file()
+    # The held-back and partial bundles must be untouched.
+    assert not (tmp_path / "20990101_ABC9903_P1"
+                / "20990101_ABC9903_P1_deep_review_cleared.json").exists()
+    assert not (tmp_path / "20990101_ABC9904_P1"
+                / "20990101_ABC9904_P1_deep_review_cleared.json").exists()
