@@ -329,6 +329,12 @@ class WatcherDB:
             ('videos', 'crystallized_label', 'TEXT'),
             ('videos', 'reprocess_scope', 'TEXT'),
             ('collages', 'retry_count', 'INTEGER'),
+            # WHY a column and not the log: force_state's reason goes only to
+            # the text log, so nothing queryable distinguishes a HAND-MARK
+            # ("re-run this pathological video") from a scanner mark. The
+            # reprocessor's two-way door must never un-mark a hand-mark, and
+            # a mark's reason must survive log rotation to enforce that.
+            ('videos', 'mark_reason', 'TEXT'),
         ]
 
         with self._lock:

@@ -276,6 +276,7 @@ class ReprocessingScanner:
                         self.db.force_state(
                             video_id, 'outdated',
                             reprocess_scope=scope,
+                            mark_reason=None,  # scanner mark; hand-marks set one
                         )
                         logger.info(
                             f"Marked {video_id} as outdated "
@@ -307,12 +308,18 @@ class ReprocessingScanner:
                 comparison = compare_manifest_to_current(manifest, current)
                 if not comparison['is_current']:
                     continue
-                if comparison.get('compat_used'):
-                    # Current ONLY via compatible_versions. A hand-mark on such
-                    # a row IS the targeted re-run that compat's contract
-                    # promises ("affected videos are re-marked by hand") --
-                    # un-marking it would cancel the very mechanism. Leave it
-                    # for the drain.
+                if comparison.get('compat_used') and (video.get('mark_reason') or '').strip():
+                    # Current only via compatible_versions AND carrying an
+                    # explicit mark_reason: this is a hand-marked targeted
+                    # re-run -- exactly what compat's contract promises
+                    # ("affected videos are re-marked by hand"). Never un-mark
+                    # it; the drain re-runs it. Compat-current rows WITHOUT a
+                    # reason are declaration-era phantoms (the scanner never
+                    # writes a reason) and un-marking them is this door's
+                    # purpose: measured 2026-09-01, 309 of 1,198 outdated rows
+                    # on this node were phantoms frozen by the blanket
+                    # compat-skip this replaces, while current-outright rows
+                    # numbered ZERO -- the door served nothing.
                     continue
                 # A saved human review newer than the archived kinematics still
                 # owes a re-run; checked against the one-walk mtime index, not
@@ -329,10 +336,12 @@ class ReprocessingScanner:
                 if mark_outdated:
                     try:
                         self.db.update_state(video_id, 'archived',
-                                             reprocess_scope=None)
+                                             reprocess_scope=None,
+                                             mark_reason=None)
                     except Exception:
                         self.db.force_state(
                             video_id, 'archived', reprocess_scope=None,
+                            mark_reason=None,
                             reason='reprocess mark stale: versions compare current')
                     logger.info(
                         f"Un-marked {video_id}: versions compare current, "
