@@ -107,6 +107,8 @@ mousereach-review-outcomes = "mousereach.outcomes.cli:main_review"  # Deprecated
 
 # Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue
 mousereach-review-tool = "mousereach.review.causal_review_widget:main"
+# Bulk release check for deep-review bundles (human-invoked; gates on human.outcome)
+mousereach-review-release = "mousereach.review.release_cli:main"
 
 # Put a video into a review queue with a reason (generic; the way an external
 # integrator such as a database tool asks MouseReach to hold a video for a person)
