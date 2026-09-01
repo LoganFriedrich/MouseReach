@@ -458,6 +458,20 @@ class WatcherControlWidget(QWidget):
         self._f_dbpath.setText(str(d.get("db_path", "") or ""))
         self._f_staging.setText(str(d.get("staging_path", "") or ""))
 
+    # Every watcher setting this form owns. Anything else in the config file
+    # is preserved on save. WHY: the form rebuilds the watcher section from
+    # its own fields, so a setting with no widget -- work_priority, and today
+    # also mode, db_path, max_local_pending, staging_path when they were
+    # hand-written -- was silently deleted the first time somebody pressed
+    # Save. Listing the owned keys (rather than merging everything) keeps the
+    # form's ability to CLEAR a path by blanking it.
+    _FORM_MANAGED_KEYS = frozenset({
+        "enabled", "mode", "poll_interval_seconds", "stability_wait_seconds",
+        "max_retries", "max_local_pending", "dlc_gpu_device",
+        "auto_archive_approved", "also_process", "dlc_config_path",
+        "quarantine_dir", "log_dir", "db_path", "staging_path",
+    })
+
     def _form_to_dict(self) -> dict:
         d = {
             "enabled": self._f_enabled.isChecked(),
@@ -491,7 +505,10 @@ class WatcherControlWidget(QWidget):
             existing = {}
             if cfg_path.exists():
                 existing = json.loads(cfg_path.read_text(encoding="utf-8"))
-            existing["watcher"] = self._form_to_dict()
+            preserved = {k: v for k, v in (existing.get("watcher") or {}).items()
+                         if k not in self._FORM_MANAGED_KEYS}
+            preserved.update(self._form_to_dict())
+            existing["watcher"] = preserved
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
             cfg_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
             show_info("Config saved. Restart the watcher for changes to take effect.")
