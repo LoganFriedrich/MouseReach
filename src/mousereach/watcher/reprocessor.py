@@ -134,6 +134,26 @@ class ReprocessingScanner:
             logger.warning("No pipeline_versions.json found or empty -- cannot scan")
             return summary
 
+        # ONE enumeration for the whole scan instead of a per-video directory
+        # walk. WHY: _load_manifest globs the tree per video, and the pending-
+        # review check rglobbed the WHOLE archive per video; at 563 archived +
+        # 1,203 outdated rows a single scan issued ~1,800 directory walks over
+        # the NAS and ran for upwards of half an hour -- and the orchestrator
+        # processes nothing while a scan runs, so the stall was total.
+        manifest_index: dict = {}
+        feats_mtime: dict = {}
+        try:
+            for p in self.archive_dir.glob("*/*/*_processing_manifest.json"):
+                manifest_index[p.name[:-len("_processing_manifest.json")]] = p
+            for p in self.archive_dir.glob("*/*/*_features.json"):
+                try:
+                    feats_mtime[p.name[:-len("_features.json")]] = p.stat().st_mtime
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning(
+                f"Archive index build failed ({e}); falling back to per-video walks")
+
         # Get all archived videos from DB
         archived = self.db.get_videos_in_state('archived')
         logger.info(f"Scanning {len(archived)} archived videos for version compliance")
@@ -163,7 +183,7 @@ class ReprocessingScanner:
 
             try:
                 # Load manifest
-                manifest = self._load_manifest(video_id)
+                manifest = self._load_manifest_indexed(video_id, manifest_index)
                 if not manifest:
                     summary['no_manifest'] += 1
                     continue
@@ -281,14 +301,24 @@ class ReprocessingScanner:
             if not is_supported_tray_type(f"{video_id}.mp4"):
                 continue  # E/F rows stay parked; their pipeline scope is a separate decision
             try:
-                manifest = self._load_manifest(video_id)
+                manifest = self._load_manifest_indexed(video_id, manifest_index)
                 if not manifest:
                     continue
                 comparison = compare_manifest_to_current(manifest, current)
                 if not comparison['is_current']:
                     continue
-                if self._pending_review_path(video_id) is not None:
-                    continue  # a re-run is still owed to apply the human review
+                # A saved human review newer than the archived kinematics still
+                # owes a re-run; checked against the one-walk mtime index, not
+                # a per-video rglob of the archive.
+                try:
+                    from mousereach.review.causal_review_io import resolve_review_path
+                    review = resolve_review_path(video_id)
+                    if review is not None:
+                        ft = feats_mtime.get(video_id)
+                        if ft is None or review.stat().st_mtime > ft:
+                            continue  # a re-run is still owed for the review
+                except Exception:
+                    pass
                 if mark_outdated:
                     try:
                         self.db.update_state(video_id, 'archived',
@@ -386,6 +416,18 @@ class ReprocessingScanner:
                 "deep review instead of a kinematics-only re-run", video_id)
         except Exception as e:
             logger.error("%s: could not divert to deep review: %s", video_id, e)
+
+    def _load_manifest_indexed(self, video_id: str, manifest_index: dict):
+        """Manifest via the scan's one-walk index; falls back to the per-video
+        walk only for stems the index missed (e.g. archived mid-scan)."""
+        p = manifest_index.get(video_id)
+        if p is not None:
+            try:
+                with open(p) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return self._load_manifest(video_id)
 
     def _load_manifest(self, video_id: str) -> Optional[dict]:
         """Find and load processing manifest for an archived video.
