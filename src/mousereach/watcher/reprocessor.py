@@ -307,6 +307,13 @@ class ReprocessingScanner:
                 comparison = compare_manifest_to_current(manifest, current)
                 if not comparison['is_current']:
                     continue
+                if comparison.get('compat_used'):
+                    # Current ONLY via compatible_versions. A hand-mark on such
+                    # a row IS the targeted re-run that compat's contract
+                    # promises ("affected videos are re-marked by hand") --
+                    # un-marking it would cancel the very mechanism. Leave it
+                    # for the drain.
+                    continue
                 # A saved human review newer than the archived kinematics still
                 # owes a re-run; checked against the one-walk mtime index, not
                 # a per-video rglob of the archive.

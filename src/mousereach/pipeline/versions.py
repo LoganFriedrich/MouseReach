@@ -205,6 +205,13 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
         'stale_components': [],
         'unrecorded_components': [],
         'needs_full_reprocess': False,
+        # Stages that only count as current because compatible_versions says
+        # so. Callers that UNDO staleness marks (the reprocessor's two-way
+        # door) must leave such rows alone: compat's contract is that the few
+        # pathological videos are re-marked BY HAND, and un-marking them
+        # because they compare "current" would silently cancel exactly those
+        # hand-marks (it did, on its first live run).
+        'compat_used': [],
     }
 
     current_versions = current.get('versions', {})
@@ -251,6 +258,7 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
             result['unrecorded_components'].append(stage)
         elif manifest_v != current_v:
             if str(manifest_v) in {str(v) for v in (compat.get(stage) or [])}:
+                result['compat_used'].append(stage)
                 continue
             result['is_current'] = False
             result['stale_components'].append(stage)

@@ -19,6 +19,9 @@ def test_compatible_version_is_current():
     r = compare_manifest_to_current(_manifest("2.2.3"), current)
     assert r["is_current"] is True
     assert "segmenter" not in r["stale_components"]
+    # The caller that un-marks staleness must be able to see that this row is
+    # current only BY COMPAT -- a hand-mark on it must survive the two-way door.
+    assert r["compat_used"] == ["segmenter"]
 
 
 def test_non_compatible_version_is_stale():
@@ -35,3 +38,4 @@ def test_exact_match_still_current_without_compat_key():
     current = {"versions": {"segmenter": "2.2.4"}}
     r = compare_manifest_to_current(_manifest("2.2.4"), current)
     assert r["is_current"] is True
+    assert r["compat_used"] == []  # outright current; the door may un-mark
