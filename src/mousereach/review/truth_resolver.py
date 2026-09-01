@@ -143,13 +143,18 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         if ho is None:
             continue
         hc = human.get("causal_reach") or {}
-        cid = hc.get("reach_id")
-        # Older reviews store the human's causal pick as FRAMES only -- the
-        # durable fact -- with no reach_id. The id-based match below then got
-        # None and the human's answer was silently dropped: 18 picks on one
-        # fully-reviewed video yielded zero causal reaches downstream. Resolve
-        # the frames to the reach they name, exactly as the reviewer meant.
-        if cid is None and hc.get("start") is not None and current_segments:
+        stored = hc.get("reach_id")
+        cid = stored
+        # The FRAMES are the durable fact; the reach_id is not. Reach ids are
+        # renumbered on every run, so a review written against an earlier
+        # reach list names an id this run does not have -- the id-only match
+        # then found nothing and the human's answer silently vanished from the
+        # reach rows (612 reviewed segments in the 2026-08-31 snapshot; e.g. a
+        # pick stored as id 42 at frames 3989-4004 while this run's reach at
+        # those frames is id 36). Older reviews store frames only. So: resolve
+        # by frames whenever they exist, and fall back to the stored id only
+        # when they do not or nothing overlaps.
+        if hc.get("start") is not None and current_segments:
             _hs, _he = int(hc["start"]), int(hc.get("end", hc["start"]))
             best, best_ov = None, 0
             for _seg in current_segments:
@@ -164,10 +169,14 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
                         best, best_ov = _r.get("reach_id"), ov
             span = max(1, _he - _hs + 1)
             if best is not None and best_ov >= 0.5 * span:
+                if stored is not None and best != stored:
+                    logger.info("review causal pick re-anchored by frames: segment %s id %s -> %s",
+                                sn, stored, best)
                 cid = best
         out[int(sn)] = {
             "outcome": ho,
             "causal_reach_id": cid if ho in _TOUCHED_OUTCOMES else None,
+            "review_causal_reach_id": stored,
             "abnormal_ranges": ans.get("abnormal_ranges"),
             "reviewer": (doc or {}).get("reviewer"),
             "source": source,
@@ -221,6 +230,8 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]]) ->
         seg["algo_causal_reach_id"] = seg.get("causal_reach_id")
         seg["outcome"] = ov["outcome"]
         seg["causal_reach_id"] = ov.get("causal_reach_id")
+        if ov.get("review_causal_reach_id") is not None:
+            seg["review_causal_reach_id"] = ov["review_causal_reach_id"]  # the id as reviewed; provenance
         seg["outcome_source"] = ov["source"]
         if ov.get("reviewer"):
             seg["reviewed_by"] = ov["reviewer"]

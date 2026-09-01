@@ -8,6 +8,14 @@ Verified against: b65fcf0 (2026-08-23)
 
 ## What this subsystem is
 
+> **Status 2026-09-01:** the watcher no longer calls this path at all. The
+> in-pipeline `db_sync` step was removed -- it had been left behind after
+> the 2026-08-28 move to mousedb PULLING features files from the Analyzed
+> tree, always failed on configuration, and logged a failed step on every
+> video. `sync_file_to_database` and the tools below still exist for a lab
+> that configures `central_db` deliberately; nothing in the watcher invokes
+> them.
+
 One thing is written: a table called `reach_data`, in an OPTIONAL external SQLite database whose location is configuration -- `central_db` in `~/.mousereach/config.json` or the environment variable `MOUSEREACH_CENTRAL_DB` (since 2026-08-28; there is no built-in default, and with no value set the sync does nothing and says so). Why optional: MouseReach must produce complete, usable output standing alone; pushing rows into a central database is an integration a lab may or may not run. One row per reach. Alongside it, a flat comma-separated file — a full dump of that table — as `database_dump/reach_data.csv` in the folder of the configured database.
 
 The input is always one file: `{video}_features.json`, the last thing the pipeline writes for a video. Nothing else is ever read into the table. The reach detector's own output, the outcome detector's own output, the reach-assignment file — none of them are read here. Whatever did not make it into the features file cannot reach the database through this path.

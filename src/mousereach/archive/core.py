@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import json
 import shutil
+import time
 from datetime import datetime
 
 from mousereach.config import Paths, get_video_id, AnimalID
@@ -275,7 +276,20 @@ def archive_video(
                 if verbose:
                     print(f"    Already archived (identical): {f.name}")
                 continue
-            shutil.move(str(f), str(dest_path))
+            # A handle another process is just closing (a video reader on the
+            # success path) makes the first move fail with WinError 32; a few
+            # seconds later it succeeds. Try briefly before calling it failed.
+            last_err = None
+            for attempt in range(3):
+                try:
+                    shutil.move(str(f), str(dest_path))
+                    last_err = None
+                    break
+                except PermissionError as e:
+                    last_err = e
+                    time.sleep(2.0)
+            if last_err is not None:
+                raise last_err
             moved.append(f.name)
             if verbose:
                 print(f"    Moved: {f.name}")
