@@ -230,6 +230,17 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
     # cannot be certified as current at every step.
     from mousereach.pipeline.manifest import TRACKED_STAGES, NOT_A_VERSION
 
+    # Versions declared compatible with the current one do NOT stale a video.
+    # WHY: a version bump whose output is identical for non-pathological
+    # videos (a bugfix that only changes broken cases, with the few affected
+    # videos re-marked by hand) must not mark the whole corpus outdated. That
+    # exact accident happened twice in August 2026 -- two declaration edits
+    # with no algorithm change behind them marked 1,255 rows stale -- and
+    # 'outdated' was a one-way door, so no corrective declaration could undo
+    # it. Declare compatibility in pipeline_versions.json beside 'versions':
+    #   "compatible_versions": {"segmenter": ["2.2.3"]}
+    compat = current.get('compatible_versions', {}) or {}
+
     for stage in TRACKED_STAGES:
         current_v = current_versions.get(stage, '')
         if not current_v:
@@ -239,6 +250,8 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
             result['is_current'] = False
             result['unrecorded_components'].append(stage)
         elif manifest_v != current_v:
+            if str(manifest_v) in {str(v) for v in (compat.get(stage) or [])}:
+                continue
             result['is_current'] = False
             result['stale_components'].append(stage)
 

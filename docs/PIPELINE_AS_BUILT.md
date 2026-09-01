@@ -233,7 +233,7 @@ Before the algorithms run, the code resolves the pose file through `resolve_pose
 2. IS THE POSE CURRENT? — checked, but only for already-finished videos, and from the manifest, not the file
 Every tenth poll cycle (about five minutes at the thirty-second default) the processing side runs a sweep called the ReprocessingScanner (orchestrator.py:1341, 1373-1382). It walks only the videos its database lists as 'archived' — videos that already completed and were moved into the final Analyzed output tree (reprocessor.py:97). For each it loads that video's manifest (reprocessor.py:106) and compares it to the version declaration (versions.py:138-195):
 - scorer differs -> the video's ANALYSIS is stale, because segments, reaches and outcomes were computed from the older pose. Whether the POSE has to be made again is a separate question, and since 2026-08-24 the scanner asks it: it indexes the pose files in the Analyzed tree once and checks whether a pose from the declared scorer already exists for that video. If it does, the scope is 'segmentation' - every post-DLC stage re-runs against the pose that is already there, and no GPU is used. If it does not, the scope is 'full' and the video genuinely needs re-posing. On the Y: archive as of 2026-08-24 that split was 1,233 videos needing no GPU against 31 that do, so the check is worth roughly 288 GPU-hours;
-- one of segmenter / reach detector / outcome detector / kinematic extractor differs -> stale from that stage onward, and the re-run reuses the still-current earlier outputs (reprocessor.py:35-42, orchestrator.py:1846-1853);
+- one of segmenter / reach detector / outcome detector / kinematic extractor differs -> stale from that stage onward, and the re-run reuses the still-current earlier outputs (reprocessor.py:35-42, orchestrator.py:1846-1853). Exception: a manifest version listed under `compatible_versions` for that stage in `pipeline_versions.json` does NOT stale the video (versions.py) -- this is how a bugfix bump whose output only changes for pathological videos (which get re-marked by hand) avoids marking the whole corpus outdated, the accident that happened twice in August 2026;
 - a human review file newer than the kinematics file also triggers a re-run of kinematics alone, so the reviewer's corrections reach the results and the central database (reprocessor.py:117, 175-191).
 Videos found stale get the database state 'outdated' plus a 'reprocess_scope' (reprocessor.py:150). The same sweep is what "mousereach-version-check" prints, and "--mark" is the manual way to trigger it (watcher/cli.py:1231-1290).
 Three things this does NOT do, which matter:
@@ -337,7 +337,9 @@ A periodic job mirrors Behavior/MouseReach_Pipeline, Tissue/MouseBrain_Pipeline 
 The segmenter emits exactly 21 boundaries every time. That count is hard-coded
 and guaranteed by a safety net, so a forced segmentation and a measured one
 looked identical downstream, and the count was never evidence that anything
-worked. Reviewers hit the consequence directly: the algorithm's outcomes were
+worked. (Since 2.2.4 the boundaries are also guaranteed strictly increasing:
+duplicates -- which became zero-length segments and self-generated triage work
+-- are deduped and re-projected, recorded in `anomalies` and `needs_human`.) Reviewers hit the consequence directly: the algorithm's outcomes were
 right and the segment NUMBERING was wrong, drifting by one and then two through a
 single video, which made bench pellet 7 get compared against footage of pellet 8.
 
