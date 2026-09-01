@@ -226,6 +226,7 @@ The same widget with `deep_review=True` (`causal_review_widget.py:198-203`). Dif
 - It reads the `DEEP_REVIEW` queue, not the triage queue (`queue_launcher_widget.py:123-126`).
 - `triage_only` is forced off (`:210`), so **every** segment is walked.
 - The **Clear -> re-enter pipeline** button appears. It saves the review, then writes `{stem}_deep_review_cleared.json` into the bundle (`_clear_deep_review`, `:3069`, marker at `:3085`). That marker is what the watcher looks for.
+- The same marker can be written in bulk from a terminal: `mousereach-review-release` lists every deep-review bundle's completeness (judged on `human.outcome` per segment -- never `answers.reviewed`, which nothing has ever written) and with `--clear` releases the fully-answered ones. It is the button's bulk form for reviews completed without the second step, not an automatic release.
 
 It has no console command. It opens from the "Review Queues" launcher tab (`queue_launcher_widget.py:123`) or from the pipeline dashboard for one named video (`dashboard/widget.py:1488`).
 
@@ -478,6 +479,7 @@ Only `scan_review_queues` (`review_return.py:225`) moves a bundle out. It runs i
 
   Before that fix the release side was narrower than the admission side. `evaluate_gate` had always subtracted GT-determined segments, but `triage_status.resolved_segments` read the causal-review document alone, so a bundle whose questions GT had answered could never satisfy `fully_resolved`. The review tool skipped the same bundle because `has_gt()` said there was nothing to ask. Nobody asked and nobody released: measured 2026-08-28, 7 bundles were stuck exactly there, one of them since July.
 - **Deep review**: the bundle leaves when `{stem}_deep_review_cleared.json` exists, or a ground-truth file sits in the bundle (`:108-115`).
+- **Triage with a failed segmentation**: the return scan diverts the bundle to deep review -- it can never satisfy the triage release condition (which requires a sound segmentation), and before this divert existed such bundles had no route out at all. The processing-side gate honors an existing human clear marker even when the segmentation self-check still reports failure, so a cleared video does not ping-pong back.
 
 Returning moves the bundle's data files, including the review file, into the local processing directory, drops the queue-only manifest, deletes the now-empty bundle directory, and sets the video back to `processing` so the pipeline re-runs it and the gate re-checks (`_return_to_processing`, `:118-214`). It refuses and leaves the bundle alone if the database row cannot be created (`:141-146`), if the pose file cannot be found (`:152-159`), or if the state cannot be set (`:198-205`) — a clearance is never spent on a run that would fail.
 

@@ -328,6 +328,32 @@ def scan_review_queues(db, processing_dir: Path,
             st = triage_status(bundle, stem)
         except Exception:
             continue
+        if st.seg_failed:
+            # A seg-failed bundle can NEVER satisfy the triage release
+            # condition below, and nothing else moves it -- it sat in the
+            # triage queue with no route out (40 bundles at the time this was
+            # added). A failed segmentation makes the whole video
+            # untrustworthy, which is deep review's definition, so send it
+            # there. Ordering note: the deep-review release path must honor
+            # the human clear marker (review_gate seg_failed branch does,
+            # same change) or this merely moves the stall to a queue that
+            # does not drain.
+            try:
+                from .review_gate import route_to_queue
+                route_to_queue(
+                    stem, bundle, Paths.DEEP_REVIEW,
+                    reason="segmentation failed -- triage cannot release this "
+                           "bundle; needs deep review",
+                    db=db, db_state="deep_review",
+                )
+                summary["diverted_to_deep"] += 1
+                logger.info(
+                    "Return scan: %s diverted triage -> deep review "
+                    "(segmentation failed; no triage route out)", stem)
+            except Exception as e:
+                logger.error("Return scan: could not divert %s to deep review: %s",
+                             stem, e)
+            continue
         if not (st.has_triage and st.fully_resolved and not st.seg_failed):
             continue
         if st.seg_pending_reseg:
