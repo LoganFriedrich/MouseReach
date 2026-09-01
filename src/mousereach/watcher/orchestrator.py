@@ -40,6 +40,7 @@ from mousereach.watcher.locate import (
     resolve_pose_input, locate_pose_file, locate_video_file, node_search_dirs,
 )
 from mousereach.pipeline.manifest import select_pose_file
+from mousereach.watcher.work_priority import load_and_announce
 from mousereach.config import (
     Paths, WatcherConfig, require_processing_root, parse_tray_type,
     get_video_id, AnimalID
@@ -253,7 +254,63 @@ class BaseOrchestrator:
         raise NotImplementedError
 
     def _get_next_work_item(self):
-        """Return next work dict or None."""
+        """Return the next work dict, or None when there is nothing to do.
+
+        TWO PASSES, and why:
+
+        Some work is worth doing but must never take a machine that could be
+        doing something else -- on this pipeline, the Easy and Flat tray
+        sessions, where the divot is level with the scoring area, a displaced
+        pellet can be retried, and a per-pellet outcome is not a meaningful
+        unit. Those sessions are wanted for session-level measures, and wanted
+        LAST.
+
+        A preference INSIDE one bucket cannot express that: the buckets are a
+        fixed order (finish, then take in, then run, then re-run), so a
+        deferred video sitting in an earlier bucket would still beat a
+        preferred one in a later bucket. So the bucket sequence runs twice.
+        The first pass may not ADMIT deferred work onto this node; only if
+        every bucket comes back empty -- the definition of an idle node --
+        does the second pass allow it.
+
+        ADMIT, NOT EVERYTHING. Only the buckets that bring NEW work onto this
+        node are held back (see the ADMIT/DRAIN split in each role's
+        _select_work_item). The buckets that finish work already sitting on
+        this node's disk always run, on both passes. Two reasons, both
+        observed:
+
+          * A gated intake bucket is visited BEFORE the pipeline bucket that
+            drains it, so an idle node would copy a whole cap's worth of
+            deferred videos onto local disk before analysing one of them.
+            With intake gated and the pipeline ungated, one deferred video is
+            taken in, and the next cycle finishes it before another is taken.
+
+          * Gating the drain buckets strands data. A deferred video already on
+            local disk would never be analysed while any other work exists
+            anywhere, it would hold a slot against max_local_pending forever,
+            and that throttles intake of the work we actually wanted first.
+            A node with a backlog is never idle, so "later" means "never".
+
+        "Do not take on new low-priority work" is the policy. "Refuse to
+        finish low-priority work already on your disk" never was.
+
+        Cost: one extra sweep of the work queries on an otherwise idle cycle.
+        Nothing is picked twice -- the first pass returned None.
+        """
+        work = self._select_work_item(admit_deferred=False)
+        if work is None:
+            work = self._select_work_item(admit_deferred=True)
+        return work
+
+    def _select_work_item(self, admit_deferred: bool = True):
+        """One pass over this role's work buckets. Return a work dict or None.
+
+        admit_deferred=False means "do not take deferred work ONTO this node
+        on this pass". It applies only to the buckets that admit new work;
+        the buckets that drain work already here ignore it. Subclasses
+        implement this; _get_next_work_item above calls it, so no role can
+        forget the second pass.
+        """
         raise NotImplementedError
 
     def _dispatch_work(self, work: dict):
@@ -296,36 +353,110 @@ class BaseOrchestrator:
             return priority_animal in animal_value.split(',')
         return animal_value == priority_animal
 
-    def _pick_from_pool(self, items: list, priority_animal: Optional[str],
-                        animal_field: str, is_collage: bool = False):
+    @property
+    def work_priority(self):
+        """The ordering policy from config, resolved once per process.
+
+        Read lazily rather than in __init__ so that an unreadable or malformed
+        key cannot stop a node from starting: the policy falls back to the
+        shipped default and complains in the log. See watcher/work_priority.py
+        for why this key is a preference with a default and not a location with
+        a hard stop.
         """
-        Pick a work item: priority animal first, then Pillar-first, random within tier.
+        policy = getattr(self, "_work_priority", None)
+        if policy is None:
+            policy = load_and_announce(getattr(self.config, "work_priority", None))
+            self._work_priority = policy
+        return policy
+
+    def _pick_from_pool(self, items: list, priority_animal: Optional[str],
+                        animal_field: str, is_collage: bool = False,
+                        allow_deferred: bool = True,
+                        randomize: bool = True):
+        """
+        Pick one work item out of a bucket, or None if this pass can take none.
+
+        THIS CAN RETURN None ON A NON-EMPTY BUCKET, which the old contract
+        ("None only when items is empty") did not: a bucket holding nothing but
+        deferred work yields nothing when allow_deferred is False. Every call
+        site must test the result -- picking blind would crash the work loop on
+        pick['video_id'] every cycle.
+
+        Order of operations, fixed here so it is stated once instead of
+        emerging from five call sites:
+
+          1. PRIORITY ANIMAL narrowing. mousereach-watch-prioritize is a person
+             saying "this animal, now". It is explicit, temporary and manual,
+             and it outranks both standing policies below, the deferral
+             included: if the only work for the requested animal is an Easy
+             video, the operator gets that video, and a log line says why. The
+             alternative is a button that silently does nothing for a rehab
+             animal, which is the kind of silent failure this pipeline is not
+             allowed to have.
+          2. DEFERRAL, when the caller passes allow_deferred=False. Only the
+             buckets that ADMIT new work onto this node do that; see the
+             ADMIT/DRAIN split in each role's _select_work_item.
+          3. CONFIGURED ORDER. The first tier with any candidate wins; the
+             choice is made among that tier only. Items in no tier are last,
+             so no configuration can make work unreachable.
+          4. Tie-break: random within the tier -- several nodes share these
+             pools, so random spreads them -- or the database's own order,
+             created_at DESC (newest first), where the caller asks for it.
 
         Args:
-            items: All items in this work tier
+            items: All items in this work bucket
             priority_animal: Animal ID to prefer, or None
             animal_field: DB field containing animal ID(s)
-            is_collage: True if items are collages (filename-based pillar check)
+            is_collage: True if items are collages (filename-based tray check)
+            allow_deferred: False to hide the policy's deferred work this pass
+            randomize: False to keep the database's own order within a tier
 
         Returns:
-            Selected item dict, or None if items is empty
+            Selected item dict, or None
         """
         if not items:
             return None
 
-        # Split into priority animal's items and others
+        policy = self.work_priority
+
+        # 1. Priority animal -- an explicit human override.
+        forced_by_operator = False
         if priority_animal:
             preferred = [i for i in items if self._matches_priority(i, priority_animal, animal_field)]
             if preferred:
                 items = preferred  # Only pick from preferred
+                forced_by_operator = True
 
-        # Pillar-first within selected pool
-        if is_collage:
-            pillar = [c for c in items if '_P' in c.get('filename', '')]
-        else:
-            pillar = [v for v in items if v.get('tray_type') == 'P']
+        # 2. Deferral (admitting buckets, first pass only).
+        if not allow_deferred:
+            if forced_by_operator:
+                deferred = [i for i in items
+                            if policy.is_deferred(i, is_collage=is_collage)]
+                if deferred and not getattr(self, "_logged_priority_over_idle", False):
+                    # Latched for the life of the process, so it cannot fire
+                    # twice in one cycle even though this runs on both passes.
+                    self._logged_priority_over_idle = True
+                    logger.info(
+                        "Priority animal %s: %d item(s) that would normally wait for "
+                        "an idle node are being taken on now because the priority "
+                        "animal was set by hand (%s). Clear it to restore the normal "
+                        "order.",
+                        priority_animal, len(deferred),
+                        ", ".join(str(i.get("video_id") or i.get("filename"))
+                                  for i in deferred[:5]))
+            else:
+                items = [i for i in items
+                         if not policy.is_deferred(i, is_collage=is_collage)]
+                if not items:
+                    return None
 
-        return random.choice(pillar if pillar else items)
+        # 3. Configured order: first tier with a candidate wins.
+        tiered = [(policy.tier(i, is_collage=is_collage), i) for i in items]
+        best = min(tier for tier, _ in tiered)
+        candidates = [i for tier, i in tiered if tier == best]
+
+        # 4. Tie-break.
+        return random.choice(candidates) if randomize else candidates[0]
 
     # =========================================================================
     # UTILITIES
@@ -514,9 +645,30 @@ class DLCOrchestrator(BaseOrchestrator):
     # WORK QUEUE
     # =========================================================================
 
-    def _get_next_work_item(self):
+    def _select_work_item(self, admit_deferred: bool = True):
         """
-        Get next work item — priority animal first, then Pillar-first, random.
+        One pass over this node's work buckets -- priority animal first,
+        then the configured order, random within the winning tier.
+
+        Called twice per cycle by BaseOrchestrator._get_next_work_item: once
+        with admit_deferred=False, and only if that finds nothing at all, once
+        with it True. Every pick below is tested for None, because a bucket
+        can be non-empty and still yield nothing on the first pass.
+
+        ADMIT / DRAIN. Only the buckets that bring NEW work onto this node
+        honour admit_deferred:
+
+          ADMIT (gated):    single_dlc (2), collage (3)
+          DRAIN (ungated):  archive_local (1a), local_pipeline (1b, 1c),
+                            stage_to_nas (1c)
+
+        The drain buckets finish work whose files are already on this node's
+        disk. Holding them back does not save the GPU for anything -- the
+        collage and DLC-queue buckets below are where a deferred session would
+        actually consume it -- and it does strand results: a node with a
+        backlog is never idle, so a deferred archive or stage never happens
+        at all. They are still ORDERED by the policy: inside each bucket the
+        preferred tier is picked first.
 
         Priority:
         1. Stage DLC-complete videos to NAS (finish what's done)
@@ -526,15 +678,13 @@ class DLCOrchestrator(BaseOrchestrator):
         priority_animal = self._get_priority_animal()
 
         # Priority 1a: Archive locally processed videos (also_process mode)
+        # DRAIN: the result exists; filing it is a file move, not analysis.
         if self.config.also_process:
             processed = [v for v in self.db.get_videos_in_state('processed')
                          if not self._archive_backoff_active(v['video_id'])]
-            if processed:
-                if priority_animal:
-                    preferred = [v for v in processed if self._matches_priority(v, priority_animal, 'animal_id')]
-                    pick = preferred[0] if preferred else processed[0]
-                else:
-                    pick = processed[0]
+            pick = self._pick_from_pool(processed, priority_animal, 'animal_id',
+                                        randomize=False)
+            if pick is not None:
                 return {
                     'type': 'archive_local',
                     'id': pick['video_id'],
@@ -542,42 +692,46 @@ class DLCOrchestrator(BaseOrchestrator):
                 }
 
         # Priority 1b: Run local pipeline on DLC-complete videos (also_process mode)
+        # DRAIN: the video and its pose are already here, already occupying
+        # this node's disk. Finishing it is what frees the node.
         if self.config.also_process:
             processing = self.db.get_videos_in_state('processing')
-            if processing:
-                pick = self._pick_from_pool(processing, priority_animal, 'animal_id')
+            pick = self._pick_from_pool(processing, priority_animal, 'animal_id')
+            if pick is not None:
                 return {
                     'type': 'local_pipeline',
                     'id': pick['video_id'],
                     'data': pick
                 }
 
-        # Priority 1c: Videos with DLC complete — stage to NAS or run local pipeline
+        # Priority 1c: Videos with DLC complete - stage to NAS or run local pipeline
+        # DRAIN either way. Handing the pose to the processing server is a file
+        # move, and the server applies its own admit rule when it decides what
+        # to RUN -- holding a finished pose on this node's disk buys nothing and
+        # hides the work from every other node. Running the pipeline on it here
+        # is finishing a video this node already has.
+        # For staging, prefer priority animal but no randomization (stage ASAP).
         videos = self.db.get_videos_in_state('dlc_complete')
-        if videos:
-            # For staging, prefer priority animal but no randomization (stage ASAP)
-            if priority_animal:
-                preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
-                pick = preferred[0] if preferred else videos[0]
-            else:
-                pick = videos[0]
-
-            if self.config.also_process:
-                return {
-                    'type': 'local_pipeline',
-                    'id': pick['video_id'],
-                    'data': pick
-                }
+        stage = 'local_pipeline' if self.config.also_process else 'stage_to_nas'
+        pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
+                                    randomize=False)
+        if pick is not None:
             return {
-                'type': 'stage_to_nas',
+                'type': stage,
                 'id': pick['video_id'],
                 'data': pick
             }
 
-        # Priority 2: Videos queued for DLC (Pillar first, random within tier)
+        # Priority 2: Videos queued for DLC (preferred tier first, random within tier)
+        # ADMIT: running DLC is the expensive GPU analysis this node exists for.
+        # Starting one on a deferred session is exactly the thing that must wait
+        # until there is nothing else. Nothing strands: a queued video holds no
+        # slot against a cap, and the next pass takes it the moment the node is
+        # idle.
         videos = self.db.get_videos_in_state('dlc_queued')
-        if videos:
-            pick = self._pick_from_pool(videos, priority_animal, 'animal_id')
+        pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
+                                    allow_deferred=admit_deferred)
+        if pick is not None:
             return {
                 'type': 'single_dlc',
                 'id': pick['video_id'],
@@ -586,8 +740,11 @@ class DLCOrchestrator(BaseOrchestrator):
 
         # Priority 3: Crop next collage (Pillar first, random within tier)
         collages = self.db.get_collages_in_state('stable')
-        if collages:
-            pick = self._pick_from_pool(collages, priority_animal, 'animal_ids', is_collage=True)
+        # ADMIT: cropping a collage creates new local files and new DLC work.
+        pick = self._pick_from_pool(collages, priority_animal, 'animal_ids',
+                                    is_collage=True,
+                                    allow_deferred=admit_deferred)
+        if pick is not None:
             return {
                 'type': 'collage',
                 'id': pick['filename'],
@@ -655,6 +812,14 @@ class DLCOrchestrator(BaseOrchestrator):
         priority_animal = self._get_priority_animal()
         if priority_animal:
             print(f"\n  PRIORITY ANIMAL:      {priority_animal}")
+
+        # Show the ordering policy, so nobody has to read the config file to
+        # find out why one video is being taken before another.
+        print("\nWork priority:")
+        for line in self.work_priority.describe():
+            print(f"  {line}")
+        for complaint in self.work_priority.complaints:
+            print(f"  [!] {complaint}")
 
         # Show what work would be done
         print(f"\nPending work items:")
@@ -1518,18 +1683,45 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # WORK QUEUE
     # =========================================================================
 
-    def _get_next_work_item(self):
+    def _select_work_item(self, admit_deferred: bool = True):
         """
-        Get next work item for the processing server.
+        One pass over the processing server's work buckets.
+
+        Called twice per cycle by BaseOrchestrator._get_next_work_item: once
+        with admit_deferred=False, and only if that finds nothing at all, once
+        with it True. Every pick below is tested for None, because a bucket can
+        be non-empty and still yield nothing on the first pass.
+
+        ADMIT / DRAIN. Only the buckets that bring NEW work onto this node
+        honour admit_deferred:
+
+          ADMIT (gated):    intake (2), reprocess (4)
+          DRAIN (ungated):  archive (1), pipeline (3)
+
+        The drain buckets finish videos whose files are already on this
+        server's disk and already counted against max_local_pending. Gating
+        them was tried and is wrong twice over. It strands data -- a node with
+        a backlog is never idle, so a deferred video in 'processing' is never
+        analysed and never archived, and it holds a slot against the cap
+        forever, which then throttles intake of the work we wanted first. And
+        because intake is visited BEFORE pipeline, gating only intake without
+        also ungating pipeline would let an idle node copy a whole cap's worth
+        of deferred videos in before analysing one. With intake gated and
+        pipeline ungated, one deferred video is admitted, the next cycle
+        finishes it, and the pool never fills with work that cannot leave it.
+
+        The drain buckets are still ORDERED by the policy: inside each one the
+        preferred tier is picked first.
 
         Priority:
-        1. Archive: Processed videos → archive to NAS (finish what's done)
-        2. Intake: DLC-complete videos on NAS → copy to local Processing/
+        1. Archive: Processed videos -> archive to NAS (finish what's done)
+        2. Intake: DLC-complete videos on NAS -> copy to local Processing/
         3. Pipeline: Videos in Processing/ that need seg/reach/outcomes
+        4. Reprocess: videos the staleness scanner marked outdated
         """
         priority_animal = self._get_priority_animal()
 
-        # Priority 1: Archive — move processed videos to NAS, before taking on
+        # Priority 1: Archive - move processed videos to NAS, before taking on
         # new work. WHY: archive used to be below pipeline, and intake keeps
         # the pipeline pool topped up, so completed results piled up locally and
         # never reached the NAS (or the database that pulls from it) until the
@@ -1537,51 +1729,64 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # file moves; doing it first keeps results flowing without measurably
         # starving the pipeline. Same finish-what's-done ordering the DLC-node
         # orchestrator has always used.
+        #
+        # DRAIN, so never gated: filing a finished video is not analysis. The
+        # result has already been produced; refusing to file it strands it on
+        # local disk, holds a row in a working state, and keeps the result off
+        # the NAS and out of every downstream pull. Ordering still applies --
+        # the preferred tier is filed first.
         videos = [v for v in self.db.get_videos_in_state('processed')
                   if not self._archive_backoff_active(v['video_id'])]
-        if videos:
-            if priority_animal:
-                preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
-                pick = preferred[0] if preferred else videos[0]
-            else:
-                pick = videos[0]
+        pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
+                                    randomize=False)
+        if pick is not None:
             return {
                 'type': 'archive',
                 'id': pick['video_id'],
                 'data': pick
             }
 
-        # Priority 2: Intake — videos discovered in staging, not yet copied locally
+        # Priority 2: Intake - videos discovered in staging, not yet copied locally
+        # ADMIT: this is the door that puts a new video on this node's disk and
+        # spends a slot of max_local_pending. It is the one that must wait.
         videos = self.db.get_videos_in_state('dlc_complete')
         if videos:
             # Check disk space cap
             processing_count = len(self.db.get_videos_in_state('processing'))
             if processing_count >= self.config.max_local_pending:
-                logger.warning(
-                    f"Local pending limit reached ({processing_count}/{self.config.max_local_pending}). "
-                    "Pausing intake — review or archive pending videos."
-                )
+                # First pass only. Both passes see the same cap and the same
+                # bucket, and one warning per cycle is one warning per cycle.
+                if not admit_deferred:
+                    logger.warning(
+                        f"Local pending limit reached ({processing_count}/{self.config.max_local_pending}). "
+                        "Pausing intake -- review or archive pending videos."
+                    )
             else:
-                if priority_animal:
-                    preferred = [v for v in videos if self._matches_priority(v, priority_animal, 'animal_id')]
-                    pick = preferred[0] if preferred else videos[0]
-                else:
-                    pick = videos[0]
-                return {
-                    'type': 'intake',
-                    'id': pick['video_id'],
-                    'data': pick
-                }
+                pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
+                                            allow_deferred=admit_deferred,
+                                            randomize=False)
+                if pick is not None:
+                    return {
+                        'type': 'intake',
+                        'id': pick['video_id'],
+                        'data': pick
+                    }
 
-        # Priority 3: Pipeline — run seg/reach/outcomes on locally staged videos
+        # Priority 3: Pipeline - run seg/reach/outcomes on locally staged videos
+        # DRAIN, so never gated. The video is already on this disk and already
+        # counted against the cap; finishing it is what frees the slot. This is
+        # also what makes a deadlock guard unnecessary: a local pool full of
+        # deferred videos drains itself on the very first pass, so intake can
+        # never be blocked by work that has no way out.
         videos = self.db.get_videos_in_state('processing')
         if videos:
             pick = self._pick_from_pool(videos, priority_animal, 'animal_id')
-            return {
-                'type': 'pipeline',
-                'id': pick['video_id'],
-                'data': pick
-            }
+            if pick is not None:
+                return {
+                    'type': 'pipeline',
+                    'id': pick['video_id'],
+                    'data': pick
+                }
 
         # Priority 4: Reprocess outdated videos
         outdated = self.db.get_videos_in_state('outdated')
@@ -1618,12 +1823,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
             if actionable:
                 # post_dlc: re-run seg/reach/outcomes from existing DLC output
-                pick = self._pick_from_pool(actionable, priority_animal, 'animal_id')
-                return {
-                    'type': 'reprocess',
-                    'id': pick['video_id'],
-                    'data': pick
-                }
+                # ADMIT: reprocessing pulls a finished video back onto this
+                # node and re-opens work that was already done. It waits.
+                pick = self._pick_from_pool(actionable, priority_animal, 'animal_id',
+                                            allow_deferred=admit_deferred)
+                if pick is not None:
+                    return {
+                        'type': 'reprocess',
+                        'id': pick['video_id'],
+                        'data': pick
+                    }
 
         return None
 
@@ -1772,6 +1981,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
         priority_animal = self._get_priority_animal()
         if priority_animal:
             print(f"\n  PRIORITY ANIMAL:    {priority_animal}")
+
+        # Show the ordering policy, so nobody has to read the config file to
+        # find out why one video is being taken before another.
+        print("\nWork priority:")
+        for line in self.work_priority.describe():
+            print(f"  {line}")
+        for complaint in self.work_priority.complaints:
+            print(f"  [!] {complaint}")
 
         # Show pending work
         print(f"\nPending work items:")
