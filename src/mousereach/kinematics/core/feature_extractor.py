@@ -294,9 +294,18 @@ class FeatureExtractor:
         # order 1 hold. On human-owned segments the algorithm's original pick is
         # still recorded under algo_causal_reach_id, so an override remains
         # visible as an override.
+        _unmerged_touched = 0
         for _seg in outcomes_data.get('segments', []):
             _asn = assignment_by_segment.get(int(_seg.get('segment_num', -1)))
             if _asn is None:
+                # No assignment for this segment. Legal for pre-algo-4 files,
+                # but when it happens on a TOUCHED segment the causal reach is
+                # about to be absent from the output -- and this skip used to
+                # be silent, which is how 9,280 touched segments shipped with
+                # an outcome and no causal reach before anyone noticed
+                # (census 2026-09-01). Count it and say so below.
+                if _seg.get('outcome') in ('retrieved', 'displaced_sa', 'displaced_outside'):
+                    _unmerged_touched += 1
                 continue
             if 'causal_reach_id' in _seg:
                 if _seg.get('algo_causal_reach_id') is None:
@@ -305,6 +314,10 @@ class FeatureExtractor:
             _seg['causal_reach_id'] = _asn['reach_id']
             if _seg.get('interaction_frame') is None:
                 _seg['interaction_frame'] = _asn.get('segment_ifr')
+        if _unmerged_touched:
+            print(f"[feature_extractor] {Path(outcomes_path).name}: {_unmerged_touched} touched "
+                  f"segment(s) have no reach-assignment answer to merge -- their causal reach "
+                  f"will be absent unless a human layer supplies one")
 
         for seg_data, outcome_data in zip(reaches_data['segments'], outcomes_data['segments']):
             seg_num = seg_data['segment_num']
@@ -381,6 +394,17 @@ class FeatureExtractor:
                 reach_features.n_reaches_in_segment = n_reaches
 
                 seg_features.reaches.append(reach_features)
+
+            # Invariant: a segment has at most ONE causal reach -- the pellet
+            # moved once. Cross-generation files violated this 7 times in the
+            # 2026-08-31 snapshot; enforce at write time (first wins, extras
+            # cleared loudly) so it can never ship again.
+            _causal = [r for r in seg_features.reaches if getattr(r, 'causal_reach', False)]
+            if len(_causal) > 1:
+                for r in _causal[1:]:
+                    r.causal_reach = False
+                print(f"[feature_extractor] segment {seg_num}: {len(_causal)} reaches marked "
+                      f"causal -- kept reach {getattr(_causal[0], 'reach_id', '?')}, cleared the rest")
 
             segment_features.append(seg_features)
 
