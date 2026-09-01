@@ -1198,18 +1198,10 @@ class DLCOrchestrator(BaseOrchestrator):
                         # says kinematics never happened. Stamp the truth.
                         from mousereach.pipeline.manifest import record_kinematic_version
                         record_kinematic_version(video_id, processing_dir, extractor.VERSION)
-
-                        try:
-                            from mousereach.sync.database import sync_file_to_database
-                            if sync_file_to_database(features_path):
-                                self.db.log_step(video_id, 'db_sync', 'completed')
-                            else:
-                                self.db.log_step(video_id, 'db_sync', 'failed',
-                                                 message="results did not reach connectome.db")
-                                logger.warning(f"Database sync DID NOT HAPPEN for {video_id}")
-                        except Exception as e:
-                            self.db.log_step(video_id, 'db_sync', 'failed', message=str(e))
-                            logger.warning(f"Database sync failed for {video_id}: {e}")
+                        # No database push here: mousedb PULLS features files
+                        # from the Analyzed tree (tool independence, 2026-08-28).
+                        # The old sync call stayed behind and logged a failed
+                        # 'db_sync' step on every video (1,539 times) -- removed.
                     except Exception as e:
                         self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e))
                         logger.warning(f"Feature extraction failed for {video_id}: {e}")
@@ -2249,27 +2241,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         duration=feat_duration
                     )
                     logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
-
-                    try:
-                        from mousereach.sync.database import sync_file_to_database
-                        synced = sync_file_to_database(features_path)
-                        if synced:
-                            self.db.log_step(video_id, 'db_sync', 'completed', message="Synced to connectome.db")
-                            logger.info(f"Database sync complete: {video_id}")
-                        else:
-                            # A False return means this video's results are NOT
-                            # in connectome.db. At debug level that was
-                            # invisible: the audit table showed 65 sync
-                            # successes against 1229 completed extractions
-                            # before anyone noticed.
-                            self.db.log_step(video_id, 'db_sync', 'failed',
-                                             message="results did not reach connectome.db "
-                                                     "(subject unknown or DB unavailable)")
-                            logger.warning(f"Database sync DID NOT HAPPEN for {video_id} "
-                                           f"(subject not in DB or DB unavailable)")
-                    except Exception as e:
-                        self.db.log_step(video_id, 'db_sync', 'failed', message=str(e))
-                        logger.warning(f"Database sync failed for {video_id}: {e}")
+                    # No database push here: mousedb PULLS features files from
+                    # the Analyzed tree (tool independence, 2026-08-28). The old
+                    # sync call stayed behind, always failed on config, and
+                    # logged a failed 'db_sync' step on every video -- removed.
 
                 except Exception as e:
                     feat_duration = time.time() - step_start
@@ -2312,6 +2287,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     reason=f"bundle found in {qstate} queue on disk at archive time")
                 self._clear_archive_backoff(video_id)
                 return
+
+        # Let go of the outcome detector's cached video handle first: it keeps
+        # the LAST processed mp4 open until the next video replaces it, and the
+        # move below then fails with "being used by another process" until it
+        # does (218 videos cycled through archive backoff this way, 2026-08-31).
+        try:
+            from mousereach.outcomes.v6_cascade.cv_artifact_gate import release_cap_cache
+            release_cap_cache()
+        except Exception:
+            pass
 
         logger.info(f"Archiving {video_id} to NAS")
         self.db.log_step(video_id, 'archive', 'started')
