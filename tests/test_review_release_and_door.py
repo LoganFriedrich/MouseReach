@@ -85,6 +85,27 @@ def test_routing_reason_gates_segmentation_release(tmp_path):
     assert _names_segmentation("bench_disagreement_segment_mislabel")
 
 
+def test_ghost_segment_flags_are_ignored(tmp_path):
+    """A triage flag naming a segment that does not exist is unanswerable and
+    must not hold the bundle forever (seven live bundles were flagged on
+    segment 21 of a 20-segment video)."""
+    from mousereach.review.triage_status import triage_status
+    stem = "20990101_ABC9905_P1"
+    (tmp_path / f"{stem}_segments.json").write_text(json.dumps({
+        "overall_confidence": 0.9,
+        "boundaries": list(range(0, 2100, 100)),  # 21 boundaries -> 20 segments
+    }), encoding="utf-8")
+    (tmp_path / f"{stem}_pellet_outcomes.json").write_text(json.dumps({
+        "segments": [
+            {"segment_num": 20, "outcome": "triaged", "flagged_for_review": True},
+            {"segment_num": 21, "outcome": "triaged", "flagged_for_review": True},
+        ],
+    }), encoding="utf-8")
+    st = triage_status(tmp_path, stem)
+    assert 20 in st.triaged
+    assert 21 not in st.triaged  # the ghost is dropped, not waited on forever
+
+
 def test_classify_and_release_shared_engine(tmp_path):
     """The GUI button and the CLI share classify_queue/release_finished; the
     release must touch exactly the finished bundles and nothing else."""

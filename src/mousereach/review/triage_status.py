@@ -27,6 +27,7 @@ are trivially testable. ``triage_status`` is the dir-based convenience wrapper.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -258,6 +259,23 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     review = _load(directory, f"{video_id}_causal_review.json")
 
     tri = triaged_segments(outcome, assign)
+
+    # A flag can name a segment that does not exist (a producer numbering by
+    # boundary index rather than by segment: seven live bundles carried a flag
+    # on segment 21 of a 20-segment video). An unanswerable question can never
+    # be resolved, so such a bundle could never be released by any human
+    # action. Drop out-of-range flags, loudly -- an unanswerable question is
+    # worse than a missing one.
+    bounds = (seg or {}).get("boundaries") or []
+    if bounds:
+        n_segs = max(0, len(bounds) - 1)
+        ghost = {s for s in tri if isinstance(s, int) and s > n_segs}
+        if ghost:
+            logging.getLogger(__name__).warning(
+                "%s: triage flags name nonexistent segment(s) %s (only %d "
+                "segments exist); ignoring them", video_id, sorted(ghost), n_segs)
+            tri -= ghost
+
     res = resolved_segments(review)
 
     # Ground truth counts as an answer here, exactly as it does in evaluate_gate.

@@ -102,9 +102,13 @@ def _resolve_inputs(bundle: Path, stem: str):
 
 
 def _bundles(queue_root: Optional[Path]) -> List[Path]:
+    # Dot-directories are never bundles (a stray .omc/ in both queues was
+    # iterated as a phantom video every scan on 2026-09-01, and -- having no
+    # segments file -- read as seg_failed and got divert-retried forever).
     if not queue_root or not Path(queue_root).exists():
         return []
-    return [d for d in Path(queue_root).iterdir() if d.is_dir()]
+    return [d for d in Path(queue_root).iterdir()
+            if d.is_dir() and not d.name.startswith(".")]
 
 
 def _is_queue_metadata(name: str) -> bool:
@@ -336,6 +340,20 @@ def scan_review_queues(db, processing_dir: Path,
             st = triage_status(bundle, stem)
         except Exception:
             continue
+        if st.seg_failed or st.seg_pending_reseg:
+            _dr = getattr(Paths, "DEEP_REVIEW", None)
+            if _dr and (Path(_dr) / stem).exists():
+                # A same-stem bundle ALREADY sits in deep review (historical
+                # escalations split bundles across queues: jsons moved, mp4
+                # left behind). Diverting would merge blindly into the
+                # reviewer's copy, and retrying the impossible move every
+                # scan consumed the whole return budget -- the queue
+                # live-locked on 2026-09-01 with human-cleared releases
+                # starved behind it. Leave duplicates for deliberate cleanup;
+                # one info line, no budget spent, no route attempted.
+                logger.info("Return scan: %s exists in BOTH queues; divert "
+                            "skipped (duplicate needs deliberate cleanup)", stem)
+                continue
         if st.seg_failed:
             # A seg-failed bundle can NEVER satisfy the triage release
             # condition below, and nothing else moves it -- it sat in the
@@ -393,8 +411,12 @@ def scan_review_queues(db, processing_dir: Path,
             summary["triage_returned"] += 1
 
     # DEEP_REVIEW: an explicit clear marker or in-bundle GT.
+    # Own budget, NOT shared with the triage loop's: on 2026-09-01 the triage
+    # loop's diverts consumed the whole shared budget every scan and 46
+    # human-released deep bundles were starved indefinitely. Releases of
+    # finished human work must never queue behind machine-initiated moves.
     for bundle in _bundles(Paths.DEEP_REVIEW):
-        if not _budget_left():
+        if summary["deep_returned"] >= limit:
             summary["deferred"] += 1
             continue
         stem = bundle.name
