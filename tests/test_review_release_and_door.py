@@ -61,3 +61,25 @@ def test_bundle_dirs_skip_dot_directories(tmp_path):
     (tmp_path / "a_file.txt").write_text("x", encoding="utf-8")
     names = [b.name for b in _bundle_dirs(tmp_path)]
     assert names == ["20990101_ABC9901_P1"]
+
+
+def test_routing_reason_gates_segmentation_release(tmp_path):
+    from mousereach.review.release_cli import (
+        _names_segmentation, _routing_reason, _boundary_source_human)
+    stem = "20990101_ABC9901_P1"
+    b = tmp_path / stem
+    b.mkdir()
+    (b / f"{stem}_routing.json").write_text(json.dumps(
+        {"routed_reason": "reviewer escalated from triage: bad segmentation"}),
+        encoding="utf-8")
+    (b / f"{stem}_segments.json").write_text(json.dumps(
+        {"boundary_source": "human", "boundaries": [1, 2]}), encoding="utf-8")
+    assert _routing_reason(b, stem).startswith("reviewer escalated")
+    assert _names_segmentation(_routing_reason(b, stem))
+    assert _boundary_source_human(b, stem)
+    # A QC-routed bundle must NOT read as segmentation-releasable: the clear
+    # marker is a blanket human-clear token the gate honors, so a cut-fix
+    # releasing it would clear a concern nobody addressed.
+    assert not _names_segmentation("qc_needs_review")
+    assert not _names_segmentation("")
+    assert _names_segmentation("bench_disagreement_segment_mislabel")
