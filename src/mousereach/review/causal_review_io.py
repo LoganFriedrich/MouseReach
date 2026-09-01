@@ -410,6 +410,16 @@ MIN_SPAN_OVERLAP = 0.5
 # straddles two segments and there is no honest way to choose.
 MIN_MARGIN = 0.15
 
+# A span shorter than this many frames is not footage: the tray advance alone
+# takes ~15 frames and the shortest real pellet trial runs hundreds. The only
+# sources of shorter spans are the duplicate-boundary defect (a zero-length
+# segment) and a review recorded against one. Such a span must never be a
+# matching target OR a matchable review: overlap is normalised by the SHORTER
+# span, so a 1-frame segment inside any review span scores 100%, ties the true
+# target, and the tie then drops the human's answer (seen live 2026-09-01 on a
+# segment spanning frames 35108-35108).
+MIN_REAL_SEGMENT_FRAMES = 5
+
 
 def index_review_by_segment(review_doc, current_segments=None):
     """Map each CURRENT segment number to the review record describing it.
@@ -456,8 +466,15 @@ def index_review_by_segment(review_doc, current_segments=None):
     spans = {}
     for seg in current_segments:
         sn, sp = seg.get("segment_num"), _seg_span(seg)
-        if sn is not None and sp is not None:
-            spans[int(sn)] = sp
+        if sn is None or sp is None:
+            continue
+        if sp[1] - sp[0] + 1 < MIN_REAL_SEGMENT_FRAMES:
+            notes.append(
+                "current segment %s (frames %d-%d) is shorter than any real "
+                "footage; excluded as a review-matching target"
+                % (sn, sp[0], sp[1]))
+            continue
+        spans[int(sn)] = sp
     if not spans:
         return by_num, notes
 
@@ -466,6 +483,12 @@ def index_review_by_segment(review_doc, current_segments=None):
     for rec in records:
         rspan = _span_of(rec)
         old_num = rec.get("segment_num")
+        if rspan is not None and rspan[1] - rspan[0] + 1 < MIN_REAL_SEGMENT_FRAMES:
+            notes.append(
+                "segment %s review covers frames %d-%d, shorter than any real "
+                "footage (a zero-length-segment artifact); dropped"
+                % (old_num, rspan[0], rspan[1]))
+            continue
         if rspan is None:
             # No frames recorded; the number is the only handle there is.
             if old_num is not None and int(old_num) in spans:

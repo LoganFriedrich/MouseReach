@@ -361,6 +361,7 @@ All 662 archived review files under `MouseReach_Pipeline/Analyzed` now carry spa
 
 - A record with no span is matched by number, and only if that number exists in the current segmentation (`:404-408`). That is all that was ever available for those records.
 - A record with a span is scored against every current segment by overlap. The score is `overlapping frames / the shorter of the two ranges` (`:415`).
+- Spans shorter than **5 frames** (`MIN_REAL_SEGMENT_FRAMES`) are excluded on BOTH sides before scoring: a zero-length segment is not footage, and because the score normalises by the shorter range, a 1-frame segment inside any review span would score 100%, tie the true target, and the tie would drop the human's answer (seen live 2026-09-01). A degenerate current segment is skipped as a target; a review recorded against one is dropped, each with a note.
 - The best match must beat the runner-up by at least **0.15** (`MIN_MARGIN`, `:346`). If it does not, the reviewed stretch has been split across two new segments and the record is **dropped**, with a note (`:423-430`).
 - The best match must cover at least **0.5** of the shorter range (`MIN_SPAN_OVERLAP`, `:342`). Below that the record is **dropped** as describing different footage (`:432-437`).
 - If two records both want the same current segment, the weaker overlap is dropped (`:439-445`).
