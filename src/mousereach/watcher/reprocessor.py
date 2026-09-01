@@ -120,6 +120,16 @@ class ReprocessingScanner:
 
         # Load current versions
         current = get_current_versions(self.nas_root)
+        # Say so every scan while the declaration disagrees with the code:
+        # silent drift here has twice made whole version bumps invisible to
+        # staleness scanning (segmenter 2.2, kinematic_extractor 2.1).
+        try:
+            from mousereach.pipeline.versions import declaration_drift
+            for _stage, _decl, _code in declaration_drift(current):
+                logger.warning("declaration drift: %s declared %s but the code stamps %s "
+                               "-- staleness scanning is blind to this stage", _stage, _decl, _code)
+        except Exception:
+            pass
         if not current or not current.get('versions'):
             logger.warning("No pipeline_versions.json found or empty -- cannot scan")
             return summary
