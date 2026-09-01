@@ -266,6 +266,45 @@ class ReprocessingScanner:
                 summary['errors'] += 1
                 logger.error(f"Error scanning {video_id}: {e}")
 
+        # TWO-WAY DOOR: rows already marked 'outdated' are re-checked against
+        # the declaration and un-marked when they compare current. WHY: the
+        # loop above only walks 'archived', so 'outdated' was a one-way door --
+        # two August 2026 declaration edits with no algorithm change behind
+        # them marked 1,255 rows, and no corrective declaration could ever
+        # undo it (roughly 330 phantom marks at the time this was added).
+        # With compatible_versions (versions.py) a bugfix bump can declare the
+        # old version equivalent; this loop is what lets that declaration
+        # actually heal the queue.
+        summary['unmarked_current'] = 0
+        for video in self.db.get_videos_in_state('outdated'):
+            video_id = video['video_id']
+            if not is_supported_tray_type(f"{video_id}.mp4"):
+                continue  # E/F rows stay parked; their pipeline scope is a separate decision
+            try:
+                manifest = self._load_manifest(video_id)
+                if not manifest:
+                    continue
+                comparison = compare_manifest_to_current(manifest, current)
+                if not comparison['is_current']:
+                    continue
+                if self._pending_review_path(video_id) is not None:
+                    continue  # a re-run is still owed to apply the human review
+                if mark_outdated:
+                    try:
+                        self.db.update_state(video_id, 'archived',
+                                             reprocess_scope=None)
+                    except Exception:
+                        self.db.force_state(
+                            video_id, 'archived', reprocess_scope=None,
+                            reason='reprocess mark stale: versions compare current')
+                    logger.info(
+                        f"Un-marked {video_id}: versions compare current, "
+                        f"'outdated' mark was stale")
+                summary['unmarked_current'] += 1
+            except Exception as e:
+                summary['errors'] += 1
+                logger.error(f"Error re-checking outdated {video_id}: {e}")
+
         # Also count crystallized (for reporting)
         crystallized = self.db.get_videos_in_state('crystallized')
         summary['crystallized_skipped'] = len(crystallized)
@@ -273,6 +312,7 @@ class ReprocessingScanner:
         logger.info(
             f"Scan complete: {summary['scanned']} checked, "
             f"{summary['current']} current, {summary['outdated']} outdated, "
+            f"{summary['unmarked_current']} un-marked (were outdated, now current), "
             f"{summary['crystallized_skipped']} crystallized"
         )
 

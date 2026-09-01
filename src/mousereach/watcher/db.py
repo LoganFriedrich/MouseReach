@@ -46,7 +46,10 @@ VIDEO_TRANSITIONS = {
     'processed': ['archiving', 'unresolvable'],
     'archiving': ['archived', 'failed', 'unresolvable'],
     'archived': ['outdated', 'crystallized', 'unresolvable'],  # Version-aware reprocessing
-    'outdated': ['dlc_queued', 'processing', 'failed', 'unresolvable'],  # Re-enters pipeline
+    # 'archived' = un-mark: the row compares current again (e.g. after a
+    # corrective or compatible-version declaration). Without it 'outdated' was
+    # a one-way door and a declaration accident could never be undone.
+    'outdated': ['dlc_queued', 'processing', 'failed', 'archived', 'unresolvable'],  # Re-enters pipeline
     'crystallized': [],  # Locked against reprocessing (use force_state to unlock)
     # --- Human-review holds: the video is held OUT of the archive + connectome.db
     # until a human clears it. Kinematics NEVER run on a held video. ---
@@ -325,6 +328,7 @@ class WatcherDB:
             ('videos', 'crystallized_by', 'TEXT'),
             ('videos', 'crystallized_label', 'TEXT'),
             ('videos', 'reprocess_scope', 'TEXT'),
+            ('collages', 'retry_count', 'INTEGER'),
         ]
 
         with self._lock:
