@@ -137,8 +137,10 @@ class TestRetryBackoff:
         """Both roles filter on it, so one stuck video cannot block the queue."""
         import inspect
         from mousereach.watcher import orchestrator as o
-        for fn in (o.ProcessingOrchestrator._get_next_work_item,
-                   o.DLCOrchestrator._get_next_work_item):
+        # _get_next_work_item is now the two-pass wrapper on the base class;
+        # the buckets (and this filter) live in _select_work_item.
+        for fn in (o.ProcessingOrchestrator._select_work_item,
+                   o.DLCOrchestrator._select_work_item):
             assert "_archive_backoff_active" in inspect.getsource(fn)
 
 

@@ -33,6 +33,14 @@ CONFIG_DIR = Path.home() / ".mousereach"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 MACHINE_ROLE_FILE = CONFIG_DIR / "machine_role.json"
 
+# The watcher settings this wizard actually prompts for. Everything else
+# already in the config file is carried over untouched when the watcher
+# section is rewritten -- see run_setup_wizard().
+_WIZARD_PROMPTED_KEYS = frozenset({
+    'dlc_config_path', 'dlc_gpu_device', 'poll_interval_seconds',
+    'stability_wait_seconds', 'enabled', 'max_retries',
+})
+
 # Lab profiles file (lab-specific, gitignored) with shipped template fallback
 LAB_PROFILES_FILE = Path(__file__).parent / "lab_profiles.json"
 LAB_PROFILES_EXAMPLE = Path(__file__).parent / "lab_profiles.json.example"
@@ -421,6 +429,16 @@ def run_setup_wizard():
         watcher_config['enabled'] = True
         watcher_config['max_retries'] = existing_watcher.get('max_retries',
                                          profile_watcher.get('max_retries', 3))
+
+        # Carry over every watcher setting this wizard does not ask about.
+        # save_config() REPLACES the whole watcher section, so anything not
+        # copied here is destroyed by re-running setup. That is not
+        # hypothetical: on a processing server the wizard's own output drops
+        # mode, db_path, max_local_pending, also_process and staging_path,
+        # and it would drop work_priority too.
+        for key, value in existing_watcher.items():
+            if key not in _WIZARD_PROMPTED_KEYS:
+                watcher_config.setdefault(key, value)
 
     # --- Step 4: Create pipeline directories ---
     if proc_root:

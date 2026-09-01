@@ -682,6 +682,12 @@ class WatcherConfig:
         self.staging_path: Optional[Path] = (
             Path(cfg['staging_path']) if cfg.get('staging_path') else None
         )  # Custom staging path for DLC output
+        # Which work this node takes first, and which work waits until the
+        # node has nothing else to do. Kept as the raw dict; it is validated
+        # by mousereach.watcher.work_priority, which also documents the
+        # shape and explains why an absent key is a default rather than a
+        # hard stop (it is a preference, not a location).
+        self.work_priority: Optional[dict] = cfg.get('work_priority')
 
     @classmethod
     def load(cls) -> 'WatcherConfig':
@@ -714,6 +720,8 @@ class WatcherConfig:
             d['db_path'] = str(self.db_path)
         if self.staging_path:
             d['staging_path'] = str(self.staging_path)
+        if self.work_priority is not None:
+            d['work_priority'] = self.work_priority
         return d
 
     def get_quarantine_dir(self) -> Path:
