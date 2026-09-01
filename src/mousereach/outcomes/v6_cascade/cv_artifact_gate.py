@@ -66,6 +66,22 @@ def _get_cap(video_path):
     return cap
 
 
+def release_cap_cache() -> None:
+    """Close the cached VideoCapture. The cache is only evicted when the NEXT
+    video is opened, so after detect() the last video's mp4 stayed open -- and
+    the archiver's move of that mp4 failed with "being used by another
+    process" until another video came along (218 videos, 2026-08-31). Called
+    by the watcher before it archives a video; idempotent."""
+    cap = _cap_cache["cap"]
+    _cap_cache["path"] = None
+    _cap_cache["cap"] = None
+    if cap is not None:
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+
 def _patch_bright(frame, x, y, hw=3):
     """90th-percentile intensity in a small (pellet-sized) patch -- a bright-
     object detector robust to sub-pixel DLC placement."""
