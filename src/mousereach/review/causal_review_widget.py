@@ -318,6 +318,15 @@ The notes box travels with the video.
             pass
         header_layout.addLayout(title_row)
 
+        # WHY-AM-I-HERE banner (deep review). The tool must explain itself:
+        # a video's routing reason decides what the human should do, and the
+        # guidance must never point at re-segmentation for a video that is
+        # not here because the segmentation is wrong.
+        self._routing_banner = QLabel("")
+        self._routing_banner.setWordWrap(True)
+        self._routing_banner.setVisible(False)
+        header_layout.addWidget(self._routing_banner)
+
         vid_row = QHBoxLayout()
         browse_btn = QPushButton("Load Video...")
         browse_btn.clicked.connect(self._browse_video)
@@ -541,6 +550,60 @@ The notes box travels with the video.
         self._manifest = dict(manifest)
         self._bundle_dir = Path(bundle_dir)
         self._load_video(Path(manifest["canonical_video_path"]))
+        self._update_routing_banner()
+
+    def _update_routing_banner(self):
+        """Say WHY this video is in deep review and what the right action is.
+
+        Routing-aware on purpose: what clearing (or fixing) means depends on
+        why the video was routed here, and the guidance must never propose
+        re-segmentation for a video that is not here because the segmentation
+        is wrong. Every action named is a button in this tool -- the tool has
+        to be usable end-to-end with no one to interpret the queue.
+        """
+        banner = getattr(self, "_routing_banner", None)
+        if banner is None or not self._deep_review:
+            return
+        bundle = getattr(self, "_bundle_dir", None)
+        stem = self._video_stem
+        if not bundle or not stem:
+            banner.setVisible(False)
+            return
+        try:
+            from mousereach.review.release_cli import (
+                _routing_reason, _names_segmentation,
+            )
+            reason = _routing_reason(Path(bundle), stem)
+        except Exception:
+            reason = ""
+        base = "padding:6px; border-radius:3px; font-size:12px;"
+        if reason and _names_segmentation(reason):
+            banner.setStyleSheet(base + "background:#16405a; color:white;")
+            banner.setText(
+                "<b>Why this video is here:</b> %s<br>"
+                "The segment CUTS are in question. Fix them in the "
+                "Re-segmentation tool (saving there releases the video), or "
+                "-- if the cuts are actually fine -- answer the questions and "
+                "press Clear." % reason)
+        elif reason and "qc" in reason.lower():
+            banner.setStyleSheet(base + "background:#5a4a16; color:white;")
+            banner.setText(
+                "<b>Why this video is here:</b> the pipeline's own quality "
+                "self-check flagged the whole video (%s).<br>"
+                "<b>Your job:</b> watch enough to judge whether the tracking "
+                "follows the paw and pellet. If it does, press Clear -- the "
+                "flag stays attached to this video's data either way. If the "
+                "tracking is visibly broken, do NOT Clear: press \"Flag "
+                "Session (needs review)\" instead. Re-segmentation is NOT "
+                "the fix here; the cuts are not the question." % reason)
+        else:
+            banner.setStyleSheet(base + "background:#3a3a3a; color:white;")
+            banner.setText(
+                "<b>Why this video is here:</b> no routing reason was "
+                "recorded (an older bundle -- that is a bookkeeping gap, not "
+                "your problem).<br>Look it over, answer anything flagged, and "
+                "press Clear when you are satisfied.")
+        banner.setVisible(True)
 
     # frames of context padded around a reach when windowing a segment
     WINDOW_PAD = 45
