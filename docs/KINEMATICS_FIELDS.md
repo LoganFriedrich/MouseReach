@@ -59,7 +59,7 @@ if causal_reach_id is not None and causal_reach_id == reach_id:
 | `v6_cascade` 6.1.0 | 947 | 18,940 | **0** | **0** |
 | unnamed, version 2.4.4 (older) | 199 | 3,980 | 1,495 | 3,980 |
 
-So `causal_reach = True` only ever arrives from somewhere other than the current algorithm. In the Analyzed-archive sample, the 906 causal reaches break down as: 739 in old pre-v6 files, 149 from a human causal review, 18 from a ground-truth file, and **zero** with `outcome_source = 'algo'`. Human reviews and ground truth put a causal reach id onto the segment through the truth-layering step (`review/truth_resolver.py:122` and `:145`), and the extractor then picks it up.
+So `causal_reach = True` only ever arrives from somewhere other than the current algorithm. In the Analyzed-archive sample, the 906 causal reaches break down as: 739 in old pre-v6 files, 149 from a human causal review, 18 from a ground-truth file, and **zero** with `outcome_source = 'algo'`. Human reviews and ground truth put a causal reach id onto the segment through the truth-layering step (`review/truth_resolver.py`), and the extractor then picks it up. Since 2026-09-01 that step resolves a human's causal pick by its **frames** whenever the review records them, and only falls back to the stored reach id when it does not: reach ids are renumbered on every run, so a review written against last month's reach list named an id this run does not have, and the human's answer silently vanished from the reach rows (612 reviewed segments in the 2026-08-31 snapshot). The stored id is kept beside the resolved one for provenance.
 
 **Two things follow, and they are the largest holes in this data.**
 
