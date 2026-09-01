@@ -326,6 +326,30 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 
     logger.info("Prerequisites OK")
 
+    # SINGLE-INSTANCE GUARD. Two watchers on one state database is never a
+    # valid configuration (interleaved work selection, double-claimed items),
+    # and on 2026-09-01 a day of deploy kill/restart cycles showed how easily
+    # a second instance can go unnoticed: process filters based on command
+    # lines miss instances whose command line is not visible. A named mutex
+    # is per-machine, costs nothing, and the OS releases it on ANY exit,
+    # force-kill included. Exit code 0 on "already running": an eager
+    # relauncher gets an orderly no-op, not a failure to retry.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            _mutex = kernel32.CreateMutexW(None, True, "Global\\mousereach-watcher-singleton")
+            ERROR_ALREADY_EXISTS = 183
+            if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+                logger.warning("Another watcher instance already holds the "
+                               "singleton mutex on this machine -- exiting.")
+                print("Watcher already running on this machine; exiting.")
+                sys.exit(0)
+            # Keep a reference so the handle lives as long as the process.
+            globals()["_watcher_singleton_mutex"] = _mutex
+        except Exception as e:
+            logger.warning(f"Single-instance guard unavailable ({e}); continuing")
+
     # Create database
     try:
         # Use local DB path if configured (avoids SQLite-over-SMB issues)
