@@ -3068,6 +3068,36 @@ The notes box travels with the video.
             f"Saved review: {n_reviewed}/{len(segments)} segments "
             f"-> {out_path.name}"
         )
+
+        # Deep review: answering and releasing used to be separate acts, and
+        # the second was skipped often enough that finished bundles sat in the
+        # queue with no path out. When this save leaves EVERY segment carrying
+        # a human outcome, the review is complete by the measure release uses
+        # -- write the clear marker now. Partial walks (placeholders remain)
+        # still go through the Clear button or the release CLI, where a human
+        # judges whether covering every triaged segment was enough.
+        try:
+            bundle = getattr(self, "_bundle_dir", None)
+            if self._deep_review and bundle:
+                marker = Path(bundle) / f"{self._video_stem}_deep_review_cleared.json"
+                complete = bool(segments) and all(
+                    (s.get("human") or {}).get("outcome") is not None
+                    for s in segments
+                )
+                if complete and not marker.exists():
+                    from .causal_review_io import _write_json
+                    _write_json(marker, {
+                        "type": "deep_review_cleared",
+                        "video_stem": self._video_stem,
+                        "cleared_by": reviewer,
+                        "cleared_at": timestamp,
+                        "reason": "review complete on save: every segment "
+                                  "carries a human outcome",
+                        "gated_on": "human.outcome",
+                    })
+                    show_info("Review complete -- released back to the pipeline.")
+        except Exception as e:
+            print(f"Warning: auto-release check failed: {e}")
         self._status_label.setText(f"Saved: {out_path.name}")
         self.data_saved.emit(out_path)
 

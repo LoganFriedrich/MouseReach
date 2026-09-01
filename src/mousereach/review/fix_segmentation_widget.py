@@ -1137,6 +1137,46 @@ automatic.
         self.status.setText(
             "Saved %d cuts for %s (%d added, %d removed). Original archived."
             % (len(self.boundaries), self.video_stem, n_added, n_removed))
+
+        # Release the bundle if this fix answers why it was queued. Saving a
+        # hand-corrected segmentation finishes the work the video was routed
+        # here FOR when the routing reason names segmentation -- but the clear
+        # marker is a blanket human-clear token the watcher gate honors, so
+        # writing it for a bundle routed on other grounds (e.g. a QC hold)
+        # would release concerns nobody addressed. Gate on the routing reason.
+        try:
+            bundle = Path(self.seg_path).parent
+            stem = self.video_stem
+            marker = bundle / f"{stem}_deep_review_cleared.json"
+            routing = bundle / f"{stem}_routing.json"
+            if routing.is_file() and not marker.exists():
+                from .release_cli import _names_segmentation, _routing_reason
+                reason_txt = _routing_reason(bundle, stem)
+                if _names_segmentation(reason_txt):
+                    from .causal_review_io import (_write_json, _get_username,
+                                                   _get_timestamp)
+                    _write_json(marker, {
+                        "type": "deep_review_cleared",
+                        "video_stem": stem,
+                        "cleared_by": _get_username(),
+                        "cleared_at": _get_timestamp(),
+                        "reason": "segmentation corrected by hand",
+                        "gated_on": "boundary_source",
+                        "routing_reason": reason_txt,
+                    })
+                    self.status.setText(self.status.text()
+                                        + "  Released back to the pipeline.")
+                else:
+                    self.status.setText(
+                        self.status.text()
+                        + "  NOT auto-released: routed for '%s', which fixing "
+                          "cuts does not address -- use the Deep Review "
+                          "tool's Clear when that is resolved."
+                        % (reason_txt or "an unrecorded reason"))
+        except Exception as e:
+            self.status.setText(self.status.text()
+                                + "  (release check failed: %s)" % e)
+
         self._next_video()
 
 
