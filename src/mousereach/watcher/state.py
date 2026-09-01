@@ -91,6 +91,29 @@ class WatcherStateManager:
                         logger.info(
                             f"Collage {filename}: recorded path was not a file "
                             f"({recorded!r}); corrected to {file_path}")
+                    # A 'failed' collage whose file is still present gets
+                    # re-validated. 'failed' -> 'validated' is the state
+                    # machine's own retry edge, but nothing ever took it: this
+                    # skip block dropped the file because the row existed, so
+                    # one transient failure (an old state-machine bug, a blip
+                    # mid-crop) parked the collage permanently (148 on one
+                    # node when this was added, 132 of them Pillar). The retry
+                    # counter keeps a deterministically broken file from
+                    # retrying forever.
+                    if known.get('state') == 'failed':
+                        retries = int(known.get('retry_count') or 0)
+                        max_r = int(getattr(self.config, 'max_retries', 3) or 3)
+                        if retries < max_r:
+                            self.db.update_collage_state(
+                                filename, 'validated',
+                                retry_count=retries + 1)
+                            logger.info(
+                                f"Collage {filename}: failed -> validated "
+                                f"(retry {retries + 1}/{max_r}; file present)")
+                        else:
+                            logger.debug(
+                                f"Collage {filename}: failed and out of "
+                                f"retries ({retries}/{max_r}); leaving parked")
                 except Exception as e:
                     logger.debug(f"Could not check collage path for {filename}: {e}")
                 continue
