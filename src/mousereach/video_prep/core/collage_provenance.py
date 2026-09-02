@@ -48,6 +48,15 @@ CROP_CROPPED = "cropped"       # every expected offspring exists
 COMPLETE_STAGES = {"analyzed"}
 
 
+def normalize_video_stem(p) -> str:
+    """Single-animal session stem from any pipeline file name (video, .h5,
+    DLC output, '_full' copy): strips the DLC suffix and the '_full' marker.
+    THE one place this rule lives -- the downstream index and the census both
+    normalize through here, so a DLC artifact can never be counted as a
+    different video than its session."""
+    return Path(p).stem.split("DLC")[0].replace("_full", "").strip("_")
+
+
 def _tool_version() -> Optional[str]:
     try:
         from mousereach import __version__  # type: ignore
@@ -94,7 +103,7 @@ def build_downstream_index() -> Dict[str, str]:
     idx: Dict[str, str] = {}
 
     def _norm(p: Path) -> str:
-        return p.stem.split("DLC")[0].replace("_full", "").strip("_")
+        return normalize_video_stem(p)
 
     def _add(folder, state):
         if not folder or not Path(folder).exists():
