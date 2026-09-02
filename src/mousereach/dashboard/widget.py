@@ -27,7 +27,8 @@ from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea,
     QComboBox, QGroupBox, QProgressBar, QTabWidget, QTextEdit,
-    QCheckBox, QDialog, QDialogButtonBox, QAbstractItemView
+    QCheckBox, QDialog, QDialogButtonBox, QAbstractItemView,
+    QLineEdit, QInputDialog, QMessageBox,
 )
 from qtpy.QtCore import Qt, QTimer, QObject, Signal
 from qtpy.QtGui import QColor, QBrush
@@ -680,6 +681,9 @@ class PipelineDashboard(QWidget):
         stats_widget = self._build_stats_tab()
         tabs.addTab(stats_widget, "Statistics")
 
+        # --- Tab 3: Publication Lock (freeze a dataset for a paper) ---
+        tabs.addTab(self._build_lock_tab(), "Publication Lock")
+
     def _build_overview_tab(self) -> QWidget:
         """Build pipeline overview tab."""
         widget = QWidget()
@@ -752,6 +756,20 @@ class PipelineDashboard(QWidget):
         self.details_btn.clicked.connect(self._show_file_details_dialog)
         btn_layout.addWidget(self.details_btn)
 
+        # Per-video re-run: a researcher's "something looks off about THIS
+        # one, redo it" -- ordinary workflow, so it is a button. The typed
+        # reason is persisted on the row (mark_reason), which also protects
+        # the mark from being auto-cleared by the reprocessor's un-marker.
+        self.rerun_btn = QPushButton("Re-run selected video")
+        self.rerun_btn.setToolTip(
+            "Send the selected video back through the pipeline. You will be "
+            "asked WHY (recorded with the mark). It re-enters at segmentation "
+            "on the existing tracking; its current results are replaced when "
+            "it finishes. Select a row to enable.")
+        self.rerun_btn.setEnabled(False)
+        self.rerun_btn.clicked.connect(self._rerun_selected)
+        btn_layout.addWidget(self.rerun_btn)
+
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setToolTip("Reload from index (fast)")
         refresh_btn.clicked.connect(self._refresh_clicked)
@@ -811,6 +829,206 @@ class PipelineDashboard(QWidget):
 
         widget.setLayout(layout)
         return widget
+
+    # ---------------------------------------------------------------- re-run
+    def _watcher_db(self):
+        """The node's watcher database, resolved the same way the watcher
+        resolves it (config db_path first) -- never the class default."""
+        from mousereach.watcher.cli import _resolve_db_path
+        from mousereach.watcher.db import WatcherDB
+        return WatcherDB(_resolve_db_path())
+
+    def _rerun_selected(self):
+        """Mark ONE archived video for reprocessing, with a required reason.
+
+        Workflow, not diagnostics: 'this video looks off, redo it' is a
+        normal researcher action. The reason is stored on the row
+        (mark_reason), so the reprocessor's two-way door will never
+        auto-clear a deliberate human mark."""
+        from pathlib import Path as _P
+        fn = getattr(self, "_selected_file", None)
+        if not fn:
+            return
+        stem = _P(fn).stem
+        try:
+            db = self._watcher_db()
+            row = db.get_video(stem)
+        except Exception as e:
+            QMessageBox.warning(self, "Re-run video",
+                                f"Could not open the pipeline database: {e}")
+            return
+        if row is None:
+            QMessageBox.information(
+                self, "Re-run video",
+                f"{stem}\n\nThis computer is not managing that video (it may "
+                f"belong to another machine). Nothing was changed.")
+            return
+        if row["state"] != "archived":
+            QMessageBox.information(
+                self, "Re-run video",
+                f"{stem} is currently '{row['state']}' -- it is already "
+                f"queued or mid-run. Nothing to do.")
+            return
+        reason, ok = QInputDialog.getText(
+            self, "Re-run video",
+            f"Why re-run {stem}?\n(Recorded with the mark; required.)")
+        if not ok:
+            return
+        reason = (reason or "").strip()
+        if not reason:
+            QMessageBox.information(self, "Re-run video",
+                                    "A reason is required -- nothing was changed.")
+            return
+        if QMessageBox.question(
+                self, "Re-run video",
+                f"Re-run {stem} through the pipeline?\n\n"
+                f"It re-enters at segmentation on the existing tracking; its "
+                f"current results are replaced when it finishes.\n\n"
+                f"Reason: {reason}",
+                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return
+        try:
+            db.force_state(stem, "outdated",
+                           reprocess_scope="segmentation",
+                           mark_reason=reason,
+                           reason=f"dashboard re-run: {reason}")
+            QMessageBox.information(
+                self, "Re-run video",
+                f"{stem} is marked for reprocessing. The auto-processor picks "
+                f"it up on its next pass.")
+        except Exception as e:
+            QMessageBox.warning(self, "Re-run video", f"Could not mark it: {e}")
+
+    # ------------------------------------------------------------- pub lock
+    def _build_lock_tab(self) -> QWidget:
+        """Freeze a dataset for a paper: locked videos are never reprocessed
+        until unlocked. Workflow (a scientist's deliberate act), so it is a
+        tab with buttons -- previously terminal-only."""
+        widget = QWidget()
+        lay = QVBoxLayout(widget)
+        intro = QLabel(
+            "Lock a cohort's finished videos so NOTHING ever reprocesses them "
+            "-- freeze the exact numbers behind a paper. Nothing is deleted, "
+            "and unlocking allows reprocessing again.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color:#888;")
+        lay.addWidget(intro)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Cohort:"))
+        self._lock_cohort_edit = QLineEdit()
+        self._lock_cohort_edit.setPlaceholderText("e.g. CNT03")
+        row.addWidget(self._lock_cohort_edit)
+        row.addWidget(QLabel("Label:"))
+        self._lock_label_edit = QLineEdit()
+        self._lock_label_edit.setPlaceholderText("e.g. PNAS_2026")
+        row.addWidget(self._lock_label_edit)
+        lay.addLayout(row)
+
+        lock_btn = QPushButton("Lock this cohort's archived videos")
+        lock_btn.setStyleSheet("background:#16405a; color:white; font-weight:bold;")
+        lock_btn.setToolTip(
+            "Every ARCHIVED video whose animal ID contains the cohort text is "
+            "locked under the label. Locked videos are skipped by every "
+            "reprocessing path until unlocked.")
+        lock_btn.clicked.connect(self._lock_cohort)
+        lay.addWidget(lock_btn)
+
+        unlock_btn = QPushButton("Unlock a label (allow reprocessing again)")
+        unlock_btn.setToolTip(
+            "Unlocks every video locked under the Label text above.")
+        unlock_btn.clicked.connect(self._unlock_label)
+        lay.addWidget(unlock_btn)
+
+        self._locks_view = QTextEdit()
+        self._locks_view.setReadOnly(True)
+        lay.addWidget(QLabel("Current locks:"))
+        lay.addWidget(self._locks_view, 1)
+        refresh = QPushButton("Refresh lock list")
+        refresh.clicked.connect(self._refresh_locks)
+        lay.addWidget(refresh)
+        QTimer.singleShot(400, self._refresh_locks)
+        return widget
+
+    def _refresh_locks(self):
+        try:
+            db = self._watcher_db()
+            rows = db.get_videos_in_state("crystallized")
+        except Exception as e:
+            self._locks_view.setPlainText(f"(could not read locks: {e})")
+            return
+        by_label = {}
+        for v in rows:
+            by_label.setdefault(v.get("crystallized_label") or "(no label)", []).append(v)
+        if not by_label:
+            self._locks_view.setPlainText("No locked videos on this computer.")
+            return
+        lines = []
+        for label in sorted(by_label):
+            vs = by_label[label]
+            lines.append(f"{label}: {len(vs)} video(s), locked "
+                         f"{(vs[0].get('crystallized_at') or '?')[:10]} "
+                         f"by {vs[0].get('crystallized_by') or '?'}")
+        self._locks_view.setPlainText("\n".join(lines))
+
+    def _lock_cohort(self):
+        cohort = self._lock_cohort_edit.text().strip()
+        label = self._lock_label_edit.text().strip()
+        if not cohort or not label:
+            QMessageBox.information(self, "Publication Lock",
+                                    "Enter both a cohort and a label.")
+            return
+        try:
+            db = self._watcher_db()
+            candidates = [v for v in db.get_videos_in_state("archived")
+                          if cohort.upper() in (v.get("animal_id") or "").upper()]
+        except Exception as e:
+            QMessageBox.warning(self, "Publication Lock",
+                                f"Could not read the pipeline database: {e}")
+            return
+        if not candidates:
+            QMessageBox.information(
+                self, "Publication Lock",
+                f"No archived videos on this computer match cohort "
+                f"'{cohort}'. Nothing was locked.")
+            return
+        if QMessageBox.question(
+                self, "Publication Lock",
+                f"Lock {len(candidates)} archived video(s) of cohort "
+                f"'{cohort}' under label '{label}'?\n\nThey will never be "
+                f"reprocessed until the label is unlocked.",
+                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return
+        try:
+            from mousereach.pipeline.versions import crystallize_videos
+            n = crystallize_videos(db, cohort=cohort, label=label)
+            QMessageBox.information(self, "Publication Lock",
+                                    f"Locked {n} video(s) under '{label}'.")
+        except Exception as e:
+            QMessageBox.warning(self, "Publication Lock", f"Lock failed: {e}")
+        self._refresh_locks()
+
+    def _unlock_label(self):
+        label = self._lock_label_edit.text().strip()
+        if not label:
+            QMessageBox.information(self, "Publication Lock",
+                                    "Enter the label to unlock.")
+            return
+        if QMessageBox.question(
+                self, "Publication Lock",
+                f"Unlock every video under label '{label}'? They become "
+                f"eligible for reprocessing again.",
+                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return
+        try:
+            from mousereach.pipeline.versions import uncrystallize_videos
+            db = self._watcher_db()
+            n = uncrystallize_videos(db, label=label)
+            QMessageBox.information(self, "Publication Lock",
+                                    f"Unlocked {n} video(s).")
+        except Exception as e:
+            QMessageBox.warning(self, "Publication Lock", f"Unlock failed: {e}")
+        self._refresh_locks()
 
     def _build_details_tab(self) -> QWidget:
         """Build file details tab."""
@@ -1391,6 +1609,8 @@ class PipelineDashboard(QWidget):
         self._selected_file = name_item.text() if name_item else None
         if hasattr(self, "details_btn"):
             self.details_btn.setEnabled(bool(self._selected_file))
+        if hasattr(self, "rerun_btn"):
+            self.rerun_btn.setEnabled(bool(self._selected_file))
 
     def _show_file_details_dialog(self):
         """Open a dialog with the selected file's full details (was the old
