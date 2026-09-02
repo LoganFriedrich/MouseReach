@@ -209,14 +209,14 @@ def test_tally_without_database_view_reports_unavailable_not_zero():
 
 # --- Estimates never invent a pace ----------------------------------------
 def test_eta_without_pace_reports_no_dates():
-    eta = estimate_eta({"unanalyzed": 100, "triage": 10}, None, None, 14)
+    eta = estimate_eta(100, 10, None, None, 14)
     assert eta["machine_backlog"] == 100
     assert eta["human_backlog"] == 10
     assert "machine_date" not in eta and "human_date" not in eta
 
 
 def test_eta_with_pace_projects_dates():
-    eta = estimate_eta({"unanalyzed": 100}, 10.0, 5.0, 14)
+    eta = estimate_eta(100, 0, 10.0, 5.0, 14)
     assert eta["machine_days"] == 10.0
     assert eta["machine_date"]
 

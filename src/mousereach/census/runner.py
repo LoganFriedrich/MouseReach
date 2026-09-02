@@ -206,13 +206,18 @@ def review_pace(window_days: int) -> Optional[float]:
     return pace_per_day(stamps, window_days)
 
 
-def estimate_eta(by_element: Dict[str, int], finished_per_day: Optional[float],
+def estimate_eta(machine_backlog: int, human_backlog: int,
+                 finished_per_day: Optional[float],
                  reviews_per_day: Optional[float], window_days: int) -> dict:
     """Backlog sizes and projected completion. Estimates carry their basis in
-    the output; a missing pace yields a missing estimate, never a made-up one."""
-    machine = sum(by_element.get(k, 0) or 0
-                  for k in ("unanalyzed", "crop_dlc", "mousereach"))
-    human = sum(by_element.get(k, 0) or 0 for k in ("triage", "deep_review"))
+    the output; a missing pace yields a missing estimate, never a made-up one.
+
+    ``machine_backlog`` must count only sessions the machines still owe work
+    on -- not started, in crop/pose, or mid-algorithms. Finished sessions
+    awaiting their database import and sessions queued for a person are NOT
+    machine work; folding them in overstated the first live estimate by ~30%.
+    """
+    machine, human = machine_backlog, human_backlog
     out = {
         "machine_backlog": machine,
         "human_backlog": human,
@@ -333,7 +338,13 @@ def run_census(window_days: int = 14) -> dict:
 
     fpd = pace_per_day(fin_at.values(), window_days)
     rpd = review_pace(window_days)
-    eta = estimate_eta(by_element, fpd, rpd, window_days)
+    machine_backlog = sum(
+        1 for s in per_session.values()
+        if s["element"] in ("unanalyzed", "crop_dlc")
+        or (s["element"] == "mousereach" and not s["finished"]))
+    human_backlog = (by_element.get("triage", 0)
+                     + by_element.get("deep_review", 0))
+    eta = estimate_eta(machine_backlog, human_backlog, fpd, rpd, window_days)
 
     # -- Review completeness (who is finished-but-unreleased in each queue).
     review = {}
