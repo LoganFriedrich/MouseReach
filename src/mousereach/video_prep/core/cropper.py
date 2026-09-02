@@ -53,12 +53,19 @@ CROP_COORDS = [
 # =============================================================================
 
 def is_blank_animal(animal_id: str) -> bool:
-    """Check if animal ID is blank (cohort 00)."""
-    # Format: {letters}{cohort:2d}{subject:2d}
-    # e.g., CNT0001 has cohort "00" at positions 3:5
-    if len(animal_id) >= 5:
-        return animal_id[3:5] == "00"
-    return False
+    """Is this grid position an empty box (cohort 00)?
+
+    Delegates to AnimalID, which finds where the letters end rather than
+    assuming a three-character prefix. The old ``animal_id[3:5] == "00"``
+    matched only 3-letter prefixes: ASPA0001 read 'A0' and ENCR0001 read
+    'R0', so empty boxes were cropped, posed and analysed as animals. The
+    first 4-letter-prefix import produced 52 such phantoms out of 256
+    singles, and no collage carrying one ever satisfied retirement (a
+    phantom counts as expected offspring but gets retired, so all_complete
+    could never become true). The validator and AnimalID always agreed on
+    the right answer; this function was the odd one out.
+    """
+    return AnimalID.is_blank(animal_id)
 
 
 def get_experiment_code(animal_id: str) -> str:
