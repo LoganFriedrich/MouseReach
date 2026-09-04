@@ -308,6 +308,48 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     return True
 
 
+def _retire_stale_bundle(bundle: Path, stem: str, video_state: str) -> bool:
+    """Move a stale queue bundle into the _Problematic archive (never delete).
+
+    A bundle is STALE when the pipeline has re-handled its video since it was
+    staged -- the video's live state says processing/processed/archiving/
+    archived while the bundle still carries the old era's flags. Leaving it
+    would re-divert (and re-flip a healthy video) on every scan; deleting it
+    would destroy provenance. Archive it beside the other reconciled bundles,
+    with a note saying why. Never raises; False means the bundle stayed put
+    (it will be re-attempted next scan).
+    """
+    import json
+    from datetime import datetime
+
+    try:
+        root = Paths.REVIEW_ROOT
+        if not root:
+            return False
+        dest = (Path(root) / "_Problematic"
+                / f"_stale_seg_failed_bundles_{datetime.now():%Y-%m-%d}" / stem)
+        dest.mkdir(parents=True, exist_ok=True)
+        note = {
+            "retired_at": datetime.now().isoformat(),
+            "video_state_at_retirement": video_state,
+            "why": ("triage bundle carried seg-failed flags from an earlier "
+                    "era, but the pipeline has since re-handled this video; "
+                    "diverting it would have flipped a healthy video into "
+                    "deep_review and blocked its archive"),
+        }
+        (dest / f"{stem}_stale_retire.json").write_text(
+            json.dumps(note, indent=2), encoding="utf-8")
+        for f in list(bundle.iterdir()):
+            if f.is_file():
+                _safe_move(f, dest / f.name)
+        bundle.rmdir()
+        return True
+    except Exception as e:
+        logger.warning("Return scan: could not retire stale bundle %s: %s",
+                       stem, e)
+        return False
+
+
 # How many bundles one scan may re-inject before yielding back to the work loop.
 # Unbounded, this starves everything else: each return moves 6 files across the
 # NAS (~10 s), so a 748-deep queue occupied the loop for ~2 hours while
@@ -355,6 +397,28 @@ def scan_review_queues(db, processing_dir: Path,
                             "skipped (duplicate needs deliberate cleanup)", stem)
                 continue
         if st.seg_failed:
+            # STALE-BUNDLE GUARD: if the video's CURRENT state says the
+            # pipeline has re-handled it since this bundle was staged
+            # (re-segmented clean, review applied, finished or filed), the
+            # bundle is a leftover from the earlier failed era -- diverting it
+            # would flip a healthy video into deep_review and block its
+            # archive. That happened twice on 2026-09-04: videos re-completed
+            # CLEAN seconds earlier were dragged back by their own stale
+            # triage husks. Retire the husk to the _Problematic archive
+            # (never delete) and leave the video alone.
+            try:
+                row = db.get_video(stem) if db else None
+                cur_state = (row or {}).get('state')
+            except Exception:
+                cur_state = None
+            if cur_state in ('processing', 'processed', 'archiving', 'archived'):
+                if _retire_stale_bundle(bundle, stem, cur_state):
+                    summary["stale_retired"] = summary.get("stale_retired", 0) + 1
+                    logger.info(
+                        "Return scan: %s triage bundle is STALE (video is now "
+                        "'%s'); retired to _Problematic instead of diverting",
+                        stem, cur_state)
+                continue
             # A seg-failed bundle can NEVER satisfy the triage release
             # condition below, and nothing else moves it -- it sat in the
             # triage queue with no route out (40 bundles at the time this was
