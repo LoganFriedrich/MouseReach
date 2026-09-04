@@ -64,9 +64,30 @@ def wait_for_stable(path: Path, check_interval: float = 5.0,
     return False
 
 
+# Transient Windows sharing violations -- a reviewer GUI, an indexer or a
+# backup pass briefly holding the DESTINATION file -- surface as
+# PermissionError winerror 5/32 (errno 13). One such hold failed a reprocess
+# work item on 2026-09-04 and the file was free again minutes later; worse,
+# the cleanup unlink below hit the same lock and raised OUT of the except
+# block, which is what actually killed the work item. Bounded retries absorb
+# the transient; the cleanup is best-effort and never raises.
+COPY_RETRY_ATTEMPTS = 3
+COPY_RETRY_BASE_DELAY = 2.0
+
+
+def _is_transient_lock(e: OSError) -> bool:
+    """A lock that plausibly clears in seconds, worth retrying."""
+    return getattr(e, "winerror", None) in (5, 32) or e.errno == 13
+
+
 def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
     """
     Copy a file with size verification.
+
+    Retries transient sharing violations (see ``_is_transient_lock``) with a
+    short backoff before giving up. NEVER raises: cleanup of a partial copy
+    is best-effort, because the same lock that failed the copy can also hold
+    the destination against unlink.
 
     Args:
         src: Source file path
@@ -76,33 +97,49 @@ def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
     Returns:
         True if copy succeeded (and verified if requested)
     """
-    try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1, COPY_RETRY_ATTEMPTS + 1):
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Copying {src.name} -> {dst.parent}")
-        shutil.copy2(str(src), str(dst))
+            logger.info(f"Copying {src.name} -> {dst.parent}")
+            shutil.copy2(str(src), str(dst))
 
-        if verify:
-            src_size = src.stat().st_size
-            dst_size = dst.stat().st_size
-            if src_size != dst_size:
-                logger.error(
-                    f"Size mismatch after copy: src={src_size}, dst={dst_size} "
-                    f"for {src.name}"
-                )
-                # Clean up bad copy
-                dst.unlink(missing_ok=True)
-                return False
-            logger.debug(f"Copy verified: {src_size} bytes for {src.name}")
+            if verify:
+                src_size = src.stat().st_size
+                dst_size = dst.stat().st_size
+                if src_size != dst_size:
+                    logger.error(
+                        f"Size mismatch after copy: src={src_size}, dst={dst_size} "
+                        f"for {src.name}"
+                    )
+                    # Clean up bad copy (best-effort)
+                    try:
+                        dst.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    return False
+                logger.debug(f"Copy verified: {src_size} bytes for {src.name}")
 
-        return True
+            return True
 
-    except OSError as e:
-        logger.error(f"Copy failed {src} -> {dst}: {e}")
-        # Clean up partial copy
-        if dst.exists():
-            dst.unlink(missing_ok=True)
-        return False
+        except OSError as e:
+            # Clean up partial copy (best-effort -- the destination may be
+            # held by the very lock that failed the copy)
+            try:
+                if dst.exists():
+                    dst.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt < COPY_RETRY_ATTEMPTS and _is_transient_lock(e):
+                delay = COPY_RETRY_BASE_DELAY * attempt
+                logger.warning(
+                    f"Copy attempt {attempt} of {src.name} hit a transient "
+                    f"lock ({e}); retrying in {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            logger.error(f"Copy failed {src} -> {dst}: {e}")
+            return False
+    return False
 
 
 def safe_move(src: Path, dst: Path) -> bool:

@@ -1930,9 +1930,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
         for d in source_dirs:
             all_files.extend(f for f in Path(d).iterdir()
                              if f.is_file() and f.stem.startswith(video_id))
+        copy_failures = []
         for src_file in all_files:
             dest = self.processing_dir / src_file.name
-            safe_copy(src_file, dest, verify=True)
+            if not safe_copy(src_file, dest, verify=True):
+                copy_failures.append(src_file.name)
+        if copy_failures:
+            # A partial working set must not reach the pipeline: a stale local
+            # twin of a file that failed to copy would be silently reused by
+            # the stage-reuse checks (a locked _reaches.json nearly caused
+            # exactly that on 2026-09-04). Fail loudly instead; safe_copy has
+            # already absorbed transient locks with retries.
+            self.db.mark_failed(
+                video_id,
+                "reprocess copy failed for: %s" % ", ".join(sorted(copy_failures)))
+            return
 
         # Transition to processing state
         local_h5 = select_pose_file(self.processing_dir.glob(f"{video_id}DLC*.h5"))
