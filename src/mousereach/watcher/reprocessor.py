@@ -77,6 +77,13 @@ class ReprocessingScanner:
         self.db = db
         self.nas_root = Path(nas_root)
         self.archive_dir = self.nas_root / "Analyzed"
+        # Manifest cache keyed by mtime: a steady-state scan re-read ~1,200
+        # unchanged manifests over the NAS every pass (~37 minutes measured
+        # 2026-09-04) to report "0 outdated" every time. A stat is far cheaper
+        # than a read; only changed manifests are re-parsed. The cache only
+        # pays off on a PERSISTENT scanner instance -- both orchestrator call
+        # sites hold one.
+        self._manifest_cache: dict = {}
 
     def scan(self, mark_outdated: bool = True) -> dict:
         """Scan all archived videos, optionally mark outdated ones.
@@ -439,8 +446,14 @@ class ReprocessingScanner:
         p = manifest_index.get(video_id)
         if p is not None:
             try:
+                mtime = p.stat().st_mtime
+                hit = self._manifest_cache.get(video_id)
+                if hit is not None and hit[0] == mtime:
+                    return hit[1]
                 with open(p) as f:
-                    return json.load(f)
+                    manifest = json.load(f)
+                self._manifest_cache[video_id] = (mtime, manifest)
+                return manifest
             except Exception:
                 pass
         return self._load_manifest(video_id)

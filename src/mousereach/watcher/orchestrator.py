@@ -182,8 +182,15 @@ class BaseOrchestrator:
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
 
-                # Dispatch work to appropriate handler
-                self._dispatch_work(work)
+                # Dispatch work to appropriate handler. A dispatch that
+                # accomplished nothing must NOT count as progress: without
+                # this sleep, one row that fails in milliseconds spins the
+                # loop at full speed and every cycle-cheap assumption
+                # elsewhere collapses (2026-09-04: a stuck priority-1 row +
+                # a cycle-counted scan gate = 15 back-to-back 37-minute
+                # scans overnight, ~6 videos processed in 12 hours).
+                if self._dispatch_work(work) is False:
+                    shutdown_event.wait(timeout=self.config.poll_interval_seconds)
 
             except Exception as e:
                 logger.error(f"Error in main loop: {e}", exc_info=True)
@@ -204,8 +211,8 @@ class BaseOrchestrator:
             work = self._get_next_work_item()
             if work is None:
                 break
-            self._dispatch_work(work)
-            processed += 1
+            if self._dispatch_work(work) is not False:
+                processed += 1
 
         logger.info(f"Run-once complete: processed {processed} items")
 
@@ -225,17 +232,21 @@ class BaseOrchestrator:
             return
 
         interval = getattr(self.config, 'reprocess_scan_interval_seconds', 1800)
-        now = time.time()
-        if not force and (now - getattr(self, '_last_reprocess_scan', 0.0)) < interval:
+        if not force and (time.monotonic()
+                          - getattr(self, '_last_reprocess_scan', 0.0)) < interval:
             return
-        self._last_reprocess_scan = now
         try:
             from mousereach.config import Paths
             nas_root = Paths.NAS_ROOT
             if not nas_root:
                 return
             from mousereach.watcher.reprocessor import ReprocessingScanner
-            summary = ReprocessingScanner(self.db, nas_root).scan(mark_outdated=True)
+            # One PERSISTENT scanner instance (shared with any subclass that
+            # made its own): its manifest mtime-cache is what turns the
+            # steady-state scan from ~37 minutes of NAS reads into stats.
+            if getattr(self, '_reprocess_scanner', None) is None:
+                self._reprocess_scanner = ReprocessingScanner(self.db, nas_root)
+            summary = self._reprocess_scanner.scan(mark_outdated=True)
             n_out = summary.get('outdated', 0)
             if n_out:
                 logger.info(
@@ -244,6 +255,11 @@ class BaseOrchestrator:
                     f"-- watcher will reprocess them")
         except Exception as e:
             logger.warning(f"Reprocess scan skipped: {e}")
+        finally:
+            # Stamp AFTER the pass: a scan that runs longer than its interval
+            # must still leave a full idle gap before the next one, or the
+            # node scans continuously and processes nothing (2026-09-04).
+            self._last_reprocess_scan = time.monotonic()
 
     # =========================================================================
     # ABSTRACT METHODS (subclasses must implement)
@@ -763,21 +779,30 @@ class DLCOrchestrator(BaseOrchestrator):
         work_id = work['id']
 
         try:
+            ok = None
             if work_type == 'collage':
-                self._process_collage(work)
+                ok = self._process_collage(work)
             elif work_type == 'single_dlc':
-                self._process_single_dlc(work)
+                ok = self._process_single_dlc(work)
             elif work_type == 'stage_to_nas':
-                self._stage_to_nas(work)
+                ok = self._stage_to_nas(work)
             elif work_type == 'local_pipeline':
-                self._run_local_pipeline(work)
+                ok = self._run_local_pipeline(work)
             elif work_type == 'archive_local':
-                self._archive_locally_processed(work)
+                ok = self._archive_locally_processed(work)
             else:
-                logger.warning(f"Unknown work type: {work_type}")
+                # A row producing unrecognised work would be re-selected
+                # forever; fail it so the loop cannot spin on it.
+                logger.warning(f"Unknown work type: {work_type} -- marking {work_id} failed")
+                self.db.mark_failed(work_id, f"unknown work type: {work_type}")
+                return False
 
             # Backup local DB to NAS after each successful work item
             self._backup_local_db()
+            # A handler that explicitly declined (returned False) did no
+            # work; the main loop must sleep, not spin (legacy handlers
+            # returning None count as progress).
+            return ok is not False
 
         except Exception as e:
             error_msg = f"{work_type} failed: {str(e)}"
@@ -787,6 +812,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 self.db.update_collage_state(work_id, 'failed', validation_error=error_msg)
             else:
                 self.db.mark_failed(work_id, error_msg)
+            return False
 
     # =========================================================================
     # DRY RUN
@@ -1437,17 +1463,32 @@ class DLCOrchestrator(BaseOrchestrator):
                             f.unlink()
                         except Exception:
                             pass
+                return True
             else:
                 error = result.get('error', 'archive failed')
+                if error == "No files found in Processing/":
+                    # Terminal, not retriable -- see _archive_to_nas for why.
+                    self.db.mark_failed(video_id, error)
+                    self.db.log_step(video_id, 'archive', 'failed',
+                                     message=error, duration=duration)
+                    logger.error(
+                        f"Archive impossible for {video_id}: {error} -- marked "
+                        f"failed (nothing on disk to archive)")
+                    return False
                 delay = self._note_archive_failure(video_id)
                 self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
                 logger.warning(f"Archive failed for {video_id}: {error} "
                                f"(retrying in {delay // 60}m)")
+                return False
 
         except Exception as e:
             duration = time.time() - start_time
+            # Back off (see _archive_to_nas): a cheap repeating exception must
+            # not re-select every cycle with no delay.
+            self._note_archive_failure(video_id)
             self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
             logger.error(f"Archive error for {video_id}: {e}")
+            return False
 
     # =========================================================================
     # NAS STAGING
@@ -1583,24 +1624,30 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.processing_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Processing directory: {self.processing_dir}")
 
-        # Reprocessing scanner (runs every N poll cycles)
+        # Reprocessing scanner instance (the heavy version-compliance scan
+        # itself is scheduled by BaseOrchestrator._maybe_review_reprocess_scan
+        # -- ONE scheduler, wall-clock, stamped after completion. _scan_phase
+        # used to fire a second, cycle-counted copy of the same scan; two
+        # schedulers meant double NAS load, and cycle counts made the cadence
+        # depend on an assumption about loop speed that nothing enforces.
+        # 2026-09-01: back-to-back scans "fixed" by raising the cycle count.
+        # 2026-09-04: recurred anyway -- a stuck priority-1 row failed in
+        # 50 ms every cycle, cycles became free, and the counter fired the
+        # 37-minute scan 15 times back-to-back overnight (~9.5 of 12 hours
+        # scanning, ~6 videos processed). Seconds cannot be raced.
         self._reprocess_scanner = None
-        self._scan_cycle_count = 0
-        # WHY two intervals instead of one: the version-compliance scan walks
-        # the whole archive and takes ~10 minutes at current corpus size, so
-        # firing it every ~5 minutes left the node scanning back-to-back and
-        # processing only ~25% of the time (measured 2026-09-01: scan 16:38->
-        # 16:50, three minutes of work, next scan 16:53). The review-return
-        # scan, by contrast, is a cheap listdir over two queue folders and is
-        # how human-cleared work re-enters the pipeline -- coupling it to the
-        # heavy scan's cadence made reviewers wait tens of minutes for a
-        # release to take effect. Heavy scan: rare. Cheap return scan: often.
-        self._reprocess_scan_interval = 60  # heavy archive scan, ~every 30 min at 30s cycles
-        self._review_return_interval = 4    # cheap queue-return scan, ~every 2 min
-        # Collage retirement runs on a slower cadence (it does two full pipeline-tree
-        # scans); every Nth reprocess-scan cycle.
-        self._retire_scan_every = 6  # ~30 min at the interval above
-        self._retire_cycle_count = 0
+        # The review-return scan is a cheap listdir over two queue folders and
+        # is how human-cleared work re-enters the pipeline: often, on its own
+        # wall clock.
+        self._review_return_min_s = 120
+        # Collage retirement does two full pipeline-tree scans; rare on
+        # purpose. (Its old expression -- every 6th reprocess scan -- had
+        # already silently drifted from ~30 min to ~3 h when the scan cadence
+        # changed on 2026-09-01; 3 h is the deployed behaviour and is kept,
+        # now stated explicitly.)
+        self._retire_min_s = 3 * 3600
+        self._last_review_return_mono = 0.0
+        self._last_retire_mono = 0.0
 
         if Paths.NAS_ROOT:
             try:
@@ -1626,37 +1673,32 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if newly_found:
             logger.info(f"Discovered {len(newly_found)} new DLC outputs in staging")
 
-        # Periodic reprocessing scan (every N cycles)
-        self._scan_cycle_count += 1
-        if (self._reprocess_scanner and
-                self._scan_cycle_count % self._reprocess_scan_interval == 0):
-            try:
-                summary = self._reprocess_scanner.scan(mark_outdated=True)
-                if summary.get('outdated', 0) > 0:
-                    logger.info(
-                        f"Reprocessing scan: {summary['outdated']} outdated videos found"
-                    )
-            except Exception as e:
-                logger.warning(f"Reprocessing scan failed: {e}")
+        # The heavy version-compliance scan is NOT fired here -- see __init__:
+        # BaseOrchestrator._maybe_review_reprocess_scan is its one scheduler.
 
         # Periodic review-return scan: re-inject human-cleared held videos
         # (triage fully resolved / deep-review flag cleared) back into Processing
-        # so the pipeline re-runs them and the gate re-checks.
-        if (self._scan_cycle_count % self._review_return_interval == 0
-                and self.processing_dir):
+        # so the pipeline re-runs them and the gate re-checks. Wall-clock,
+        # stamped after the pass (see __init__ for why never cycle counts).
+        if (self.processing_dir and
+                time.monotonic() - self._last_review_return_mono
+                >= self._review_return_min_s):
             try:
                 from mousereach.watcher.review_return import scan_review_queues
                 scan_review_queues(self.db, self.processing_dir)
             except Exception as e:
                 logger.warning(f"Review-return scan failed: {e}")
+            finally:
+                self._last_review_return_mono = time.monotonic()
 
         # Periodic collage retirement: move any collage whose offspring have ALL
         # made it through the pipeline (version-current + review-clean) to ultimate
         # storage (Analyzed/Multi-Animal, backup-synced). Slow cadence.
-        if self._scan_cycle_count % self._reprocess_scan_interval == 0:
-            self._retire_cycle_count += 1
-            if self._retire_cycle_count % self._retire_scan_every == 0:
+        if time.monotonic() - self._last_retire_mono >= self._retire_min_s:
+            try:
                 self._retire_completed_collages()
+            finally:
+                self._last_retire_mono = time.monotonic()
 
     def _retire_completed_collages(self):
         """Retire fully-complete collages to ultimate storage. Best-effort; only
@@ -1846,21 +1888,31 @@ class ProcessingOrchestrator(BaseOrchestrator):
         work_id = work['id']
 
         try:
+            ok = None
             if work_type == 'intake':
-                self._intake_from_staging(work)
+                ok = self._intake_from_staging(work)
             elif work_type == 'pipeline':
-                self._run_pipeline(work)
+                ok = self._run_pipeline(work)
             elif work_type == 'archive':
-                self._archive_to_nas(work)
+                ok = self._archive_to_nas(work)
             elif work_type == 'reprocess':
-                self._reprocess_video(work)
+                ok = self._reprocess_video(work)
             else:
-                logger.warning(f"Unknown work type: {work_type}")
+                # A row producing unrecognised work would be re-selected
+                # forever; fail it so the loop cannot spin on it.
+                logger.warning(f"Unknown work type: {work_type} -- marking {work_id} failed")
+                self.db.mark_failed(work_id, f"unknown work type: {work_type}")
+                return False
+            # A handler that explicitly declined (returned False) did no
+            # work; the main loop must sleep, not spin (legacy handlers
+            # returning None count as progress).
+            return ok is not False
 
         except Exception as e:
             error_msg = f"{work_type} failed: {str(e)}"
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
             self.db.mark_failed(work_id, error_msg)
+            return False
 
     # =========================================================================
     # REPROCESS: Re-run pipeline on outdated archived videos
@@ -2584,10 +2636,26 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             logger.debug(f"Cleaned staging: {f.name}")
                         except Exception:
                             pass
+                return True
             else:
                 error = result.get('error', 'archive failed')
-                # Not a fatal error -- the video stays in 'processed' and is
-                # retried. But it must not be retried on EVERY cycle: a video
+                if error == "No files found in Processing/":
+                    # Nothing to archive will not appear by waiting: the files
+                    # are gone (moved by hand, archived with the state write
+                    # lost, or a crash between move and write). Backoff kept
+                    # one such row invisible for three days -- re-selected at
+                    # every expiry, failing in 50 ms, reading as merely slow
+                    # (2026-09-04). Terminal and loud; a person resets the row
+                    # after restoring files (or force-states it archived if
+                    # the outputs are already in Analyzed).
+                    self.db.mark_failed(video_id, error)
+                    self.db.log_step(video_id, 'archive', 'failed',
+                                     message=error, duration=duration)
+                    logger.error(
+                        f"Archive impossible for {video_id}: {error} -- marked "
+                        f"failed (nothing on disk to archive)")
+                    return False
+                # Other errors are retriable -- but not on EVERY cycle: a video
                 # that cannot be archived usually cannot be archived a second
                 # later either, and the loop ran at roughly one attempt per
                 # second from February to August, logging 326,235 failures
@@ -2599,12 +2667,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 logger.warning(
                     f"Archive failed for {video_id}: {error} "
                     f"(retrying in {delay // 60}m)")
+                return False
 
         except Exception as e:
             duration = time.time() - start_time
+            # Back off here too: an exception that repeats cheaply would
+            # otherwise re-select this row every cycle with no delay at all.
+            self._note_archive_failure(video_id)
             self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
             logger.error(f"Archive error for {video_id}: {e}")
             # Don't mark_failed — keep in processed state for retry
+            return False
 
 
 # =============================================================================
