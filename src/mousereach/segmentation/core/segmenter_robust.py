@@ -973,8 +973,10 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
         'overall_confidence': to_native(np.mean(diagnostics.boundary_confidences)),
     }
 
-    with open(output_path, 'w') as f:
-        json.dump(data, f, indent=2)
+    # Absorb a reviewer GUI's brief hold on the output file (a stage write
+    # died on exactly this, 2026-09-05); a persistent hold still raises.
+    from mousereach.pipeline.fsutil import dump_json_with_retry
+    dump_json_with_retry(output_path, data, indent=2)
 
     # Update pipeline index with new file
     try:

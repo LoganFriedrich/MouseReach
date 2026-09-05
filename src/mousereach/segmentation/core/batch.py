@@ -35,8 +35,11 @@ def add_validation_status(json_path: Path, status: str):
     data['validation_status'] = status
     data['validation_timestamp'] = datetime.now().isoformat()
 
-    with open(json_path, 'w') as f:
-        json.dump(data, f, indent=2)
+    # This rewrites a JSON a reviewer may have open; absorb a brief hold
+    # (a stage write died on exactly that, 2026-09-05). A persistent hold
+    # still raises.
+    from mousereach.pipeline.fsutil import dump_json_with_retry
+    dump_json_with_retry(json_path, data, indent=2)
 
 
 def get_associated_files(dlc_path: Path, video_id: str) -> List[Path]:

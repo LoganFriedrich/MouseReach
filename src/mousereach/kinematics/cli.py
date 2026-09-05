@@ -132,9 +132,11 @@ def main_batch():
             results = extractor.extract(dlc_path, reaches_path, outcome_path,
                                         review_path=review_path)
 
-            # Save results
-            with open(output_path, 'w') as f:
-                json.dump(results.to_dict(), f, indent=2)
+            # Save results -- absorbing a reviewer GUI's brief hold on the
+            # file (a stage write died on exactly this, 2026-09-05); a
+            # persistent hold still raises and fails the stage loudly.
+            from mousereach.pipeline.fsutil import dump_json_with_retry
+            dump_json_with_retry(output_path, results.to_dict(), indent=2)
 
             # Sync to central database
             try:

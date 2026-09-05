@@ -75,9 +75,10 @@ COPY_RETRY_ATTEMPTS = 3
 COPY_RETRY_BASE_DELAY = 2.0
 
 
-def _is_transient_lock(e: OSError) -> bool:
-    """A lock that plausibly clears in seconds, worth retrying."""
-    return getattr(e, "winerror", None) in (5, 32) or e.errno == 13
+# The transient-lock predicate is single-sourced in pipeline.fsutil (the
+# stage writers apply the same rule to their own output files); imported
+# here so the copy paths and the writers can never drift apart.
+from mousereach.pipeline.fsutil import is_transient_lock as _is_transient_lock
 
 
 def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:

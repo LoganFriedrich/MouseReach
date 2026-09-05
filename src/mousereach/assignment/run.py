@@ -70,7 +70,11 @@ def assign_reaches_for_video(
 
     if write:
         out = processing_dir / f"{video_id}_reach_assignments.json"
-        out.write_text(json.dumps(assign_result, indent=2) + "\n", encoding="utf-8")
+        # Absorb a reviewer GUI's brief hold on the output file; a
+        # persistent hold still raises (see pipeline.fsutil).
+        from mousereach.pipeline.fsutil import retry_transient
+        retry_transient(lambda: out.write_text(
+            json.dumps(assign_result, indent=2) + "\n", encoding="utf-8"))
         n_causal = sum(1 for r in assign_result.get("reaches", []) if r.get("is_causal"))
         logger.info(
             f"Assignment (algo-4) complete: {video_id} "
