@@ -161,6 +161,53 @@ class ReprocessingScanner:
             logger.warning(
                 f"Archive index build failed ({e}); falling back to per-video walks")
 
+        # RECONCILE DISK AGAINST DB before scanning: the archive on disk is
+        # the ground truth for what exists; this db is one node's ledger.
+        # Videos archived by ANOTHER node (also_process GPU machines) have no
+        # row here, so no version scan anywhere ever covered them -- 907
+        # accumulated exactly this way before being adopted by hand
+        # (2026-09-08, reviewer diagnosis). Adopt them automatically so the
+        # blind spot cannot return on the next version bump. Bounded per scan;
+        # the remainder is adopted on subsequent passes, and freshly adopted
+        # rows are version-checked on the NEXT pass (this pass's archived
+        # list was already fetched).
+        summary['adopted'] = 0
+        summary['adopt_no_mp4'] = []
+        try:
+            conn = self.db._get_connection()
+            try:
+                with_rows = {r[0] for r in conn.execute("SELECT video_id FROM videos")}
+            finally:
+                conn.close()
+        except Exception as e:
+            with_rows = None
+            logger.warning(f"Disk-vs-db reconcile skipped (could not list rows): {e}")
+        if with_rows is not None and manifest_index:
+            orphans = sorted(s for s in manifest_index if s not in with_rows)
+            for stem in orphans[:200]:
+                mp4 = manifest_index[stem].parent / f"{stem}.mp4"
+                if not mp4.exists():
+                    # Manifest with no video beside it: named, never silent.
+                    summary['adopt_no_mp4'].append(stem)
+                    continue
+                try:
+                    self.db.register_video(video_id=stem, source_path=str(mp4),
+                                           current_path=str(mp4))
+                    self.db.force_state(
+                        stem, 'archived',
+                        reason='reconcile: archived on disk with no row on this '
+                               'node (archived by another machine); adopted so '
+                               'version compliance covers it')
+                    summary['adopted'] += 1
+                except Exception as e:
+                    summary['errors'] += 1
+                    logger.error(f"Reconcile adopt failed for {stem}: {e}")
+            if summary['adopted'] or summary['adopt_no_mp4']:
+                logger.info(
+                    f"Reconcile: adopted {summary['adopted']} disk-archived "
+                    f"video(s) with no local row; "
+                    f"{len(summary['adopt_no_mp4'])} manifest-without-mp4 stem(s)")
+
         # Get all archived videos from DB
         archived = self.db.get_videos_in_state('archived')
         logger.info(f"Scanning {len(archived)} archived videos for version compliance")
@@ -366,7 +413,8 @@ class ReprocessingScanner:
             f"Scan complete: {summary['scanned']} checked, "
             f"{summary['current']} current, {summary['outdated']} outdated, "
             f"{summary['unmarked_current']} un-marked (were outdated, now current), "
-            f"{summary['crystallized_skipped']} crystallized"
+            f"{summary['crystallized_skipped']} crystallized, "
+            f"{summary.get('adopted', 0)} adopted from disk"
         )
 
         return summary

@@ -229,6 +229,16 @@ def route_to_queue(
         extra_manifest={"db_state": db_state} if db_state else None,
     )
     _write_review_manifest(bundle, video_id, reason)
+    # If the SOURCE was a per-video bundle dir (a queue-to-queue divert) and
+    # the move emptied it, remove it: an empty date-named dir left behind in
+    # a queue reads as a seg-failed bundle and re-diverts "(0 files)" forever
+    # -- the phantom that re-flipped a parked video (2026-09-08). The shared
+    # Processing dir is never named like a video stem, so it never matches.
+    try:
+        if processing_dir.name == video_id and not any(processing_dir.iterdir()):
+            processing_dir.rmdir()
+    except OSError:
+        pass
     if db is not None and db_state:
         try:
             db.update_state(video_id, db_state)
