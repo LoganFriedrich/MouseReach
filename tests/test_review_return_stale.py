@@ -73,6 +73,42 @@ def test_stale_bundle_is_retired_not_diverted(tmp_path, monkeypatch):
     assert note and "re-handled" in note[0].read_text(encoding="utf-8")
 
 
+def test_empty_dir_is_retired_not_routed(tmp_path, monkeypatch):
+    """An empty dir is residue, not a bundle: routing zero files while
+    flipping db state is phantom action (it re-flipped a parked video the
+    moment its twin side cleared, 2026-09-08). Retired regardless of state."""
+    triage, deep = _wire_paths(monkeypatch, tmp_path)
+    stem = "20240101_ABC0103_P1"
+    (triage / stem).mkdir()
+    routed = []
+    monkeypatch.setattr(rg, "route_to_queue",
+                        lambda *a, **k: routed.append(a))
+
+    db = FakeDB("triage")                      # even a non-active state
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+
+    assert summary.get("empty_retired") == 1
+    assert not routed and not db.forced
+    assert not (triage / stem).exists()
+
+
+def test_parked_unresolvable_video_is_never_unparked(tmp_path, monkeypatch):
+    """A person shelved that video with a reason; a husk must not undo it."""
+    triage, deep = _wire_paths(monkeypatch, tmp_path)
+    stem = "20240101_ABC0104_P1"
+    _make_bundle(triage, stem)
+    routed = []
+    monkeypatch.setattr(rg, "route_to_queue",
+                        lambda *a, **k: routed.append(a))
+
+    db = FakeDB("unresolvable")
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+
+    assert summary.get("stale_retired") == 1
+    assert not routed and not db.forced
+    assert not (triage / stem).exists()
+
+
 def test_genuinely_held_video_still_diverts(tmp_path, monkeypatch):
     triage, deep = _wire_paths(monkeypatch, tmp_path)
     stem = "20240101_ABC0102_P1"

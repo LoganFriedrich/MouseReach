@@ -308,7 +308,8 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     return True
 
 
-def _retire_stale_bundle(bundle: Path, stem: str, video_state: str) -> bool:
+def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
+                         why: str = None) -> bool:
     """Move a stale queue bundle into the _Problematic archive (never delete).
 
     A bundle is STALE when the pipeline has re-handled its video since it was
@@ -332,7 +333,8 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str) -> bool:
         note = {
             "retired_at": datetime.now().isoformat(),
             "video_state_at_retirement": video_state,
-            "why": ("triage bundle carried seg-failed flags from an earlier "
+            "why": why or (
+                    "triage bundle carried seg-failed flags from an earlier "
                     "era, but the pipeline has since re-handled this video; "
                     "diverting it would have flipped a healthy video into "
                     "deep_review and blocked its archive"),
@@ -379,6 +381,26 @@ def scan_review_queues(db, processing_dir: Path,
             continue
         stem = bundle.name
         try:
+            if not any(bundle.iterdir()):
+                # An EMPTY dir is not a bundle -- it is residue of an earlier
+                # divert/return that moved the files and left the folder.
+                # Sep-04 left several; one hid behind the both-queues skip all
+                # weekend, then diverted "(0 files)" and re-flipped a parked
+                # video the moment its twin side cleared (2026-09-08).
+                # Routing zero files while flipping db state is pure phantom
+                # action; retire the folder instead, whatever the video's
+                # state.
+                if _retire_stale_bundle(
+                        bundle, stem, "(empty dir)",
+                        why="empty directory left behind by an earlier "
+                            "divert/return; not a bundle"):
+                    summary["empty_retired"] = summary.get("empty_retired", 0) + 1
+                    logger.info("Return scan: %s is an EMPTY dir, not a "
+                                "bundle; retired to _Problematic", stem)
+                continue
+        except OSError:
+            continue
+        try:
             st = triage_status(bundle, stem)
         except Exception:
             continue
@@ -411,7 +433,10 @@ def scan_review_queues(db, processing_dir: Path,
                 cur_state = (row or {}).get('state')
             except Exception:
                 cur_state = None
-            if cur_state in ('processing', 'processed', 'archiving', 'archived'):
+            # 'unresolvable' guards too: a person parked that video with a
+            # reason, and a husk must never un-park it (one did, 2026-09-08).
+            if cur_state in ('processing', 'processed', 'archiving',
+                             'archived', 'unresolvable'):
                 if _retire_stale_bundle(bundle, stem, cur_state):
                     summary["stale_retired"] = summary.get("stale_retired", 0) + 1
                     logger.info(
