@@ -98,6 +98,31 @@ def _resolve_inputs(bundle: Path, stem: str):
         except OSError as e:
             logger.debug(f"{stem}: could not search Analyzed: {e}")
 
+    # Fourth and last: the DLC_Complete staging area. A GPU node's freshly
+    # staged pose sits there before any intake pulls it; a video routed to a
+    # queue in that window (or whose bundle omitted its h5) otherwise refuses
+    # to return in a loop -- one did, every ~2-3 minutes, 2026-09-08. Only a
+    # DECLARED-scorer pose is accepted from staging: an old-model pose here
+    # is stale by definition, and silently posing with it is the wrong-pose
+    # failure this resolver exists to prevent.
+    if pose is None and getattr(Paths, "DLC_STAGING", None):
+        try:
+            staging = Path(Paths.DLC_STAGING)
+            hits = [p for p in staging.glob(f"{stem}DLC*.h5") if p.is_file()]
+            if hits:
+                from mousereach.pipeline.versions import get_current_versions
+                declared = ((get_current_versions(Paths.NAS_ROOT) or {})
+                            .get("versions") or {}).get("dlc_scorer") or ""
+                cur = [p for p in hits if declared and declared in p.name]
+                if cur:
+                    pose = select_pose_file(cur)
+            if mp4 is None:
+                cand = staging / f"{stem}.mp4"
+                if cand.is_file():
+                    mp4 = cand
+        except OSError as e:
+            logger.debug(f"{stem}: could not search staging: {e}")
+
     return mp4, pose
 
 
