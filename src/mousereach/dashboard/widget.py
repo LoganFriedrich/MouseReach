@@ -765,7 +765,8 @@ class PipelineDashboard(QWidget):
             "Send the selected video back through the pipeline. You will be "
             "asked WHY (recorded with the mark). It re-enters at segmentation "
             "on the existing tracking; its current results are replaced when "
-            "it finishes. Select a row to enable.")
+            "it finishes. Also un-sticks a FAILED or parked (unresolvable) "
+            "video once its problem is fixed. Select a row to enable.")
         self.rerun_btn.setEnabled(False)
         self.rerun_btn.clicked.connect(self._rerun_selected)
         btn_layout.addWidget(self.rerun_btn)
@@ -773,6 +774,7 @@ class PipelineDashboard(QWidget):
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setToolTip("Reload from index (fast)")
         refresh_btn.clicked.connect(self._refresh_clicked)
+        refresh_btn.clicked.connect(self._update_health)
         btn_layout.addWidget(refresh_btn)
 
         rebuild_btn = QPushButton("Rebuild Index")
@@ -825,7 +827,30 @@ class PipelineDashboard(QWidget):
         retire_btn.clicked.connect(self._retire_completed_collages)
         btn_layout.addWidget(retire_btn)
 
+        restart_btn = QPushButton("Restart the auto-processor")
+        restart_btn.setStyleSheet("background:#7a1f1f; color:white;")
+        restart_btn.setToolTip(
+            "Stop the background auto-processor and start a fresh one. Use "
+            "after a software update, or when the health line says it is not "
+            "running. In-flight work is safe -- the pipeline re-picks it; the "
+            "first scan afterwards is slower.")
+        restart_btn.clicked.connect(self._restart_watcher_clicked)
+        btn_layout.addWidget(restart_btn)
+
         layout.addLayout(btn_layout)
+
+        # The one health line: is the processor alive, and is anything stuck
+        # waiting for a person. Plain words; refreshed with the table.
+        self.health_label = QLabel("")
+        self.health_label.setWordWrap(True)
+        self.health_label.setStyleSheet(
+            "padding:4px; background:#20303a; color:#dde;")
+        layout.addWidget(self.health_label)
+        try:
+            from qtpy.QtCore import QTimer
+            QTimer.singleShot(0, self._update_health)
+        except Exception:
+            pass
 
         widget.setLayout(layout)
         return widget
@@ -863,15 +888,25 @@ class PipelineDashboard(QWidget):
                 f"{stem}\n\nThis computer is not managing that video (it may "
                 f"belong to another machine). Nothing was changed.")
             return
-        if row["state"] != "archived":
+        # archived: ordinary "redo it". failed / unresolvable: retry after the
+        # underlying problem is fixed -- previously terminal states could only
+        # be reset from a terminal, which is exactly the operator dead-end
+        # this button exists to remove.
+        if row["state"] not in ("archived", "failed", "unresolvable"):
             QMessageBox.information(
                 self, "Re-run video",
                 f"{stem} is currently '{row['state']}' -- it is already "
                 f"queued or mid-run. Nothing to do.")
             return
+        prior_note = ""
+        if row["state"] in ("failed", "unresolvable"):
+            why_stuck = (row.get("error_message") or "").strip()
+            prior_note = (f"\n\nIt is currently '{row['state']}'"
+                          + (f":\n  {why_stuck[:300]}" if why_stuck else "")
+                          + "\nOnly re-run it if that problem is fixed.")
         reason, ok = QInputDialog.getText(
             self, "Re-run video",
-            f"Why re-run {stem}?\n(Recorded with the mark; required.)")
+            f"Why re-run {stem}?{prior_note}\n(Recorded with the mark; required.)")
         if not ok:
             return
         reason = (reason or "").strip()
@@ -898,6 +933,32 @@ class PipelineDashboard(QWidget):
                 f"it up on its next pass.")
         except Exception as e:
             QMessageBox.warning(self, "Re-run video", f"Could not mark it: {e}")
+
+    # ------------------------------------------------------------- health
+    def _update_health(self):
+        from mousereach.watcher.health import health_report
+        try:
+            db = self._watcher_db()
+        except Exception:
+            db = None
+        try:
+            self.health_label.setText("\n".join(health_report(db)))
+        except Exception:
+            pass
+
+    def _restart_watcher_clicked(self):
+        if QMessageBox.question(
+                self, "Restart the auto-processor",
+                "Stop the background auto-processor and start a fresh one?\n\n"
+                "In-flight work is safe (the pipeline re-picks it); the first "
+                "scan afterwards is slower.",
+                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return
+        from mousereach.watcher.health import restart_watcher
+        ok, msg = restart_watcher()
+        (QMessageBox.information if ok else QMessageBox.warning)(
+            self, "Restart the auto-processor", msg)
+        self._update_health()
 
     # ------------------------------------------------------------- pub lock
     def _build_lock_tab(self) -> QWidget:
