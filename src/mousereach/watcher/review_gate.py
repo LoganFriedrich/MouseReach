@@ -197,16 +197,32 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
     """
     mp4 = bundle / f"{video_id}.mp4"
     h5s = sorted(bundle.glob(f"{video_id}*.h5"))
+    pose_path = str(h5s[0]) if h5s else None
+    if pose_path is None:
+        # No pose in the bundle: record where the canonical pose LIVES, so
+        # the return path and the review tools can load it. A manifest
+        # claiming self_contained with a null pose pointer put one video into
+        # an every-2-minutes return-refusal loop (2026-09-08). Reuse the
+        # return path's own resolver (Analyzed model trees, then
+        # declared-scorer staging) so the two can never disagree.
+        try:
+            from mousereach.watcher.review_return import _resolve_inputs
+            _mp4, _pose = _resolve_inputs(bundle, video_id)
+            if _pose is not None:
+                pose_path = str(_pose)
+        except Exception as e:
+            logger.debug(f"{video_id}: manifest pose resolve failed: {e}")
     manifest = {
         "type": "causal_review_bundle",
         "schema_version": "1.0",
         "video_stem": video_id,
         "canonical_video_path": str(mp4),
-        "canonical_dlc_h5_path": str(h5s[0]) if h5s else None,
+        "canonical_dlc_h5_path": pose_path,
         "provenance": {
             "routed_reason": reason,
             "staged_at": datetime.now().isoformat(),
-            "self_contained": True,
+            # True only when the pose really is IN the bundle.
+            "self_contained": bool(h5s),
         },
     }
     (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
