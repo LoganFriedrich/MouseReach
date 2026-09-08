@@ -44,6 +44,33 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
+
+
+def invalidate_stale_downstream(seg_path, video_stem, archive_dir):
+    """Archive-then-remove every output computed from boundaries that are
+    about to be replaced.
+
+    A boundary change voids reaches, outcomes, assignments and features --
+    they all describe the OLD cuts. Leaving them in place re-circulated
+    corrected videos to triage with data for different spans, and risked a
+    causal reach attributed to the wrong pellet (2026-09-08). Removing them
+    also forces every stage to recompute even under a reuse-scoped rerun.
+
+    Qt-free so it is testable bare. Raises on failure -- the caller must
+    refuse the save rather than leave a half-invalidated video.
+    Returns the list of archived+removed file names.
+    """
+    removed = []
+    for suffix in ("_reaches.json", "_pellet_outcomes.json",
+                   "_reach_assignments.json", "_features.json"):
+        stale = Path(seg_path).parent / (video_stem + suffix)
+        if stale.exists():
+            shutil.copy2(stale, Path(archive_dir) / stale.name)
+            stale.unlink()
+            removed.append(stale.name)
+    return removed
+
+
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
@@ -1112,6 +1139,15 @@ automatic.
                                  "Refusing to overwrite the original: %s" % e)
             return
 
+        # A boundary change voids everything computed from boundaries.
+        try:
+            removed = invalidate_stale_downstream(self.seg_path,
+                                                  self.video_stem, archive)
+        except Exception as e:
+            QMessageBox.critical(self, "Could not invalidate stale outputs",
+                                 "The corrected cuts were NOT saved: %s" % e)
+            return
+
         seg = dict(self.seg)
         seg["boundaries"] = [int(b) for b in self.boundaries]
         seg["algo_boundaries"] = [int(b) for b in self.original_boundaries]
@@ -1136,7 +1172,10 @@ automatic.
         n_removed = len([b for b in self.original_boundaries if b not in self.boundaries])
         self.status.setText(
             "Saved %d cuts for %s (%d added, %d removed). Original archived."
-            % (len(self.boundaries), self.video_stem, n_added, n_removed))
+            % (len(self.boundaries), self.video_stem, n_added, n_removed)
+            + ("  %d downstream file(s) computed from the old cuts were "
+               "archived and removed; the pipeline recomputes them."
+               % len(removed) if removed else ""))
 
         # Release the bundle if this fix answers why it was queued. Saving a
         # hand-corrected segmentation finishes the work the video was routed

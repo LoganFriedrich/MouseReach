@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 DECISION_CLEAN = "clean"
 DECISION_TRIAGE = "triage"
 DECISION_DEEP = "deep_review"
+# Outputs predate the segments file: mid-flight, not reviewable, not routable.
+DECISION_STALE = "stale_outputs"
 
 
 def _gt_certification(video_id: str) -> Tuple[bool, set]:
@@ -96,6 +98,24 @@ def evaluate_gate(
                 f"human's deep-review clear exists -- honoring the clear.")
         else:
             return DECISION_DEEP, "segmentation_failed", st
+    # A boundary change voids everything computed from boundaries. When the
+    # outcomes file PREDATES the segments file, downstream was computed
+    # against cuts that no longer exist: the video is mid-flight, not
+    # reviewable. Judging it routed reviewers to data describing the OLD
+    # cuts, repeatedly (hand-fixed segmentations re-circulating to triage,
+    # 2026-09-08). A healthy pipeline always writes segments before
+    # outcomes, so this never fires on an ordinary run.
+    seg_p = processing_dir / f"{video_id}_segments.json"
+    out_p = processing_dir / f"{video_id}_pellet_outcomes.json"
+    try:
+        if seg_p.exists() and out_p.exists() \
+                and out_p.stat().st_mtime < seg_p.stat().st_mtime:
+            return (DECISION_STALE,
+                    "outcomes predate segments -- boundaries changed after "
+                    "they were computed", st)
+    except OSError:
+        pass
+
     # NOT routing on the segmenter's needs_human verdict. It was briefly wired
     # up here and is deliberately switched off.
     #
@@ -271,6 +291,16 @@ def run_gate(
         route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
                        db=db, db_state="triage", extra_sources=extra)
         logger.info(f"Gate: {video_id} -> TRIAGE ({reason})")
+    elif decision == DECISION_STALE:
+        # Do NOT route -- a reviewer must not judge data describing old cuts
+        # -- and do NOT touch state or files. The video stays 'processing'
+        # with its files in place, so the work loop re-picks it and a full
+        # rerun recomputes downstream from the (possibly hand-corrected)
+        # LOCAL segmentation. Deliberately not marked 'outdated': the
+        # reprocess path copies from the ARCHIVE, which can hold the old
+        # algo segmentation and would overwrite the human fix.
+        logger.warning(f"Gate: {video_id} -> STALE ({reason}) -- not routed; "
+                       f"left in Processing for a full recompute")
     else:
         logger.info(f"Gate: {video_id} -> CLEAN (proceed to kinematics)")
     return decision
