@@ -2274,6 +2274,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
             return
 
+        # Stage outputs land BESIDE the pose file, so a pose outside the local
+        # processing dir scatters results into whatever tree holds it -- three
+        # restored videos wrote into the archive's model folder exactly this
+        # way and archived thin bundles (2026-09-08; the staleness net caught
+        # them). Stage the pose locally first, always.
+        if Path(dlc_path).parent != Path(self.processing_dir):
+            local = Path(self.processing_dir) / Path(dlc_path).name
+            if not local.exists():
+                from mousereach.watcher.transfer import safe_copy
+                if not safe_copy(Path(dlc_path), local, verify=True):
+                    self.db.mark_failed(
+                        video_id, f"could not stage pose locally from {dlc_path}")
+                    return
+            dlc_path = local
+
         logger.info(f"Running pipeline on {video_id}")
         pipeline_start = time.time()
 
