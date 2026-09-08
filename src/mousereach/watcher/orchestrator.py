@@ -80,6 +80,30 @@ def segmentation_could_not_run(error, dlc_path) -> bool:
 # BASE ORCHESTRATOR
 # =============================================================================
 
+def _reprocess_copy_set(source_dirs, pose_dir, video_id):
+    """The files a reprocess stages locally, with the pose tree contributing
+    ONLY pose artifacts.
+
+    WHY: the pose tree can hold scattered analysis jsons from runs whose pose
+    path pointed into it (pre-b742b58), and set-ordered copies let such an
+    ALGO segments.json clobber the results dir's HUMAN one -- which
+    re-segmented away a reviewer's hand-set cuts (2026-09-08). Results jsons
+    come from the results dir alone; the filter is skipped when the pose dir
+    is the ONLY source (then its jsons are all we have).
+    """
+    out = []
+    dirs = [Path(d) for d in source_dirs]
+    filter_pose = len(dirs) > 1
+    for d in dirs:
+        for f in d.iterdir():
+            if not (f.is_file() and f.stem.startswith(video_id)):
+                continue
+            if filter_pose and d == Path(pose_dir) and "DLC" not in f.name:
+                continue
+            out.append(f)
+    return out
+
+
 class BaseOrchestrator:
     """
     Shared infrastructure for all watcher orchestrator roles.
@@ -1978,10 +2002,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         self.processing_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy DLC h5 and video
-        all_files = []
-        for d in source_dirs:
-            all_files.extend(f for f in Path(d).iterdir()
-                             if f.is_file() and f.stem.startswith(video_id))
+        all_files = _reprocess_copy_set(source_dirs, source_h5.parent, video_id)
         copy_failures = []
         for src_file in all_files:
             dest = self.processing_dir / src_file.name
