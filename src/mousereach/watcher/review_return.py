@@ -509,6 +509,14 @@ def scan_review_queues(db, processing_dir: Path,
             st = triage_status(bundle, stem)
         except Exception:
             continue
+        # A human's deep-review clearance outranks the machine's seg self-check
+        # -- the SAME honor rule the gate applies (review_gate seg_failed
+        # branch). Without it here, a cleared video with unresolved triage
+        # segments ping-pongs forever: gate honors the clear and routes to
+        # triage, this scan sees raw seg_failed and diverts to deep review,
+        # the clear marker instantly releases it, the pipeline re-runs, repeat
+        # (20250708_CNT0210_P4 made 43 laps on 2026-09-09).
+        cleared = _deep_review_cleared(bundle, stem)
         if st.seg_failed or st.seg_pending_reseg:
             _dr = getattr(Paths, "DEEP_REVIEW", None)
             if _dr and (Path(_dr) / stem).exists():
@@ -549,36 +557,41 @@ def scan_review_queues(db, processing_dir: Path,
                         "'%s'); retired to _Problematic instead of diverting",
                         stem, cur_state)
                 continue
-            # A seg-failed bundle can NEVER satisfy the triage release
-            # condition below, and nothing else moves it -- it sat in the
-            # triage queue with no route out (40 bundles at the time this was
-            # added). A failed segmentation makes the whole video
-            # untrustworthy, which is deep review's definition, so send it
-            # there. Ordering note: the deep-review release path must honor
-            # the human clear marker (review_gate seg_failed branch does,
-            # same change) or this merely moves the stall to a queue that
-            # does not drain.
-            if not _claim_return(stem):
+            # A human already cleared the failed segmentation: the deep-review
+            # question is ANSWERED, so diverting would only lap the cycle.
+            # Fall through instead -- the bundle is an ordinary triage bundle
+            # now, waiting for its triaged segments to be answered.
+            if not cleared:
+                # A seg-failed bundle can NEVER satisfy the triage release
+                # condition below, and nothing else moves it -- it sat in the
+                # triage queue with no route out (40 bundles at the time this
+                # was added). A failed segmentation makes the whole video
+                # untrustworthy, which is deep review's definition, so send it
+                # there. The deep-review release path honors the human clear
+                # marker, so a cleared bundle would come straight back --
+                # which is why cleared bundles never take this divert.
+                if not _claim_return(stem):
+                    continue
+                try:
+                    from .review_gate import route_to_queue
+                    route_to_queue(
+                        stem, bundle, Paths.DEEP_REVIEW,
+                        reason="segmentation failed -- triage cannot release "
+                               "this bundle; needs deep review",
+                        db=db, db_state="deep_review",
+                    )
+                    summary["diverted_to_deep"] += 1
+                    logger.info(
+                        "Return scan: %s diverted triage -> deep review "
+                        "(segmentation failed; no triage route out)", stem)
+                except Exception as e:
+                    logger.error("Return scan: could not divert %s to deep "
+                                 "review: %s", stem, e)
+                finally:
+                    _release_return_claim(stem)
                 continue
-            try:
-                from .review_gate import route_to_queue
-                route_to_queue(
-                    stem, bundle, Paths.DEEP_REVIEW,
-                    reason="segmentation failed -- triage cannot release this "
-                           "bundle; needs deep review",
-                    db=db, db_state="deep_review",
-                )
-                summary["diverted_to_deep"] += 1
-                logger.info(
-                    "Return scan: %s diverted triage -> deep review "
-                    "(segmentation failed; no triage route out)", stem)
-            except Exception as e:
-                logger.error("Return scan: could not divert %s to deep review: %s",
-                             stem, e)
-            finally:
-                _release_return_claim(stem)
-            continue
-        if not (st.has_triage and st.fully_resolved and not st.seg_failed):
+        if not (st.has_triage and st.fully_resolved
+                and (not st.seg_failed or cleared)):
             continue
         if st.seg_pending_reseg:
             # The reviewer answered everything BUT also declared at least one
@@ -630,7 +643,7 @@ def scan_review_queues(db, processing_dir: Path,
         logger.info(
             f"Review-return scan: {summary['triage_returned']} triage + "
             f"{summary['deep_returned']} deep-review videos re-injected, "
-            f"{summary['diverted_to_deep']} diverted to deep review (segment mislabel)"
+            f"{summary['diverted_to_deep']} diverted to deep review"
             + (f" ({summary['deferred']} left for later cycles)"
                if summary["deferred"] else "")
         )
