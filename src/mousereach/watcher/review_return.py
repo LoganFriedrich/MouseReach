@@ -27,8 +27,11 @@ ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
 from __future__ import annotations
 
+import functools
 import shutil
 import logging
+import socket
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -178,6 +181,82 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
             stem, e)
 
 
+# --- cross-node bundle claims -------------------------------------------
+# With several watchers scanning the SAME shared queues, two nodes that spot
+# the same cleared bundle in one pass would both start moving its files and
+# tear the bundle in half across machines -- the split-bundle failure class,
+# cross-node edition. Same write-then-verify marker pattern the DLC intake
+# claims use; claimed only at MUTATION time (returns, diverts, retires),
+# never for mere scanning. Fail-open when the claims dir cannot exist
+# (single-node mode). A return takes seconds, so a marker older than the
+# stale window is a crashed node's and is broken.
+
+_RETURN_CLAIM_STALE_S = 2 * 3600
+
+
+def _return_claims_dir():
+    root = getattr(Paths, "REVIEW_ROOT", None)
+    return (Path(root) / ".return_claims") if root else None
+
+
+def _claim_return(stem: str) -> bool:
+    d = _return_claims_dir()
+    if d is None:
+        return True
+    try:
+        d.mkdir(exist_ok=True)
+    except OSError:
+        return True
+    host = socket.gethostname()
+    f = d / f"{stem}.claim"
+    try:
+        if f.exists():
+            try:
+                claimer = f.read_text(encoding="utf-8").strip().split("\n")[0]
+            except OSError:
+                return False
+            if claimer == host:
+                return True                    # our own (crash retry)
+            try:
+                if time.time() - f.stat().st_mtime > _RETURN_CLAIM_STALE_S:
+                    f.unlink()                 # crashed node's leftover
+                else:
+                    return False
+            except OSError:
+                return False
+        from datetime import datetime
+        f.write_text(f"{host}\n{datetime.now().isoformat()}\n", encoding="utf-8")
+        time.sleep(0.5)                        # SMB race window, as intake does
+        return f.read_text(encoding="utf-8").strip().split("\n")[0] == host
+    except OSError:
+        return False
+
+
+def _release_return_claim(stem: str) -> None:
+    d = _return_claims_dir()
+    if d is None:
+        return
+    try:
+        (d / f"{stem}.claim").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _with_return_claim(fn):
+    """Guard a bundle-mutating helper with the cross-node claim."""
+    @functools.wraps(fn)
+    def wrapper(bundle, stem, *a, **k):
+        if not _claim_return(stem):
+            logger.debug(f"{stem}: bundle claimed by another node; skipping")
+            return False
+        try:
+            return fn(bundle, stem, *a, **k)
+        finally:
+            _release_return_claim(stem)
+    return wrapper
+
+
+@_with_return_claim
 def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                           reason: str) -> bool:
     """Move a cleared bundle's data files into ``processing_dir`` and set the
@@ -333,6 +412,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     return True
 
 
+@_with_return_claim
 def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
                          why: str = None) -> bool:
     """Move a stale queue bundle into the _Problematic archive (never delete).
@@ -478,6 +558,8 @@ def scan_review_queues(db, processing_dir: Path,
             # the human clear marker (review_gate seg_failed branch does,
             # same change) or this merely moves the stall to a queue that
             # does not drain.
+            if not _claim_return(stem):
+                continue
             try:
                 from .review_gate import route_to_queue
                 route_to_queue(
@@ -493,6 +575,8 @@ def scan_review_queues(db, processing_dir: Path,
             except Exception as e:
                 logger.error("Return scan: could not divert %s to deep review: %s",
                              stem, e)
+            finally:
+                _release_return_claim(stem)
             continue
         if not (st.has_triage and st.fully_resolved and not st.seg_failed):
             continue
@@ -504,6 +588,8 @@ def scan_review_queues(db, processing_dir: Path,
             # segmentation error intact. Divert to DEEP_REVIEW for manual
             # re-segmentation instead; the review file travels with the bundle
             # and re-attaches by frame span after the boundaries are fixed.
+            if not _claim_return(stem):
+                continue
             try:
                 from .review_gate import route_to_queue
                 route_to_queue(
@@ -520,6 +606,8 @@ def scan_review_queues(db, processing_dir: Path,
             except Exception as e:
                 logger.error("Return scan: could not divert %s to deep review: %s",
                              stem, e)
+            finally:
+                _release_return_claim(stem)
             continue
         if _return_to_processing(bundle, stem, processing_dir, db, "triage_cleared"):
             summary["triage_returned"] += 1
