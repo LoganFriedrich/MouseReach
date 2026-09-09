@@ -279,7 +279,8 @@ def create_processing_manifest(
     return manifest
 
 
-def record_kinematic_version(video_id: str, processing_dir: Path, version: str) -> bool:
+def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
+                             review_path: Optional[Path] = None) -> bool:
     """Stamp the kinematic extractor version onto a video's existing manifest.
 
     Both pipelines compose the manifest BEFORE running feature extraction --
@@ -308,6 +309,28 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str) 
         with open(manifest_path) as f:
             manifest = json.load(f)
         manifest.setdefault('pipeline_versions', {})['kinematic_extractor'] = version
+        # Record WHICH review these kinematics applied, by CONTENT identity
+        # (reviewed_at + sha256), never by file mtime. WHY: "is the review
+        # applied yet?" used to be answered by comparing two mtimes stamped by
+        # two different clocks -- SMB-written reviews carry the NAS server's
+        # clock while archived features keep the local clock (copy2 preserves
+        # it) -- and a ~20-minute NAS clock skew made every fresh re-run look
+        # staler than the review it had just applied, reprocessing reviewed
+        # videos in a loop all day (2026-09-09). No clock can break a content
+        # stamp. An absent stamp means this run applied no review.
+        if review_path is not None:
+            try:
+                from mousereach.pipeline.fsutil import sha256_file
+                doc = json.loads(Path(review_path).read_text(encoding='utf-8'))
+                manifest['applied_review'] = {
+                    'file': Path(review_path).name,
+                    'reviewed_at': doc.get('reviewed_at'),
+                    'sha256': sha256_file(review_path),
+                }
+            except Exception:
+                manifest.pop('applied_review', None)
+        else:
+            manifest.pop('applied_review', None)
         with open(manifest_path, 'w') as f:
             json.dump(manifest, f, indent=2)
         try:

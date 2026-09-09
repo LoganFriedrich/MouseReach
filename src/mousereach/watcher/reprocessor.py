@@ -244,11 +244,15 @@ class ReprocessingScanner:
 
                 # Compare against current versions
                 comparison = compare_manifest_to_current(manifest, current)
-                # A freshly-saved human review that post-dates the archived
-                # kinematics must also be applied -- re-run so the reviewer's
-                # triage resolution flows into features/DB (the extractor applies
-                # it; see orchestrator + resolve_review_path).
-                review_path = self._pending_review_path(video_id)
+                # Human-authored segmentation is version-exempt (see helper).
+                comparison = self._drop_human_seg_staleness(
+                    video_id, manifest_index, comparison)
+                # A human review the archived kinematics have not applied must
+                # still be applied -- re-run so the reviewer's triage
+                # resolution flows into features/DB (the extractor applies it;
+                # see orchestrator + resolve_review_path).
+                review_path = self._pending_review_path(
+                    video_id, manifest, feats_mtime)
                 review_pending = review_path is not None
 
                 # EXCEPTION: a pending review that declares a segment mislabel
@@ -371,6 +375,11 @@ class ReprocessingScanner:
                 if not manifest:
                     continue
                 comparison = compare_manifest_to_current(manifest, current)
+                # Human-authored segmentation is version-exempt here too --
+                # the door must be able to HEAL rows the mark side created
+                # before the exemption existed.
+                comparison = self._drop_human_seg_staleness(
+                    video_id, manifest_index, comparison)
                 if not comparison['is_current']:
                     continue
                 if comparison.get('compat_used') and (video.get('mark_reason') or '').strip():
@@ -386,18 +395,12 @@ class ReprocessingScanner:
                     # compat-skip this replaces, while current-outright rows
                     # numbered ZERO -- the door served nothing.
                     continue
-                # A saved human review newer than the archived kinematics still
-                # owes a re-run; checked against the one-walk mtime index, not
-                # a per-video rglob of the archive.
-                try:
-                    from mousereach.review.causal_review_io import resolve_review_path
-                    review = resolve_review_path(video_id)
-                    if review is not None:
-                        ft = feats_mtime.get(video_id)
-                        if ft is None or review.stat().st_mtime > ft:
-                            continue  # a re-run is still owed for the review
-                except Exception:
-                    pass
+                # A saved human review the archived kinematics have not applied
+                # still owes a re-run -- same identity-first check as the mark
+                # side (mtimes lie across the NAS/local clock boundary).
+                if self._pending_review_path(video_id, manifest,
+                                             feats_mtime) is not None:
+                    continue  # a re-run is still owed for the review
                 if mark_outdated:
                     try:
                         self.db.update_state(video_id, 'archived',
@@ -430,23 +433,90 @@ class ReprocessingScanner:
 
         return summary
 
-    def _pending_review_path(self, video_id: str):
-        """Path of a saved human review that is NEWER than the archived
-        kinematics -- i.e. the reviewer's triage resolution has not yet been
-        applied to the features/DB product -- else None. Such videos are re-run
-        (post_dlc scope); the feature extractor then substitutes the human
-        calls. Never raises; any error yields None (no spurious reprocessing)."""
+    def _pending_review_path(self, video_id: str, manifest=None,
+                             feats_mtime=None):
+        """Path of a saved human review that the archived kinematics have NOT
+        applied -- else None. Such videos are re-run (post_dlc scope); the
+        feature extractor then substitutes the human calls. Never raises; any
+        error yields None (no spurious reprocessing).
+
+        Identity first, clocks last. The manifest's applied_review stamp
+        (reviewed_at + sha256, written by record_kinematic_version the moment
+        the extractor applies a review) is compared by CONTENT -- no clock can
+        break it. Fallback for legacy manifests without a stamp: the review's
+        in-file reviewed_at vs the manifest's created_at, both process-clock
+        stamps. Only when either is missing does the old mtime comparison run.
+        WHY the mtime comparison had to go: it mixed the NAS clock (SMB-written
+        reviews) with the local clock (archived features keep it via copy2),
+        and a ~20-minute NAS clock skew made every fresh re-run look staler
+        than the review it had just applied -- reviewed videos reprocessed in
+        a loop all day (2026-09-09).
+
+        ``feats_mtime`` is the scan's one-walk {video_id: mtime} index; pass it
+        to avoid a per-video rglob of the whole archive."""
         try:
             from mousereach.review.causal_review_io import resolve_review_path
             review = resolve_review_path(video_id)
             if review is None:
                 return None
-            feats = next(self.archive_dir.rglob(f"{video_id}_features.json"), None)
-            if feats is None:
+            stamp = (manifest or {}).get('applied_review') or {}
+            if stamp.get('sha256'):
+                from mousereach.pipeline.fsutil import sha256_file
+                return None if sha256_file(review) == stamp['sha256'] else review
+            if feats_mtime is not None:
+                ft = feats_mtime.get(video_id)
+            else:
+                feats = next(self.archive_dir.rglob(f"{video_id}_features.json"),
+                             None)
+                ft = feats.stat().st_mtime if feats else None
+            if ft is None:
                 return review  # reviewed but no kinematics yet -> needs a run
-            return review if review.stat().st_mtime > feats.stat().st_mtime else None
+            reviewed_at = None
+            try:
+                doc = json.loads(Path(review).read_text(encoding='utf-8'))
+                reviewed_at = doc.get('reviewed_at')
+            except Exception:
+                pass
+            created_at = (manifest or {}).get('created_at')
+            if reviewed_at and created_at:
+                # ISO strings from the same format sort lexicographically.
+                return review if str(reviewed_at) > str(created_at) else None
+            return review if review.stat().st_mtime > ft else None
         except Exception:
             return None
+
+    def _drop_human_seg_staleness(self, video_id: str, manifest_index,
+                                  comparison):
+        """Remove 'segmenter' from a comparison's stale set when the archived
+        segmentation is HUMAN-authored (boundary_source == 'human'). WHY: a
+        human's cuts are facts about the video, not algorithm output -- no
+        segmenter release can stale them, and the reprocess run preserves them
+        rather than re-cutting. So the manifest keeps recording the segmenter
+        version that originally cut the video, the comparison keeps calling it
+        stale, and the scanner re-marked such videos after every single re-run
+        (20251009_CNT0308_P3 was swept into the versioned Archive 53 times
+        before this was added)."""
+        if 'segmenter' not in (comparison.get('stale_components') or ()):
+            return comparison
+        try:
+            mpath = manifest_index.get(video_id)
+            if mpath is None:
+                return comparison
+            seg = Path(mpath).parent / f"{video_id}_segments.json"
+            if not seg.exists():
+                return comparison
+            doc = json.loads(seg.read_text(encoding='utf-8'))
+            if doc.get('boundary_source') != 'human':
+                return comparison
+        except Exception:
+            return comparison
+        comparison = dict(comparison)
+        comparison['stale_components'] = [
+            c for c in comparison['stale_components'] if c != 'segmenter']
+        if (not comparison['stale_components']
+                and not comparison.get('needs_full_reprocess')):
+            comparison['is_current'] = True
+        return comparison
 
     @staticmethod
     def _review_declares_mislabel(review_path) -> bool:

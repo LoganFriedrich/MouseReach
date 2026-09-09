@@ -30,6 +30,16 @@ RETRY_BASE_DELAY = 2.0
 _open = builtins.open
 
 
+def sha256_file(path) -> str:
+    """sha256 hex digest of a file's content, chunked."""
+    import hashlib
+    h = hashlib.sha256()
+    with _open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def is_transient_lock(e: OSError) -> bool:
     """A lock that plausibly clears in seconds, worth retrying.
 

@@ -1429,9 +1429,13 @@ class DLCOrchestrator(BaseOrchestrator):
                         logger.info(f"Feature extraction complete: {video_id}")
 
                         # The manifest was composed before this ran, so it still
-                        # says kinematics never happened. Stamp the truth.
+                        # says kinematics never happened. Stamp the truth --
+                        # including WHICH review was applied (content identity;
+                        # the staleness scanner reads it back).
                         from mousereach.pipeline.manifest import record_kinematic_version
-                        record_kinematic_version(video_id, processing_dir, extractor.VERSION)
+                        record_kinematic_version(video_id, processing_dir,
+                                                 extractor.VERSION,
+                                                 review_path=review_path)
                         # No database push here: mousedb PULLS features files
                         # from the Analyzed tree (tool independence, 2026-08-28).
                         # The old sync call stayed behind and logged a failed
@@ -2576,9 +2580,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         json.dump(features.to_dict(), f, indent=2)
 
                     # The manifest was composed before this ran, so it still says
-                    # kinematics never happened. Stamp the truth.
+                    # kinematics never happened. Stamp the truth -- including
+                    # WHICH review was applied (content identity; the staleness
+                    # scanner reads it back).
                     from mousereach.pipeline.manifest import record_kinematic_version
-                    record_kinematic_version(video_id, self.processing_dir, extractor.VERSION)
+                    record_kinematic_version(video_id, self.processing_dir,
+                                             extractor.VERSION,
+                                             review_path=review_path)
 
                     feat_duration = time.time() - step_start
                     self.db.log_step(
