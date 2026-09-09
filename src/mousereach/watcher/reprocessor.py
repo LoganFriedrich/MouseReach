@@ -355,6 +355,17 @@ class ReprocessingScanner:
             video_id = video['video_id']
             if not is_supported_tray_type(f"{video_id}.mp4"):
                 continue  # E/F rows stay parked; their pipeline scope is a separate decision
+            if (video.get('mark_reason') or '').strip():
+                # A HAND-MARK. A person said "re-run this", with a recorded
+                # why -- version currency is irrelevant (the usual reason is
+                # precisely that the current-version OUTPUTS are wrong). The
+                # protection used to live only in the compat branch below, so
+                # a version-current-outright row lost its hand-mark within one
+                # scan: the dashboard Re-run button's promise self-cancelled
+                # inside 30 minutes for every current video, and a repair
+                # re-mark was wiped mid-repair (2026-09-08). Never un-mark a
+                # row carrying a reason; only the drain clears it.
+                continue
             try:
                 manifest = self._load_manifest_indexed(video_id, manifest_index)
                 if not manifest:
