@@ -1241,7 +1241,26 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
             return
 
-        processing_dir = dlc_path.parent
+        # Stage outputs land BESIDE the pose file, and this function used to
+        # make the pose's own folder the working directory -- so any video
+        # whose pose resolved into the archive's model tree scattered its
+        # results there while the review bundle was assembled from stale
+        # copies in Processing (reviewer diagnosis, 2026-09-08: a corrected
+        # video's PERFECT re-detection sat in the pose tree while the queue
+        # showed August data with 120 reaches outside their segments). Same
+        # defect as _run_pipeline's, same cure: stage the pose locally,
+        # always, and work in the local processing dir.
+        processing_dir = Path(Paths.PROCESSING)
+        processing_dir.mkdir(parents=True, exist_ok=True)
+        if Path(dlc_path).parent != processing_dir:
+            local = processing_dir / Path(dlc_path).name
+            if not local.exists():
+                from mousereach.watcher.transfer import safe_copy
+                if not safe_copy(Path(dlc_path), local, verify=True):
+                    self.db.mark_failed(
+                        video_id, f"could not stage pose locally from {dlc_path}")
+                    return
+            dlc_path = local
         logger.info(f"Running local pipeline on {video_id} (also_process mode)")
 
         self.db.update_state(video_id, 'processing')
