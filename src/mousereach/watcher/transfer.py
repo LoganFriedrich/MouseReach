@@ -238,7 +238,14 @@ def verify_file_hash(path1: Path, path2: Path, algorithm: str = 'md5') -> bool:
         hash2 = _hash_file(path2)
         match = hash1 == hash2
         if not match:
-            logger.error(f"Hash mismatch: {path1.name} ({hash1[:8]}...) vs {path2.name} ({hash2[:8]}...)")
+            # DEBUG, not ERROR: this is a pure equality predicate and every
+            # caller treats False as an expected, handled outcome (supersede
+            # versions the differing file; archive_video moves the newer one).
+            # The caller that detects real corruption (supersede's post-copy
+            # check) logs its own ERROR. Logging ERROR here produced hundreds
+            # of alarming-but-benign lines per day that trained operators to
+            # ignore the one string that WOULD signal real corruption.
+            logger.debug(f"Hash mismatch: {path1.name} ({hash1[:8]}...) vs {path2.name} ({hash2[:8]}...)")
         return match
     except OSError as e:
         logger.error(f"Hash verification failed: {e}")

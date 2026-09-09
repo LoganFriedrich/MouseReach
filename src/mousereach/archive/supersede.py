@@ -97,26 +97,36 @@ def algo_stack_label(versions: Optional[Dict]) -> str:
             f"_out{s('outcome_detector')}_asn{s('assignment')}")
 
 
-def _versioned(dst: Path) -> Path:
-    """A non-clobbering variant of ``dst`` (append .1/.2/... before the suffix)."""
+def _versioned_or_existing(src: Path, dst: Path) -> Path:
+    """A non-clobbering variant of ``dst`` (append .1/.2/... before the suffix)
+    -- unless one of the existing .N copies is already byte-identical to
+    ``src``, in which case that copy is returned. WHY: a reprocess loop
+    re-sweeps the same bytes every cycle; comparing only against the base name
+    archived another identical multi-MB duplicate per lap (two identical 23 MB
+    .h5 copies found 2026-09-09)."""
     i = 1
     while True:
         cand = dst.with_name(f"{dst.stem}.{i}{dst.suffix}")
         if not cand.exists():
             return cand
+        if verify_file_hash(src, cand, "sha256"):
+            return cand                # already archived under this version
         i += 1
 
 
 def _checksummed_move(src: Path, dst: Path) -> Optional[Path]:
     """Copy ``src`` to ``dst``, verify sha256, then delete ``src``. Never clobbers:
-    an identical file already at ``dst`` -> drop src, return the existing dst; a
-    different same-named file -> version the incoming one. Returns the final dest,
-    or None on failure (source left intact)."""
+    an identical file already at ``dst`` (base or any .N version) -> drop src and
+    return the existing copy; a genuinely new same-named file -> version the
+    incoming one. Returns the final dest, or None on failure (source left intact)."""
     if dst.exists():
         if verify_file_hash(src, dst, "sha256"):
             src.unlink()               # already archived, byte-identical
             return dst
-        dst = _versioned(dst)          # different content -> keep both
+        dst = _versioned_or_existing(src, dst)   # identical .N, or first free slot
+        if dst.exists():
+            src.unlink()               # already archived under a .N version
+            return dst
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         shutil.copy2(str(src), str(dst))
