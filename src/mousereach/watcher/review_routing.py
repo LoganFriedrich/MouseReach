@@ -64,10 +64,22 @@ def _safe_move(src: Path, dst: Path) -> None:
     Cross-filesystem moves (C: Processing -> Y: NAS) are copy+delete under the
     hood; that is intended -- the bundle must live on the NAS so any node / the
     GUI can review it.
+
+    Retries transient Windows sharing violations (WinError 32/5): the pipeline
+    routes a bundle seconds after its own readers finish with the mp4, and the
+    handle is sometimes still closing. Without the retry the mp4 silently
+    stayed behind in Processing while the rest of the bundle moved -- 81 such
+    part-moved bundles on 2026-09-09 alone. A genuinely stuck file still
+    raises to the caller after the retries.
     """
-    if dst.exists():
-        dst.unlink()
-    shutil.move(str(src), str(dst))
+    from mousereach.pipeline.fsutil import retry_transient
+
+    def _mv():
+        if dst.exists():
+            dst.unlink()
+        shutil.move(str(src), str(dst))
+
+    retry_transient(_mv, what=src.name)
 
 
 def move_video_bundle(
