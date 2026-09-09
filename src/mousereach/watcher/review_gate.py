@@ -115,6 +115,28 @@ def evaluate_gate(
                     "they were computed", st)
     except OSError:
         pass
+    # The mtime test alone is defeated whenever something rewrites all the
+    # files after the fact -- the unified-triage validation_status rewrite
+    # touches segments, reaches AND outcomes seconds before this gate runs,
+    # so outcomes always look newer (reviewer diagnosis, 2026-09-08). The
+    # IN-FILE dates cannot be defeated that way: a human correction stamp
+    # (segments corrected_at) newer than the reach detector's own run stamp
+    # (reaches detected_at) means the reaches were computed against
+    # boundaries that no longer exist, whatever the file times say.
+    reach_p = processing_dir / f"{video_id}_reaches.json"
+    try:
+        if seg_p.exists() and reach_p.exists():
+            corrected = (json.loads(seg_p.read_text(encoding="utf-8"))
+                         .get("corrected_at"))
+            if corrected:
+                detected = (json.loads(reach_p.read_text(encoding="utf-8"))
+                            .get("detected_at"))
+                if detected and str(detected) < str(corrected):
+                    return (DECISION_STALE,
+                            "reaches predate the human boundary correction "
+                            "(in-file dates)", st)
+    except (OSError, ValueError):
+        pass
 
     # NOT routing on the segmenter's needs_human verdict. It was briefly wired
     # up here and is deliberately switched off.

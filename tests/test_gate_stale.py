@@ -55,6 +55,32 @@ def test_gate_returns_stale_when_outcomes_predate_segments(tmp_path, monkeypatch
     assert "predate" in reason
 
 
+def test_gate_stale_by_in_file_dates_despite_fresh_mtimes(tmp_path, monkeypatch):
+    """The triage validation rewrite refreshes every file's mtime seconds
+    before the gate, defeating the mtime test -- but the in-file stamps
+    survive: corrected_at newer than detected_at is stale, full stop."""
+    vid = "20240101_ABC0101_P1"
+    (tmp_path / (vid + "_segments.json")).write_text(json.dumps(
+        {"overall_confidence": 1.0, "boundaries": [1, 2],
+         "boundary_source": "human",
+         "corrected_at": "2026-09-01T15:15:00"}), encoding="utf-8")
+    (tmp_path / (vid + "_reaches.json")).write_text(json.dumps(
+        {"detected_at": "2026-08-11T10:00:00", "segments": []}),
+        encoding="utf-8")
+    # outcomes written LAST: newest mtime, so the mtime test passes it
+    (tmp_path / (vid + "_pellet_outcomes.json")).write_text(
+        '{"segments": []}', encoding="utf-8")
+
+    class _St:
+        seg_failed = False
+
+    monkeypatch.setattr(rg, "triage_status", lambda d, v: _St())
+    monkeypatch.setattr(rg, "_gt_certification", lambda v: (False, set()))
+    decision, reason, _ = rg.evaluate_gate(vid, tmp_path, "auto_approved")
+    assert decision == rg.DECISION_STALE
+    assert "in-file dates" in reason
+
+
 def test_run_gate_stale_routes_nothing_touches_nothing(tmp_path, monkeypatch):
     vid = "20240101_ABC0101_P1"
     routed = []
