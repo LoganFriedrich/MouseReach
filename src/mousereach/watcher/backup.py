@@ -218,11 +218,24 @@ def main():
         print("ERROR: backup.source_root and backup.backup_root must be set in config", file=sys.stderr)
         sys.exit(1)
 
+    # Optional scope override: backup.sync_dirs (list of paths relative to
+    # source_root). WHY: the default three-tree scope can exceed the backup
+    # volume's free space (measured 7.0 TB of sources vs 6.3 TB free,
+    # 2026-09-10); a lab must be able to protect what fits rather than have
+    # robocopy fill the disk and fail partway with no complete tree.
+    sync_dirs = backup_config.get('sync_dirs') or None
+    if sync_dirs is not None and (not isinstance(sync_dirs, list)
+                                  or not all(isinstance(s, str) for s in sync_dirs)):
+        print("ERROR: backup.sync_dirs must be a list of strings "
+              "(paths relative to source_root)", file=sys.stderr)
+        sys.exit(1)
+
     watcher = BackupWatcher(
         source_root=source_root,
         backup_root=backup_root,
         poll_interval=backup_config.get('poll_interval_seconds', 600),
         stability_seconds=backup_config.get('stability_seconds', 300),
+        sync_dirs=sync_dirs,
     )
 
     if dry_run_mode:
