@@ -80,18 +80,28 @@ class BackupWatcher:
         print(f"Destination: {self.backup_root}")
         print()
 
+        def _count(root):
+            # os.walk with onerror, not Path.rglob: rglob raises on the first
+            # unreadable subdirectory (broken-ACL dirs exist on this NAS) and
+            # took the whole dry run down with it. A count that skips what it
+            # cannot read is the right behavior for a preview -- the real sync
+            # is robocopy, which handles unreadable entries itself.
+            import os
+            n = 0
+            for _, _, files in os.walk(root, onerror=lambda e: None):
+                n += len(files)
+            return n
+
         for subdir in self.sync_dirs:
             src = self.source_root / subdir
             dst = self.backup_root / subdir
             if src.exists():
-                # Count files
-                file_count = sum(1 for _ in src.rglob('*') if _.is_file())
+                file_count = _count(src)
                 print(f"  {subdir}")
                 print(f"    Source:  {src} ({file_count} files)")
                 print(f"    Backup:  {dst}")
                 if dst.exists():
-                    backup_count = sum(1 for _ in dst.rglob('*') if _.is_file())
-                    print(f"    Backup files: {backup_count}")
+                    print(f"    Backup files: {_count(dst)}")
                 else:
                     print(f"    Backup:  (does not exist yet)")
             else:
