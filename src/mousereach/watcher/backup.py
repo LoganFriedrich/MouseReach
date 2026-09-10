@@ -280,3 +280,9 @@ def main():
 
     watcher.run(shutdown_event)
     print("Backup watcher stopped.")
+
+
+if __name__ == "__main__":
+    # `python -m mousereach.watcher.backup` -- how the scheduled task invokes
+    # it (schtasks cannot pass `-c "..."` through its quoting).
+    sys.exit(main() or 0)
