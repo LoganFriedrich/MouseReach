@@ -20,6 +20,12 @@ def test_constructor_defaults_without_override():
     assert "Behavior/MouseReach_Pipeline" in w.sync_dirs
 
 
+def test_constructor_honors_robocopy_timeout():
+    w = BackupWatcher("/src", "/dst", robocopy_timeout=21600)
+    assert w.robocopy_timeout == 21600
+    assert BackupWatcher("/src", "/dst").robocopy_timeout == 3600
+
+
 def test_main_passes_config_sync_dirs(monkeypatch, capsys):
     import mousereach.watcher.backup as b
     import mousereach.config as mc

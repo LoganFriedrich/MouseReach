@@ -33,7 +33,8 @@ class BackupWatcher:
     ]
 
     def __init__(self, source_root, backup_root, poll_interval=600,
-                 stability_seconds=300, sync_dirs=None):
+                 stability_seconds=300, sync_dirs=None,
+                 robocopy_timeout=3600):
         """
         Args:
             source_root: Root directory to sync from (e.g. the NAS root)
@@ -41,12 +42,18 @@ class BackupWatcher:
             poll_interval: Seconds between sync checks (default 10 min)
             stability_seconds: Wait this long after last change before syncing (default 5 min)
             sync_dirs: List of subdirectories to sync (relative to source_root)
+            robocopy_timeout: Seconds one robocopy run may take (default 1 h).
+                Steady-state incrementals finish in minutes; the FIRST seed of
+                a terabyte-scale tree needs hours -- a timed-out seed leaves
+                the backup partial and logs an error every cycle until someone
+                notices (it did, 2026-09-10). Raise via config for seeding.
         """
         self.source_root = Path(source_root)
         self.backup_root = Path(backup_root)
         self.poll_interval = poll_interval
         self.stability_seconds = stability_seconds
         self.sync_dirs = sync_dirs or self.DEFAULT_SYNC_DIRS
+        self.robocopy_timeout = robocopy_timeout
         self._last_sync_at = None
         self._sync_count = 0
 
@@ -154,7 +161,7 @@ class BackupWatcher:
                 "/NJS",         # No job summary
                 "/XD", "__pycache__", ".git", ".claims",  # Exclude dirs
                 "/XF", "*.pyc", "watcher.db-journal",     # Exclude files
-            ], capture_output=True, text=True, timeout=3600)
+            ], capture_output=True, text=True, timeout=self.robocopy_timeout)
 
             # Robocopy exit codes: 0=no changes, 1=files copied, 2=extra files,
             # 4=mismatches, 8=failures, 16=fatal error
@@ -246,6 +253,7 @@ def main():
         poll_interval=backup_config.get('poll_interval_seconds', 600),
         stability_seconds=backup_config.get('stability_seconds', 300),
         sync_dirs=sync_dirs,
+        robocopy_timeout=backup_config.get('robocopy_timeout_seconds', 3600),
     )
 
     if dry_run_mode:
