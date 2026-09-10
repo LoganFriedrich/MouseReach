@@ -5,7 +5,8 @@ Run with: python -m pytest test_version_simulator.py -v
 Or just: python test_version_simulator.py
 """
 
-from version_simulator import VersionFilter, apply_version_filter, VERSION_FILTERS
+from mousereach.eval.version_simulator import (
+    VersionFilter, apply_version_filter, VERSION_FILTERS)
 
 
 def test_version_filters_defined():
