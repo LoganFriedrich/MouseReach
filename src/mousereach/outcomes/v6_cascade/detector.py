@@ -209,6 +209,31 @@ def detect_outcomes_v6_cascade(
     dict
         Standard pellet_outcomes JSON shape. Caller writes to disk.
     """
+    from .cv_artifact_gate import release_cap_cache
+    try:
+        return _detect_outcomes_v6_cascade_impl(
+            dlc_df, segments, reaches, video_id=video_id, video_dir=video_dir)
+    finally:
+        # Always close the CV gate's cached VideoCapture on the way out --
+        # success, held-for-review, or exception. The cache used to be
+        # released only on the watcher's ARCHIVE path, so a video the gate
+        # ROUTED TO REVIEW kept its mp4 open until the next video evicted it,
+        # and the routing move failed with "being used by another process",
+        # leaving the mp4 behind in Processing (43 review bundles missing
+        # their mp4 in one day, 2026-09-10). Idempotent; the watcher's own
+        # pre-archive release remains as a belt-and-braces second call.
+        release_cap_cache()
+
+
+def _detect_outcomes_v6_cascade_impl(
+    dlc_df: pd.DataFrame,
+    segments: List[Tuple[int, int]],
+    reaches: List[Tuple[int, int]],
+    *,
+    video_id: str = "",
+    video_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Body of detect_outcomes_v6_cascade (see its docstring)."""
     stages = _build_production_stages(video_dir=video_dir)
 
     # Build SegmentInput for each segment
