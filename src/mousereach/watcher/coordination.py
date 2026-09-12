@@ -69,6 +69,27 @@ NODE_LOCAL_STATES = {
     'dlc_complete', 'processing', 'processed', 'archiving', 'outdated',
 }
 
+
+def _is_live_local_work(local_row) -> bool:
+    """A local row in a working state whose recorded file is really on this
+    node is this node's LIVE work, not stale bookkeeping to be advanced.
+
+    WHY: every re-posed video was archived once, so its central record (and
+    its name in the reach table) says 'archived'. Recovery used to advance
+    the local row to match, which turned a video queued for a new pose back
+    into 'archived' on the first restart, with its copied mp4 orphaned in
+    DLC_Queue (2026-09-12). Disk truth wins, as it does in the archive step.
+    """
+    try:
+        if (local_row or {}).get('state') not in NODE_LOCAL_STATES:
+            return False
+        from pathlib import Path
+        raw = (local_row or {}).get('current_path')
+        return bool(raw) and Path(raw).is_file()
+    except Exception:
+        return False
+
+
 COLLAGE_STATE_ORDER = [
     'discovered', 'quarantined', 'validated', 'stable', 'cropping', 'cropped', 'archived',
 ]
@@ -460,7 +481,8 @@ class PipelineCoordinator:
                 local_idx = _state_index(local_state, VIDEO_STATE_ORDER)
                 remote_idx = _state_index(remote_state, VIDEO_STATE_ORDER)
 
-                if remote_idx > local_idx and local_state != 'failed':
+                if (remote_idx > local_idx and local_state != 'failed'
+                        and not _is_live_local_work(local_row)):
                     try:
                         local_db.force_state(video_id, remote_state)
                         stats['videos_advanced'] += 1
@@ -553,7 +575,8 @@ class PipelineCoordinator:
                 local_idx = _state_index(local_state, VIDEO_STATE_ORDER)
                 archived_idx = _state_index('archived', VIDEO_STATE_ORDER)
 
-                if local_idx < archived_idx and local_state != 'failed':
+                if (local_idx < archived_idx and local_state != 'failed'
+                        and not _is_live_local_work(local_row)):
                     try:
                         local_db.force_state(video_name, 'archived')
                         stats['mousedb_confirmed'] += 1
