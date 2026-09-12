@@ -684,6 +684,11 @@ class WatcherConfig:
         self.mode: str = cfg.get('mode', 'dlc_pc')  # 'dlc_pc' or 'processing_server'
         self.max_local_pending: int = cfg.get('max_local_pending', 200)
         self.also_process: bool = cfg.get('also_process', False)  # DLC PCs also run seg/reach/outcomes
+        # How many re-pose requests a GPU node keeps in flight at once. Each
+        # one is a ~1 GB copy into the local queue plus ~14 min of GPU, and a
+        # request stays claimed until the pose comes back, so a small number
+        # keeps claims short-lived and leaves requests for other GPU nodes.
+        self.repose_batch: int = int(cfg.get('repose_batch', 2))
         self.db_path: Optional[Path] = (
             Path(cfg['db_path']) if cfg.get('db_path') else None
         )  # Local DB path to avoid SQLite-over-SMB issues
@@ -715,6 +720,7 @@ class WatcherConfig:
             'mode': self.mode,
             'max_local_pending': self.max_local_pending,
             'also_process': self.also_process,
+            'repose_batch': self.repose_batch,
         }
         if self.dlc_shuffle is not None:
             d['dlc_shuffle'] = self.dlc_shuffle

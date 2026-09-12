@@ -888,6 +888,37 @@ class WatcherDB:
             finally:
                 conn.close()
 
+    def set_fields(self, video_id: str, **fields) -> None:
+        """Update columns on a row WITHOUT changing its state.
+
+        For bookkeeping that belongs to the row's current state -- narrowing
+        a reprocess_scope, recording where a fresh pose landed -- where
+        update_state would refuse (no transition) and force_state would log a
+        validation bypass that never happened. Raises if the row is missing.
+        """
+        if not fields:
+            return
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT state FROM videos WHERE video_id = ?", (video_id,)
+                ).fetchone()
+                if not row:
+                    raise ValueError(f"Video {video_id} not found")
+                cols = [f'{k} = ?' for k in fields] + ['updated_at = ?']
+                vals = list(fields.values()) + [self._now(), video_id]
+                conn.execute(
+                    f"UPDATE videos SET {', '.join(cols)} WHERE video_id = ?", vals)
+                conn.commit()
+                logger.info(f"Updated video {video_id} fields ({row['state']}): "
+                            f"{', '.join(fields)}")
+            except Exception as e:
+                logger.error(f"Failed to update fields on {video_id}: {e}")
+                raise
+            finally:
+                conn.close()
+
     @_retry_network_errors
     def log_step(self, video_id: str, step: str, status: str,
                 message: str = None, duration: float = None):

@@ -85,11 +85,16 @@ class ReprocessingScanner:
         # sites hold one.
         self._manifest_cache: dict = {}
 
-    def scan(self, mark_outdated: bool = True) -> dict:
+    def scan(self, mark_outdated: bool = True, adopt_orphans: bool = True) -> dict:
         """Scan all archived videos, optionally mark outdated ones.
 
         Args:
             mark_outdated: If True, update DB state to 'outdated' for stale videos
+            adopt_orphans: If True, register disk-archived videos that have no
+                row on this node (see the reconcile block). A GPU node that
+                also processes runs this scan for what IT archived; with three
+                such nodes each adopting the whole archive, every video would
+                be scanned and marked three times over, so they pass False.
 
         Returns:
             Summary dict with counts:
@@ -182,7 +187,7 @@ class ReprocessingScanner:
         except Exception as e:
             with_rows = None
             logger.warning(f"Disk-vs-db reconcile skipped (could not list rows): {e}")
-        if with_rows is not None and manifest_index:
+        if adopt_orphans and with_rows is not None and manifest_index:
             orphans = sorted(s for s in manifest_index if s not in with_rows)
             for stem in orphans[:200]:
                 mp4 = manifest_index[stem].parent / f"{stem}.mp4"
