@@ -285,11 +285,14 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         if not Paths.PROCESSING:
             problems.append("PROCESSING path not configured")
     else:
-        # DLC PC needs: NAS drive, DLC config, ffmpeg, GPU
-        if not Paths.NAS_DRIVE:
-            problems.append("NAS drive not configured")
-        elif not Paths.NAS_DRIVE.exists():
-            problems.append(f"NAS drive does not exist: {Paths.NAS_DRIVE}")
+        # DLC PC needs: the shared pipeline root, DLC config, ffmpeg, GPU.
+        # NAS_ROOT is what every shared path hangs off; a lab that configured
+        # only nas_root (the documented setting) used to be refused here for
+        # lacking the older nas_drive.
+        if not Paths.NAS_ROOT:
+            problems.append("NAS root not configured (nas_root in ~/.mousereach/config.json)")
+        elif not Paths.NAS_ROOT.exists():
+            problems.append(f"NAS root does not exist: {Paths.NAS_ROOT}")
 
         if config.dlc_config_path and not config.dlc_config_path.exists():
             problems.append(f"DLC config not found: {config.dlc_config_path}")
