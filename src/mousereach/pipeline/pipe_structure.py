@@ -17,6 +17,8 @@ Target layout (relative to the pipe root = the configured data-pipe drive):
     Processing/                       anything being worked (not raw, not done)
         Single_Animal/                cropped singles (cropping counts as processing)
         DLC_Complete/                 posed, waiting for the MouseReach claim
+        Repose_Queue/                 re-pose requests (one json per video) for
+                                      any GPU node to pull -- see watcher/repose.py
         Review/
             triage/                   -> the triage review tool
             flagged_for_review/       -> deeper causal / ground-truth review
@@ -51,6 +53,7 @@ TARGET_DIRS: List[str] = [
     "Unanalyzed/Multi-Animal",
     "Processing/Single_Animal",
     "Processing/DLC_Complete",
+    "Processing/Repose_Queue",
     "Processing/Review/triage",
     "Processing/Review/flagged_for_review",
     "Processing/Quarantine",

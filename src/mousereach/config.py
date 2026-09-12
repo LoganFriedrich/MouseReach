@@ -119,6 +119,14 @@ class Paths:
     # Post-DLC staging: posed videos waiting for the MouseReach claim (being-worked).
     DLC_STAGING = NAS_ROOT / "Processing" / "DLC_Complete" if NAS_ROOT else None
 
+    # Re-pose requests: one small JSON per archived video that needs a NEW pose
+    # from the declared DLC model. Written by whichever node runs the version
+    # scan; picked up (pull, not push) by any GPU node's watcher, which copies
+    # the archived mp4 into its own local DLC_Queue and poses it. Shared storage
+    # is the only channel between nodes, so this works for a lab with one GPU
+    # PC and a drive as well as for a server + GPU-PC pair (watcher/repose.py).
+    REPOSE_QUEUE = NAS_ROOT / "Processing" / "Repose_Queue" if NAS_ROOT else None
+
     # Final validated outputs, organized by project/cohort (Step 6 destination)
     ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" if NAS_ROOT else None
 
