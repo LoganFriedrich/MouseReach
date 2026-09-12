@@ -1615,10 +1615,20 @@ class DLCOrchestrator(BaseOrchestrator):
 
             duration = time.time() - start_time
 
-            # Mark as archived (done on this machine)
+            # Mark as archived (done on this machine). Record the STAGED pose
+            # path too: until 2026-09-12 only current_path was updated and
+            # dlc_output_path kept pointing at the local DLC_Queue file the
+            # move above had just removed -- 339 of 458 archived rows on the
+            # lab GPU node named a pose file that no longer existed, and any
+            # reader that trusts the recorded path (rather than globbing the
+            # folder) concluded those videos had no pose.
+            staged_h5 = select_pose_file(
+                self.staging_dir.glob(f"{video_id}DLC*.h5"))
             self.db.update_state(
                 video_id, 'archived',
-                current_path=str(self.staging_dir / current_path.name)
+                current_path=str(self.staging_dir / current_path.name),
+                dlc_output_path=(str(staged_h5) if staged_h5
+                                 else video_data.get('dlc_output_path')),
             )
             self.db.log_step(
                 video_id, 'stage_to_nas', 'completed',
