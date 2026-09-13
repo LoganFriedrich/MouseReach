@@ -40,7 +40,7 @@ from mousereach.watcher.locate import (
     resolve_pose_input, locate_pose_file, locate_video_file, node_search_dirs,
 )
 from mousereach.pipeline.manifest import select_pose_file
-from mousereach.watcher.work_priority import load_and_announce
+from mousereach.watcher.work_priority import load_lab_policy, LAB_PRIORITY_HINT
 from mousereach.config import (
     Paths, WatcherConfig, require_processing_root, parse_tray_type,
     get_video_id, AnimalID
@@ -451,17 +451,26 @@ class BaseOrchestrator:
 
     @property
     def work_priority(self):
-        """The ordering policy from config, resolved once per process.
+        """The lab's ordering policy, resolved once per process.
+
+        The shared priority_order.json on the pipeline drive first, then this
+        machine's own watcher.work_priority, then the shipped default -- one
+        order for the whole lab, so the processing side and the human review
+        tools cannot disagree about what matters.
 
         Read lazily rather than in __init__ so that an unreadable or malformed
-        key cannot stop a node from starting: the policy falls back to the
+        setting cannot stop a node from starting: the policy falls back to the
         shipped default and complains in the log. See watcher/work_priority.py
-        for why this key is a preference with a default and not a location with
-        a hard stop.
+        for why this is a preference with a default and not a location with a
+        hard stop.
         """
         policy = getattr(self, "_work_priority", None)
         if policy is None:
-            policy = load_and_announce(getattr(self.config, "work_priority", None))
+            policy = load_lab_policy(getattr(self.config, "work_priority", None))
+            for complaint in policy.complaints:
+                logger.warning("%s. To fix: %s", complaint, LAB_PRIORITY_HINT)
+            for line in policy.describe():
+                logger.info("Work priority -- %s", line)
             self._work_priority = policy
         return policy
 

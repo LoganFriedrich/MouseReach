@@ -557,10 +557,17 @@ automatic.
                 self._queue.append((bundle, spare))
             except Exception:
                 continue
-        # Most alternatives first. A video where the segmenter bailed out has no
-        # candidates at all, so it has to be marked from scratch -- that is the
-        # slowest work and should not be what the tool opens on.
-        self._queue.sort(key=lambda t: -t[1])
+        # The lab's order decides which videos come first. Within one tier,
+        # most alternatives first: a video where the segmenter bailed out has
+        # no candidates at all, so it has to be marked from scratch -- that is
+        # the slowest work and should not be what the tool opens on.
+        try:
+            from mousereach.watcher.work_priority import load_lab_policy
+            _policy = load_lab_policy()
+            self._queue.sort(
+                key=lambda t: (_policy.tier({"video_id": t[0].name}), -t[1]))
+        except Exception:
+            self._queue.sort(key=lambda t: -t[1])
         n_blind = sum(1 for _, spare in self._queue if spare == 0)
         self._queue = [b for b, _ in self._queue]
         self.status.setText(

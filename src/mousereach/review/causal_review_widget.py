@@ -78,6 +78,40 @@ OUTCOME_PICK_SENTINEL = "-- select outcome --"
 OUTCOMES_WITHOUT_A_REACH = ("untouched",)
 
 
+def _pick_by_priority(bundles):
+    """One bundle to hand a reviewer, and the tier it came from.
+
+    The lab's order (priority_order.json on the pipeline drive -- see
+    watcher/work_priority.py) decides WHICH group of videos gets worked
+    through first. The long-standing random draw, which is there to keep the
+    reviewed set unbiased across cohorts and days, still decides which video
+    inside that group. If the order cannot be read for any reason the pick
+    falls back to plain random: a reviewer must never be blocked by a
+    configuration file.
+    """
+    import random
+    try:
+        from mousereach.watcher.work_priority import (
+            as_item, best_tier_choice, load_lab_policy,
+        )
+        policy = load_lab_policy()
+        chosen = best_tier_choice(bundles, policy=policy)
+        if chosen is not None:
+            return chosen, policy.tier(as_item(chosen))
+    except Exception:
+        pass
+    return random.choice(list(bundles)), None
+
+
+def _pick_note(tier_n) -> str:
+    """How the status line describes the way this video was chosen."""
+    if tier_n is None:
+        return "random pick"
+    if tier_n == 0:
+        return "top-priority pick"
+    return "priority pick (group %d)" % (tier_n + 1)
+
+
 def _segment_span(seg) -> Optional[Dict[str, int]]:
     """The segment's frame range, stored on every review record.
 
@@ -2967,9 +3001,11 @@ The notes box travels with the video.
                 if seg.get("segment_num") in wanted]
 
     def load_pending_queue(self, pending_dir: Path):
-        """Enter the review queue on a RANDOM video that still needs review
-        (skips flagged sessions and already-complete videos). Random sampling
-        keeps the reviewed set unbiased across cohorts/days.
+        """Enter the review queue on the highest-priority video that still needs
+        review (skips flagged sessions and already-complete videos). The lab's
+        order decides which group of videos is worked through first; inside that
+        group the pick is random, which keeps the reviewed set unbiased across
+        cohorts/days.
 
         PERF: the needs-review pool is scanned over the NAS ONCE here and cached
         on the widget (``self._pool_cache``). The per-video advance
@@ -2985,18 +3021,20 @@ The notes box travels with the video.
         if not self._pool_cache:
             show_info("Review queue: nothing left to review (all flagged or complete).")
             return
-        b = random.choice(self._pool_cache)
+        b, tier_n = _pick_by_priority(self._pool_cache)
         manifest = json.loads(bundle_manifest_path(b).read_text(encoding="utf-8"))
         self.load_from_manifest(manifest, b)
         self._status_label.setText(
-            self._status_label.text() + f"   [random pick -- {len(self._pool_cache)} in queue]")
+            self._status_label.text()
+            + f"   [{_pick_note(tier_n)} -- {len(self._pool_cache)} in queue]")
 
     def _load_next_video(self):
-        """Load a RANDOM next video that still NEEDS review, drawn from the pool
-        cached at launch minus the bundles already visited this session. Only when
-        that cache is exhausted do we pay for a fresh full NAS scan (which also
-        picks up bundles staged since launch). Random sampling keeps the reviewed
-        set unbiased across cohorts/days."""
+        """Load the next video that still NEEDS review -- highest-priority group
+        first, random inside it -- drawn from the pool cached at launch minus the
+        bundles already visited this session. Only when that cache is exhausted do
+        we pay for a fresh full NAS scan (which also picks up bundles staged since
+        launch). The random draw inside a group keeps the reviewed set unbiased
+        across cohorts/days."""
         import random
         pending = self._pending_dir()
         if pending is None or not pending.exists():
@@ -3021,13 +3059,13 @@ The notes box travels with the video.
             show_info(msg)
             self._status_label.setText(msg)
             return
-        nxt = random.choice(candidates)
+        nxt, tier_n = _pick_by_priority(candidates)
         try:
             manifest = json.loads(bundle_manifest_path(nxt).read_text(encoding="utf-8"))
             self.load_from_manifest(manifest, nxt)
             self._status_label.setText(
                 self._status_label.text()
-                + f"   [random pick -- {len(candidates)} left this pass]")
+                + f"   [{_pick_note(tier_n)} -- {len(candidates)} left this pass]")
         except Exception as e:
             show_error(f"Could not load next video ({nxt.name}): {e}")
 

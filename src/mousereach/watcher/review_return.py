@@ -135,8 +135,18 @@ def _bundles(queue_root: Optional[Path]) -> List[Path]:
     # segments file -- read as seg_failed and got divert-retried forever).
     if not queue_root or not Path(queue_root).exists():
         return []
-    return [d for d in Path(queue_root).iterdir()
-            if d.is_dir() and not d.name.startswith(".")]
+    found = [d for d in Path(queue_root).iterdir()
+             if d.is_dir() and not d.name.startswith(".")]
+    # Only a bounded number of these re-enter the pipeline per scan
+    # (MAX_RETURNS_PER_SCAN), so WHICH ones is a real decision, not a detail:
+    # raw directory order returned whatever the filesystem happened to list
+    # first, while every other part of the watcher worked to the lab's order.
+    # Cleared videos now come back in that same order.
+    try:
+        from mousereach.watcher.work_priority import order_items
+        return order_items(found)
+    except Exception:
+        return sorted(found)
 
 
 def _is_queue_metadata(name: str) -> bool:
