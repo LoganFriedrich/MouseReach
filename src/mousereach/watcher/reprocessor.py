@@ -85,7 +85,8 @@ class ReprocessingScanner:
         # sites hold one.
         self._manifest_cache: dict = {}
 
-    def scan(self, mark_outdated: bool = True, adopt_orphans: bool = True) -> dict:
+    def scan(self, mark_outdated: bool = True, adopt_orphans: bool = True,
+             full_only: bool = False) -> dict:
         """Scan all archived videos, optionally mark outdated ones.
 
         Args:
@@ -95,6 +96,12 @@ class ReprocessingScanner:
                 also processes runs this scan for what IT archived; with three
                 such nodes each adopting the whole archive, every video would
                 be scanned and marked three times over, so they pass False.
+            full_only: If True, mark only videos whose scope would be 'full'
+                (they need a NEW pose). A node with no handler for narrower
+                scopes must not mark them: an 'outdated' row nothing drains
+                is not harmless bookkeeping (it syncs, and it hides the
+                video from every other node's scan). Such videos are counted
+                under 'outdated_partial_unmarked' instead.
 
         Returns:
             Summary dict with counts:
@@ -335,6 +342,11 @@ class ReprocessingScanner:
                         'stale_components': stale,
                     })
 
+                    if full_only and scope != 'full':
+                        summary['outdated_partial_unmarked'] = (
+                            summary.get('outdated_partial_unmarked', 0) + 1)
+                        summary['outdated'] -= 1          # counted above; not marked
+                        continue
                     if mark_outdated:
                         self.db.force_state(
                             video_id, 'outdated',

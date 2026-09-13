@@ -143,6 +143,21 @@ class BaseOrchestrator:
         """Forget a video's failure history once it archives."""
         getattr(self, "_archive_backoff", {}).pop(video_id, None)
 
+    def _already_failed(self, video_id: str) -> bool:
+        """True when this row is already recorded failed.
+
+        A handler that marks a video failed and then re-raises would have it
+        marked a SECOND time by the dispatch guard, and mark_failed increments
+        error_count -- so two real attempts spent a budget of three, and the
+        re-pose consumer held a request as 'failed too often' one attempt
+        early. The retry budget has to count attempts, not calls.
+        """
+        try:
+            row = self.db.get_video(video_id)
+        except Exception:
+            return False
+        return bool(row) and row.get("state") == "failed"
+
     def _archive_backoff_active(self, video_id: str) -> bool:
         """True while this video is waiting out a previous archive failure."""
         if not hasattr(self, "_archive_backoff"):
@@ -271,7 +286,8 @@ class BaseOrchestrator:
             if getattr(self, '_reprocess_scanner', None) is None:
                 self._reprocess_scanner = ReprocessingScanner(self.db, nas_root)
             summary = self._reprocess_scanner.scan(mark_outdated=True,
-                                                   adopt_orphans=self.adopts_orphans)
+                                                   adopt_orphans=self.adopts_orphans,
+                                                   full_only=not self.reprocesses_partial)
             n_out = summary.get('outdated', 0)
             if n_out:
                 logger.info(
@@ -295,6 +311,12 @@ class BaseOrchestrator:
     # meant to cover the whole archive; False for a GPU node that also
     # processes, which scans only what it archived itself.
     adopts_orphans = True
+    # Whether this node can drain an 'outdated' row whose scope is narrower
+    # than 'full' (re-run from segmentation/reach/outcome/kinematics against
+    # an existing pose). The processing role can; a GPU node that also
+    # processes has no such handler yet, so its scan marks only the rows
+    # that need a NEW pose -- the ones its own GPU can do something about.
+    reprocesses_partial = True
 
     def _publish_repose_requests(self) -> None:
         """Ask a GPU node, over shared storage, for a new pose for every row
@@ -308,8 +330,8 @@ class BaseOrchestrator:
         except Exception as e:
             logger.debug(f"could not list outdated rows for re-pose requests: {e}")
             return
-        if not rows:
-            return
+        # Runs with an empty list too: the pass also withdraws requests whose
+        # row has since healed and returns claims nobody heartbeats.
         latched = getattr(self, '_repose_latched', None)
         if latched is None:
             latched = self._repose_latched = set()
@@ -577,8 +599,10 @@ class DLCOrchestrator(BaseOrchestrator):
     - Stages video+h5 back to NAS for the processing PC
     """
 
-    # A GPU node scans only what it archived itself (see BaseOrchestrator).
+    # A GPU node scans only what it archived itself, and marks only the rows
+    # that need a new pose (see BaseOrchestrator).
     adopts_orphans = False
+    reprocesses_partial = False
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)
@@ -687,15 +711,45 @@ class DLCOrchestrator(BaseOrchestrator):
                     # declared model is beside it: queue it again.
                     from mousereach.watcher import repose
                     declared = repose.declared_scorer()
-                    if not [h for h in dlc_queue.glob(f"{video_id}DLC*.h5")
-                            if not declared or repose.scorer_of(h) == declared]:
+                    if declared and not [h for h in dlc_queue.glob(f"{video_id}DLC*.h5")
+                                         if repose.scorer_of(h) == declared]:
+                        repose.clear_stale_poses(dlc_queue, video_id, declared)
+                        reason = (existing.get('mark_reason')
+                                  or f"{repose.REASON_PREFIX} resumed after restart")
                         self.db.force_state(
                             video_id, 'dlc_queued',
                             reason="video is in DLC_Queue with no declared-model pose; "
                                    "re-pose resumed after restart",
                             current_path=str(mp4), source_path=str(mp4),
-                            dlc_output_path=None, error_message=None)
+                            dlc_output_path=None, error_message=None,
+                            mark_reason=reason)
                         logger.info(f"{video_id}: re-pose resumed from DLC_Queue")
+                elif (existing.get('state') == 'failed'
+                      and int(existing.get('error_count') or 0)
+                          < getattr(self.config, 'max_retries', 3)):
+                    # A pose or staging failure leaves this node's files where
+                    # they were (staging copies everything before it deletes
+                    # anything), so the video can simply be run again. This
+                    # role's work loop has no 'failed' bucket, so without this
+                    # nothing here would ever retry it: the video would sit
+                    # failed with its files beside it, and a re-pose request
+                    # for it would stay claimed until it went stale a day
+                    # later. A restart is the retry.
+                    from mousereach.watcher import repose
+                    declared = repose.declared_scorer()
+                    has_pose = bool(declared) and any(
+                        repose.scorer_of(h) == declared
+                        for h in dlc_queue.glob(f"{video_id}DLC*.h5"))
+                    self.db.force_state(
+                        video_id, 'dlc_complete' if has_pose else 'dlc_queued',
+                        reason=f"retrying after a failure on this node "
+                               f"(attempt {int(existing.get('error_count') or 0) + 1} "
+                               f"of {getattr(self.config, 'max_retries', 3)}); "
+                               f"its files are still in DLC_Queue",
+                        current_path=str(mp4), source_path=str(mp4),
+                        error_message=None)
+                    logger.info(f"{video_id}: retrying after failure "
+                                f"({'pose present' if has_pose else 'needs pose'})")
                 continue  # Already tracked
 
             # Determine state from sibling files
@@ -758,13 +812,18 @@ class DLCOrchestrator(BaseOrchestrator):
             if latched is None:
                 latched = self._repose_latched = set()
             repose.heartbeat(self.db, hostname=self.hostname)
+            retry_after = getattr(self, '_repose_retry_after', None)
+            if retry_after is None:
+                retry_after = self._repose_retry_after = {}
+            dlc_cfg = self.config.dlc_config_path
             summary = repose.consume_requests(
                 self.db, dlc_queue=Paths.DLC_QUEUE, hostname=self.hostname,
                 batch=getattr(self.config, 'repose_batch', 2),
                 max_retries=getattr(self.config, 'max_retries', 3),
+                can_pose=bool(dlc_cfg and Path(dlc_cfg).exists()),
                 on_queued=lambda vid, mp4: self._sync_to_connectome(
                     vid, 'dlc_queued', source_path=str(mp4)),
-                latched=latched)
+                latched=latched, retry_after=retry_after)
             if summary.get('queued') or summary.get('completed'):
                 logger.info(f"Re-pose requests: queued {summary['queued']} video(s) "
                             f"for DLC on this node, {summary['completed']} already posed")
@@ -924,7 +983,7 @@ class DLCOrchestrator(BaseOrchestrator):
 
             if work_type == 'collage':
                 self.db.update_collage_state(work_id, 'failed', validation_error=error_msg)
-            else:
+            elif not self._already_failed(work_id):
                 self.db.mark_failed(work_id, error_msg)
             return False
 
@@ -1291,10 +1350,22 @@ class DLCOrchestrator(BaseOrchestrator):
 
             if results and results[0].get('status') == 'success':
                 from mousereach.watcher import repose
+                declared = repose.declared_scorer()
                 chosen_h5 = select_pose_file(
                     dlc_output_dir.glob(f"{video_id}DLC*.h5"),
-                    expected_scorer=repose.declared_scorer() or None)
+                    expected_scorer=declared or None)
                 dlc_output = str(chosen_h5) if chosen_h5 else None
+                # A video re-posed on REQUEST must come back from the declared
+                # model; a node whose DLC project produces another scorer
+                # would stage a pose nobody adopts, and be asked again a day
+                # later, forever. Say so once instead.
+                if ((video_data.get('mark_reason') or '').startswith(repose.REASON_PREFIX)
+                        and declared and chosen_h5 is not None
+                        and repose.scorer_of(chosen_h5) != declared):
+                    raise RuntimeError(
+                        f"this node's DLC model produced {repose.scorer_of(chosen_h5)} "
+                        f"but the declared model is {declared}; check dlc_config_path "
+                        f"/ dlc_shuffle on this node")
 
                 self.db.update_state(
                     video_id, 'dlc_complete',
@@ -1391,7 +1462,12 @@ class DLCOrchestrator(BaseOrchestrator):
                 video_id, raw=video_data.get('current_path'),
                 extra_dirs=[Paths.DLC_QUEUE, Path(dlc_path).parent],
                 search_archive=False)
-            if src_mp4 is not None and Path(src_mp4) != local_mp4:
+            if src_mp4 is None:
+                self.db.mark_failed(
+                    video_id, "video file not found on this node for the local "
+                              "pipeline (recorded path: %r)" % (video_data.get('current_path'),))
+                return
+            if Path(src_mp4) != local_mp4:
                 from mousereach.watcher.transfer import safe_copy
                 if not safe_copy(Path(src_mp4), local_mp4, verify=True):
                     self.db.mark_failed(
@@ -1650,7 +1726,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 # the request must not stay outstanding (watcher/repose.py).
                 try:
                     from mousereach.watcher import repose
-                    if repose.close_request(video_id):
+                    if repose.close_request(video_id, consumed_by=self.hostname):
                         logger.info(f"{video_id}: re-pose request closed (archived here)")
                 except Exception as e:
                     logger.debug(f"{video_id}: could not close re-pose request ({e})")
@@ -1691,6 +1767,56 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
             logger.error(f"Archive error for {video_id}: {e}")
             return False
+
+    def _stage_files(self, video_id: str, files: list) -> list:
+        """Move this video's files into NAS staging so the other side can
+        never take in a half-staged set. Three rules:
+
+          * COPY everything first, each under a temporary name (<name>.part);
+            a copy straight to the final name was visible, and could be
+            claimed, from its first byte;
+          * only when every copy verified, RENAME them into place, the pose
+            (.h5) strictly last -- a staged .h5 is what the processing node's
+            discovery keys on, so when it appears everything else is there;
+          * only then DELETE the local originals.
+
+        Any failure before the deletes leaves the originals intact and no
+        final-named file behind: the temporaries are removed and IOError is
+        raised, so the row is marked failed rather than 'archived' with a
+        pose path that points at nothing. Returns the staged names.
+        """
+        self.staging_dir.mkdir(parents=True, exist_ok=True)
+        ordered = sorted(files, key=lambda f: (f.suffix.lower() == '.h5', f.name))
+        parts = []
+        try:
+            for file_path in ordered:
+                dest = self.staging_dir / file_path.name
+                part = dest.with_name(dest.name + '.part')
+                if not safe_copy(file_path, part, verify=True):
+                    raise IOError(f"could not copy {file_path.name} to staging")
+                parts.append((file_path, part, dest))
+            for file_path, part, dest in parts:
+                try:
+                    part.replace(dest)
+                except OSError as e:
+                    raise IOError(f"could not finalise {dest.name} in staging: {e}")
+        except Exception:
+            for _, part, _ in parts:
+                try:
+                    part.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+        staged = []
+        for file_path, _, dest in parts:
+            try:
+                file_path.unlink()
+            except OSError as e:
+                logger.warning(f"{video_id}: staged {dest.name} but could not remove the "
+                               f"local copy ({e}); it will be cleaned up later")
+            staged.append(dest.name)
+            logger.debug(f"Staged: {dest.name}")
+        return staged
 
     # =========================================================================
     # NAS STAGING
@@ -1735,14 +1861,39 @@ class DLCOrchestrator(BaseOrchestrator):
             return
 
         if current_path.parent == self.staging_dir:
-            # Already where staging would put it -- a re-run after an interrupted
-            # move. Record the end state instead of moving a file onto itself.
-            logger.info(f"{video_id} is already in NAS staging; marking archived")
-            self.db.force_state(video_id, 'archived',
-                                reason="already present in NAS staging",
-                                current_path=str(current_path))
-            self.db.log_step(video_id, 'stage_to_nas', 'completed',
-                             message="already staged")
+            # The video is already where staging would put it -- a re-run
+            # after an interrupted move. That used to be recorded as done on
+            # the spot, which stranded a pose still sitting locally (and the
+            # server, which discovers on the pose, never saw the video).
+            # Stage whatever is still local for it first; only a staged pose
+            # from the declared model makes it done.
+            from mousereach.watcher import repose
+            leftovers = (self._get_associated_files(Paths.DLC_QUEUE, video_id)
+                         if Paths.DLC_QUEUE else [])
+            self.db.log_step(video_id, 'stage_to_nas', 'started', message="resuming")
+            start_time = time.time()
+            try:
+                if leftovers:
+                    self._stage_files(video_id, leftovers)
+                staged_h5 = select_pose_file(
+                    self.staging_dir.glob(f"{video_id}DLC*.h5"),
+                    expected_scorer=repose.declared_scorer() or None)
+                if staged_h5 is None:
+                    raise IOError("video is staged but no pose file for it exists "
+                                  "in staging or locally")
+                logger.info(f"{video_id} is already in NAS staging; marking archived")
+                self.db.force_state(video_id, 'archived',
+                                    reason="already present in NAS staging",
+                                    current_path=str(current_path),
+                                    dlc_output_path=str(staged_h5))
+                self.db.log_step(video_id, 'stage_to_nas', 'completed',
+                                 message=f"already staged ({len(leftovers)} file(s) resumed)",
+                                 duration=time.time() - start_time)
+            except Exception as e:
+                self.db.mark_failed(video_id, str(e))
+                self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e),
+                                 duration=time.time() - start_time)
+                raise
             return
 
         self.db.log_step(video_id, 'stage_to_nas', 'started')
@@ -1756,39 +1907,7 @@ class DLCOrchestrator(BaseOrchestrator):
             if not all_files:
                 raise FileNotFoundError(f"No files found for {video_id} in {source_dir}")
 
-            self.staging_dir.mkdir(parents=True, exist_ok=True)
-
-            # Move each file to NAS staging. Two rules keep a half-staged
-            # video from being taken in by the other side:
-            #   * each file lands under a temporary name and is renamed into
-            #     place only when complete (a copy straight to the final name
-            #     was visible, and could be claimed, from its first byte);
-            #   * the pose files go LAST, because a staged .h5 is what the
-            #     processing node's discovery keys on -- when it appears,
-            #     everything else is already there.
-            # A file that fails to move is a failed staging, not a warning:
-            # the row used to go 'archived' anyway, with its pose path dead and
-            # nothing on the other side ever able to find the video.
-            ordered = sorted(all_files, key=lambda f: 'DLC' in f.name)
-            staged_files = []
-            failed_files = []
-            for file_path in ordered:
-                dest_path = self.staging_dir / file_path.name
-                part = dest_path.with_name(dest_path.name + '.part')
-                if safe_move(file_path, part):
-                    try:
-                        part.replace(dest_path)
-                        staged_files.append(file_path.name)
-                        logger.debug(f"Staged: {file_path.name}")
-                    except OSError as e:
-                        logger.warning(f"Failed to finalise {file_path.name}: {e}")
-                        failed_files.append(file_path.name)
-                else:
-                    logger.warning(f"Failed to stage: {file_path.name}")
-                    failed_files.append(file_path.name)
-            if failed_files:
-                raise IOError("stage_to_nas incomplete, not staged: "
-                              + ", ".join(failed_files))
+            staged_files = self._stage_files(video_id, all_files)
 
             duration = time.time() - start_time
 
@@ -1909,8 +2028,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # A video this node already knows about, parked 'outdated' because it
         # needed a NEW pose, is invisible to discover_dlc_staged (which only
         # registers unknown ids). When a GPU node re-poses it and stages the
-        # result here, adopt it as fresh DLC output so ordinary intake follows
-        # (watcher/repose.py -- the return leg of the re-pose round trip).
+        # result here, adopt it: the row stays 'outdated' but its scope
+        # narrows to 'segmentation' and points at the staged pose, and the
+        # outdated handler (_reprocess_video) re-runs it with the archived
+        # results copied down beside it (watcher/repose.py -- the return leg
+        # of the re-pose round trip).
         try:
             from mousereach.watcher import repose
             adopted = repose.adopt_staged_reposes(self.db, self.staging_dir)
@@ -2098,7 +2220,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # storage instead: one request file per video in the Repose_Queue
             # folder, which any GPU node's watcher pulls from (watcher/repose.py).
             # When the new pose comes back through Processing/DLC_Complete,
-            # _scan_phase adopts it and the row re-enters at 'dlc_complete'.
+            # _scan_phase adopts it: the row's scope narrows to 'segmentation'
+            # and it drains through the 'actionable' branch below.
             # The scanner has already been taught not to call a video DLC-stale
             # when the declared pose is sitting in the archive, so this pool is
             # small, and nothing in it blocks the videos that CAN be re-run here.
@@ -2166,7 +2289,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception as e:
             error_msg = f"{work_type} failed: {str(e)}"
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
-            self.db.mark_failed(work_id, error_msg)
+            if not self._already_failed(work_id):
+                self.db.mark_failed(work_id, error_msg)
             return False
 
     # =========================================================================
@@ -2212,7 +2336,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, f"DLC h5 not found in archive for reprocessing")
             return
 
-        source_h5 = select_pose_file(h5_files)
+        source_h5 = select_pose_file(h5_files, expected_scorer=declared or None)
 
         # The pose file lives in its OWN per-model tree
         # (Analyzed/Connectome/DLC Model 4/CNT01), not beside the video's results
@@ -2266,8 +2390,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 "reprocess copy failed for: %s" % ", ".join(sorted(copy_failures)))
             return
 
-        # Transition to processing state
-        local_h5 = select_pose_file(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+        # Transition to processing state. Name the model explicitly: the copy
+        # set above brings the previous generation's pose down beside the new
+        # one, and select_pose_file's default is a cached reading of the
+        # declaration -- on a daemon started before the model changed, that
+        # cache chose the OLD pose and every re-run re-staled the video.
+        local_h5 = select_pose_file(
+            self.processing_dir.glob(f"{video_id}DLC*.h5"),
+            expected_scorer=declared or None)
         self.db.force_state(
             video_id, 'processing',
             dlc_output_path=str(local_h5) if local_h5 else '',
@@ -2484,8 +2614,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
             duration = time.time() - start_time
 
-            # Find local DLC h5 path
-            local_h5 = select_pose_file(self.processing_dir.glob(f"{video_id}DLC*.h5"))
+            # Find local DLC h5 path. Name the model rather than relying on
+            # select_pose_file's cached default: a re-posed video's older
+            # pose can still be sitting in this folder from a previous run.
+            from mousereach.watcher import repose
+            local_h5 = select_pose_file(
+                self.processing_dir.glob(f"{video_id}DLC*.h5"),
+                expected_scorer=repose.declared_scorer() or None)
             local_mp4 = self.processing_dir / f"{video_id}.mp4"
 
             # Advance to processing state

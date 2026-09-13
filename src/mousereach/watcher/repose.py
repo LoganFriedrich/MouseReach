@@ -20,27 +20,36 @@ both:
   1. PUBLISH  (any node that runs the version scan, once per scan) -- for
      each outdated video that needs a NEW pose, one small JSON request in
      NAS_ROOT/Processing/Repose_Queue/<video_id>.json. Nothing is moved.
-  2. CONSUME  (any GPU node, every poll, a few at a time) -- CLAIM a request
-     by renaming it into Repose_Queue/.inflight/ (a rename is atomic, so two
-     GPU nodes cannot both take it), copy the archived mp4 into this node's
-     own local DLC_Queue, put the local row in 'dlc_queued'. The ordinary
-     pose + stage steps take it from there.
+     A row whose declared pose already sits in the archive is narrowed on
+     the spot (scope 'segmentation', pose recorded) -- no GPU needed.
+  2. CONSUME  (any GPU node that can pose, every poll, a few at a time) --
+     CLAIM a request by renaming it into Repose_Queue/.inflight/ (a rename
+     is atomic, so two GPU nodes cannot both take it), copy the archived mp4
+     into this node's own local DLC_Queue, put the local row in 'dlc_queued'.
+     The ordinary pose + stage steps take it from there.
   3. ADOPT    (any node that takes work from Processing/DLC_Complete) -- a
      staged pose from the declared model for a video whose row is parked
-     'outdated' narrows that row's reprocess scope to 'segmentation' and
-     records the staged pose, so the EXISTING reprocess path re-runs every
-     post-DLC stage against it -- with the archived results folder (human
-     segmentation and reviews included) copied down beside it, as any other
-     partial reprocess does. Adoption closes the request.
+     'outdated' with scope 'full' narrows that row's scope to 'segmentation'
+     and records the staged pose, so the EXISTING reprocess path re-runs
+     every post-DLC stage against it -- with the archived results folder
+     (human segmentation and reviews included) copied down beside it.
+     Adoption closes the request.
 
 The request file is the claim and the idempotency key: it exists (queued or
-inflight) from publish until the new pose is adopted, or until a GPU node
-that also processes archives the result itself. Publish never re-asks while
-either file exists; a GPU node heartbeats the inflight file while it holds
-the video, and a request nobody has touched for a day goes back to the
-queue. The archived mp4 is COPIED, never moved. Request files are queue
-bookkeeping and are deleted when the round trip closes, the same way the
-review-return claim files are; the processing_log keeps the provenance.
+inflight) from publish until the new pose is adopted, or until the GPU node
+that consumed it archives the result itself. Publish never re-asks while
+either file exists; a GPU node heartbeats the inflight file while it still
+holds the video (in any state, human holds included), and a request nobody
+has touched for a day goes back to the queue -- unless its pose has in fact
+arrived, in which case it is closed instead. The archived mp4 is COPIED,
+never moved. Request files are queue bookkeeping and are deleted when the
+round trip closes, the same way the review-return claim files are; the
+processing_log keeps the provenance.
+
+Every model-sensitive decision needs the declared scorer. When it cannot be
+read (the declaration file is being rewritten, the share blinked) the step
+does nothing this poll and says so once, rather than treating every pose as
+the declared one.
 """
 from __future__ import annotations
 
@@ -60,11 +69,12 @@ logger = logging.getLogger(__name__)
 STEP = "repose_request"            # processing_log step name
 INFLIGHT = ".inflight"             # subfolder of the queue: claimed requests
 STALE_S = 24 * 3600                # inflight with no heartbeat this long -> back to queue
+RETRY_S = 1800                     # a request that failed to copy/resolve here waits this long
 IN_FLIGHT_STATES = ("dlc_queued", "dlc_running", "dlc_complete",
                     "processing", "processed", "archiving")
 REDRIVE_STATES = ("archived", "outdated", "unresolvable", "validated", "deep_review")
 REFUSE_STATES = ("crystallized", "triage", "quarantined", "discovered")
-ADOPT_STATES = ("outdated", "unresolvable")
+DONE_STATES = ("archived", "crystallized", "unresolvable")   # a GPU node no longer holds these
 REASON_PREFIX = "re-pose request"  # mark_reason prefix on rows a GPU node re-drove
 
 
@@ -95,14 +105,23 @@ def read_json(p: Path) -> Optional[dict]:
         return None
 
 
-def write_json_atomic(p: Path, body: dict) -> None:
+def write_json_atomic(p: Path, body: dict, attempts: int = 3) -> None:
     """Write via a sibling temp file and rename, so a reader never sees a
-    half-written request."""
+    half-written request. The rename is retried: over SMB it fails with a
+    sharing violation while another node has the file open to read it."""
     p = Path(p)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(body, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    for i in range(attempts):
+        try:
+            os.replace(tmp, p)
+            return
+        except OSError:
+            if i == attempts - 1:
+                _unlink(tmp)
+                raise
+            time.sleep(0.5)
 
 
 def _unlink(p: Path) -> bool:
@@ -143,10 +162,13 @@ def _once(latched: Optional[Set[str]], key: str) -> bool:
 
 def declared_scorer() -> str:
     """The DLC scorer pipeline_versions.json declares current, read fresh
-    (the manifest module caches its copy for the life of the process)."""
+    ('' when it cannot be read -- callers treat that as unknown, not as
+    'anything goes'). Also refreshes the manifest module's copy, which
+    select_pose_file uses by default, so a long-running watcher does not
+    keep preferring the model declared when it started."""
     try:
-        from mousereach.pipeline.versions import get_current_versions
-        return (get_current_versions().get("versions") or {}).get("dlc_scorer", "") or ""
+        from mousereach.pipeline import manifest
+        return manifest.declared_dlc_scorer(max_age_s=0.0)
     except Exception as e:
         logger.debug(f"declared scorer unavailable: {e}")
         return ""
@@ -163,16 +185,16 @@ def video_id_of_h5(h5: Path) -> str:
 
 def declared_poses_in(folder: Optional[Path], declared: str) -> Dict[str, Path]:
     """{video_id: h5} for every pose file in ``folder`` from the declared
-    model (any model when nothing is declared). One glob; *.part ignored."""
+    model. Empty when no model is declared (nothing can be matched)."""
     out: Dict[str, Path] = {}
-    if not folder:
+    if not folder or not declared:
         return out
     folder = Path(folder)
     if not folder.exists():
         return out
     try:
         for h5 in folder.glob("*DLC*.h5"):
-            if not declared or scorer_of(h5) == declared:
+            if scorer_of(h5) == declared:
                 out.setdefault(video_id_of_h5(h5), h5)
     except OSError:
         pass
@@ -192,12 +214,14 @@ def declared_pose_in_archive(video_id: str, declared: str) -> Optional[Path]:
     """A pose from the declared model in this video's archive folder, or None.
     (The version scan looks further -- the whole Analyzed tree -- before it
     calls a video 'full'; this is the cheap re-check a request needs.)"""
+    if not declared:
+        return None
     d = archive_folder(video_id)
     if d is None or not d.exists():
         return None
     try:
         for h5 in d.glob(f"{video_id}DLC*.h5"):
-            if not declared or scorer_of(h5) == declared:
+            if scorer_of(h5) == declared:
                 return h5
     except OSError:
         pass
@@ -250,6 +274,28 @@ def resolve_request_video(video_id: str, body: dict) -> Optional[Path]:
     return None
 
 
+def clear_stale_poses(dlc_queue: Path, video_id: str, declared: str) -> List[str]:
+    """Remove pose artifacts for this video from the local queue that are NOT
+    from the declared model, so an old pose left by an interrupted stage
+    cannot be mistaken for the new one. Returns the names removed."""
+    removed: List[str] = []
+    if not declared:
+        return removed
+    dlc_queue = Path(dlc_queue)
+    if not dlc_queue.exists():
+        return removed
+    for h5 in list(dlc_queue.glob(f"{video_id}DLC*.h5")):
+        if scorer_of(h5) == declared:
+            continue
+        for f in list(dlc_queue.glob(h5.name[:-3] + "*")):
+            if _unlink(f):
+                removed.append(f.name)
+    if removed:
+        logger.info(f"{video_id}: removed stale pose files from DLC_Queue: "
+                    f"{', '.join(removed)}")
+    return removed
+
+
 def _log(db, video_id: str, status: str, message: str) -> None:
     try:
         db.log_step(video_id, STEP, status, message=message)
@@ -257,17 +303,56 @@ def _log(db, video_id: str, status: str, message: str) -> None:
         pass
 
 
+def _narrow_to_segmentation(db, row: dict, h5: Path, why: str) -> bool:
+    """A declared-model pose exists for this parked row: the video no longer
+    needs a GPU. Narrow the row's scope and record the pose so the ordinary
+    reprocess path (which copies the archived results down beside it) runs
+    every post-DLC stage against it. Legal transitions only."""
+    video_id = row["video_id"]
+    state = row.get("state")
+    old_scope = row.get("reprocess_scope")
+    try:
+        if state == "outdated":
+            db.set_fields(video_id, reprocess_scope="segmentation",
+                          dlc_output_path=str(h5), error_message=None)
+        elif state == "archived":
+            db.update_state(video_id, "outdated", reprocess_scope="segmentation",
+                            dlc_output_path=str(h5), mark_reason=None)
+        elif state == "unresolvable":
+            db.force_state(video_id, "outdated", reason=why,
+                           reprocess_scope="segmentation",
+                           dlc_output_path=str(h5), error_message=None)
+        else:
+            return False
+    except Exception as e:
+        logger.error(f"{video_id}: could not narrow the reprocess scope ({e})")
+        return False
+    _log(db, video_id, "narrowed",
+         f"{h5.name}; scope {old_scope!r} -> segmentation; "
+         f"mark_reason={row.get('mark_reason')!r}; {why}")
+    logger.info(f"{video_id}: {why}; scope {old_scope!r} -> segmentation "
+                f"(row was '{state}')")
+    return True
+
+
 # ---------------------------------------------------------------- lifecycle
 
-def close_request(video_id: str, repose_dir: Optional[Path] = None) -> bool:
+def close_request(video_id: str, repose_dir: Optional[Path] = None, *,
+                  consumed_by: Optional[str] = None) -> bool:
     """The round trip is over for this video: drop its queue, inflight and
-    failure files. True if anything was removed."""
+    failure files. With ``consumed_by`` given, an inflight file another node
+    claimed is left alone (that node still owns the work). True if anything
+    was removed."""
     repose_dir = repose_dir if repose_dir is not None else repose_queue_dir()
     if not repose_dir:
         return False
+    infl = inflight_path(video_id, repose_dir)
+    if consumed_by is not None and infl.exists():
+        owner = (read_json(infl) or {}).get("consumed_by")
+        if owner not in (None, "", consumed_by):
+            return False
     removed = False
-    for p in (queue_path(video_id, repose_dir), inflight_path(video_id, repose_dir),
-              failed_path(video_id, repose_dir)):
+    for p in (queue_path(video_id, repose_dir), infl, failed_path(video_id, repose_dir)):
         removed = _unlink(p) or removed
     return removed
 
@@ -302,18 +387,22 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
                     latched: Optional[Set[str]] = None) -> Dict[str, list]:
     """Ask GPU nodes, over shared storage, for a new pose for every row in
     ``rows`` (this node's outdated videos with reprocess_scope 'full').
-    Runs once per version scan. Builds its index of the queue and the
-    staging folder once, then touches shared storage only for videos that
-    need a request written, rewritten, or withdrawn.
+    Runs once per version scan, with an EMPTY ``rows`` too: the sweeps below
+    must run whether or not anything is parked right now.
 
-    Also sweeps this node's own bookkeeping: withdraws a queued request whose
-    row is no longer outdated/full or whose declared model changed, and
-    returns an inflight request nobody has heartbeated for a day to the
-    queue. Never raises."""
+    Builds its index of the queue and the staging folder once. A row whose
+    request is already in flight costs nothing further; a row whose declared
+    pose turns out to be staged or archived is narrowed (no GPU needed) and
+    any request for it withdrawn.
+
+    Sweeps this node's own bookkeeping: withdraws a queued request whose row
+    is no longer outdated/full, rewrites one whose declared model changed,
+    and returns an inflight request nobody has heartbeated for a day to the
+    queue -- or closes it, when its pose has in fact arrived. Never raises."""
     out: Dict[str, list] = {"published": [], "republished": [], "rewritten": [],
-                            "withdrawn": [], "returned": [], "staged": [],
-                            "in_archive": [], "inflight": [], "no_video": [],
-                            "failed_remote": []}
+                            "withdrawn": [], "returned": [], "closed": [],
+                            "narrowed": [], "staged": [], "inflight": [],
+                            "no_video": [], "failed_remote": [], "unknown_model": []}
     repose_dir = repose_dir if repose_dir is not None else repose_queue_dir()
     rows = list(rows)
     if not repose_dir:
@@ -325,8 +414,15 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
                 ", ".join(r["video_id"] for r in rows[:5]),
                 "" if len(rows) <= 5 else " and %d more" % (len(rows) - 5))
         return out
-    repose_dir = Path(repose_dir)
     declared = declared_scorer() if declared is None else declared
+    if not declared:
+        if rows and _once(latched, "unknown_model"):
+            logger.warning("%d video(s) need a new DLC pose but the declared model "
+                           "could not be read from pipeline_versions.json; no "
+                           "request published this pass", len(rows))
+        out["unknown_model"] = [r["video_id"] for r in rows]
+        return out
+    repose_dir = Path(repose_dir)
     staging_dir = staging_dir if staging_dir is not None else Paths.DLC_STAGING
     try:
         repose_dir.mkdir(parents=True, exist_ok=True)
@@ -344,32 +440,31 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
     now = time.time()
 
     for video_id, row in wanted.items():
-        if video_id in staged:
-            out["staged"].append(video_id)       # adoption takes it next poll
-            continue
-        if declared_pose_in_archive(video_id, declared) is not None:
-            out["in_archive"].append(video_id)   # next scan will narrow the scope
-            continue
-        fp = failed_path(video_id, repose_dir)
-        if fp.exists() and _once(latched, f"failed_remote:{video_id}"):
-            note = read_json(fp) or {}
-            logger.warning(f"{video_id}: a GPU node ({note.get('host', '?')}) could not "
-                           f"pose it: {note.get('error', '?')}. The request stays "
-                           f"out; fix the cause there, or re-mark the video here.")
-            _log(db, video_id, "failed_remote", f"{note.get('host', '?')}: {note.get('error', '')}")
-            out["failed_remote"].append(video_id)
+        # Cheapest checks first: a request already out costs no lookups.
         if video_id in inflight:
             body = read_json(inflight[video_id]) or {}
-            if declared and body.get("declared_scorer") not in ("", None, declared) \
+            if body.get("declared_scorer") not in ("", None, declared) \
                     and _once(latched, f"inflight_stale:{video_id}"):
                 logger.warning(f"{video_id}: a GPU node is posing it for "
                                f"{body.get('declared_scorer')} but the declared model is "
                                f"now {declared}; it will be re-requested after that run")
             out["inflight"].append(video_id)
             continue
+        satisfied = staged.get(video_id) or declared_pose_in_archive(video_id, declared)
+        if satisfied is not None:
+            where = "staged" if video_id in staged else "archived"
+            if _narrow_to_segmentation(db, row, satisfied,
+                                       f"declared pose already {where}"):
+                out["narrowed"].append(video_id)
+                if video_id in queued and _unlink(queued[video_id]):
+                    out["withdrawn"].append(video_id)
+                    _log(db, video_id, "withdrawn", f"declared pose already {where}")
+            if video_id in staged:
+                out["staged"].append(video_id)
+            continue
         if video_id in queued:
             body = read_json(queued[video_id]) or {}
-            if declared and body.get("declared_scorer") not in ("", None, declared):
+            if body.get("declared_scorer") not in ("", None, declared):
                 body["declared_scorer"] = declared
                 body["rewritten_at"] = datetime.now().isoformat()
                 try:
@@ -379,6 +474,14 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
                 except OSError as e:
                     logger.warning(f"{video_id}: could not rewrite request ({e})")
             continue
+        fp = failed_path(video_id, repose_dir)
+        if fp.exists() and _once(latched, f"failed_remote:{video_id}"):
+            note = read_json(fp) or {}
+            logger.warning(f"{video_id}: a GPU node ({note.get('host', '?')}) could not "
+                           f"pose it: {note.get('error', '?')}. A new request goes out; "
+                           f"if it fails again, fix the cause there or re-mark here.")
+            _log(db, video_id, "failed_remote", f"{note.get('host', '?')}: {note.get('error', '')}")
+            out["failed_remote"].append(video_id)
         mp4 = archived_video(video_id)
         if mp4 is None:
             if _once(latched, f"no_video:{video_id}"):
@@ -402,6 +505,7 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
         except OSError as e:
             logger.warning(f"{video_id}: could not write re-pose request ({e})")
             continue
+        _unlink(fp)
         republish = _once(latched, f"published:{video_id}") is False
         out["republished" if republish else "published"].append(video_id)
         _log(db, video_id, "republished" if republish else "published", f"to {repose_dir}")
@@ -417,14 +521,29 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
             out["withdrawn"].append(video_id)
             _log(db, video_id, "withdrawn", "row is no longer outdated with scope full")
     for video_id, p in inflight.items():
+        body = read_json(p) or {}
+        if body.get("requested_by") != hostname:
+            continue
         try:
             age = now - p.stat().st_mtime
         except OSError:
             continue
         if age <= STALE_S:
             continue
-        body = read_json(p) or {}
-        if body.get("requested_by") != hostname:
+        # Nobody has touched it for a day. Before handing it to another GPU
+        # node, look at what actually happened: the pose may be back already
+        # (the consumer's row moves on after staging, so its heartbeat stops
+        # there), or this node may no longer want it.
+        satisfied = staged.get(video_id) or declared_pose_in_archive(video_id, declared)
+        if satisfied is not None or video_id not in wanted:
+            row = wanted.get(video_id)
+            if satisfied is not None and row is not None:
+                if _narrow_to_segmentation(db, row, satisfied,
+                                           "declared pose arrived while the request was stale"):
+                    out["narrowed"].append(video_id)
+            if _unlink(p):
+                out["closed"].append(video_id)
+                _log(db, video_id, "closed", "stale request; pose present or no longer wanted")
             continue
         try:
             os.replace(p, queue_path(video_id, repose_dir))
@@ -436,11 +555,12 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
         except OSError as e:
             logger.debug(f"{video_id}: could not return stale request ({e})")
 
-    if out["published"] or out["republished"] or out["rewritten"]:
-        logger.info("Re-pose requests: %d published, %d re-published, %d rewritten "
-                    "for a GPU node to pull: %s",
+    if out["published"] or out["republished"] or out["rewritten"] or out["narrowed"]:
+        logger.info("Re-pose requests: %d published, %d re-published, %d rewritten, "
+                    "%d narrowed without a GPU: %s",
                     len(out["published"]), len(out["republished"]), len(out["rewritten"]),
-                    ", ".join((out["published"] + out["republished"])[:5]))
+                    len(out["narrowed"]),
+                    ", ".join((out["published"] + out["republished"] + out["narrowed"])[:5]))
     return out
 
 
@@ -516,26 +636,31 @@ def _in_flight_reposes(db) -> int:
 
 def heartbeat(db, *, hostname: str, repose_dir: Optional[Path] = None) -> int:
     """Touch the inflight file of every request this node consumed whose
-    local row is still in flight, so the publisher knows it is alive. Returns
-    how many were touched."""
+    video it still holds -- in any state short of done, human holds and a
+    retryable failure included -- so the publisher knows it is alive.
+    Returns how many were touched."""
     repose_dir = repose_dir if repose_dir is not None else repose_queue_dir()
     if not repose_dir:
         return 0
     n = 0
     for video_id, p in _list_ids(Path(repose_dir) / INFLIGHT).items():
         body = read_json(p) or {}
-        if body.get("consumed_by") != hostname:
-            continue
         try:
             row = db.get_video(video_id)
         except Exception:
             row = None
-        if row and row.get("state") in IN_FLIGHT_STATES:
-            try:
-                os.utime(p, None)
-                n += 1
-            except OSError:
-                pass
+        if not row or row.get("state") in DONE_STATES:
+            continue
+        owner = body.get("consumed_by")
+        mine = owner == hostname or (
+            not owner and (row.get("mark_reason") or "").startswith(REASON_PREFIX))
+        if not mine:
+            continue
+        try:
+            os.utime(p, None)
+            n += 1
+        except OSError:
+            pass
     return n
 
 
@@ -543,20 +668,27 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
                      repose_dir: Optional[Path] = None,
                      declared: Optional[str] = None,
                      batch: int = 2, max_retries: int = 3,
+                     can_pose: bool = True,
                      on_queued: Optional[Callable[[str, Path], None]] = None,
-                     latched: Optional[Set[str]] = None) -> Dict[str, int]:
+                     latched: Optional[Set[str]] = None,
+                     retry_after: Optional[Dict[str, float]] = None) -> Dict[str, int]:
     """GPU side, once per poll: pull up to ``batch`` requests into this
     node's local DLC_Queue and queue them for pose, keeping at most ``batch``
     re-poses in flight on this node. Never raises.
 
-    The local row is inspected BEFORE the request is claimed, so a row this
-    node must not touch (locked, in a human queue, failed too often) never
-    holds the request away from another GPU node."""
+    A node that cannot pose (``can_pose`` False: no DLC model configured)
+    takes nothing, so it cannot hold requests away from nodes that can. The
+    local row is inspected BEFORE the request is claimed, so a row this node
+    must not touch (locked, in a human queue, failed too often) never holds
+    the request either. A request this node could not copy or resolve is
+    put back and not retried here for RETRY_S (``retry_after`` is a dict the
+    caller owns)."""
     summary = {"queued": 0, "satisfied": 0, "completed": 0, "in_flight": 0,
                "refused": 0, "held_failed": 0, "no_video": 0, "copy_failed": 0,
-               "claimed_elsewhere": 0, "bad_request": 0, "skipped_cap": 0}
+               "claimed_elsewhere": 0, "bad_request": 0, "skipped_cap": 0,
+               "backoff": 0, "unknown_model": 0}
     repose_dir = repose_dir if repose_dir is not None else repose_queue_dir()
-    if not repose_dir or not dlc_queue:
+    if not repose_dir or not dlc_queue or not can_pose:
         return summary
     repose_dir = Path(repose_dir)
     dlc_queue = Path(dlc_queue)
@@ -564,14 +696,24 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
     if not queued:
         return summary
     declared = declared_scorer() if declared is None else declared
+    if not declared:
+        if _once(latched, "unknown_model"):
+            logger.warning("re-pose requests are waiting but the declared model could "
+                           "not be read from pipeline_versions.json; nothing taken")
+        summary["unknown_model"] = len(queued)
+        return summary
     slots = max(0, int(batch) - _in_flight_reposes(db))
     if slots <= 0:
         summary["skipped_cap"] = len(queued)
         return summary
+    now = time.time()
 
     for video_id in sorted(queued):
         if slots <= 0:
             summary["skipped_cap"] += 1
+            continue
+        if retry_after is not None and retry_after.get(video_id, 0) > now:
+            summary["backoff"] += 1
             continue
         req = queued[video_id]
         body = read_json(req)
@@ -631,12 +773,11 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
         body["consumed_at"] = datetime.now().isoformat()
         try:
             write_json_atomic(infl, body)
-        except OSError:
-            pass
+        except OSError as e:
+            logger.debug(f"{video_id}: claim annotation not written ({e}); "
+                         f"the row's mark_reason identifies it as ours")
 
         # --- already satisfied? ---------------------------------------
-        local_h5s = list(dlc_queue.glob(f"{video_id}DLC*.h5")) if dlc_queue.exists() else []
-        local_declared = [h for h in local_h5s if not declared or scorer_of(h) == declared]
         if declared_pose_in_archive(video_id, declared) is not None:
             close_request(video_id, repose_dir)
             logger.info(f"{video_id}: re-pose request already satisfied (declared pose "
@@ -648,10 +789,9 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
         # --- the video file --------------------------------------------
         src = resolve_request_video(video_id, body)
         if src is None:
-            try:
-                os.replace(infl, req)           # let another node try
-            except OSError:
-                pass
+            _return(infl, req)
+            if retry_after is not None:
+                retry_after[video_id] = now + RETRY_S
             if _once(latched, f"no_video:{video_id}"):
                 logger.warning(f"{video_id}: re-pose requested but no video file was "
                                f"found from this node (request names "
@@ -665,21 +805,19 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
         except OSError:
             same = False
         if not same and not safe_copy(src, dest, verify=True):
-            try:
-                os.replace(infl, req)
-            except OSError:
-                pass
-            logger.warning(f"{video_id}: could not copy video into DLC_Queue")
+            _return(infl, req)
+            if retry_after is not None:
+                retry_after[video_id] = now + RETRY_S
+            if _once(latched, f"copy_failed:{video_id}"):
+                logger.warning(f"{video_id}: could not copy video into DLC_Queue; "
+                               f"no more requests taken this pass")
             summary["copy_failed"] += 1
-            continue
+            break                               # a full disk would fail them all
 
         # --- an old-model pose beside it would be mistaken for the new one
-        for h5 in local_h5s:
-            if h5 not in local_declared:
-                stem = h5.name[:-3]
-                for f in dlc_queue.glob(stem + "*"):
-                    if _unlink(f):
-                        logger.info(f"{video_id}: removed stale {f.name} from DLC_Queue")
+        clear_stale_poses(dlc_queue, video_id, declared)
+        local_declared = [h for h in dlc_queue.glob(f"{video_id}DLC*.h5")
+                          if scorer_of(h) == declared]
 
         reason = (f"{REASON_PREFIX} from {body.get('requested_by', '?')}: "
                   f"{body.get('reason', '')}").strip()
@@ -690,13 +828,12 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
                 state = row.get("state")
             if local_declared:
                 # DLC already ran for the declared model here; nothing to pose.
-                target = "dlc_complete"
-                fields = dict(current_path=str(dest), source_path=str(dest),
-                              dlc_output_path=str(local_declared[0]),
-                              error_message=None, reprocess_scope=None,
-                              mark_reason=reason)
-                db.force_state(video_id, target, reason=reason + " (declared pose already local)",
-                               **fields)
+                db.force_state(video_id, "dlc_complete",
+                               reason=reason + " (declared pose already local)",
+                               current_path=str(dest), source_path=str(dest),
+                               dlc_output_path=str(local_declared[0]),
+                               error_message=None, reprocess_scope=None,
+                               mark_reason=reason)
                 summary["completed"] += 1
             else:
                 _requeue_for_dlc(db, video_id, state, reason,
@@ -706,10 +843,7 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
                 slots -= 1
         except Exception as e:
             logger.error(f"{video_id}: could not queue for re-pose ({e})")
-            try:
-                os.replace(infl, req)
-            except OSError:
-                pass
+            _return(infl, req)
             continue
         _log(db, video_id, "consumed", json.dumps(body))
         if on_queued is not None:
@@ -721,6 +855,14 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
     return summary
 
 
+def _return(infl: Path, req: Path) -> None:
+    """Give a claimed request back to the queue (this node could not act)."""
+    try:
+        os.replace(infl, req)
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------- 3. adopt
 
 def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
@@ -730,11 +872,12 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
     """Server side, once per poll. For every pose from the declared model in
     staging whose video has a row here:
 
-      * row 'outdated' or 'unresolvable' -> the row becomes 'outdated' with
-        reprocess_scope 'segmentation' and dlc_output_path = the staged h5.
-        The existing reprocess handler then copies that pose AND the archived
-        results folder down and re-runs every post-DLC stage. No state is
-        forced past the state machine, and a hand-mark reason survives.
+      * row 'outdated' with scope 'full' (or 'unresolvable') -> the row
+        becomes 'outdated' with reprocess_scope 'segmentation' and
+        dlc_output_path = the staged h5. The existing reprocess handler then
+        copies that pose AND the archived results folder down and re-runs
+        every post-DLC stage. Rows already narrowed for another reason
+        (a kinematics-only bump, say) are left exactly as they are.
       * row 'archived' whose archived manifest names another model -> the
         same, via the legal archived -> outdated transition. New pose
         information is worth a re-run whether or not the scan has caught up.
@@ -742,10 +885,15 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
 
     Closes the request. Returns the adopted video ids. Never raises."""
     adopted: List[str] = []
-    staged = declared_poses_in(staging_dir, declared_scorer() if declared is None else declared)
+    declared = declared_scorer() if declared is None else declared
+    if not declared:
+        if _once(latched, "unknown_model"):
+            logger.warning("staged poses cannot be adopted: the declared model could "
+                           "not be read from pipeline_versions.json")
+        return adopted
+    staged = declared_poses_in(staging_dir, declared)
     if not staged:
         return adopted
-    declared = declared_scorer() if declared is None else declared
     repose_dir = repose_dir if repose_dir is not None else repose_queue_dir()
     for video_id, h5 in sorted(staged.items()):
         try:
@@ -762,37 +910,16 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
                                f"(mousereach-watch-reprocess) to take the pose")
             continue
         if state == "archived":
-            if declared and _archived_scorer(video_id) == declared:
+            if _archived_scorer(video_id) == declared:
                 continue                            # already current on this pose
-        elif state not in ADOPT_STATES:
+        elif state == "outdated":
+            if row.get("reprocess_scope") != "full":
+                continue                            # narrowed already, or another reason
+        elif state != "unresolvable":
             continue
-        if state == "outdated" and row.get("reprocess_scope") == "segmentation" \
-                and row.get("dlc_output_path") == str(h5):
-            continue                                # already adopted, waiting its turn
-        old_scope = row.get("reprocess_scope")
-        reason = (f"declared pose {h5.name} staged for a row parked '{state}'; "
-                  f"re-run from segmentation on it")
-        try:
-            if state == "outdated":
-                db.set_fields(video_id, reprocess_scope="segmentation",
-                              dlc_output_path=str(h5), error_message=None)
-            elif state == "archived":
-                db.update_state(video_id, "outdated", reprocess_scope="segmentation",
-                                dlc_output_path=str(h5), mark_reason=None)
-            else:                                   # unresolvable: legal to archived,
-                db.force_state(video_id, "outdated", reason=reason,   # not to outdated
-                               reprocess_scope="segmentation",
-                               dlc_output_path=str(h5), error_message=None)
-        except Exception as e:
-            logger.error(f"{video_id}: could not adopt staged pose ({e})")
-            continue
-        close_request(video_id, repose_dir)
-        _log(db, video_id, "adopted",
-             f"{h5.name}; scope {old_scope!r} -> segmentation; "
-             f"mark_reason={row.get('mark_reason')!r}")
-        logger.info(f"{video_id}: adopted staged {h5.name} (row was '{state}'); "
-                    f"queued for a post-DLC re-run")
-        adopted.append(video_id)
+        if _narrow_to_segmentation(db, row, h5, f"declared pose {h5.name} staged"):
+            close_request(video_id, repose_dir)
+            adopted.append(video_id)
     return adopted
 
 
