@@ -792,6 +792,39 @@ class DLCOrchestrator(BaseOrchestrator):
         """
         video_id = work['id']
         data = work['data']
+
+        # NEVER pose a video that is already finished. Before this state was
+        # worked at all, the shared singles folder was full of videos that had
+        # long since been analysed and filed, and being ignored was the only
+        # thing keeping them quiet. Now that the state is live, a node whose
+        # database does not know them -- a new GPU machine, or a rebuilt
+        # database -- would queue every one of them for pose. Measured on the
+        # lab's own folder: 2,271 such videos, at about 14 minutes of GPU
+        # each, or roughly 530 GPU-hours of redoing finished work.
+        #
+        # The archive is the authority on what is finished, so ask it, and
+        # record the truth instead of burning a card on it.
+        try:
+            from mousereach.archive.core import get_archive_destination
+            archived_here = get_archive_destination(video_id)
+            done = (archived_here is not None
+                    and (Path(archived_here) / f"{video_id}_processing_manifest.json").is_file())
+        except Exception:
+            done = False
+        if done:
+            try:
+                self.db.force_state(
+                    video_id, 'archived',
+                    reason="already analysed and filed in the archive; recorded "
+                           "as done rather than posed again")
+                self.db.log_step(video_id, 'adopt', 'skipped',
+                                 message="already in the archive")
+            except Exception as e:
+                logger.warning(f"{video_id}: already archived, but the row "
+                               f"could not be corrected ({e})")
+            logger.info(f"{video_id}: already in the archive; not posing it again")
+            return True
+
         dlc_queue = Paths.DLC_QUEUE
         if not dlc_queue:
             self.db.mark_unresolvable(

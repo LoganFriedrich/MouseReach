@@ -120,6 +120,45 @@ def test_it_does_not_copy_again_when_the_video_is_already_here(node):
     assert node.db.moves == [(VID, "dlc_queued", str(dest))]
 
 
+def test_a_video_already_in_the_archive_is_never_posed_again(node, tmp_path, monkeypatch):
+    """The guard that stops a fresh node re-posing the whole corpus.
+
+    Before 'validated' was worked at all, the shared folder was full of
+    finished videos and being ignored was the only thing keeping them quiet.
+    Measured on the lab's own folder: 2,271 of them, ~14 min of GPU each.
+    """
+    import mousereach.archive.core as core
+    archive = tmp_path / "Analyzed" / "X"
+    archive.mkdir(parents=True)
+    (archive / f"{VID}_processing_manifest.json").write_text("{}")
+    monkeypatch.setattr(core, "get_archive_destination", lambda v: archive)
+
+    src = node.shared / f"{VID}.mp4"
+    src.write_bytes(b"a video")
+    node.db._rows[VID] = {"video_id": VID, "state": "validated",
+                          "current_path": str(src)}
+
+    assert node._adopt_single_for_dlc({"id": VID, "data": node.db._rows[VID]}) is True
+    assert node.db.moves == [(VID, "archived", None)]      # recorded, not queued
+    assert not (node.local / f"{VID}.mp4").exists()        # no GPU work created
+
+
+def test_a_video_not_in_the_archive_is_still_posed(node, tmp_path, monkeypatch):
+    """The guard must not swallow genuinely unprocessed videos."""
+    import mousereach.archive.core as core
+    empty = tmp_path / "Analyzed" / "X"
+    empty.mkdir(parents=True)
+    monkeypatch.setattr(core, "get_archive_destination", lambda v: empty)
+
+    src = node.shared / f"{VID}.mp4"
+    src.write_bytes(b"a video")
+    node.db._rows[VID] = {"video_id": VID, "state": "validated",
+                          "current_path": str(src)}
+
+    assert node._adopt_single_for_dlc({"id": VID, "data": node.db._rows[VID]}) is True
+    assert node.db.moves == [(VID, "dlc_queued", str(node.local / f"{VID}.mp4"))]
+
+
 def test_a_video_that_has_since_been_removed_is_parked_not_retried_forever(node):
     node.db._rows[VID] = {"video_id": VID, "state": "validated",
                           "current_path": str(node.shared / f"{VID}.mp4")}
