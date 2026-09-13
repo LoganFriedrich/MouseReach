@@ -34,6 +34,21 @@ from mousereach.config import AnimalID
 from mousereach.watcher import work_priority as wp
 
 
+@pytest.fixture(autouse=True)
+def _no_lab_order(monkeypatch):
+    """Every test here is about the MACHINE's own setting, so the lab-wide
+    file must not answer for it.
+
+    Without this they pass or fail according to whether the shared drive
+    happens to hold a priority_order.json -- which is exactly what happened
+    the first time a real one was written.
+    """
+    monkeypatch.setattr(wp, "read_lab_priority", lambda *a, **k: None)
+    wp.invalidate_lab_policy()
+    yield
+    wp.invalidate_lab_policy()
+
+
 # =============================================================================
 # RESOLVERS -- the DB column is never trusted on its own
 # =============================================================================
