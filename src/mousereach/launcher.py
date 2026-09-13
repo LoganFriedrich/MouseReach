@@ -448,6 +448,40 @@ def launch(video_path=None, steps=None):
         # Raise the first tab
         dock_widgets[0].raise_()
 
+    # Give the video room to be watched. Every tool docks on the right and is
+    # tabbed into ONE stack, so the stack is as wide as its widest page: one
+    # crowded panel made every other tab that wide too, and the video got a
+    # sliver. Ask for about a third of the window. The panels now scroll
+    # horizontally rather than push the dock wider (their scroll areas used to
+    # have the horizontal bar switched off, which turned them into width
+    # amplifiers instead of width limiters).
+    # Let every panel SCROLL rather than force the dock wider. Several tools
+    # -- the watcher, quarantine and setup panels among them -- have no scroll
+    # area of their own, and their contents measured over 1100px wide each.
+    # Doing it here covers every panel, including any added later.
+    for _dw in dock_widgets:
+        try:
+            from qtpy.QtWidgets import QScrollArea as _QScrollArea
+            _inner = _dw.widget()
+            if _inner is None or isinstance(_inner, _QScrollArea):
+                continue
+            _scroll = _QScrollArea()
+            _scroll.setWidgetResizable(True)
+            _scroll.setWidget(_inner)
+            _dw.setWidget(_scroll)
+        except Exception as _e:
+            print(f"  (could not make a panel scrollable: {_e})")
+
+    if dock_widgets:
+        try:
+            from qtpy.QtCore import Qt as _Qt
+            _main = viewer.window._qt_window
+            _want = max(360, int(_main.width() * 0.34))
+            _main.resizeDocks(dock_widgets, [_want] * len(dock_widgets),
+                              _Qt.Horizontal)
+        except Exception as _e:
+            print(f"  (could not set the panel width: {_e})")
+
     # Connect tab change detection - when user switches tabs, auto-load video into new tab
     # Note: UnifiedReviewWidget handles its own internal tab switching
     def on_tab_changed(dock_widget, visible):
@@ -458,7 +492,13 @@ def launch(video_path=None, steps=None):
         # Find which widget this dock belongs to
         for step_id, widget in widgets_loaded:
             # Check if this widget is inside the activated dock
-            if dock_widget.widget() is widget:
+            # The panel now sits inside a scroll area (added above so panels
+            # scroll instead of widening the dock), so look through it -- a
+            # plain identity check against the dock's own child stopped
+            # matching anything the moment that wrapper appeared.
+            _held = dock_widget.widget()
+            _within = _held.widget() if hasattr(_held, "widget") else None
+            if _held is widget or _within is widget:
                 print(f"[MouseReach] Tab switched to {step_id}")
 
                 # Skip widgets that handle their own video loading (dashboard, prep, unified review)

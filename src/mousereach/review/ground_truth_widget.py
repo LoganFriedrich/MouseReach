@@ -191,7 +191,7 @@ class GroundTruthWidget(QWidget):
         # === SCROLLABLE CONTENT ===
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout()

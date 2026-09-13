@@ -28,10 +28,34 @@ from qtpy.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea,
     QComboBox, QGroupBox, QProgressBar, QTabWidget, QTextEdit,
     QCheckBox, QDialog, QDialogButtonBox, QAbstractItemView,
-    QLineEdit, QInputDialog, QMessageBox,
+    QLineEdit, QInputDialog, QMessageBox, QGridLayout,
 )
 from qtpy.QtCore import Qt, QTimer, QObject, Signal
 from qtpy.QtGui import QColor, QBrush
+
+
+class _WrapGrid(QGridLayout):
+    """A row of buttons that WRAPS instead of forcing the panel wider.
+
+    Ten buttons in one horizontal row gave this widget a minimum width equal
+    to the sum of ten labels. Every tool is tabbed into a single dock, and a
+    tabbed stack is as wide as its widest page -- so this one row set the
+    width of every other tab too, and left a sliver for the video. addWidget
+    keeps the call shape the row already used, so the buttons themselves are
+    unchanged.
+    """
+
+    def __init__(self, columns: int = 3, parent=None):
+        super().__init__(parent)
+        self._columns = max(1, int(columns))
+        self._placed = 0
+
+    def addWidget(self, widget, *args, **kwargs):
+        if args or kwargs:                    # an explicit row/column call
+            return super().addWidget(widget, *args, **kwargs)
+        row, col = divmod(self._placed, self._columns)
+        self._placed += 1
+        return super().addWidget(widget, row, col)
 
 
 class _VersionCheckWorker(QObject):
@@ -719,6 +743,9 @@ class PipelineDashboard(QWidget):
             '<i>(Click status icons to launch review tool)</i>'
         )
         legend.setStyleSheet("font-size: 10px; padding: 3px;")
+        # Six status chips on one unbreakable line was a second reason this
+        # panel could not be made narrow.
+        legend.setWordWrap(True)
         layout.addWidget(legend)
 
         # Table showing all files and their validation status
@@ -744,8 +771,9 @@ class PipelineDashboard(QWidget):
         # legend, and button row stay compact).
         layout.addWidget(self.overview_table, 1)
 
-        # Buttons row
-        btn_layout = QHBoxLayout()
+        # Buttons row -- wraps at three across (see _WrapGrid), so ten buttons
+        # cannot dictate the width of every tab in the window.
+        btn_layout = _WrapGrid(columns=2)
 
         # File Details: greyed out until a file is selected in the table above.
         self.details_btn = QPushButton("File Details")
@@ -760,7 +788,7 @@ class PipelineDashboard(QWidget):
         # one, redo it" -- ordinary workflow, so it is a button. The typed
         # reason is persisted on the row (mark_reason), which also protects
         # the mark from being auto-cleared by the reprocessor's un-marker.
-        self.rerun_btn = QPushButton("Re-run selected video")
+        self.rerun_btn = QPushButton("Re-run video")
         self.rerun_btn.setToolTip(
             "Send the selected video back through the pipeline. You will be "
             "asked WHY (recorded with the mark). It re-enters at segmentation "
@@ -815,7 +843,7 @@ class PipelineDashboard(QWidget):
         setup_btn.clicked.connect(self._open_setup)
         btn_layout.addWidget(setup_btn)
 
-        retire_btn = QPushButton("Retire completed collages")
+        retire_btn = QPushButton("Retire collages")
         retire_btn.setToolTip(
             "Move every raw collage whose single-mouse videos have ALL made it "
             "through the entire pipeline (in the final Analyzed output, processed "
@@ -827,7 +855,9 @@ class PipelineDashboard(QWidget):
         retire_btn.clicked.connect(self._retire_completed_collages)
         btn_layout.addWidget(retire_btn)
 
-        restart_btn = QPushButton("Restart the auto-processor")
+        # Short label, full sentence in the tooltip: this button's text alone
+        # set the minimum width of the whole window's panel area.
+        restart_btn = QPushButton("Restart processor")
         restart_btn.setStyleSheet("background:#7a1f1f; color:white;")
         restart_btn.setToolTip(
             "Stop the background auto-processor and start a fresh one. Use "

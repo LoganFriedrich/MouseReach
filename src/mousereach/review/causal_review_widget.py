@@ -466,7 +466,7 @@ The notes box travels with the video.
         # --- Scrollable question panel ---
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self._questions_container = QWidget()
         self._questions_layout = QVBoxLayout()
@@ -2129,7 +2129,7 @@ The notes box travels with the video.
         scroll.setWidgetResizable(True)
         scroll.setWidget(reaches_box)
         scroll.setMaximumHeight(160)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         layout.addWidget(scroll)
 
         # "Show all reaches" -- reveal the ruled-out reaches so the reviewer can
