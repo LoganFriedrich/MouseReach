@@ -196,6 +196,24 @@ class BaseOrchestrator:
         except Exception:
             return False
 
+    def _stop_requested(self) -> bool:
+        """True when something has asked this watcher to finish and exit.
+
+        A file rather than a signal, because the only universally deliverable
+        stop on Windows is a hard kill. psutil's terminate() is an alias for
+        kill() there, and a watcher started detached (as the Restart button
+        starts it) has no console, so a Ctrl+C event cannot reach it either.
+        Killing a watcher mid-pose throws away a 14-minute GPU run and used to
+        strand the video outright.
+
+        The loop checks this between work items, so the item in flight always
+        finishes first.
+        """
+        try:
+            return (require_processing_root() / "watcher_stop.flag").exists()
+        except Exception:
+            return False
+
     # --- States a node sets WHILE it is working on something -----------------
     # Nothing selects these as work. If the process dies here the row stops
     # moving and no later run ever picks it up: the video is stranded, and
@@ -291,6 +309,14 @@ class BaseOrchestrator:
         while not shutdown_event.is_set():
             try:
                 # Check for pause sentinel (filming mode)
+                # Asked to stop. Checked here, between work items, so whatever
+                # is in flight has already finished -- a pose is ~14 minutes of
+                # GPU and must never be thrown away just to shut down.
+                if self._stop_requested():
+                    logger.info("Stop requested (watcher_stop.flag); finishing "
+                                "here and exiting.")
+                    break
+
                 if self._is_paused():
                     logger.info("Watcher PAUSED (filming mode) — run 'mousereach-watch-toggle' to resume.")
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)

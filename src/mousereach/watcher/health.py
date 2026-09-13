@@ -57,12 +57,20 @@ def health_report(db=None) -> List[str]:
     return lines
 
 
-def restart_watcher(stop_delay: float = 3.0, verify_wait: float = 12.0):
+def restart_watcher(stop_delay: float = 3.0, verify_wait: float = 12.0,
+                    graceful_wait: float = 90.0, force: bool = False):
     """Stop the running auto-processor (if any) and start a fresh one.
 
     Machine-agnostic: launches through this environment's own python with the
     same entry the service wrapper uses, so no machine path is needed; the
     single-instance mutex prevents doubles. Returns (ok, message).
+
+    The stop is a request, not a kill (see below). ``graceful_wait`` is how
+    long to wait for the watcher to finish its current item and exit; a caller
+    that would rather lose that work than wait can pass ``force=True``, which
+    kills whatever is left after that wait. The default never kills, because
+    the usual caller is a button in the GUI and the usual item in flight is a
+    fourteen-minute pose.
     """
     import subprocess
     import sys
@@ -83,39 +91,69 @@ def restart_watcher(stop_delay: float = 3.0, verify_wait: float = 12.0):
         if "main_watch" in cmd or "mousereach-watch" in cmd:
             targets.append(p)
 
-    # Ask before insisting. A force kill mid-crop used to strand the collage:
-    # 'cropping' has no edge back to 'stable' and nothing selects it, so the
-    # video needed a hand-written database fix. Startup reclaim now repairs
-    # that, but letting the loop finish its current item is still the right
-    # order of events -- it also lets an in-flight DLC run reach a state the
-    # next start can resume from.
+    # Stopping is a REQUEST, not a kill.
+    #
+    # There is no polite kill available here. On Windows psutil's terminate()
+    # is documented as an alias for kill(), and a watcher started the way this
+    # function starts one is detached with no console, so a Ctrl+C event
+    # cannot reach it either. A hard kill part-way through a pose throws away
+    # about fourteen minutes of GPU, and before startup reclaim existed it
+    # stranded the video outright.
+    #
+    # So: drop watcher_stop.flag, which the loop checks between work items,
+    # and let it finish what it is doing. If it is busy, say so and change
+    # nothing -- an honest "not now" beats a restart that costs a pose.
+    from mousereach.config import require_processing_root
+    try:
+        stop_flag = require_processing_root() / "watcher_stop.flag"
+    except Exception as e:
+        return False, f"Cannot find the pipeline folder to signal a stop: {e}"
+
     stopped = 0
-    for p in targets:
+    try:
+        if targets:
+            stop_flag.write_text("restart requested\n", encoding="utf-8")
+            gone, alive = psutil.wait_procs(targets, timeout=graceful_wait)
+            stopped = len(gone)
+            if alive and not force:
+                # Clear the request first, so the watcher carries on normally.
+                stop_flag.unlink(missing_ok=True)
+                # It may have exited in the instant between giving up and
+                # clearing the flag. If it did, start a replacement rather
+                # than leave the machine with no watcher at all.
+                if [p for p in alive if p.is_running()]:
+                    return False, (
+                        "The auto-processor is busy, most likely part-way "
+                        "through a pose, which takes about fourteen minutes. "
+                        "It has not stopped yet, so nothing was killed and no "
+                        "work was lost. It is still running normally. Try "
+                        "again when it is idle, or stop it from its own "
+                        "console with Ctrl+C.")
+            for p in alive:
+                try:
+                    p.kill()
+                    stopped += 1
+                except Exception:
+                    pass
+            if alive:
+                psutil.wait_procs(alive, timeout=10)
+        # The replacement must never find this, or it exits on sight.
+        stop_flag.unlink(missing_ok=True)
+
+        flags = 0
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+        subprocess.Popen(
+            [sys.executable, "-c",
+             "from mousereach.watcher.cli import main_watch; main_watch()"],
+            creationflags=flags, close_fds=True)
+    finally:
+        # Belt and braces: a stop flag left behind would stop the next watcher
+        # the moment it starts, which is a worse failure than not restarting.
         try:
-            p.terminate()
+            stop_flag.unlink(missing_ok=True)
         except Exception:
             pass
-    gone, alive = psutil.wait_procs(targets, timeout=max(stop_delay, 20.0))
-    stopped += len(gone)
-    for p in alive:
-        try:
-            p.kill()
-            stopped += 1
-        except Exception:
-            pass
-    if targets and not stopped:
-        return False, ("Found %d watcher process(es) but could not stop any of "
-                       "them; not starting a second, which would exit on the "
-                       "single-instance lock and leave the old one running."
-                       % len(targets))
-    time.sleep(stop_delay)
-    flags = 0
-    if sys.platform == "win32":
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-    subprocess.Popen(
-        [sys.executable, "-c",
-         "from mousereach.watcher.cli import main_watch; main_watch()"],
-        creationflags=flags, close_fds=True)
     time.sleep(verify_wait)
     pid = watcher_running()
     if pid:
