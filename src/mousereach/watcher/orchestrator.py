@@ -2246,6 +2246,74 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # SCAN PHASE
     # =========================================================================
 
+    # How long a video must sit in the posed-video folder with no pose beside
+    # it before it counts as misfiled rather than mid-handover. Staging copies
+    # the video first and renames the pose into place LAST, so a video that
+    # has only just arrived legitimately has no pose yet -- without this, the
+    # rescue below would pull a video out from under a staging in progress.
+    _MISFILED_SETTLE_S = 30 * 60
+
+    def _rescue_misfiled_singles(self) -> int:
+        """Move a video left in the posed-video folder back to the front door.
+
+        Processing/DLC_Complete is where POSED videos are handed over, and the
+        scan that reads it keys on pose files. A bare mp4 dropped there was
+        therefore invisible twice over: no pose to find it by, and no database
+        row to notice it was missing. It belongs in Processing/Single_Animal,
+        which is where a video that still needs posing goes, and the ordinary
+        path takes it from there.
+
+        Deliberately narrow, because this folder is a live handover point.
+        Only a video this database has never heard of, with no pose beside it,
+        nothing half-written alongside, and settled long enough that it cannot
+        be a handover in progress.
+        """
+        staging = self.staging_dir
+        front_door = Paths.SINGLE_ANIMAL_OUTPUT
+        if not staging or not front_door or not Path(staging).exists():
+            return 0
+        try:
+            candidates = list(Path(staging).glob("*.mp4"))
+        except OSError as e:
+            logger.debug(f"could not read the staging folder: {e}")
+            return 0
+        moved = 0
+        now = time.time()
+        for mp4 in candidates:
+            if "DLC" in mp4.stem:
+                continue                      # a labeled/overlay by-product
+            video_id = get_video_id(mp4.name)
+            if not video_id:
+                continue
+            if list(Path(staging).glob(f"{video_id}DLC*.h5")):
+                continue                      # posed: an ordinary handover
+            if list(Path(staging).glob(f"{video_id}*.part")):
+                continue                      # still being written
+            try:
+                if now - mp4.stat().st_mtime < self._MISFILED_SETTLE_S:
+                    continue                  # may be a handover in progress
+            except OSError:
+                continue
+            try:
+                if self.db.get_video(video_id) is not None:
+                    continue                  # known already, not a stray drop
+            except Exception:
+                continue
+            dest = Path(front_door) / mp4.name
+            if dest.exists():
+                continue
+            try:
+                Path(front_door).mkdir(parents=True, exist_ok=True)
+                if safe_move(mp4, dest):
+                    moved += 1
+                    logger.warning(
+                        "%s sat in the posed-video folder with no pose beside "
+                        "it. Moved to %s, where a video that still needs "
+                        "posing goes.", video_id, front_door)
+            except Exception as e:
+                logger.warning(f"could not move {mp4.name} to the front door: {e}")
+        return moved
+
     def _scan_phase(self):
         """Discover new DLC outputs in the staging directory."""
         if not self.staging_dir:
@@ -2271,6 +2339,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             f"{'' if len(adopted) <= 5 else ' ...'}")
         except Exception as e:
             logger.warning(f"Re-pose adoption scan failed (non-fatal): {e}")
+
+        # A video someone put in the posed-video folder without a pose is
+        # invisible to the scan below, which finds videos BY their pose file.
+        # Send it back to the front door rather than leave it sitting.
+        try:
+            self._rescue_misfiled_singles()
+        except Exception as e:
+            logger.warning(f"Could not check staging for misfiled videos: {e}")
 
         newly_found = self.state.discover_dlc_staged(self.staging_dir)
         if newly_found:
