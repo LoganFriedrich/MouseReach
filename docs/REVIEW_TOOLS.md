@@ -250,7 +250,15 @@ escalate button, or the watcher's mislabel diverts). One way out:
 `boundary_source: "human"` in the segments file means the cuts were already
 hand-fixed, and the bundle is not offered again. Videos with the most unused
 candidate cuts are offered first; videos with no candidates at all are last,
-because those have to be marked from scratch.
+because those have to be marked from scratch. Which videos come first is now
+also subject to the lab's work order (`priority_order.json`, see
+docs/WORK_PRIORITY.md); the most-unused-candidates rule breaks ties within a
+group.
+
+Until 2026-09-13 this was the one review tool that could not play a video at
+all -- only step frame by frame. It now has the same transport and speed
+buttons as the other tools (Rev / Play / Stop and 0.25x to 8x), driven by the
+video's real frame rate.
 
 **The guided walk** (added 2026-08-25, redesigned boundary-centric the same
 day) is how the tool opens: one BOUNDARY at a time, playhead parked on it. A

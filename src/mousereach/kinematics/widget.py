@@ -77,7 +77,7 @@ class DataViewerWidget(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         main_layout.addWidget(scroll)
 
         inner_widget = QWidget()
@@ -134,8 +134,11 @@ class DataViewerWidget(QWidget):
 
         play_row.addWidget(QLabel("Speed:"))
         self.speed_buttons = {}
-        for speed in [1, 2, 4, 8, 16]:
-            btn = QPushButton(f"{speed}x")
+        # Slow speeds matter more than fast ones here: a reach lasts a few
+        # frames, and this tool could only ever play at 1x or faster.
+        for speed in [0.25, 0.5, 1, 2, 4, 8, 16]:
+            label = f"{speed}x" if speed < 1 else f"{int(speed)}x"
+            btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setMaximumWidth(40)
             btn.clicked.connect(lambda checked, s=speed: self._set_speed(s))

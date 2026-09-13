@@ -28,7 +28,7 @@ from qtpy.QtWidgets import (
     QFileDialog, QProgressBar, QGroupBox, QListWidget, QMessageBox,
     QSpinBox, QScrollArea, QDialog, QTextBrowser
 )
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtGui import QFont
 
 import napari
@@ -87,6 +87,14 @@ class BoundaryReviewWidget(QWidget):
         self.boundaries: List[int] = []
         self.boundaries_reviewed: List[bool] = []  # Track which boundaries have been reviewed
         self.fps = 60.0
+        # Playback state. This tool could only STEP through frames -- every
+        # other review tool can play, at speed. The timer is owned by the
+        # widget so it stops when the widget goes away.
+        self.playback_timer = QTimer(self)
+        self.playback_timer.timeout.connect(self._playback_step)
+        self.playback_speed = 1.0
+        self.playback_direction = 1
+        self.is_playing = False
         self.video_layer = None
         self.points_layer = None
         self.video_path = None
@@ -131,7 +139,7 @@ class BoundaryReviewWidget(QWidget):
         # Scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         main_layout.addWidget(scroll)
 
         # Inner widget that holds all content
@@ -244,6 +252,36 @@ class BoundaryReviewWidget(QWidget):
             self.fwd_seg_btn = QPushButton("+1 seg >>>")
             self.fwd_seg_btn.clicked.connect(lambda: self._jump_frames(1837))
             jump_layout.addWidget(self.fwd_seg_btn)
+
+            # Playback. Same ladder, same labels and same button sizes as the
+            # causal review tool, so nobody has to re-learn the controls when
+            # they move between review tools.
+            play_row = QHBoxLayout()
+            self.play_rev_btn = QPushButton("Rev")
+            self.play_rev_btn.setMaximumWidth(40)
+            self.play_rev_btn.clicked.connect(self._play_reverse)
+            play_row.addWidget(self.play_rev_btn)
+            self.play_btn = QPushButton("Play")
+            self.play_btn.setMaximumWidth(40)
+            self.play_btn.clicked.connect(self._play_forward)
+            play_row.addWidget(self.play_btn)
+            self.stop_btn = QPushButton("Stop")
+            self.stop_btn.setMaximumWidth(40)
+            self.stop_btn.clicked.connect(self._stop_play)
+            play_row.addWidget(self.stop_btn)
+            play_row.addStretch()
+            play_row.addWidget(QLabel("Speed:"))
+            self.speed_buttons = {}
+            for _speed in (0.25, 0.5, 1, 2, 4, 8):
+                _label = f"{_speed}x" if _speed < 1 else f"{int(_speed)}x"
+                _btn = QPushButton(_label)
+                _btn.setCheckable(True)
+                _btn.setMaximumWidth(35)
+                _btn.clicked.connect(lambda _, s=_speed: self._set_speed(s))
+                self.speed_buttons[_speed] = _btn
+                play_row.addWidget(_btn)
+            self.speed_buttons[1].setChecked(True)
+            nav_layout.addLayout(play_row)
 
             nav_layout.addLayout(jump_layout)
 
@@ -946,6 +984,65 @@ class BoundaryReviewWidget(QWidget):
             self.goto_spin.setValue(frame_idx)
             self.goto_spin.blockSignals(False)
     
+    # --- Playback -----------------------------------------------------
+    # Added 2026-09-13: this was the one review tool that could not play at
+    # all, only step. Deliberately the same shape as the causal review tool's
+    # implementation rather than a new one.
+
+    def _playback_interval(self) -> int:
+        """Milliseconds between frames. Below 1x the interval stretches; at or
+        above it the interval holds and _playback_step skips frames instead,
+        which is what keeps fast playback smooth rather than merely asked for.
+        """
+        return max(1, int(1000 / ((self.fps or 60.0) * self.playback_speed)))
+
+    def _play_forward(self):
+        self.playback_direction = 1
+        self._start_playback()
+
+    def _play_reverse(self):
+        self.playback_direction = -1
+        self._start_playback()
+
+    def _start_playback(self):
+        if self.is_playing:
+            self._stop_play()          # the play button doubles as pause
+            return
+        if not self.n_frames:
+            return
+        self.is_playing = True
+        self.playback_timer.start(self._playback_interval())
+        btn = (getattr(self, "play_btn", None) if self.playback_direction == 1
+               else getattr(self, "play_rev_btn", None))
+        if btn is not None:
+            btn.setText("||")
+
+    def _stop_play(self):
+        self.is_playing = False
+        self.playback_timer.stop()
+        # Embedded mode builds no navigation bar, so these may not exist.
+        for name, text in (("play_btn", "Play"), ("play_rev_btn", "Rev")):
+            btn = getattr(self, name, None)
+            if btn is not None:
+                btn.setText(text)
+
+    def _playback_step(self):
+        current = self.viewer.dims.current_step[0]
+        skip = max(1, int(self.playback_speed))
+        new_frame = current + (skip * self.playback_direction)
+        if 0 <= new_frame < self.n_frames:
+            self.viewer.dims.set_current_step(0, new_frame)
+        else:
+            self._stop_play()
+
+    def _set_speed(self, speed: float):
+        self.playback_speed = speed
+        for s, btn in getattr(self, "speed_buttons", {}).items():
+            btn.setChecked(s == speed)
+        if self.is_playing:
+            self.playback_timer.stop()
+            self.playback_timer.start(self._playback_interval())
+
     def _jump_frames(self, delta: int):
         """Jump forward/backward by delta frames."""
         current = self.viewer.dims.current_step[0]

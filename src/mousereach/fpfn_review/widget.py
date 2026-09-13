@@ -225,7 +225,7 @@ class FPFNReviewWidget(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         main_layout.addWidget(scroll)
 
         inner = QWidget()
@@ -330,8 +330,8 @@ class FPFNReviewWidget(QWidget):
 
         speed_row = QHBoxLayout()
         speed_row.addWidget(QLabel("Speed:"))
-        for mult in (1, 2, 4, 8, 16):
-            btn = QPushButton(f"{mult}x")
+        for mult in (0.25, 0.5, 1, 2, 4, 8, 16):
+            btn = QPushButton(f"{mult}x" if mult < 1 else f"{int(mult)}x")
             btn.setCheckable(True)
             btn.setMaximumWidth(50)
             btn.clicked.connect(lambda checked, m=mult: self._set_speed_direct(m))
@@ -2312,7 +2312,7 @@ class FPFNReviewWidget(QWidget):
 
     def _set_speed_direct(self, multiplier: int) -> None:
         self.playback_speed = multiplier
-        for mult in (1, 2, 4, 8, 16):
+        for mult in (0.25, 0.5, 1, 2, 4, 8, 16):
             btn = getattr(self, f"_speed_btn_{mult}", None)
             if btn is not None:
                 btn.setChecked(mult == multiplier)

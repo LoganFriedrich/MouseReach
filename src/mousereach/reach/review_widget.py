@@ -113,7 +113,7 @@ class ReachAnnotatorWidget(QWidget):
         # Scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         main_layout.addWidget(scroll)
         
         # Inner widget that holds all content
@@ -202,8 +202,11 @@ class ReachAnnotatorWidget(QWidget):
 
             play_layout.addWidget(QLabel("Speed:"))
             self.speed_buttons = {}
-            for speed in [1, 2, 4, 8, 16]:
-                btn = QPushButton(f"{speed}x")
+            # Slow speeds matter more than fast ones here: a reach lasts a few
+            # frames, and this tool could only ever play at 1x or faster.
+            for speed in [0.25, 0.5, 1, 2, 4, 8, 16]:
+                label = f"{speed}x" if speed < 1 else f"{int(speed)}x"
+                btn = QPushButton(label)
                 btn.setCheckable(True)
                 btn.setMaximumWidth(40)
                 btn.clicked.connect(lambda checked, s=speed: self._set_speed(s))
@@ -1522,6 +1525,16 @@ class ReachAnnotatorWidget(QWidget):
 
     # === Playback ===
     
+    def _playback_interval(self) -> int:
+        """Milliseconds between frames, for the CURRENT speed.
+
+        The speed multiplier used to be missing from this sum entirely: the
+        interval was 1000/fps whatever the buttons said, so speed took effect
+        only through frame-skipping. That silently made every speed below 1x
+        a no-op, because the skip is int(speed) and int(0.25) is 0.
+        """
+        return max(1, int(1000 / ((self.fps or 60.0) * self.playback_speed)))
+
     def _set_speed(self, speed: int):
         """Set playback speed multiplier."""
         self.playback_speed = speed
@@ -1531,8 +1544,7 @@ class ReachAnnotatorWidget(QWidget):
         # If playing, restart timer with new speed
         if self.is_playing:
             self.playback_timer.stop()
-            interval = max(1, int(1000 / self.fps))
-            self.playback_timer.start(interval)
+            self.playback_timer.start(self._playback_interval())
     
     def _play_forward(self):
         """Start forward playback."""
@@ -1563,8 +1575,7 @@ class ReachAnnotatorWidget(QWidget):
             return
         
         self.is_playing = True
-        interval = max(1, int(1000 / self.fps))
-        self.playback_timer.start(interval)
+        self.playback_timer.start(self._playback_interval())
         
         if self.playback_direction == 1:
             self.play_btn.setText("⏸")
