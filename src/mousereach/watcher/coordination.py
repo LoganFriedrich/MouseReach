@@ -81,11 +81,27 @@ def _is_live_local_work(local_row) -> bool:
     DLC_Queue (2026-09-12). Disk truth wins, as it does in the archive step.
     """
     try:
-        if (local_row or {}).get('state') not in NODE_LOCAL_STATES:
+        state = (local_row or {}).get('state')
+        if state == 'outdated':
+            # This node's own verdict about the archive (and any hand-mark on
+            # it) -- never a thing another node's record may overwrite.
+            return True
+        if state not in NODE_LOCAL_STATES:
             return False
         from pathlib import Path
         raw = (local_row or {}).get('current_path')
-        return bool(raw) and Path(raw).is_file()
+        if not raw or not Path(raw).is_file():
+            return False
+        # A file on the shared drive is not this node's working copy.
+        from mousereach.config import Paths
+        nas = Paths.NAS_ROOT
+        if nas:
+            try:
+                Path(raw).resolve().relative_to(Path(nas).resolve())
+                return False
+            except ValueError:
+                pass
+        return True
     except Exception:
         return False
 
