@@ -130,6 +130,15 @@ class Paths:
     # Final validated outputs, organized by project/cohort (Step 6 destination)
     ANALYZED_OUTPUT = NAS_ROOT / "Analyzed" if NAS_ROOT else None
 
+    # Which work comes first, for the WHOLE lab: an ordered list of projects
+    # and, within each, an ordered list of cohorts. It lives on the shared
+    # drive beside pipeline_versions.json rather than in each machine's own
+    # config, because the queues it orders are shared too -- a per-machine
+    # copy meant the processing node and the review tools could disagree
+    # about what mattered, and nothing said so. Set once, read everywhere
+    # (watcher/work_priority.py).
+    LAB_PRIORITY = NAS_ROOT / "priority_order.json" if NAS_ROOT else None
+
     # --- Human-review queue roots (NAS -- cross-node visible) ---
     # A video only reaches kinematics + connectome.db when it is CLEAN. Anything
     # the algo cannot commit is held OUT of the archive+DB as a self-contained

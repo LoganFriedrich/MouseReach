@@ -93,7 +93,13 @@ stopping we are loud: the resolved policy is logged at startup, printed by
 file to edit. Nothing here fails silently and nothing here fails closed.
 """
 
+import json
 import logging
+import os
+import random
+import socket
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -416,3 +422,269 @@ def load_and_announce(raw) -> WorkPriority:
     for line in policy.describe():
         logger.info("Work priority -- %s", line)
     return policy
+
+
+# =============================================================================
+# THE LAB-WIDE ORDER -- one file, on the shared drive, read by every tool
+# =============================================================================
+#
+# WHY A SHARED FILE. The selectors above are expressive but per-machine:
+# they live in each node's ~/.mousereach/config.json. The queues they order
+# are shared, so two machines could disagree about what mattered and nothing
+# said so -- and the human review tools read no policy at all, so a reviewer
+# was handed a random video while the processing node worked strictly by
+# preference. One file on the shared drive, beside pipeline_versions.json,
+# is what makes "set it once" true.
+#
+# WHY TWO LISTS RATHER THAN SELECTORS. What a lab actually wants to say is
+# "this project before that one, and within it these cohorts first". Writing
+# that as selectors is easy to get subtly wrong, so the file holds the two
+# ordered lists and this module compiles them into selectors. Raw `order` /
+# `idle_only` are still accepted for anything the lists cannot express.
+
+LAB_PRIORITY_SCHEMA = "1.0"
+LAB_PRIORITY_FILENAME = "priority_order.json"
+LAB_PRIORITY_HINT = ("set the order in the MouseReach window (Watcher Control "
+                     "-> Work priority), or edit priority_order.json at the "
+                     "root of the shared pipeline folder")
+
+_LAB_CACHE_TTL_S = 60.0
+# What is cached is the FILE, not the resolved policy. Caching the policy was
+# wrong in a way tests caught immediately: the answer also depends on the
+# caller's own machine setting, so within the cache window a second caller got
+# the first caller's policy no matter what it asked for. Reading the shared
+# drive is the expensive part; building the policy from it is not.
+_LAB_RAW: Optional[dict] = None
+_LAB_RAW_AT: float = 0.0
+_LAB_RAW_SEEN: bool = False
+
+
+def lab_priority_path(nas_root=None) -> Optional[Path]:
+    """The shared order file, or None when no shared drive is configured."""
+    if nas_root is None:
+        from mousereach.config import Paths
+        nas_root = Paths.NAS_ROOT
+    return (Path(nas_root) / LAB_PRIORITY_FILENAME) if nas_root else None
+
+
+def compile_order(projects=None, cohorts=None, tray_types=None) -> List[dict]:
+    """Turn "projects first, cohorts within them" into ordering selectors.
+
+    Most specific first: each project's named cohorts, then the rest of that
+    project, then the next project. A preferred tray letter is folded into
+    every tier so Pillar work leads within each one, and a bare tray tier is
+    appended so Pillar still outranks an unnamed project.
+
+    Cohorts are emitted both bare ("01") and qualified ("CNT01") because a
+    video's cohort resolves to both (see cohort_labels), and a lab may write
+    either.
+    """
+    out: List[dict] = []
+    seen = set()
+    tray = [t for t in (tray_types or []) if str(t).strip()]
+
+    def add(selector: dict):
+        key = tuple(sorted((f, tuple(v)) for f, v in selector.items()))
+        if key not in seen:
+            seen.add(key)
+            out.append(selector)
+
+    for project in (projects or []):
+        project = str(project).strip()
+        if not project:
+            continue
+        for cohort in ((cohorts or {}).get(project) or []):
+            cohort = str(cohort).strip()
+            if not cohort:
+                continue
+            labels = [cohort] if cohort.upper().startswith(project.upper()) \
+                else [cohort, f"{project}{cohort}"]
+            selector = {"project": [project], "cohort": labels}
+            if tray:
+                selector["tray_type"] = list(tray)
+            add(selector)
+        selector = {"project": [project]}
+        if tray:
+            selector["tray_type"] = list(tray)
+        add(selector)
+    if tray:
+        add({"tray_type": list(tray)})
+    return out
+
+
+def read_lab_priority(nas_root=None) -> Optional[dict]:
+    """The shared order file's contents, or None when absent/unreadable."""
+    path = lab_priority_path(nas_root)
+    if not path:
+        return None
+    try:
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        logger.warning("Lab priority file %s could not be read (%s); falling "
+                       "back to this machine's own setting", path, e)
+        return None
+
+
+def save_lab_priority(projects=None, cohorts=None, tray_types=None,
+                      idle_only_tray_types=None, nas_root=None,
+                      updated_by=None, notes=None) -> Path:
+    """Write the shared order file. Atomic, so a node reading it mid-write
+    never sees half a file (the version declaration learned that the hard
+    way). Returns the path written."""
+    path = lab_priority_path(nas_root)
+    if not path:
+        raise ValueError("no shared drive configured, so there is nowhere to "
+                         "put the lab-wide order")
+    body = {
+        "schema_version": LAB_PRIORITY_SCHEMA,
+        "updated_at": datetime.now().isoformat(),
+        "updated_by": updated_by or socket.gethostname(),
+        "projects": [str(p).strip() for p in (projects or []) if str(p).strip()],
+        "cohorts": {str(k): [str(c).strip() for c in (v or []) if str(c).strip()]
+                    for k, v in (cohorts or {}).items()},
+        "tray_types": [str(t).strip() for t in (tray_types or []) if str(t).strip()],
+        "idle_only_tray_types": [str(t).strip() for t in (idle_only_tray_types or [])
+                                 if str(t).strip()],
+    }
+    if notes:
+        body["notes"] = str(notes)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(body, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    invalidate_lab_policy()
+    logger.info("Lab priority order saved to %s", path)
+    return path
+
+
+def _policy_from_lab_file(raw_file: dict) -> WorkPriority:
+    """Build a policy from the shared file, compiling the two lists unless it
+    carries raw selectors."""
+    if raw_file.get("order") is not None or raw_file.get("idle_only") is not None:
+        policy = load_policy({k: raw_file[k] for k in ("order", "idle_only")
+                              if raw_file.get(k) is not None})
+        policy.source = "lab file (raw selectors)"
+        return policy
+    order = compile_order(raw_file.get("projects"),
+                          raw_file.get("cohorts"),
+                          raw_file.get("tray_types") or
+                          list(FilePatterns.SUPPORTED_TRAY_TYPES))
+    idle = [{"tray_type": list(raw_file["idle_only_tray_types"])}] \
+        if raw_file.get("idle_only_tray_types") else None
+    policy = load_policy({"order": order} if idle is None
+                         else {"order": order, "idle_only": idle})
+    policy.source = "lab file (%s)" % LAB_PRIORITY_FILENAME
+    return policy
+
+
+_UNSET = object()
+
+
+def load_lab_policy(local_raw=_UNSET, nas_root=None,
+                    max_age_s: Optional[float] = None) -> WorkPriority:
+    """The one ordering every tool should use.
+
+    Shared file first, then this machine's own watcher.work_priority, then
+    the shipped default. Only the FILE READ is cached (a minute); pass
+    max_age_s=0 to read now. Never raises.
+
+    Passing local_raw=None means "this caller HAS no local setting", and the
+    shipped default follows. That is different from not passing it at all,
+    which means "go and look this machine's config up for me". Collapsing the
+    two let this function answer a caller from a source the caller had already
+    ruled out -- which quietly dropped the Pillar-first default.
+    """
+    try:
+        raw_file = _cached_lab_raw(nas_root, max_age_s)
+        if raw_file:
+            return _policy_from_lab_file(raw_file)
+        if local_raw is _UNSET:
+            try:
+                from mousereach.config import WatcherConfig
+                local_raw = WatcherConfig.load().work_priority
+            except Exception:
+                local_raw = None
+        policy = load_policy(local_raw)
+        if local_raw:
+            policy.source += " (this machine only -- no lab file yet)"
+        return policy
+    except Exception as e:                       # never let ordering stop work
+        logger.warning("Lab priority could not be resolved (%s); using the "
+                       "shipped default", e)
+        return load_policy(None)
+
+
+def _cached_lab_raw(nas_root=None, max_age_s: Optional[float] = None):
+    """The shared file's contents, re-read at most once a minute.
+
+    Only the READ is cached. The resolved policy is not, because it also
+    depends on the caller's own machine setting -- caching that handed a
+    second caller the first caller's answer.
+    """
+    global _LAB_RAW, _LAB_RAW_AT, _LAB_RAW_SEEN
+    ttl = _LAB_CACHE_TTL_S if max_age_s is None else max_age_s
+    # ttl <= 0 means "read it now"; comparing elapsed time alone would not,
+    # because this clock's resolution makes two calls in one tick look
+    # simultaneous.
+    fresh = (_LAB_RAW_SEEN and ttl > 0
+             and time.monotonic() - _LAB_RAW_AT <= ttl)
+    if not fresh:
+        _LAB_RAW = read_lab_priority(nas_root)
+        _LAB_RAW_AT = time.monotonic()
+        _LAB_RAW_SEEN = True
+    return _LAB_RAW
+
+
+def invalidate_lab_policy() -> None:
+    """Forget the cached file (after a save, or in a test)."""
+    global _LAB_RAW, _LAB_RAW_AT, _LAB_RAW_SEEN
+    _LAB_RAW, _LAB_RAW_AT, _LAB_RAW_SEEN = None, 0.0, False
+
+
+# --- using it on a list -----------------------------------------------------
+
+def as_item(obj) -> dict:
+    """Adapt whatever a caller holds -- a bundle folder, a video id, a DB row
+    -- into the dict the resolvers above understand."""
+    if isinstance(obj, dict):
+        return obj
+    if isinstance(obj, Path):
+        return {"video_id": obj.name}
+    return {"video_id": str(obj)}
+
+
+def order_items(items, key=None, policy=None, is_collage: bool = False) -> list:
+    """``items`` sorted by preference, stable within a tier.
+
+    Use where the order itself is the product (a queue listing, a drain that
+    takes the first N). Where one item is being handed to a person, prefer
+    best_tier_choice, which keeps the sampling unbiased inside a tier.
+    """
+    policy = policy or load_lab_policy()
+    to_item = key or as_item
+    return [obj for _, _, obj in sorted(
+        ((policy.tier(to_item(o), is_collage=is_collage), i, o)
+         for i, o in enumerate(items)),
+        key=lambda t: (t[0], t[1]))]
+
+
+def best_tier_choice(items, key=None, policy=None, rng=None,
+                     is_collage: bool = False):
+    """One item from the most-preferred non-empty tier, chosen at random.
+
+    This is the reconciliation the review tools need: the lab's order decides
+    WHICH tier a reviewer works through, and the long-standing random pick --
+    there to keep the reviewed set unbiased across cohorts and days -- still
+    decides which video inside that tier. Returns None for an empty list.
+    """
+    items = list(items)
+    if not items:
+        return None
+    policy = policy or load_lab_policy()
+    to_item = key or as_item
+    tiers = [policy.tier(to_item(o), is_collage=is_collage) for o in items]
+    best = min(tiers)
+    candidates = [o for o, t in zip(items, tiers) if t == best]
+    return (rng or random).choice(candidates)

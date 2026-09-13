@@ -1,7 +1,13 @@
-# Which video the watcher picks next
+# Which video comes next
 
 Assumes no knowledge of the codebase. If you only want to know *how to make one
-kind of session go first*, read "The two settings" and stop.
+kind of session go first*, read "One order for the whole lab" and stop.
+
+One order decides both what the processing machines pick up next AND which video
+the human review tools hand a reviewer next. Until 2026-09-13 those disagreed:
+the order was a separate copy on each machine, and the review tools read no
+order at all, so a reviewer was handed a uniformly random video while the
+machines worked strictly by preference.
 
 ---
 
@@ -28,9 +34,50 @@ NAS, running the local pipeline, and archiving locally do not.
 
 ---
 
+## One order for the whole lab
+
+Set it once, in the MouseReach window: **Watcher Control -> Work priority
+(whole lab)**. Two boxes:
+
+| Box | Means | Example |
+|-----|-------|---------|
+| projects, best first | which projects matter most | `CNT, ASPA` |
+| cohorts within a project | which groups inside a project come first | `CNT: 01, 02, 03, 04` |
+| tray types first | which tray letters lead | `P` |
+
+That example says, in order: pillar videos from CNT cohorts 01 to 04 first, then
+the rest of CNT, then ASPA, then everything else. Easy and Flat trays are left
+until a machine has nothing else to do.
+
+Pressing Save writes **`priority_order.json` at the root of the shared pipeline
+folder**, beside `pipeline_versions.json`. Every machine reads that one file, so
+there is nothing to copy around and no way for two machines to disagree. Running
+watchers pick up a change within a minute; the review tools apply it to the next
+video they hand out. Nothing needs restarting.
+
+**Who obeys it.** The processing watchers, for every kind of work they choose
+between. The triage review tool and the deep review tool, when they choose which
+video to show next. The re-segmentation queue. And the order in which videos a
+reviewer has cleared re-enter the pipeline, which matters because only ten of
+them go back per cycle.
+
+**One deliberate exception.** Inside the most important group, the review tools
+still pick at random. That randomness is not an oversight: it is what keeps the
+reviewed set unbiased across cohorts and days. The lab's order decides which
+group a reviewer works through; the coin decides which video inside it.
+
+**If it cannot be read** -- no shared drive configured, the file missing or
+malformed -- nothing stops. Each machine falls back to its own setting below,
+then to the shipped default (pillar first), and says so in its log.
+
+---
+
 ## The two settings
 
-Everything lives under `watcher.work_priority` in `~/.mousereach/config.json`:
+The lab-wide file above is the way to set this. Underneath, it compiles to the
+two settings described here, which can also be written by hand for anything the
+two lists cannot express. A machine's own copy, under `watcher.work_priority` in
+`~/.mousereach/config.json`, is used only when there is no lab file:
 
 ```json
 {
@@ -164,7 +211,10 @@ so that it is not something you have to work out from the code.
    GPU node, collage cropping and DLC). A preferred project's Easy session still
    waits behind any Pillar session.
 4. **`order`** decides among what is left, in every kind including the ones
-   `idle_only` does not touch.
+   `idle_only` does not touch. Which `order` is in force is itself a
+   precedence: the lab file on the shared drive, then this machine's own
+   `watcher.work_priority`, then the shipped default (pillar first). The log
+   line at startup names which one was used.
 5. **Chance** decides among equals -- except for archiving, staging and intake,
    which keep the database's own newest-first order.
 
@@ -200,7 +250,20 @@ The default already does this. Nothing to write.
 ## Where this lives in the code
 
 - `src/mousereach/watcher/work_priority.py` -- the policy, the selectors, and
-  the field resolvers.
+  the field resolvers. Also the lab-wide layer: `compile_order` turns the two
+  lists into selectors, `save_lab_priority` / `read_lab_priority` own
+  `priority_order.json` on the shared drive, `load_lab_policy` resolves the
+  precedence above (only the file read is cached), and `order_items` /
+  `best_tier_choice` are what everything outside the watcher calls.
+- `src/mousereach/watcher/control_widget.py` -- the "Work priority (whole lab)"
+  box that writes that file.
+- The review side, which reads the same order:
+  `review/causal_review_widget.py` `_pick_by_priority` (triage and deep review
+  -- top group first, random inside it), `review/fix_segmentation_widget.py`
+  `_load_queue`, and `watcher/review_return.py` `_bundles`, which decides which
+  cleared videos re-enter the pipeline first when only ten go back per cycle.
+- `tests/test_lab_priority.py` -- the shared file, the precedence, and the
+  review-side ordering, with no database and no network.
 - `BaseOrchestrator._get_next_work_item` -- the two passes.
 - `<role>Orchestrator._select_work_item` -- one pass over the four work kinds,
   and the ADMIT/DRAIN split marked bucket by bucket.
