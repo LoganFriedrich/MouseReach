@@ -781,6 +781,92 @@ class DLCOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.debug(f"DB backup failed (non-fatal): {e}")
 
+    def _adopt_single_for_dlc(self, work: dict):
+        """Bring a video someone left in the shared singles folder onto this
+        node and queue it for pose.
+
+        Copying rather than posing it where it lies is the whole point:
+        DeepLabCut writes its output beside its input, and the input is on the
+        shared drive. Posing in place would scatter pose files across a folder
+        every machine reads.
+        """
+        video_id = work['id']
+        data = work['data']
+        dlc_queue = Paths.DLC_QUEUE
+        if not dlc_queue:
+            self.db.mark_unresolvable(
+                video_id, "no local DLC queue is configured on this node")
+            return False
+        src = locate_video_file(video_id, raw=data.get('current_path'),
+                                extra_dirs=[Paths.SINGLE_ANIMAL_OUTPUT],
+                                search_archive=False)
+        if src is None:
+            self.db.mark_unresolvable(
+                video_id, "registered from the shared singles folder, but the "
+                          "file is no longer there")
+            return False
+        dest = Path(dlc_queue) / f"{video_id}.mp4"
+        try:
+            Path(dlc_queue).mkdir(parents=True, exist_ok=True)
+            same = dest.is_file() and dest.stat().st_size == Path(src).stat().st_size
+        except OSError:
+            same = False
+        if not same and not safe_copy(Path(src), dest, verify=True):
+            self.db.mark_failed(video_id, f"could not copy {src} into the DLC queue")
+            return False
+        self.db.update_state(video_id, 'dlc_queued',
+                             current_path=str(dest), source_path=str(dest))
+        self.db.log_step(video_id, 'adopt', 'completed',
+                         message=f"taken from the shared singles folder into {dlc_queue}")
+        logger.info(f"{video_id}: left in the shared singles folder; adopted "
+                    f"onto this node and queued for DLC")
+        return True
+
+    def _adopt_untracked_queue_files(self) -> int:
+        """Pick up anything dropped straight into this node's DLC queue.
+
+        The startup sweep below does the same thing plus retry handling, but
+        only at startup: a file dropped while the watcher was running sat
+        there until somebody restarted it. This runs every cycle and only
+        touches files the database has never heard of, so it cannot disturb
+        anything already in flight.
+
+        DeepLabCut's own by-products are skipped rather than quarantined --
+        a '..._labeled.mp4' beside a pose is output, not an unprocessed video,
+        and treating it as a misnamed one would file it as a problem.
+        """
+        dlc_queue = Paths.DLC_QUEUE
+        if not dlc_queue or not Path(dlc_queue).exists():
+            return 0
+        adopted = 0
+        for mp4 in Path(dlc_queue).glob("*.mp4"):
+            if "DLC" in mp4.stem:
+                continue                       # a labeled/overlay by-product
+            video_id = get_video_id(mp4.name)
+            if not video_id:
+                continue
+            try:
+                if self.db.get_video(video_id) is not None:
+                    continue                   # already tracked
+            except Exception:
+                continue
+            h5s = list(Path(dlc_queue).glob(f"{video_id}DLC*.h5"))
+            state = 'dlc_complete' if h5s else 'dlc_queued'
+            try:
+                self.db.register_video(video_id=video_id, source_path=str(mp4),
+                                       current_path=str(mp4))
+                self.db.force_state(
+                    video_id, state,
+                    reason="found in this node's DLC queue with no database row",
+                    current_path=str(mp4),
+                    dlc_output_path=str(h5s[0]) if h5s else None)
+                adopted += 1
+                logger.info(f"{video_id}: dropped into the DLC queue; picked up as "
+                            f"'{state}'")
+            except Exception as e:
+                logger.warning(f"could not pick up {mp4.name}: {e}")
+        return adopted
+
     def _recover_local_dlc_queue(self):
         """Scan DLC_Queue for orphaned MP4s not in local DB.
 
@@ -915,6 +1001,14 @@ class DLCOrchestrator(BaseOrchestrator):
         # Phase B: Check for DLC completions (h5 files appearing)
         self._scan_for_dlc_completions()
 
+        # Phase B2: Pick up anything dropped straight into this node's queue.
+        # The startup sweep catches these too, but only at startup -- a file
+        # dropped while the watcher was running sat there until a restart.
+        try:
+            self._adopt_untracked_queue_files()
+        except Exception as e:
+            logger.warning(f"Could not check the DLC queue for dropped files: {e}")
+
         # Phase C: Pull re-pose requests from shared storage. A node that runs
         # the version scan asks for new poses by writing one small file per
         # video into Processing/Repose_Queue; this GPU node copies the archived
@@ -1041,6 +1135,25 @@ class DLCOrchestrator(BaseOrchestrator):
                 'data': pick
             }
 
+        # Priority 2b: A video somebody left in the shared singles folder.
+        # ADMIT: adopting one brings a new file onto this node and creates new
+        # GPU work, so it waits behind the videos already queued.
+        #
+        # discover_new_singles records these as 'validated', and until
+        # 2026-09-13 no job list selected that state: the file was noticed,
+        # written into the database, and then ignored for good. Somebody
+        # dropping a video where the folder layout says videos go is the most
+        # ordinary thing a person can do, and it has to work.
+        videos = self.db.get_videos_in_state('validated')
+        pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
+                                    allow_deferred=admit_deferred)
+        if pick is not None:
+            return {
+                'type': 'adopt_single',
+                'id': pick['video_id'],
+                'data': pick
+            }
+
         # Priority 3: Crop next collage (Pillar first, random within tier)
         collages = self.db.get_collages_in_state('stable')
         # ADMIT: cropping a collage creates new local files and new DLC work.
@@ -1069,6 +1182,8 @@ class DLCOrchestrator(BaseOrchestrator):
             ok = None
             if work_type == 'collage':
                 ok = self._process_collage(work)
+            elif work_type == 'adopt_single':
+                ok = self._adopt_single_for_dlc(work)
             elif work_type == 'single_dlc':
                 ok = self._process_single_dlc(work)
             elif work_type == 'stage_to_nas':
