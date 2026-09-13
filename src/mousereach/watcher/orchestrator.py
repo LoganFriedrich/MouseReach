@@ -196,9 +196,97 @@ class BaseOrchestrator:
         except Exception:
             return False
 
+    # --- States a node sets WHILE it is working on something -----------------
+    # Nothing selects these as work. If the process dies here the row stops
+    # moving and no later run ever picks it up: the video is stranded, and
+    # stranded silently, because the queue looks busy rather than broken.
+    #
+    # Reclaiming them is unambiguous rather than a guess about a live run: a
+    # named global mutex (watcher/cli.py) means exactly one watcher runs per
+    # machine and a second one exits, so anything still sitting in one of
+    # these AT STARTUP was left behind by a process that is already gone.
+    #
+    # 'processing' is deliberately absent. Both roles already select it, so an
+    # interrupted pipeline run is picked up again on its own -- and picked up
+    # where it left off, because the pipeline reuses the stage outputs that
+    # already exist rather than redoing them.
+    _ORPHANED_VIDEO_STATES = {
+        # left behind in -> put back to
+        'archiving': 'processed',        # re-files the finished video
+    }
+    _ORPHANED_COLLAGE_STATES: dict = {}
+
+    def _reclaim_orphaned_work(self) -> dict:
+        """Put anything a dead process left mid-flight back in the queue.
+
+        Runs once at startup, before this node takes on anything new. Never
+        raises: a node must still start even if reclaiming fails.
+        """
+        from mousereach.watcher.db import VIDEO_TRANSITIONS, COLLAGE_TRANSITIONS
+        reclaimed = {}
+        why = ("left mid-run by a watcher that stopped before it finished; "
+               "returned to the queue at startup")
+
+        for state, back_to in self._ORPHANED_VIDEO_STATES.items():
+            try:
+                rows = self.db.get_videos_in_state(state)
+            except Exception as e:
+                logger.debug(f"could not list '{state}' videos to reclaim: {e}")
+                continue
+            for row in rows:
+                video_id = row['video_id']
+                try:
+                    if back_to in VIDEO_TRANSITIONS.get(state, []):
+                        self.db.update_state(video_id, back_to)
+                    else:
+                        self.db.force_state(video_id, back_to, reason=why)
+                    self.db.log_step(video_id, 'reclaim', 'completed',
+                                     message=f"{state} -> {back_to}: {why}")
+                    reclaimed[state] = reclaimed.get(state, 0) + 1
+                    logger.warning("Reclaimed %s: was left in '%s', back to '%s'",
+                                   video_id, state, back_to)
+                except Exception as e:
+                    logger.error(f"Could not reclaim {video_id} from '{state}': {e}")
+
+        for state, back_to in self._ORPHANED_COLLAGE_STATES.items():
+            try:
+                rows = self.db.get_collages_in_state(state)
+            except Exception as e:
+                logger.debug(f"could not list '{state}' collages to reclaim: {e}")
+                continue
+            for row in rows:
+                name = row.get('filename') or row.get('collage_id')
+                try:
+                    if back_to in COLLAGE_TRANSITIONS.get(state, []):
+                        self.db.update_collage_state(name, back_to)
+                    else:
+                        # No 'reason' parameter on this one, unlike the video
+                        # equivalent: anything extra is written as a column.
+                        self.db.force_collage_state(name, back_to)
+                    reclaimed[state] = reclaimed.get(state, 0) + 1
+                    logger.warning("Reclaimed collage %s: was left in '%s', "
+                                   "back to '%s'", name, state, back_to)
+                except Exception as e:
+                    logger.error(f"Could not reclaim collage {name}: {e}")
+
+        if reclaimed:
+            logger.warning(
+                "Startup reclaim: %s. These were interrupted by a stop or a "
+                "crash and would otherwise have sat untouched.",
+                ", ".join(f"{n} from '{s}'" for s, n in sorted(reclaimed.items())))
+        return reclaimed
+
     def run(self, shutdown_event: threading.Event):
         """Main orchestrator loop: scan + process in a single thread."""
         logger.info(f"{self.__class__.__name__} starting main loop")
+
+        # Before taking anything new on, put back whatever a previous run was
+        # holding when it stopped. Without this an interrupted pose or archive
+        # sits in a state nothing selects, for good.
+        try:
+            self._reclaim_orphaned_work()
+        except Exception as e:
+            logger.error(f"Startup reclaim failed (continuing): {e}")
 
         while not shutdown_event.is_set():
             try:
@@ -612,6 +700,23 @@ class DLCOrchestrator(BaseOrchestrator):
     # that need a new pose (see BaseOrchestrator).
     adopts_orphans = False
     reprocesses_partial = False
+
+    # This role is the only one that poses and the only one that crops, so it
+    # is the only one that can leave a video in 'dlc_running' or a collage in
+    # 'cropping'. Reclaiming a pose is what stops a stopped watcher from
+    # stranding one: 'dlc_running' -> 'dlc_queued' is a legal transition, and
+    # the transition table's own note calls it "re-queue on interrupt".
+    #
+    # These stay OFF the base class on purpose. The processing role has no
+    # GPU and never selects 'dlc_queued', so reclaiming a pose there would
+    # swap one dead end for another.
+    _ORPHANED_VIDEO_STATES = {
+        'archiving': 'processed',
+        'dlc_running': 'dlc_queued',
+    }
+    _ORPHANED_COLLAGE_STATES = {
+        'cropping': 'stable',
+    }
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)

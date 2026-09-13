@@ -534,6 +534,19 @@ def main_status():
     print(f"  Crystallized: {video_states.get('crystallized', 0)}")
     print(f"  Quarantined:  {video_states.get('quarantined', 0)}")
     print(f"  Failed:       {video_states.get('failed', 0)}")
+
+    # Anything sitting in a state the watcher only sets WHILE it is working
+    # was interrupted -- a stop, a reboot, a crash. Say so plainly rather than
+    # leaving it to look like busy work that never finishes.
+    interrupted = {s: video_states.get(s, 0)
+                   for s in ('dlc_running', 'archiving')
+                   if video_states.get(s, 0)}
+    if interrupted:
+        print()
+        print("  Interrupted mid-run: "
+              + ", ".join(f"{n} {s}" for s, n in sorted(interrupted.items())))
+        print("  The next watcher start puts these back in the queue by itself.")
+        print("  Nothing is lost and nothing needs doing by hand.")
     print()
 
     # Per-animal breakdown
