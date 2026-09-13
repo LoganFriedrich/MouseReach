@@ -70,15 +70,44 @@ def restart_watcher(stop_delay: float = 3.0, verify_wait: float = 12.0):
         import psutil
     except ImportError:
         return False, "psutil is not installed; cannot manage the process."
-    stopped = 0
+    # Match BOTH spellings. A watcher started from the console script is
+    # 'mousereach-watch.exe' with a python child whose command line says the
+    # same; only a watcher started as `python -c "...main_watch()"` contains
+    # 'main_watch'. Matching one spelling meant this stopped nothing on half
+    # the machines in the lab, and then reported success -- the replacement
+    # exited on the singleton mutex and the OLD code kept running (found on a
+    # GPU node, 2026-09-13).
+    targets = []
     for p in psutil.process_iter(["cmdline"]):
         cmd = " ".join(p.info.get("cmdline") or [])
-        if "main_watch" in cmd:
-            try:
-                p.kill()
-                stopped += 1
-            except Exception:
-                pass
+        if "main_watch" in cmd or "mousereach-watch" in cmd:
+            targets.append(p)
+
+    # Ask before insisting. A force kill mid-crop used to strand the collage:
+    # 'cropping' has no edge back to 'stable' and nothing selects it, so the
+    # video needed a hand-written database fix. Startup reclaim now repairs
+    # that, but letting the loop finish its current item is still the right
+    # order of events -- it also lets an in-flight DLC run reach a state the
+    # next start can resume from.
+    stopped = 0
+    for p in targets:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    gone, alive = psutil.wait_procs(targets, timeout=max(stop_delay, 20.0))
+    stopped += len(gone)
+    for p in alive:
+        try:
+            p.kill()
+            stopped += 1
+        except Exception:
+            pass
+    if targets and not stopped:
+        return False, ("Found %d watcher process(es) but could not stop any of "
+                       "them; not starting a second, which would exit on the "
+                       "single-instance lock and leave the old one running."
+                       % len(targets))
     time.sleep(stop_delay)
     flags = 0
     if sys.platform == "win32":
