@@ -140,8 +140,15 @@ def update_current_versions(updates: dict, nas_root: Path = None,
 
     # Save
     versions_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(versions_path, 'w') as f:
+    # Write via a sibling temp file and rename: every node re-reads this
+    # declaration each poll, and a reader that caught it half-written got
+    # {} -- an empty scorer -- from which every model check drew the wrong
+    # conclusion.
+    import os as _os
+    _tmp = versions_path.with_name(versions_path.name + '.tmp')
+    with open(_tmp, 'w') as f:
         json.dump(data, f, indent=2)
+    _os.replace(_tmp, versions_path)
 
     logger.info(f"Updated pipeline_versions.json: {updates}")
     return data
@@ -177,8 +184,15 @@ def initialize_versions(nas_root: Path = None) -> dict:
     }
 
     versions_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(versions_path, 'w') as f:
+    # Write via a sibling temp file and rename: every node re-reads this
+    # declaration each poll, and a reader that caught it half-written got
+    # {} -- an empty scorer -- from which every model check drew the wrong
+    # conclusion.
+    import os as _os
+    _tmp = versions_path.with_name(versions_path.name + '.tmp')
+    with open(_tmp, 'w') as f:
         json.dump(data, f, indent=2)
+    _os.replace(_tmp, versions_path)
 
     logger.info(f"Created pipeline_versions.json at {versions_path}")
     return data

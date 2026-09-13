@@ -71,12 +71,27 @@ def extract_dlc_model_info(h5_path: Path) -> Dict[str, str]:
 
 
 _DECLARED_SCORER: Optional[str] = None
+_DECLARED_SCORER_AT: float = 0.0
+_DECLARED_SCORER_TTL_S: float = 60.0
 
 
-def declared_dlc_scorer() -> str:
-    """The DLC scorer pipeline_versions.json declares as current ('' if none)."""
-    global _DECLARED_SCORER
-    if _DECLARED_SCORER is None:
+def declared_dlc_scorer(max_age_s: Optional[float] = None) -> str:
+    """The DLC scorer pipeline_versions.json declares as current ('' if none).
+
+    Cached for a minute, not for the life of the process: a watcher that
+    has run since before a model change used to keep preferring the OLD
+    pose whenever two sat side by side -- exactly the situation a re-pose
+    creates. Pass ``max_age_s=0`` to read the declaration now.
+    """
+    global _DECLARED_SCORER, _DECLARED_SCORER_AT
+    import time as _time
+    ttl = _DECLARED_SCORER_TTL_S if max_age_s is None else max_age_s
+    # ttl <= 0 means "read it now". Testing only the elapsed time would not:
+    # this clock has a ~16 ms resolution on Windows, so two calls in the same
+    # tick differ by exactly 0.0, which is not > 0.0, and the caller asking
+    # for a fresh read got the cached answer instead.
+    if (_DECLARED_SCORER is None or ttl <= 0
+            or _time.monotonic() - _DECLARED_SCORER_AT > ttl):
         try:
             from mousereach.pipeline.versions import get_current_versions
             _DECLARED_SCORER = (
@@ -84,6 +99,7 @@ def declared_dlc_scorer() -> str:
             )
         except Exception:
             _DECLARED_SCORER = ''
+        _DECLARED_SCORER_AT = _time.monotonic()
     return _DECLARED_SCORER
 
 
