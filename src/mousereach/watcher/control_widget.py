@@ -205,6 +205,38 @@ class WatcherControlWidget(QWidget):
         vform.addRow(vbtns)
         root.addWidget(ver)
 
+        # --- Work priority: ONE order, for the whole lab ---
+        # This is deliberately not a per-machine setting. The queues it orders
+        # are shared, so a copy on each machine meant the processing node and
+        # the review tools could disagree about what mattered and nothing said
+        # so. Saving here writes priority_order.json on the pipeline drive and
+        # every node picks it up.
+        pri = QGroupBox("Work priority (whole lab -- processing AND human review)")
+        pform = QFormLayout(pri)
+        self._pri_projects = QLineEdit()
+        self._pri_projects.setPlaceholderText("most important first, e.g.  CNT, ASPA")
+        self._pri_cohorts = QLineEdit()
+        self._pri_cohorts.setPlaceholderText("per project, e.g.  CNT: 01, 02, 03, 04")
+        self._pri_trays = QLineEdit()
+        self._pri_trays.setPlaceholderText("tray letters worked first, e.g.  P")
+        pform.addRow("projects, best first", self._pri_projects)
+        pform.addRow("cohorts within a project", self._pri_cohorts)
+        pform.addRow("tray types first", self._pri_trays)
+        self._pri_status = QLabel("")
+        self._pri_status.setWordWrap(True)
+        self._pri_status.setStyleSheet("color:#888;")
+        pform.addRow(self._pri_status)
+        pbtns = QHBoxLayout()
+        preload = QPushButton("Reload")
+        preload.clicked.connect(self._load_priority_into_form)
+        psave = QPushButton("Save priority order")
+        psave.setStyleSheet("font-weight:bold;")
+        psave.clicked.connect(self._save_priority)
+        pbtns.addWidget(preload)
+        pbtns.addWidget(psave)
+        pform.addRow(pbtns)
+        root.addWidget(pri)
+
         # --- Backups (copy inputs + final outputs to a second drive) ---
         bkp = QGroupBox("Backups (copy pipeline data to a second drive)")
         bform = QFormLayout(bkp)
@@ -232,6 +264,7 @@ class WatcherControlWidget(QWidget):
 
         self._load_config_into_form()
         self._load_versions()
+        self._load_priority_into_form()
         self._load_backup()
 
     # ------------------------------------------------------------- helpers
@@ -514,6 +547,81 @@ class WatcherControlWidget(QWidget):
             show_info("Config saved. Restart the watcher for changes to take effect.")
         except Exception as e:
             show_error(f"Could not save config: {e}")
+
+    # ------------------------------------------------------------- priority
+    @staticmethod
+    def _parse_cohort_text(text: str) -> dict:
+        """"CNT: 01, 02; ASPA: 05" -> {"CNT": ["01","02"], "ASPA": ["05"]}.
+
+        Commas and spaces both separate, so nobody has to remember which.
+        A chunk with no project prefix is skipped rather than guessed at.
+        """
+        out = {}
+        for chunk in (text or "").split(";"):
+            chunk = chunk.strip()
+            if not chunk or ":" not in chunk:
+                continue
+            project, rest = chunk.split(":", 1)
+            project = project.strip()
+            values = [v for v in rest.replace(",", " ").split() if v]
+            if project and values:
+                out[project] = values
+        return out
+
+    @staticmethod
+    def _format_cohort_text(cohorts: dict) -> str:
+        return "; ".join("%s: %s" % (p, ", ".join(v))
+                         for p, v in (cohorts or {}).items() if v)
+
+    @staticmethod
+    def _split_list(text: str) -> list:
+        return [v for v in (text or "").replace(",", " ").split() if v]
+
+    def _load_priority_into_form(self):
+        """Show the lab-wide order, and what it currently resolves to."""
+        try:
+            from mousereach.watcher.work_priority import (
+                lab_priority_path, load_lab_policy, read_lab_priority,
+            )
+            raw = read_lab_priority() or {}
+            self._pri_projects.setText(", ".join(raw.get("projects") or []))
+            self._pri_cohorts.setText(self._format_cohort_text(raw.get("cohorts")))
+            self._pri_trays.setText(", ".join(raw.get("tray_types") or ["P"]))
+            policy = load_lab_policy(max_age_s=0)
+            where = lab_priority_path()
+            lines = policy.describe()
+            if not raw:
+                lines.append("no lab file yet at %s -- saving here creates it"
+                             % (where or "(no shared drive configured)"))
+            self._pri_status.setText("\n".join(lines))
+        except Exception as e:
+            self._pri_status.setText("Could not read the lab order: %s" % e)
+
+    def _save_priority(self):
+        """Write the lab-wide order to the shared drive."""
+        try:
+            from mousereach.config import FilePatterns
+            from mousereach.watcher.work_priority import (
+                read_lab_priority, save_lab_priority,
+            )
+            existing = read_lab_priority() or {}
+            trays = [t.upper() for t in self._split_list(self._pri_trays.text())]
+            path = save_lab_priority(
+                projects=self._split_list(self._pri_projects.text()),
+                cohorts=self._parse_cohort_text(self._pri_cohorts.text()),
+                tray_types=trays or None,
+                # Not on the form: keep whatever the file already said, and
+                # fall back to the shipped "unsupported trays wait" rule.
+                idle_only_tray_types=(existing.get("idle_only_tray_types")
+                                      or list(FilePatterns.UNSUPPORTED_TRAY_TYPES)),
+            )
+            self._load_priority_into_form()
+            show_info("Priority order saved to %s. Every machine reads it -- "
+                      "running watchers pick it up within a minute, and the "
+                      "review tools use it for the next video they hand out."
+                      % path)
+        except Exception as e:
+            show_error("Could not save the priority order: %s" % e)
 
     # ------------------------------------------------------------- versions
     def _load_versions(self):
