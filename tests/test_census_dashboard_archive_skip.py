@@ -49,26 +49,34 @@ def _age(path, seconds_ago):
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """A tmp pipeline with every stage folder present and empty, so a test
-    only sees what it puts there. The quarantine lookup and review resolver
-    are stubbed so nothing reads this machine's config or shared drive."""
+    """A tmp pipeline with every stage folder of the stage layout present and
+    empty, so a test only sees what it puts there, and a plain guard FILE at
+    each retired folder name, as the migrated share has. The quarantine lookup
+    and review resolver are stubbed so nothing reads this machine's config or
+    shared drive."""
     nas = tmp_path / "nas"
     work = tmp_path / "work"
     dirs = {
         "NAS_ROOT": nas,
         "ANALYZED_OUTPUT": nas / "Analyzed",
         "MULTI_ANIMAL_SOURCE": nas / "Unanalyzed" / "Multi-Animal",
-        "SINGLE_ANIMAL_OUTPUT": nas / "Unanalyzed" / "Single-Animal",
-        "DLC_STAGING": nas / "Processing" / "DLC_Complete",
+        "SINGLE_ANIMAL_OUTPUT": nas / "Unanalyzed" / "Single_Animal",
+        "DLC_STAGING": nas / "Processing" / "Posed",
         "FAILED": nas / "Processing" / "Failed",
         "TRIAGE_REVIEW": nas / "Processing" / "Review" / "triage",
-        "DEEP_REVIEW": nas / "Processing" / "Review" / "flagged_for_review",
+        "DEEP_REVIEW": nas / "Processing" / "Review" / "deep_review",
         "PROCESSING": work / "Processing",
     }
     P = _paths()
     for name, d in dirs.items():
         d.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(P, name, d)
+    # WHY guard files at the retired names: code under test that hardcoded a
+    # retired join off NAS_ROOT (instead of reading Paths) then raises or finds
+    # nothing, rather than passing on folders built for it here.
+    for rel in (("Processing", "Single_Animal"), ("Processing", "DLC_Complete"),
+                ("Processing", "Review", "flagged_for_review")):
+        nas.joinpath(*rel).write_text("retired folder", encoding="ascii")
 
     import mousereach.config as cfg
 

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
@@ -213,6 +215,49 @@ def _review_resolved_segments(video_id: str, processing_dir: Path):
         return set()
 
 
+def _in_staging(path: Path) -> bool:
+    """True when ``path`` sits directly in the pose staging folder
+    (``Paths.DLC_STAGING``). Read at call time so it always matches the folder
+    the resolver searched. Never raises."""
+    staging = getattr(Paths, "DLC_STAGING", None)
+    if not staging:
+        return False
+    try:
+        return (os.path.normcase(os.path.normpath(str(Path(path).parent)))
+                == os.path.normcase(os.path.normpath(str(staging))))
+    except (TypeError, ValueError):
+        return False
+
+
+def _copy_pose_into_bundle(pose: Path, bundle: Path, video_id: str) -> Optional[Path]:
+    """Copy a staged pose file into ``bundle`` under its own name; return the
+    copy, or None when the copy failed (and nothing is left behind).
+
+    WHY copy to ``.part`` then rename: a half-written file under a pose name
+    would be taken for the pose by every resolver that globs the bundle. WHY a
+    copy and not a move: the staged pose also belongs to the intake that pulls
+    it from staging; taking it away here would strand that side."""
+    pose = Path(pose)
+    dest = bundle / pose.name
+    part = bundle / (pose.name + ".part")
+    try:
+        shutil.copy2(pose, part)
+        if part.stat().st_size != pose.stat().st_size:
+            raise OSError("copied size differs from the staged pose")
+        os.replace(part, dest)
+        return dest
+    except OSError as e:
+        logger.warning(
+            f"{video_id}: could not copy staged pose {pose.name} into the review "
+            f"bundle ({e}); the manifest's pose pointer is left empty and the "
+            f"return path will resolve the pose when the bundle returns.")
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        return None
+
+
 def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
     """Write the ``manifest.json`` the review tool needs to open a self-contained
     bundle -- BUNDLE-LOCAL canonical pointers so the video + pose load in place.
@@ -220,6 +265,7 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
     mp4 = bundle / f"{video_id}.mp4"
     h5s = sorted(bundle.glob(f"{video_id}*.h5"))
     pose_path = str(h5s[0]) if h5s else None
+    self_contained = bool(h5s)
     if pose_path is None:
         # No pose in the bundle: record where the canonical pose LIVES, so
         # the return path and the review tools can load it. A manifest
@@ -230,7 +276,19 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
         try:
             from mousereach.watcher.review_return import _resolve_inputs
             _mp4, _pose = _resolve_inputs(bundle, video_id)
-            if _pose is not None:
+            if _pose is not None and _in_staging(_pose):
+                # WHY never point at staging: it is a transient handover folder.
+                # Its pose moves on (intake pulls it; a layout change set the old
+                # staging folder aside where no resolver reads), and a manifest
+                # still naming it makes the bundle refuse to return every cycle
+                # and open with no pose in the review tool. Carry a copy IN the
+                # bundle instead; if the copy fails, leave the pointer null and
+                # let the return path resolve the pose when the bundle returns.
+                copied = _copy_pose_into_bundle(_pose, bundle, video_id)
+                if copied is not None:
+                    pose_path = str(copied)
+                    self_contained = True
+            elif _pose is not None:
                 pose_path = str(_pose)
         except Exception as e:
             logger.debug(f"{video_id}: manifest pose resolve failed: {e}")
@@ -244,7 +302,7 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
             "routed_reason": reason,
             "staged_at": datetime.now().isoformat(),
             # True only when the pose really is IN the bundle.
-            "self_contained": bool(h5s),
+            "self_contained": self_contained,
         },
     }
     (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

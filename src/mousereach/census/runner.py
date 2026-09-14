@@ -138,7 +138,12 @@ def ids_in_dir(d, exts=(".mp4", ".mkv")) -> Set[str]:
     normalized so a DLC output or ``_full`` copy maps to its session."""
     from mousereach.video_prep.core.collage_provenance import normalize_video_stem
     d = Path(d) if d else None
-    if not d or not d.exists():
+    # is_dir(), not exists(): when the folder layout changes, a plain FILE is
+    # left at each retired folder name so old code fails loudly instead of
+    # rebuilding the folder. A path that is not a folder holds no videos; with
+    # exists() the iterdir below would raise on that file and take the whole
+    # census (and reconcile) down with it.
+    if not d or not d.is_dir():
         return set()
     out = set()
     for p in d.iterdir():
@@ -154,7 +159,10 @@ def bundles_in(d) -> Set[str]:
     count: dot-dirs, underscore-prefixed archives and other scratch folders
     land inside queues and would otherwise be phantom videos."""
     d = Path(d) if d else None
-    if not d or not d.exists():
+    # is_dir(), not exists(): a guard FILE at a retired queue name (e.g. the
+    # old deep-review folder name) is not a queue and holds no bundles --
+    # iterdir on it would raise instead of answering "empty".
+    if not d or not d.is_dir():
         return set()
     return {x.name for x in d.iterdir()
             if x.is_dir() and _BUNDLE_NAME.match(x.name)}
@@ -375,7 +383,9 @@ def run_census(window_days: int = 14) -> dict:
         durable = None
     for qname, qroot in (("triage", Paths.TRIAGE_REVIEW),
                          ("deep_review", Paths.DEEP_REVIEW)):
-        if qroot and Path(qroot).exists():
+        # is_dir(), not exists(): same guard-file rule as bundles_in -- a
+        # file at a retired queue name is not a queue to scan.
+        if qroot and Path(qroot).is_dir():
             rows, skipped = scan_queue(qroot, durable_dir=durable)
             s = summarise(rows)
             s["no_review_document"] = len(skipped)
@@ -416,8 +426,12 @@ def _print_table(c: dict) -> None:
     print()
     label = {
         "unanalyzed": "not started (collage in Unanalyzed/Multi-Animal)",
-        "crop_dlc": "cropping / pose estimation (DLC_Queue, Single_Animal)",
-        "mousereach": "analysis algorithms (DLC_Complete, Processing)",
+        # Folder names as they appear on the share, so an operator can open
+        # them: singles wait for a pose in Unanalyzed/Single_Animal and wait
+        # for the algorithms in Processing/Posed ("Processing" alone is a
+        # node's local working folder).
+        "crop_dlc": "cropping / pose estimation (DLC_Queue, Unanalyzed/Single_Animal)",
+        "mousereach": "analysis algorithms (Processing/Posed, local Processing)",
         "triage": "waiting for a person: triage queue",
         "deep_review": "waiting for a person: deep review queue",
         "quarantined": "held out: quarantine (unprocessable as-is)",

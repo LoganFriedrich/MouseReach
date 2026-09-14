@@ -2,14 +2,12 @@
 
 WHY THIS EXISTS
 ---------------
-Superseded outputs belong under ``Analyzed/Archive/``, and they keep their
-ORIGINAL names: ``{stem}_features.json``, ``{stem}_processing_manifest.json``,
-``{stem}DLC_...h5``. That is the TARGET layout of the folder migration, not
-yet what the code writes: ``archive.supersede.default_archive_root`` still
-returns ``<NAS_ROOT>/Archive``, a sibling of Analyzed (a strict-xfail
-contract test in tests/test_analyzed_tree.py flips when the move lands, so
-this name and supersede's folder cannot drift apart unnoticed). A walker that
-descends the whole Analyzed tree with
+Superseded outputs are filed under ``Analyzed/Archive/``
+(``archive.supersede.default_archive_root``), and they keep their ORIGINAL
+names: ``{stem}_features.json``, ``{stem}_processing_manifest.json``,
+``{stem}DLC_...h5``. Contract tests in tests/test_analyzed_tree.py tie the
+skipped name to supersede's folder, so the two cannot drift apart unnoticed.
+A walker that descends the whole Analyzed tree with
 ``rglob`` therefore finds an older generation's files beside the live ones and
 cannot tell them apart by name. Every consequence is silent: the version scan
 reads a superseded manifest and marks a current video outdated, a returning

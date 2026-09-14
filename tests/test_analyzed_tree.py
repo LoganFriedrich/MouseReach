@@ -165,10 +165,22 @@ def test_package_public_names_still_resolve():
         pipeline.not_a_name
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "archive.supersede.default_archive_root still returns <NAS_ROOT>/Archive, "
-    "a sibling of Analyzed; the move to Analyzed/Archive has not landed. "
-    "strict: when it lands this XPASSes and fails -- remove the marker then."))
 def test_supersede_archive_root_sits_inside_analyzed(tmp_path, monkeypatch):
+    """Superseded outputs live in Analyzed/Archive, not a top-level Archive
+    beside Unanalyzed/ and Processing/. The old default_archive_root returned
+    <NAS_ROOT>/Archive, so root.parent was NAS_ROOT and this failed."""
     root, Paths = _supersede_root(tmp_path, monkeypatch)
     assert root.parent == Paths.ANALYZED_OUTPUT
+    assert root != Paths.NAS_ROOT / "Archive"
+
+
+def test_supersede_archive_root_is_none_without_analyzed(tmp_path, monkeypatch):
+    """No configured Analyzed tree -> no archive root, so supersede refuses
+    instead of writing into some default folder."""
+    from mousereach.config import Paths
+    from mousereach.archive.supersede import default_archive_root, supersede_video_outputs
+    monkeypatch.setattr(Paths, "NAS_ROOT", None)
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", None)
+    assert default_archive_root() is None
+    out = supersede_video_outputs(STEM, tmp_path)
+    assert "error" in out and out["pose"] == [] and out["algo"] == []

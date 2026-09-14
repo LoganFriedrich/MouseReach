@@ -270,6 +270,15 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     nas_problem = check_nas_root(Paths.NAS_ROOT, Paths.NAS_ROOT_ORIGIN)
     if nas_problem:
         problems.append(nas_problem)
+    else:
+        # WHY refuse to start on an unmigrated share: this watcher works in the
+        # stage-layout folders only. Where a retired folder name is still a real
+        # folder, work waiting there would never be picked up and nothing would
+        # say so. Stat only -- the folder is neither listed nor created.
+        from mousereach.pipeline.pipe_structure import (
+            UNMIGRATED_MESSAGE, retired_folders_present)
+        for rel in retired_folders_present(Paths.NAS_ROOT):
+            problems.append(f"{Paths.NAS_ROOT / rel}: {UNMIGRATED_MESSAGE}")
 
     if config.mode == 'processing_server':
         # Processing server needs: DLC_STAGING accessible, Processing/ writable

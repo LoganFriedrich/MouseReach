@@ -546,29 +546,55 @@ mousereach-export -i Processing/ -o results.xlsx
 
 ## File Organization (v2.3+ Single-Folder Architecture)
 
+The shared pipeline folder (`nas_root`) has one folder per stage. Each folder is
+named for the state the work is in, not for the tool that produced it:
+
 ```
 <nas_root>\
-├── Raw_Videos\
-│   └── Multi-Animal\           # Original collages (archive)
+├── Unanalyzed\
+│   ├── Multi-Animal\           # Collages waiting to be cut
+│   └── Single_Animal\          # Single-animal videos waiting for a pose
 │
+├── Processing\
+│   ├── Posed\                  # Posed videos waiting for the algorithms
+│   ├── Repose_Queue\           # Re-pose request files
+│   ├── Review\
+│   │   ├── triage\             # Held for a person: per-element questions
+│   │   └── deep_review\        # Held for a person: failed segmentation or QC
+│   ├── Quarantine\
+│   └── Failed\
+│
+├── Analyzed\
+│   ├── <project>\<cohort>\     # Finished videos
+│   └── Archive\                # Superseded outputs, kept for provenance
+│
+└── Archive\
+    └── historical\             # Read-only source material
+```
+
+Each machine also has a local working folder (`processing_root`):
+
+```
+<processing_root>\
 ├── DLC_Queue\                  # Videos waiting for DLC processing
 │
-├── Processing\                 # ALL active videos live here
-│   ├── video.mp4               # Single-animal video
-│   ├── videoDLC*.h5            # DLC tracking results
-│   ├── video_segments.json     # Boundaries (validation_status in JSON)
-│   ├── video_reaches.json      # Reaches (validation_status in JSON)
-│   ├── video_pellet_outcomes.json  # Outcomes (validation_status in JSON)
-│   └── video_features.json     # Kinematic features per reach (Step 5)
-│
-├── Results\
-│   └── exports\                # Final Excel/CSV files
-│
-└── Failed\                     # Processing errors
+└── Processing\                 # ALL active videos on this machine live here
+    ├── video.mp4               # Single-animal video
+    ├── videoDLC*.h5            # DLC tracking results
+    ├── video_segments.json     # Boundaries (validation_status in JSON)
+    ├── video_reaches.json      # Reaches (validation_status in JSON)
+    ├── video_pellet_outcomes.json  # Outcomes (validation_status in JSON)
+    └── video_features.json     # Kinematic features per reach (Step 5)
 ```
 
 **Note:** v2.3+ uses JSON `validation_status` field ("needs_review", "auto_approved",
 "validated") instead of separate folders. All files for a video stay together in Processing/.
+
+**Old folder names:** `Processing\Single_Animal`, `Processing\DLC_Complete` and
+`Processing\Review\flagged_for_review` are retired (now `Unanalyzed\Single_Animal`,
+`Processing\Posed` and `Processing\Review\deep_review`). A migrated drive keeps a plain
+file at each old path, so old code that tries to use one stops with an error instead of
+quietly rebuilding the old folder and working there.
 
 ---
 

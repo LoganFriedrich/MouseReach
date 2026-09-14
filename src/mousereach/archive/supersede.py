@@ -6,11 +6,20 @@ When a video is reprocessed to a newer version its OLD outputs are NOT overwritt
 -- they are moved aside, checksum-verified, into a version-stamped Archive tree so
 the history is preserved and the CURRENT outputs (next to the video) stay clean.
 
+Where: ``<pipeline root>/Analyzed/Archive/``. It sits under the finished tree,
+not beside ``Unanalyzed/`` and ``Processing/``, because a top-level folder there
+reads as a pipeline stage and nothing in the archive is waiting for anything.
+Archived files keep their ORIGINAL names, so every walk of Analyzed skips any
+folder named ``Archive`` (``pipeline/analyzed_tree.SUPERSEDED_DIR_NAMES``);
+otherwise a superseded copy would be read as a live result. The top-level
+``Archive/`` keeps only read-only historical source material, which this module
+never writes into.
+
 Layout (the DLC pose is stored ONCE per DLC generation; algo outputs live under
 their algo-version subfolder, so N algo variants that share one pose never
 duplicate the multi-MB h5/csv)::
 
-    Archive/
+    Analyzed/Archive/
       DLC Model 3.1/
         <pose: {stem}DLC_resnet50_..._100000.h5/.csv/_meta.pickle>   one copy/gen
         seg2.1.0_reach5.3.0_out2.4.4_asnNA/
@@ -69,10 +78,23 @@ _DLC_GENERATION = {
 
 
 def default_archive_root() -> Optional[Path]:
-    """``MouseReach_Pipeline/Archive`` -- inside the pipe root, mirrored to X: by
-    the backup watcher (per the storage model). None if the NAS isn't configured."""
+    """``<pipeline root>/Analyzed/Archive`` -- inside the finished tree, so the
+    backup of the pipeline root covers it too. None if Analyzed is not
+    configured (no NAS root).
+
+    WHY under Analyzed and not a top-level ``Archive/``: a top-level folder
+    beside ``Unanalyzed/`` and ``Processing/`` reads as a stage, and superseded
+    outputs are not waiting for anything. The folder name stays ``Archive``
+    because every walker of Analyzed skips that name
+    (``pipeline/analyzed_tree.SUPERSEDED_DIR_NAMES``); renaming it here without
+    updating that set would let superseded copies be read as live results.
+
+    WHY the top-level ``Archive/`` is not used at all any more: it now holds
+    only read-only historical source material (``Archive/historical``), which
+    must never be written into."""
     from ..config import Paths
-    return (Path(Paths.NAS_ROOT) / "Archive") if Paths.NAS_ROOT else None
+    analyzed = getattr(Paths, "ANALYZED_OUTPUT", None)
+    return (Path(analyzed) / "Archive") if analyzed else None
 
 
 def dlc_generation_label(scorer: Optional[str]) -> str:
@@ -268,8 +290,13 @@ def write_archive_readme(archive_root: Path) -> None:
             "=====================================================\n\n"
             "This holds outputs from OLD processing generations, moved aside when a\n"
             "video was reprocessed to a newer version so the current outputs (next\n"
-            "to the video in Analyzed/) stay clean. Nothing here was deleted from a\n"
-            "video -- it was moved, checksum-verified, out of the live tree.\n\n"
+            "to the video in Analyzed/<project>/<cohort>/) stay clean. Nothing here\n"
+            "was deleted from a video -- it was moved here, checksum-verified.\n\n"
+            "This folder sits under Analyzed/, but it is NOT live data. The files\n"
+            "keep their original names, so every tool that walks Analyzed/ skips\n"
+            "any folder named Archive; that is the only thing keeping these copies\n"
+            "from being read as current results. Do not rename this folder, and\n"
+            "do not copy files out of it into a cohort folder.\n\n"
             "Layout:\n"
             "  DLC Model <gen>/                      one DLC generation\n"
             "    <stem>DLC_<net>_...h5/.csv/.pickle  the pose, stored ONCE per gen\n"

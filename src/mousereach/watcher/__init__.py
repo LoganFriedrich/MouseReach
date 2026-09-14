@@ -6,10 +6,10 @@ Two-machine architecture with role-aware orchestrators:
   DLC PC (mode="dlc_pc")
       GPU machine with direct-attached NAS.  Scans NAS for new collage
       videos, crops them to single-animal videos, runs DLC inference,
-      and stages video+h5 to NAS DLC_Complete/ for the processing server.
+      and stages video+h5 to NAS Processing/Posed/ for the processing server.
 
   Processing Server (mode="processing_server")
-      Server with fast local storage.  Watches DLC_Complete/ on NAS for
+      Server with fast local storage.  Watches Processing/Posed/ on NAS for
       new DLC outputs, copies them locally, runs segmentation + reach
       detection + outcome detection, and archives results back to NAS.
 
@@ -26,7 +26,7 @@ DLC PC:
     4. ffmpeg on PATH (for video cropping)
 
 Processing Server:
-    1. Access to NAS DLC_Complete/ staging folder (via network)
+    1. Access to NAS Processing/Posed/ staging folder (via network)
     2. Local storage for Processing/ folder (fast I/O for pipeline)
     3. No GPU required
 
@@ -34,7 +34,7 @@ All paths are configured via ~/.mousereach/config.json (run mousereach-setup).
 
 Folder Structure
 ================
-DLC PC (PROCESSING_ROOT on local drive, e.g. A:\\MouseReach_Pipeline):
+DLC PC (PROCESSING_ROOT on local drive, e.g. <drive>:\\...\\MouseReach_Pipeline):
 
     <PROCESSING_ROOT>/
     ├── DLC_Queue/             ← single-animal videos waiting for DLC
@@ -53,9 +53,24 @@ NAS (shared between both):
     <NAS_ROOT>/
     ├── Unanalyzed/
     │   ├── Multi-Animal/      ← collage videos arrive here (from filming PCs)
-    │   └── Single_Animal/     ← pre-cropped single-animal videos
-    ├── DLC_Complete/          ← DLC PC stages finished videos here
-    └── Analyzed/{project}/{cohort}/  ← final archived output (e.g. Connectome/CNT03/)
+    │   └── Single_Animal/     ← single-animal videos waiting for a pose
+    ├── Processing/
+    │   ├── Posed/             ← posed videos waiting for the algorithms (DLC PC stages here)
+    │   ├── Repose_Queue/      ← re-pose request files (see repose.py)
+    │   ├── Review/
+    │   │   ├── triage/        ← held for a person: per-element questions
+    │   │   └── deep_review/   ← held for a person: failed segmentation / QC
+    │   ├── Quarantine/
+    │   └── Failed/
+    ├── Analyzed/{project}/{cohort}/  ← finished output (e.g. Connectome/CNT03/)
+    ├── Analyzed/Archive/      ← superseded outputs (every walk of Analyzed skips it)
+    └── Archive/historical/    ← read-only source material
+
+    Folders are named for the state the work is in, not the tool that made it.
+    Retired names: Processing/Single_Animal, Processing/DLC_Complete and
+    Processing/Review/flagged_for_review. A migrated drive holds a plain FILE
+    at each, so old code that tries to use them fails loudly instead of
+    quietly rebuilding the old folder and working there.
 
 Configuration (in ~/.mousereach/config.json):
     nas_drive:                     root of NAS mount (e.g. "X:\\")

@@ -450,9 +450,9 @@ def run_setup_wizard():
         if nas_drive:
             nas_root = Path(nas_drive) / "! DLC Output" if str(nas_drive) != str(proc_root) else proc_root
             # The canonical NAS pipe tree -- single source of truth in
-            # pipeline.pipe_structure (Unanalyzed / Processing[Single_Animal,
-            # DLC_Complete, Review/{triage,flagged_for_review}, Quarantine, Failed]
-            # / Analyzed / Archive).
+            # pipeline.pipe_structure (Unanalyzed[Multi-Animal, Single_Animal]
+            # / Processing[Posed, Repose_Queue, Review/{triage,deep_review},
+            # Quarantine, Failed] / Analyzed[Archive]).
             from mousereach.pipeline.pipe_structure import TARGET_DIRS
             dirs_to_create.extend(nas_root / rel for rel in TARGET_DIRS)
 

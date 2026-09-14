@@ -108,16 +108,24 @@ class Paths:
     # Raw 8-camera collage videos (ARCHIVE - NEVER DELETE)
     MULTI_ANIMAL_SOURCE = NAS_ROOT / "Unanalyzed" / "Multi-Animal" if NAS_ROOT else None
 
-    # Cropped single-animal videos -- cropping counts as processing, so these live
-    # in the Processing zone (state rule: being-worked -> Processing).
-    SINGLE_ANIMAL_OUTPUT = NAS_ROOT / "Processing" / "Single_Animal" if NAS_ROOT else None
+    # Cropped single-animal videos waiting for a pose. A folder is a place work
+    # RESTS, named for what it waits for: a cut single is waiting to be posed, not
+    # being worked, so it lives in Unanalyzed. WHY not Processing/Single_Animal:
+    # that old name is now a guard FILE on the shared drive, so code still aimed
+    # at it fails loudly instead of quietly rebuilding the retired folder.
+    SINGLE_ANIMAL_OUTPUT = NAS_ROOT / "Unanalyzed" / "Single_Animal" if NAS_ROOT else None
 
     # Unsupported tray types (E/F) that got into pipeline by mistake
     # These require different algorithms and should be returned to NAS
     UNSUPPORTED_TRAY_RETURN = NAS_ROOT / "Unanalyzed" / "Unsupported_Tray_Type" if NAS_ROOT else None
 
-    # Post-DLC staging: posed videos waiting for the MouseReach claim (being-worked).
-    DLC_STAGING = NAS_ROOT / "Processing" / "DLC_Complete" if NAS_ROOT else None
+    # Post-DLC staging: posed videos resting until a node claims them for the
+    # MouseReach algorithms. Named for the state of the work (Posed), not for the
+    # tool that produced it. WHY not Processing/DLC_Complete: that old name is now
+    # a guard FILE on the shared drive (mkdir/listing it raises), and
+    # 'dlc_complete' stays in use as a watcher DB state name -- only the folder
+    # moved. Not to be confused with DLC_COMPLETE below (a LOCAL alias).
+    DLC_STAGING = NAS_ROOT / "Processing" / "Posed" if NAS_ROOT else None
 
     # Re-pose requests: one small JSON per archived video that needs a NEW pose
     # from the declared DLC model. Written by whichever node runs the version
@@ -145,12 +153,17 @@ class Paths:
     # bundle here until a human clears it. Two queues:
     #   TRIAGE_REVIEW (Processing/Review/triage) -- per-element "which reach / what
     #     outcome" questions the triage review tool answers quickly (<5s each).
-    #   DEEP_REVIEW (Processing/Review/flagged_for_review) -- segmentation FAILED,
+    #   DEEP_REVIEW (Processing/Review/deep_review) -- segmentation FAILED,
     #     or a reviewer escalated a video that needs the causal/GT deep tools.
     #     Clearing a deep-review flag re-injects the video at the START (re-segment).
+    # The folder is named for the queue it is (deep_review, beside triage). WHY
+    # not Processing/Review/flagged_for_review: that old folder name is now a
+    # guard FILE on the shared drive, so stale code raises instead of reviving
+    # it. 'flagged_for_review' is still a JSON field and a database column --
+    # only the folder was renamed.
     REVIEW_ROOT = NAS_ROOT / "Processing" / "Review" if NAS_ROOT else None
     TRIAGE_REVIEW = REVIEW_ROOT / "triage" if REVIEW_ROOT else None
-    DEEP_REVIEW = REVIEW_ROOT / "flagged_for_review" if REVIEW_ROOT else None
+    DEEP_REVIEW = REVIEW_ROOT / "deep_review" if REVIEW_ROOT else None
 
     # --- Processing Pipeline Paths (derived from MouseReach_PROCESSING_ROOT) ---
     # These will be None if PROCESSING_ROOT is not configured

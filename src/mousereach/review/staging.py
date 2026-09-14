@@ -91,7 +91,7 @@ def resolve_canonical_paths(
     ``pose_dirs`` are extra directories searched for the 4.0 pose h5 when it is
     not in the standard ``DLC Model 4/<cohort>`` tree. ``mp4_dirs`` are extra
     directories searched for the mp4 when it is not archived in the canonical
-    Connectome tree (e.g. still sitting in a DLC_Queue / DLC_Complete staging
+    Connectome tree (e.g. still sitting in a DLC_Queue / Processing/Posed staging
     dir). Both are used in place -- nothing is copied into the archive.
     """
     cohort = cohort_dir_for_stem(stem)

@@ -33,9 +33,34 @@ READ-ONLY. It never moves, writes or marks anything.
     mousereach-reconcile --all    # also list every video that is fine
     mousereach-reconcile --json   # everything, machine-readable
 
-Exit codes: 0 no mismatches, 1 mismatches found, 2 could not run.
+Exit codes: 0 no mismatches, 1 mismatches found (or the share still has a
+retired stage folder, see below), 2 could not run.
 
 SCOPE: single-animal videos. Collages are not judged yet.
+
+WHERE IT LOOKS
+--------------
+  - the waiting folders, taken from ``Paths`` when the check runs
+    (``Paths.SINGLE_ANIMAL_OUTPUT`` = Unanalyzed/Single_Animal, a single waiting
+    for a pose; ``Paths.DLC_STAGING`` = Processing/Posed, posed and waiting for
+    the algorithms). Never restated here, so this check and the watcher cannot
+    disagree about where a single waits;
+  - the review queues, Failed and Quarantine;
+  - Analyzed/, minus the folders every walk of it skips;
+  - leftovers: every folder at Processing/_leftovers_pending_cleanup_*/*. When
+    the folder layout changed, the retired stage folders were set aside there.
+    They hold copies of finished work kept until cleanup and are NOT a stage.
+
+The retired folder names themselves (Processing/Single_Animal,
+Processing/DLC_Complete, Processing/Review/flagged_for_review) are never listed:
+a plain file sits at each so old code fails loudly, and a file where a folder
+was expected reads as empty here rather than crashing the check.
+
+They ARE checked, stat only, for still being real FOLDERS. That means the share
+was never migrated to the stage layout, so work may be waiting where this check
+does not look. It is reported under ``unmigrated_folders``, printed as a warning
+before anything else, and makes the exit code 1: a clean "no mismatches" on an
+unmigrated share would be a plausible wrong answer.
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
@@ -50,6 +75,7 @@ from typing import Dict, List, Optional
 
 from mousereach.census.runner import bundles_in, ids_in_dir
 from mousereach.pipeline.analyzed_tree import SUPERSEDED_DIR_NAMES
+from mousereach.pipeline.pipe_structure import UNMIGRATED_MESSAGE, retired_folders_present
 
 _MANIFEST = "_processing_manifest.json"
 _FEATURES = "_features.json"
@@ -66,13 +92,36 @@ _FEATURES = "_features.json"
 # must agree on which folder that is.
 _ANALYZED_SKIP = {"Folder Template", "UNKNOWN", "Multi-Animal"} | set(SUPERSEDED_DIR_NAMES)
 
-# Folders where a single waits before analysis, in the target layout.
-_WAITING = ("Unanalyzed/Single_Animal", "Processing/Posed")
-# Folders from the previous layout. What they hold is kept as insurance until
-# cleanup and is NOT a stage: almost all of it is a copy of work finished
-# elsewhere. A video found ONLY there is still listed, per video, because it
-# may be real waiting work.
-_OLD_FOLDERS = ("Processing/Single_Animal", "Processing/DLC_Complete")
+# Where leftovers are set aside when the folder layout changes: one dated
+# folder per change under Processing/, each holding the retired stage folders.
+# What they hold is kept as insurance until cleanup and is NOT a stage: almost
+# all of it is a copy of work finished elsewhere. A video found ONLY there is
+# still listed, per video, because it may be real waiting work. A pattern, not
+# a list of names, so a later layout change needs no code change here.
+_LEFTOVERS_PATTERN = "_leftovers_pending_cleanup_*"
+
+
+def _waiting_folders() -> List[Path]:
+    """Folders where a single waits before analysis, read from Paths at call
+    time. WHY not constants: the watcher moves singles into exactly these
+    folders, so a copy of the names here would silently disagree the day
+    either side changed -- and a waiting video would read as a lost one."""
+    from mousereach.config import Paths
+    return [Path(p) for p in (Paths.SINGLE_ANIMAL_OUTPUT, Paths.DLC_STAGING) if p]
+
+
+def _leftover_folders(nas) -> List[Path]:
+    """Every folder at <nas>/Processing/_leftovers_pending_cleanup_*/*.
+    Files anywhere in that walk are skipped: only folders are leftovers, and
+    listing a file would raise."""
+    processing = Path(nas) / "Processing"
+    if not processing.is_dir():
+        return []
+    found = []
+    for parent in sorted(processing.glob(_LEFTOVERS_PATTERN)):
+        if parent.is_dir():
+            found.extend(sorted(c for c in parent.iterdir() if c.is_dir()))
+    return found
 
 # Verdicts that are fine as they stand.
 DONE = "done"
@@ -252,6 +301,12 @@ def reconcile() -> dict:
             "no version declaration at %s -- nothing to judge currency against"
             % (nas / "pipeline_versions.json"))
 
+    # WHY check (stat only) before judging: a retired stage name that is still a
+    # real folder means this share was never migrated, and whatever waits there
+    # is invisible to every walk below. Reported, never listed, so the check
+    # keeps its promise not to read the retired folders.
+    unmigrated = retired_folders_present(nas)
+
     where: Dict[str, set] = {}
 
     def mark(stems, label):
@@ -264,10 +319,10 @@ def reconcile() -> dict:
                 continue
             where.setdefault(s, set()).add(label)
 
-    for rel in _WAITING:
-        mark(ids_in_dir(nas / rel), "waiting:" + rel)
-    for rel in _OLD_FOLDERS:
-        mark(ids_in_dir(nas / rel), "old:" + rel)
+    for folder in _waiting_folders():
+        mark(ids_in_dir(folder), "waiting:" + _rel(folder, nas))
+    for folder in _leftover_folders(nas):
+        mark(ids_in_dir(folder), "old:" + _rel(folder, nas))
     mark(bundles_in(Paths.TRIAGE_REVIEW), "triage")
     mark(bundles_in(Paths.DEEP_REVIEW), "deep_review")
     mark(ids_in_dir(Paths.FAILED), "failed")
@@ -287,6 +342,7 @@ def reconcile() -> dict:
         "checked": len(rows),
         "mismatches": [r for r in rows if r["verdict"] in MISMATCHES],
         "leftover_copies": leftovers,
+        "unmigrated_folders": unmigrated,
         "rows": rows,
     }
 
@@ -307,12 +363,30 @@ def main(argv=None) -> int:
         print(f"[reconcile] cannot run: {e}")
         return 2
 
+    unmigrated = result.get("unmigrated_folders") or []
+
+    def warn_unmigrated(stream):
+        # WHY first and on every output mode: "no mismatches" on an unmigrated
+        # share is a plausible wrong answer; the warning must be seen before it.
+        for rel in unmigrated:
+            print(f"[reconcile] WARNING: {rel}: {UNMIGRATED_MESSAGE}", file=stream)
+        if unmigrated:
+            print("[reconcile] Work waiting in those folders is NOT checked here. "
+                  "Migrate the share to the stage layout, then run this again.",
+                  file=stream)
+
     if args.json:
+        # The warning goes to stderr so stdout stays valid JSON; the same list
+        # is in the JSON as "unmigrated_folders".
+        warn_unmigrated(sys.stderr)
         print(json.dumps(result, indent=2))
-        return 1 if result["mismatches"] else 0
+        return 1 if (result["mismatches"] or unmigrated) else 0
 
     print(f"[reconcile] share:    {result['share']}")
     print(f"[reconcile] versions: {result['versions_file']}")
+    if unmigrated:
+        print()
+        warn_unmigrated(sys.stdout)
     print(f"Checked {result['checked']:,} single-animal videos against the definition of done.")
     print()
 
@@ -332,8 +406,8 @@ def main(argv=None) -> int:
 
     only_old = [r for r in result["rows"] if r["verdict"] == ONLY_IN_OLD_FOLDER]
     if only_old:
-        print(f"Only copy is in a folder from the previous layout ({len(only_old):,}) "
-              "-- not a mismatch, but may be real waiting work:")
+        print(f"Only copy is in leftovers set aside when the folder layout changed "
+              f"({len(only_old):,}) -- not a mismatch, but may be real waiting work:")
         show(only_old)
         print()
 
@@ -351,7 +425,7 @@ def main(argv=None) -> int:
     if args.all:
         for s in result["leftover_copies"]:
             print(f"  {s}")
-    return 1 if mism else 0
+    return 1 if (mism or unmigrated) else 0
 
 
 if __name__ == "__main__":

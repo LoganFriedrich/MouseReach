@@ -5,10 +5,10 @@ Two machines, two roles:
 
   DLCOrchestrator (mode="dlc_pc")
       NAS/DLC PC with GPU.  Scans NAS for collages -> crop -> DLC -> stage
-      video+h5 to NAS DLC_Complete/ folder for the processing server.
+      video+h5 to NAS Processing/Posed/ folder for the processing server.
 
   ProcessingOrchestrator (mode="processing_server")
-      Processing server.  Watches DLC_Complete/ -> intake to local Processing/
+      Processing server.  Watches Processing/Posed/ -> intake to local Processing/
       -> segmentation -> reach detection -> outcome detection -> archive to NAS.
 
 Both share a BaseOrchestrator that provides the polling loop, priority animal
@@ -1962,7 +1962,7 @@ class DLCOrchestrator(BaseOrchestrator):
         """Archive a locally processed video directly to NAS.
 
         In also_process mode, results go straight to Analyzed/{project}/{cohort}/ on NAS,
-        skipping the DLC_Complete staging step entirely.
+        skipping the Processing/Posed staging step entirely.
         """
         from mousereach.archive.core import archive_video
 
@@ -2112,7 +2112,8 @@ class DLCOrchestrator(BaseOrchestrator):
 
     def _stage_to_nas(self, work: dict):
         """
-        Move DLC-complete video + h5 from local (A:) to NAS staging (D:).
+        Move DLC-complete video + h5 from local storage to NAS staging
+        (Processing/Posed).
 
         The processing PC picks these up from the NAS staging folder.
         """
@@ -2243,7 +2244,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
     """
     Processing server orchestrator.
 
-    Watches the NAS DLC_Complete/ staging folder for new DLC outputs,
+    Watches the NAS Processing/Posed/ staging folder for new DLC outputs,
     copies them to the local Processing/ folder, and runs the full
     analysis pipeline (segmentation -> reach detection -> outcomes).
 
@@ -2315,10 +2316,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _rescue_misfiled_singles(self) -> int:
         """Move a video left in the posed-video folder back to the front door.
 
-        Processing/DLC_Complete is where POSED videos are handed over, and the
+        Processing/Posed is where POSED videos are handed over, and the
         scan that reads it keys on pose files. A bare mp4 dropped there was
         therefore invisible twice over: no pose to find it by, and no database
-        row to notice it was missing. It belongs in Processing/Single_Animal,
+        row to notice it was missing. It belongs in Unanalyzed/Single_Animal,
         which is where a video that still needs posing goes, and the ordinary
         path takes it from there.
 
@@ -2583,7 +2584,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # So the row stays 'outdated' here and the ASK travels over shared
             # storage instead: one request file per video in the Repose_Queue
             # folder, which any GPU node's watcher pulls from (watcher/repose.py).
-            # When the new pose comes back through Processing/DLC_Complete,
+            # When the new pose comes back through Processing/Posed,
             # _scan_phase adopts it: the row's scope narrows to 'segmentation'
             # and it drains through the 'actionable' branch below.
             # The scanner has already been taught not to call a video DLC-stale
@@ -2856,7 +2857,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _claim_video(self, video_id: str) -> bool:
         """Try to claim a video for processing. Returns True if claimed.
 
-        Uses marker files in DLC_Complete/.claims/ to prevent multiple nodes
+        Uses marker files in Processing/Posed/.claims/ to prevent multiple nodes
         from processing the same video simultaneously.
         """
         if not self.staging_dir:

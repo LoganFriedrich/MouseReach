@@ -106,7 +106,7 @@ def _resolve_inputs(bundle: Path, stem: str):
         except OSError as e:
             logger.debug(f"{stem}: could not search Analyzed: {e}")
 
-    # Fourth and last: the DLC_Complete staging area. A GPU node's freshly
+    # Fourth and last: the Processing/Posed staging area. A GPU node's freshly
     # staged pose sits there before any intake pulls it; a video routed to a
     # queue in that window (or whose bundle omitted its h5) otherwise refuses
     # to return in a loop -- one did, every ~2-3 minutes, 2026-09-08. Only a

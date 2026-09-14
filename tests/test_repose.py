@@ -36,12 +36,17 @@ NEW = "DLC_resnet101_MPSAOct27shuffle3_100000"
 def env(tmp_path, monkeypatch):
     nas = tmp_path / "nas"
     queue = nas / "Processing" / "Repose_Queue"
-    staging = nas / "Processing" / "DLC_Complete"
+    staging = nas / "Processing" / "Posed"
     archive = nas / "Analyzed" / "X" / "C01"
     local_q = tmp_path / "local" / "DLC_Queue"
     processing = tmp_path / "local" / "Processing"
     for d in (queue, staging, archive, local_q, processing):
         d.mkdir(parents=True)
+    # WHY a plain FILE at the retired staging name, as the migrated share has:
+    # code that hardcoded NAS_ROOT / "Processing" / "DLC_Complete" instead of
+    # Paths.DLC_STAGING then raises instead of staging into a folder the test
+    # happens to inspect.
+    (nas / "Processing" / "DLC_Complete").write_text("retired folder", encoding="ascii")
     for name in ("NAS_ROOT", "REPOSE_QUEUE", "DLC_STAGING", "DLC_QUEUE",
                  "ANALYZED_OUTPUT", "PROCESSING"):
         monkeypatch.setattr(repose.Paths, name, {

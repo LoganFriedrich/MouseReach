@@ -23,8 +23,13 @@ def env(tmp_path, monkeypatch):
     dirs = {
         "ANALYZED_OUTPUT": nas / "Analyzed",
         "TRIAGE_REVIEW": nas / "Processing" / "Review" / "triage",
-        "DEEP_REVIEW": nas / "Processing" / "Review" / "flagged_for_review",
+        "DEEP_REVIEW": nas / "Processing" / "Review" / "deep_review",
         "FAILED": nas / "Processing" / "Failed",
+        # The waiting folders are patched like every other root: reconcile
+        # reads them from Paths at call time, so the tests never depend on
+        # the machine's configured share.
+        "SINGLE_ANIMAL_OUTPUT": nas / "Unanalyzed" / "Single_Animal",
+        "DLC_STAGING": nas / "Processing" / "Posed",
     }
     for d in dirs.values():
         d.mkdir(parents=True)
@@ -163,11 +168,18 @@ def test_failed_and_quarantined_need_a_person(env):
     assert verdict_of(VID2)["verdict"] == rc.NEEDS_PERSON
 
 
+LEFTOVERS = "Processing/_leftovers_pending_cleanup_2026-09-14"
+
+
+def leftovers(env, name):
+    folder = env.nas / LEFTOVERS / name
+    folder.mkdir(parents=True)
+    return folder
+
+
 def test_copy_in_an_old_folder_is_a_leftover_not_a_mismatch(env):
     put_analyzed(VID)
-    old = env.nas / "Processing" / "Single_Animal"
-    old.mkdir(parents=True)
-    (old / f"{VID}.mp4").write_bytes(b"v")
+    (leftovers(env, "Single_Animal") / f"{VID}.mp4").write_bytes(b"v")
     result = rc.reconcile()
     assert verdict_of(VID)["verdict"] == rc.DONE
     assert result["leftover_copies"] == [VID]
@@ -175,20 +187,112 @@ def test_copy_in_an_old_folder_is_a_leftover_not_a_mismatch(env):
 
 
 def test_only_copy_in_an_old_folder_is_listed_per_video(env):
-    old = env.nas / "Processing" / "DLC_Complete"
-    old.mkdir(parents=True)
-    (old / f"{VID}.mp4").write_bytes(b"v")
+    (leftovers(env, "DLC_Complete") / f"{VID}.mp4").write_bytes(b"v")
     row = verdict_of(VID)
     assert row["verdict"] == rc.ONLY_IN_OLD_FOLDER
-    assert "Processing/DLC_Complete" in row["detail"]
+    assert f"{LEFTOVERS}/DLC_Complete" in row["detail"]
     assert rc.reconcile()["leftover_copies"] == []
 
 
-def test_single_waiting_in_a_stage_folder(env):
-    waiting = env.nas / "Unanalyzed" / "Single_Animal"
-    waiting.mkdir(parents=True)
-    (waiting / f"{VID}.mp4").write_bytes(b"v")
-    assert verdict_of(VID)["verdict"] == rc.WAITING
+def test_every_leftovers_folder_is_read_and_stray_files_are_skipped(env):
+    # Any dated leftovers folder counts (a pattern, not one name), and a file
+    # at either level of that walk is skipped rather than listed or crashed on.
+    (leftovers(env, "DLC_Complete") / f"{VID}.mp4").write_bytes(b"v")
+    later = env.nas / "Processing" / "_leftovers_pending_cleanup_2027-01-01" / "Single_Animal"
+    later.mkdir(parents=True)
+    (later / f"{VID2}.mp4").write_bytes(b"v")
+    (env.nas / LEFTOVERS / "README.txt").write_text("kept until cleanup")
+    (env.nas / "Processing" / "_leftovers_pending_cleanup_note.txt").write_text("x")
+    rows = {r["video_id"]: r for r in rc.reconcile()["rows"]}
+    assert set(rows) == {VID, VID2}
+    assert rows[VID]["found_in"] == [f"old:{LEFTOVERS}/DLC_Complete"]
+    assert rows[VID2]["found_in"] == [
+        "old:Processing/_leftovers_pending_cleanup_2027-01-01/Single_Animal"]
+    assert all(r["verdict"] == rc.ONLY_IN_OLD_FOLDER for r in rows.values())
+
+
+@pytest.mark.parametrize("stage, rel", [
+    ("SINGLE_ANIMAL_OUTPUT", "Unanalyzed/Single_Animal"),
+    ("DLC_STAGING", "Processing/Posed"),
+])
+def test_single_waiting_in_a_stage_folder(env, stage, rel):
+    (getattr(env, stage) / f"{VID}.mp4").write_bytes(b"v")
+    row = verdict_of(VID)
+    assert row["verdict"] == rc.WAITING
+    assert row["found_in"] == ["waiting:" + rel]
+
+
+def test_waiting_folders_come_from_paths_at_call_time(env, monkeypatch):
+    # The watcher moves singles into Paths' folders; reconcile must look in
+    # the same ones, not in a copy of their names. Repoint Paths after import:
+    # the video there is waiting, and the folder Paths no longer names is not read.
+    elsewhere = env.nas / "Processing" / "Posed_elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / f"{VID}.mp4").write_bytes(b"v")
+    (env.DLC_STAGING / f"{VID2}.mp4").write_bytes(b"v")
+    monkeypatch.setattr(rc_paths(), "DLC_STAGING", elsewhere)
+    rows = {r["video_id"]: r for r in rc.reconcile()["rows"]}
+    assert set(rows) == {VID}
+    assert rows[VID]["verdict"] == rc.WAITING
+    assert rows[VID]["found_in"] == ["waiting:Processing/Posed_elsewhere"]
+
+
+def test_guard_files_at_retired_folder_names_do_not_crash(env, monkeypatch):
+    # The layout change leaves a plain FILE at each retired folder name so old
+    # code fails loudly. Reconcile must neither crash on them nor read them.
+    processing = env.nas / "Processing"
+    guards = {
+        "SINGLE_ANIMAL_OUTPUT": processing / "Single_Animal",
+        "DLC_STAGING": processing / "DLC_Complete",
+        "DEEP_REVIEW": processing / "Review" / "flagged_for_review",
+    }
+    for guard in guards.values():
+        guard.write_text("retired folder -- see the new layout")
+    put_analyzed(VID)
+    (env.DLC_STAGING / f"{VID2}.mp4").write_bytes(b"v")
+    rows = {r["video_id"]: r for r in rc.reconcile()["rows"]}
+    assert rows[VID]["verdict"] == rc.DONE
+    assert rows[VID2]["verdict"] == rc.WAITING
+
+    # Even a stale config that still names the retired folders reads them as
+    # empty instead of raising on iterdir.
+    for name, guard in guards.items():
+        monkeypatch.setattr(rc_paths(), name, guard)
+    result = rc.reconcile()
+    assert [r["video_id"] for r in result["rows"]] == [VID]
+    assert result["mismatches"] == []
+    assert result["unmigrated_folders"] == []   # a guard file is the migrated state
+    assert rc.main([]) == 0
+
+
+def test_unmigrated_share_is_reported_not_silently_ignored(env, capsys):
+    # The retired names are still real FOLDERS: this share was never migrated,
+    # and work waiting there is invisible to every stage walk. Reconcile must
+    # say so loudly -- without listing those folders -- and not exit clean.
+    from mousereach.pipeline.pipe_structure import RETIRED_DIRS
+    put_analyzed(VID)
+    for rel in RETIRED_DIRS:
+        (env.nas / rel).mkdir(parents=True)
+    (env.nas / "Processing" / "DLC_Complete" / f"{VID2}.mp4").write_bytes(b"v")
+
+    result = rc.reconcile()
+    assert result["unmigrated_folders"] == list(RETIRED_DIRS)
+    assert [r["video_id"] for r in result["rows"]] == [VID]   # never listed
+    assert result["mismatches"] == []
+
+    assert rc.main([]) == 1
+    out = capsys.readouterr().out
+    out.encode("ascii")
+    for rel in RETIRED_DIRS:
+        assert rel in out
+    assert "not been migrated" in out
+    # The warning comes before the verdicts, so it is read first.
+    assert out.index("not been migrated") < out.index("MISMATCHES")
+
+    assert rc.main(["--json"]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["unmigrated_folders"] == list(RETIRED_DIRS)
+    assert "not been migrated" in captured.err
 
 
 def test_unsupported_tray_is_out_of_scope(env):

@@ -247,7 +247,7 @@ options:
                         vior\MouseReach_Pipeline\Unanalyzed\Multi-Animal)
   -o OUTPUT, --output OUTPUT
                         Output directory (default: <path>
-                        useReach_Pipeline\Processing\Single_Animal)
+                        useReach_Pipeline\Unanalyzed\Single_Animal)
   --queue               Also copy outputs to DLC_Queue
   -q, --quiet
 ```

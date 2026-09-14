@@ -67,5 +67,59 @@ def test_manifest_in_bundle_pose_is_self_contained(tmp_path):
     assert doc["provenance"]["self_contained"] is True
 
 
+def _staged_pose_env(tmp_path, monkeypatch, stem):
+    """A share with a declared-scorer pose only in staging (Processing/Posed)
+    and an empty triage bundle; the real resolver is used."""
+    import mousereach.pipeline.versions as vmod
+    nas = tmp_path / "nas"
+    staging = nas / "Processing" / "Posed"
+    staging.mkdir(parents=True)
+    staged = staging / (stem + "DLC_newmodel.h5")
+    staged.write_bytes(b"pose-bytes")
+    bundle = nas / "Processing" / "Review" / "triage" / stem
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", nas)
+    monkeypatch.setattr(rr.Paths, "ANALYZED_OUTPUT", None)
+    monkeypatch.setattr(rr.Paths, "DLC_STAGING", staging)
+    monkeypatch.setattr(vmod, "get_current_versions",
+                        lambda root: {"versions": {"dlc_scorer": "DLC_newmodel"}})
+    return staged, bundle
+
+
+def test_manifest_never_points_at_staging_it_copies_the_pose_in(tmp_path, monkeypatch):
+    # Staging is a transient handover folder: a manifest naming it went stale
+    # when the pose moved on (and when the old staging folder was set aside by
+    # the layout change), so the bundle refused to return every cycle. The pose
+    # now travels IN the bundle, and the staged copy is left for intake.
+    stem = "20240101_ABC0101_P1"
+    staged, bundle = _staged_pose_env(tmp_path, monkeypatch, stem)
+    rg._write_review_manifest(bundle, stem, "why")
+    doc = json.loads((bundle / (stem + "_manifest.json")).read_text(encoding="utf-8"))
+    local = bundle / staged.name
+    assert local.read_bytes() == b"pose-bytes"
+    assert doc["canonical_dlc_h5_path"] == str(local)
+    assert doc["provenance"]["self_contained"] is True
+    assert staged.exists()
+    assert not list(bundle.glob("*.part"))
+    # And the return path now finds the pose in the bundle itself.
+    assert rr._resolve_inputs(bundle, stem)[1] == local
+
+
+def test_manifest_pose_pointer_stays_empty_when_the_staged_copy_fails(tmp_path, monkeypatch):
+    stem = "20240101_ABC0101_P1"
+    staged, bundle = _staged_pose_env(tmp_path, monkeypatch, stem)
+
+    def no_space(src, dst, *a, **k):
+        Path(dst).write_bytes(b"half")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rg.shutil, "copy2", no_space)
+    rg._write_review_manifest(bundle, stem, "why")
+    doc = json.loads((bundle / (stem + "_manifest.json")).read_text(encoding="utf-8"))
+    assert doc["canonical_dlc_h5_path"] is None
+    assert doc["provenance"]["self_contained"] is False
+    assert sorted(p.name for p in bundle.iterdir()) == [stem + "_manifest.json"]
+
+
 def test_dashboard_widget_imports():
     import mousereach.dashboard.widget  # noqa: F401

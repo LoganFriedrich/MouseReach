@@ -1,6 +1,10 @@
 # Design: the filesystem is the state, the database is derived
 
-STATUS: DESIGN, NOT YET BUILT. This describes a target, not the running system.
+STATUS: PARTLY BUILT (2026-09-14). Built: the read-only check (step 0), the
+rule that every walk of Analyzed skips superseded outputs, and the stage-folder
+layout (steps 1 and 2: config, the folder builder, the archive root, guard-file
+handling). Not yet built: claim by rename (step 3), rebuilding the database
+from folders (step 4), folder-first readers (step 5).
 For what the pipeline does today, read PIPELINE_AS_BUILT.md.
 
 Decided 2026-09-14: a video's position in the pipeline is determined by which
@@ -110,7 +114,9 @@ Constraints on the move:
   * The read-only historical source tree (`Archive/historical/`, read by
     `aspa/import_collages.py` and counted by `census/runner.py`) does NOT move.
     It is source data produced by older tools, copied out of and never written
-    into. A test asserts no code path opens a file for writing beneath it.
+    into. The rule: no code path opens a file for writing beneath it. Nothing
+    enforces that automatically today, so every change touching it has to be
+    checked by hand against the rule.
   * The move must happen with every watcher stopped. The normal archiving step
     (`archive/core.py` -> `supersede_video_outputs`) writes into the archive
     whenever it replaces an earlier generation, so a watcher running old code
@@ -122,9 +128,19 @@ Constraints on the move:
     cleanup.
   * Rename within the share (`os.rename` / `Move-Item`), never `shutil.move`,
     which silently falls back to copy-and-delete across volumes.
-  * Then change the three constants together: `archive/supersede.py`,
-    `aspa/import_collages.py`, `census/runner.py`. `migrate_to_processing.py`
-    builds an `Archive` path from the LOCAL processing root and is out of scope.
+  * Then change ONE constant: `archive/supersede.default_archive_root`, which
+    becomes `<Analyzed>/Archive`. The constants in `aspa/import_collages.py`
+    and `census/runner.py` point at `Archive/historical/`, which does not move,
+    and must stay as they are; repointing them would send the collage importer
+    and the census looking for historical source material in the wrong place.
+    `migrate_to_processing.py` builds an `Archive` path from the LOCAL
+    processing root and is out of scope.
+  * Every walk of Analyzed already skips folders named `Archive` and
+    `_archived` (`pipeline/analyzed_tree.py`), because archived files keep
+    their original names and would otherwise be read as live results. Keep the
+    archive folder named `Archive` for that reason. `DLC Model <N>/` folders
+    are deliberately NOT skipped: inside a project they are live pose storage,
+    and hiding them would make finished videos look like they need a pose.
 
 
 ## CLAIM BY RENAME, RECLAIM BY TIMEOUT
@@ -176,9 +192,9 @@ always.
 
 ## WHAT THIS BREAKS, AND MUST BE CHANGED WITH IT
 
-  * `config.Paths` gains the stage folders. The single-animal, post-pose and
-    deep-review paths are repointed; the roughly one hundred `Paths.*` call
-    sites follow.
+  * DONE: `config.Paths` names the stage folders (the single-animal, post-pose
+    and deep-review paths are repointed); the roughly one hundred `Paths.*`
+    call sites follow.
   * `watcher/locate.py` search order: the stage folders in order of currency,
     the archive last.
   * `dashboard/widget.py` reads folders only. The database adapter, and its
@@ -208,7 +224,7 @@ Each step is reversible until the last.
      it before and after every later step: the mismatch set must shrink and
      never grow.
   1. Create the new stage folders (`pipeline/pipe_structure.TARGET_DIRS`,
-     idempotent). Nothing uses them yet.
+     idempotent).
   2. The freeze. It cannot be incremental: code resolves a stage to a path and
      then lists it, so there is no moment when both names are right, and a
      machine listing mid-rename fails silently.
@@ -219,7 +235,24 @@ Each step is reversible until the last.
           explicitly: manifests may already name the current model.
        e. Move the archive (constraints above).
        f. Move folders carrying real waiting work only, never leftovers;
-          repoint `config.Paths`.
+          repoint `config.Paths`. The old stage folders
+          (`Processing/Single_Animal/`, `Processing/DLC_Complete/`) hold only
+          leftover copies of finished work, so they are renamed whole into
+          `Processing/_leftovers_pending_cleanup_<date>/`. The leading `_`
+          marks them as not a stage, and they wait there for cleanup.
+          `Processing/Review/flagged_for_review/` is renamed to
+          `Processing/Review/deep_review/`, and the paths recorded inside its
+          bundle manifests are rewritten to match.
+       f2. Leave a guard FILE (a plain file, not a folder) at each old folder
+          name: `Processing/Single_Animal`, `Processing/DLC_Complete`,
+          `Processing/Review/flagged_for_review`. WHY: code that still uses an
+          old name would otherwise quietly recreate the empty folder and carry
+          on working in the old layout, splitting the pipeline in two with no
+          error anywhere. With a file in the way, creating or listing that
+          folder raises (`FileExistsError`, `NotADirectoryError`) and the
+          stale code stops loudly. It follows that new code must never create,
+          list or glob those old names, and that generic folder listings must
+          not crash when they meet a file where a folder was expected.
        g. Every machine pulls current code before it restarts.
   3. Claim by rename, reclaim by timeout.
   4. Rebuild the database from folders into a fresh file and diff.

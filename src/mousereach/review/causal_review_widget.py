@@ -580,10 +580,27 @@ The notes box travels with the video.
         and DLC pose are loaded from the manifest's canonical Y: paths (they live
         in different dirs and are never copied). See mousereach.review.staging
         for how bundles are produced.
+
+        The manifest's paths are ABSOLUTE, so they go stale when a folder above
+        the bundle is renamed; the video is therefore resolved (manifest path,
+        else the bundle's own copy) -- see mousereach.review.bundle_media.
         """
+        from mousereach.review.bundle_media import resolve_bundle_video
+        bundle_dir = Path(bundle_dir)
+        video = resolve_bundle_video(manifest, bundle_dir)
+        if video is None:
+            # WHY stop before touching self._manifest/_bundle_dir: the video
+            # already on screen must stay paired with its own bundle, or a save
+            # would land in the wrong bundle.
+            stem = manifest.get("video_stem") or bundle_dir.name
+            show_error(
+                f"Could not open review bundle {stem}: no video at the "
+                f"manifest's path ({manifest.get('canonical_video_path')}) and "
+                f"no {stem}.mp4 inside the bundle folder ({bundle_dir}).")
+            return
         self._manifest = dict(manifest)
-        self._bundle_dir = Path(bundle_dir)
-        self._load_video(Path(manifest["canonical_video_path"]))
+        self._bundle_dir = bundle_dir
+        self._load_video(video)
         self._update_routing_banner()
 
     def _update_routing_banner(self):
@@ -835,8 +852,17 @@ The notes box travels with the video.
         import pandas as pd
         candidates = []
         manifest = getattr(self, "_manifest", None)
-        if manifest and manifest.get("canonical_dlc_h5_path"):
-            candidates.append(Path(manifest["canonical_dlc_h5_path"]))
+        if manifest:
+            # WHY resolve, not the raw manifest path: it is absolute and goes
+            # stale on a folder rename; the bundle's own pose is the fallback.
+            try:
+                from mousereach.review.bundle_media import resolve_bundle_pose
+                pose = resolve_bundle_pose(
+                    manifest, getattr(self, "_bundle_dir", None), self._video_stem)
+            except Exception:
+                pose = None
+            if pose is not None:
+                candidates.append(pose)
         candidates.extend(self.video_path.parent.glob(f"{self._video_stem}*.h5"))
         for h5_path in candidates:
             try:

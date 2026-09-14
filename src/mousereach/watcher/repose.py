@@ -7,7 +7,7 @@ pose from that model are marked state='outdated', reprocess_scope='full' by
 the version scan. Until 2026-09-12 that was a dead end: the node that runs
 the scan usually has no GPU, nothing carried the video to a node that does,
 and when a GPU node was fed the video by hand and staged the new pose into
-Processing/DLC_Complete, the staged-pose scan ignored it because the video
+Processing/Posed, the staged-pose scan ignored it because the video
 already had a row. Every such video cost one hand step on each machine.
 
 THE SHAPE: PULL, OVER SHARED STORAGE
@@ -27,7 +27,7 @@ both:
      is atomic, so two GPU nodes cannot both take it), copy the archived mp4
      into this node's own local DLC_Queue, put the local row in 'dlc_queued'.
      The ordinary pose + stage steps take it from there.
-  3. ADOPT    (any node that takes work from Processing/DLC_Complete) -- a
+  3. ADOPT    (any node that takes work from Processing/Posed) -- a
      staged pose from the declared model for a video whose row is parked
      'outdated' with scope 'full' narrows that row's scope to 'segmentation'
      and records the staged pose, so the EXISTING reprocess path re-runs

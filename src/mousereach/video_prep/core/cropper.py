@@ -6,10 +6,10 @@ The collage layout is 2x4:
     1  2  3  4     (top row)
     5  6  7  8     (bottom row)
 
-Input: {NAS_DRIVE}/Unanalyzed/Multi-Animal/
+Input: {NAS_ROOT}/Unanalyzed/Multi-Animal/   (collages waiting to be cut)
        20250704_CNT0101,CNT0205,CNT0305,CNT0306,CNT0102,CNT0605,CNT0309,CNT0906_P1.mkv
 
-Output: {NAS_DRIVE}/Unanalyzed/Single_Animal/
+Output: {NAS_ROOT}/Unanalyzed/Single_Animal/   (singles waiting for a pose)
         20250704_CNT0101_P1.mp4, 20250704_CNT0205_P1.mp4, etc.
 
 Cohort "00" means skip that position (blank/unused).

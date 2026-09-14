@@ -29,9 +29,14 @@ class FakeDB:
 
 def _wire(monkeypatch, tmp_path):
     triage = tmp_path / "Review" / "triage"
-    deep = tmp_path / "Review" / "flagged_for_review"
+    deep = tmp_path / "Review" / "deep_review"
     triage.mkdir(parents=True)
     deep.mkdir(parents=True)
+    # WHY a plain FILE at the retired queue name, as the migrated share has: a
+    # hardcoded REVIEW_ROOT / "flagged_for_review" join then raises here instead
+    # of quietly finding these bundles and passing.
+    (tmp_path / "Review" / "flagged_for_review").write_text("retired folder",
+                                                            encoding="ascii")
     monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")

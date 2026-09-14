@@ -401,7 +401,7 @@ This is the most important thing in this document.
 
 0. `review_records/reviews/<stem>_causal_review.json` (the durable copy -- always written, belongs to no bundle)
 1. `Processing/Review/triage/<stem>/<stem>_causal_review.json`
-2. `Processing/Review/flagged_for_review/<stem>/<stem>_causal_review.json`
+2. `Processing/Review/deep_review/<stem>/<stem>_causal_review.json`
 3. whatever the caller passes as `primary_dir`
 
 `_review_doc` (`truth_resolver.py:72-88`) reads a review by appending a filename to what it is given. It accepts a **directory**. Every production caller passes the result of `resolve_review_path` (`run_all.py:120-124`, `orchestrator.py:1151-1155`, `orchestrator.py:2100-2104`, `reprocess_to_current.py:258-260`), and `resolve_review_path` returns the path to the JSON **file** (`causal_review_io.py:83-90`). Appending a filename to a file path yields nothing, so **lookup 3 never contributes**.
@@ -453,13 +453,15 @@ Reaches themselves are grouped by segment in two different ways depending on fil
 
 ### Where they are
 
-Set in `config.py:134-136`, derived from `NAS_ROOT`:
+Set in `config.py:164-166`, derived from `NAS_ROOT`:
 
 | Setting | Path | Holds |
 |---|---|---|
 | `Paths.REVIEW_ROOT` | `<nas>/Processing/Review` | parent of both queues; `flagged_sessions.json` and `_QC/` live here |
 | `Paths.TRIAGE_REVIEW` | `<nas>/Processing/Review/triage` | per-element questions |
-| `Paths.DEEP_REVIEW` | `<nas>/Processing/Review/flagged_for_review` | failed segmentation, failed quality control, escalations |
+| `Paths.DEEP_REVIEW` | `<nas>/Processing/Review/deep_review` | failed segmentation, failed quality control, escalations |
+
+The deep-review folder was once `Processing/Review/flagged_for_review`. That name is retired for the folder only -- `flagged_for_review` is still a field in the segments, reaches and outcomes files and a database column. A migrated drive holds a plain file at the old folder path, so old code that tries to use it fails loudly instead of rebuilding it.
 
 An unset `nas_root` does **not** make these `None`. `NAS_ROOT` falls back to `<NAS drive>/! DLC Output` whenever a NAS drive is configured (`config.py:100-101`), so the three queue paths resolve to real folders in the old layout and the node looks like it is working. `Paths.NAS_ROOT_ORIGIN` (`:106`) is what distinguishes `config` from `fallback` from `unset`. Only when both `nas_root` and the NAS drive are unset are the queues `None`, and only then does the launcher tab report "queue not configured" (`queue_launcher_widget.py:112-113`). The code carries the same warning in a comment at `config.py:102-105`.
 
