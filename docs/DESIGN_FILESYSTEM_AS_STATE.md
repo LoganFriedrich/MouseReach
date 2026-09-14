@@ -1,7 +1,7 @@
-# Design proposal: the filesystem is the state, the database is derived
+# Design: the filesystem is the state, the database is derived
 
-STATUS: PROPOSAL. Nothing here is built. This describes a target, not the
-running system. For what the pipeline does today, read PIPELINE_AS_BUILT.md.
+STATUS: DESIGN, NOT YET BUILT. This describes a target, not the running system.
+For what the pipeline does today, read PIPELINE_AS_BUILT.md.
 
 Decided 2026-09-14: a video's position in the pipeline is determined by which
 folder contains it. The database is a cache of that fact, rebuildable by
@@ -18,103 +18,137 @@ with no database consulted at all. Everything else drifted into database-only
 state, where the folder a file sits in means nothing and a row means
 everything.
 
-The cost of that split is not theoretical. On 2026-09-14 a backup copy of one
-node's database was read as current state and roughly 1,100 finished videos
-were reported as needing about 14 minutes of GPU each. They were done. Their
-results had been sitting in `Analyzed/` for eleven days. Under this design the
-question is answered by looking at which folder holds the video, and the
-mistake is not available to make.
+The cost of that split is not theoretical. A backup copy of one node's database
+was once read as current state, and a large batch of finished videos was
+reported as needing a fresh pose each. They were done; their results had been
+sitting in `Analyzed/` for days. Under this design the question is answered by
+looking at which folder holds the video, and the mistake is not available to
+make.
 
 A second property matters as much: a person who has read no documentation
-should be able to open the share and see where everything is. Today they
-cannot, because between cropping and the end of pose estimation a single-mouse
-video exists only on one machine's local disk.
+should be able to open the share and see where everything is.
 
 
-## THE INVARIANT
+## WHAT "DONE" MEANS
 
-At any moment, exactly one folder on the share holds the canonical copy of a
-video, and that folder names what has been done to it. Everything else is a
-working copy that may be deleted without loss.
+A video is done only when BOTH are true:
 
-Work still happens on local disk, for the reasons it always did: DeepLabCut
-writes its output beside its input, and SQLite over a share loses writes. The
-change is that the local copy is explicitly a scratch copy with no authority,
-and the canonical file on the share moves when a stage completes.
+  1. Its analysis is current, or declared compatible with current. "Current"
+     means produced by the pose model and tool versions declared in
+     `pipeline_versions.json`, as recorded in the video's own
+     `_processing_manifest.json`. Compatibility is declared once, in the same
+     file (`compatible_versions`), and is already honoured by
+     `versions.compare_manifest_to_current`. Every human analysis of the video
+     must be reflected in that current analysis.
+  2. That analysis is where it SHOULD be: beside the video in
+     `Analyzed/<project>/<cohort>/`, with project and cohort worked out from the
+     video's name (`archive/core.get_archive_destination`). Not where it
+     happens to be, and not wherever a database row says it is.
+
+Fail either and the video is not done. Agreement between files and records
+proves nothing, because both can agree on the wrong folder or an old version.
+The right place and the current versions are fixed by rule; the check compares
+reality against those rules. There is no exceptions list.
+
+"Outdated" is therefore not a state anyone records. It is computed from the
+files every time: the current analysis is simply not there yet.
+
+Human analyses (ground truth, causal reviews) are never outdated. They are
+statements about the video itself -- at this frame a reach happened that did
+this to the pellet -- so they stay true whichever tool version they were made
+alongside. They always stay with the video, are never archived, and must
+reach the analysis. `archive/supersede._NEVER_SUFFIXES` and
+`reprocessor._drop_human_seg_staleness` already lean this way.
+
+A name known to be wrong is repaired, not tolerated, because the right place
+is computed from the name. Each repair is confirmed case by case, starting
+with the collage (singles are re-cut from it), and leaves a small note beside
+the renamed file recording the old name. Nothing renames files from a pattern.
 
 
 ## STAGE FOLDERS
 
-    Unanalyzed/Multi-Animal/        collage, waiting to be cut
-    Unanalyzed/Single_Animal/       single, waiting for a pose
-    Processing/Posed/               has a current-model pose
-    Processing/Segmented/           segmentation done
-    Processing/Reaches/             reach detection done
-    Processing/Outcomes/            outcome detection done
-    Processing/Assigned/            assignment done
-    Processing/Review/triage/       held for a person
-    Processing/Review/deep_review/  held for a person
-    Processing/Failed/              needs a person, retryable
-    Processing/Quarantine/          filename failed the hard gate
-    Analyzed/<project>/<cohort>/    finished single, with its outputs
-    Analyzed/<project>/<cohort>/Multi-Animal/   finished collage
-    Analyzed/Archive/               old work nobody cares about any more
+Every folder is a place work RESTS: waiting for a machine, waiting for a
+person, or finished. There are no per-algorithm folders. The four algorithms
+run back to back on one local copy in seconds, and nothing ever runs them
+independently, so a folder between each would add network moves and no
+information.
 
-The video and every output it has so far travel together as one bundle. The
-existing rule that human truth never leaves the video (ground truth, causal
-review) is unchanged.
+    Unanalyzed/Multi-Animal/          collage, waiting to be cut
+    Unanalyzed/Single_Animal/         single, waiting for a pose
+    Processing/Posed/                 posed; the algorithms run from here
+    Processing/Review/triage/         held for a person
+    Processing/Review/deep_review/    held for a person
+    Processing/Failed/                needs a person
+    Processing/Quarantine/            filename failed the gate
+    Analyzed/<project>/<cohort>/      finished single, with its outputs
+    Analyzed/Archive/                 superseded outputs only
 
+Folders that are NOT stages, and that a scan must classify rather than read as
+a video's position: `Processing/Repose_Queue/` (request files, not videos),
+`Unanalyzed/Unsupported_Tray_Type/` (tray types this pipeline does not
+analyse), any folder whose name starts with `.` or `_` (claims, in-flight
+work, retired bundles), and any leftover folder from the previous layout while
+it waits for cleanup.
 
-## ARCHIVE IS A KIND OF FINISHED, AND LIVES UNDER THE FINISHED TREE
-
-`Archive/` moves from the top of the pipeline folder to `Analyzed/Archive/`,
-and its meaning is stated in one line: old work nobody cares about any more.
-Kept because deleting it would be irreversible, not because anything reads it.
-
-This matters more than it sounds. A top-level `Archive/` sitting beside
-`Unanalyzed/` and `Processing/` reads like a stage, and it is not one. Nothing
-in it is waiting for anything. Putting it under the finished tree says what it
-is by where it is, which is the whole point of this design.
-
-What belongs there: superseded pose generations and the algorithm outputs that
-were computed from them, per the existing versioned layout
-(`DLC Model <gen>/<algo stack>/`). What does not: any video that is the only
-copy, and anything a current result depends on.
-
-Consequences:
-
-  * `archive/supersede.py:default_archive_root` returns `NAS_ROOT / "Archive"`
-    and becomes `NAS_ROOT / "Analyzed" / "Archive"`. One line, but every path
-    already recorded in an existing archive README points at the old location.
-  * The move itself is a rename within one volume, so it is metadata only and
-    does not copy the 3.7 TB currently under `Archive/`.
-  * `aspa/import_collages.py` and `census/runner.py` both name
-    `Archive/historical/ASPA` explicitly and would need the new path. That
-    corpus is live source data for an active import, not old work, so whether
-    it belongs under an archive named "nobody cares about this" is a separate
-    question worth asking.
-  * `migrate_to_processing.py:190` also builds an `Archive` path, but from the
-    LOCAL processing root rather than the share, and belongs to the one-time
-    migration off the previous architecture. Different folder, out of scope
-    here; listed so the next person greps once and finds all four.
+The video and every output it has so far travel together as one bundle.
 
 
-## THE MOVE IS THE COMMIT
+## ARCHIVE LIVES UNDER THE FINISHED TREE
+
+Superseded outputs move from a top-level `Archive/` to `Analyzed/Archive/`. A
+top-level archive beside `Unanalyzed/` and `Processing/` reads like a stage,
+and it is not one. Nothing in it is waiting for anything.
+
+What belongs there: superseded pose generations and the algorithm outputs
+computed from them, in the existing versioned layout
+(`DLC Model <gen>/<algo stack>/`). What does not: any only copy of a video,
+anything a current result depends on, and human analyses.
+
+Constraints on the move:
+
+  * The read-only historical source tree (`Archive/historical/`, read by
+    `aspa/import_collages.py` and counted by `census/runner.py`) does NOT move.
+    It is source data produced by older tools, copied out of and never written
+    into. A test asserts no code path opens a file for writing beneath it.
+  * The move must happen with every watcher stopped. The normal archiving step
+    (`archive/core.py` -> `supersede_video_outputs`) writes into the archive
+    whenever it replaces an earlier generation, so a watcher running old code
+    would recreate the top-level folder right after it moved.
+  * The move adds `Analyzed\` to every path beneath. Measure the longest path
+    first: anything that would reach 260 characters becomes unopenable on
+    Windows. Subtrees that would cross the limit and hold no superseded video
+    outputs (for example old development material) stay where they are until
+    cleanup.
+  * Rename within the share (`os.rename` / `Move-Item`), never `shutil.move`,
+    which silently falls back to copy-and-delete across volumes.
+  * Then change the three constants together: `archive/supersede.py`,
+    `aspa/import_collages.py`, `census/runner.py`. `migrate_to_processing.py`
+    builds an `Archive` path from the LOCAL processing root and is out of scope.
+
+
+## CLAIM BY RENAME, RECLAIM BY TIMEOUT
 
 One stage, in order:
 
-  1. Claim: atomically rename the bundle into `<stage>/.inflight/<hostname>/`.
-     A rename either succeeds or does not, so two machines cannot claim the
-     same video. This is the pattern `watcher/repose.py` already uses.
-  2. Copy to local scratch. Work there.
-  3. Write results back beside the video, still inside `.inflight/<hostname>/`.
-  4. Atomically move the bundle to the next stage folder.
+  1. Look first, then claim: atomically rename the bundle into
+     `<stage>/.inflight/<hostname>/<stem>/`. A rename either succeeds or does
+     not; `FileNotFoundError` means another machine won. This is the pattern
+     `watcher/repose.py` already uses.
+  2. Copy to local scratch and work there, touching the in-flight folder as a
+     heartbeat.
+  3. Write results back beside the video, still inside `.inflight/`.
+  4. Atomically move the bundle to the next folder.
   5. Delete the local scratch copy.
 
-A crash leaves the bundle in `.inflight/<hostname>/`. Recovery moves anything
-there back to its own stage folder and it is simply claimed again. That is the
-same reclaim already implemented in `BaseOrchestrator._reclaim_orphaned_work`,
-applied to folders instead of database states.
+This replaces the `.claims` marker files, which are not atomic (write, sleep,
+read back).
+
+A crash leaves the bundle in `.inflight/<hostname>/`. Recovery must run on
+EVERY poll, not only at startup: the startup reclaim is safe only for the
+machine's own folder, and a bundle stranded by a different machine would
+otherwise wait forever. A bundle whose heartbeat is older than
+`repose.STALE_S` goes back to its stage folder and is simply claimed again.
 
 Nothing is ever deleted from the share to advance a stage. A move that fails
 leaves the bundle where it was.
@@ -122,71 +156,87 @@ leaves the bundle where it was.
 
 ## THE DATABASE AFTER THIS
 
-Derived. A scan of the stage folders reconstructs every row. The database
-remains useful for history, timings, error messages and the processing log,
-which the filesystem cannot express. It stops being consulted to answer "where
-is this video" or "is this done".
+Derived. A scan of the stage folders reconstructs every row.
 
-Consequences worth stating plainly:
+  * Calculated from the files, never stored: whether the current analysis
+    exists, and therefore what needs re-running.
+  * Written as a small note in the video's folder when it becomes true: failure
+    reason and retry count, why a person asked for a re-run, and which collage
+    the single came from.
+  * Kept only in the database, as history: per-step durations, the processing
+    log, first-seen time. Losing this never makes a video look unfinished.
 
-  * A rebuild command must exist and must be safe to run at any time.
-  * Anything that today reads state from a database row needs to read the
-    folder instead, or read a cache that a scan refreshes.
-  * `watcher_state/<host>/watcher.db` becomes uninteresting rather than
-    dangerous: a backup of a cache is harmless.
-  * Disagreement between a row and a folder is resolved in the folder's favour,
-    always, with no judgement call.
+A rebuild writes a FRESH database beside the live one and diffs them. A rebuild
+that overwrites its own comparison target cannot be checked. Promotion is a
+manual rename.
+
+Disagreement between a row and a folder is resolved in the folder's favour,
+always.
 
 
 ## WHAT THIS BREAKS, AND MUST BE CHANGED WITH IT
 
-  * `config.Paths` gains the stage folders; `DLC_QUEUE` and the local
-    `PROCESSING` folder become explicitly scratch.
-  * `watcher/locate.py` search order: the stage folders become the places a
-    video legitimately lives, and the archive stays last.
-  * `census/runner.py` already works this way and gets simpler, not harder.
-  * `dashboard/widget.py` reads folders, which also removes the current bug
-    where it opens a database at a hardcoded path that on at least one machine
-    holds zero rows.
-  * `index/index.py` carries a three-entry `STAGES` list from the previous
-    architecture; it is either updated to the list above or removed.
-  * The archive readiness check currently consults a cached index that the
-    watcher never writes, so a stage's completion is not reliably recorded
-    anywhere the move could depend on. This has to be settled before a move
-    can be gated on it.
+  * `config.Paths` gains the stage folders. The single-animal, post-pose and
+    deep-review paths are repointed; the roughly one hundred `Paths.*` call
+    sites follow.
+  * `watcher/locate.py` search order: the stage folders in order of currency,
+    the archive last.
+  * `dashboard/widget.py` reads folders only. The database adapter, and its
+    reads of a database at a hardcoded path, go.
+  * The review gate's ground-truth lookup (`causal_review_io.find_gt`) indexes
+    only the local processing tree. Ground truth kept beside a finished video
+    must be visible to it, or human truth sits beside the video without ever
+    reaching the analysis.
+  * `review_return` retires a stale review bundle whenever the video already
+    reads as finished. It must refuse when the bundle carries a review the
+    finished copy lacks.
+  * `review_return._resolve_inputs` assumes bundles are not self-contained,
+    although bundles carry their own media. Settle that before any cleanup
+    deletes staged copies.
+  * `index/index.py` carries a three-entry `STAGES` list from an older
+    architecture; update it or remove it.
 
 
 ## MIGRATION ORDER
 
-Each step leaves the pipeline working.
+Each step is reversible until the last.
 
-  1. File superseded poses into the versioned Archive, so each video has one
-     current pose beside it. Already validated by dry run; independently
-     useful; the same principle at small scale.
-  1b. Move `Archive/` to `Analyzed/Archive/` and point
-     `default_archive_root` at it. A rename within one volume, so no data is
-     copied. Do this AFTER step 1 rather than before, so the pose filing runs
-     against a path that is not moving under it.
-  2. Create the stage folders and have the watcher WRITE position to them
-     while still reading state from the database. Nothing depends on the
-     folders yet, so a mistake costs nothing.
-  3. Add the rebuild-from-folders command and verify it reproduces the live
-     database exactly. This is the gate: if it does not reproduce, the folders
-     are not yet the truth and step 4 must not start.
-  4. Switch readers over to the folders, one at a time, starting with the
-     dashboard and census.
-  5. Remove the database as an authority. It stays as history.
+  0. A read-only check, `mousereach-reconcile`, compares every video against
+     the definition of done and reports mismatches PER VIDEO, never as counts
+     (counts can match while being wrong in both directions). Databases are
+     read only to report where they disagree; they never decide anything. Run
+     it before and after every later step: the mismatch set must shrink and
+     never grow.
+  1. Create the new stage folders (`pipeline/pipe_structure.TARGET_DIRS`,
+     idempotent). Nothing uses them yet.
+  2. The freeze. It cannot be incremental: code resolves a stage to a path and
+     then lists it, so there is no moment when both names are right, and a
+     machine listing mid-rename fails silently.
+       a. Stop every watcher and every importer; close review tools.
+       b. Prove the freeze: record folder modification times, wait, compare.
+       c. Snapshot every database, with checksums, off the share.
+       d. File superseded poses into the archive. Name the OLD scorer
+          explicitly: manifests may already name the current model.
+       e. Move the archive (constraints above).
+       f. Move folders carrying real waiting work only, never leftovers;
+          repoint `config.Paths`.
+       g. Every machine pulls current code before it restarts.
+  3. Claim by rename, reclaim by timeout.
+  4. Rebuild the database from folders into a fresh file and diff.
+  5. Switch readers to folders. This is the point of no return: gate it on
+     step 0 reporting no mismatches.
 
-Step 3 is the decision point. Until a scan can reproduce the database, this
-design is not real and should not be relied upon.
+Do not rewrite the work-selection order (`orchestrator._select_work_item`) as
+part of this. It encodes two production failures and its tests pin it.
 
 
-## OPEN QUESTIONS FOR THE LAB
+## SETTLED
 
-  * Should a single that fails one algorithm sit in the previous stage folder
-    or in `Failed/`? Failed is retryable today and carries a retry count.
-  * Do collages need per-stage folders too, or is discovered/cropped enough?
-  * Should `Analyzed/<project>/<cohort>/` keep videos and outputs together as
-    it does now, or separate `Single_Animal/` and `Multi-Animal/` beneath it?
-  * How long may a bundle sit in `.inflight/<hostname>/` before recovery
-    reclaims it? The pose is the longest step at roughly fourteen minutes.
+  * No per-algorithm folders.
+  * The historical source tree does not move and is never written.
+  * Human analyses are never outdated and never archived.
+  * Status lives on disk; history lives in the database.
+  * Stranded work is reclaimed automatically on timeout.
+  * Migration freezes in place, migrates, and resumes; it does not drain first.
+  * Leftover working copies are not moved into the new layout. Cleanup waits
+    until every other step is done.
