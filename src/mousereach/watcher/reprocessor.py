@@ -49,8 +49,7 @@ def _outside_superseded(root: Path, hits):
     depth as a live Analyzed/<project>/<cohort>/<file> -- and superseded files
     keep their original names, so the glob alone reads an older generation as
     live. Any superseded directory component rejects the hit, matching
-    analyzed_tree.iter_files (which never enters such a folder at any depth).
-    Imported lazily: mousereach.pipeline's __init__ loads the napari widget."""
+    analyzed_tree.iter_files (which never enters such a folder at any depth)."""
     from mousereach.pipeline.analyzed_tree import is_superseded_dir
     for p in hits:
         try:

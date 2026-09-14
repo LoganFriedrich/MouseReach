@@ -105,7 +105,6 @@ def build_downstream_index() -> Dict[str, str]:
     def _norm(p: Path) -> str:
         return normalize_video_stem(p)
 
-    # Imported here: the mousereach.pipeline package __init__ is heavy (napari).
     from mousereach.pipeline.analyzed_tree import iter_files
 
     def _add(folder, state, skip_superseded=False):
@@ -179,8 +178,7 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     # WHY iter_files and not rglob: an archived manifest under Analyzed/Archive/
     # keeps its ORIGINAL name, and one that compares current made a stem with
     # no live output (or an outdated live one) "complete" -- enough to retire
-    # its collage. iter_files never enters a superseded folder. (Imported
-    # here: the mousereach.pipeline package __init__ is heavy.)
+    # its collage. iter_files never enters a superseded folder.
     from mousereach.pipeline.analyzed_tree import iter_files
     for mp in iter_files(analyzed_root, f"*{_PROC_MANIFEST_SUFFIX}"):
         stem = mp.name[: -len(_PROC_MANIFEST_SUFFIX)]

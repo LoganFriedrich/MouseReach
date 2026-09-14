@@ -95,8 +95,6 @@ def walk_analyzed(root) -> tuple:
     Every other folder -- cohort folders, ``Multi-Animal/`` collages,
     ``DLC Model <N>/`` -- is walked exactly as before.
     """
-    # Imported here, not at module top: the mousereach.pipeline package
-    # __init__ loads the napari widget, which a headless census must not pay.
     from mousereach.pipeline.analyzed_tree import is_superseded_dir, walk_onerror
 
     index: Dict[str, Set[str]] = {}

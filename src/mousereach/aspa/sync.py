@@ -291,8 +291,7 @@ def find_reprocessed_videos(
     # ...) inside a superseded folder (Archive). Such a folder is neither a
     # cohort nor a video: as a "cohort" its old reaches would sync into ASPA.db
     # as live, and as a "video" subfolder it would make a flat cohort look
-    # per-video and hide the live flat *_reaches.json files. Imported here, not
-    # at module top, because the helper's package loads the napari widget.
+    # per-video and hide the live flat *_reaches.json files.
     from mousereach.pipeline.analyzed_tree import is_superseded_dir
 
     if cohort:

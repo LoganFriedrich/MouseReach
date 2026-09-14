@@ -148,7 +148,6 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
         # generation's _reaches.json as "analyzed" -- and since analyzed
         # outranks processing, a video back in Processing for a reprocess
         # showed as done. iter_files never enters a superseded folder.
-        # (Imported here: the mousereach.pipeline package __init__ is heavy.)
         from mousereach.pipeline.analyzed_tree import iter_files
         for f in iter_files(analyzed, f"*{_REACHES}"):
             add(f.name[: -len(_REACHES)], "analyzed", f)

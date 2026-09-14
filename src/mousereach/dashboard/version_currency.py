@@ -32,8 +32,6 @@ def build_manifest_index(roots) -> Dict[str, Path]:
     gives it a newer mtime than the live one, so newest-mtime-wins could pick
     it and report a current video as outdated -- or an outdated one as
     current."""
-    # Imported here: the mousereach.pipeline package __init__ loads the
-    # napari widget, and this module is also used headless.
     from mousereach.pipeline.analyzed_tree import iter_files
 
     idx: Dict[str, Path] = {}

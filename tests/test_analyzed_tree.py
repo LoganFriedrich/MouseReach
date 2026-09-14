@@ -142,6 +142,29 @@ def test_supersede_archive_folder_name_is_skipped_by_every_walker(tmp_path, monk
     assert root.name in SUPERSEDED_DIR_NAMES
 
 
+def test_importing_the_rule_does_not_load_napari():
+    """Headless tools import this module (mousereach-reconcile, the census, the
+    version scan). The pipeline package used to import its napari widget
+    eagerly, so this import took about six seconds and loaded Qt. Checked in a
+    fresh interpreter, because this test process may already have napari."""
+    import subprocess
+    import sys
+    code = ("import sys, mousereach.pipeline.analyzed_tree; "
+            "print('napari' in sys.modules, 'qtpy' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, check=True, env=dict(os.environ))
+    assert out.stdout.split() == ["False", "False"]
+
+
+def test_package_public_names_still_resolve():
+    """The lazy package keeps `from mousereach.pipeline import X` working."""
+    import mousereach.pipeline as pipeline
+    assert "UnifiedPipelineWidget" in pipeline.__all__
+    assert pipeline.UnifiedPipelineProcessor.__name__ == "UnifiedPipelineProcessor"
+    with pytest.raises(AttributeError):
+        pipeline.not_a_name
+
+
 @pytest.mark.xfail(strict=True, reason=(
     "archive.supersede.default_archive_root still returns <NAS_ROOT>/Archive, "
     "a sibling of Analyzed; the move to Analyzed/Archive has not landed. "

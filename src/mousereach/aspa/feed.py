@@ -39,9 +39,7 @@ def find_single_animal_videos(
 
     # WHY: superseded outputs live under Analyzed/Archive/ with their original
     # names. That folder is not a cohort, and walking into it would feed an
-    # older generation's videos back into DLC as if they were live. Imported
-    # here, not at module top, because the helper's package loads the napari
-    # widget and this CLI does not otherwise need it.
+    # older generation's videos back into DLC as if they were live.
     from mousereach.pipeline.analyzed_tree import is_superseded_dir, iter_files
 
     if cohort:
