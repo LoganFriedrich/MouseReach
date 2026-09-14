@@ -455,3 +455,66 @@ scope 'segmentation' -- every post-DLC stage re-runs against the pose already
 there. The 31 with no current pose keep scope 'full'. Their manifests are not
 edited: the manifest correctly records what produced the current results, and the
 reprocess run rewrites it with the pose that actually ran.
+
+
+---
+
+## Update 2026-09-14: which watcher database is authoritative, and one that is not
+
+A check of whether roughly 1,100 CNT videos still needed a new pose found that
+they did not. Their manifests record the declared scorer and the current version
+of every tracked stage, and the processing server's own live database holds no
+'outdated' rows at all. The check took far longer than it should have, because
+two separate places make a stale or empty database read like live state. Neither
+is described anywhere else, so both are recorded here.
+
+THE PER-HOST FILE UNDER watcher_state IS A BACKUP, NOT STATE
+
+`nas_root/watcher_state/<hostname>/watcher.db` is written by `backup_db`
+(watcher/coordination.py:175) as a plain `shutil.copy2` of that node's local
+database, through a `.tmp` file and a rename. Exactly one caller reads it --
+`restore_db` (:208) -- and only when the local database is missing or smaller
+than 4 KB, which means a fresh or wiped node. Nothing else in `src/` or `tests/`
+refers to `watcher_state` at all.
+
+So it is a restore safety net with no defined freshness. `_backup_local_db`
+(watcher/orchestrator.py:801) runs opportunistically inside the work loop
+(:1262), not on a timer, so the file's timestamp records when that node last
+completed a cycle -- not when its contents were true.
+
+Reading it as pipeline state is a mistake, and an expensive one. On the morning
+of 2026-09-14 a GPU node's backup held 1,882 videos in 'outdated' (1,221 at
+scope 'full', which reads as "needs about 14 minutes of GPU each") while the
+processing server's live database held zero outdated rows, and the manifests for
+those same videos recorded the declared scorer and current versions throughout.
+
+The authoritative database for a node is the one that node's own watcher writes:
+the `db_path` override in its `~/.mousereach/config.json`, else
+`processing_root/watcher.db`. For reprocessing questions the processing server's
+copy is the one that decides, because it is the only role with
+`reprocesses_partial` true (orchestrator.py:433; the GPU role sets it false at
+:728 and therefore passes `full_only=True`, marking only the scope it can
+drain). Note that `handles_reprocessing` does NOT distinguish the roles -- the
+GPU role sets it from `also_process` (:756), which is true on all three lab GPU
+machines.
+
+A gap worth recording: that same backup also held 661 rows at scope
+'kinematics', which `full_only=True` should have prevented that node from
+marking. Whether they predate the flag or arrive by another path is not
+established here.
+
+THE DASHBOARD STILL HARDCODES THE PATH THE CLI STOPPED HARDCODING
+
+The 2026-08-23 update above moved all eight watcher commands onto
+`_resolve_db_path`, which honours the node's `db_path` override and prints the
+path it chose so a wrong database is loud. The dashboard was never included. It
+resolves correctly in one place (dashboard/widget.py:892) and hardcodes the
+fallback in four others: :365, :593, :1284 and :1415.
+
+On this processing server the override points at
+`processing_root/watcher_local.db`, which holds 4,113 rows (3,896 archived, 169
+triage, 47 deep review, 1 unresolvable). The hardcoded
+`processing_root/watcher.db` sitting beside it carries the full schema and zero
+rows. The GUI therefore opens an empty database while the watcher writes a full
+one -- the same failure the CLI had, silent, and indistinguishable on screen
+from "there is nothing to do".
