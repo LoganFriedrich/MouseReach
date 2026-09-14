@@ -150,7 +150,11 @@ def scan_files(root: Path, limit: Optional[int] = None,
         distinct: Dict[str, set] = defaultdict(set)
         total: Dict[str, int] = defaultdict(int)
         n_files = 0
-        paths = sorted(root.rglob("*" + suffix))
+        # WHY iter_files, not rglob: superseded outputs keep their original names
+        # under Analyzed/Archive/, so rglob would tally an older generation's
+        # fields as if the current pipeline produced them.
+        from mousereach.pipeline.analyzed_tree import iter_files
+        paths = sorted(iter_files(root, "*" + suffix))
         for p in paths:
             stem = p.name[: -len(suffix)]
             if only is not None and stem not in only:

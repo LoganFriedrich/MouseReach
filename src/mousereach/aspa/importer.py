@@ -304,8 +304,14 @@ def find_post_processing_dirs(nas_root: Path, cohort: Optional[str] = None):
         else:
             print(f"[!] Post-Processing dir not found for cohort {cohort}: {candidate}")
     else:
+        # WHY: superseded outputs live under Analyzed/Archive/ with their
+        # original names. That folder is not a cohort; importing its
+        # Post-Processing sheets would load an older generation's reaches as
+        # live rows under a cohort called "Archive". Imported here, not at
+        # module top, because the helper's package loads the napari widget.
+        from mousereach.pipeline.analyzed_tree import is_superseded_dir
         for cohort_dir in sorted(analyzed.iterdir()):
-            if not cohort_dir.is_dir():
+            if not cohort_dir.is_dir() or is_superseded_dir(cohort_dir.name):
                 continue
             pp = cohort_dir / "Post-Processing"
             if pp.exists():

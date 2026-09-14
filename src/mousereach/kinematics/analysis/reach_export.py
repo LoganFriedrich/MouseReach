@@ -274,7 +274,11 @@ def export_cohort(cohort: str, search_root: Optional[Path] = None,
     search_root = Path(search_root) if search_root else Path(Paths.ANALYZED_OUTPUT)
     rows: List[Dict[str, Any]] = []
     vids = set()
-    for fp in search_root.rglob("*_features.json"):
+    # WHY iter_files, not rglob: a superseded _features.json keeps its original
+    # name under Analyzed/Archive/, and rglob would add that old generation's
+    # reaches to the cohort CSV beside the current ones -- silently.
+    from mousereach.pipeline.analyzed_tree import iter_files
+    for fp in iter_files(search_root, "*_features.json"):
         video = fp.stem.replace("_features", "")
         if _video_in_cohort(video, cohort):
             r = _emit_features_video(fp)

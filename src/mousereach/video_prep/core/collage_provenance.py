@@ -105,10 +105,22 @@ def build_downstream_index() -> Dict[str, str]:
     def _norm(p: Path) -> str:
         return normalize_video_stem(p)
 
-    def _add(folder, state):
+    # Imported here: the mousereach.pipeline package __init__ is heavy (napari).
+    from mousereach.pipeline.analyzed_tree import iter_files
+
+    def _add(folder, state, skip_superseded=False):
         if not folder or not Path(folder).exists():
             return
-        for p in Path(folder).rglob("*"):
+        # WHY skip_superseded for Analyzed: superseded outputs (videos, DLC
+        # .h5) sit under Analyzed/Archive/ with their ORIGINAL names. rglob
+        # counted them as "analyzed", which outranks every working stage -- so
+        # a child back in Processing for a reprocess read as finished and its
+        # collage could look retirement-ready. iter_files never enters a
+        # superseded folder; DLC Model <N>/ pose folders stay visible. The
+        # working folders keep the plain rglob walk they always had.
+        walk = (iter_files(folder) if skip_superseded
+                else Path(folder).rglob("*"))
+        for p in walk:
             if p.suffix.lower() in (".mp4", ".mkv", ".h5"):
                 s = _norm(p)
                 if s and (s not in idx or
@@ -118,7 +130,7 @@ def build_downstream_index() -> Dict[str, str]:
     _add(Paths.SINGLE_ANIMAL_OUTPUT, "cropped")
     _add(Paths.DLC_STAGING, "dlc_complete")
     _add(Paths.PROCESSING, "processing")
-    _add(Paths.ANALYZED_OUTPUT, "analyzed")
+    _add(Paths.ANALYZED_OUTPUT, "analyzed", skip_superseded=True)
     for root, state in ((Paths.TRIAGE_REVIEW, "triage"), (Paths.DEEP_REVIEW, "deep_review")):
         if root and Path(root).exists():
             for d in Path(root).iterdir():
@@ -164,7 +176,13 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     if not analyzed_root.exists():
         return complete
     current = get_current_versions(nas_root)
-    for mp in analyzed_root.rglob(f"*{_PROC_MANIFEST_SUFFIX}"):
+    # WHY iter_files and not rglob: an archived manifest under Analyzed/Archive/
+    # keeps its ORIGINAL name, and one that compares current made a stem with
+    # no live output (or an outdated live one) "complete" -- enough to retire
+    # its collage. iter_files never enters a superseded folder. (Imported
+    # here: the mousereach.pipeline package __init__ is heavy.)
+    from mousereach.pipeline.analyzed_tree import iter_files
+    for mp in iter_files(analyzed_root, f"*{_PROC_MANIFEST_SUFFIX}"):
         stem = mp.name[: -len(_PROC_MANIFEST_SUFFIX)]
         try:
             manifest = json.loads(mp.read_text(encoding="utf-8"))

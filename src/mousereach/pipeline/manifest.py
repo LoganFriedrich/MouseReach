@@ -402,7 +402,11 @@ def backfill_manifest_versions(root: Path, apply: bool = False,
         raise ValueError("archive_dir is required when apply=True -- "
                          "manifests are archived before they are modified")
 
-    for manifest_path in root.rglob("*_processing_manifest.json"):
+    # WHY iter_files, not rglob: superseded manifests sit under Analyzed/Archive/
+    # with their original names. rglob would "repair" them and, with --apply,
+    # REWRITE an archived record and push it into the version index as live.
+    from mousereach.pipeline.analyzed_tree import iter_files
+    for manifest_path in iter_files(root, "*_processing_manifest.json"):
         stem = manifest_path.name[: -len("_processing_manifest.json")]
         stats['manifests'] += 1
         try:
@@ -497,7 +501,14 @@ def main_backfill_manifest_versions():
     archive_dir = args.archive_dir
     if archive_dir is None:
         stamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-        base = Path(root).parent / "_archived"
+        # Anchored to the pipeline root, NOT to --root's parent. WHY: with
+        # --root Analyzed/<project> the old default put original-named manifest
+        # copies at Analyzed/_archived/, inside the tree every walker reads as
+        # live. For the default root this is the same folder as before
+        # (Analyzed's parent is NAS_ROOT). Only with no NAS configured does it
+        # fall back to --root's parent.
+        base = ((Path(Paths.NAS_ROOT) if Paths.NAS_ROOT else Path(root).parent)
+                / "_archived")
         archive_dir = base / ("manifests_pre_version_backfill_%s" % stamp)
 
     print("Walking %s" % root)
@@ -549,7 +560,11 @@ def backfill_kinematic_versions(root: Path, apply: bool = False) -> Dict:
     versions = Counter()
     root = Path(root)
 
-    for manifest_path in root.rglob("*_processing_manifest.json"):
+    # WHY iter_files, not rglob: superseded manifests keep their names under
+    # Analyzed/Archive/; with --apply, rglob would rewrite an archived record
+    # (and upsert it into the version index) as if it were the live one.
+    from mousereach.pipeline.analyzed_tree import iter_files
+    for manifest_path in iter_files(root, "*_processing_manifest.json"):
         stem = manifest_path.name[: -len("_processing_manifest.json")]
         stats['manifests'] += 1
         try:

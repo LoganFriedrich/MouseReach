@@ -788,7 +788,11 @@ automatic.
                 from mousereach.config import Paths
                 root = getattr(Paths, "ANALYZED_OUTPUT", None)
                 if root:
-                    hit = next(iter(Path(root).rglob("%s.mp4" % stem)), None)
+                    # WHY first_file, not rglob: a superseded copy under
+                    # Analyzed/Archive/ keeps its name; re-segmenting against it
+                    # would score cuts on the wrong file.
+                    from mousereach.pipeline.analyzed_tree import first_file
+                    hit = first_file(root, "%s.mp4" % stem)
                     if hit is not None:
                         mp4 = hit
             except Exception:

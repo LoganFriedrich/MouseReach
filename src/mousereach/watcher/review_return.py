@@ -92,11 +92,16 @@ def _resolve_inputs(bundle: Path, stem: str):
 
     if (mp4 is None or pose is None) and Paths.ANALYZED_OUTPUT:
         root = Path(Paths.ANALYZED_OUTPUT)
+        # Walk Analyzed without entering Analyzed/Archive/: superseded files
+        # keep their original names there, so an rglob returned a reviewed
+        # video on an archived mp4 / old-generation pose as if it were live.
+        # DLC Model <N>/ folders stay visible -- they are live pose storage.
+        from mousereach.pipeline.analyzed_tree import first_file, iter_files
         try:
             if mp4 is None:
-                mp4 = _first_file(root.rglob(f"{stem}.mp4"))
+                mp4 = first_file(root, f"{stem}.mp4")
             if pose is None:
-                hits = [p for p in root.rglob(f"{stem}DLC*.h5") if p.is_file()]
+                hits = list(iter_files(root, f"{stem}DLC*.h5"))
                 pose = select_pose_file(hits) if hits else None
         except OSError as e:
             logger.debug(f"{stem}: could not search Analyzed: {e}")

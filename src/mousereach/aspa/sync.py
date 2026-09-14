@@ -287,18 +287,28 @@ def find_reprocessed_videos(
         print(f"[!] ASPA results directory not found: {aspa_dir}")
         return
 
+    # WHY: superseded outputs keep their ORIGINAL names ({stem}_reaches.json
+    # ...) inside a superseded folder (Archive). Such a folder is neither a
+    # cohort nor a video: as a "cohort" its old reaches would sync into ASPA.db
+    # as live, and as a "video" subfolder it would make a flat cohort look
+    # per-video and hide the live flat *_reaches.json files. Imported here, not
+    # at module top, because the helper's package loads the napari widget.
+    from mousereach.pipeline.analyzed_tree import is_superseded_dir
+
     if cohort:
         cohort_dirs = [aspa_dir / cohort]
     else:
-        cohort_dirs = sorted(d for d in aspa_dir.iterdir() if d.is_dir())
+        cohort_dirs = sorted(d for d in aspa_dir.iterdir()
+                             if d.is_dir() and not is_superseded_dir(d.name))
 
     for cohort_dir in cohort_dirs:
         if not cohort_dir.is_dir():
             continue
         cohort_name = cohort_dir.name
 
-        # Check for per-video subdirectories
-        subdirs = [d for d in cohort_dir.iterdir() if d.is_dir()]
+        # Check for per-video subdirectories (superseded folders excluded, as above)
+        subdirs = [d for d in cohort_dir.iterdir()
+                   if d.is_dir() and not is_superseded_dir(d.name)]
         if subdirs:
             for video_subdir in sorted(subdirs):
                 video_id   = video_subdir.name

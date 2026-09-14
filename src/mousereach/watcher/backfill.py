@@ -50,7 +50,11 @@ def backfill_archive(db, archive_root, progress: Optional[Callable[[int, int], N
     if not archive_root.exists():
         return result
 
-    reaches = list(archive_root.rglob(f"*{_SUFFIX}"))
+    # Never enter Analyzed/Archive/: superseded _reaches.json files keep their
+    # original names there, so an rglob registered videos (and mp4 source
+    # paths) from an older generation as if they were the live archive.
+    from mousereach.pipeline.analyzed_tree import iter_files
+    reaches = list(iter_files(archive_root, f"*{_SUFFIX}"))
     total = len(reaches)
     seen = set()
     for i, rf in enumerate(reaches):

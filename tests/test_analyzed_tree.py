@@ -4,9 +4,17 @@ Superseded outputs keep their original names under Analyzed/Archive, so a
 plain rglob cannot tell them from live results. DLC Model folders, on the
 other hand, are live pose storage and must stay visible.
 """
+import os
 from pathlib import Path
 
-from mousereach.pipeline.analyzed_tree import first_file, is_superseded_dir, iter_files
+import pytest
+
+from mousereach.pipeline.analyzed_tree import (
+    SUPERSEDED_DIR_NAMES,
+    first_file,
+    is_superseded_dir,
+    iter_files,
+)
 
 STEM = "20250101_CNT0101_P1"
 POSE = f"{STEM}DLC_resnet101_MPSAOct27shuffle3_100000.h5"
@@ -18,8 +26,10 @@ def _touch(p: Path) -> Path:
     return p
 
 
-def test_only_archive_is_superseded():
+def test_only_superseded_folders_are_superseded():
     assert is_superseded_dir("Archive")
+    # MouseReach's own pre-modification backups keep original names too.
+    assert is_superseded_dir("_archived")
     for name in ("DLC Model 4", "DLC Model 3", "Connectome", "CNT01", "Multi-Animal", "_x", ".y"):
         assert not is_superseded_dir(name), name
 
@@ -30,6 +40,18 @@ def test_archived_copies_are_never_found(tmp_path):
     _touch(an / "Archive" / "DLC Model 4.0" / "seg2.2.4_reach8.1.0_out6.1.0_asn2.1.0" / f"{STEM}_features.json")
     _touch(an / "Connectome" / "CNT01" / "Archive" / f"{STEM}_features.json")
     assert list(iter_files(an, "*_features.json")) == [live]
+
+
+def test_backup_copies_under_archived_are_never_found(tmp_path):
+    """backfill-manifest-versions run with --root Analyzed/<project> used to
+    copy originals to Analyzed/_archived/manifests_pre_version_backfill_<ts>/.
+    With SUPERSEDED_DIR_NAMES == {"Archive"} (the old set) iter_files yielded
+    that copy beside the live manifest, so this assert failed."""
+    an = tmp_path / "Analyzed"
+    live = _touch(an / "Connectome" / "CNT01" / f"{STEM}_processing_manifest.json")
+    _touch(an / "_archived" / "manifests_pre_version_backfill_20260914_120000"
+           / f"{STEM}_processing_manifest.json")
+    assert list(iter_files(an, "*_processing_manifest.json")) == [live]
 
 
 def test_live_pose_storage_stays_visible(tmp_path):
@@ -52,3 +74,78 @@ def test_default_pattern_lists_files_not_folders(tmp_path):
     f = _touch(tmp_path / "a" / "b.json")
     (tmp_path / "empty_dir").mkdir()
     assert list(iter_files(tmp_path)) == [f]
+
+
+# --- listing errors: the rule rglob had ------------------------------------
+
+def _fail_listing(monkeypatch, bad: Path, exc: OSError):
+    """os.walk lists each folder with the os module's scandir; make exactly
+    one folder unlistable."""
+    real = os.scandir
+    target = os.path.normcase(os.path.normpath(str(bad)))
+
+    def fake(path="."):
+        if os.path.normcase(os.path.normpath(os.fspath(path))) == target:
+            raise exc
+        return real(path)
+
+    monkeypatch.setattr(os, "scandir", fake)
+
+
+def test_network_error_listing_a_subfolder_raises(tmp_path, monkeypatch):
+    """A NAS hiccup (WinError 59) listing one cohort folder. rglob raised it;
+    os.walk's default onerror=None silently skipped the folder and returned
+    only the other cohort's file -- a partial answer that looks complete. The
+    old iter_files therefore did not raise and this test failed."""
+    an = tmp_path / "Analyzed"
+    _touch(an / "Connectome" / "CNT01" / f"{STEM}_features.json")
+    bad = an / "Connectome" / "CNT02"
+    _touch(bad / "20250101_CNT0201_P1_features.json")
+    _fail_listing(monkeypatch, bad, OSError(
+        22, "The specified network name is no longer available", str(bad), 59))
+
+    with pytest.raises(OSError) as ei:
+        list(iter_files(an, "*_features.json"))
+    assert getattr(ei.value, "winerror", None) == 59
+
+
+def test_permission_denied_subfolder_is_skipped_like_rglob(tmp_path, monkeypatch):
+    """Regression guard, not a fix: rglob skipped a folder it had no
+    permission to list, and iter_files keeps doing so."""
+    an = tmp_path / "Analyzed"
+    live = _touch(an / "Connectome" / "CNT01" / f"{STEM}_features.json")
+    bad = an / "Connectome" / "CNT02"
+    _touch(bad / "20250101_CNT0201_P1_features.json")
+    _fail_listing(monkeypatch, bad, PermissionError(13, "Access is denied", str(bad)))
+
+    assert list(iter_files(an, "*_features.json")) == [live]
+
+
+# --- contract with archive.supersede ---------------------------------------
+# Every walker's test builds its own Analyzed/Archive tree by hand, so none of
+# them would notice if supersede wrote somewhere else. These two tie the
+# skipped name to the folder supersede actually uses.
+
+def _supersede_root(tmp_path, monkeypatch):
+    from mousereach.config import Paths
+    from mousereach.archive.supersede import default_archive_root
+    nas = tmp_path / "nas"
+    monkeypatch.setattr(Paths, "NAS_ROOT", nas)
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", nas / "Analyzed")
+    return default_archive_root(), Paths
+
+
+def test_supersede_archive_folder_name_is_skipped_by_every_walker(tmp_path, monkeypatch):
+    """Fails the moment supersede's folder is renamed ("Superseded",
+    "_Archive" ...) without updating SUPERSEDED_DIR_NAMES."""
+    root, _ = _supersede_root(tmp_path, monkeypatch)
+    assert root.name in SUPERSEDED_DIR_NAMES
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "archive.supersede.default_archive_root still returns <NAS_ROOT>/Archive, "
+    "a sibling of Analyzed; the move to Analyzed/Archive has not landed. "
+    "strict: when it lands this XPASSes and fails -- remove the marker then."))
+def test_supersede_archive_root_sits_inside_analyzed(tmp_path, monkeypatch):
+    root, Paths = _supersede_root(tmp_path, monkeypatch)
+    assert root.parent == Paths.ANALYZED_OUTPUT

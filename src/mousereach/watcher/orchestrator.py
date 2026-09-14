@@ -2695,7 +2695,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
             if staged is not None:
                 h5_files = [staged]
         if not h5_files:
-            h5_files = list(archive_dir.rglob(f"{video_id}DLC*.h5"))
+            # Never enter Analyzed/Archive/: superseded poses keep their
+            # original names there, so an rglob found them beside the live
+            # ones and select_pose_file could re-run the video on an old
+            # generation's pose (newest mtime wins among same-scorer files).
+            # DLC Model <N>/ folders stay visible -- they are live pose storage.
+            from mousereach.pipeline.analyzed_tree import iter_files
+            h5_files = list(iter_files(archive_dir, f"{video_id}DLC*.h5"))
         if not h5_files:
             self.db.mark_failed(video_id, f"DLC h5 not found in archive for reprocessing")
             return

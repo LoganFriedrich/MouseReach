@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from mousereach.census.runner import bundles_in, ids_in_dir
+from mousereach.pipeline.analyzed_tree import SUPERSEDED_DIR_NAMES
 
 _MANIFEST = "_processing_manifest.json"
 _FEATURES = "_features.json"
@@ -58,7 +59,12 @@ _FEATURES = "_features.json"
 # template and UNKNOWN folders are not cohorts. Names starting with "." or "_"
 # are scratch or retired copies. Descending into any of them would invent
 # videos, or count a pose-only folder as an analysis in the wrong place.
-_ANALYZED_SKIP = {"Folder Template", "UNKNOWN", "Multi-Animal", "Archive"}
+# The superseded-output folder (Analyzed/Archive) comes from the one shared
+# rule in pipeline.analyzed_tree instead of being restated here: its files keep
+# their original names, so reading them would list a current video's older
+# generation as a second copy in the wrong place, and every walker of Analyzed
+# must agree on which folder that is.
+_ANALYZED_SKIP = {"Folder Template", "UNKNOWN", "Multi-Animal"} | set(SUPERSEDED_DIR_NAMES)
 
 # Folders where a single waits before analysis, in the target layout.
 _WAITING = ("Unanalyzed/Single_Animal", "Processing/Posed")

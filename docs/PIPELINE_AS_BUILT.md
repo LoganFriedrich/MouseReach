@@ -563,3 +563,54 @@ of a video that exists elsewhere is a leftover pending cleanup; a video whose
 ONLY copy is in such a folder is listed per video, because it may be real work.
 
 Collages are not judged yet.
+
+
+---
+
+## Update 2026-09-14: no walk of Analyzed reads superseded outputs
+
+Superseded outputs keep their original names (`{stem}_features.json`,
+`{stem}_processing_manifest.json`, `{stem}DLC_...h5`), so a plain `rglob` over
+Analyzed cannot tell an older generation from the live one. Every consequence
+was silent: the version scan could read a superseded manifest and mark a
+current video outdated, a returning review bundle could be re-run on an
+old-model pose, `mousereach-route-to-queue` could write flags into an archived
+file and move an archive folder into a review queue, and the cohort reach
+export could gain rows from old generations.
+
+Every walk of the Analyzed tree now goes through `pipeline/analyzed_tree.py`
+(`iter_files`, `first_file`, `is_superseded_dir`) and never enters a folder
+named `Archive` (the superseded-output root) or `_archived` (MouseReach's own
+pre-modification backups, e.g. from the manifest backfill CLI).
+
+`DLC Model <N>/` folders are deliberately still walked. They are live pose
+storage: a finished video's current pose can sit only there, and the version
+scan and the pose lookups depend on finding it.
+
+WHAT WAS SWITCHED
+
+The version scanner (pose index, manifest and features index, the per-video
+fallbacks, the mislabel divert to deep review), the reprocess pose lookup in
+the orchestrator, the review-return fallback lookups, `mousereach-route-to-queue`,
+the dashboard's folder scan and manifest index, the census walk, collage
+provenance, the manifest backfill CLIs, the field audit, the cohort reach
+export, reprocess-to-current, the fix-segmentation video lookup, and the ASPA
+feed, importer and sync cohort listings. `mousereach-reconcile` shares the same
+constant. Depth-limited globs such as `*/*/name` are filtered as well, because
+`Analyzed/Archive/<folder>/<file>` is exactly two levels deep.
+
+An unlistable folder behaves as it did under `rglob`: a PermissionError is
+skipped, anything else (a network error, for instance) raises. `os.walk`'s
+default would have skipped it silently and returned a partial answer that
+looked complete.
+
+The manifest backfill CLIs now put their backup copies under
+`<NAS_ROOT>/_archived` whatever `--root` is; with `--root Analyzed/<project>`
+the old default put them inside Analyzed.
+
+NOT YET
+
+`archive.supersede` still files superseded outputs under `<NAS_ROOT>/Archive`,
+beside Analyzed. Moving that root under Analyzed is a separate change; a
+strict-xfail test in `tests/test_analyzed_tree.py` fails loudly the moment it
+lands, so the marker is removed with it.

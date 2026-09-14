@@ -143,7 +143,14 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
         progress("Scanning the final output (Analyzed) -- this is the big one, ~30s...")
     analyzed = Paths.ANALYZED_OUTPUT
     if analyzed and Path(analyzed).exists():
-        for f in Path(analyzed).rglob(f"*{_REACHES}"):
+        # WHY iter_files and not rglob: superseded outputs sit under
+        # Analyzed/Archive/ with their ORIGINAL names, so rglob listed an old
+        # generation's _reaches.json as "analyzed" -- and since analyzed
+        # outranks processing, a video back in Processing for a reprocess
+        # showed as done. iter_files never enters a superseded folder.
+        # (Imported here: the mousereach.pipeline package __init__ is heavy.)
+        from mousereach.pipeline.analyzed_tree import iter_files
+        for f in iter_files(analyzed, f"*{_REACHES}"):
             add(f.name[: -len(_REACHES)], "analyzed", f)
 
     # Roll each collage's offspring state up to the collage: a "raw_collage" that

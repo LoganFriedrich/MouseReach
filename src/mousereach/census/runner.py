@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -87,28 +88,49 @@ def walk_analyzed(root) -> tuple:
     Filters on the NAME only (no is_file stat per entry) -- over a network
     share the stat is the cost, and a directory named ``*.json`` would merely
     contribute a harmless unparsable name.
+
+    Superseded folders (``Analyzed/Archive/``) are never entered: superseded
+    outputs keep their ORIGINAL names there, so counting them would mark a
+    session finished (and date its throughput) from an older generation.
+    Every other folder -- cohort folders, ``Multi-Animal/`` collages,
+    ``DLC Model <N>/`` -- is walked exactly as before.
     """
+    # Imported here, not at module top: the mousereach.pipeline package
+    # __init__ loads the napari widget, which a headless census must not pay.
+    from mousereach.pipeline.analyzed_tree import is_superseded_dir, walk_onerror
+
     index: Dict[str, Set[str]] = {}
     mtimes: Dict[str, Dict[str, float]] = {}
     collages: list = []
     root = Path(root)
     if not root.exists():
         return index, mtimes, collages
-    for p in root.rglob("*"):
-        name = p.name
-        low = name.lower()
-        if low.endswith(".json"):
-            for suf in SUFFIXES:
-                if name.endswith(suf):
-                    stem = name[: -len(suf)]
-                    index.setdefault(stem, set()).add(suf)
-                    try:
-                        mtimes.setdefault(stem, {})[suf] = p.stat().st_mtime
-                    except OSError:
-                        pass
-                    break
-        elif low.endswith((".mkv", ".mp4")) and "," in p.stem:
-            collages.append(p)
+    # WHY os.walk and not root.rglob("*"): rglob descends into Analyzed/Archive/
+    # and reads superseded outputs as live ones, silently. The walk prunes
+    # superseded folders before descending. Directory names are still tested
+    # alongside file names, exactly as rglob("*") yielded both, and the visit
+    # order (pre-order, root first) is the same, so outputs are unchanged
+    # apart from the archive. onerror=walk_onerror keeps rglob's error rule: a
+    # folder that cannot be listed (a NAS hiccup) raises instead of being
+    # skipped, so the census never reports a partial count as complete.
+    for dirpath, dirnames, filenames in os.walk(root, onerror=walk_onerror):
+        dirnames[:] = [d for d in dirnames if not is_superseded_dir(d)]
+        base = Path(dirpath)
+        for name in dirnames + filenames:
+            p = base / name
+            low = name.lower()
+            if low.endswith(".json"):
+                for suf in SUFFIXES:
+                    if name.endswith(suf):
+                        stem = name[: -len(suf)]
+                        index.setdefault(stem, set()).add(suf)
+                        try:
+                            mtimes.setdefault(stem, {})[suf] = p.stat().st_mtime
+                        except OSError:
+                            pass
+                        break
+            elif low.endswith((".mkv", ".mp4")) and "," in p.stem:
+                collages.append(p)
     return index, mtimes, collages
 
 

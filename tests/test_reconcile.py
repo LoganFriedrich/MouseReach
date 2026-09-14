@@ -248,3 +248,91 @@ def test_exit_codes(env, capsys):
     out.encode("ascii")
     (env.nas / "pipeline_versions.json").unlink()
     assert rc.main([]) == 2
+
+
+def test_superseded_analysis_under_archive_is_not_read(env):
+    # REGRESSION GUARD, not proof of a fix: reconcile already pruned "Archive"
+    # at every depth before this branch (it was literally in _ANALYZED_SKIP).
+    # The branch only rebuilt _ANALYZED_SKIP from the shared
+    # analyzed_tree.SUPERSEDED_DIR_NAMES; this pins that the refactor kept
+    # Archive pruned. Why it matters: superseded outputs keep their ORIGINAL
+    # names under Analyzed/Archive/. If the walk entered Archive, the older
+    # generation would be a second manifest for VID outside its cohort folder
+    # -> WRONG_PLACE for a video that is done, and a stem that exists ONLY in
+    # Archive would be invented as a video.
+    live = put_analyzed(VID)
+    archive = env.ANALYZED_OUTPUT / "Archive"
+    put_analyzed(VID, seg="1.0", folder=archive / "superseded_processing_root_3.1")
+    put_analyzed(VID, seg="1.0", folder=archive / "Connectome" / "CNT01")
+    put_analyzed(VID2, folder=archive / "superseded_processing_root_3.1")
+
+    walked = rc.walk_analyzed(env.ANALYZED_OUTPUT)
+    assert walked[VID]["manifest"] == [live / f"{VID}_processing_manifest.json"]
+    assert VID2 not in walked
+
+    result = rc.reconcile()
+    row = {r["video_id"]: r for r in result["rows"]}[VID]
+    assert row["verdict"] == rc.DONE
+    assert VID2 not in {r["video_id"] for r in result["rows"]}
+    assert result["mismatches"] == []
+
+
+# --- ASPA discovery helpers: the same Archive rule, over Analyzed/<cohort> ---
+# They live here because they are small iterdir walks of Analyzed with no data
+# dependency. Each builds a live cohort AND a same-shaped decoy under
+# Analyzed/Archive; the old iterdir listed "Archive" as a cohort, so each
+# assertion below fails against it.
+
+def test_aspa_feed_skips_archive_as_a_cohort(tmp_path):
+    from mousereach.aspa.feed import find_single_animal_videos
+
+    analyzed = tmp_path / "Analyzed"
+    live = analyzed / "H" / "Single_Animal"
+    live.mkdir(parents=True)
+    (live / "H0101_P1.mp4").write_bytes(b"v")
+    decoy = analyzed / "Archive" / "Single_Animal"
+    decoy.mkdir(parents=True)
+    (decoy / "H0101_P1.mp4").write_bytes(b"old")
+    # A superseded folder nested inside a live cohort is not walked either
+    # (the old rglob found this one).
+    nested = live / "Archive"
+    nested.mkdir()
+    (nested / "H0102_P1.mp4").write_bytes(b"old")
+
+    found = list(find_single_animal_videos(tmp_path))
+    assert found == [("H", live / "H0101_P1.mp4")]
+
+
+def test_aspa_importer_skips_archive_as_a_cohort(tmp_path):
+    from mousereach.aspa.importer import find_post_processing_dirs
+
+    analyzed = tmp_path / "Analyzed"
+    live = analyzed / "H" / "Post-Processing"
+    live.mkdir(parents=True)
+    (live / "H0101_P1.xlsx").write_bytes(b"x")
+    decoy = analyzed / "Archive" / "Post-Processing"
+    decoy.mkdir(parents=True)
+    (decoy / "H0101_P1.xlsx").write_bytes(b"old")
+
+    assert list(find_post_processing_dirs(tmp_path)) == [("H", live)]
+
+
+def test_aspa_sync_skips_superseded_folders_as_cohort_and_as_video(tmp_path):
+    from mousereach.aspa.sync import find_reprocessed_videos
+
+    stem = "20220811_H01_P3"
+    aspa = tmp_path / "Analyzed" / "ASPA"
+    cohort = aspa / "H"
+    cohort.mkdir(parents=True)
+    (cohort / f"{stem}_reaches.json").write_text("{}")          # live, flat
+    (cohort / "Archive").mkdir()
+    (cohort / "Archive" / f"{stem}_reaches.json").write_text("{}")  # decoy
+    (aspa / "Archive").mkdir()
+    (aspa / "Archive" / f"{stem}_reaches.json").write_text("{}")    # decoy
+
+    # Old code yielded ("Archive", stem, "H01", ASPA/Archive) -- archived
+    # reaches synced as a cohort -- and ("H", "Archive", "UNKNOWN", H/Archive),
+    # which also made H look per-video and hid the live flat file.
+    expected = [("H", stem, "H01", cohort)]
+    assert list(find_reprocessed_videos(tmp_path)) == expected
+    assert list(find_reprocessed_videos(tmp_path, cohort="H")) == expected

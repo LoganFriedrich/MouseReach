@@ -40,7 +40,12 @@ def find_current_pose(video_id: str):
     if not an or not an.exists():
         return None
     best = None
-    for h5 in an.rglob(f"{video_id}*resnet101*shuffle3*.h5"):
+    # WHY iter_files, not rglob: a superseded pose under Analyzed/Archive/ (e.g.
+    # Archive/DLC Model 4.0/...) keeps its name AND its path contains
+    # "DLC Model 4", so the substring preference below would pick it over the
+    # live one. Never entering Archive is the fix; DLC Model <N> stays visible.
+    from .analyzed_tree import iter_files
+    for h5 in iter_files(an, f"{video_id}*resnet101*shuffle3*.h5"):
         if best is None or "DLC Model 4" in str(h5):
             best = h5
     return best
@@ -52,12 +57,16 @@ def find_video_file(video_id: str):
     an = Path(Paths.ANALYZED_OUTPUT) if Paths.ANALYZED_OUTPUT else None
     if not an or not an.exists():
         return None
+    # WHY iter_files/first_file, not rglob: a superseded copy under
+    # Analyzed/Archive/ keeps its name; finalize would land current outputs
+    # beside that archived video instead of the live one.
+    from .analyzed_tree import iter_files, first_file
     for ext in (".mp4", ".mkv"):
         # prefer the cohort dir (not a DLC Model N staging dir)
-        hits = [p for p in an.rglob(f"{video_id}{ext}") if "DLC Model" not in str(p)]
+        hits = [p for p in iter_files(an, f"{video_id}{ext}") if "DLC Model" not in str(p)]
         if hits:
             return hits[0]
-        any_hit = next(an.rglob(f"{video_id}{ext}"), None)
+        any_hit = first_file(an, f"{video_id}{ext}")
         if any_hit:
             return any_hit
     return None
@@ -359,7 +368,11 @@ def build_reprocess_worklist(limit: Optional[int] = None, *,
 
     work = []
     seen = set()
-    for h5 in scan_root.rglob("*resnet101*shuffle3*.h5"):
+    # WHY iter_files, not rglob: when scan_root falls back to Analyzed itself,
+    # rglob would queue superseded poses under Analyzed/Archive/ as work (and
+    # "seen" could then shadow the live pose for the same video).
+    from .analyzed_tree import iter_files
+    for h5 in iter_files(scan_root, "*resnet101*shuffle3*.h5"):
         vid = h5.name.split("DLC")[0]
         if vid in seen or vid in exclude:
             continue

@@ -44,12 +44,18 @@ QUEUES = ("triage", "deep_review")
 
 def _find_outcomes(analyzed: Path, video_id: str) -> Optional[Path]:
     """The video's pellet_outcomes file under the Analyzed tree, or None."""
+    from mousereach.pipeline.analyzed_tree import first_file, is_superseded_dir
     name = f"{video_id}_pellet_outcomes.json"
+    # Analyzed/Archive/<folder>/<name> is exactly two levels deep, so the fast
+    # glob matched superseded outputs too -- and route_video then wrote review
+    # flags into the ARCHIVED file and moved an archive folder into a review
+    # queue. Skip any hit that sits under a superseded folder.
     for hit in analyzed.glob(f"*/*/{name}"):
+        if any(is_superseded_dir(p) for p in hit.relative_to(analyzed).parts[:-1]):
+            continue
         return hit
-    for hit in analyzed.rglob(name):
-        return hit
-    return None
+    # Same rule for the full-depth fallback: never enter Analyzed/Archive/.
+    return first_file(analyzed, name)
 
 
 def flag_segments(outcomes_path: Path, segment_nums: Iterable[int], reason: str) -> List[int]:

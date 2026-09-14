@@ -37,18 +37,28 @@ def find_single_animal_videos(
         print(f"[!] Analyzed directory not found: {analyzed}")
         return
 
+    # WHY: superseded outputs live under Analyzed/Archive/ with their original
+    # names. That folder is not a cohort, and walking into it would feed an
+    # older generation's videos back into DLC as if they were live. Imported
+    # here, not at module top, because the helper's package loads the napari
+    # widget and this CLI does not otherwise need it.
+    from mousereach.pipeline.analyzed_tree import is_superseded_dir, iter_files
+
     if cohort:
         cohort_dirs = [analyzed / cohort]
     else:
         cohort_dirs = sorted(
-            d for d in analyzed.iterdir() if d.is_dir()
+            d for d in analyzed.iterdir()
+            if d.is_dir() and not is_superseded_dir(d.name)
         )
 
     for cohort_dir in cohort_dirs:
         sa_dir = cohort_dir / "Single_Animal"
         if not sa_dir.exists():
             continue
-        for mp4 in sorted(sa_dir.rglob("*.mp4")):
+        # iter_files, not rglob: same *.mp4 files, but never inside a nested
+        # superseded folder (same reason as above).
+        for mp4 in sorted(iter_files(sa_dir, "*.mp4")):
             yield cohort_dir.name, mp4
 
 

@@ -42,6 +42,25 @@ def earliest_stale_stage(stale_components) -> str:
     return min(stages, key=_POST_DLC_ORDER.index)
 
 
+def _outside_superseded(root: Path, hits):
+    """Drop hits of a depth-limited glob over Analyzed that sit inside a
+    superseded folder. WHY: ``glob("*/*/<name>")`` never enters deep trees, but
+    Analyzed/Archive/<folder>/<file> is exactly two levels deep -- the same
+    depth as a live Analyzed/<project>/<cohort>/<file> -- and superseded files
+    keep their original names, so the glob alone reads an older generation as
+    live. Any superseded directory component rejects the hit, matching
+    analyzed_tree.iter_files (which never enters such a folder at any depth).
+    Imported lazily: mousereach.pipeline's __init__ loads the napari widget."""
+    from mousereach.pipeline.analyzed_tree import is_superseded_dir
+    for p in hits:
+        try:
+            dir_parts = p.relative_to(root).parts[:-1]
+        except ValueError:
+            dir_parts = p.parts[:-1]
+        if not any(is_superseded_dir(d) for d in dir_parts):
+            yield p
+
+
 def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
     """{video_id: set of DLC scorers whose pose file is in the archive}.
 
@@ -50,14 +69,21 @@ def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
     pose is in Analyzed/{project}/DLC Model N/{cohort}/ -- so there is no cheap
     per-video path to check, and 2,600 separate globs over the NAS is not a scan
     anyone would wait for.
+
+    The walk never enters Analyzed/Archive/: a superseded pose there keeps its
+    original name, and counting it would call the declared pose "already on
+    disk" and schedule a re-run from segmentation on a pose that is not live
+    (no GPU re-pose would ever be queued). DLC Model <N>/ folders ARE walked --
+    they are where live pose is stored.
     """
+    from mousereach.pipeline.analyzed_tree import iter_files
     from mousereach.pipeline.manifest import extract_dlc_model_info
 
     index: Dict[str, set] = {}
     archive_dir = Path(archive_dir)
     if not archive_dir.exists():
         return index
-    for h5 in archive_dir.rglob("*DLC*.h5"):
+    for h5 in iter_files(archive_dir, "*DLC*.h5"):
         video_id = h5.name.split("DLC")[0].rstrip("_")
         scorer = extract_dlc_model_info(h5).get('dlc_scorer', '')
         if scorer:
@@ -162,9 +188,17 @@ class ReprocessingScanner:
         manifest_index: dict = {}
         feats_mtime: dict = {}
         try:
-            for p in self.archive_dir.glob("*/*/*_processing_manifest.json"):
+            # Superseded hits filtered out: Analyzed/Archive/<folder>/<file> is
+            # also two levels deep, and an archived manifest here would be
+            # version-compared, adopted as a video (its archived mp4
+            # registered), or overwrite the live entry for the same stem.
+            for p in _outside_superseded(self.archive_dir, self.archive_dir.glob(
+                    "*/*/*_processing_manifest.json")):
                 manifest_index[p.name[:-len("_processing_manifest.json")]] = p
-            for p in self.archive_dir.glob("*/*/*_features.json"):
+            # Same for features: an archived copy's mtime would stand in for
+            # the live kinematics in the pending-review check.
+            for p in _outside_superseded(self.archive_dir, self.archive_dir.glob(
+                    "*/*/*_features.json")):
                 try:
                     feats_mtime[p.name[:-len("_features.json")]] = p.stat().st_mtime
                 except OSError:
@@ -483,8 +517,11 @@ class ReprocessingScanner:
             if feats_mtime is not None:
                 ft = feats_mtime.get(video_id)
             else:
-                feats = next(self.archive_dir.rglob(f"{video_id}_features.json"),
-                             None)
+                # Never Analyzed/Archive/: a superseded features file keeps its
+                # name, and its mtime would say the review was already applied.
+                from mousereach.pipeline.analyzed_tree import first_file
+                feats = first_file(self.archive_dir,
+                                   f"{video_id}_features.json")
                 ft = feats.stat().st_mtime if feats else None
             if ft is None:
                 return review  # reviewed but no kinematics yet -> needs a run
@@ -553,7 +590,10 @@ class ReprocessingScanner:
         old segmentation_wrong record in the review describes a fixed problem
         and must not re-divert the video. Never raises; unreadable -> False."""
         try:
-            seg = next(self.archive_dir.rglob(f"{video_id}_segments.json"), None)
+            # Never Analyzed/Archive/: an older generation's human segments
+            # there would say the live boundaries were already fixed.
+            from mousereach.pipeline.analyzed_tree import first_file
+            seg = first_file(self.archive_dir, f"{video_id}_segments.json")
             if seg is None:
                 return False
             return json.loads(seg.read_text(
@@ -566,9 +606,13 @@ class ReprocessingScanner:
         a human re-segments it. Never raises; a failure is logged and the video
         stays where it is (it will be retried on the next scan)."""
         try:
+            from mousereach.pipeline.analyzed_tree import first_file
             from mousereach.watcher.review_gate import route_deep_review
-            outcomes = next(
-                self.archive_dir.rglob(f"{video_id}_pellet_outcomes.json"), None)
+            # Never Analyzed/Archive/: the hit's PARENT is what gets moved into
+            # the deep review queue, so an archived copy would route an
+            # archive folder (and strip superseded outputs out of the archive).
+            outcomes = first_file(self.archive_dir,
+                                  f"{video_id}_pellet_outcomes.json")
             if outcomes is None:
                 logger.warning(
                     "%s: pending review declares a segment mislabel but no "
@@ -611,17 +655,23 @@ class ReprocessingScanner:
         """
         if not self.archive_dir.exists():
             return None
+        from mousereach.pipeline.analyzed_tree import iter_files
 
-        # Try direct glob first (project/cohort/manifest)
-        for manifest_path in self.archive_dir.glob(f"*/*/{video_id}_processing_manifest.json"):
+        # Try direct glob first (project/cohort/manifest). Superseded hits are
+        # dropped: Analyzed/Archive/<folder>/<manifest> is also two levels deep,
+        # and an archived manifest would be compared as the video's live one.
+        for manifest_path in _outside_superseded(self.archive_dir, self.archive_dir.glob(
+                f"*/*/{video_id}_processing_manifest.json")):
             try:
                 with open(manifest_path) as f:
                     return json.load(f)
             except Exception as e:
                 logger.warning(f"Failed to read manifest {manifest_path}: {e}")
 
-        # Fall back to recursive search
-        for manifest_path in self.archive_dir.rglob(f"{video_id}_processing_manifest.json"):
+        # Fall back to recursive search -- never into Analyzed/Archive/, for
+        # the same reason (a deeper superseded copy keeps the same name).
+        for manifest_path in iter_files(self.archive_dir,
+                                        f"{video_id}_processing_manifest.json"):
             try:
                 with open(manifest_path) as f:
                     return json.load(f)

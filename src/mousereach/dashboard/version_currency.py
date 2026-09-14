@@ -24,7 +24,18 @@ logger = logging.getLogger(__name__)
 def build_manifest_index(roots) -> Dict[str, Path]:
     """Map ``{video_stem: manifest_path}`` by scanning ``roots`` for
     ``*_processing_manifest.json`` (most-recently-modified wins on duplicates).
-    This walks the archive tree, so it is the expensive step -- cache it."""
+    This walks the archive tree, so it is the expensive step -- cache it.
+
+    Superseded folders (``Analyzed/Archive/``) are never entered. WHY: an
+    archived manifest keeps its ORIGINAL name, and any later in-place rewrite
+    of the archived copy (e.g. a manifest backfill that walked all of Analyzed)
+    gives it a newer mtime than the live one, so newest-mtime-wins could pick
+    it and report a current video as outdated -- or an outdated one as
+    current."""
+    # Imported here: the mousereach.pipeline package __init__ loads the
+    # napari widget, and this module is also used headless.
+    from mousereach.pipeline.analyzed_tree import iter_files
+
     idx: Dict[str, Path] = {}
     for r in roots:
         if not r:
@@ -33,7 +44,7 @@ def build_manifest_index(roots) -> Dict[str, Path]:
         if not r.exists():
             continue
         try:
-            for p in r.rglob("*_processing_manifest.json"):
+            for p in iter_files(r, "*_processing_manifest.json"):
                 stem = p.name.replace("_processing_manifest.json", "")
                 try:
                     if stem not in idx or p.stat().st_mtime > idx[stem].stat().st_mtime:
