@@ -659,10 +659,14 @@ class TestOrchestratorIntegration:
     """Integration tests for WatcherOrchestrator (mock heavy dependencies)."""
 
     @pytest.fixture
-    def mock_orchestrator(self, temp_db, watcher_config, tmp_path):
+    def mock_orchestrator(self, temp_db, watcher_config, tmp_path, scratch_paths):
         """Create orchestrator with mocked dependencies.
 
-        Two live-data doors are shut. The orchestrator's constructor restores
+        Three live-data doors are shut. ``scratch_paths`` points config.Paths at a
+        temp tree: the constructor creates Paths.DLC_STAGING, and without it this
+        fixture created the REAL post-pose staging folder on the shared drive --
+        unnoticed while that folder already existed, found when it was renamed.
+        The constructor also restores
         this node's watcher.db from the NAS backup whenever the local file is
         small (which a fresh temp database always is), and then runs cross-node
         recovery out of the real connectome.db. Without both patches the "temp"
@@ -1007,9 +1011,9 @@ def scratch_paths(tmp_path, monkeypatch):
         "PROCESSING": "proc/Processing",
         "DLC_QUEUE": "proc/DLC_Queue",
         "NAS_ROOT": "nas",
-        "DLC_STAGING": "nas/DLC_Complete",
-        "SINGLE_ANIMAL_OUTPUT": "nas/Single_Animal",
-        "MULTI_ANIMAL_SOURCE": "nas/Multi_Animal",
+        "DLC_STAGING": "nas/Processing/Posed",
+        "SINGLE_ANIMAL_OUTPUT": "nas/Unanalyzed/Single_Animal",
+        "MULTI_ANIMAL_SOURCE": "nas/Unanalyzed/Multi-Animal",
         "ANALYZED_OUTPUT": "nas/Analyzed",
     }
     made = {}
