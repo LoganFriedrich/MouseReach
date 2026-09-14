@@ -200,6 +200,7 @@ mousereach-watch-toggle = "mousereach.watcher.cli:main_toggle"
 
 # Version tracking and reprocessing
 mousereach-version-check = "mousereach.watcher.cli:main_version_check"
+mousereach-reconcile = "mousereach.watcher.reconcile:main"
 mousereach-aspa-import-collages = "mousereach.aspa.import_collages:main"
 mousereach-backfill-kinematic-versions = "mousereach.pipeline.manifest:main_backfill_kinematic_versions"
 mousereach-version-index-build = "mousereach.pipeline.version_index:cli_build"

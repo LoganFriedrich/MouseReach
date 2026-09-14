@@ -518,3 +518,48 @@ triage, 47 deep review, 1 unresolvable). The hardcoded
 rows. The GUI therefore opens an empty database while the watcher writes a full
 one -- the same failure the CLI had, silent, and indistinguishable on screen
 from "there is nothing to do".
+
+
+---
+
+## Update 2026-09-14: `mousereach-reconcile` checks videos against "done", from files only
+
+A new read-only command (watcher/reconcile.py) is the first step of
+DESIGN_FILESYSTEM_AS_STATE.md. It judges every single-animal video on the share
+against the definition of done -- analysis current or declared compatible, with
+every saved human review reflected, AND sitting beside the video in
+`Analyzed/<project>/<cohort>/` as `archive/core.get_archive_destination` works it
+out from the name -- and lists each mismatch per video. Exit 0 means none, 1
+means some, 2 means it could not judge (no share configured, or no
+`pipeline_versions.json`).
+
+WHAT IT READS, AND WHAT IT DOES NOT
+
+Folders only: the review queues (`bundles_in`, date-named directories only),
+Failed, Quarantine, the two folders a single waits in under the target layout
+(`Unanalyzed/Single_Animal`, `Processing/Posed`), the two folders from the
+previous layout (`Processing/Single_Animal`, `Processing/DLC_Complete`), and one
+pruned walk of `Analyzed` that skips `DLC Model*`, `Multi-Animal`, `Archive`,
+`Folder Template`, `UNKNOWN` and anything starting with `.` or `_`. It never opens
+a watcher database, so a stale or empty database cannot mislead it, and it writes
+nothing.
+
+Currency is not re-implemented. It calls the version scanner's own rules
+(`compare_manifest_to_current`, `ReprocessingScanner._drop_human_seg_staleness`,
+`ReprocessingScanner._pending_review_path`), so the check and the watcher cannot
+disagree about what "current" means.
+
+WHAT COUNTS AS A MISMATCH
+
+  * not_current -- analysis in the right place but outdated, missing a recorded
+    version, or missing a saved human review.
+  * wrong_place -- analysis in a different folder than the name says, a second
+    copy elsewhere, or a current analysis with no video beside it.
+  * stray_review_bundle -- already done, but a bundle still sits in a queue.
+
+Not mismatches: held in a review queue, in Failed or Quarantine, waiting in a
+pre-analysis folder, or an unsupported tray. A copy in a previous-layout folder
+of a video that exists elsewhere is a leftover pending cleanup; a video whose
+ONLY copy is in such a folder is listed per video, because it may be real work.
+
+Collages are not judged yet.
