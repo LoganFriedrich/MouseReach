@@ -308,6 +308,14 @@
     "src/mousereach/watcher/orchestrator.py",
     "src/mousereach/watcher/review_gate.py"
    ]
+  },
+  {
+   "doc": "docs/WATCHER_DB_DICTIONARY.md",
+   "what": "What every watcher-database field and state value means, and which file on disk is live state",
+   "covers": [
+    "src/mousereach/watcher/coordination.py",
+    "src/mousereach/watcher/db.py"
+   ]
   }
  ]
 }
