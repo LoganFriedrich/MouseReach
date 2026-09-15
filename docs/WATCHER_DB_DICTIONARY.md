@@ -1,6 +1,8 @@
 # Watcher database: what every field means
 
-Verified against: 412ad28 (2026-09-14)
+Verified against: 05de530 (2026-09-14), plus the GPU-node guards of 2026-09-15
+(collage claims, finished-or-held children, Processing/Posed; see
+PIPELINE_AS_BUILT.md, "Update 2026-09-15")
 
 WHY THIS EXISTS
 
@@ -35,11 +37,51 @@ state it set was lost).
       finished a cycle, not when its contents were true. Do not read it to
       answer questions about the pipeline.
 
-  nas_root/watcher_central.db                    AUDIT LOG, NOT STATE
-      Provenance written after each archive. Every row in it is 'archived' by
-      construction, so "this video is archived here" carries no information
-      about its current state. Has columns the per-node schema does not
-      (source_machine, exported_at).
+  nas_root/watcher_central.db                    TWO KINDS OF TABLE IN ONE FILE
+      Tables `videos` and `processing_log`: AUDIT LOG, NOT STATE.
+      Provenance written after each archive (db.py, export to central). Every
+      row in `videos` is 'archived' by construction, so "this video is archived
+      here" carries no information about its current state. Has columns the
+      per-node schema does not (source_machine, exported_at).
+
+      Tables `pipeline_collages` and `pipeline_videos`: LIVE CROSS-NODE
+      COORDINATION between GPU nodes (watcher/coordination.py). Only
+      DLCOrchestrator writes or reads them; the processing server never does.
+
+      pipeline_collages   one row per collage a GPU node has claimed for cropping
+        filename          the collage file name (PRIMARY KEY: one claim per collage)
+        hostname          the node holding the claim
+        state             'cropping' = claimed, crop not finished;
+                          'cropped'  = the holder finished the crop (or found every
+                                       child already finished or held)
+        claimed_at        when the holder took or last re-used the claim, on the
+                          holder's clock
+        completed_at, singles_created
+      Rules, each with its reason (full account in PIPELINE_AS_BUILT.md,
+      "Update 2026-09-15"):
+        * No claim, no crop. A node that cannot reach this table crops nothing.
+          WHY: without a claim two GPU nodes crop the same collage and pose
+          every child twice (~14 GPU-minutes each).
+        * A 'cropping' row another host has held for more than 24 h
+          (COLLAGE_CLAIM_STALE_S) is taken over -- but NOT while any child of
+          that collage has a row in pipeline_videos. WHY: a stale claim does not
+          mean nothing was cropped; its children may be queued on the holder,
+          in Processing/Posed or on the processing server.
+        * The holder deletes its row after a failed crop, unless it still
+          carries a child of the collage. WHY: a claim that outlives a failed
+          crop blocked that collage for every node.
+        * A 'cropped' row is never taken over or released.
+
+      pipeline_videos     one row per video a GPU node has synced
+        video_id, collage_id, hostname (last node to write it), state,
+        source_path, nas_path, discovered_at, dlc_completed_at, processed_at,
+        staged_at, updated_at, error_message
+      Written best-effort by GPU nodes as a video moves: 'dlc_queued' the
+      moment a cropped child is queued (since 2026-09-15; before that the
+      first write was 'dlc_running'), then 'dlc_running', 'dlc_complete',
+      'processed', 'archived'. Read at a GPU node's startup by cross-node
+      recovery, and by the claim takeover check above. A GPU node's 'archived'
+      means that node staged or filed it, not that the analysis is finished.
 
 For reprocessing questions the processing server's live database decides. It is
 the only role with `reprocesses_partial` true (orchestrator.py:433); GPU nodes
@@ -164,13 +206,38 @@ READ THIS BEFORE INTERPRETING A STATE
   the pose; the algorithms have not run yet. The collages table uses the same
   idiom for 'cropped'. This is the single most misread value in the schema.
 
+  On a GPU node, a row can also be 'archived', 'triage' or 'deep_review' with
+  source_path '(no file on this node)' for a video this node never cropped or
+  posed. Since 2026-09-15 a GPU node checks the shared drive before it poses a
+  collage child or a dropped single: an archive manifest means 'archived', a
+  bundle in a review queue (or its .incoming build folder) means that queue's
+  state, and the row is recorded that way instead of being queued for DLC.
+  The processing log says why (step 'crop', 'adopt' or 'dlc', status 'skipped').
+
+  collages.state 'cropped' on a GPU node has three meanings. Read the collage's
+  processing log to tell them apart:
+    * cropped HERE: step 'crop', status 'completed'; videos_created = the
+      children this node queued.
+    * cropped by ANOTHER node: step 'claim', status 'skipped', naming the node.
+      This node has no children of it.
+    * NOT cropped at all, because every child was already finished or held:
+      step 'crop', status 'skipped'; videos_created = 0.
+  A collage another node is cropping RIGHT NOW stays 'stable' here. This node
+  skips it for 30 minutes at a time, then asks the shared claim table again.
+  The wait is kept in memory, so it does not show in this table.
+
   'outdated' means the version scanner found a mismatch, NOT that the work is
   bad or missing. Read reprocess_scope to learn what is actually stale, and the
   manifest in Analyzed/ to learn what actually ran.
 
   'unresolvable' means this node has no file for this video. Nothing went wrong
   with the data. It is deliberately not 'failed', which is a retry state and
-  which reads to people as a verdict about the animal's data.
+  which reads to people as a verdict about the animal's data. One case added
+  2026-09-15: a GPU node's stage step finds the video already in
+  Processing/Posed and nothing of it left locally ("already in NAS staging ...
+  left for the processing server"). This node may well have staged it and been
+  stopped before recording that; files in Posed are never taken as proof, so
+  the row is not 'archived' either.
 
   'triage' and 'deep_review' are human-review holds. Kinematics never run on a
   held video, and it stays out of the archive and the central database until a

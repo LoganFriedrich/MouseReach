@@ -3,7 +3,9 @@
 Describes: src/mousereach/watcher, src/mousereach/archive, src/mousereach/config.py, src/mousereach/pipeline/
 Verified against: b65fcf0 (2026-08-23), with sections 4, 5 and 6 re-verified
 against the pathless-row and DLC-staleness fixes of 2026-08-24 (see the
-update section at the end).
+update section at the end), and the collage-claim, re-crop and Posed
+statements in sections 2, 3 and 4 corrected against 05de530 plus the
+GPU-node guards of 2026-09-15.
 
 Written 2026-08-21 by reading the code, not the documentation. Each section
 was traced against the source by a separate reviewer, and every statement
@@ -107,7 +109,7 @@ Every newly seen collage has its file name validated (watcher/validator.py:103-2
 
 When cropping actually runs
 
-Cropping is the LOWEST-priority job the graphics-card machine does. On each cycle it first stages already-finished work back to the network, then runs pose estimation on any single-mouse video waiting for it, and only if both of those queues are empty does it pick up a new collage (watcher/orchestrator.py:530-580). Before starting, it tries to claim the collage in a shared database so two machines cannot crop the same one (watcher/orchestrator.py:720-727).
+Cropping is the LOWEST-priority job the graphics-card machine does. On each cycle it first stages already-finished work back to the network, then runs pose estimation on any single-mouse video waiting for it, and only if both of those queues are empty does it pick up a new collage (watcher/orchestrator.py:530-580). Before starting, it claims the collage in a shared database (the pipeline_collages table of watcher_central.db on the shared root) so two machines cannot crop the same one. Since 2026-09-15 this fails closed: a node that cannot obtain a claim does not crop, and a collage whose children are all already finished or held for review is not cropped at all. The update section of 2026-09-15 at the end of this document has the details.
 
 The cropping step itself
 
@@ -133,7 +135,7 @@ This is where the real behaviour differs from the folder names people use in con
 
 Re-running a collage
 
-If a collage is picked up again later - its file is still sitting in the intake folder, after all - each child is checked first. A child that has already moved past the earliest stages is left alone rather than being reset and re-queued. Only children in the states "discovered", "validated" or "failed" are re-driven (watcher/orchestrator.py:791-812).
+If a collage is picked up again later - its file is still sitting in the intake folder, after all - each child is checked first. A child that has already moved past the earliest stages is left alone rather than being reset and re-queued. Only children in the states "discovered", "validated" or "failed" are re-driven (watcher/orchestrator.py:791-812). Since 2026-09-15 the shared drive is asked too, because this node's database may be new or rebuilt. If a child's archive folder holds its processing manifest, or its bundle is in the triage or deep-review queue (or that queue's .incoming build folder), the child is recorded in that state and not queued for pose. If every child is in that position, the collage is not cropped.
 
 Other ways cropping can be started
 
@@ -153,9 +155,11 @@ Step 1 - noticing a collage. Every thirty seconds the watcher lists the shared f
 
 Step 2 - choosing what to do next. The watcher does exactly one job per cycle, chosen by a fixed priority order: finish videos whose pose is already done, then pose a video that is waiting, and only when nothing at all is in flight does it start cropping the next collage. So cropping is deliberately the lowest priority - the machine drains what it has started before opening a new collage.
 
-Step 3 - cropping. Before touching the file the machine tries to claim the collage in the shared connectome.db database, so two GPU machines watching the same folder cannot crop the same collage twice. It then COPIES the collage from the network into a scratch folder on its own disk (processing_root\watcher_working) and verifies the copy by size. The collage on the network is not moved, renamed or deleted. The scratch copy is cut with ffmpeg into eight fixed rectangles - the recording is a 1920x1080 grid of eight camera views, two rows of four, each cell 480x540. Grid positions whose animal identifier has cohort "00" mean "no mouse here" and are skipped. Each surviving cell is written as its own mp4 named {date}_{animal}_{tray}.mp4, into the same scratch folder.
+Step 3 - cropping. Before touching the file the machine claims the collage in the shared coordination database (the pipeline_collages table of watcher_central.db on the shared root), so two GPU machines watching the same folder cannot crop the same collage twice. No claim means no crop (since 2026-09-15). This covers a database that cannot be reached, a claim check that errors, and a claim another machine holds. A claim left unfinished for a day can be taken over, and a failed crop gives its claim back; the 2026-09-15 update section at the end has the rules and the reasons. It then COPIES the collage from the network into a scratch folder on its own disk (processing_root\watcher_working) and verifies the copy by size. The collage on the network is not moved, renamed or deleted. The scratch copy is cut with ffmpeg into eight fixed rectangles - the recording is a 1920x1080 grid of eight camera views, two rows of four, each cell 480x540. Grid positions whose animal identifier has cohort "00" mean "no mouse here" and are skipped. Each surviving cell is written as its own mp4 named {date}_{animal}_{tray}.mp4, into the same scratch folder.
 
 Step 4 - where the cropped singles go. Each single is registered in the watcher's database and then COPIED (with a size check) into a second local folder: processing_root\DLC_Queue - on the lab GPU machines, A:\MouseReach_Pipeline\DLC_Queue. The scratch copies, and the scratch copy of the collage, are then deleted. Note what this means: the cropped singles do NOT go to any folder called Processing. The settings file does define a shared network folder Unanalyzed\Single_Animal, and the hand-run command `mousereach-crop` writes there by default, but the automatic path never uses it. Between cropping and the end of pose estimation, each single exists in exactly one place - one machine's local disk - and is invisible to the rest of the lab. If a single had already been cropped and taken past this point in an earlier pass, it is left alone rather than reset; the two exceptions the code deliberately re-drives are children recorded as "failed" and children recorded as merely "validated", the latter because that state means the copy into DLC_Queue never succeeded and no file exists anywhere.
+
+Since 2026-09-15 each child is also checked against the shared drive before it is queued. An archive manifest, or a bundle in a review queue, means the child is recorded as finished or held rather than posed again; a new or rebuilt node database cannot know that on its own.
 
 A gap worth recording: the cropper is meant to leave a small provenance file beside the collage listing which child came from which grid position, but in the automatic path it is written beside the temporary copy in the scratch folder, so it never appears next to the collage on the network. Nothing downstream breaks, because the later retirement sweep falls back to reconstructing the child list from the collage filename.
 
@@ -205,7 +209,7 @@ WHAT THE SECOND WATCHER REQUIRES BEFORE IT WILL TOUCH A VIDEO
 
 The second watcher runs on the server. It has exactly one source of new work: the network handoff folder Processing/Posed. Each cycle it globs that folder for DeepLabCut output files, and for each one it requires a matching video file with the same name to also be present in that same folder before it will register the video at all. If the video's filename does not parse, the video is quarantined instead (src/mousereach/watcher/orchestrator.py:1363-1372; src/mousereach/watcher/state.py:212-300). It does not scan the network Unanalyzed/Single_Animal folder, and it does not walk the final Analyzed folder looking for work.
 
-Before copying a registered video in, it takes a claim: it writes a marker file named after the video, containing its own hostname, into a hidden .claims subfolder of the handoff folder, and skips the video if a marker already exists naming a different machine. Markers more than 24 hours old are deleted as leftovers from a crashed machine (src/mousereach/watcher/orchestrator.py:1658-1734, 1746). This claim exists only to stop two PROCESSING machines watching the same handoff folder from grabbing the same video. It is not a check against the first watcher: the first watcher never reads or writes those markers, and the second watcher never reads the first watcher's own collage-level claims, which live in the shared connectome database and are only created by the first watcher (src/mousereach/watcher/orchestrator.py:721-727 versus the second watcher's constructor at :1326-1361, which never builds a coordinator).
+Before copying a registered video in, it takes a claim: it writes a marker file named after the video, containing its own hostname, into a hidden .claims subfolder of the handoff folder, and skips the video if a marker already exists naming a different machine. Markers more than 24 hours old are deleted as leftovers from a crashed machine (src/mousereach/watcher/orchestrator.py:1658-1734, 1746). This claim exists only to stop two PROCESSING machines watching the same handoff folder from grabbing the same video. It is not a check against the first watcher: the first watcher never reads or writes those markers, and the second watcher never reads the first watcher's own collage-level claims, which live in the pipeline_collages table of watcher_central.db on the shared root and are only created by the first watcher (src/mousereach/watcher/orchestrator.py:721-727 versus the second watcher's constructor at :1326-1361, which never builds a coordinator).
 
 There is therefore no explicit "is the other watcher still working on this?" check anywhere. What keeps the two apart is the shape of the handoff: the first watcher holds the files on its own local disk until DeepLabCut has finished, and only then moves them into the shared folder. Two caveats. First, the move is implemented as copy-to-the-final-name then delete the source (src/mousereach/watcher/transfer.py:108-130), and discovery only tests that the names exist - there is no wait for the files to stop growing. A partially copied video is visible under its finished name. The subsequent intake copy compares source and destination sizes and rejects a mismatch (src/mousereach/watcher/transfer.py:85-95), which usually turns such a race into a failed intake rather than a truncated file being analysed, but that is an after-the-fact guard, not a wait. Second, on a machine with also_process = true nothing is ever staged, so no contention arises there at all.
 
@@ -828,3 +832,218 @@ THE REVIEW MANIFEST NAMES THE CHOSEN POSE
 `<stem>DLC*.h5` files as `canonical_dlc_h5_path`, not the first name sorted.
 WHY: the review tools trust that pointer before choosing for themselves, and a
 bundle holding two pose generations sorted the OLD model's file first.
+
+
+---
+
+## Update 2026-09-15: extra GPU nodes cannot re-pose finished videos, spin on collage claims, or touch Processing/Posed
+
+Several GPU nodes (watcher.mode "dlc_pc", `DLCOrchestrator`) share the collage
+intake folder Unanalyzed/Multi-Animal. One processing server
+(`ProcessingOrchestrator`) is the only node that takes posed videos in from
+Processing/Posed (`Paths.DLC_STAGING`). Three defects had to be fixed before
+more GPU nodes could join. Each is described below: what the code does now, why,
+and what an operator sees in the watcher log.
+
+FINISHED OR HELD WORK IS NEVER POSED AGAIN
+
+Before, only adopting a video from Unanalyzed/Single_Animal asked whether it
+was already finished. Cropping a collage and running DLC did not. A node with a
+new, rebuilt or partial database therefore re-cropped and re-posed finished
+children, about 14 GPU-minutes each, and fed duplicate processing and archiving
+downstream.
+
+`DLCOrchestrator._already_done_or_held(stem)` now asks the shared drive, never
+the node's own database, which is exactly what cannot be trusted here:
+
+  * a bundle folder `Processing/Review/triage/<stem>` or
+    `Processing/Review/deep_review/<stem>`, or `<queue>/.incoming/<stem>` (a
+    route into that queue still being built), means a person holds the video.
+    Posing it again would build a second result beside the one under review.
+  * `<stem>_processing_manifest.json` in the video's archive folder
+    (`archive.core.get_archive_destination`) means it was analysed and filed.
+
+The queues are checked first, because a video held for review can also have an
+older manifest in the archive; `_archive_to_nas` uses the same order.
+
+It is asked at four points:
+
+  1. Adopting a single from Unanalyzed/Single_Animal (as before, now including
+     review holds).
+  2. Before cropping. A child's name follows from the collage filename
+     (`collage_provenance.expected_offspring`). If EVERY child is finished or
+     held, the collage is not copied or cropped. Each child row is recorded in
+     its real state, the collage becomes 'cropped' locally with
+     videos_created = 0, and the shared claim is marked 'cropped'.
+  3. After cropping, for each child. A finished or held child is recorded, not
+     queued for DLC. A child whose row on this node has already moved past
+     discovery (for example 'dlc_running') is left exactly as it is.
+  4. Just before DLC inference, as the last line of defence for rows queued
+     another way. The run is refused and the row is set to the state the drive
+     shows. Exception: a re-pose request (mark_reason starting "re-pose
+     request") for an archived or deep-review video is posed, because posing
+     a finished video again is what the request asks for. A triage hold is
+     refused, as the re-pose consumer refuses it.
+
+A child recorded this way has source_path "(no file on this node)"; see
+WATCHER_DB_DICTIONARY.md.
+
+In the log (INFO): `<stem>: already analysed and filed in the archive;
+recorded as 'archived', not queued for DLC`, and `Collage <name>: not cropped:
+all N expected child video(s) are already analysed or held for review`. When a
+refused video's copy is still in DLC_Queue, a WARNING names the file and says
+it is not removed automatically. WHY not delete it: a hold is judged from a
+folder existing, and a leftover empty queue folder must not be enough to
+destroy a crop. Delete such a file by hand to free the space.
+
+Re-pose requests: a GPU node copies 'triage' into its own rows, but only the
+processing server's review-return scan ever moves a video out of triage. So a
+GPU node's 'triage' row could outlive the hold and refuse every re-pose request
+for that video until a restart. `repose.consume_requests` now re-drives a
+'triage' row whose bundle is no longer in the triage queue
+(`repose._held_in_triage_on_disk`). If that cannot be told (no queue
+configured, an unreadable share), it keeps refusing.
+
+COLLAGE CLAIMS FAIL CLOSED, EXPIRE, AND ARE GIVEN BACK
+
+The claim is a row in the `pipeline_collages` table of watcher_central.db on
+the shared root: the collage filename, the holding node, the state ('cropping'
+or 'cropped') and claimed_at. It is not in connectome.db. Before, claims failed
+OPEN: a claim error, or a coordinator that never started, cropped anyway. A
+lost claim counted as progress, so the node re-picked the same collage at full
+speed and copied its whole watcher.db to the share after each attempt. A claim
+was never released or expired, so a collage whose crop failed on the claiming
+node was blocked for every node, for good.
+
+The rules now, each with its reason:
+
+  1. No coordinator, no crop. If the coordination database cannot be opened at
+     startup, collages are not even offered to the work loop (offering one only
+     to refuse it would copy watcher.db to the share every poll). The database
+     is tried again every 5 minutes, with no restart needed
+     (`_COORDINATOR_RETRY_S`). Posing and staging carry on meanwhile.
+     Log: WARNING at startup, then `Collage claims are unavailable on this node
+     since <time> (<reason>)` every hour for as long as it lasts; INFO
+     `Collage coordination database is available again` when it recovers.
+     Cross-node recovery runs only at the next restart, because it rewrites
+     rows and must not run under live work.
+     WHY: a node that started while the share was still coming up used to crop
+     every collage without a claim, and a restart was the only cure.
+  2. A claim check that raises (share or database trouble) means no crop this
+     poll. The collage stays 'stable' and is tried again next poll. Log: one
+     WARNING per collage per outage, `could not check the shared claim`; a
+     check that works in between re-arms it. WHY: an error is evidence of
+     neither "mine" nor "another node's". Treating it as "mine" is how every
+     node cropped the same collage whenever the share blinked.
+  3. Claim held by another node:
+       * that node FINISHED the crop (claim 'cropped'): the collage is recorded
+         'cropped' here for good, and the processing log (step 'claim', status
+         'skipped') names the node. INFO `already cropped by <node>`.
+       * the claim is live: the collage stays 'stable' and is not offered again
+         for 30 minutes (`_CLAIM_RECHECK_S`), then the claim is asked about
+         again. INFO `claimed by <node> ... asked about again in 30 minutes`.
+         The wait is kept in memory, so a restart asks once more straight away.
+     In both cases the handler reports no progress, so the loop sleeps instead
+     of spinning. WHY not park a live claim for good: that claim can still be
+     given back after a failed crop, or go stale. With two or three GPU nodes,
+     every node that had looked would otherwise never crop the collage.
+  4. Stale claims. A 'cropping' claim held by another node with claimed_at
+     older than 24 hours (`COLLAGE_CLAIM_STALE_S`, the same value and reasoning
+     as `repose.STALE_S`) is taken over by a conditional update. Of two nodes
+     racing for it, exactly one wins. Log: WARNING `took over the crop claim
+     <node> left in 'cropping' ...`. Two safeguards:
+       * A holder that re-uses its own 'cropping' claim restarts claimed_at.
+         WHY: age is the only evidence. A holder that came back after a day and
+         cropped under its old timestamp would otherwise be taken over mid-crop.
+       * A stale claim is NOT taken over while any child of the collage has a
+         row in `pipeline_videos`, matched by collage_id or by the child names
+         the collage filename implies. Log: WARNING `... NOT taken over -- a
+         second crop would pose them again`, repeated each time a node asks.
+         WHY: a stale 'cropping' row does not mean nothing was cropped. The
+         holder may have queued children and then failed, or finished and
+         failed only to record 'cropped'. Its children then sit in its DLC
+         queue, in Posed or on the processing server, where the finished-work
+         check cannot see them. This is also why a cropped child is now synced
+         to `pipeline_videos` as 'dlc_queued' the moment it is queued, not
+         first at 'dlc_running'.
+  5. After a failed crop the holder gives the claim back (deletes the row),
+     unless this node carries any child of the collage: queued by this attempt,
+     or left in flight here by an earlier one. Then the claim is kept, with a
+     WARNING `crop failed while this node carries N child video(s) of it;
+     keeping the shared claim`. The node retries its own failed collage on
+     later scans (`discover_new_collages` re-validates a failed collage whose
+     file is present, up to watcher.max_retries). A finished claim is never
+     given back. WHY: once a child is on this node it will be posed here, and a
+     second crop elsewhere would pose it twice.
+  6. 'cropped' is written to the shared claim only while this node still holds
+     it. A failed write is a WARNING (`the shared claim could not be marked
+     'cropped'`) and is retried every poll until it lands. WHY: before, it was
+     a debug line. Since claims can be taken over, a missed 'cropped' could
+     otherwise let a finished collage be cropped again a day later. If the
+     claim turns out to belong to another node by then, a WARNING says so (`no
+     longer held by this node ... a person should check that its child videos
+     are not posed twice`).
+
+When a collage stays in the intake folder and no node crops it:
+
+  * Look in each GPU node's watcher log for the collage name.
+  * `NOT taken over` repeating means its holder left it half-done. If that node
+    will run again, starting its watcher lets it finish. If it will not, a
+    person first decides which children are still missing (every child already
+    finished or held is skipped automatically anyway). Then delete the claim
+    row with any SQLite tool, while no watcher is cropping that collage:
+    `DELETE FROM pipeline_collages WHERE filename = '<collage file name>';`
+    The next node that polls claims and crops it.
+  * `claims are unavailable` means that node cannot reach watcher_central.db
+    on the shared root.
+
+A GPU NODE NEVER READS FROM, WRITES INTO, OR REASONS FROM PROCESSING/POSED
+
+Posed is the processing server's intake. Before, GPU handlers could resolve
+files INTO it, because the search list for "where can this video's files be"
+included it:
+
+  * adopting a single could copy a Posed mp4 into the node's DLC_Queue and
+    pose it a second time;
+  * DLC could run with its input in Posed, and DLC writes the .h5 beside its
+    input, into the shared intake;
+  * staging could find the video "already there" and force-mark it 'archived'
+    on the strength of another node's file;
+  * the local pipeline could take its pose or video from Posed, and a re-pose
+    consumer could count a Posed copy as "already going here".
+
+`watcher/locate.py` now has an opt-out. `node_search_dirs(include_staging=False)`
+and `locate_video_file` / `locate_pose_file(search_staging=False)` leave the
+folder out of the search, ignore a recorded path inside it (or beneath it), and
+drop an `extra_dirs` entry that points there. `locate.is_in_staging(path)`
+answers the question directly.
+
+Every GPU-side caller uses the opt-out: adopting a single, DLC inference,
+staging, both lookups of the local pipeline, the re-pose consumer's
+`_local_file_exists` and `resolve_request_video` (which also refuses a request
+whose recorded path points into Posed; the request waits and is served from
+the archive), `repose.archived_video`, and cross-node recovery at startup. The
+re-pose publish pass on a GPU node that also processes calls
+`publish_pending(staging_dir=False)` (`reads_pose_staging` is False on
+`DLCOrchestrator`). The processing server's own intake from Posed is unchanged.
+
+Staging decides "already staged" by what THIS call staged, never by what sits
+in Posed. The pose recorded on the row is the one this call moved there
+(`_own_staged_pose`). A stage that was cut short leaves the mp4 in Posed and
+this node's pose in its DLC_Queue; resuming it stages the leftovers and marks
+the video 'archived' only on a pose it staged itself. With nothing of its own
+left, the row becomes 'unresolvable': INFO `already in NAS staging
+(Processing/Posed) and no file for it on this node; left for the processing
+server`. The files in Posed are left untouched. WHY 'unresolvable' and not
+'failed': nothing went wrong with the video (this node may even have staged it
+fully and been stopped before recording that). 'failed' is a retry state that
+reads as a verdict on the data, and its ERROR trace used to fill the failed
+count with videos already safely with the server.
+
+Every no-work path in the GPU handlers now returns False, so the main loop
+sleeps for a poll interval instead of re-picking the same row at full speed.
+
+Known gaps, not yet closed: `WatcherDB.register_video` called without a
+source_path, and `mousereach-watch-unresolvable --retry`, still search with the
+default folder list, which includes Posed. Neither runs in the GPU work loop's
+normal path.

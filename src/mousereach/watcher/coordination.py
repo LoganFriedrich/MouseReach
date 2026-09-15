@@ -8,15 +8,26 @@ shared coordination layer. Each DLC PC syncs its pipeline state here so that:
 2. At runtime, collage claims prevent duplicate cropping across PCs
 3. Video states are visible across all PCs for monitoring
 
-The local watcher.db remains the primary data store for speed. Connectome.db
-sync is always best-effort — NAS unavailability never blocks processing.
+The local watcher.db remains the primary data store for speed. State SYNC
+(sync_video_state, update_collage_state, recovery) is best-effort for the
+CALLER: these methods raise, and the orchestrator logs and carries on, so
+NAS unavailability never blocks posing or processing of work a node already
+holds.
+
+The collage CLAIM is the exception, and deliberately fails closed:
+try_claim_collage raises on any database error instead of guessing, and a
+node that cannot obtain a claim does not crop. WHY: a crop is ~14 GPU-minutes
+per child and its children are then posed, processed and archived; a node
+that crops without a claim duplicates all of that downstream of every other
+node that did the same. Skipping one poll costs nothing -- the collage is
+still in the intake folder next poll.
 """
 
 import shutil
 import logging
 import socket
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 from mousereach.watcher.locate import locate_video_file
@@ -110,6 +121,21 @@ COLLAGE_STATE_ORDER = [
     'discovered', 'quarantined', 'validated', 'stable', 'cropping', 'cropped', 'archived',
 ]
 
+# A collage claim left in 'cropping' this long by another host is taken over.
+# WHY: claims used to be permanent, so a node that claimed a collage and then
+# crashed, lost the share, or failed the crop without releasing blocked that
+# collage for every node forever. A crop takes minutes to an hour or two, so a
+# day of silence means the claimant is not coming back; the margin also swamps
+# any clock or timezone difference between nodes (claimed_at is each node's
+# local time). Same value, and the same reasoning, as repose.STALE_S for
+# re-pose requests nobody heartbeats.
+COLLAGE_CLAIM_STALE_S = 24 * 3600
+
+# Collage claim states that mean the crop FINISHED: its children exist and
+# have been handed on. Such a claim is never taken over and never released --
+# reopening it would crop and pose every child a second time.
+_COLLAGE_DONE_STATES = ('cropped', 'archived')
+
 CREATE_PIPELINE_VIDEOS_SQL = """
 CREATE TABLE IF NOT EXISTS pipeline_videos (
     video_id        TEXT PRIMARY KEY,
@@ -141,6 +167,18 @@ CREATE TABLE IF NOT EXISTS pipeline_collages (
 
 def _now() -> str:
     return datetime.now().isoformat()
+
+
+def _parse_claimed_at(value) -> Optional[datetime]:
+    """claimed_at as written by _now() (naive local ISO 8601), or None when
+    the column holds something else. An unreadable timestamp is treated as
+    NOT stale by the caller: a claim is only ever taken over on evidence."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
 
 
 def _state_index(state: str, order: list) -> int:
@@ -246,7 +284,11 @@ class PipelineCoordinator:
     """Syncs pipeline state to/from connectome.db for cross-PC coordination.
 
     Uses the same sqlalchemy pattern as mousereach.sync.database.DatabaseSyncer.
-    All operations are best-effort — failures are logged but never raised.
+    Database and driver errors RAISE from every method; it is the caller that
+    decides what a failure means. For state sync the orchestrator logs and
+    carries on (best-effort). For the collage claim it must not crop: see the
+    module docstring. (recover_local_db is the one method that absorbs errors
+    itself, per row, so one bad record cannot stop a node starting.)
     """
 
     def __init__(self, db_path: Optional[Path] = None):
@@ -267,7 +309,15 @@ class PipelineCoordinator:
         return self._engine
 
     def ensure_tables(self):
-        """Create pipeline_videos and pipeline_collages tables if needed."""
+        """Create pipeline_videos and pipeline_collages tables if needed.
+
+        Raises on any failure (sqlalchemy missing, no shared root configured,
+        share unreachable, file not a database) and stays un-ensured, so the
+        next call tries again. WHY raise: the orchestrator's startup calls this
+        inside a try that leaves ``self.coordinator`` None on failure, and
+        every claim-dependent step must be able to see that coordination is
+        unavailable -- a swallowed failure here is how crops ran unclaimed.
+        """
         if self._tables_ensured:
             return
         with self.engine.connect() as conn:
@@ -331,35 +381,227 @@ class PipelineCoordinator:
     def try_claim_collage(self, filename: str, hostname: str) -> bool:
         """Attempt to claim a collage for cropping.
 
-        Uses INSERT OR IGNORE — first writer wins (SQLite atomic).
-        Returns True if we got the claim, False if another PC already claimed it.
+        Returns True when ``hostname`` holds the claim (it just took it, it
+        already held it from an earlier run, or it took over a stale one) and
+        False when another host holds a live claim.
+
+        Database and driver errors RAISE -- they are never turned into True
+        or False. WHY: True on an error is how every node cropped the same
+        collage whenever the share blinked, and False would make an outage
+        look like another node's work. The caller must treat a raise as "do
+        not crop this poll".
+
+        First writer wins through INSERT OR IGNORE (SQLite serialises the
+        insert). A claim another host has left in 'cropping' for longer than
+        COLLAGE_CLAIM_STALE_S is taken over by a CONDITIONAL update that names
+        the old holder and the old state, so when two hosts race for the same
+        stale claim exactly one update matches a row. A finished claim
+        ('cropped'/'archived') is never taken over.
+
+        Two further rules keep a takeover from re-cropping work that exists:
+
+          * The holder re-using its own 'cropping' claim RESTARTS claimed_at
+            (conditionally, so a host that lost the claim in between does not
+            get it back). WHY: age is the only staleness evidence. A holder
+            that crashed, stayed down a day and then cropped again under its
+            old timestamp was cropping behind a claim every other host read as
+            abandoned -- a second host took it over and both cropped.
+          * A stale claim is NOT taken over while any child of the collage is
+            on record in pipeline_videos (by collage_id, or by the child names
+            the collage filename implies). WHY: a stale 'cropping' row does
+            not mean nothing was cropped. The holder may have queued children
+            and then failed, or finished and failed only to record 'cropped'.
+            Its children then sit in its DLC queue, in Posed or on the
+            processing server, where the taker's finished-work check cannot
+            see them, and a takeover would crop and pose them all again
+            (~14 GPU-minutes each). Such a collage waits for its holder, or a
+            person; a WARNING names it each time a host asks.
+        """
+        self.ensure_tables()
+        # Three passes cover a row that changes between our read and our write
+        # (released, taken over by another host); the first pass normally decides.
+        for _attempt in range(3):
+            with self.engine.connect() as conn:
+                result = conn.execute(text(
+                    "INSERT OR IGNORE INTO pipeline_collages "
+                    "(filename, hostname, state, claimed_at) "
+                    "VALUES (:filename, :hostname, 'cropping', :claimed_at)"
+                ), {'filename': filename, 'hostname': hostname, 'claimed_at': _now()})
+                conn.commit()
+
+                if result.rowcount > 0:
+                    return True
+
+                # Row already existed -- check who owns it
+                row = conn.execute(text(
+                    "SELECT hostname, state, claimed_at FROM pipeline_collages "
+                    "WHERE filename = :filename"
+                ), {'filename': filename}).fetchone()
+
+            if row is None:
+                continue                  # released in between; insert again
+
+            holder, state, claimed_at = row[0], row[1], row[2]
+            if holder == hostname:
+                # We already claimed it (e.g., from a previous run).
+                if state != 'cropping':
+                    return True
+                if self._refresh_own_claim(filename, hostname):
+                    return True
+                continue                  # taken over in between; look again
+
+            if state == 'cropping':
+                when = _parse_claimed_at(claimed_at)
+                cutoff = datetime.now() - timedelta(seconds=COLLAGE_CLAIM_STALE_S)
+                if when is not None and when < cutoff:
+                    on_record = self.collage_children_on_record(filename)
+                    if on_record:
+                        sample = ", ".join(
+                            f"{r['video_id']} ({r.get('state')} on {r.get('hostname')})"
+                            for r in on_record[:3])
+                        logger.warning(
+                            f"Collage {filename}: {holder} has held its crop claim in "
+                            f"'cropping' for more than {COLLAGE_CLAIM_STALE_S // 3600} h, "
+                            f"but {len(on_record)} of its child video(s) are already on "
+                            f"record ({sample}), so the claim is NOT taken over -- a "
+                            f"second crop would pose them again. {holder} finishes it "
+                            f"when its watcher runs again; if {holder} is gone for good, "
+                            f"a person decides what is left to crop.")
+                        return False
+                    if self._take_over_stale_claim(filename, holder, hostname,
+                                                   cutoff=cutoff):
+                        return True
+                    continue              # released or taken meanwhile; look again
+
+            logger.info(f"Collage {filename} already claimed by {holder} ({state})")
+            return False
+
+        logger.info(f"Collage {filename}: claim row kept changing under this host; "
+                    f"not claimed this poll")
+        return False
+
+    def _refresh_own_claim(self, filename: str, hostname: str) -> bool:
+        """Restart the clock on a 'cropping' claim ``hostname`` still holds.
+        True only if this update matched the row (the WHERE names the holder,
+        so a claim another host took over in between is left alone)."""
+        with self.engine.connect() as conn:
+            result = conn.execute(text(
+                "UPDATE pipeline_collages SET claimed_at = :now "
+                "WHERE filename = :filename AND hostname = :hostname "
+                "AND state = 'cropping'"
+            ), {'now': _now(), 'filename': filename, 'hostname': hostname})
+            conn.commit()
+        return result.rowcount == 1
+
+    def collage_children_on_record(self, filename: str) -> List[dict]:
+        """pipeline_videos rows for this collage's children:
+        ``[{video_id, hostname, state}]``, [] when there are none.
+
+        A child is matched by collage_id, or by the child names the collage
+        filename implies (the cropper names each child from it), so a row
+        synced without its collage_id still counts. Raises on database errors
+        -- the caller is deciding whether a claim may be taken over, and an
+        unreadable table is no evidence that nothing was cropped.
+        """
+        self.ensure_tables()
+        stems: List[str] = []
+        try:
+            from mousereach.video_prep.core.collage_provenance import expected_offspring
+            stems = [c['offspring_stem'] for c in expected_offspring(filename)
+                     if not c.get('blank') and c.get('offspring_stem')]
+        except Exception as e:
+            logger.debug(f"could not derive the children of {filename}: {e}")
+        params = {'filename': filename}
+        clause = "collage_id = :filename"
+        if stems:
+            names = []
+            for i, stem in enumerate(stems):
+                params[f"s{i}"] = stem
+                names.append(f":s{i}")
+            clause += f" OR video_id IN ({', '.join(names)})"
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(
+                f"SELECT video_id, hostname, state FROM pipeline_videos WHERE {clause}"
+            ), params).fetchall()
+        return [{'video_id': r[0], 'hostname': r[1], 'state': r[2]} for r in rows]
+
+    def get_collage_claim(self, filename: str) -> Optional[dict]:
+        """The pipeline_collages row for one collage, or None. Raises on errors.
+        One row, so a node asking who holds a collage does not read the whole
+        table over the share."""
+        self.ensure_tables()
+        with self.engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT * FROM pipeline_collages WHERE filename = :filename"
+            ), {'filename': filename}).fetchone()
+        return dict(row._mapping) if row is not None else None
+
+    def _take_over_stale_claim(self, filename: str, old_hostname: str,
+                               new_hostname: str,
+                               cutoff: Optional[datetime] = None) -> bool:
+        """Move a stale 'cropping' claim from ``old_hostname`` to
+        ``new_hostname``. True only if THIS update changed the row.
+
+        The WHERE clause re-checks everything the decision rested on (holder,
+        state, age) inside the single UPDATE statement, so SQLite's write lock
+        makes it all-or-nothing: of two hosts that both read the stale row,
+        the first update rewrites the holder and the second matches nothing.
+        claimed_at is compared as text, which orders correctly because every
+        row is written by _now() in the same ISO 8601 form as the cutoff.
+        """
+        if cutoff is None:
+            cutoff = datetime.now() - timedelta(seconds=COLLAGE_CLAIM_STALE_S)
+        with self.engine.connect() as conn:
+            result = conn.execute(text(
+                "UPDATE pipeline_collages SET hostname = :new, claimed_at = :now "
+                "WHERE filename = :filename AND hostname = :old "
+                "AND state = 'cropping' AND claimed_at < :cutoff"
+            ), {'new': new_hostname, 'now': _now(), 'filename': filename,
+                'old': old_hostname, 'cutoff': cutoff.isoformat()})
+            conn.commit()
+        if result.rowcount == 1:
+            logger.warning(
+                f"Collage {filename}: took over the crop claim {old_hostname} left in "
+                f"'cropping' for more than {COLLAGE_CLAIM_STALE_S // 3600} h "
+                f"(that crop never finished); {new_hostname} will crop it")
+            return True
+        return False
+
+    def release_collage_claim(self, filename: str, hostname: str) -> bool:
+        """Give up this host's claim on a collage whose crop FAILED, so any
+        node (this one included) can claim and crop it again.
+
+        Deletes the row only when ``hostname`` holds it and the crop has not
+        finished. True if a row was released. Raises on database errors.
+
+        WHY: a claim that outlives a failed crop blocks the collage for every
+        node until the stale takeover a day later. WHY never a finished claim
+        ('cropped', or the later 'archived'): its children already exist and
+        have been handed on; reopening it would crop and pose them all again.
+        WHY only the holder: another host's claim is its live work.
         """
         self.ensure_tables()
         with self.engine.connect() as conn:
             result = conn.execute(text(
-                "INSERT OR IGNORE INTO pipeline_collages "
-                "(filename, hostname, state, claimed_at) "
-                "VALUES (:filename, :hostname, 'cropping', :claimed_at)"
-            ), {'filename': filename, 'hostname': hostname, 'claimed_at': _now()})
+                "DELETE FROM pipeline_collages "
+                "WHERE filename = :filename AND hostname = :hostname "
+                "AND state NOT IN ('cropped', 'archived')"
+            ), {'filename': filename, 'hostname': hostname})
             conn.commit()
+        released = result.rowcount > 0
+        if released:
+            logger.info(f"Collage {filename}: claim released by {hostname} after a failed crop")
+        return released
 
-            if result.rowcount > 0:
-                return True
+    def update_collage_state(self, filename: str, state: str,
+                             only_if_held_by: Optional[str] = None, **kwargs) -> bool:
+        """Update collage state after cropping completes. True if a row changed.
 
-            # Row already existed — check who owns it
-            row = conn.execute(text(
-                "SELECT hostname, state FROM pipeline_collages WHERE filename = :filename"
-            ), {'filename': filename}).fetchone()
-
-            if row and row[0] == hostname:
-                # We already claimed it (e.g., from a previous run)
-                return True
-
-            logger.info(f"Collage {filename} already claimed by {row[0] if row else 'unknown'}")
-            return False
-
-    def update_collage_state(self, filename: str, state: str, **kwargs):
-        """Update collage state after cropping completes."""
+        ``only_if_held_by``: change the row only while that host holds the
+        claim. WHY: a node whose claim was taken over while it cropped must not
+        stamp 'cropped' over the new holder's live claim -- the False result is
+        how it learns the collage may have been cropped twice.
+        """
         self.ensure_tables()
         fields = {'state': state}
         if state in ('cropped', 'archived'):
@@ -368,12 +610,17 @@ class PipelineCoordinator:
 
         set_clause = ', '.join(f'{k} = :{k}' for k in fields.keys())
         fields['filename'] = filename
+        where = "filename = :filename"
+        if only_if_held_by is not None:
+            fields['_holder'] = only_if_held_by
+            where += " AND hostname = :_holder"
 
         with self.engine.connect() as conn:
-            conn.execute(text(
-                f"UPDATE pipeline_collages SET {set_clause} WHERE filename = :filename"
+            result = conn.execute(text(
+                f"UPDATE pipeline_collages SET {set_clause} WHERE {where}"
             ), fields)
             conn.commit()
+        return result.rowcount > 0
 
     def get_all_collage_states(self) -> Dict[str, dict]:
         """Read all pipeline_collages. Returns {filename: row_dict}."""
@@ -456,10 +703,18 @@ class PipelineCoordinator:
                     # is the opposite of what the remote state claims -- adopting
                     # 'dlc_complete' on the strength of an archived copy would send
                     # the stager to move files out of the archive.
+                    #
+                    # search_staging=False: recovery runs only on GPU nodes (only
+                    # DLCOrchestrator builds a coordinator), and a copy in
+                    # Processing/Posed is the processing server's intake, not
+                    # this node's in-flight file. Counting it made a fresh node
+                    # adopt another node's hand-off as its own 'dlc_complete'
+                    # row (watcher/locate.py docstring).
                     claims_in_flight = remote_state in NODE_LOCAL_STATES
                     local_file = locate_video_file(
                         video_id, raw=remote.get('source_path'),
-                        search_archive=False) if claims_in_flight else None
+                        search_archive=False,
+                        search_staging=False) if claims_in_flight else None
 
                     if local_file is None and claims_in_flight:
                         # Another node owns the work and holds the files. Say so

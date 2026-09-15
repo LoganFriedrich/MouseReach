@@ -28,7 +28,7 @@ import threading
 from mousereach.gpu import setup_gpu_env
 setup_gpu_env()
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from datetime import datetime
 
 from mousereach.watcher.db import WatcherDB
@@ -431,6 +431,13 @@ class BaseOrchestrator:
     # processes has no such handler yet, so its scan marks only the rows
     # that need a NEW pose -- the ones its own GPU can do something about.
     reprocesses_partial = True
+    # Whether this role may read Processing/Posed (Paths.DLC_STAGING) when it
+    # reasons about re-pose requests. True only for the processing role, whose
+    # intake that folder is. A GPU node that also processes runs the same
+    # publish pass, and must not narrow its rows or close its requests on the
+    # strength of a pose that is on its way into the processing server
+    # (watcher/locate.py docstring).
+    reads_pose_staging = True
 
     def _publish_repose_requests(self) -> None:
         """Ask a GPU node, over shared storage, for a new pose for every row
@@ -449,9 +456,11 @@ class BaseOrchestrator:
         latched = getattr(self, '_repose_latched', None)
         if latched is None:
             latched = self._repose_latched = set()
+        # False = do not read staging at all (see reads_pose_staging).
+        staging = Paths.DLC_STAGING if self.reads_pose_staging else False
         try:
             repose.publish_pending(self.db, rows, hostname=self.hostname,
-                                   staging_dir=Paths.DLC_STAGING, latched=latched)
+                                   staging_dir=staging, latched=latched)
         except Exception as e:
             logger.warning(f"Re-pose request pass failed (non-fatal): {e}")
 
@@ -754,6 +763,22 @@ class DLCOrchestrator(BaseOrchestrator):
     # that need a new pose (see BaseOrchestrator).
     adopts_orphans = False
     reprocesses_partial = False
+    reads_pose_staging = False
+
+    # How often a node whose coordination database failed tries it again.
+    # WHY retry at all: a node that started while the share was still coming up
+    # used to crop nothing until someone restarted it, silently, for days.
+    # Minutes, not seconds: each try opens a database over the share.
+    _COORDINATOR_RETRY_S = 300
+    # While claims stay unavailable the WARNING repeats this often, so the
+    # condition is never one line long gone from view.
+    _CLAIMS_UNAVAILABLE_REWARN_S = 3600
+    # A collage another host is cropping right now is asked about again after
+    # this long. WHY not park it for good: the holder may fail and release, or
+    # go stale, and only a node that asks again can then crop it. WHY not every
+    # poll: each lost claim is a round trip to the share and a no-progress
+    # dispatch. A crop takes minutes to an hour or two.
+    _CLAIM_RECHECK_S = 1800
 
     # This role is the only one that poses and the only one that crops, so it
     # is the only one that can leave a video in 'dlc_running' or a collage in
@@ -789,26 +814,56 @@ class DLCOrchestrator(BaseOrchestrator):
             self.staging_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Staging directory: {self.staging_dir}")
 
-        # --- Cross-PC coordination via connectome.db ---
+        # --- Cross-PC coordination via the shared watcher_central.db ---
+        # WHY the failure is RECORDED and not just left as coordinator=None:
+        # None used to mean "crop without a claim", so a node whose share
+        # blinked at startup cropped every collage other nodes were also
+        # cropping. The collage handler now refuses to crop without a working
+        # coordinator (see _hold_collage_claim) and says why, once, using the
+        # reason kept here. Restore and recovery are separate steps on purpose:
+        # neither is needed for a claim, so neither may switch claims off.
         self.coordinator = None
+        self._coordinator_init_error = None
         try:
             from mousereach.watcher.coordination import (
                 PipelineCoordinator, restore_db, backup_db
             )
             self._backup_db = backup_db
             self._restore_db = restore_db
-
-            # Quick-restore watcher.db from NAS backup if local is empty
-            nas_root = Paths.NAS_ROOT
-            if nas_root:
-                restore_db(db.db_path, nas_root, self.hostname)
-
-            self.coordinator = PipelineCoordinator()
-            self.coordinator.ensure_tables()
-            stats = self.coordinator.recover_local_db(db, self.hostname)
-            logger.info("Startup recovery from connectome.db complete")
         except Exception as e:
-            logger.warning(f"Connectome DB recovery skipped: {e}")
+            PipelineCoordinator = None
+            self._coordinator_init_error = f"{type(e).__name__}: {e}"
+
+        if PipelineCoordinator is not None:
+            # Quick-restore watcher.db from NAS backup if local is empty
+            try:
+                nas_root = Paths.NAS_ROOT
+                if nas_root:
+                    restore_db(db.db_path, nas_root, self.hostname)
+            except Exception as e:
+                logger.warning(f"watcher.db restore from the shared drive skipped: {e}")
+
+            try:
+                coordinator = PipelineCoordinator()
+                coordinator.ensure_tables()
+                self.coordinator = coordinator
+            except Exception as e:
+                self._coordinator_init_error = f"{type(e).__name__}: {e}"
+
+        if self.coordinator is not None:
+            try:
+                self.coordinator.recover_local_db(db, self.hostname)
+                logger.info("Startup recovery from the coordination database complete")
+            except Exception as e:
+                logger.warning(f"Cross-node recovery skipped: {e}")
+        else:
+            self._coordinator_last_attempt = time.monotonic()
+            self._coordinator_unavailable_since = datetime.now().isoformat(timespec='seconds')
+            logger.warning(
+                "Collage coordination database unavailable (%s). Posing and "
+                "staging continue, but this node crops no collage until the "
+                "database answers; it is tried again every %d minutes.",
+                self._coordinator_init_error, self._COORDINATOR_RETRY_S // 60)
 
         # Scan local DLC_Queue for orphaned files not in DB
         self._recover_local_dlc_queue()
@@ -835,6 +890,347 @@ class DLCOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.debug(f"DB backup failed (non-fatal): {e}")
 
+    # =========================================================================
+    # FINISHED OR HELD: never pose (or crop for) a video that needs no pose
+    # =========================================================================
+
+    def _already_done_or_held(self, video_id: str) -> Optional[Tuple[str, str]]:
+        """Is this video finished, or held for a person? ``(state, reason)`` if
+        so, None if it genuinely still needs a pose.
+
+        ``state`` is what this node's row should say instead: 'archived', or
+        the review queue's state ('triage' / 'deep_review').
+
+        WHY ask the shared drive instead of this node's database: the database
+        is exactly what cannot be trusted here. A new GPU node, or one whose
+        database was rebuilt, knows nothing about the thousands of videos
+        already analysed, and a pose costs ~14 GPU-minutes that then feeds
+        duplicate processing downstream. The shared drive is the authority:
+
+          * a bundle folder in Processing/Review/triage/<stem> or
+            deep_review/<stem> means a person holds the video -- posing it again
+            would build a second result beside the one under review;
+          * <queue>/.incoming/<stem> is a route into that queue still being
+            written (review_routing publishes it with one rename) -- the same
+            hold, a moment earlier;
+          * <stem>_processing_manifest.json in the video's archive folder means
+            it was analysed and filed.
+
+        The queues are checked first because a held video can ALSO have an
+        older manifest in the archive (a reprocess under review), and the hold
+        is the more current truth -- the same order _archive_to_nas uses.
+        Never raises: an unreadable location counts as "not there".
+        """
+        try:
+            from mousereach.watcher.review_routing import INCOMING_DIR_NAME
+        except ImportError:
+            INCOMING_DIR_NAME = ".incoming"
+        for qroot, qstate in ((getattr(Paths, 'TRIAGE_REVIEW', None), 'triage'),
+                              (getattr(Paths, 'DEEP_REVIEW', None), 'deep_review')):
+            if not qroot:
+                continue
+            try:
+                if (Path(qroot) / video_id).is_dir():
+                    return qstate, f"its bundle is held for a person in the {qstate} queue"
+                if (Path(qroot) / INCOMING_DIR_NAME / video_id).is_dir():
+                    return qstate, (f"its bundle is being routed into the {qstate} "
+                                    f"queue ({INCOMING_DIR_NAME})")
+            except OSError:
+                continue
+        try:
+            from mousereach.archive.core import get_archive_destination
+            archived_here = get_archive_destination(video_id)
+            if (archived_here is not None
+                    and (Path(archived_here) / f"{video_id}_processing_manifest.json").is_file()):
+                return 'archived', "already analysed and filed in the archive"
+        except Exception:
+            pass
+        return None
+
+    def _record_finished_child(self, video_id: str, verdict: Tuple[str, str],
+                               collage_filename: str, metadata: dict) -> bool:
+        """Record a collage child that needs no pose in the state the shared
+        drive says it is in. True if this node's row was set.
+
+        A child whose row here has already moved past discovery is left
+        alone: that row is this node's own history of the video (in flight,
+        archived, held) and is at least as informative. Only a row that is
+        new, 'validated', 'failed' or 'unresolvable' is corrected.
+
+        No file path is recorded (NO_FILE_HERE, as cross-node recovery does for
+        finished videos): the crop in the working folder is deleted with the
+        rest, and nothing reads a finished row's path.
+        """
+        state, reason = verdict
+        row = self.db.get_video(video_id)
+        if row is None:
+            self.db.register_video(
+                video_id=video_id,
+                source_path=getattr(self.db, 'NO_FILE_HERE', '(no file on this node)'),
+                collage_id=collage_filename,
+                **{k: v for k, v in metadata.items() if v is not None})
+            prior = 'discovered'
+        else:
+            prior = row.get('state')
+        if prior not in ('discovered', 'validated', 'failed', 'unresolvable'):
+            logger.info(f"{video_id}: {reason}; its row here is already '{prior}', "
+                        f"left as it is")
+            return False
+        self.db.force_state(
+            video_id, state,
+            reason=f"{reason}; recorded instead of queuing it for DLC from "
+                   f"collage {collage_filename}")
+        self.db.log_step(video_id, 'crop', 'skipped', message=reason)
+        logger.info(f"{video_id}: {reason}; recorded as '{state}', not queued for DLC")
+        return True
+
+    @staticmethod
+    def _child_metadata(video_id: str, animal_id: str, position, collage_data: dict) -> dict:
+        """The columns a cropped child is registered with, from its names."""
+        parsed_animal = AnimalID.parse(animal_id) if animal_id else {}
+        tray_info = parse_tray_type(f"{video_id}.mp4")
+        return {
+            'date': collage_data.get('date'),
+            'animal_id': animal_id,
+            'experiment': parsed_animal.get('experiment'),
+            'cohort': parsed_animal.get('cohort'),
+            'subject': parsed_animal.get('subject'),
+            'tray_type': tray_info.get('tray_type'),
+            'tray_position': position,
+        }
+
+    # =========================================================================
+    # COLLAGE CLAIMS: fail closed
+    # =========================================================================
+
+    def _warn_collage_claims_unavailable(self) -> None:
+        """Say that this node crops nothing, and why -- once, then again every
+        _CLAIMS_UNAVAILABLE_REWARN_S for as long as it lasts."""
+        now = time.monotonic()
+        last = getattr(self, '_claims_unavailable_warned_at', None)
+        if last is not None and now - last < self._CLAIMS_UNAVAILABLE_REWARN_S:
+            return
+        self._claims_unavailable_warned_at = now
+        since = getattr(self, '_coordinator_unavailable_since', None)
+        logger.warning(
+            "Collage claims are unavailable on this node%s (%s). No collage is "
+            "cropped here until the central database (watcher_central.db on the "
+            "shared drive) answers; it is tried again every %d minutes. WHY: "
+            "without a claim, every GPU node sharing the intake folder can crop "
+            "the same collage and pose its children twice.",
+            f" since {since}" if since else "",
+            getattr(self, '_coordinator_init_error', None)
+            or "the coordination database did not start",
+            self._COORDINATOR_RETRY_S // 60)
+
+    def _retry_coordinator(self) -> bool:
+        """True when a coordinator is available, trying to build one again if
+        the constructor's attempt failed and _COORDINATOR_RETRY_S has passed.
+
+        Only a RECORDED startup failure is retried: a node built without the
+        constructor, or one whose coordinator was switched off on purpose, is
+        left as it is. Cross-node recovery is NOT run here -- it rewrites rows
+        at startup, before work begins, and must not run under live work; it
+        runs at the next restart.
+        """
+        if getattr(self, 'coordinator', None) is not None:
+            return True
+        if getattr(self, '_coordinator_init_error', None) is None:
+            return False
+        now = time.monotonic()
+        last = getattr(self, '_coordinator_last_attempt', None)
+        if last is not None and now - last < self._COORDINATOR_RETRY_S:
+            return False
+        self._coordinator_last_attempt = now
+        try:
+            from mousereach.watcher.coordination import PipelineCoordinator
+            coordinator = PipelineCoordinator()
+            coordinator.ensure_tables()
+        except Exception as e:
+            self._coordinator_init_error = f"{type(e).__name__}: {e}"
+            logger.debug(f"coordination database still unavailable: {e}")
+            return False
+        since = getattr(self, '_coordinator_unavailable_since', None)
+        self.coordinator = coordinator
+        self._coordinator_init_error = None
+        self._coordinator_unavailable_since = None
+        self._claims_unavailable_warned_at = None
+        logger.info(
+            "Collage coordination database is available again%s; this node crops "
+            "collages again. Cross-node recovery runs at the next watcher restart.",
+            f" (unavailable since {since})" if since else "")
+        return True
+
+    def _claim_backoff_active(self, collage_filename: str) -> bool:
+        """True while this node waits before asking about a collage another
+        host was cropping (see _park_collage_claimed_elsewhere)."""
+        until = getattr(self, '_claim_backoff', {}).get(collage_filename)
+        return until is not None and time.monotonic() < until
+
+    def _hold_collage_claim(self, collage_filename: str) -> bool:
+        """True only when THIS node holds the shared claim on the collage.
+
+        Fails closed on every path. The claim is the only thing stopping
+        several GPU nodes from cropping one collage and each posing its
+        children (~14 GPU-minutes a child, then duplicate processing and
+        archiving downstream); skipping a poll costs nothing, because the
+        collage is still in the intake folder next poll.
+
+          * no coordinator (it failed to start): try it again when the retry
+            interval has passed (_retry_coordinator); otherwise do not crop,
+            with a WARNING repeated while it lasts.
+          * the claim call raised (share or database trouble): do not crop;
+            one WARNING per collage per outage (a successful check on that
+            collage re-arms it); the row stays 'stable', so the next poll
+            tries again.
+          * another host holds the claim: see _park_collage_claimed_elsewhere.
+        """
+        if not self._retry_coordinator():
+            self._warn_collage_claims_unavailable()
+            return False
+        coordinator = self.coordinator
+        warned = getattr(self, '_claim_error_warned', None)
+        if warned is None:
+            warned = self._claim_error_warned = set()
+        try:
+            held = coordinator.try_claim_collage(collage_filename, self.hostname)
+        except Exception as e:
+            if collage_filename not in warned:
+                warned.add(collage_filename)
+                logger.warning(
+                    f"Collage {collage_filename}: could not check the shared claim "
+                    f"({type(e).__name__}: {e}); not cropping it this poll. It "
+                    f"stays queued and is tried again next poll.")
+            return False
+        # The check worked: a later outage must warn again for this collage.
+        warned.discard(collage_filename)
+        if not held:
+            self._park_collage_claimed_elsewhere(collage_filename)
+            return False
+        getattr(self, '_claim_backoff', {}).pop(collage_filename, None)
+        return True
+
+    def _park_collage_claimed_elsewhere(self, collage_filename: str) -> None:
+        """Another node holds the claim: stop this node re-picking the collage.
+
+        WHY park rather than just return: the row stayed 'stable', so the loop
+        picked the same collage again on the very next pass, lost the claim
+        again, and copied the whole local watcher.db to the share after each
+        attempt.
+
+        Two cases, told apart by the shared claim row:
+
+          * the crop there FINISHED ('cropped'/'archived'): this node's row is
+            set to 'cropped' for good, with the holder named in the collage's
+            processing log (step 'claim', status 'skipped'). That is the truth
+            -- the collage has been cropped, just not here.
+          * the claim is live, stale-but-refused, or could not be read: the row
+            stays 'stable' and this node does not ask about it again for
+            _CLAIM_RECHECK_S. WHY not 'cropped': a claim can still be released
+            after a failed crop, or taken over once stale, and a node that had
+            parked the collage for good would never crop it then -- with two or
+            three GPU nodes, that was every node that had looked (G2's "blocked
+            forever", just moved).
+        """
+        claim = None
+        try:
+            claim = self.coordinator.get_collage_claim(collage_filename)
+        except Exception as e:
+            logger.debug(f"could not read who holds {collage_filename}: {e}")
+        claim = claim or {}
+        holder = claim.get('hostname') or "another node"
+        state = claim.get('state')
+        if state in ('cropped', 'archived'):
+            reason = (f"already cropped by {holder} (shared claim is '{state}'); "
+                      f"not cropped again here")
+            try:
+                self.db.force_collage_state(collage_filename, 'cropped')
+                self.db.log_step(collage_filename, 'claim', 'skipped', message=reason)
+            except Exception as e:
+                logger.warning(f"Collage {collage_filename}: {reason}, but its row here "
+                               f"could not be recorded ({e})")
+                return
+            logger.info(f"Collage {collage_filename}: {reason}; recorded here as 'cropped'")
+            return
+
+        backoff = getattr(self, '_claim_backoff', None)
+        if backoff is None:
+            backoff = self._claim_backoff = {}
+        backoff[collage_filename] = time.monotonic() + self._CLAIM_RECHECK_S
+        reason = (f"claimed by {holder} (shared claim is '{state or 'unknown'}', "
+                  f"claimed at {claim.get('claimed_at') or '?'}); left to that node, "
+                  f"asked about again in {self._CLAIM_RECHECK_S // 60} minutes")
+        logged = getattr(self, '_claim_parked_logged', None)
+        if logged is None:
+            logged = self._claim_parked_logged = set()
+        if collage_filename not in logged:
+            logged.add(collage_filename)
+            try:
+                self.db.log_step(collage_filename, 'claim', 'skipped', message=reason)
+            except Exception as e:
+                logger.debug(f"could not log the claim skip for {collage_filename}: {e}")
+        logger.info(f"Collage {collage_filename}: {reason}")
+
+    def _note_unsynced_collage_claim(self, collage_filename: str, singles_created: int,
+                                     error) -> None:
+        """Remember a 'cropped' that did not reach the shared claim table, so
+        it is sent again (_retry_unsynced_collage_claims). WHY it matters now:
+        a claim left in 'cropping' used to block other nodes only; since claims
+        can be taken over after COLLAGE_CLAIM_STALE_S, a lost 'cropped' is how
+        a finished collage gets cropped again a day later."""
+        pending = getattr(self, '_unsynced_collage_claims', None)
+        if pending is None:
+            pending = self._unsynced_collage_claims = {}
+        pending[collage_filename] = singles_created
+        logger.warning(
+            f"Collage {collage_filename}: cropped here, but the shared claim could not "
+            f"be marked 'cropped' ({type(error).__name__}: {error}). It is sent again "
+            f"each poll until it lands; until then other nodes see an unfinished claim.")
+
+    def _retry_unsynced_collage_claims(self) -> None:
+        """Send again every 'cropped' that did not reach the shared table."""
+        pending = getattr(self, '_unsynced_collage_claims', None)
+        if not pending or getattr(self, 'coordinator', None) is None:
+            return
+        for name, created in list(pending.items()):
+            try:
+                changed = self.coordinator.update_collage_state(
+                    name, 'cropped', only_if_held_by=self.hostname,
+                    singles_created=created)
+            except Exception as e:
+                logger.debug(f"collage {name}: 'cropped' still not synced ({e})")
+                continue
+            pending.pop(name, None)
+            if changed is False:
+                self._warn_claim_lost_while_cropping(name)
+            else:
+                logger.info(f"Collage {name}: shared claim marked 'cropped' (retried)")
+
+    def _warn_claim_lost_while_cropping(self, collage_filename: str) -> None:
+        logger.warning(
+            f"Collage {collage_filename}: cropped here, but the shared claim is no "
+            f"longer held by this node, so it was not marked 'cropped'. Another node "
+            f"took the claim over and may crop it too; a person should check that its "
+            f"child videos are not posed twice.")
+
+    def _collage_children_in_flight_here(self, collage_filename: str) -> list:
+        """Video ids of this collage's children that THIS node is carrying
+        (queued, posing, posed, staged, processing ...). Rows recorded with no
+        file here (finished or held children, _record_finished_child) and rows
+        that never got a file (discovered, validated, failed) do not count.
+        Raises on database errors."""
+        conn = self.db._get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT video_id FROM videos WHERE collage_id = ? "
+                "AND state NOT IN ('discovered', 'validated', 'quarantined', "
+                "'failed', 'unresolvable') AND COALESCE(source_path, '') != ?",
+                (collage_filename, getattr(self.db, 'NO_FILE_HERE',
+                                           '(no file on this node)'))).fetchall()
+        finally:
+            conn.close()
+        return [r[0] for r in rows]
+
     def _adopt_single_for_dlc(self, work: dict):
         """Bring a video someone left in the shared singles folder onto this
         node and queue it for pose.
@@ -857,26 +1253,20 @@ class DLCOrchestrator(BaseOrchestrator):
         # each, or roughly 530 GPU-hours of redoing finished work.
         #
         # The archive is the authority on what is finished, so ask it, and
-        # record the truth instead of burning a card on it.
-        try:
-            from mousereach.archive.core import get_archive_destination
-            archived_here = get_archive_destination(video_id)
-            done = (archived_here is not None
-                    and (Path(archived_here) / f"{video_id}_processing_manifest.json").is_file())
-        except Exception:
-            done = False
-        if done:
+        # record the truth instead of burning a card on it. A video held in a
+        # review queue is not posed again either (_already_done_or_held).
+        verdict = self._already_done_or_held(video_id)
+        if verdict:
+            state, why = verdict
             try:
                 self.db.force_state(
-                    video_id, 'archived',
-                    reason="already analysed and filed in the archive; recorded "
-                           "as done rather than posed again")
-                self.db.log_step(video_id, 'adopt', 'skipped',
-                                 message="already in the archive")
+                    video_id, state,
+                    reason=f"{why}; recorded as such rather than posed again")
+                self.db.log_step(video_id, 'adopt', 'skipped', message=why)
             except Exception as e:
-                logger.warning(f"{video_id}: already archived, but the row "
-                               f"could not be corrected ({e})")
-            logger.info(f"{video_id}: already in the archive; not posing it again")
+                logger.warning(f"{video_id}: {why}, but the row could not be "
+                               f"corrected ({e})")
+            logger.info(f"{video_id}: {why}; not posing it again")
             return True
 
         dlc_queue = Paths.DLC_QUEUE
@@ -884,9 +1274,12 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_unresolvable(
                 video_id, "no local DLC queue is configured on this node")
             return False
+        # search_staging=False: Processing/Posed is the processing server's
+        # intake. Adopting from it would copy another node's hand-off into this
+        # node's queue and pose the same video twice (watcher/locate.py).
         src = locate_video_file(video_id, raw=data.get('current_path'),
                                 extra_dirs=[Paths.SINGLE_ANIMAL_OUTPUT],
-                                search_archive=False)
+                                search_archive=False, search_staging=False)
         if src is None:
             self.db.mark_unresolvable(
                 video_id, "registered from the shared singles folder, but the "
@@ -1242,7 +1635,23 @@ class DLCOrchestrator(BaseOrchestrator):
             }
 
         # Priority 3: Crop next collage (Pillar first, random within tier)
-        collages = self.db.get_collages_in_state('stable')
+        # Not offered at all when the coordination database failed to start:
+        # the handler would refuse every one (no claim, no crop), and picking
+        # a collage only to refuse it costs a copy of watcher.db to the share
+        # each poll. Keyed on the RECORDED failure, so a node built without
+        # the constructor keeps its ordinary selection.
+        # The retry (_retry_coordinator) is rate-limited, so a node whose
+        # database is still down pays one attempt every few minutes, not one
+        # per poll.
+        if (getattr(self, '_coordinator_init_error', None) is not None
+                and not self._retry_coordinator()):
+            self._warn_collage_claims_unavailable()
+            return None
+        self._retry_unsynced_collage_claims()
+        # A collage another host is cropping is skipped until its recheck time
+        # (_park_collage_claimed_elsewhere), so the loop moves on to others.
+        collages = [c for c in self.db.get_collages_in_state('stable')
+                    if not self._claim_backoff_active(c.get('filename'))]
         # ADMIT: cropping a collage creates new local files and new DLC work.
         pick = self._pick_from_pool(collages, priority_animal, 'animal_ids',
                                     is_collage=True,
@@ -1420,8 +1829,71 @@ class DLCOrchestrator(BaseOrchestrator):
     # COLLAGE PROCESSING
     # =========================================================================
 
+    def _expected_children(self, collage_filename: str) -> list:
+        """The collage's non-blank children, from its filename alone:
+        ``[{position, animal_id, offspring_stem}]``. [] when the name cannot be
+        parsed (the crop then decides, exactly as before).
+
+        The cropper names each child ``{date}_{animal_id}_{last}.mp4`` from the
+        collage name, so a child's id is known BEFORE cropping -- which is what
+        lets a collage whose children are all finished be skipped without
+        spending a crop on it.
+        """
+        try:
+            from mousereach.video_prep.core.collage_provenance import expected_offspring
+            return [c for c in expected_offspring(collage_filename)
+                    if not c.get('blank') and c.get('offspring_stem')]
+        except Exception as e:
+            logger.debug(f"could not derive the children of {collage_filename}: {e}")
+            return []
+
+    def _record_collage_needs_no_crop(self, collage_filename: str, collage_data: dict,
+                                      children: list, verdicts: dict) -> bool:
+        """Every child is finished or held: record that instead of cropping.
+
+        Each child row is set to its real state, the collage is marked
+        'cropped' here with the reason in its processing log, and the shared
+        claim this node holds is marked 'cropped' too, so no other node crops
+        it either. Returns True: the collage has been dealt with and its row
+        has left 'stable', so the loop cannot pick it again.
+        """
+        recorded = 0
+        for child in children:
+            stem = child['offspring_stem']
+            try:
+                if self._record_finished_child(
+                        stem, verdicts[stem], collage_filename,
+                        self._child_metadata(stem, child.get('animal_id', ''),
+                                             child.get('position'), collage_data)):
+                    recorded += 1
+            except Exception as e:
+                logger.warning(f"{stem}: {verdicts[stem][1]}, but its row could not "
+                               f"be recorded ({e})")
+        reason = (f"not cropped: all {len(children)} expected child video(s) are "
+                  f"already analysed or held for review "
+                  f"({recorded} row(s) corrected on this node)")
+        self.db.force_collage_state(collage_filename, 'cropped',
+                                    videos_created=0, videos_skipped=len(children))
+        self.db.log_step(collage_filename, 'crop', 'skipped', message=reason)
+        logger.info(f"Collage {collage_filename}: {reason}")
+        try:
+            if self.coordinator.update_collage_state(
+                    collage_filename, 'cropped', only_if_held_by=self.hostname,
+                    singles_created=0) is False:
+                self._warn_claim_lost_while_cropping(collage_filename)
+        except Exception as e:
+            self._note_unsynced_collage_claim(collage_filename, 0, e)
+        return True
+
     def _process_collage(self, work: dict):
-        """Copy collage from NAS to local, crop into singles, queue for DLC."""
+        """Copy collage from NAS to local, crop into singles, queue for DLC.
+
+        Returns False whenever this node did nothing with the collage (no
+        claim, claim lost, claim check failed) so the main loop sleeps instead
+        of re-picking it at full speed; True when the collage was cropped or
+        recorded as needing no crop. A failed crop raises, after the shared
+        claim is released so another attempt is possible.
+        """
         from mousereach.video_prep.core.cropper import crop_collage
 
         collage_filename = work['id']
@@ -1429,19 +1901,30 @@ class DLCOrchestrator(BaseOrchestrator):
 
         logger.info(f"Processing collage: {collage_filename}")
 
-        # Cross-PC dedup: try to claim this collage before cropping
-        if self.coordinator:
-            try:
-                if not self.coordinator.try_claim_collage(collage_filename, self.hostname):
-                    logger.info(f"Collage {collage_filename} claimed by another PC, skipping")
-                    return
-            except Exception as e:
-                logger.debug(f"Collage claim check failed (proceeding anyway): {e}")
+        # Cross-PC dedup: hold the shared claim before anything else. Fails
+        # closed -- see _hold_collage_claim.
+        if not self._hold_collage_claim(collage_filename):
+            return False
+
+        # A collage whose children are ALL finished or held needs no crop.
+        # Asked before cropping because the children's ids follow from the
+        # collage name; a node with a fresh or partial database would otherwise
+        # re-crop and re-pose finished work (see _already_done_or_held).
+        children = self._expected_children(collage_filename)
+        if children:
+            verdicts = {c['offspring_stem']: self._already_done_or_held(c['offspring_stem'])
+                        for c in children}
+            if all(verdicts.values()):
+                return self._record_collage_needs_no_crop(
+                    collage_filename, collage_data, children, verdicts)
 
         self.db.update_collage_state(collage_filename, 'cropping')
         self.db.log_step(collage_filename, 'crop', 'started')
 
         start_time = time.time()
+        # Before the try: a failed crop's cleanup reads it to decide whether
+        # the shared claim may be released (_release_claim_after_failed_crop).
+        videos_created = 0
 
         try:
             # Source path on NAS (D:)
@@ -1482,22 +1965,27 @@ class DLCOrchestrator(BaseOrchestrator):
                 video_id = get_video_id(output_path.name)
 
                 animal_id = result.get('animal_id', '')
-                parsed_animal = AnimalID.parse(animal_id) if animal_id else {}
-                tray_info = parse_tray_type(output_path.name)
+                metadata = self._child_metadata(video_id, animal_id,
+                                                result.get('position'), collage_data)
+
+                # A child that is finished, or held for a person, is never
+                # queued for DLC: its row is recorded in its real state instead
+                # (see _already_done_or_held). Checked again here, per child,
+                # because the collage as a whole still needed cropping.
+                verdict = self._already_done_or_held(video_id)
+                if verdict:
+                    self._record_finished_child(video_id, verdict, collage_filename,
+                                                metadata)
+                    videos_skipped += 1
+                    continue
 
                 # Register video in DB
                 self.db.register_video(
                     video_id=video_id,
                     source_path=str(output_path),
                     collage_id=collage_filename,
-                    date=collage_data.get('date'),
-                    animal_id=animal_id,
-                    experiment=parsed_animal.get('experiment'),
-                    cohort=parsed_animal.get('cohort'),
-                    subject=parsed_animal.get('subject'),
-                    tray_type=tray_info.get('tray_type'),
-                    tray_position=result.get('position'),
-                    current_path=str(output_path)
+                    current_path=str(output_path),
+                    **metadata
                 )
 
                 # A collage can be re-claimed after its children have already been
@@ -1530,6 +2018,15 @@ class DLCOrchestrator(BaseOrchestrator):
                     dlc_queue_path = Paths.DLC_QUEUE / output_path.name
                     if safe_copy(output_path, dlc_queue_path, verify=True):
                         self.db.update_state(video_id, 'dlc_queued', current_path=str(dlc_queue_path))
+                        # Put the child on record in the shared table now, not
+                        # at its first pose. WHY: a claim left in 'cropping'
+                        # is refused for takeover while its collage has
+                        # children on record (coordination.try_claim_collage);
+                        # a child first synced at 'dlc_running' was invisible
+                        # for as long as it waited in this node's queue.
+                        self._sync_to_connectome(video_id, 'dlc_queued',
+                                                 collage_id=collage_filename,
+                                                 source_path=str(dlc_queue_path))
                         logger.info(f"Created and queued: {video_id}")
                         videos_created += 1
                     else:
@@ -1555,14 +2052,18 @@ class DLCOrchestrator(BaseOrchestrator):
 
             logger.info(f"Collage cropped: {collage_filename} ({videos_created} singles, {videos_skipped} skipped)")
 
-            # Sync collage completion to connectome.db
+            # Sync collage completion to the shared coordination database. Not
+            # best-effort any more: a claim left in 'cropping' can be taken over
+            # after a day, so a lost 'cropped' is retried until it lands, and a
+            # claim that turns out to be held by another host is said out loud.
             if self.coordinator:
                 try:
-                    self.coordinator.update_collage_state(
-                        collage_filename, 'cropped', singles_created=videos_created
-                    )
+                    if self.coordinator.update_collage_state(
+                            collage_filename, 'cropped', only_if_held_by=self.hostname,
+                            singles_created=videos_created) is False:
+                        self._warn_claim_lost_while_cropping(collage_filename)
                 except Exception as e:
-                    logger.debug(f"Collage sync failed (non-fatal): {e}")
+                    self._note_unsynced_collage_claim(collage_filename, videos_created, e)
 
             # Cleanup working directory
             local_collage.unlink(missing_ok=True)
@@ -1572,34 +2073,121 @@ class DLCOrchestrator(BaseOrchestrator):
 
         except Exception as e:
             duration = time.time() - start_time
-            self.db.update_collage_state(collage_filename, 'failed', validation_error=str(e))
-            self.db.log_step(collage_filename, 'crop', 'failed', message=str(e), duration=duration)
+            try:
+                self.db.update_collage_state(collage_filename, 'failed', validation_error=str(e))
+                self.db.log_step(collage_filename, 'crop', 'failed', message=str(e), duration=duration)
+            finally:
+                self._release_claim_after_failed_crop(collage_filename, videos_created)
             raise
+        return True
+
+    def _release_claim_after_failed_crop(self, collage_filename: str,
+                                         videos_created: int) -> None:
+        """Give the shared claim back after this node's crop failed.
+
+        WHY: a claim used to outlive a failed crop forever, so the one node
+        that could not crop a collage stopped every other node from trying.
+        Released only when this node carries no child of the collage: none
+        queued by this attempt, and none left in flight here by an earlier one
+        (_collage_children_in_flight_here). Once a child is on this node it
+        will be posed here, and letting another node re-crop the collage would
+        pose that child a second time. Such a claim is KEPT: this node retries
+        its own failed collage (discover_new_collages re-validates it), and no
+        other node takes the claim over while those children are on record in
+        the shared table (coordination.try_claim_collage). Never raises: the
+        crop's own error is the one to report.
+        """
+        coordinator = getattr(self, 'coordinator', None)
+        if coordinator is None:
+            return
+        try:
+            carried = self._collage_children_in_flight_here(collage_filename)
+        except Exception as e:
+            logger.warning(f"Collage {collage_filename}: crop failed and this node's "
+                           f"children of it could not be counted ({e}); keeping the "
+                           f"shared claim")
+            return
+        if videos_created or carried:
+            logger.warning(
+                f"Collage {collage_filename}: crop failed while this node carries "
+                f"{max(videos_created, len(carried))} child video(s) of it; keeping "
+                f"the shared claim so no other node crops and poses them again. This "
+                f"node retries the collage; if it cannot, a person decides.")
+            return
+        try:
+            coordinator.release_collage_claim(collage_filename, self.hostname)
+        except Exception as e:
+            logger.warning(f"Collage {collage_filename}: crop failed and the shared "
+                           f"claim could not be released ({type(e).__name__}: {e}); "
+                           f"other nodes can take it over once it goes stale")
 
     # =========================================================================
     # DLC INFERENCE
     # =========================================================================
 
     def _process_single_dlc(self, work: dict):
-        """Run DLC inference on a single video."""
+        """Run DLC inference on a single video.
+
+        Returns True when a pose was produced, False when nothing was run
+        (refused, no file here, node not configured) so the main loop sleeps
+        instead of re-picking the row at full speed. A failed run raises.
+        """
         from mousereach.dlc.core import run_dlc_batch, resolve_dlc_shuffle
+        from mousereach.watcher import repose
 
         video_id = work['id']
         video_data = work['data']
 
+        # Last line of defence against posing finished or held work: rows can
+        # reach 'dlc_queued' without passing the crop or adopt checks (queued
+        # before those checks existed, or found in DLC_Queue at startup).
+        #
+        # A RE-POSE REQUEST is the exception for exactly the states the re-pose
+        # consumer re-drives (repose.REDRIVE_STATES: an archived video, or one
+        # in deep review whose fix needs a new pose) -- posing an already
+        # finished video again is what the request asks for. A triage hold
+        # stays refused, as the consumer refuses it.
+        verdict = self._already_done_or_held(video_id)
+        if verdict:
+            state, why = verdict
+            requested = (video_data.get('mark_reason') or '').startswith(repose.REASON_PREFIX)
+            if requested and state in repose.REDRIVE_STATES:
+                logger.info(f"{video_id}: {why}, but a re-pose was requested; posing it")
+            else:
+                self.db.force_state(video_id, state,
+                                    reason=f"{why}; not posed again")
+                self.db.log_step(video_id, 'dlc', 'skipped', message=why)
+                local = (Path(Paths.DLC_QUEUE) / f"{video_id}.mp4") if Paths.DLC_QUEUE else None
+                if local is not None and local.is_file():
+                    # Not deleted automatically: the finished or held copy lives
+                    # elsewhere, but a hold is judged from a folder's existence,
+                    # and a leftover empty queue folder must not be enough to
+                    # destroy a crop. Named, so a person can free the space.
+                    logger.warning(f"{video_id}: {why}; not posing it. Its copy "
+                                   f"{local} is not needed for that and is NOT "
+                                   f"removed automatically; delete it by hand to "
+                                   f"free the space.")
+                else:
+                    logger.info(f"{video_id}: {why}; not posing it")
+                return False
+
         # Same pathless-row hazard as _stage_to_nas, and the same reason for
         # search_archive=False: DLC writes its .h5 beside its input, so resolving
         # to the archived copy would drop new pose files into the archive.
+        # search_staging=False for the same reason one folder over: a video in
+        # Processing/Posed is the processing server's intake, and posing it
+        # there would write a pose into the shared hand-off folder.
         current_path = locate_video_file(
             video_id, raw=video_data.get('current_path'),
-            extra_dirs=[Paths.DLC_QUEUE], search_archive=False)
+            extra_dirs=[Paths.DLC_QUEUE], search_archive=False,
+            search_staging=False)
 
         if current_path is None:
             self.db.mark_unresolvable(
                 video_id,
                 "queued for DLC but no video file for it on this node "
                 "(recorded path: %r)" % (video_data.get('current_path'),))
-            return
+            return False
 
         logger.info(f"Running DLC on {video_id}")
 
@@ -1616,14 +2204,14 @@ class DLCOrchestrator(BaseOrchestrator):
                 f"a node configuration problem. DLC is stopped on this node until "
                 f"this is fixed."
             )
-            return
+            return False
 
         if not self.config.dlc_config_path:
             logger.warning(
                 f"DLC config not configured - {video_id} stays in dlc_queued. "
                 "Run 'mousereach-setup' to set DLC model path."
             )
-            return
+            return False
 
         dlc_config = Path(self.config.dlc_config_path)
         if not dlc_config.exists():
@@ -1631,12 +2219,12 @@ class DLCOrchestrator(BaseOrchestrator):
                 dlc_config = dlc_config / "config.yaml"
             if not dlc_config.exists():
                 logger.error(f"DLC config not found: {self.config.dlc_config_path}")
-                return
+                return False
 
         if not current_path.exists():
             logger.error(f"Video file not found: {current_path}")
             self.db.mark_failed(video_id, f"Video file not found: {current_path}")
-            return
+            return False
 
         self.db.update_state(video_id, 'dlc_running')
         self.db.log_step(video_id, 'dlc', 'started', message=f"GPU {self.config.dlc_gpu_device}")
@@ -1712,6 +2300,7 @@ class DLCOrchestrator(BaseOrchestrator):
             except Exception:
                 pass
             raise
+        return True
 
     # =========================================================================
     # LOCAL PIPELINE (also_process mode)
@@ -1723,6 +2312,10 @@ class DLCOrchestrator(BaseOrchestrator):
         When also_process=True, DLC PCs run the full pipeline locally instead
         of staging to NAS for the processing server. Reuses the same pipeline
         functions as ProcessingOrchestrator._run_pipeline().
+
+        Returns False when nothing was run (no pose or video here, a file could
+        not be staged locally, segmentation could not start), True once the
+        pipeline ran -- whether the video then went to review or to 'processed'.
         """
         from mousereach.segmentation.core.batch import process_single as seg_single
         from mousereach.reach.core.batch import process_single as reach_single
@@ -1739,14 +2332,22 @@ class DLCOrchestrator(BaseOrchestrator):
         # Path(None) raised and failed 950 of 954 videos on the DLC PC, and the
         # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
         # missing-pose guard stopped firing and 723 videos were routed to human
-        # review with "[Errno 13] Permission denied: '.'". resolve_pose_input
-        # returns a real file or None and never a placeholder path.
-        dlc_path = resolve_pose_input(
-            video_data.get('dlc_output_path'), video_id, Paths.DLC_QUEUE
-        )
+        # review with "[Errno 13] Permission denied: '.'". locate_pose_file
+        # (through resolve_pose_input) returns a real file or None and never a
+        # placeholder path.
+        #
+        # search_staging=False: a recorded pose path inside Processing/Posed is
+        # ignored. That folder is the processing server's intake; running this
+        # node's pipeline on a pose found there would process a hand-off the
+        # server is taking in at the same time. search_archive=False keeps the
+        # old scope (the archive was never searched here).
+        dlc_path = locate_pose_file(
+            video_id, raw=video_data.get('dlc_output_path'),
+            extra_dirs=[Paths.DLC_QUEUE], search_archive=False,
+            search_staging=False)
         if dlc_path is None:
             self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
-            return
+            return False
 
         # Stage outputs land BESIDE the pose file, and this function used to
         # make the pose's own folder the working directory -- so any video
@@ -1766,29 +2367,30 @@ class DLCOrchestrator(BaseOrchestrator):
                 if not safe_copy(Path(dlc_path), local, verify=True):
                     self.db.mark_failed(
                         video_id, f"could not stage pose locally from {dlc_path}")
-                    return
+                    return False
             dlc_path = local
         # The video must sit beside the pose too: the review gate opens it
         # from here, a deep-review bundle is built from here, and the archive
         # step files from here. Without this copy the gate saw no video and
         # the archive filed a bundle with no results (2026-09-12).
+        # search_staging=False, as for the pose above: never Processing/Posed.
         local_mp4 = processing_dir / f"{video_id}.mp4"
         if not local_mp4.exists():
             src_mp4 = locate_video_file(
                 video_id, raw=video_data.get('current_path'),
                 extra_dirs=[Paths.DLC_QUEUE, Path(dlc_path).parent],
-                search_archive=False)
+                search_archive=False, search_staging=False)
             if src_mp4 is None:
                 self.db.mark_failed(
                     video_id, "video file not found on this node for the local "
                               "pipeline (recorded path: %r)" % (video_data.get('current_path'),))
-                return
+                return False
             if Path(src_mp4) != local_mp4:
                 from mousereach.watcher.transfer import safe_copy
                 if not safe_copy(Path(src_mp4), local_mp4, verify=True):
                     self.db.mark_failed(
                         video_id, f"could not stage video locally from {src_mp4}")
-                    return
+                    return False
         logger.info(f"Running local pipeline on {video_id} (also_process mode)")
 
         self.db.update_state(video_id, 'processing')
@@ -1819,7 +2421,7 @@ class DLCOrchestrator(BaseOrchestrator):
                         f"Marking failed -- not routing to human review."
                     )
                     self.db.mark_failed(video_id, f"Segmentation could not run: {error}")
-                    return
+                    return False
                 # A real seg failure -> DEEP review, not a dead 'failed'. Move the
                 # whole bundle out of Processing so a human re-segments it.
                 try:
@@ -1831,13 +2433,14 @@ class DLCOrchestrator(BaseOrchestrator):
                 except Exception as route_err:
                     logger.warning(f"Deep-review routing failed for {video_id}: {route_err}")
                     self.db.mark_failed(video_id, f"Segmentation failed: {error}")
-                return
+                    return False
+                return True
 
             # Step 2: Reach Detection
             seg_path = processing_dir / f"{video_id}_segments.json"
             if not seg_path.exists():
                 self.db.mark_failed(video_id, "Segments file not created")
-                return
+                return False
 
             self.db.log_step(video_id, 'reach_detection', 'started')
             step_start = time.time()
@@ -1935,7 +2538,7 @@ class DLCOrchestrator(BaseOrchestrator):
             if decision != DECISION_CLEAN:
                 logger.info(f"Local pipeline held: {video_id} -> {decision} "
                             f"(no kinematics until cleared)")
-                return
+                return True
 
             # Step 4: Feature Extraction + DB sync (CLEAN videos ONLY)
             if not skip_outcomes:
@@ -1985,6 +2588,7 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'local_pipeline', 'failed', message=str(e), duration=pipeline_duration)
             self.db.mark_failed(video_id, f"Local pipeline error: {e}")
             raise
+        return True
 
     def _archive_locally_processed(self, work: dict):
         """Archive a locally processed video directly to NAS.
@@ -2151,7 +2755,7 @@ class DLCOrchestrator(BaseOrchestrator):
         if not self.staging_dir:
             logger.error("DLC_STAGING path not configured (NAS drive not set)")
             self.db.mark_failed(video_id, "DLC_STAGING path not configured")
-            return
+            return False
 
         logger.info(f"Staging {video_id} to NAS: {self.staging_dir}")
 
@@ -2164,54 +2768,36 @@ class DLCOrchestrator(BaseOrchestrator):
         # search_archive is off deliberately: the loop below MOVES what it finds.
         # A hit in the archive is the finished copy of this video, and moving it
         # into the staging folder would empty the archive to feed a queue.
+        #
+        # search_staging is off too, and that is a decision about what counts
+        # as "already staged". This handler WRITES into staging, so a file found
+        # there says nothing about THIS node: the same stem can be another
+        # node's hand-off, or the processing server's intake mid-copy. A video
+        # used to be force-marked 'archived' here on the strength of such a
+        # file. Now only this node's own copies are found, and staging is looked
+        # at in exactly one case: finishing this node's own interrupted stage
+        # (_resume_interrupted_stage), where the proof is a pose this node
+        # stages itself.
         current_path = locate_video_file(
             video_id, raw=video_data.get('current_path'),
-            extra_dirs=[Paths.DLC_QUEUE], search_archive=False)
+            extra_dirs=[Paths.DLC_QUEUE], search_archive=False,
+            search_staging=False)
 
         if current_path is None:
+            staged_mp4 = self.staging_dir / f"{video_id}.mp4"
+            try:
+                staged_already = staged_mp4.is_file()
+            except OSError:
+                staged_already = False
+            if staged_already:
+                return self._resume_interrupted_stage(video_id, staged_mp4)
             self.db.mark_unresolvable(
                 video_id,
                 "nothing to stage: no video file for it on this node "
                 "(recorded path: %r)" % (video_data.get('current_path'),))
             self.db.log_step(video_id, 'stage_to_nas', 'skipped',
                              message="no file on this node")
-            return
-
-        if current_path.parent == self.staging_dir:
-            # The video is already where staging would put it -- a re-run
-            # after an interrupted move. That used to be recorded as done on
-            # the spot, which stranded a pose still sitting locally (and the
-            # server, which discovers on the pose, never saw the video).
-            # Stage whatever is still local for it first; only a staged pose
-            # from the declared model makes it done.
-            from mousereach.watcher import repose
-            leftovers = (self._get_associated_files(Paths.DLC_QUEUE, video_id)
-                         if Paths.DLC_QUEUE else [])
-            self.db.log_step(video_id, 'stage_to_nas', 'started', message="resuming")
-            start_time = time.time()
-            try:
-                if leftovers:
-                    self._stage_files(video_id, leftovers)
-                staged_h5 = select_pose_file(
-                    self.staging_dir.glob(f"{video_id}DLC*.h5"),
-                    expected_scorer=repose.declared_scorer() or None)
-                if staged_h5 is None:
-                    raise IOError("video is staged but no pose file for it exists "
-                                  "in staging or locally")
-                logger.info(f"{video_id} is already in NAS staging; marking archived")
-                self.db.force_state(video_id, 'archived',
-                                    reason="already present in NAS staging",
-                                    current_path=str(current_path),
-                                    dlc_output_path=str(staged_h5))
-                self.db.log_step(video_id, 'stage_to_nas', 'completed',
-                                 message=f"already staged ({len(leftovers)} file(s) resumed)",
-                                 duration=time.time() - start_time)
-            except Exception as e:
-                self.db.mark_failed(video_id, str(e))
-                self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e),
-                                 duration=time.time() - start_time)
-                raise
-            return
+            return False
 
         self.db.log_step(video_id, 'stage_to_nas', 'started')
         start_time = time.time()
@@ -2234,11 +2820,9 @@ class DLCOrchestrator(BaseOrchestrator):
             # move above had just removed -- 339 of 458 archived rows on the
             # lab GPU node named a pose file that no longer existed, and any
             # reader that trusts the recorded path (rather than globbing the
-            # folder) concluded those videos had no pose.
-            from mousereach.watcher import repose
-            staged_h5 = select_pose_file(
-                self.staging_dir.glob(f"{video_id}DLC*.h5"),
-                expected_scorer=repose.declared_scorer() or None)
+            # folder) concluded those videos had no pose. The pose recorded is
+            # one THIS call staged, never whatever else sits in staging.
+            staged_h5 = self._own_staged_pose(staged_files)
             if staged_h5 is None:
                 raise IOError("stage_to_nas incomplete: no pose file staged")
             self.db.update_state(
@@ -2262,6 +2846,76 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, str(e))
             self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e), duration=duration)
             raise
+        return True
+
+    def _own_staged_pose(self, staged_names) -> Optional[Path]:
+        """The pose among the files THIS call just staged, or None.
+
+        WHY only those: globbing staging for any pose of this stem could pick
+        one another node (or an earlier run) left there, and recording it
+        would say this node handed over a pose it did not. When this call
+        staged more than one pose, the declared model's wins, as elsewhere.
+        """
+        from mousereach.watcher import repose
+        poses = [self.staging_dir / name for name in staged_names
+                 if name.endswith('.h5') and 'DLC' in name]
+        return select_pose_file(poses, expected_scorer=repose.declared_scorer() or None)
+
+    def _resume_interrupted_stage(self, video_id: str, staged_mp4: Path):
+        """The video is already in staging and has no copy left on this node:
+        finish this node's own interrupted stage, or say it cannot.
+
+        _stage_files renames the pose into place LAST and deletes the local
+        originals only after every rename, so a stage cut short leaves the
+        mp4 in staging with this node's pose still in its DLC_Queue. That is
+        the case this finishes: stage whatever is still local, and count the
+        video done only on a pose THIS call staged (_own_staged_pose).
+
+        WHY not on anything else in staging: a same-named mp4 or pose there
+        can be another node's hand-off or the processing server's intake, and
+        is no evidence this node posed or staged the video. With nothing of
+        its own left to stage the row is recorded 'unresolvable' -- never
+        'archived' -- and the files in staging are left untouched for the
+        processing server. WHY not 'failed': nothing went wrong with the video
+        (this node may even have staged it fully and been stopped before
+        recording it); it simply has no file here. 'failed' is a retry state
+        that reads as a verdict on the data, and the ERROR it raised filled the
+        failed count with videos already safely with the server.
+        """
+        leftovers = (self._get_associated_files(Path(Paths.DLC_QUEUE), video_id)
+                     if Paths.DLC_QUEUE else [])
+        if not leftovers:
+            reason = ("already in NAS staging (Processing/Posed) and no file for it on "
+                      "this node; left for the processing server")
+            self.db.mark_unresolvable(video_id, reason)
+            self.db.log_step(video_id, 'stage_to_nas', 'skipped', message=reason)
+            logger.info(f"{video_id}: {reason}")
+            return False
+        self.db.log_step(video_id, 'stage_to_nas', 'started', message="resuming")
+        start_time = time.time()
+        try:
+            staged = self._stage_files(video_id, leftovers) if leftovers else []
+            staged_h5 = self._own_staged_pose(staged)
+            if staged_h5 is None:
+                raise IOError(
+                    "the video is already in NAS staging but this node has no pose "
+                    "of its own left to stage; a pose already in staging is not "
+                    "evidence that this node staged it")
+            logger.info(f"{video_id}: finished an interrupted stage to NAS "
+                        f"({len(staged)} file(s)); marking archived")
+            self.db.force_state(video_id, 'archived',
+                                reason="finished this node's interrupted stage to NAS staging",
+                                current_path=str(staged_mp4),
+                                dlc_output_path=str(staged_h5))
+            self.db.log_step(video_id, 'stage_to_nas', 'completed',
+                             message=f"resumed ({len(staged)} file(s) staged)",
+                             duration=time.time() - start_time)
+        except Exception as e:
+            self.db.mark_failed(video_id, str(e))
+            self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e),
+                             duration=time.time() - start_time)
+            raise
+        return True
 
 
 # =============================================================================

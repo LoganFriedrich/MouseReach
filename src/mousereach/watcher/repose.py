@@ -229,7 +229,14 @@ def declared_pose_in_archive(video_id: str, declared: str) -> Optional[Path]:
 
 
 def archived_video(video_id: str) -> Optional[Path]:
-    """The archived mp4 for this video, or None."""
+    """The archived mp4 for this video, or None.
+
+    The fallback search leaves out Processing/Posed (search_staging=False).
+    WHY: the mp4 found here is written into a request that GPU nodes read,
+    and a GPU node must never read from the processing server's intake
+    (resolve_request_video refuses it, so such a request could never be
+    served). This also runs ON a GPU node that processes its own videos,
+    which must not reason from Posed either."""
     d = archive_folder(video_id)
     if d is not None:
         p = d / f"{video_id}.mp4"
@@ -237,7 +244,7 @@ def archived_video(video_id: str) -> Optional[Path]:
             return p
     try:
         from mousereach.watcher.locate import locate_video_file
-        return locate_video_file(video_id, search_archive=True)
+        return locate_video_file(video_id, search_archive=True, search_staging=False)
     except Exception as e:
         logger.debug(f"{video_id}: locate failed ({e})")
         return None
@@ -247,7 +254,15 @@ def resolve_request_video(video_id: str, body: dict) -> Optional[Path]:
     """Where the mp4 named by a request is ON THIS NODE. The request carries
     a path relative to the shared root (drive letters differ between nodes)
     and, as a fallback, the publisher's absolute path; the archive folder
-    is tried in between. The file must be named <video_id>.mp4."""
+    is tried in between. The file must be named <video_id>.mp4.
+
+    Runs on the GPU node that consumes the request, so nothing inside
+    Processing/Posed is accepted -- not a request path that points there
+    (requests published before 2026-09-15 could), not a search hit. WHY:
+    Posed is the processing server's intake; copying from it poses a video
+    that is at that moment being taken in (watcher/locate.py docstring). The
+    request then waits RETRY_S and is served from the archive once it lands."""
+    from mousereach.watcher.locate import is_in_staging
     candidates: List[Path] = []
     rel = body.get("video_rel")
     if rel and Paths.NAS_ROOT:
@@ -260,13 +275,14 @@ def resolve_request_video(video_id: str, body: dict) -> Optional[Path]:
         candidates.append(Path(raw))
     for p in candidates:
         try:
-            if p.is_file() and p.name == f"{video_id}.mp4":
+            if (p.is_file() and p.name == f"{video_id}.mp4"
+                    and not is_in_staging(p)):
                 return p
         except OSError:
             continue
     try:
         from mousereach.watcher.locate import locate_video_file
-        p = locate_video_file(video_id, search_archive=True)
+        p = locate_video_file(video_id, search_archive=True, search_staging=False)
         if p is not None and Path(p).name == f"{video_id}.mp4":
             return Path(p)
     except Exception:
@@ -381,7 +397,7 @@ def note_failure(video_id: str, hostname: str, error: str,
 # ---------------------------------------------------------------- 1. publish
 
 def publish_pending(db, rows: Iterable[dict], *, hostname: str,
-                    staging_dir: Optional[Path] = None,
+                    staging_dir=None,
                     repose_dir: Optional[Path] = None,
                     declared: Optional[str] = None,
                     latched: Optional[Set[str]] = None) -> Dict[str, list]:
@@ -398,7 +414,15 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
     Sweeps this node's own bookkeeping: withdraws a queued request whose row
     is no longer outdated/full, rewrites one whose declared model changed,
     and returns an inflight request nobody has heartbeated for a day to the
-    queue -- or closes it, when its pose has in fact arrived. Never raises."""
+    queue -- or closes it, when its pose has in fact arrived. Never raises.
+
+    ``staging_dir``: None means Paths.DLC_STAGING; ``False`` means do not read
+    staging at all. A GPU node that also processes passes False. WHY: Posed
+    is the processing server's intake, and a GPU node must not narrow its
+    rows or close its requests on the strength of a pose sitting there (that
+    pose is on its way into the SERVER, not into this node's archive).
+    Without the opt-out, None fell back to the staging folder, so there was no
+    way to say "none"."""
     out: Dict[str, list] = {"published": [], "republished": [], "rewritten": [],
                             "withdrawn": [], "returned": [], "closed": [],
                             "narrowed": [], "staged": [], "inflight": [],
@@ -423,7 +447,10 @@ def publish_pending(db, rows: Iterable[dict], *, hostname: str,
         out["unknown_model"] = [r["video_id"] for r in rows]
         return out
     repose_dir = Path(repose_dir)
-    staging_dir = staging_dir if staging_dir is not None else Paths.DLC_STAGING
+    if staging_dir is None:
+        staging_dir = Paths.DLC_STAGING
+    elif staging_dir is False:
+        staging_dir = None                   # declared_poses_in(None) -> {}
     try:
         repose_dir.mkdir(parents=True, exist_ok=True)
         (repose_dir / INFLIGHT).mkdir(exist_ok=True)
@@ -614,12 +641,43 @@ def _register_single(db, video_id: str, mp4: Path) -> None:
 
 
 def _local_file_exists(video_id: str, row: dict, dlc_queue: Path) -> bool:
+    """Does THIS GPU node still hold the file for an in-flight row?
+
+    search_staging=False: a copy in Processing/Posed is the processing
+    server's intake, not this node's work. Counting it made a node believe a
+    husk row was live ("already going here") and keep the request away from
+    every node that could pose it (watcher/locate.py docstring)."""
     try:
         from mousereach.watcher.locate import locate_video_file
         return locate_video_file(video_id, raw=row.get("current_path"),
-                                 extra_dirs=[dlc_queue], search_archive=False) is not None
+                                 extra_dirs=[dlc_queue], search_archive=False,
+                                 search_staging=False) is not None
     except Exception:
         return False
+
+
+def _held_in_triage_on_disk(video_id: str) -> bool:
+    """Is this video's bundle really in the triage queue (or being routed into
+    it) right now? True when that cannot be told (no queue configured, an
+    unreadable share), so the caller keeps refusing.
+
+    WHY: a GPU node's 'triage' row is a copy of a hold the processing server
+    owns. Nothing on the GPU node ever moves that row on -- the review-return
+    scan runs only on the processing server -- so after a reviewer clears the
+    video the row still says 'triage', and a re-pose request for it would be
+    refused here for good. The queue folder is the authority on the hold."""
+    root = getattr(Paths, "TRIAGE_REVIEW", None)
+    if not root:
+        return True
+    try:
+        from mousereach.watcher.review_routing import INCOMING_DIR_NAME
+    except ImportError:
+        INCOMING_DIR_NAME = ".incoming"
+    try:
+        return ((Path(root) / video_id).is_dir()
+                or (Path(root) / INCOMING_DIR_NAME / video_id).is_dir())
+    except OSError:
+        return True
 
 
 def _in_flight_reposes(db) -> int:
@@ -740,8 +798,15 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
             except Exception:
                 summary["in_flight"] += 1
                 continue
-        if state in REFUSE_STATES or (state is not None and state not in REDRIVE_STATES
-                                      and state != "failed"):
+        # A 'triage' row whose bundle is no longer in the triage queue is a
+        # stale copy of a hold that has since been cleared (see
+        # _held_in_triage_on_disk); the video is then re-drivable like any other.
+        stale_triage = state == "triage" and not _held_in_triage_on_disk(video_id)
+        if stale_triage and _once(latched, f"stale_triage:{video_id}"):
+            logger.info(f"{video_id}: the row here says 'triage' but no bundle for it "
+                        f"is in the triage queue any more; re-driving it")
+        if not stale_triage and (state in REFUSE_STATES or (
+                state is not None and state not in REDRIVE_STATES and state != "failed")):
             if _once(latched, f"refused:{video_id}"):
                 logger.warning(f"{video_id}: re-pose requested but the row here is "
                                f"'{state}', which this node will not re-drive; "

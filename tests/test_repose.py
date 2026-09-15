@@ -53,13 +53,18 @@ def env(tmp_path, monkeypatch):
             "NAS_ROOT": nas, "REPOSE_QUEUE": queue, "DLC_STAGING": staging,
             "DLC_QUEUE": local_q, "ANALYZED_OUTPUT": nas / "Analyzed",
             "PROCESSING": processing}[name])
+    # The triage queue is read to tell a live hold from a stale 'triage' row
+    # (repose._held_in_triage_on_disk); it must never be the real one.
+    triage = nas / "Processing" / "Review" / "triage"
+    triage.mkdir(parents=True)
+    monkeypatch.setattr(repose.Paths, "TRIAGE_REVIEW", triage, raising=False)
     monkeypatch.setattr(repose, "archive_folder", lambda vid: archive)
     for v in (VID, VID2, VID3):
         (archive / f"{v}.mp4").write_bytes(b"video-bytes-" + v.encode())
         (archive / f"{v}{OLD}.h5").write_bytes(b"old-pose")
     db = WatcherDB(db_path=tmp_path / "w.db")
     return SimpleNamespace(nas=nas, queue=queue, staging=staging, archive=archive,
-                           local_q=local_q, processing=processing, db=db)
+                           local_q=local_q, processing=processing, triage=triage, db=db)
 
 
 def _row(db, vid, state, **fields):
@@ -295,11 +300,23 @@ def test_consume_respects_the_batch_cap(env):
 def test_consume_refuses_locked_and_human_held_rows(env):
     _row(env.db, VID, "crystallized")
     _row(env.db, VID2, "triage")
+    (env.triage / VID2).mkdir()                  # the hold is real: its bundle is queued
     _publish(env, [_outdated_full_row(VID), _outdated_full_row(VID2)])
     out = _consume(env)
     assert out["refused"] == 2 and out["queued"] == 0
     assert (env.queue / f"{VID}.json").exists() and (env.queue / f"{VID2}.json").exists()
     assert env.db.get_video(VID)["state"] == "crystallized"
+
+
+def test_consume_re_drives_a_triage_row_whose_bundle_has_left_the_queue(env):
+    """A GPU node's 'triage' row copies a hold the processing server owns, and
+    nothing on the GPU node moves it on once a reviewer clears the video. The
+    queue folder decides, or the re-pose would be refused here for good."""
+    _row(env.db, VID, "triage")
+    _publish(env, [_outdated_full_row(VID)])
+    out = _consume(env)
+    assert out["refused"] == 0 and out["queued"] == 1
+    assert env.db.get_video(VID)["state"] == "dlc_queued"
 
 
 def test_consume_holds_a_row_that_failed_too_often_but_retries_a_fresh_failure(env):
@@ -600,13 +617,17 @@ def test_stage_to_nas_resume_stages_a_leftover_pose_before_marking_done(env, mon
     assert Path(kw["dlc_output_path"]) == env.staging / f"{VID}{NEW}.h5"
 
 
-def test_stage_to_nas_resume_with_no_pose_anywhere_fails_the_row(env, monkeypatch):
+def test_stage_to_nas_resume_with_nothing_left_here_is_unresolvable_not_failed(env, monkeypatch):
+    """Already staged, nothing of it on this node: this node has no file for
+    it, which is 'unresolvable' -- not a failure, and never 'archived' on the
+    strength of files in staging that may be another node's."""
     o = _bare_dlc(env, monkeypatch)
     staged_mp4 = env.staging / f"{VID}.mp4"
     staged_mp4.write_bytes(b"video")
-    with pytest.raises(IOError):
-        o._stage_to_nas({"id": VID, "data": {"current_path": str(staged_mp4)}})
-    assert o.db.called("mark_failed") and not o.db.called("force_state")
+    assert o._stage_to_nas({"id": VID, "data": {"current_path": str(staged_mp4)}}) is False
+    assert o.db.called("mark_unresolvable")
+    assert not o.db.called("mark_failed") and not o.db.called("force_state")
+    assert staged_mp4.exists()
 
 
 # ---------------------------------------------------------------- also_process
