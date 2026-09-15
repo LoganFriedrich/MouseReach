@@ -6,11 +6,17 @@ Commands:
     mousereach-watch-status    Show current pipeline state
     mousereach-watch-reprocess Reset failed videos for reprocessing
     mousereach-watch-quarantine Manage quarantined files
+    mousereach-watch-toggle    Pause / resume the watcher by hand
+    mousereach-watch-recorders Recording programs that pause the watcher
 """
 
+import os
+import re
 import sys
+import time
 import signal
 import logging
+import tempfile
 import threading
 import subprocess
 import json
@@ -510,6 +516,9 @@ def main_status():
             print()
         except Exception:
             pass
+
+    # Is it paused, why, and which shared folders does it work from.
+    _print_pause_and_stage_folders()
 
     # Collage summary
     print("Collages:")
@@ -1306,15 +1315,198 @@ def _get_pause_file():
     return require_processing_root() / "watcher_paused.flag"
 
 
-def main_toggle():
-    """Toggle the watcher between filming (paused) and processing (active) modes.
+def _ascii(text) -> str:
+    """Printable ASCII only. WHY: a Windows console cannot encode every
+    character a path, a typed program name or an exception message may
+    contain, and one such character crashes the print (house rule)."""
+    return str(text).encode("ascii", "replace").decode("ascii")
 
-    When paused, the running watcher skips all work and waits.
-    When active, normal processing resumes.
+
+# Said the same way recording_guard.HAND_PAUSE_REASON says it; used only when
+# that module could not be imported at all.
+_HAND_PAUSE_FALLBACK = "paused by hand (watcher_paused.flag)"
+
+
+def _pause_state() -> dict:
+    """Why this watcher is or is not paused, decided the way the watcher
+    itself decides (recording_guard.pause_reason).
+
+    WHY one helper: the watcher pauses for two independent reasons -- the
+    hand pause (watcher_paused.flag, set by mousereach-watch-toggle or the
+    Pause button) and a recording program listed with
+    mousereach-watch-recorders being open. If every command checked the two
+    its own way, sooner or later one of them would say ACTIVE while the
+    watcher sat paused, and a paused watcher otherwise looks exactly like an
+    idle one.
+
+    Never raises. Keys:
+        root_error  why the hand pause could not be checked, or None
+        manual      True when watcher_paused.flag exists
+        names       configured recording program names
+        grace       resume grace period in seconds
+        recording   the recording guard's reason, or None
+        overall     the reason the watcher is paused, or None = not paused
+    """
+    state = {'root': None, 'root_error': None, 'manual': False,
+             'names': [], 'grace': 120, 'recording': None, 'overall': None}
+    try:
+        pause_file = _get_pause_file()
+        state['root'] = pause_file.parent
+        state['manual'] = pause_file.exists()
+    except Exception as e:
+        state['root_error'] = _ascii(e)
+
+    try:
+        from mousereach.config import WatcherConfig
+        from mousereach.watcher import recording_guard as rg
+        cfg = WatcherConfig.load()
+        state['names'] = list(cfg.pause_while_running or [])
+        state['grace'] = cfg.pause_resume_grace_seconds
+        # A fresh guard has no memory of a program that closed a minute ago,
+        # so from a one-off command it can report "running" but never the
+        # grace countdown; the running watcher's own guard does that. scan is
+        # passed explicitly so it is looked up when called, not when
+        # recording_guard was imported.
+        guard = rg.RecordingGuard(state['names'], grace_seconds=state['grace'],
+                                  scan=rg.running_programs)
+        state['recording'] = guard.reason()
+        state['overall'] = rg.pause_reason(processing_root=state['root'],
+                                           config=cfg, guard=guard)
+    except Exception as e:
+        # Fail safe, exactly like the guard: a check that could not run is
+        # reported as a reason to be paused, never as "not paused". WHY:
+        # recording must win, and a person told "not paused" looks no further.
+        state['recording'] = f"cannot check for recording programs: {_ascii(e)}"
+        state['overall'] = (_HAND_PAUSE_FALLBACK if state['manual']
+                            else state['recording'])
+    return state
+
+
+def _recording_hint(reason: str) -> str:
+    """What a person does about a recording-program pause."""
+    if reason.startswith("cannot check"):
+        return ("It stays paused until this check works, because recording "
+                "must win (see mousereach-watch-recorders).")
+    return ("Recording always wins: work starts again by itself once the "
+            "recording program has been closed.")
+
+
+# The shared folders a video rests in between machines and people, in the
+# order a video passes through them. (label, attribute of config.Paths)
+_STAGE_FOLDERS = (
+    ("Cut videos waiting for a pose", "SINGLE_ANIMAL_OUTPUT"),
+    ("Posed videos waiting for analysis", "DLC_STAGING"),
+    ("Triage review queue", "TRIAGE_REVIEW"),
+    ("Deep review queue", "DEEP_REVIEW"),
+)
+
+
+def _print_pause_and_stage_folders():
+    """The "Pause:" line and "Stage folders:" block of mousereach-watch-status.
+
+    WHY the pause line: a paused watcher looks exactly like an idle one -- the
+    counts just stop moving -- and it can now be paused two ways, by hand or
+    by a recording program being open. The line says which, in the words the
+    watcher itself uses.
+
+    WHY the folders: the operator of a GPU node had no command that showed
+    which shared staging folder the node works from, so confirming a node was
+    pointed at the right place meant opening config files by hand.
+    """
+    state = _pause_state()
+    overall = state['overall']
+    if overall:
+        print(f"Pause:  PAUSED -- {overall}")
+        if state['manual'] and state['recording']:
+            print(f"        and also: {state['recording']}")
+        if state['manual']:
+            print("        Resume with: mousereach-watch-toggle --resume")
+        else:
+            print(f"        {_recording_hint(overall)}")
+    else:
+        print("Pause:  not paused")
+    if state['root_error']:
+        print(f"        (could not check the hand pause: {state['root_error']})")
+    if state['names']:
+        print(f"        Pauses while any of these run: "
+              f"{_ascii(', '.join(state['names']))} "
+              f"(resumes {state['grace']} s after they close)")
+        if not overall:
+            # WHY: this command cannot see the running watcher's own timer, so
+            # "not paused" here can still mean "waiting out the grace period".
+            print(f"        (If one closed within the last {state['grace']} s, a "
+                  f"running watcher is still waiting before it starts work.)")
+        print("        Change the list with: mousereach-watch-recorders")
+    print()
+
+    from mousereach.config import Paths
+    print("Stage folders:")
+    for label, attr in _STAGE_FOLDERS:
+        path = getattr(Paths, attr, None)
+        print(f"  {label} (Paths.{attr}):")
+        if not path:
+            print("      (not configured -- nas_root is not set; run mousereach-setup)")
+            continue
+        try:
+            found = Path(path).is_dir()
+        except OSError:
+            found = False
+        print(f"      {_ascii(path)}{'' if found else '   [folder not found]'}")
+    print()
+
+
+def _print_toggle_status():
+    """mousereach-watch-toggle --status: both pause reasons, then the verdict."""
+    state = _pause_state()
+    if state['root_error']:
+        print(f"Hand pause:          cannot check -- {state['root_error']}")
+    elif state['manual']:
+        print("Hand pause:          ON (watcher_paused.flag)")
+    else:
+        print("Hand pause:          off")
+
+    names = _ascii(', '.join(state['names']))
+    if state['recording']:
+        print(f"Recording programs:  {state['recording']}")
+    elif not state['names']:
+        print("Recording programs:  none configured -- the watcher never pauses for one")
+    else:
+        print(f"Recording programs:  none running (watching for: {names})")
+        print(f"                     A running watcher that has just seen one close "
+              f"waits {state['grace']} s before working again.")
+    print()
+
+    if state['overall']:
+        print(f"Watcher is PAUSED -- {state['overall']}.")
+        if state['manual']:
+            print("Run 'mousereach-watch-toggle --resume' to remove the hand pause.")
+        if state['recording']:
+            print(_recording_hint(state['recording']))
+    else:
+        print("Watcher is ACTIVE (processing mode).")
+        print("Run 'mousereach-watch-toggle --pause' to pause for filming.")
+
+
+def main_toggle():
+    """Pause or resume the watcher by hand, or show why it is paused.
 
     Usage:
-        mousereach-watch-toggle          Toggle current state
-        mousereach-watch-toggle --status  Show current state only
+        mousereach-watch-toggle            Flip: paused -> active, active -> paused
+        mousereach-watch-toggle --pause    Pause by hand (stays paused until --resume)
+        mousereach-watch-toggle --resume   Remove the hand pause
+        mousereach-watch-toggle --status   Show both pause reasons; change nothing
+
+    Two separate things pause the watcher:
+      * the hand pause set here (the file watcher_paused.flag in this
+        machine's processing folder, also set by the Pause button), and
+      * a recording program listed with mousereach-watch-recorders being open.
+    --resume removes only the hand pause. It cannot override a recording
+    program: recording always wins, so close the recording program to let
+    work start again.
+
+    --pause and --resume do exactly what they say even when run twice, so a
+    person or a script never flips the watcher back by accident (the plain
+    toggle cannot promise that).
     """
     args = sys.argv[1:]
 
@@ -1325,13 +1517,18 @@ def main_toggle():
     if '-h' in args or '--help' in args:
         print(main_toggle.__doc__)
         return
-    unknown = [a for a in args if a not in ('--status',)]
+    unknown = [a for a in args if a not in ('--status', '--pause', '--resume')]
     if unknown:
         print(main_toggle.__doc__)
         print(f"Unknown argument(s): {' '.join(unknown)}", file=sys.stderr)
         sys.exit(2)
-
-    status_only = '--status' in args
+    chosen = sorted(set(args))
+    if len(chosen) > 1:
+        # Refuse rather than guess which one was meant.
+        print(main_toggle.__doc__)
+        print("Choose ONE of --pause, --resume or --status.", file=sys.stderr)
+        sys.exit(2)
+    action = chosen[0] if chosen else None
 
     try:
         pause_file = _get_pause_file()
@@ -1342,29 +1539,344 @@ def main_toggle():
 
     currently_paused = pause_file.exists()
 
-    if status_only:
+    if action == '--status':
+        _print_toggle_status()
+        return
+
+    if action is None:
+        # The plain toggle: flip whatever the hand pause is now.
+        action = '--resume' if currently_paused else '--pause'
+
+    if action == '--resume':
         if currently_paused:
-            print("Watcher is PAUSED (filming mode).")
-            print("Run 'mousereach-watch-toggle' to resume processing.")
+            pause_file.unlink(missing_ok=True)
+            print("=" * 50)
+            print("  Watcher RESUMED -- processing mode active")
+            print("  DLC and cropping will run during downtime.")
+            print("=" * 50)
         else:
-            print("Watcher is ACTIVE (processing mode).")
-            print("Run 'mousereach-watch-toggle' to pause for filming.")
+            print("The watcher was not paused by hand -- nothing to remove.")
+        # Removing the hand pause does not beat a recording program. Say so,
+        # or the operator waits for work that cannot start.
+        state = _pause_state()
+        if state['recording']:
+            print(f"[!] Still PAUSED: {state['recording']}.")
+            print(f"    {_recording_hint(state['recording'])}")
         return
 
     if currently_paused:
-        pause_file.unlink()
-        print("=" * 50)
-        print("  Watcher RESUMED — processing mode active")
-        print("  DLC and cropping will run during downtime.")
-        print("=" * 50)
+        print("The watcher is already paused by hand -- nothing changed.")
+        print("Run 'mousereach-watch-toggle --resume' when filming is done.")
+        return
+    pause_file.parent.mkdir(parents=True, exist_ok=True)
+    pause_file.write_text("Watcher paused for filming.\n")
+    print("=" * 50)
+    print("  Watcher PAUSED -- filming mode active")
+    print("  DLC processing is suspended.")
+    print("  Toggle again (or run with --resume) when filming is done.")
+    print("=" * 50)
+
+
+# =============================================================================
+# RECORDING PROGRAMS COMMAND
+# =============================================================================
+
+_RECORDERS_USAGE = """
+usage: mousereach-watch-recorders [--list] [--add NAME] [--remove NAME] [--grace SECONDS]
+
+Show or change the recording programs that pause THIS machine's watcher.
+While any listed program is open the watcher starts no new work, and a pose
+in progress is stopped and posed again later, because recording always wins:
+a pose can be run again, a spoiled recording cannot. A collage crop that has
+already started finishes first. A running watcher picks up changes made here
+by itself within about a minute.
+
+  --list            Show the list, the grace period, and what is running now.
+                    This is what happens with no options at all.
+  --add NAME        Add a program. NAME is the program's name as Task Manager
+                    shows it on the Details tab, for example recorder.exe.
+                    Capital letters, a full path or a missing .exe still match.
+  --remove NAME     Take a program off the list.
+  --grace SECONDS   How long every listed program must have been closed before
+                    work starts again (default 120). WHY: people often close
+                    the recording program and open it again a moment later.
+
+--add and --remove may each be given more than once. The settings are saved in
+the 'watcher' section of ~/.mousereach/config.json; nothing else in that file
+changes. An empty list (the default) means the watcher never pauses for a
+program.
+
+Examples:
+  mousereach-watch-recorders
+  mousereach-watch-recorders --add recorder.exe
+  mousereach-watch-recorders --remove recorder.exe
+  mousereach-watch-recorders --grace 300
+"""
+
+
+class _ConfigEditError(Exception):
+    """The config file cannot be edited safely; nothing was written."""
+
+
+def _user_config_file() -> Path:
+    """The per-user config file WatcherConfig.load() reads.
+
+    Spelled exactly as mousereach.config._load_config spells it and resolved
+    when called. mousereach.config has no public helper for this path, and
+    mousereach.setup.wizard.CONFIG_FILE is fixed at the moment that module is
+    imported. WHY it matters: this command must write the very file the
+    watcher reads, or a setting "saved" here would never reach the watcher.
+    """
+    from mousereach.config import config_file_path
+    return config_file_path()
+
+
+def _read_config_for_edit(path: Path) -> dict:
+    """The whole config file, for an in-place edit. A missing file is {}.
+
+    Raises _ConfigEditError for a file that is not a JSON object. WHY:
+    mousereach.config quietly treats an unreadable file as empty; an editor
+    that did the same would rewrite it holding only the watcher section and
+    erase processing_root, nas_root and every other setting on the machine.
+    """
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise _ConfigEditError(f"cannot read {path}: {e}")
+    if not text.strip():
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise _ConfigEditError(f"{path} is not valid JSON ({e})")
+    if not isinstance(data, dict):
+        raise _ConfigEditError(f"{path} does not hold a JSON object")
+    return data
+
+
+def _write_config_atomically(path: Path, data: dict):
+    """Write the config through a temporary file and os.replace.
+
+    WHY: a watcher, the GUI and the setup wizard all read this file. Writing
+    it in place leaves a moment where it is half written; a reader that hits
+    that moment sees no processing_root at all. os.replace swaps the complete
+    new file in at once. The retries cover Windows refusing the swap while
+    another program has the file open for an instant.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # ensure_ascii (the default) keeps the file pure ASCII, so it reads back
+    # identically whatever text encoding the reader assumes.
+    text = json.dumps(data, indent=2) + "\n"
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp",
+                               dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        for attempt in range(5):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.2)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _same_program(a: str, b: str) -> bool:
+    """True when two configured names match the same running program, by the
+    recording guard's own rule (capitals, a pasted path and a missing .exe do
+    not matter). WHY reuse it: a --remove that compared names differently
+    from the guard could report "removed" while another spelling of the same
+    program kept pausing the watcher."""
+    from mousereach.watcher.recording_guard import clean_names
+    return len(clean_names([a, b])) == 1
+
+
+def main_recorders():
+    """Show or change which recording programs pause this machine's watcher.
+
+    WHY this is configuration and not code: which program a lab records with,
+    and how long to wait after it closes, are that lab's own facts. They live
+    in the 'watcher' section of the user's config file (pause_while_running,
+    pause_resume_grace_seconds), editable here or from the watcher panel,
+    so no one has to edit code or JSON by hand.
+    """
+    _maybe_print_help(_RECORDERS_USAGE)
+    args = sys.argv[1:]
+
+    def usage_error(message):
+        print(_RECORDERS_USAGE.strip(), file=sys.stderr)
+        print(file=sys.stderr)
+        print(f"ERROR: {_ascii(message)}", file=sys.stderr)
+        print("Nothing was changed.", file=sys.stderr)
+        sys.exit(2)
+
+    from mousereach.config import WatcherConfig
+    from mousereach.watcher import recording_guard as rg
+
+    # Every argument is checked before anything is written, so a typo in the
+    # last one cannot leave a half-applied change behind.
+    adds, removes, grace = [], [], None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '--list':
+            i += 1
+            continue
+        if arg not in ('--add', '--remove', '--grace'):
+            usage_error(f"unknown argument: {arg}")
+        if i + 1 >= len(args) or args[i + 1].startswith('--'):
+            usage_error(f"{arg} needs a value")
+        value = args[i + 1].strip()
+        i += 2
+        if arg == '--grace':
+            try:
+                grace = int(value)
+            except ValueError:
+                grace = -1
+            if grace < 0:
+                usage_error(f"--grace needs a whole number of seconds, 0 or more "
+                            f"(got '{value}')")
+        elif not rg.clean_names([value]):
+            usage_error(f"{arg} needs a program name, for example recorder.exe")
+        else:
+            (adds if arg == '--add' else removes).append(value)
+
+    cfg_file = _user_config_file()
+    try:
+        data = _read_config_for_edit(cfg_file)
+        watcher = data.get('watcher')
+        if watcher is None:
+            watcher = {}
+        if not isinstance(watcher, dict):
+            raise _ConfigEditError(f"the 'watcher' section of {cfg_file} is not an object")
+        current = watcher.get('pause_while_running')
+        if current is not None and not isinstance(current, (str, list, tuple)):
+            raise _ConfigEditError(
+                f"watcher.pause_while_running in {cfg_file} is not a list of names")
+    except _ConfigEditError as e:
+        print(f"ERROR: {_ascii(e)}", file=sys.stderr)
+        print("Nothing was changed. Fix that file (or re-run mousereach-setup) "
+              "and try again.", file=sys.stderr)
+        sys.exit(1)
+
+    names = rg.clean_names(current)
+    messages = []
+    names_changed = False
+    for name in adds:
+        if any(_same_program(name, n) for n in names):
+            messages.append(f"{name} is already in the list -- not added again.")
+        else:
+            names.append(name)
+            names_changed = True
+            messages.append(f"Added {name}.")
+    for name in removes:
+        kept = [n for n in names if not _same_program(name, n)]
+        if len(kept) == len(names):
+            messages.append(f"{name} was not in the list -- nothing to remove.")
+        else:
+            names = kept
+            names_changed = True
+            messages.append(f"Removed {name}.")
+    grace_changed = grace is not None and watcher.get('pause_resume_grace_seconds') != grace
+    if grace is not None:
+        messages.append(f"Resume grace set to {grace} s." if grace_changed
+                        else f"Resume grace is already {grace} s.")
+
+    saved = False
+    if names_changed or grace_changed:
+        # Change only these two keys; every other watcher setting, and every
+        # other section of the file, is written back exactly as it was read.
+        new_watcher = dict(watcher)
+        if names_changed:
+            if names:
+                new_watcher['pause_while_running'] = names
+            else:
+                # Absent, not [], so the file reads as the default again.
+                new_watcher.pop('pause_while_running', None)
+        if grace_changed:
+            new_watcher['pause_resume_grace_seconds'] = grace
+        data['watcher'] = new_watcher
+        try:
+            _write_config_atomically(cfg_file, data)
+        except OSError as e:
+            print(f"ERROR: could not save {_ascii(cfg_file)}: {_ascii(e)}", file=sys.stderr)
+            print("Nothing was changed.", file=sys.stderr)
+            sys.exit(1)
+        watcher = new_watcher
+        saved = True
+
+    for message in messages:
+        print(_ascii(message))
+    if saved:
+        print(f"Saved to {_ascii(cfg_file)}")
+    if messages:
+        print()
+
+    # Shown through WatcherConfig so the list and grace printed are exactly
+    # what the watcher will load from this file.
+    view = WatcherConfig(watcher)
+    names = list(view.pause_while_running or [])
+    grace_now = view.pause_resume_grace_seconds
+    print(f"Config file: {_ascii(cfg_file)}")
+    print()
+    if not names:
+        print("Recording programs that pause this watcher: none")
+        print("  The watcher never pauses for a recording program on this machine.")
+        print("  Add one with:  mousereach-watch-recorders --add recorder.exe")
+        print(f"Resume grace: {grace_now} s")
     else:
-        pause_file.parent.mkdir(parents=True, exist_ok=True)
-        pause_file.write_text("Watcher paused for filming.\n")
-        print("=" * 50)
-        print("  Watcher PAUSED -- filming mode active")
-        print("  DLC processing is suspended.")
-        print("  Toggle again when filming is done.")
-        print("=" * 50)
+        error = None
+        try:
+            running = set(rg.running_programs(names))
+        except ImportError:
+            running, error = set(), "psutil is not installed"
+        except Exception as e:
+            running, error = set(), f"{type(e).__name__}: {e}"
+        # Compared by the guard's own matching rule, so two spellings of one
+        # program in a hand-edited file both show as running.
+        running_now = [n for n in names
+                       if any(_same_program(n, r) for r in running)]
+        width = max(len(_ascii(n)) for n in names)
+        print("Recording programs that pause this watcher:")
+        for n in names:
+            status = ("cannot check" if error
+                      else "RUNNING now" if n in running_now else "not running")
+            print(f"  {_ascii(n):<{width}}   {status}")
+        print(f"Resume grace: {grace_now} s -- after the last listed program closes, "
+              f"the watcher waits this long before it starts work again.")
+        print()
+        if error:
+            print(f"Right now: cannot check for recording programs ({_ascii(error)}).")
+            print("  A running watcher stays PAUSED while it cannot check, because "
+                  "recording must win.")
+        elif running:
+            shown = [n for n in names if n in running]
+            verb = "is" if len(shown) == 1 else "are"
+            print(f"Right now: {_ascii(', '.join(shown))} {verb} running, so a running "
+                  f"watcher is PAUSED.")
+            print("  Close the recording program when you are done recording.")
+        else:
+            print("Right now: no listed program is running, so none of them is "
+                  "pausing the watcher.")
+
+    if saved:
+        print()
+        # True since the watcher re-reads these two settings when the file
+        # changes (BaseOrchestrator._refresh_recording_settings).
+        print("A running watcher picks up this change by itself within about a minute;")
+        print("no restart is needed. A pose it started before a program was first")
+        print("listed runs to its end.")
 
 
 # =============================================================================

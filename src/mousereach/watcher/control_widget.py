@@ -6,9 +6,11 @@ This panel lets an operator, without touching a terminal:
   * START / STOP the background auto-processor (the watcher daemon),
   * RUN ONCE (one scan+drain, then stop) for a quick manual push,
   * PAUSE / RESUME it (e.g. during filming) without stopping it,
+  * see WHY it is paused -- by hand, or because a recording program is open,
   * watch live pipeline status (how many videos in each state, incl. the
     Triage / Deep-Review holds), and
-  * view and edit the watcher configuration.
+  * view and edit the watcher configuration, including the list of recording
+    programs that pause this PC.
 
 Design notes (from the daemon's own contract):
   * Start/stop is a threading.Event -- the daemon loops until the event is set.
@@ -17,8 +19,21 @@ Design notes (from the daemon's own contract):
     minutes for DLC/pipeline items).
   * Pause is a sentinel file (watcher_paused.flag) the loop checks every cycle --
     independent of start/stop, and visible to a daemon in any process/node.
+  * The watcher ALSO pauses itself while any program listed in
+    ``pause_while_running`` is open (mousereach.watcher.recording_guard). WHY: a
+    GPU node in the behaviour room poses videos whenever nobody is filming, but
+    it cannot know the filming schedule -- the open recording program is the
+    only reliable signal, and recording must always win. The Pause/Resume
+    button cannot override it; closing the recording program is what resumes.
   * Config is read from ~/.mousereach/config.json at import time, so edits apply
-    on the NEXT (re)start, not live. The UI says so.
+    on the NEXT (re)start, not live. The UI says so. Two exceptions: the
+    recording-program list and the resume time are followed by a RUNNING
+    watcher (BaseOrchestrator._refresh_recording_settings), because a program
+    added here must protect the very next recording.
+  * The RUNNING/STOPPED line also looks for a watcher started OUTSIDE this panel
+    (the command line, a scheduled task, the Restart button). WHY: an operator
+    told STOPPED while a watcher is running presses Start and gets two watchers
+    doing the same work.
 
 ASCII-only for any console output (Windows cp1252). Qt widget text may use
 Unicode, but this module prints nothing to the terminal.
@@ -27,9 +42,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, List, Optional, Tuple
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
@@ -53,6 +70,181 @@ _HOLD_STATES = {"triage", "deep_review"}
 _BAD_STATES = {"failed", "quarantined"}
 
 
+# ---------------------------------------------------------------------------
+# Plain helpers (no Qt) -- kept out of the widget so they are testable headless.
+# ---------------------------------------------------------------------------
+
+# Default for "Resume after (seconds)" when the config does not say. Mirrors
+# WatcherConfig.pause_resume_grace_seconds. WHY a grace at all: recording
+# programs are often closed and reopened between animals; resuming the instant
+# one closes would start a 14-minute pose that the next recording then has to
+# share the machine with.
+DEFAULT_RESUME_GRACE_SECONDS = 120
+
+# The one-line explanation shown under the field. Novice-first: says what the
+# setting DOES and what the operator must do, with no jargon.
+# WHY it names the crop: a pose in progress is stopped when a listed program
+# opens, but a collage crop already running cannot be, and an operator told
+# "no pipeline work" would start filming on top of it.
+PAUSE_PROGRAMS_HELP = ("While any of these programs is open, this PC starts no "
+                       "new pipeline work, and a pose in progress is stopped "
+                       "(it is posed again later). A collage crop that has "
+                       "already started finishes first. Close the program when "
+                       "you are not recording.")
+
+# Said after Save. WHY it separates the two: most settings apply at the next
+# watcher start, but the recording-program list reaches a running watcher on
+# its own -- an operator told "restart" for it would have no way to do that for
+# a watcher started outside this panel.
+SAVE_APPLIES_TEXT = ("The recording-program list and the resume time reach a "
+                     "running watcher by themselves within about a minute. "
+                     "Every other setting applies the next time the watcher "
+                     "starts.")
+
+PAUSE_PROGRAMS_TOOLTIP = (
+    "Type the program's name as Task Manager shows it on its Details tab, "
+    "e.g. recorder.exe. Separate several names with commas. Leave empty to "
+    "never pause for a program.")
+
+PAUSE_REASON_TOOLTIP = (
+    "If a recording program is named here, close it to let this PC work "
+    "again. The Resume button cannot override it: recording always wins.")
+
+# How often the panel looks for a watcher started outside it. WHY cached: the
+# check walks every process's command line, which is slow enough on a busy
+# machine to stutter the GUI if done on every 3-second refresh.
+_EXTERNAL_WATCHER_CHECK_S = 15.0
+
+
+def parse_program_list(text: Optional[str]) -> List[str]:
+    """"recorder.exe, Other Recorder.exe" -> ["recorder.exe", "Other Recorder.exe"].
+
+    Commas, semicolons and line breaks separate names; spaces do NOT, because
+    a program's name can contain spaces. A pasted full path is reduced to the
+    program name (the watcher matches the running program's name, never its
+    folder), surrounding quotes are dropped, and a name repeated in different
+    capitals is kept once (matching is case-insensitive, so the copies would
+    only be noise).
+    """
+    raw = (text or "").replace(";", ",").replace("\r", ",").replace("\n", ",")
+    out: List[str] = []
+    seen = set()
+    for chunk in raw.split(","):
+        name = chunk.strip().strip('"').strip("'").strip()
+        # Keep only the last path component: "some folder\recorder.exe".
+        name = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append(name)
+    return out
+
+
+def format_program_list(names: Optional[Iterable[str]]) -> str:
+    """["recorder.exe", "b.exe"] -> "recorder.exe, b.exe" (the line-edit text)."""
+    return ", ".join(str(n) for n in (names or []) if str(n).strip())
+
+
+def pause_label_text(reason: Optional[str]) -> str:
+    """The text beside the Pause/Resume button: empty when not paused."""
+    return "Paused: %s" % reason if reason else ""
+
+
+def watching_label_text(names: Optional[Iterable[str]], grace: Optional[int]) -> str:
+    """The quiet text beside Pause/Resume when programs are listed but none
+    holds the watcher. Empty when nothing is listed.
+
+    WHY: with no line at all, "the check is working and nothing is open" looks
+    exactly like "the name was mistyped and nothing will ever pause" -- the
+    operator needs to see which names are being watched for.
+    """
+    names = [str(n) for n in (names or []) if str(n).strip()]
+    if not names:
+        return ""
+    grace = DEFAULT_RESUME_GRACE_SECONDS if grace is None else int(grace)
+    return ("Watching for: %s (none open now; work waits %d s after one closes)"
+            % (", ".join(names), grace))
+
+
+def recording_check_text(names: Optional[Iterable[str]],
+                         running: Optional[List[str]],
+                         error: Optional[str] = None) -> str:
+    """What Save says about the listed programs, checked right then.
+
+    WHY: a misspelled name ("recoder.exe", or a window title instead of the
+    program name) pauses nothing and shows nothing. Checking at Save, while the
+    operator still has the recording program open in front of them, is the
+    one moment the mistake can be seen.
+    """
+    names = [str(n) for n in (names or []) if str(n).strip()]
+    if not names:
+        return "No recording programs are listed, so this PC never pauses for one."
+    if error:
+        return ("Could not check which programs are running (%s). While it "
+                "cannot check, the watcher stays paused." % error)
+    if running:
+        return ("Running right now: %s -- the watcher is paused while it stays "
+                "open." % ", ".join(running))
+    return ("None of these programs is running right now. If your recording "
+            "program IS open, the name does not match: copy it from Task "
+            "Manager, Details tab.")
+
+
+def check_programs_now(names: List[str]) -> Tuple[Optional[List[str]], Optional[str]]:
+    """(running names, None) or (None, why the check failed). A module
+    function so tests can replace it without listing real processes."""
+    try:
+        from mousereach.watcher.recording_guard import running_programs
+        return running_programs(names), None
+    except ImportError:
+        return None, "psutil is not installed"
+    except Exception as e:
+        return None, str(e)
+
+
+def run_once_refusal_text(reason: str) -> str:
+    """Why Run Once did not start, and what to do. WHY the hand pause blocks
+    it too: a paused watcher starts NO new work, whichever button asks -- the
+    hand pause was the only filming protection before recording programs
+    could be listed, and a Run Once that ignored it posed on top of filming."""
+    if reason == _HAND_PAUSE_REASON:
+        return ("Not started: the watcher is paused by hand. Press Resume "
+                "first, then Run Once.")
+    if reason.startswith("cannot check"):
+        return ("Not started: %s. Nothing can start until that check works, "
+                "because recording must always win." % reason)
+    return ("Not started: %s. Close the recording program first; Run Once can "
+            "start a little after it closes." % reason)
+
+
+def status_headline(panel_running: bool, external_pid: Optional[int],
+                    pause_reason: Optional[str],
+                    run_error: Optional[str] = None) -> Tuple[str, str]:
+    """(text, colour) for the big RUNNING / STOPPED line.
+
+    ``external_pid`` is a watcher found running outside this panel. WHY it
+    counts as RUNNING: the operator must never be told STOPPED while a
+    watcher is working -- they would start a second one.
+    """
+    running = bool(panel_running or external_pid)
+    if running and pause_reason:
+        txt, color = "Status: RUNNING (PAUSED)", "#c80"
+    elif running:
+        txt, color = "Status: RUNNING", "#1a5"
+    else:
+        txt, color = "Status: STOPPED", "#a33"
+    if external_pid and not panel_running:
+        txt += "  (started outside this panel)"
+    if run_error:
+        txt += f"  --  last error: {run_error}"
+    return txt, color
+
+
+# Shown when the pause state itself cannot be worked out. Matches the text
+# recording_guard.pause_reason uses for the hand-made flag.
+_HAND_PAUSE_REASON = "paused by hand (watcher_paused.flag)"
+
+
 class WatcherControlWidget(QWidget):
     """The pipeline's control panel: run/monitor/configure the watcher daemon."""
 
@@ -63,10 +255,20 @@ class WatcherControlWidget(QWidget):
         self._shutdown_event: Optional[threading.Event] = None
         self._orchestrator = None
         self._run_error: Optional[str] = None
+        # One RecordingGuard kept for the panel's lifetime, rebuilt only when
+        # the configured list changes. WHY: the guard remembers WHEN a program
+        # closed, which is how it can say "closed 30 s ago; resuming after
+        # 120 s". A fresh guard every refresh would forget that.
+        self._guard = None
+        self._guard_key = None
+        self._ext_pid: Optional[int] = None
+        self._ext_checked_at = float("-inf")
 
         self._build_ui()
 
         # Deferred first refresh + periodic polling (guarded; DB may be on a NAS).
+        # The same timer refreshes the pause reason, so "recorder.exe is
+        # running" appears within a few seconds of the program opening.
         QTimer.singleShot(150, self._refresh)
         self._poll = QTimer(self)
         self._poll.setInterval(3000)
@@ -111,11 +313,22 @@ class WatcherControlWidget(QWidget):
         self._stop_btn.clicked.connect(self._stop)
         self._once_btn = QPushButton("Run Once")
         self._once_btn.clicked.connect(self._run_once)
-        self._pause_btn = QPushButton("Pause")
-        self._pause_btn.clicked.connect(self._toggle_pause)
-        for b in (self._start_btn, self._stop_btn, self._once_btn, self._pause_btn):
+        for b in (self._start_btn, self._stop_btn, self._once_btn):
             btn_row.addWidget(b)
         cl.addLayout(btn_row)
+
+        # Pause/Resume sits with the reason it is paused, so the operator sees
+        # at a glance whether the button or a recording program is holding it.
+        pause_row = QHBoxLayout()
+        self._pause_btn = QPushButton("Pause")
+        self._pause_btn.clicked.connect(self._toggle_pause)
+        pause_row.addWidget(self._pause_btn)
+        self._pause_reason_label = QLabel("")
+        self._pause_reason_label.setWordWrap(True)
+        self._pause_reason_label.setStyleSheet("color:#c80; font-weight:bold;")
+        self._pause_reason_label.setToolTip(PAUSE_REASON_TOOLTIP)
+        pause_row.addWidget(self._pause_reason_label, 1)
+        cl.addLayout(pause_row)
         root.addWidget(ctrl)
 
         # --- Live status ---
@@ -160,6 +373,16 @@ class WatcherControlWidget(QWidget):
         self._f_logdir = QLineEdit()
         self._f_dbpath = QLineEdit()
         self._f_staging = QLineEdit()
+        # Recording programs that pause this PC (empty = never pause for one).
+        self._f_pause_programs = QLineEdit()
+        self._f_pause_programs.setPlaceholderText("e.g. recorder.exe")
+        self._f_pause_programs.setToolTip(PAUSE_PROGRAMS_TOOLTIP)
+        # 0 is allowed (resume the moment the program closes); a day is the
+        # cap because a longer grace is indistinguishable from "never resume".
+        self._f_pause_grace = QSpinBox(); self._f_pause_grace.setRange(0, 86400)
+        self._f_pause_grace.setToolTip(
+            "After the last recording program closes, wait this many seconds "
+            "before starting work again -- in case recording starts again.")
         form.addRow("enabled", self._f_enabled)
         form.addRow("mode", self._f_mode)
         form.addRow("poll_interval_seconds", self._f_poll)
@@ -174,6 +397,12 @@ class WatcherControlWidget(QWidget):
         form.addRow("log_dir", self._f_logdir)
         form.addRow("db_path", self._f_dbpath)
         form.addRow("staging_path", self._f_staging)
+        form.addRow("Pause while these programs are running", self._f_pause_programs)
+        form.addRow("Resume after (seconds)", self._f_pause_grace)
+        pause_help = QLabel(PAUSE_PROGRAMS_HELP)
+        pause_help.setWordWrap(True)
+        pause_help.setStyleSheet("color:#888;")
+        form.addRow(pause_help)
 
         cfg_btns = QHBoxLayout()
         reload_btn = QPushButton("Reload")
@@ -279,8 +508,81 @@ class WatcherControlWidget(QWidget):
         return bool(self._thread and self._thread.is_alive())
 
     def _is_paused(self) -> bool:
+        """True when paused BY HAND (the flag file). See _current_pause_reason
+        for every reason, including an open recording program."""
         pf = self._pause_file()
         return bool(pf and pf.exists())
+
+    def _external_watcher_pid(self) -> Optional[int]:
+        """A watcher running outside this panel on this PC, or None.
+
+        Cached for _EXTERNAL_WATCHER_CHECK_S (the scan is slow). This process's
+        own id is ignored so the panel never counts itself.
+        """
+        now = time.monotonic()
+        if now - self._ext_checked_at < _EXTERNAL_WATCHER_CHECK_S:
+            return self._ext_pid
+        pid = None
+        try:
+            from mousereach.watcher.health import watcher_running
+            pid = watcher_running()
+        except Exception as e:
+            logger.debug(f"external watcher check unavailable: {e}")
+        if pid == os.getpid():
+            pid = None
+        self._ext_pid = pid
+        self._ext_checked_at = now
+        return pid
+
+    def _recording_guard(self, cfg):
+        """The panel's RecordingGuard for ``cfg``'s program list, or None when
+        no programs are listed. Rebuilt only when the list or grace changes."""
+        names = list(getattr(cfg, "pause_while_running", None) or [])
+        if not names:
+            self._guard, self._guard_key = None, None
+            return None
+        grace = getattr(cfg, "pause_resume_grace_seconds", None)
+        grace = DEFAULT_RESUME_GRACE_SECONDS if grace is None else int(grace)
+        key = (tuple(n.lower() for n in names), grace)
+        if self._guard is None or key != self._guard_key:
+            # Lazy import: the panel must still open on an install without it.
+            from mousereach.watcher.recording_guard import RecordingGuard
+            self._guard = RecordingGuard(names, grace_seconds=grace)
+            self._guard_key = key
+        return self._guard
+
+    def _recording_reason(self, cfg) -> Optional[str]:
+        """Why a recording program blocks work right now, or None.
+
+        Fails SAFE: if programs are listed but cannot be checked, that is a
+        reason. WHY: recording must always win, so "cannot tell" means "wait".
+        """
+        try:
+            guard = self._recording_guard(cfg)
+            return guard.reason() if guard is not None else None
+        except Exception as e:
+            return "cannot check for recording programs: %s" % e
+
+    def _current_pause_reason(self, cfg) -> Optional[str]:
+        """Every reason the watcher is paused (hand flag first), or None.
+
+        Uses recording_guard.pause_reason so the panel shows the same words
+        the watcher itself logs.
+        """
+        pf = self._pause_file()
+        try:
+            guard = self._recording_guard(cfg)
+            from mousereach.watcher.recording_guard import pause_reason
+            return pause_reason(pf.parent if pf is not None else None, cfg, guard)
+        except Exception as e:
+            try:
+                if pf is not None and pf.exists():
+                    return _HAND_PAUSE_REASON
+            except OSError:
+                pass
+            if getattr(cfg, "pause_while_running", None):
+                return "cannot check for recording programs: %s" % e
+            return None
 
     def _db(self):
         """Open the watcher DB if it exists, else None (do NOT create it)."""
@@ -297,9 +599,27 @@ class WatcherControlWidget(QWidget):
             return None
 
     # ------------------------------------------------------------- daemon
+    def _refuse_if_external_watcher(self) -> bool:
+        """Tell the operator and return True when a watcher already runs
+        outside this panel. WHY: the panel's watcher runs inside this program
+        and does not take the one-watcher-per-PC lock the command-line watcher
+        takes, so starting one here would run two watchers doing the same work.
+        """
+        self._ext_checked_at = float("-inf")  # a button press deserves a fresh look
+        if self._external_watcher_pid():
+            show_info("A watcher is already running on this PC (started outside "
+                      "this panel), so there is nothing to start here -- it "
+                      "keeps working on its own. To restart it, press Restart "
+                      "processor on the Dashboard.")
+            self._refresh()
+            return True
+        return False
+
     def _start(self):
         if self._is_running():
             show_info("Watcher is already running.")
+            return
+        if self._refuse_if_external_watcher():
             return
         try:
             from mousereach.config import WatcherConfig, Paths, require_processing_root
@@ -350,6 +670,22 @@ class WatcherControlWidget(QWidget):
         if self._is_running():
             show_info("Watcher is already running; Run Once is for when it is stopped.")
             return
+        if self._refuse_if_external_watcher():
+            return
+        # Every pause blocks Run Once: the hand pause and a recording program
+        # alike. The watcher's run_once refuses the same way, so without this
+        # check the panel would say "Run Once started" and then nothing would
+        # happen, with no word why. See run_once_refusal_text for the reason.
+        try:
+            from mousereach.config import WatcherConfig
+            cfg = WatcherConfig.load()
+        except Exception:
+            cfg = None
+        reason = self._current_pause_reason(cfg)
+        if reason:
+            show_info(run_once_refusal_text(reason))
+            self._refresh()
+            return
         mode = self._mode_select.currentData()
         def _once():
             try:
@@ -381,7 +717,20 @@ class WatcherControlWidget(QWidget):
         try:
             if pf.exists():
                 pf.unlink()
-                show_info("Watcher resumed.")
+                # Resume only lifts the HAND pause. Say so when a recording
+                # program still holds the watcher, or the operator is told
+                # "resumed" and then watches nothing happen.
+                try:
+                    from mousereach.config import WatcherConfig
+                    recording = self._recording_reason(WatcherConfig.load())
+                except Exception:
+                    recording = None
+                if recording:
+                    show_info("Hand pause removed, but the watcher stays paused: "
+                              "%s. It starts again once the recording program "
+                              "is closed." % recording)
+                else:
+                    show_info("Watcher resumed.")
             else:
                 pf.parent.mkdir(parents=True, exist_ok=True)
                 pf.write_text("Watcher paused via GUI.\n", encoding="utf-8")
@@ -392,24 +741,7 @@ class WatcherControlWidget(QWidget):
 
     # ------------------------------------------------------------- status
     def _refresh(self):
-        running = self._is_running()
-        paused = self._is_paused()
-        if running and paused:
-            txt, color = "Status: RUNNING (PAUSED)", "#c80"
-        elif running:
-            txt, color = "Status: RUNNING", "#1a5"
-        else:
-            txt, color = "Status: STOPPED", "#a33"
-        if self._run_error:
-            txt += f"  --  last error: {self._run_error}"
-        self._status_label.setText(txt)
-        self._status_label.setStyleSheet(f"font-weight:bold; font-size:14px; color:{color};")
-
-        self._start_btn.setEnabled(not running)
-        self._stop_btn.setEnabled(running)
-        self._once_btn.setEnabled(not running)
-        self._pause_btn.setText("Resume" if paused else "Pause")
-
+        cfg = None
         try:
             from mousereach.config import WatcherConfig, Paths
             cfg = WatcherConfig.load()
@@ -417,6 +749,35 @@ class WatcherControlWidget(QWidget):
             self._mode_label.setText(f"mode: {cfg.mode}   |   db: {db_path}")
         except Exception:
             pass
+
+        panel_running = self._is_running()
+        # Only look outside when the panel's own watcher is not running: the
+        # scan is slow, and the panel's thread already answers the question.
+        external_pid = None if panel_running else self._external_watcher_pid()
+        running = bool(panel_running or external_pid)
+        reason = self._current_pause_reason(cfg)
+
+        txt, color = status_headline(panel_running, external_pid, reason, self._run_error)
+        self._status_label.setText(txt)
+        self._status_label.setStyleSheet(f"font-weight:bold; font-size:14px; color:{color};")
+
+        self._start_btn.setEnabled(not running)
+        # Stop acts only on the panel's own watcher; one started elsewhere is
+        # stopped where it was started.
+        self._stop_btn.setEnabled(panel_running)
+        self._once_btn.setEnabled(not running)
+        # The button controls only the hand pause, so its label follows the
+        # flag; the reason label beside it shows every cause -- or, when
+        # nothing holds the watcher, quietly which programs it watches for.
+        self._pause_btn.setText("Resume" if self._is_paused() else "Pause")
+        if reason:
+            self._pause_reason_label.setStyleSheet("color:#c80; font-weight:bold;")
+            self._pause_reason_label.setText(pause_label_text(reason))
+        else:
+            self._pause_reason_label.setStyleSheet("color:#888;")
+            self._pause_reason_label.setText(watching_label_text(
+                getattr(cfg, "pause_while_running", None),
+                getattr(cfg, "pause_resume_grace_seconds", None)))
 
         self._refresh_stats()
 
@@ -490,6 +851,10 @@ class WatcherControlWidget(QWidget):
         self._f_logdir.setText(str(d.get("log_dir", "") or ""))
         self._f_dbpath.setText(str(d.get("db_path", "") or ""))
         self._f_staging.setText(str(d.get("staging_path", "") or ""))
+        self._f_pause_programs.setText(format_program_list(d.get("pause_while_running")))
+        grace = d.get("pause_resume_grace_seconds")
+        self._f_pause_grace.setValue(
+            DEFAULT_RESUME_GRACE_SECONDS if grace is None else int(grace))
 
     # Every watcher setting this form owns. Anything else in the config file
     # is preserved on save. WHY: the form rebuilds the watcher section from
@@ -497,12 +862,14 @@ class WatcherControlWidget(QWidget):
     # also mode, db_path, max_local_pending, staging_path when they were
     # hand-written -- was silently deleted the first time somebody pressed
     # Save. Listing the owned keys (rather than merging everything) keeps the
-    # form's ability to CLEAR a path by blanking it.
+    # form's ability to CLEAR a path by blanking it -- and, the same way, to
+    # clear the recording-program list, which turns the pause off.
     _FORM_MANAGED_KEYS = frozenset({
         "enabled", "mode", "poll_interval_seconds", "stability_wait_seconds",
         "max_retries", "max_local_pending", "dlc_gpu_device",
         "auto_archive_approved", "also_process", "dlc_config_path",
         "quarantine_dir", "log_dir", "db_path", "staging_path",
+        "pause_while_running", "pause_resume_grace_seconds",
     })
 
     def _form_to_dict(self) -> dict:
@@ -516,6 +883,7 @@ class WatcherControlWidget(QWidget):
             "dlc_gpu_device": self._f_gpu.value(),
             "auto_archive_approved": self._f_autoarchive.isChecked(),
             "also_process": self._f_alsoprocess.isChecked(),
+            "pause_resume_grace_seconds": self._f_pause_grace.value(),
         }
         # Path fields: include only when set.
         for key, widget in (
@@ -528,6 +896,12 @@ class WatcherControlWidget(QWidget):
             val = widget.text().strip()
             if val:
                 d[key] = val
+        # Written only when non-empty, like WatcherConfig.to_dict. WHY: an
+        # absent list is the shipped default (never pause for a program), so a
+        # PC nobody configured keeps a config file that says nothing new.
+        programs = parse_program_list(self._f_pause_programs.text())
+        if programs:
+            d["pause_while_running"] = programs
         return d
 
     def _save_config(self):
@@ -544,9 +918,13 @@ class WatcherControlWidget(QWidget):
             existing["watcher"] = preserved
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
             cfg_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-            show_info("Config saved. Restart the watcher for changes to take effect.")
         except Exception as e:
             show_error(f"Could not save config: {e}")
+            return
+        programs = preserved.get("pause_while_running") or []
+        running, error = check_programs_now(programs) if programs else (None, None)
+        show_info("Config saved. %s %s" % (
+            SAVE_APPLIES_TEXT, recording_check_text(programs, running, error)))
 
     # ------------------------------------------------------------- priority
     @staticmethod

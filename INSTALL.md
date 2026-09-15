@@ -850,8 +850,69 @@ Additional status options:
 - `mousereach-watch-status --log 20` — show last 20 processing log entries
 - `mousereach-watch-status --json` — machine-readable JSON output
 
-**To pause for filming:** Double-click the **MouseReach Toggle** shortcut on the
-Desktop, or run `mousereach-watch-toggle` in any terminal. Run it again to resume.
+#### Pausing while you film
+
+Recording always comes first: a video that drops frames can never be filmed
+again, while any pipeline work can be done later. There are two ways to keep
+this PC from working while you film. On a PC that records, set up the first
+one.
+
+**A. Let the PC pause itself whenever the recording program is open (set up once)**
+
+1. Open your recording program. Then open Task Manager (press
+   **Ctrl+Shift+Esc**), click the **Details** tab, and find the recording
+   program in the list. Its name is in the **Name** column, for example
+   `recorder.exe`.
+2. Tell MouseReach that name. Either:
+   - in MouseReach, open **Watcher Control**, type the name into
+     **Pause while these programs are running**, and press **Save config**, or
+   - in a terminal, run `mousereach-watch-recorders --add recorder.exe`
+     (with your program's name).
+3. Check the answer. With the recording program still open, the message after
+   **Save config** (or the output of `mousereach-watch-recorders`) must say the
+   program is **running**. If it says none of the programs is running while
+   yours IS open, the name does not match: copy it again from the Details tab.
+
+You do not need to restart the watcher. A running watcher picks up the change
+by itself within about a minute.
+
+From then on:
+
+- **Close the recording program whenever you are not recording.** While it is
+  open, this PC does no new pipeline work, all day if it is left open.
+- While it is open, nothing new starts. A pose (DeepLabCut) that was part-way
+  is stopped and put back in the queue; it runs again later, nothing is lost,
+  and the video is not marked failed. A collage crop that had already started
+  finishes first.
+- After you close it, the PC waits 2 minutes and then starts working again by
+  itself (in case you open the program again straight away). To change the
+  wait, set **Resume after (seconds)** in Watcher Control, or run
+  `mousereach-watch-recorders --grace 300`.
+- While it holds the PC, Watcher Control shows **Paused: recorder.exe is
+  running** next to the Pause button (and **Watching for: ...** when nothing
+  holds it). The Dashboard's health line says PAUSED and why. In a terminal,
+  `mousereach-watch-toggle --status` or `mousereach-watch-status` say the same.
+- The **Resume** button cannot override an open recording program. Close the
+  program instead.
+- If it says **cannot check for recording programs**, the PC stays paused on
+  purpose, because it cannot tell whether you are recording. The message names
+  what is missing; ask for help if you cannot fix it.
+
+To stop pausing for a program: remove the name in Watcher Control and press
+**Save config**, or run `mousereach-watch-recorders --remove recorder.exe`.
+
+**B. Pause by hand**
+
+Press **Pause** in Watcher Control, double-click the **MouseReach Toggle**
+shortcut on the Desktop, or run `mousereach-watch-toggle --pause`. It stays
+paused until you press **Resume** or run `mousereach-watch-toggle --resume`.
+A pause by hand does not stop a pose that is already running; that pose
+finishes first. **Run Once** does not start while the watcher is paused.
+
+**Pausing is not stopping.** A paused watcher is still running and starts work
+again by itself. To stop the watcher completely, press **Ctrl+C** in its
+terminal window (it finishes the video it is on, then exits), or press **Stop**
+in Watcher Control if you started it there.
 
 ---
 
@@ -872,7 +933,8 @@ On login, the startup script automatically:
 3. Launches a status monitor that refreshes every 60 seconds
 
 The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
-without opening a terminal.
+without opening a terminal. On a PC that records, also list the recording
+program so the PC pauses itself (see "Pausing while you film" in Step 10).
 
 To disable auto-launch, delete the batch file from the Startup folder
 (`Win+R` → `shell:startup`).

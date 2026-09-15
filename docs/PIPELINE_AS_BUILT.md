@@ -5,7 +5,9 @@ Verified against: b65fcf0 (2026-08-23), with sections 4, 5 and 6 re-verified
 against the pathless-row and DLC-staleness fixes of 2026-08-24 (see the
 update section at the end), and the collage-claim, re-crop and Posed
 statements in sections 2, 3 and 4 corrected against 05de530 plus the
-GPU-node guards of 2026-09-15.
+GPU-node guards of 2026-09-15. The pausing statements in sections 1, 3 and 4
+and the update "the watcher pauses itself while a recording program runs"
+were verified against the working tree on top of 73f9f48 (2026-09-15).
 
 Written 2026-08-21 by reading the code, not the documentation. Each section
 was traced against the source by a separate reviewer, and every statement
@@ -38,7 +40,7 @@ It currently holds 844 video files. Three things about this folder are easy to g
   - Only five file extensions count: .mkv, .avi, .mp4, .mov, .wmv (src/mousereach/watcher/state.py:27 and :75).
   - The filename is a hard gate. It must read YYYYMMDD_{eight comma-separated animal IDs}_{tray letter}{run number}.ext - for example 20250704_CNT0101,CNT0205,...,CNT0906_P1.mkv. The date must be a real date and not in the future, and the tray letter must be P, E or F (src/mousereach/watcher/validator.py:106 and :111-118). A file that fails any of these is moved to a quarantine folder and never processed (src/mousereach/watcher/state.py:112). The quarantine folder defaults to NAS_ROOT\Processing\Quarantine (src/mousereach/config.py:720-726).
 
-What software records the videos is outside the code entirely. The word "OBS" appears nowhere in the source. Recording, naming, and copying the file into Unanalyzed\Multi-Animal are human steps the code simply assumes have happened.
+What software records the videos is outside the code. Recording, naming, and copying the file into Unanalyzed\Multi-Animal are human steps the code simply assumes have happened. The only thing the code can know about recording is optional configuration: a GPU node can be given the name of the program that records (watcher.pause_while_running), and then pauses itself while that program is open (see the update of 2026-09-15, "the watcher pauses itself while a recording program runs", at the end).
 
 There is one other, deliberate way in: a one-off command copies archived ASPA collages into that same folder, re-encoding their names into the required format first (src/mousereach/aspa/import_collages.py:84, :229). It is run by hand, not on a timer.
 
@@ -73,7 +75,7 @@ The role is declared by a human in the config file, not detected from the hardwa
 
 Two gaps in that enforcement are worth knowing:
 
-  - The napari control panel starts the same DLCOrchestrator directly, with no hardware check at all (src/mousereach/watcher/control_widget.py:281-291), and lets the operator override the mode from a dropdown.
+  - The napari control panel starts the same DLCOrchestrator directly, with no hardware check at all (src/mousereach/watcher/control_widget.py, `WatcherControlWidget._start`), and lets the operator override the mode from a dropdown. It also takes no one-watcher-per-machine lock; since 2026-09-15 it refuses to start one while a watcher started elsewhere is running on the same PC (`health.watcher_running`).
   - Even on the command line, if the card check itself throws an error, the failure is downgraded to a log warning and startup continues (src/mousereach/watcher/cli.py:267-269).
 
 The processing-server role has no graphics-card requirement, which is consistent with its own code: when it finds a video that needs DeepLabCut re-run, it explicitly hands it back rather than doing it, with the comment "can't do it here (no CUDA)" (src/mousereach/watcher/orchestrator.py:1494-1497).
@@ -87,6 +89,8 @@ All of these live in ~/.mousereach/config.json on each machine, and defaults for
   - watcher.mode - "dlc_pc" (the default when absent) or "processing_server". Chooses which of the two roles the one watcher program plays.
   - watcher.also_process - true means a graphics-card machine runs the whole pipeline itself instead of handing off; false means it stops after DeepLabCut and stages the result for the server.
   - watcher.dlc_gpu_device - which graphics card number DeepLabCut uses, default 0.
+  - watcher.pause_while_running - programs that pause this watcher while they run (process names such as recorder.exe). Empty by default, which means the watcher never checks for any program. A running watcher follows edits to it without a restart.
+  - watcher.pause_resume_grace_seconds - how long every listed program must have been closed before work starts again, default 120.
   - backup.enabled - whether the separate Y:-to-X: backup daemon will start.
 
 ---
@@ -1047,3 +1051,188 @@ Known gaps, not yet closed: `WatcherDB.register_video` called without a
 source_path, and `mousereach-watch-unresolvable --retry`, still search with the
 default folder list, which includes Posed. Neither runs in the GPU work loop's
 normal path.
+
+---
+
+## Update 2026-09-15: the watcher pauses itself while a recording program runs
+
+WHY. A GPU node in a behaviour room poses videos whenever nobody is recording.
+A pose takes the GPU, CPU and disk for about 14 minutes, and a recording that
+drops frames because of it is behaviour that can never be filmed again, while a
+pose can always be run later. A node cannot know a recording schedule; what it
+can see is whether the recording program is open, and operators close it when
+they are not recording. So the watcher pauses itself while a configured
+program runs, and recording always wins. Code: `watcher/recording_guard.py`,
+`dlc/core/interruptible.py` and `interruptible_worker.py`, and
+`BaseOrchestrator` / `DLCOrchestrator` in `watcher/orchestrator.py`.
+
+WHAT PAUSES THE WATCHER
+
+Two independent causes, answered in one place (`recording_guard.pause_reason`)
+so the watcher, the Watcher Control panel, the CLI and the dashboard health line
+use the same words:
+
+  1. The hand pause: `watcher_paused.flag` in the processing root, set by
+     `mousereach-watch-toggle --pause` (or the plain toggle) or the panel's
+     Pause button. Checked first. Reason text: `paused by hand
+     (watcher_paused.flag)`.
+  2. A recording program: any name in `watcher.pause_while_running`. EMPTY BY
+     DEFAULT, and empty means exactly the behaviour from before: no process is
+     ever listed and the pose runs in-process as it always did. Names match
+     case-insensitively on the program name only; a pasted full path or a
+     name without `.exe` still matches (`recording_guard._match_key`). WHY so
+     forgiving: a name typed slightly differently from Task Manager must not
+     silently fail to protect a recording. On Windows the process list comes
+     from one system snapshot (`windows_process_table`); psutil elsewhere or as
+     a fallback. WHY not psutil on Windows: it opens each process in turn, and
+     one listing took over a minute and a half on a busy machine, while the
+     check runs every few seconds. The list is re-read at most every 5 s.
+     Reason text: `recorder.exe is running`.
+
+If programs are listed but the check cannot run (no process list, psutil
+missing, the listing raises), the reason is `cannot check for recording
+programs: ...` and the watcher stays PAUSED. WHY: the one outcome this exists
+to prevent is posing on top of a recording; an idle node is visible and
+recoverable, a spoiled recording is not.
+
+WHEN IT RESUMES
+
+The hand pause ends when the flag is removed (`--resume`, Resume). A recording
+pause ends only after every listed program has been closed for
+`watcher.pause_resume_grace_seconds` (default 120). The timer starts at the
+first check that finds none running; opening one again restarts it; after a
+check that could not run, the grace period applies too, because that check may
+have hidden a recording. Reason text meanwhile: `recorder.exe closed 30 s ago;
+resuming after 120 s`. WHY a grace period: operators close and reopen the
+program between animals, and a pose started in that gap would compete with the
+next recording or be thrown away seconds later. Resume cannot override an open
+recording program.
+
+WHERE THE PAUSE IS CHECKED
+
+  * At the top of every main-loop pass (as before, now with both causes).
+  * Again after the scan, right before the chosen item is started. WHY: a scan
+    can take many minutes on a shared drive, and a recording that started
+    during it must stop new work before it begins. The item is not touched and
+    stays in its state.
+  * Inside the GPU scan, before re-pose requests are taken
+    (`DLCOrchestrator._scan_phase`, phase C). WHY: taking a request copies a
+    whole archived video over the network onto the node's disk. The heartbeat
+    of claims already held still runs.
+  * `run_once` (the panel's Run Once and `mousereach-watch --once`): before the
+    scan and before every item, for the stop flag and for BOTH pause causes.
+    This is a change: run_once used to ignore the hand pause and the stop flag.
+    WHY the hand pause too: before recording programs could be listed, the
+    hand pause was the only filming protection, and a Run Once that ignored it
+    posed on top of filming. The panel checks first and says why it will not
+    start ("paused by hand -- press Resume first", or the recording reason).
+
+A POSE ALREADY RUNNING
+
+  * No programs listed: the pose runs in-process through `run_dlc_batch`,
+    exactly as before, and cannot be stopped part-way.
+  * Programs listed: the pose runs in a child process, `python -m
+    mousereach.dlc.core.interruptible_worker <args.json>`, through
+    `run_dlc_single_interruptible`. The parent asks
+    `DLCOrchestrator._recording_abort_reason` once before starting (a reason
+    means the child never starts) and then every 5 s. On a reason it kills the
+    child and everything the child started, waits for them to exit, and
+    removes ONLY this run's pose files in DLC_Queue: `<stem>DLC*` files ending
+    .h5, .csv or .pickle that were not in the listing taken just before the
+    child started AND whose modified time is at or after that start (2 s
+    allowance for coarse file-system clocks). An earlier finished pose of the
+    same video, other videos' poses and any other file survive. WHY both
+    conditions: cleanup must never be able to delete a finished pose.
+  * The video then goes back to `dlc_queued` with its `current_path` unchanged
+    (forced if the row had meanwhile moved to a state with no legal move
+    there), a processing_log row step `dlc`, status `aborted`, message = the
+    reason, is written, `dlc_queued` is synced to the shared record, and
+    error_count is NOT increased and `mark_failed` is not called. WHY: the video
+    did nothing wrong, and a busy recording week would otherwise use up its
+    retries and park it as failed. The handler reports no progress, so the loop
+    sleeps and then finds the watcher paused. Log (INFO): `<video>: pose
+    stopped after N s because <reason>; partial output removed, back in the DLC
+    queue (not counted as a failure)`.
+  * A child that finishes by itself is kept even if a stop was asked for in the
+    same instant. A child that exits without writing a result is a failed pose
+    (as a DLC error always was), with the end of its output quoted; its log is
+    kept in the system temporary folder only when the pose failed.
+  * The hand pause does NOT stop a pose that is already running. Pressing Pause
+    means "start nothing new"; only a recording, which cannot be redone, stops
+    a pose part-way.
+  * The child cannot outlive the watcher. On Windows it is put in a Job Object
+    with "kill on job close", so the operating system kills it and its
+    children whenever the watcher process exits, including a closed console
+    window, an ended scheduled task or a crash. WHY: before, the pose ran
+    in-process and died with the watcher; a windowless child would otherwise
+    keep the GPU with nothing left to stop it when recording starts. Belt and
+    braces, and the only mechanism elsewhere: when programs are listed, a GPU
+    watcher's startup reclaim first kills any pose worker whose watcher
+    process is gone (`interruptible.kill_orphaned_workers`), and only then
+    returns `dlc_running` rows to the queue, so a second pose of the same video
+    cannot start beside a leftover one.
+
+WHAT IS NOT STOPPED PART-WAY (known gap)
+
+A collage crop already running finishes: `crop_collage` copies the collage and
+runs up to 8 back-to-back ffmpeg re-encodes through `os.system`, which cannot
+be stopped from outside, for minutes to an hour or two of CPU and disk. A local
+pipeline run on an also_process node, and an archive or staging copy already
+running, also finish. The pause takes effect after them. Only new work is
+blocked. The panel's help text says so.
+
+RE-POSE CLAIMS WHILE PAUSED
+
+The scan, which heartbeats this node's claimed re-pose requests, is skipped
+while paused. So the paused loop heartbeats them itself, at most once per poll
+interval (`DLCOrchestrator._repose_heartbeat`, `_while_paused`); a failing
+heartbeat only logs a WARNING. WHY: a claim with no heartbeat for
+`repose.STALE_S` (a day) is handed back, and a long recording day would give
+away work this node had already copied and queued.
+
+SETTINGS APPLY WITHOUT A RESTART
+
+`WatcherConfig.load` records the settings file and its modified time. On every
+pause check and every 5 s poll of a running pose, the watcher stats that file.
+When it has changed, `BaseOrchestrator._refresh_recording_settings` re-reads
+ONLY `pause_while_running` and `pause_resume_grace_seconds`. A change of grace
+alone keeps the guard and its timer; a changed list builds a new guard that
+inherits the old one's grace timer (`RecordingGuard.inherit_history`), which
+can only make the watcher wait longer. A file that cannot be parsed (for example
+caught mid-save) changes nothing and gives one WARNING per change. Log (INFO):
+`Recording-program settings changed: ...`. Every other setting still applies
+at the next start. WHY: the panel, the CLI and the status commands all read the
+file; a watcher that kept its start-up list would pose on top of a recording
+while every screen said PAUSED. A pose that was started in-process before a
+program was first listed runs to its end, since it cannot be stopped.
+
+WHAT A PERSON SEES
+
+  * Watcher log, INFO: at start `Pauses while any of these programs run: ...`;
+    once on entering a pause `Watcher PAUSED: <reason>. No new work starts;
+    <what to do>.`; once when the cause changes kind (hand / recording program
+    / cannot check) `Watcher still PAUSED, now because: <reason>.`; once on
+    leaving `Watcher RESUMED: no longer paused (was: <reason>).`; and
+    `Run-once stopped <when>: ...`. Never a line per poll.
+  * Watcher Control panel: the fields "Pause while these programs are running"
+    and "Resume after (seconds)" (saved by Save config, which keeps every other
+    key and says right away whether a listed program is running, so a
+    mistyped name shows); a label beside Pause/Resume, `Paused: <reason>` or
+    `Watching for: <names> ...`; RUNNING also for a watcher started outside the
+    panel, in which case Start and Run Once refuse.
+  * Dashboard health line: when the watcher runs and is paused, a second line
+    saying PAUSED, why, and what to do (`health.pause_line`).
+  * Commands: `mousereach-watch-recorders` (--list, --add, --remove, --grace;
+    edits only those two keys, atomically); `mousereach-watch-toggle --pause`,
+    `--resume`, `--status` (the plain toggle still flips); a `Pause:` line and
+    a `Stage folders:` block in `mousereach-watch-status`.
+  * `health.watcher_running` (and the Restart processor button's targets) now
+    match only the watcher itself (`health.is_watcher_command`). WHY: matching
+    every command beginning `mousereach-watch` made a PC with no watcher look
+    RUNNING whenever someone ran `mousereach-watch-status`.
+
+Known gaps: a one-off status command or a freshly opened panel builds its own
+guard, which cannot see the running watcher's grace countdown (it says "not
+paused" while the watcher is still waiting; `mousereach-watch-status` prints a
+reminder line). Two different programs with the same program name cannot be
+told apart.

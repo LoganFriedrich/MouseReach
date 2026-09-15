@@ -34,6 +34,11 @@ dependencies = [
     # Utilities
     "openpyxl>=3.0",
     "tqdm",
+    # Process checks: is a listed recording program open, stopping a pose
+    # part-way, finding a running watcher. Named here, not left to arrive
+    # through napari, because a node with recording programs listed stays
+    # paused for good when it cannot check.
+    "psutil",
 
     # TensorFlow compatibility fixes
     "protobuf>=3.9.2",
@@ -197,6 +202,7 @@ mousereach-watch-prioritize = "mousereach.watcher.cli:main_prioritize"
 mousereach-watch-process-animal = "mousereach.watcher.cli:main_process_animal"
 mousereach-watch-info = "mousereach.watcher.cli:main_info"
 mousereach-watch-toggle = "mousereach.watcher.cli:main_toggle"
+mousereach-watch-recorders = "mousereach.watcher.cli:main_recorders"
 
 # Version tracking and reprocessing
 mousereach-version-check = "mousereach.watcher.cli:main_version_check"

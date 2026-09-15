@@ -76,6 +76,14 @@ def segmentation_could_not_run(error, dlc_path) -> bool:
                           str(error), re.IGNORECASE))
 
 
+class _PoseAborted(Exception):
+    """A pose was stopped part-way on purpose (a recording program started).
+
+    Its own type so the DLC handler can tell it apart from a failed pose: an
+    aborted pose goes back to the queue and costs the video nothing, a failed
+    one is marked failed and spends a retry."""
+
+
 # =============================================================================
 # BASE ORCHESTRATOR
 # =============================================================================
@@ -184,17 +192,195 @@ class BaseOrchestrator:
         logger.info(f"{self.__class__.__name__} initialized on {self.hostname}")
         logger.info(f"Working directory: {self.working_dir}")
 
+        # One guard for the life of the watcher, so its grace timer carries
+        # across polls (watcher/recording_guard.py). Said once at startup, so
+        # a person reading the log knows why this node may sit idle.
+        guard = self._get_recording_guard()
+        if guard.enabled:
+            # _ascii: the names are typed by a person, and one non-ASCII
+            # character would crash this line on a Windows console.
+            from mousereach.watcher.recording_guard import _ascii
+            logger.info(
+                "Pauses while any of these programs run: %s (work resumes %d s "
+                "after the last one closes).",
+                _ascii(", ".join(guard.names)), guard.grace_seconds)
+
     # =========================================================================
     # MAIN LOOP
     # =========================================================================
 
+    def _get_recording_guard(self):
+        """This watcher's RecordingGuard, built from its config on first use.
+
+        Built lazily as well as in __init__ because tests (and a few tools)
+        make an orchestrator without its constructor; with no configured
+        programs the guard never pauses, which is today's behaviour exactly.
+        """
+        guard = getattr(self, '_recording_guard', None)
+        if guard is None:
+            from mousereach.watcher.recording_guard import RecordingGuard
+            config = getattr(self, 'config', None)
+            guard = self._recording_guard = RecordingGuard(
+                getattr(config, 'pause_while_running', None) or [],
+                grace_seconds=getattr(config, 'pause_resume_grace_seconds', 120))
+        return guard
+
     def _is_paused(self) -> bool:
-        """Check if the watcher is paused (filming mode sentinel file exists)."""
+        """True while this watcher must not start new work.
+
+        Two causes, one answer (recording_guard.pause_reason): a person
+        paused it by hand (watcher_paused.flag), or a configured recording
+        program is running or closed too recently. WHY recording pauses the
+        watcher: dropped frames in a recording cannot be filmed again, and a
+        pose can always be run later.
+
+        The reason is kept on self._pause_reason for status and logging.
+        Exactly ONE log line on entering a pause and ONE on leaving it, never
+        one per poll -- a line every 30 seconds for an eight-hour recording
+        day buries everything else in the log.
+        """
+        from mousereach.watcher.recording_guard import pause_reason, _ascii
+        self._refresh_recording_settings()
+        guard = self._get_recording_guard()
         try:
-            pause_file = require_processing_root() / "watcher_paused.flag"
-            return pause_file.exists()
+            root = require_processing_root()
         except Exception:
-            return False
+            root = None
+        try:
+            reason = pause_reason(root, guard=guard)
+        except Exception as e:
+            # pause_reason is written not to raise. If it does anyway, fail
+            # SAFE only when recording programs are configured (recording
+            # must win); otherwise keep the old behaviour, which was to work.
+            reason = (_ascii(f"cannot check whether to pause: {type(e).__name__}: {e}")
+                      if guard.enabled else None)
+
+        previous = getattr(self, '_pause_reason', None)
+        self._pause_reason = reason
+        kind, previous_kind = self._pause_kind(reason), self._pause_kind(previous)
+        if reason and not previous:
+            logger.info("Watcher PAUSED: %s. No new work starts; %s.",
+                        reason, self._pause_hint(kind))
+        elif reason and kind != previous_kind:
+            # Still paused, for a different reason. WHY log it: the last line
+            # would otherwise go on telling a person to press Resume after
+            # they did, while an open recording program is what holds it now.
+            logger.info("Watcher still PAUSED, now because: %s. %s.",
+                        reason, self._pause_hint(kind).capitalize())
+        elif previous and not reason:
+            logger.info("Watcher RESUMED: no longer paused (was: %s).", previous)
+        return bool(reason)
+
+    @staticmethod
+    def _pause_kind(reason: Optional[str]) -> Optional[str]:
+        """'hand', 'unchecked' or 'recording' (a program open, or closed too
+        recently). Only a change of KIND is logged; the countdown text in a
+        grace-period reason changes every poll and must not be."""
+        from mousereach.watcher.recording_guard import HAND_PAUSE_REASON
+        if not reason:
+            return None
+        if reason == HAND_PAUSE_REASON:
+            return 'hand'
+        if reason.startswith('cannot check'):
+            return 'unchecked'
+        return 'recording'
+
+    @staticmethod
+    def _pause_hint(kind: Optional[str]) -> str:
+        if kind == 'hand':
+            return "run 'mousereach-watch-toggle --resume' or press Resume to continue"
+        if kind == 'unchecked':
+            return ("it stays paused until the check works, because recording "
+                    "must win")
+        return "work resumes on its own once the recording program has been closed"
+
+    def _refresh_recording_settings(self) -> None:
+        """Follow edits to the two recording settings without a restart.
+
+        WHY: the Watcher Control panel, mousereach-watch-recorders and the
+        status commands all read the settings FILE. A watcher that kept the
+        list it started with would pose on top of a recording while every
+        screen said PAUSED (a program added after start), or sit paused while
+        every screen said it was working (a program removed). So when the file
+        this watcher's config came from has changed, the two keys are read
+        again and the guard follows them. Only these two: every other setting
+        still applies at the next start, as the panel says.
+
+        Cheap: one stat of a local file. A file that cannot be read or parsed
+        right now (for example caught mid-save) changes nothing and is tried
+        again on the next check. Never raises.
+        """
+        config = getattr(self, 'config', None)
+        source = getattr(config, 'source_file', None)
+        if not source:
+            return
+        try:
+            mtime = Path(source).stat().st_mtime
+        except OSError:
+            return
+        seen = getattr(self, '_settings_mtime', None)
+        if seen is None:
+            seen = getattr(config, 'source_mtime', None)
+        if mtime == seen:
+            return
+        from mousereach.watcher.recording_guard import _ascii, _match_key, clean_names
+        try:
+            data = json.loads(Path(source).read_text(encoding='utf-8-sig') or '{}')
+            section = data.get('watcher') or {}
+            if not isinstance(section, dict):
+                raise ValueError("the 'watcher' section is not an object")
+            fresh = WatcherConfig(section)
+        except Exception as e:
+            if getattr(self, '_settings_bad_mtime', None) != mtime:
+                self._settings_bad_mtime = mtime
+                logger.warning(_ascii(
+                    f"Could not re-read the recording-program settings from {source} "
+                    f"({e}); keeping the ones in use."))
+            return
+        self._settings_mtime = mtime
+
+        names = list(fresh.pause_while_running)
+        grace = fresh.pause_resume_grace_seconds
+        old_names = list(getattr(config, 'pause_while_running', None) or [])
+        old_grace = getattr(config, 'pause_resume_grace_seconds', 120)
+        if names == old_names and grace == old_grace:
+            return
+        config.pause_while_running = names
+        config.pause_resume_grace_seconds = grace
+
+        old_guard = getattr(self, '_recording_guard', None)
+        same_programs = (old_guard is not None and
+                         [_match_key(n) for n in old_guard.names] ==
+                         [_match_key(n) for n in clean_names(names)])
+        if same_programs:
+            # Only the grace changed: keep the guard, and with it the timer.
+            old_guard.grace_seconds = max(0, int(grace))
+        else:
+            self._recording_guard = None
+            self._get_recording_guard().inherit_history(old_guard)
+        if names:
+            logger.info(_ascii(
+                f"Recording-program settings changed: now pauses while any of "
+                f"these run: {', '.join(names)} (work resumes {grace} s after the "
+                f"last one closes)."))
+        else:
+            logger.info("Recording-program settings changed: no programs listed; "
+                        "this watcher no longer pauses for one.")
+
+    def _recording_abort_reason(self) -> Optional[str]:
+        """Why a pose running now must stop, or None: the recording guard as
+        it stands this moment, following any edit to the program list.
+
+        WHY not the hand pause too: pressing Pause means "start nothing new",
+        and a pose already half done is kept. Only an open recording program
+        stops one part-way, because only a recording cannot be redone."""
+        self._refresh_recording_settings()
+        return self._get_recording_guard().reason()
+
+    def _while_paused(self) -> None:
+        """Upkeep that must continue while the watcher is paused. Nothing on
+        the base role; the GPU role keeps its re-pose claims alive here."""
+        return None
 
     def _stop_requested(self) -> bool:
         """True when something has asked this watcher to finish and exit.
@@ -308,7 +494,6 @@ class BaseOrchestrator:
 
         while not shutdown_event.is_set():
             try:
-                # Check for pause sentinel (filming mode)
                 # Asked to stop. Checked here, between work items, so whatever
                 # is in flight has already finished -- a pose is ~14 minutes of
                 # GPU and must never be thrown away just to shut down.
@@ -317,8 +502,10 @@ class BaseOrchestrator:
                                 "here and exiting.")
                     break
 
+                # Paused by hand, or a recording program is running. _is_paused
+                # logs once on entering and once on leaving, not every poll.
                 if self._is_paused():
-                    logger.info("Watcher PAUSED (filming mode) — run 'mousereach-watch-toggle' to resume.")
+                    self._while_paused()
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
 
@@ -332,6 +519,17 @@ class BaseOrchestrator:
                 work = self._get_next_work_item()
 
                 if work is None:
+                    shutdown_event.wait(timeout=self.config.poll_interval_seconds)
+                    continue
+
+                # Ask again right before starting the item. WHY: the scan above
+                # can take many minutes on a shared drive, and a recording that
+                # started during it must stop new work BEFORE it begins -- the
+                # check at the top of the loop is already stale. The item is
+                # not touched, so it stays in its state and is picked up again
+                # once the pause clears.
+                if self._is_paused():
+                    self._while_paused()
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
 
@@ -356,6 +554,13 @@ class BaseOrchestrator:
         """Run one full cycle: scan + process all pending items, then exit."""
         logger.info(f"{self.__class__.__name__} running once")
 
+        # The same two gates as the main loop. WHY: the GUI "Run Once" button
+        # and 'mousereach-watch --once' used to ignore both, so a person could
+        # start a pose on top of a recording, or on a watcher they had just
+        # asked to stop, with one click.
+        if self._run_once_blocked("before starting"):
+            return
+
         self._maybe_review_reprocess_scan(force=True)
         self._scan_phase()
 
@@ -364,10 +569,26 @@ class BaseOrchestrator:
             work = self._get_next_work_item()
             if work is None:
                 break
+            # Asked before EVERY item: run-once drains everything pending,
+            # which can take hours, and a recording may start part-way.
+            if self._run_once_blocked(f"after {processed} item(s)"):
+                break
             if self._dispatch_work(work) is not False:
                 processed += 1
 
         logger.info(f"Run-once complete: processed {processed} items")
+
+    def _run_once_blocked(self, when: str) -> bool:
+        """True (and one log line saying why) when run_once must not start
+        work: a stop was requested, or the watcher is paused."""
+        if self._stop_requested():
+            logger.info("Run-once stopped %s: stop requested (watcher_stop.flag).", when)
+            return True
+        if self._is_paused():
+            logger.info("Run-once stopped %s: watcher is paused (%s). Nothing "
+                        "was started.", when, getattr(self, '_pause_reason', None))
+            return True
+        return False
 
     def _maybe_review_reprocess_scan(self, force: bool = False):
         """Periodically scan this node's archived videos for freshly-saved reviews
@@ -796,6 +1017,27 @@ class DLCOrchestrator(BaseOrchestrator):
     _ORPHANED_COLLAGE_STATES = {
         'cropping': 'stable',
     }
+
+    def _reclaim_orphaned_work(self) -> dict:
+        """Stop any pose a dead watcher left running, THEN requeue its video.
+
+        WHY first: with recording programs configured a pose runs in a child
+        process (dlc/core/interruptible.py). On Windows that child dies with
+        the watcher, but where it could not be tied to it, it can outlive a
+        watcher that was closed or crashed. Requeuing its video while it still
+        runs would start a second pose of the same video, into the same files,
+        on the same GPU. Only done when programs are configured, because only
+        then can such a child exist -- and listing processes is slow on a
+        busy machine.
+        """
+        if getattr(getattr(self, 'config', None), 'pause_while_running', None):
+            try:
+                from mousereach.dlc.core.interruptible import kill_orphaned_workers
+                kill_orphaned_workers()
+            except Exception as e:
+                logger.warning(f"Could not check for poses left running by an "
+                               f"earlier watcher: {e}")
+        return super()._reclaim_orphaned_work()
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)
@@ -1499,7 +1741,15 @@ class DLCOrchestrator(BaseOrchestrator):
             latched = getattr(self, '_repose_latched', None)
             if latched is None:
                 latched = self._repose_latched = set()
-            repose.heartbeat(self.db, hostname=self.hostname)
+            self._repose_heartbeat(force=True)
+            # Asked again here, not only at the top of the loop. WHY: taking a
+            # request copies a whole archived video over the network onto
+            # this PC's disk, and the scan before this point can take many
+            # minutes on a shared drive. A recording that started meanwhile
+            # must not share the disk with that copy. The heartbeat above
+            # still ran, so claims this node already holds stay alive.
+            if self._is_paused():
+                return
             retry_after = getattr(self, '_repose_retry_after', None)
             if retry_after is None:
                 retry_after = self._repose_retry_after = {}
@@ -1517,6 +1767,37 @@ class DLCOrchestrator(BaseOrchestrator):
                             f"for DLC on this node, {summary['completed']} already posed")
         except Exception as e:
             logger.warning(f"Re-pose request scan failed (non-fatal): {e}")
+
+    def _repose_heartbeat(self, force: bool = False) -> None:
+        """Touch this node's claimed re-pose requests so the publisher knows
+        the node is alive (repose.heartbeat). Never raises.
+
+        Called from every scan, and from the paused branch of the main loop.
+        WHY while paused: the scan is skipped while paused, and a claim with
+        no heartbeat for repose.STALE_S (a day) is handed back to the queue --
+        so a long recording day would give away work this node already copied
+        and queued, and another GPU node would pose it a second time.
+
+        Rate-limited to one call per poll interval unless ``force`` (the scan
+        forces it, as it always has): the paused loop wakes every poll, and
+        the heartbeat lists a folder on the shared drive.
+        """
+        interval = float(getattr(self.config, 'poll_interval_seconds', 30) or 30)
+        now = time.monotonic()
+        last = getattr(self, '_last_repose_heartbeat', None)
+        if not force and last is not None and now - last < interval:
+            return
+        self._last_repose_heartbeat = now
+        try:
+            from mousereach.watcher import repose
+            repose.heartbeat(self.db, hostname=self.hostname)
+        except Exception as e:
+            logger.warning(f"Re-pose heartbeat failed (non-fatal): {e}")
+
+    def _while_paused(self) -> None:
+        """Keep claimed re-pose requests alive while paused (see
+        _repose_heartbeat)."""
+        self._repose_heartbeat()
 
     # =========================================================================
     # WORK QUEUE
@@ -2236,19 +2517,41 @@ class DLCOrchestrator(BaseOrchestrator):
 
         start_time = time.time()
 
+        # Two ways to run the pose. With no recording programs configured,
+        # exactly as before: in this process. With programs configured, in a
+        # child process this node can stop part-way (dlc/core/interruptible.py),
+        # asking the recording guard every few seconds. WHY not always the
+        # child: in-process is the long-proven path, and a node that never
+        # records has nothing to stop for.
+        pause_names = getattr(self.config, 'pause_while_running', None) or []
+
         try:
             # DLC outputs to same directory as input (DLC_Queue)
             dlc_output_dir = current_path.parent
             dlc_output_dir.mkdir(parents=True, exist_ok=True)
 
-            results = run_dlc_batch(
-                video_paths=[current_path],
-                config_path=dlc_config,
-                output_dir=dlc_output_dir,
-                gpu=self.config.dlc_gpu_device,
-                save_as_csv=True,
-                shuffle=shuffle
-            )
+            if pause_names:
+                from mousereach.dlc.core.interruptible import run_dlc_single_interruptible
+                result = run_dlc_single_interruptible(
+                    video_path=current_path,
+                    config_path=dlc_config,
+                    output_dir=dlc_output_dir,
+                    gpu=self.config.dlc_gpu_device,
+                    shuffle=shuffle,
+                    should_abort=self._recording_abort_reason,
+                )
+                if result and result.get('status') == 'aborted':
+                    raise _PoseAborted(result.get('abort_reason') or 'stopped part-way')
+                results = [result] if result else []
+            else:
+                results = run_dlc_batch(
+                    video_paths=[current_path],
+                    config_path=dlc_config,
+                    output_dir=dlc_output_dir,
+                    gpu=self.config.dlc_gpu_device,
+                    save_as_csv=True,
+                    shuffle=shuffle
+                )
 
             duration = time.time() - start_time
 
@@ -2288,6 +2591,12 @@ class DLCOrchestrator(BaseOrchestrator):
                 error_msg = results[0].get('error', 'Unknown DLC error') if results else 'No results'
                 raise RuntimeError(f"DLC failed: {error_msg}")
 
+        except _PoseAborted as stopped:
+            # Caught BEFORE the generic handler: stopping for a recording is
+            # not a failure of this video and must not spend its retries.
+            return self._requeue_aborted_pose(video_id, current_path, str(stopped),
+                                              time.time() - start_time)
+
         except Exception as e:
             duration = time.time() - start_time
             self.db.mark_failed(video_id, str(e))
@@ -2301,6 +2610,44 @@ class DLCOrchestrator(BaseOrchestrator):
                 pass
             raise
         return True
+
+    def _requeue_aborted_pose(self, video_id: str, current_path: Path,
+                              reason: str, duration: float) -> bool:
+        """Put a pose that was stopped for a recording back in the queue.
+
+        The row goes back to 'dlc_queued' with its file where it was, the
+        audit trail says 'aborted' and why, and the shared record is told it is
+        queued again. NOT marked failed and error_count NOT touched: the video
+        did nothing wrong, and a busy recording week would otherwise use up its
+        retries and park it as failed. The partial pose files were already
+        removed by the interruptible runner.
+
+        Always returns False (no pose was produced), so the main loop sleeps
+        instead of re-picking the row at once -- and on its next pass finds the
+        watcher paused.
+        """
+        from mousereach.watcher.db import VIDEO_TRANSITIONS
+        why = f"pose stopped part-way ({reason}); back in the DLC queue, not a failure"
+        try:
+            row = self.db.get_video(video_id) or {}
+            if 'dlc_queued' in VIDEO_TRANSITIONS.get(row.get('state'), []):
+                self.db.update_state(video_id, 'dlc_queued', current_path=str(current_path))
+            else:
+                self.db.force_state(video_id, 'dlc_queued', reason=why,
+                                    current_path=str(current_path))
+            self.db.log_step(video_id, 'dlc', 'aborted', message=reason, duration=duration)
+        except Exception as e:
+            # Left in 'dlc_running', which the next watcher start reclaims to
+            # 'dlc_queued' (_ORPHANED_VIDEO_STATES) -- still never 'failed'.
+            logger.error(f"{video_id}: pose was stopped ({reason}) but the row could "
+                         f"not be put back in the queue ({type(e).__name__}: {e}); "
+                         f"restarting the watcher returns it to the queue")
+            return False
+        self._sync_to_connectome(video_id, 'dlc_queued', source_path=str(current_path))
+        logger.info(f"{video_id}: pose stopped after {duration:.0f} s because {reason}; "
+                    f"partial output removed, back in the DLC queue (not counted as "
+                    f"a failure)")
+        return False
 
     # =========================================================================
     # LOCAL PIPELINE (also_process mode)

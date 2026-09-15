@@ -752,7 +752,7 @@ class TestOrchestratorIntegration:
         captured = capsys.readouterr()
         assert "Pending work items" in captured.out
 
-    def test_run_once_processes_available_items(self, mock_orchestrator, temp_db):
+    def test_run_once_processes_available_items(self, mock_orchestrator, temp_db, tmp_path):
         """run_once processes all available work items."""
         # Create some work
         temp_db.register_video("video1", "/path")
@@ -769,7 +769,13 @@ class TestOrchestratorIntegration:
                 temp_db.update_state(work['id'], 'dlc_running')
                 temp_db.mark_failed(work['id'], "mock processing")
 
-        with patch.object(mock_orchestrator, '_dispatch_work', side_effect=mock_dispatch):
+        # The processing root stays patched for the call itself: run_once checks
+        # watcher_stop.flag and watcher_paused.flag there, and the fixture's own
+        # patch ended when it returned -- without this the test would read this
+        # machine's REAL flags and fail whenever the real watcher is paused.
+        with patch.object(mock_orchestrator, '_dispatch_work', side_effect=mock_dispatch), \
+             patch('mousereach.watcher.orchestrator.require_processing_root',
+                   return_value=tmp_path / "processing"):
             with patch.object(mock_orchestrator, '_scan_for_dlc_completions', return_value=0):
                 mock_scan_result = Mock()
                 mock_scan_result.new_collages = 0

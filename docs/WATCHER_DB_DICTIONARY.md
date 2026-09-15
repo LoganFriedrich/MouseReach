@@ -214,6 +214,13 @@ READ THIS BEFORE INTERPRETING A STATE
   state, and the row is recorded that way instead of being queued for DLC.
   The processing log says why (step 'crop', 'adopt' or 'dlc', status 'skipped').
 
+  processing_log step 'dlc', status 'aborted' (since 2026-09-15): a pose was
+  stopped part-way because a program listed in watcher.pause_while_running
+  opened (the message is the reason, e.g. "recorder.exe is running"). The row
+  went back to 'dlc_queued' with the same current_path, error_count was NOT
+  increased, and the half-written pose files of that run were removed. It is
+  not a failure of the video; the pose runs again once recording is over.
+
   collages.state 'cropped' on a GPU node has three meanings. Read the collage's
   processing log to tell them apart:
     * cropped HERE: step 'crop', status 'completed'; videos_created = the

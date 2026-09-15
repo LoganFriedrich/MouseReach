@@ -16,6 +16,8 @@
    "covers": [
     "src/mousereach/archive",
     "src/mousereach/config.py",
+    "src/mousereach/dlc/core/interruptible.py",
+    "src/mousereach/dlc/core/interruptible_worker.py",
     "src/mousereach/pipeline/manifest.py",
     "src/mousereach/pipeline/reprocess_to_current.py",
     "src/mousereach/pipeline/versions.py",

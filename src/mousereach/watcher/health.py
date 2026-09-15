@@ -10,21 +10,105 @@ ASCII-only output (Windows consoles cannot print Unicode).
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import List, Optional
+
+# The watcher itself, started either way: the console script
+# (".../mousereach-watch.exe", or a python child whose command line says the
+# same) or `python -c "...main_watch()"`. WHY the look-ahead: the other watcher
+# commands share the prefix -- mousereach-watch-status, -toggle, -recorders --
+# and matching them made a PC with no watcher look RUNNING whenever someone
+# checked its status, so the panel refused to start one.
+_WATCHER_COMMAND = re.compile(r"\bmain_watch\b|mousereach-watch(?![-\w])")
+
+
+def is_watcher_command(cmdline: str) -> bool:
+    """True when a process command line is the watcher daemon itself."""
+    return bool(_WATCHER_COMMAND.search(cmdline or ""))
+
+
+def _watcher_processes(first_only: bool = False) -> list:
+    """psutil.Process objects for every running watcher daemon (at most one
+    when ``first_only``). Raises ImportError when psutil is missing.
+
+    WHY names first: reading EVERY process's command line through psutil took
+    about 85 seconds per call on a busy server, and the Watcher Control panel
+    asks every few seconds on the GUI thread -- the panel froze. One Windows
+    snapshot lists every program name in milliseconds, so only Python and
+    MouseReach programs (the only ones a watcher can be) have their command
+    lines read. Where the snapshot is unavailable, every process is checked as
+    before.
+    """
+    import psutil
+    candidates = None
+    try:
+        from mousereach.watcher.recording_guard import windows_process_table
+        table = windows_process_table()
+        if table:
+            candidates = [pid for pid, _ppid, exe in table
+                          if "python" in (exe or "").lower()
+                          or "mousereach" in (exe or "").lower()]
+    except Exception:
+        candidates = None
+
+    found = []
+    if candidates is not None:
+        for pid in candidates:
+            try:
+                p = psutil.Process(pid)
+                if is_watcher_command(" ".join(p.cmdline() or [])):
+                    found.append(p)
+                    if first_only:
+                        break
+            except Exception:
+                continue
+        return found
+    for p in psutil.process_iter(["cmdline"]):
+        cmd = " ".join(p.info.get("cmdline") or [])
+        if is_watcher_command(cmd):
+            found.append(p)
+            if first_only:
+                break
+    return found
 
 
 def watcher_running() -> Optional[int]:
     """The auto-processor's pid, or None when it is not running."""
     try:
-        import psutil
-        for p in psutil.process_iter(["cmdline"]):
-            cmd = " ".join(p.info.get("cmdline") or [])
-            if "main_watch" in cmd or "mousereach-watch" in cmd:
-                return p.pid
+        found = _watcher_processes(first_only=True)
     except Exception:
         return None
-    return None
+    return found[0].pid if found else None
+
+
+def _current_pause_reason() -> Optional[str]:
+    """Why the watcher on this PC is paused, or None. Never raises."""
+    try:
+        from mousereach.watcher.recording_guard import pause_reason
+        return pause_reason()
+    except Exception:
+        return None
+
+
+def pause_line(reason: str) -> str:
+    """The health line for a paused watcher, with what a person does about it.
+
+    WHY on the dashboard: a paused watcher looks exactly like a stuck one --
+    RUNNING, nothing failed, and the counts do not move. The pause may be the
+    hand pause, a recording program left open, or a check that cannot run, and
+    only this line tells an operator which, before they press Restart.
+    """
+    from mousereach.watcher.recording_guard import HAND_PAUSE_REASON
+    if reason == HAND_PAUSE_REASON:
+        return ("It is PAUSED by hand, so it starts no new work. Press Resume in "
+                "Watcher Control (or run mousereach-watch-toggle --resume) to "
+                "let it work again.")
+    if reason.startswith("cannot check"):
+        return ("It is PAUSED: %s. It stays paused until that check works, "
+                "because recording must always win." % reason)
+    return ("It is PAUSED: %s. Close the recording program when you are not "
+            "recording; work starts again by itself a little later." % reason)
 
 
 def health_report(db=None) -> List[str]:
@@ -33,6 +117,9 @@ def health_report(db=None) -> List[str]:
     pid = watcher_running()
     if pid:
         lines.append("The auto-processor is RUNNING.")
+        reason = _current_pause_reason()
+        if reason:
+            lines.append(pause_line(reason))
     else:
         lines.append("The auto-processor is NOT RUNNING -- videos will wait "
                      "until it is started (Restart button below).")
@@ -85,11 +172,8 @@ def restart_watcher(stop_delay: float = 3.0, verify_wait: float = 12.0,
     # the machines in the lab, and then reported success -- the replacement
     # exited on the singleton mutex and the OLD code kept running (found on a
     # GPU node, 2026-09-13).
-    targets = []
-    for p in psutil.process_iter(["cmdline"]):
-        cmd = " ".join(p.info.get("cmdline") or [])
-        if "main_watch" in cmd or "mousereach-watch" in cmd:
-            targets.append(p)
+    # Same fast lookup as watcher_running (see _watcher_processes for why).
+    targets = _watcher_processes()
 
     # Stopping is a REQUEST, not a kill.
     #

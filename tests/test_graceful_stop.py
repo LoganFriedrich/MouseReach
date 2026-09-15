@@ -119,6 +119,12 @@ def button(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen",
                         lambda *a, **k: launched.append(a) or SimpleNamespace())
     monkeypatch.setattr(health.time, "sleep", lambda *_: None)
+    # The watcher look-up lists program names from the REAL Windows process
+    # snapshot before asking psutil (health._watcher_processes). These tests
+    # fake psutil's process table, so the real snapshot must be off too, or the
+    # look-up finds this machine's processes instead of the fake ones.
+    from mousereach.watcher import recording_guard
+    monkeypatch.setattr(recording_guard, "windows_process_table", lambda: None)
     return SimpleNamespace(root=tmp_path, launched=launched)
 
 

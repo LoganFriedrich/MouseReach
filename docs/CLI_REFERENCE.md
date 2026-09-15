@@ -44,7 +44,7 @@ walkthroughs of the review tools themselves.
 - [Analysis Dashboard](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
 - [Database Sync - Automatic sync to central connectome database](#database-sync-automatic-sync-to-central-connectome-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
-- [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`
+- [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`
 - [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
 - [Archive migration - One-time Sort/ -> project/cohort restructure](#archive-migration-one-time-sort-project-cohort-restructure) -- `mousereach-migrate-archive`
@@ -1936,14 +1936,59 @@ and whether the watcher could run here. Takes no options.
 ### `mousereach-watch-toggle`
 
 ```
-Toggle the watcher between filming (paused) and processing (active) modes.
-
-    When paused, the running watcher skips all work and waits.
-    When active, normal processing resumes.
+Pause or resume the watcher by hand, or show why it is paused.
 
     Usage:
-        mousereach-watch-toggle          Toggle current state
-        mousereach-watch-toggle --status  Show current state only
+        mousereach-watch-toggle            Flip: paused -> active, active -> paused
+        mousereach-watch-toggle --pause    Pause by hand (stays paused until --resume)
+        mousereach-watch-toggle --resume   Remove the hand pause
+        mousereach-watch-toggle --status   Show both pause reasons; change nothing
+
+    Two separate things pause the watcher:
+      * the hand pause set here (the file watcher_paused.flag in this
+        machine's processing folder, also set by the Pause button), and
+      * a recording program listed with mousereach-watch-recorders being open.
+    --resume removes only the hand pause. It cannot override a recording
+    program: recording always wins, so close the recording program to let
+    work start again.
+
+    --pause and --resume do exactly what they say even when run twice, so a
+    person or a script never flips the watcher back by accident (the plain
+    toggle cannot promise that).
+```
+
+### `mousereach-watch-recorders`
+
+```
+usage: mousereach-watch-recorders [--list] [--add NAME] [--remove NAME] [--grace SECONDS]
+
+Show or change the recording programs that pause THIS machine's watcher.
+While any listed program is open the watcher starts no new work, and a pose
+in progress is stopped and posed again later, because recording always wins:
+a pose can be run again, a spoiled recording cannot. A collage crop that has
+already started finishes first. A running watcher picks up changes made here
+by itself within about a minute.
+
+  --list            Show the list, the grace period, and what is running now.
+                    This is what happens with no options at all.
+  --add NAME        Add a program. NAME is the program's name as Task Manager
+                    shows it on the Details tab, for example recorder.exe.
+                    Capital letters, a full path or a missing .exe still match.
+  --remove NAME     Take a program off the list.
+  --grace SECONDS   How long every listed program must have been closed before
+                    work starts again (default 120). WHY: people often close
+                    the recording program and open it again a moment later.
+
+--add and --remove may each be given more than once. The settings are saved in
+the 'watcher' section of ~/.mousereach/config.json; nothing else in that file
+changes. An empty list (the default) means the watcher never pauses for a
+program.
+
+Examples:
+  mousereach-watch-recorders
+  mousereach-watch-recorders --add recorder.exe
+  mousereach-watch-recorders --remove recorder.exe
+  mousereach-watch-recorders --grace 300
 ```
 
 ## Version tracking and reprocessing

@@ -247,9 +247,22 @@ full pipeline automatically (crop, DLC, segment, reaches, outcomes, archive).
 | `mousereach-watch-status` | Show pipeline status (video/collage counts, recent activity) |
 | `mousereach-watch-status --by-animal` | Per-animal breakdown with QC |
 | `mousereach-watch-status --log N` | Show last N processing log entries |
-| `mousereach-watch-toggle` | Pause/resume the watcher (for filming sessions) |
-| `mousereach-watch-toggle --status` | Show whether watcher is paused or active |
+| `mousereach-watch-toggle` | Pause/resume the watcher by hand (flips the current state) |
+| `mousereach-watch-toggle --pause` / `--resume` | Pause by hand / remove the hand pause (safe to run twice) |
+| `mousereach-watch-toggle --status` | Show whether the watcher is paused, and why |
+| `mousereach-watch-recorders` | Show the recording programs that pause this PC's watcher |
+| `mousereach-watch-recorders --add recorder.exe` | Pause the watcher whenever that program is open |
 | `mousereach-watch-info` | Diagnose drives and path accessibility |
+
+**Pausing while recording.** A PC that both records videos and runs the
+watcher can pause itself: list the recording program's name (as Task Manager's
+Details tab shows it) with `mousereach-watch-recorders --add <name>` or in the
+Watcher Control panel. While that program is open the watcher starts no new
+work and stops a pose part-way (the video is posed again later, not marked
+failed); a collage crop already running finishes first. Work resumes by itself
+a set time (default 120 s) after the program closes. Resume cannot override an
+open recording program. The list is empty by default, which means the watcher
+never checks for any program.
 
 The watcher runs on the NAS / DLC PC (the machine with direct NAS access and GPU).
 Set up with `mousereach-setup --set-role "NAS / DLC PC"` then `mousereach-setup`.

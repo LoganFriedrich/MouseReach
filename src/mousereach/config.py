@@ -27,9 +27,21 @@ class ConfigurationError(Exception):
 # CONFIGURATION LOADING
 # =============================================================================
 
+def config_file_path() -> Path:
+    """The per-user settings file every part of MouseReach reads.
+
+    Resolved each time it is called (not once at import), so a test or tool that
+    points the home folder elsewhere reads and writes the same file the watcher
+    does. WHY a function: several writers (the CLI, the watcher panel) must write
+    exactly the file WatcherConfig.load() reads, and a running watcher follows
+    edits to it.
+    """
+    return Path.home() / ".mousereach" / "config.json"
+
+
 def _load_config() -> dict:
     """Load configuration from JSON file."""
-    config_file = Path.home() / ".mousereach" / "config.json"
+    config_file = config_file_path()
     if config_file.exists():
         try:
             with open(config_file, "r") as f:
@@ -723,12 +735,54 @@ class WatcherConfig:
         # shape and explains why an absent key is a default rather than a
         # hard stop (it is a preference, not a location).
         self.work_priority: Optional[dict] = cfg.get('work_priority')
+        # Programs that, while running, pause this watcher: process names as
+        # the operating system lists them (e.g. "recorder.exe"), matched
+        # case-insensitively. WHY: a GPU node that also records videos must
+        # never pose on top of a recording -- dropped frames cannot be filmed
+        # again, a pose can be run later -- and a node cannot know a recording
+        # schedule, only whether the recording program is open. EMPTY BY
+        # DEFAULT, and empty means the watcher never checks for any program.
+        # See mousereach.watcher.recording_guard.
+        raw_pause = cfg.get('pause_while_running') or []
+        if isinstance(raw_pause, str):
+            # A hand-edited config that forgot the brackets still protects
+            # the recording rather than silently doing nothing.
+            raw_pause = [raw_pause]
+        self.pause_while_running: List[str] = [
+            str(n).strip() for n in raw_pause
+            if isinstance(n, str) and n.strip()]
+        # Resume only after no listed program has run for this many seconds.
+        # WHY: operators often close the recording program and reopen it a
+        # moment later; starting a 14-minute pose in that gap would compete
+        # with the next recording or be thrown away seconds later.
+        try:
+            self.pause_resume_grace_seconds: int = max(
+                0, int(cfg.get('pause_resume_grace_seconds', 120)))
+        except (TypeError, ValueError):
+            self.pause_resume_grace_seconds = 120
+        # The file these settings were read from, and its modified time then.
+        # Set only by load(). WHY: a running watcher re-reads the two recording
+        # settings above when that file changes (see
+        # BaseOrchestrator._refresh_recording_settings), so a program added in
+        # the panel or with mousereach-watch-recorders protects the very next
+        # recording without a restart. A config built from a dict (tests, tools)
+        # has no file and never changes under the caller.
+        self.source_file: Optional[Path] = None
+        self.source_mtime: Optional[float] = None
 
     @classmethod
     def load(cls) -> 'WatcherConfig':
         """Load watcher config from ~/.mousereach/config.json."""
+        path = config_file_path()
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
         config = _load_config()
-        return cls(config.get('watcher', {}))
+        cfg = cls(config.get('watcher', {}))
+        cfg.source_file = path
+        cfg.source_mtime = mtime
+        return cfg
 
     def to_dict(self) -> dict:
         """Serialize to dict for saving to config.json."""
@@ -743,7 +797,12 @@ class WatcherConfig:
             'max_local_pending': self.max_local_pending,
             'also_process': self.also_process,
             'repose_batch': self.repose_batch,
+            'pause_resume_grace_seconds': self.pause_resume_grace_seconds,
         }
+        # Written only when set, so a node that never configured it keeps a
+        # config file that says nothing about recording programs.
+        if self.pause_while_running:
+            d['pause_while_running'] = list(self.pause_while_running)
         if self.dlc_shuffle is not None:
             d['dlc_shuffle'] = self.dlc_shuffle
         if self.dlc_config_path:
