@@ -193,7 +193,7 @@ There are two watcher programs in the code, and one machine runs exactly one of 
 
 WHAT THE FIRST WATCHER DOES
 
-The first watcher runs on a machine with a graphics card. Each cycle it scans two folders on the network drive: the collage intake folder (Unanalyzed/Multi-Animal) and the network folder Unanalyzed/Single_Animal (src/mousereach/watcher/watcher.py:60-72). Files whose names it cannot parse are moved to a quarantine folder (src/mousereach/watcher/state.py:110-124). It then picks one job per cycle from a five-item priority list (src/mousereach/watcher/orchestrator.py:501-583):
+The first watcher runs on a machine with a graphics card. Each cycle it scans two folders on the network drive: the collage intake folder (Unanalyzed/Multi-Animal) and the network folder Unanalyzed/Single_Animal (src/mousereach/watcher/watcher.py:60-72). Files whose names it cannot parse are moved to a quarantine folder (src/mousereach/watcher/state.py:110-124); since 2026-09-15 a misnamed single is quarantined only once it has stopped changing, because moving a file mid-copy breaks the copy. It then picks one job per cycle from a five-item priority list (src/mousereach/watcher/orchestrator.py:501-583):
 
 1. Crop one collage. It copies the collage from the network drive to a local scratch folder, cuts it into single-mouse videos, names each one by which mouse it contains, registers each in its local tracking database, and copies each single into a folder called DLC_Queue on its OWN LOCAL DISK - not to the network Unanalyzed/Single_Animal folder. The local scratch copies are then deleted; the original collage is left where it was (src/mousereach/watcher/orchestrator.py:711-866, and src/mousereach/config.py:149).
 
@@ -207,7 +207,7 @@ The first watcher runs on a machine with a graphics card. Each cycle it scans tw
 
 So the statement "cropping and DeepLabCut are all the first watcher does" is not accurate in either configuration. With also_process off it also performs the handoff move; with also_process on it produces the final scientific product.
 
-Two further things the first watcher does that are easy to miss. It USED TO inherit a periodic housekeeping scan from the shared base class, running at startup and then roughly every 30 minutes, which walks the archived videos in its own database, reads each one's manifest out of the final Analyzed folder, and re-labels as "outdated" any video whose recorded tool versions no longer match the declared current versions or whose human review file is newer than its archived kinematics (`ReprocessingScanner.scan`). On a first-watcher machine that had no follow-through: the first watcher's job list has no entry for "outdated" videos, so a video re-labelled this way left the "archived" state and nothing on that machine ever picked it up again. Worse, the state was not inert - it synced to connectome.db, other nodes adopted it during startup recovery, and it came back as a pathless row on a machine that had no file for the video. As of 2026-08-24 the scan is gated on `handles_reprocessing`, which is true only for the second watcher, so the first watcher no longer marks anything outdated. Only the second watcher acts on "outdated" (`ProcessingOrchestrator._get_next_work_item`). Separately, single-mouse videos found sitting in the network Unanalyzed/Single_Animal folder are registered in the database at state "validated" (src/mousereach/watcher/state.py:180-188). Until 2026-09-13 "validated" was not one of the states the first watcher's job list selected from, so those videos were recorded and then never processed; the job list now has a branch for them, which copies each onto the node and queues it for pose.
+Two further things the first watcher does that are easy to miss. It USED TO inherit a periodic housekeeping scan from the shared base class, running at startup and then roughly every 30 minutes, which walks the archived videos in its own database, reads each one's manifest out of the final Analyzed folder, and re-labels as "outdated" any video whose recorded tool versions no longer match the declared current versions or whose human review file is newer than its archived kinematics (`ReprocessingScanner.scan`). On a first-watcher machine that had no follow-through: the first watcher's job list has no entry for "outdated" videos, so a video re-labelled this way left the "archived" state and nothing on that machine ever picked it up again. Worse, the state was not inert - it synced to connectome.db, other nodes adopted it during startup recovery, and it came back as a pathless row on a machine that had no file for the video. As of 2026-08-24 the scan is gated on `handles_reprocessing`, which is true only for the second watcher, so the first watcher no longer marks anything outdated. Only the second watcher acts on "outdated" (`ProcessingOrchestrator._get_next_work_item`). Separately, single-mouse videos found sitting in the network Unanalyzed/Single_Animal folder are registered in the database at state "validated" (`WatcherStateManager.discover_new_singles`). Until 2026-09-13 "validated" was not one of the states the first watcher's job list selected from, so those videos were recorded and then never processed; the job list now has a branch for them. Since 2026-09-15 a single is registered only once it has stopped changing. The branch first claims it by renaming it into Single_Animal/.inflight/<machine>/, then copies it onto the node and queues it for pose. See "Update 2026-09-15: videos can be dropped into either Unanalyzed folder at any time" at the end of this document.
 
 WHAT THE SECOND WATCHER REQUIRES BEFORE IT WILL TOUCH A VIDEO
 
@@ -873,7 +873,9 @@ older manifest in the archive; `_archive_to_nas` uses the same order.
 It is asked at four points:
 
   1. Adopting a single from Unanalyzed/Single_Animal (as before, now including
-     review holds).
+     review holds). Asked before the single is claimed, so a video that needs
+     no pose is never moved into .inflight (see "videos can be dropped into
+     either Unanalyzed folder at any time", below).
   2. Before cropping. A child's name follows from the collage filename
      (`collage_provenance.expected_offspring`). If EVERY child is finished or
      held, the collage is not copied or cropped. Each child row is recorded in
@@ -1236,3 +1238,139 @@ guard, which cannot see the running watcher's grace countdown (it says "not
 paused" while the watcher is still waiting; `mousereach-watch-status` prints a
 reminder line). Two different programs with the same program name cannot be
 told apart.
+
+---
+
+## Update 2026-09-15: videos can be dropped into either Unanalyzed folder at any time
+
+The goal: people copy new videos onto the share straight off the recording PCs,
+at any time, even while several GPU nodes run. Collages
+(Unanalyzed/Multi-Animal) already allowed this: they wait until they stop
+changing (`check_collage_stability`) and are claimed in the shared collage table
+before one node crops them. Singles (Unanalyzed/Single_Animal,
+`Paths.SINGLE_ANIMAL_OUTPUT`) did not, for two reasons:
+
+  * `discover_new_singles` registered an mp4 as 'validated' the moment it
+    appeared. A GPU node could copy, and pose, a file still being copied in.
+  * `DLCOrchestrator._adopt_single_for_dlc` copied the file into the node's own
+    DLC_Queue and LEFT THE ORIGINAL in the folder. Nothing ever removed it.
+    Every GPU node without a row for that video (another node, or a rebuilt
+    database) posed it again, unless an archive manifest or a review hold
+    already existed.
+
+WHAT THE CODE DOES NOW
+
+(a) Stability wait (`WatcherStateManager._single_is_stable`). A single is
+registered only once its size AND modified time have not changed for
+`watcher.stability_wait_seconds`. The size rule is the collages' own
+(`transfer.check_file_stable_quick`). The modified time is compared too because
+some copy programs set the final size first and fill the file in afterwards.
+The first sighting never counts. The sightings are kept in memory, because the
+videos table has no size columns, so a watcher restart simply waits again.
+Names starting with "." (a Mac's `._<name>.mp4` helper files) are never taken
+in, and neither are temporary endings (.part/.tmp/.partial). A misnamed single
+is quarantined only once stable. WHY: a file being copied in carries its final
+name from the first byte, and moving it to quarantine mid-copy breaks the copy.
+
+(b) The claim is a rename (watcher/single_claim.py). After the finished-or-held
+check and before any copy, the node renames
+`<Single_Animal>/<stem>.mp4` to `<Single_Animal>/.inflight/<machine>/<stem>.mp4`.
+WHY a rename and not a marker file: a rename within one share folder is one
+operation on the file server. Exactly one node's rename finds the file; every
+other node's fails with "file not found". Check-then-write markers (the
+processing server's `Processing/Posed/.claims`) can let two nodes both believe
+they won. WHY a dot-folder under the same folder: a same-folder rename never
+crosses a volume, and readers that list only the top of the folder never see a
+claimed video as waiting a second time. The claim also sets the file's modified
+time to now, because a rename keeps the old time and a video copied in last
+week would otherwise look like a stale claim at once.
+
+(c) What each outcome records, and what an operator sees:
+
+  * claimed: row 'dlc_queued'; log INFO `<stem>: taken from the shared singles
+    folder (held in .../.inflight/<machine> until handed on); adopted onto this
+    node and queued for DLC`.
+  * another node's rename won: nothing recorded against the row on that pass,
+    one INFO `not taken from the shared singles folder`. On the next pass the
+    row becomes 'unresolvable' with reason `gone from the shared singles folder
+    before this node took it: <machine> took it for pose ...`
+    (`single_claim.LEFT_FOLDER_REASON`). If the file comes back (see (e)), the
+    intake scan validates the row again by itself.
+  * the rename was refused while the file is still there (normally still being
+    copied in; also a video player holding it open, or an account that may
+    read the folder but not rename in it): the row stays 'validated' and is
+    parked for 2 min (`_SINGLE_REFUSED_BACKOFF_S`), so the collages behind it
+    are still cropped. INFO the first time. One WARNING naming the file and the
+    likely causes once the refusal has lasted 10 min.
+  * a same-named file is in the folder while ANOTHER node holds a claim on that
+    name (someone copied the batch in again): not claimed, not posed. The row
+    becomes 'unresolvable' with reason `a second copy of a video another node
+    already holds for pose ...` (`single_claim.DUPLICATE_OF_CLAIM_REASON`),
+    which is never re-driven, and a WARNING asks a person to delete the second
+    copy. WHY: posing it would put two poses of one name into Processing/Posed.
+  * the copy onto the node failed: the claimed file is put back in the folder,
+    and the row is 'failed' with a message saying so. This node does not retry
+    it by itself (the GPU role has no job list for failed rows, and a full disk
+    would otherwise copy a whole video every minute). Run
+    `mousereach-watch-reprocess <stem>` once the cause is fixed.
+
+(d) The claimed file is removed only once the video's next copy is confirmed
+(`_retire_claimed_single`): the staged mp4 in Processing/Posed (or, if the
+server already took it in, the stage's own verified copy), the archived mp4
+after a local archive, or the mp4 inside a review bundle. The next copy must
+have the same size. Otherwise it is kept, with a WARNING naming it. A removal
+is logged as processing_log step 'single_claim'. WHY never earlier: until the
+video moves on, the claimed file may be the only copy on the share, since the
+node's queue is on its own disk.
+
+(e) Claims that end without the video moving on:
+
+  * Every scan and every paused poll refreshes (touches) this node's claims
+    whose rows are still being worked or were handed on
+    (`_CLAIM_KEEPALIVE_STATES`). A claim whose row is failed, unresolvable or
+    missing is not refreshed, and is named once at WARNING. WHY: refreshing a
+    claim this node has given up on would hold the only shared copy from every
+    other node for as long as this node runs.
+  * A failed pose, or a queued or posed video with no local copy left, gives
+    the claim back to the folder at once (`_release_claim_given_up`, WARNING).
+  * After 3 pose failures in a row the node takes no new singles for 30 min
+    (`_POSE_FAILURE_BRAKE`, WARNING). WHY: a node whose DeepLabCut is broken
+    would otherwise claim and fail every single dropped on the share.
+  * Every running GPU node sweeps for claims untouched for 24 h
+    (`single_claim.STALE_S`, the re-pose request rule) at most every 300 s,
+    never while paused, and moves each back to the folder (WARNING). It never
+    deletes and never overwrites. If a same-named file is already back in the
+    folder, nothing moves, and a WARNING asks a person to keep one copy. That
+    warning repeats at most once a day. Trade-off: a node that comes back after
+    more than a day may pose a video another node has since taken.
+
+(f) The processing server's `_rescue_misfiled_singles` still moves a pose-less
+stray mp4 from Processing/Posed to the TOP of Unanalyzed/Single_Animal. It
+skips any name a node holds in .inflight, and never moves anything into the
+claim folder.
+
+(g) Readers count a claimed single as waiting in Unanalyzed/Single_Animal,
+never as lost or as a mismatch: `mousereach-reconcile` (detail `claimed
+by <machine> for pose`, plus `not refreshed for N h -- that machine's watcher
+may be stopped` once a claim is more than an hour old), the census (crop_dlc),
+the dashboard folder scan ("cropped", with `claimed_by`), the collage
+downstream index, and `mousereach-watch-process-animal` (lists them as already
+being posed and does not queue them again).
+
+Known gaps:
+
+  * GPU nodes still running older code copy singles without claiming, so a
+    double pose stays possible until every node runs this version.
+  * `mousereach-watch-process-animal` and `mousereach-crop --queue` copy
+    singles into a DLC queue without claiming them.
+  * Originals that the old adoption left behind in Single_Animal are not cleaned
+    up. A node that has a row for one skips it. A node without a row checks the
+    archive and review holds before it would claim one.
+  * Only a running GPU watcher sweeps stale claims. In a lab with a single GPU
+    node, a claim that node gave up on comes back only after that node runs
+    for 24 h without refreshing it; reconcile shows its age meanwhile.
+  * A losing node's row is recorded 'unresolvable' (with a WARNING), and the
+    dashboard health line counts it with the other unresolvable rows.
+  * Rows parked before 2026-09-15 under the old text ("registered from the
+    shared singles folder, but the file is no longer there") are not re-driven
+    automatically.

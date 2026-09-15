@@ -246,6 +246,35 @@ READ THIS BEFORE INTERPRETING A STATE
   stopped before recording that; files in Posed are never taken as proof, so
   the row is not 'archived' either.
 
+  Two more 'unresolvable' reasons, both for singles dropped into
+  Unanalyzed/Single_Animal (since 2026-09-15; watcher/single_claim.py):
+    * "gone from the shared singles folder before this node took it: ..."
+      (single_claim.LEFT_FOLDER_REASON). Another GPU node claimed the video
+      first (the reason names it), or somebody removed the file. Only rows
+      with this reason are set back to 'validated' by the intake scan,
+      automatically, when a file of that name is back at the top of the folder
+      and stable, and no node holds a claim on it. That happens when another
+      node's copy failed or its claim went stale. WHY only these rows:
+      'unresolvable' has other reasons, and a row parked for one of them must
+      not be re-driven just because a same-named file exists. So a row may
+      go from 'unresolvable' back to 'validated' with nobody acting: that is
+      expected.
+    * "a second copy of a video another node already holds for pose: ..."
+      (single_claim.DUPLICATE_OF_CLAIM_REASON). The same video was copied in
+      again while another node still held it. It is never re-driven. A person
+      deletes the second copy.
+
+  processing_log step 'single_claim', status 'completed' (since 2026-09-15):
+  this node removed its claimed copy of a single
+  (Single_Animal/.inflight/<host>/<stem>.mp4) after the video's next copy was
+  confirmed: staged, archived, or in a review bundle. The message names the
+  file and how the next copy was confirmed.
+
+  A 'failed' single whose error_message ends "put back in the shared singles
+  folder ..." had its copy onto this node fail. The video went back to the
+  folder for another node. This node does not retry it by itself; run
+  mousereach-watch-reprocess <video_id> once the cause is fixed.
+
   'triage' and 'deep_review' are human-review holds. Kinematics never run on a
   held video, and it stays out of the archive and the central database until a
   person clears it.

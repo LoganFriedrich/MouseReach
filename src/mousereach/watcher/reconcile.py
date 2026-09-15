@@ -45,6 +45,11 @@ WHERE IT LOOKS
     for a pose; ``Paths.DLC_STAGING`` = Processing/Posed, posed and waiting for
     the algorithms). Never restated here, so this check and the watcher cannot
     disagree about where a single waits;
+  - singles a GPU node has claimed for pose, moved into
+    <Single_Animal>/.inflight/<machine>/ so only one node poses them. Listed as
+    waiting in Unanalyzed/Single_Animal, like an unclaimed single, with a note
+    naming the machine ("claimed by NODE-A for pose"). The dot-folder is never
+    read as a video of its own;
   - the review queues, Failed and Quarantine;
   - each queue's build folder, <queue>/.incoming/<stem>/. The router assembles
     a bundle there and renames it into the queue in one step, so the files have
@@ -78,10 +83,11 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from mousereach.census.runner import bundles_in, ids_in_dir
+from mousereach.census.runner import bundles_in, claimed_singles, ids_in_dir
 from mousereach.pipeline.analyzed_tree import SUPERSEDED_DIR_NAMES
 from mousereach.pipeline.pipe_structure import UNMIGRATED_MESSAGE, retired_folders_present
 
@@ -152,6 +158,12 @@ NOT_CURRENT = "not_current"
 WRONG_PLACE = "wrong_place"
 STRAY_BUNDLE = "stray_review_bundle"
 MISMATCHES = (NOT_CURRENT, WRONG_PLACE, STRAY_BUNDLE)
+
+# A claimed single whose file has not been refreshed for longer than this is
+# described as possibly held by a stopped machine. WHY an hour: a running
+# holder refreshes its claims every poll (about 30 s), and even a long
+# recording pause keeps refreshing, so an hour of silence is never normal.
+CLAIM_QUIET_S = 3600
 
 
 class ReconcileUnavailable(RuntimeError):
@@ -231,9 +243,14 @@ def _why_not_current(comparison: dict, review) -> str:
     return "; ".join(parts) or "not current"
 
 
-def judge(stem: str, where: set, files: dict, scanner, current: dict, nas) -> dict:
+def judge(stem: str, where: set, files: dict, scanner, current: dict, nas,
+          claim_note: Optional[str] = None) -> dict:
     """One video's verdict against the definition of done. Pure apart from
-    reading the video's own files."""
+    reading the video's own files.
+
+    ``claim_note`` (e.g. "claimed by NODE-A for pose") is added to the detail
+    whatever the verdict: a claim does not change what the video is waiting
+    for, but a person chasing it needs to know which machine holds it."""
     from mousereach.archive.core import get_archive_destination
     from mousereach.config import is_supported_tray_type
     from mousereach.pipeline.versions import compare_manifest_to_current
@@ -254,6 +271,8 @@ def judge(stem: str, where: set, files: dict, scanner, current: dict, nas) -> di
                 q + "/" + INCOMING_DIR_NAME for q in incoming)
                 + " -- a route did not finish; check them")
             detail = detail + "; " + note if detail else note
+        if claim_note:
+            detail = detail + "; " + claim_note if detail else claim_note
         row["verdict"], row["detail"] = v, detail
         return row
 
@@ -359,6 +378,39 @@ def reconcile() -> dict:
 
     for folder in _waiting_folders():
         mark(ids_in_dir(folder), "waiting:" + _rel(folder, nas))
+    # A single a GPU node has claimed for pose was MOVED into
+    # <singles>/.inflight/<host>/, which the top-level listing above never
+    # reads. It is still waiting for its pose, so it gets the same
+    # "waiting:<singles folder>" label as an unclaimed single -- never a
+    # mismatch, never a vanished video -- plus a note naming the machine,
+    # so a claim that never comes back can be chased to the node holding it.
+    claim_notes: Dict[str, str] = {}
+    single = Paths.SINGLE_ANIMAL_OUTPUT
+    if single:
+        unclaimed = ids_in_dir(single)
+        claims = claimed_singles(single)
+        mark(claims, "waiting:" + _rel(single, nas))
+        # How long since each claim was last refreshed. WHY: a claim held by a
+        # stopped machine looks exactly like a live one by name alone; its
+        # holder refreshes it every poll, so an old one means that machine's
+        # watcher is not running (or has given the video up).
+        try:
+            from mousereach.watcher.single_claim import inflight_claims
+            ages = {s: time.time() - t for s, (_, t) in inflight_claims().items()}
+        except Exception:
+            ages = {}
+        for stem, host in claims.items():
+            note = f"claimed by {host} for pose"
+            age = ages.get(stem)
+            if age is not None and age > CLAIM_QUIET_S:
+                note += (f"; not refreshed for {age / 3600:.0f} h -- that machine's "
+                         f"watcher may be stopped. It goes back to the folder after "
+                         f"24 h without a refresh, once any GPU watcher is running")
+            if stem in unclaimed:
+                # The claim is one rename, so a same-named file back at the
+                # top means someone dropped the video again while it was out.
+                note += "; another copy of the same name also waits unclaimed"
+            claim_notes[stem] = note
     for folder in _leftover_folders(nas):
         mark(ids_in_dir(folder), "old:" + _rel(folder, nas))
     mark(bundles_in(Paths.TRIAGE_REVIEW), "triage")
@@ -375,7 +427,8 @@ def reconcile() -> dict:
     mark(analyzed.keys(), "analyzed")
 
     scanner = ReprocessingScanner(db=None, nas_root=nas)
-    rows = [judge(stem, where[stem], analyzed.get(stem) or {}, scanner, current, nas)
+    rows = [judge(stem, where[stem], analyzed.get(stem) or {}, scanner, current, nas,
+                  claim_note=claim_notes.get(stem))
             for stem in sorted(where)]
     leftovers = sorted(r["video_id"] for r in rows
                        if r["verdict"] != ONLY_IN_OLD_FOLDER

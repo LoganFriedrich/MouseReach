@@ -10,9 +10,10 @@ Provides high-level operations on top of WatcherDB:
 """
 
 import logging
+import os
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
 from mousereach.watcher.db import WatcherDB
@@ -25,6 +26,15 @@ from mousereach.config import WatcherConfig
 logger = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = {'.mkv', '.avi', '.mp4', '.mov', '.wmv'}
+
+# Names copy programs give a file while it is still being written, renaming it
+# once complete. A single with one of these endings is never taken in: it is
+# by definition unfinished, and the finished name will appear. Defence in
+# depth, stated so nobody relies on it alone: today the .mp4-only rule already
+# rejects these names, so this matters only if that rule is ever widened.
+# (This pipeline's own '.part' files are written into Processing/Posed by
+# DLCOrchestrator._stage_files, not into the singles folder.)
+TEMP_SUFFIXES = ('.part', '.tmp', '.partial')
 
 
 @dataclass
@@ -50,6 +60,11 @@ class WatcherStateManager:
         """
         self.db = db
         self.config = config
+        # Singles seen in the shared singles folder but not yet stable:
+        # {normalised path: (size, modified time ns, when either last changed)}.
+        # In memory on purpose: the videos table has no size columns, and a
+        # watcher restart simply waits the stability time again.
+        self._single_sightings: Dict[str, Tuple[int, int, float]] = {}
 
     def discover_new_collages(self, scan_dir: Path) -> List[str]:
         """
@@ -164,38 +179,150 @@ class WatcherStateManager:
 
         return newly_registered
 
+    @staticmethod
+    def _is_single_intake_name(file_path: Path, scan_dir: Path) -> bool:
+        """Could this path be a single waiting to be taken in? Name rules only.
+
+          * .mp4 only (cut singles are always mp4);
+          * never a temporary name (TEMP_SUFFIXES): the file is still being
+            written and will be renamed when it is complete;
+          * never a name, or a folder on the way to it, starting with "." --
+            hidden helper files (a Mac's "._<name>.mp4" beside every copy ends
+            in .mp4) and the claim area ``.inflight`` (watcher/single_claim.py),
+            where a video another node has already taken sits.
+
+        The folder part is defence in depth: discover_new_singles reads only
+        the top of the folder, so it never meets a path inside ``.inflight``
+        today. It is kept so that a future recursive scan cannot adopt another
+        node's claimed video.
+        """
+        name = file_path.name
+        if name.lower().endswith(TEMP_SUFFIXES):
+            return False
+        try:
+            parts = file_path.relative_to(scan_dir).parts
+        except ValueError:
+            parts = (name,)
+        if any(part.startswith('.') for part in parts):
+            return False
+        return file_path.suffix.lower() == '.mp4'
+
+    def _single_is_stable(self, file_path: Path) -> bool:
+        """True once this single's size and modified time have not changed for
+        ``config.stability_wait_seconds`` across polls.
+
+        WHY: a video still being copied onto the share exists under its final
+        name from the first byte. Registering it at once made it work for a
+        GPU node straight away, and the node copied (and posed) whatever part
+        had arrived. Collages have always waited like this
+        (check_collage_stability); the size rule is the same one
+        (transfer.check_file_stable_quick). The modified time is compared too
+        because some copy programs set the final size first and fill it in.
+        The first sighting never counts as stable, so every single waits at
+        least one poll.
+        """
+        sightings = self.__dict__.setdefault('_single_sightings', {})
+        key = os.path.normcase(os.path.abspath(str(file_path)))
+        try:
+            mtime_ns = file_path.stat().st_mtime_ns
+        except OSError:
+            sightings.pop(key, None)
+            return False
+        recorded_size, recorded_mtime, changed_at = sightings.get(key, (None, None, None))
+        if recorded_mtime is not None and recorded_mtime != mtime_ns:
+            recorded_size = None            # written to since last poll: wait again
+        wait = getattr(self.config, 'stability_wait_seconds', 60)
+        if wait is None:
+            wait = 60
+        is_stable, size, change_time = check_file_stable_quick(
+            file_path, recorded_size,
+            min_stable_seconds=wait,
+            last_change_time=changed_at)
+        if is_stable:
+            sightings.pop(key, None)
+            return True
+        sightings[key] = (size, mtime_ns, change_time)
+        return False
+
     def discover_new_singles(self, scan_dir: Path) -> List[str]:
         """
         Scan directory for new single-animal videos and register them.
+
+        A single is registered (as 'validated', i.e. ready to be taken by a
+        GPU node) only once it is stable (_single_is_stable) -- and a misnamed
+        one is quarantined only then too, because moving a file mid-copy
+        breaks the copy and files a truncated video. Temporary names and
+        dot-names are never taken in (_is_single_intake_name). Only the top of
+        the folder is read, so a video claimed into ``.inflight`` is not seen.
+
+        A row this node parked 'unresolvable' because the video had left the
+        folder before it could be taken (single_claim.LEFT_FOLDER_REASON) is
+        validated again when the video is back and stable: another node
+        released it after a failed copy, or its claim went stale.
 
         Args:
             scan_dir: Directory to scan for videos
 
         Returns:
-            List of newly registered video_ids
+            List of newly registered (or re-validated) video_ids
         """
         if not scan_dir or not scan_dir.exists():
             logger.debug(f"Scan directory does not exist: {scan_dir}")
             return []
 
+        from mousereach.config import get_video_id
+        from mousereach.watcher.single_claim import LEFT_FOLDER_REASON
+
         newly_registered = []
+        seen = set()
 
         for file_path in scan_dir.iterdir():
-            if not file_path.is_file():
+            if not self._is_single_intake_name(file_path, scan_dir):
                 continue
-
-            # Only .mp4 for singles
-            if file_path.suffix.lower() != '.mp4':
+            try:
+                if not file_path.is_file():
+                    continue
+            except OSError:
                 continue
 
             filename = file_path.name
+            seen.add(os.path.normcase(os.path.abspath(str(file_path))))
 
             # Generate video_id
-            from mousereach.config import get_video_id
             video_id = get_video_id(filename)
 
-            # Skip if already in database
-            if self.db.video_exists(video_id):
+            # Already in the database: skip -- unless it is a row parked because
+            # this very file had left the folder, and the file is back.
+            row = self.db.get_video(video_id)
+            if row is not None:
+                came_back = (row.get('state') == 'unresolvable'
+                             and (row.get('error_message') or '').startswith(LEFT_FOLDER_REASON))
+                if came_back and self._single_is_stable(file_path):
+                    # Not while a node still holds a claim of that name: then
+                    # the file is a second copy dropped in while the first is
+                    # out being posed, not the video coming back. Re-driving it
+                    # would pose the video twice.
+                    try:
+                        from mousereach.watcher.single_claim import inflight_ids
+                        holder = inflight_ids().get(video_id)
+                    except Exception:
+                        holder = None
+                    if holder:
+                        logger.debug(f"Single video {video_id}: a same-named file is "
+                                     f"back, but {holder} still holds a claim on it; "
+                                     f"not taken again")
+                        continue
+                    self.db.update_state(video_id, 'validated',
+                                         current_path=str(file_path),
+                                         source_path=str(file_path),
+                                         error_message=None)
+                    newly_registered.append(video_id)
+                    logger.info(f"Single video {video_id} is back in the shared singles "
+                                f"folder; ready to be taken again")
+                continue
+
+            if not self._single_is_stable(file_path):
+                logger.debug(f"Single video {filename}: not stable yet; waiting")
                 continue
 
             # Validate filename
@@ -243,6 +370,14 @@ class WatcherStateManager:
                 self.db.mark_quarantined(video_id, reason=result.error, is_collage=False)
 
                 logger.warning(f"Quarantined single video: {video_id} - {result.error}")
+
+        # Forget files that are no longer there (taken, removed, renamed), so
+        # the sightings cannot grow without bound and a same-named file dropped
+        # later starts its wait afresh.
+        sightings = self.__dict__.setdefault('_single_sightings', {})
+        for key in list(sightings):
+            if key not in seen:
+                del sightings[key]
 
         return newly_registered
 

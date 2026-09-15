@@ -25,6 +25,9 @@ _WRITE_EVENTS = frozenset({
     "os.mkdir", "os.rename", "os.replace", "os.remove", "os.rmdir",
     "shutil.copyfile", "shutil.copytree", "shutil.move", "shutil.rmtree",
     "sqlite3.connect",
+    # A touch is a write too: the claimed-singles heartbeat refreshes files on
+    # the share with os.utime, and a test must never refresh a real claim.
+    "os.utime",
 })
 
 

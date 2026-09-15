@@ -55,6 +55,12 @@ def node_search_dirs(include_staging: bool = True) -> List[Path]:
     ``include_staging=False`` drops ``Paths.DLC_STAGING``: a GPU node never
     reads from the processing server's intake (see the module docstring).
     The order of the rest is unchanged.
+
+    Only the TOP of ``Paths.SINGLE_ANIMAL_OUTPUT`` is searched, never its
+    ``.inflight/<host>/`` claim folders. WHY: a single found there has been
+    claimed by a node for pose; finding it by name would let this node copy
+    and pose another node's claim. A node reaches its own claim through the
+    path recorded on its row (``raw``), not through this search.
     """
     from mousereach.config import Paths
 

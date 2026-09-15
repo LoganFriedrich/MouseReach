@@ -571,6 +571,15 @@ reaching videos. Once running, you drop collage videos on the NAS and the
 watcher handles everything — cropping, DLC, segmentation, reach detection,
 outcomes, and archiving.
 
+**You can drop new videos at any time**, even while the watchers are running
+on several machines: collages into `Unanalyzed\Multi-Animal`, already-cut
+single-animal videos into `Unanalyzed\Single_Animal`. Copy them straight off
+the recording PC. A video is only taken once it has stopped changing (so a
+copy still in progress is never picked up half-finished), and only one machine
+takes each video. A single a machine has taken moves into a hidden
+`Single_Animal\.inflight\<machine>\` folder while that machine works on it --
+leave that folder alone; see USER_GUIDE.md, "File Organization".
+
 **Before you start, make sure:**
 - The PC can see the NAS (its drive letter shows up in File Explorer)
 - You know where your DLC model lives (a file called `config.yaml` — ask if unsure)

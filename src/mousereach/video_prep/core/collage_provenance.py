@@ -126,6 +126,11 @@ def build_downstream_index() -> Dict[str, str]:
                           _STAGE_PRIORITY.get(state, 0) > _STAGE_PRIORITY.get(idx[s], 0)):
                     idx[s] = state
 
+    # The plain rglob deliberately descends into Single_Animal/.inflight/<host>/:
+    # a single a GPU node has claimed for pose was moved there and is still a
+    # cut offspring waiting for its pose, so it must keep counting as
+    # "cropped". Pruning dot-folders here would make a collage look uncut --
+    # and eligible to be cut again -- for as long as a node holds a claim.
     _add(Paths.SINGLE_ANIMAL_OUTPUT, "cropped")
     _add(Paths.DLC_STAGING, "dlc_complete")
     _add(Paths.PROCESSING, "processing")

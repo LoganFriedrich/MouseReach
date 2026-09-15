@@ -100,6 +100,21 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
         progress("Scanning raw + cropped videos...")
     _glob_media(Paths.MULTI_ANIMAL_SOURCE, "raw_collage")
     _glob_media(Paths.SINGLE_ANIMAL_OUTPUT, "cropped")
+    # A single a GPU node has claimed for pose was MOVED into
+    # Single_Animal/.inflight/<host>/, which the top-level glob above never
+    # sees. It is still a cut video waiting for its pose, so it goes in the
+    # same "cropped" row -- otherwise it would vanish from the dashboard for
+    # as long as the node holds it. The host is kept for the File Details view.
+    claimed: Dict[str, str] = {}
+    try:
+        from mousereach.census.runner import claimed_singles, single_inflight_dir_name
+        claimed = claimed_singles(Paths.SINGLE_ANIMAL_OUTPUT)
+        inflight = Path(Paths.SINGLE_ANIMAL_OUTPUT or ".") / single_inflight_dir_name()
+        for stem, host in sorted(claimed.items()):
+            add(stem, "cropped", inflight / host / f"{stem}.mp4")
+    except Exception as e:
+        # The scan must still show everything else; say why claims are missing.
+        logger.warning("could not read singles claimed for pose: %s", e)
     _glob_media(Paths.DLC_STAGING, "dlc_complete")
 
     if progress:
@@ -205,6 +220,8 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
             "tray_type": tray,
             "tray_supported": (tray not in ("E", "F")) if tray else True,
         }
+        if state == "cropped" and stem in claimed:
+            out[stem]["metadata"]["claimed_by"] = claimed[stem]
         if roll:
             # crop_state in {cropped, partial, uncropped}; counts for the note.
             out[stem]["crop_state"] = roll["crop_state"]

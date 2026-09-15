@@ -154,6 +154,75 @@ def ids_in_dir(d, exts=(".mp4", ".mkv")) -> Set[str]:
     return out
 
 
+def single_inflight_dir_name() -> str:
+    """The dot-folder inside the singles folder where a GPU node parks a single
+    it has claimed for pose: <singles folder>/.inflight/<host>/<stem>.mp4.
+
+    Taken from the claim module so the two cannot disagree; the literal is only
+    a fallback while that module is missing or broken. Looked up at call time,
+    not at import: the census must load (and count) even when the watcher's
+    claim module cannot."""
+    try:
+        from mousereach.watcher.single_claim import INFLIGHT_DIR
+        return str(INFLIGHT_DIR)
+    except Exception:
+        return ".inflight"
+
+
+def claimed_singles(folder=None) -> Dict[str, str]:
+    """``{video_id: host}`` for every single a node has claimed for pose out of
+    the singles folder (``folder``, default ``Paths.SINGLE_ANIMAL_OUTPUT``).
+
+    WHY this exists: a GPU node claims a single by MOVING it from
+    <singles>/<stem>.mp4 into <singles>/.inflight/<host>/<stem>.mp4, so only
+    one node poses it. Every reader that lists the singles folder's top level
+    stops seeing that video the moment it is claimed. It has not gone anywhere
+    -- it is still waiting for its pose -- so each reader adds these back into
+    the same bucket as the unclaimed singles, and nothing looks like it
+    vanished. The dot-folder itself is never a video and never a folder of
+    videos to walk: readers ask here instead of descending into it.
+
+    Asks ``mousereach.watcher.single_claim.inflight_ids`` (the one owner of the
+    claim layout) when ``folder`` is the configured singles folder. Falls back
+    to listing <folder>/.inflight/*/*.mp4 itself when that module cannot be
+    imported or fails, or when a different folder was asked about -- so a
+    reader never loses claimed singles because of the claim module. A missing
+    folder, or a plain file where it should be, holds no claims.
+    """
+    from mousereach.config import Paths
+    from mousereach.video_prep.core.collage_provenance import normalize_video_stem
+
+    configured = Paths.SINGLE_ANIMAL_OUTPUT
+    if folder is None:
+        folder = configured
+    if not folder:
+        return {}
+    folder = Path(folder)
+    if configured and (os.path.normcase(os.path.normpath(str(folder)))
+                       == os.path.normcase(os.path.normpath(str(configured)))):
+        try:
+            from mousereach.watcher.single_claim import inflight_ids
+            return dict(inflight_ids() or {})
+        except Exception:
+            pass                        # list the claim folder ourselves below
+    inflight = folder / single_inflight_dir_name()
+    # is_dir(), not exists(): same guard-file rule as ids_in_dir.
+    if not inflight.is_dir():
+        return {}
+    hosts: Dict[str, list] = {}
+    for host_dir in sorted(inflight.iterdir()):
+        if not host_dir.is_dir():
+            continue                    # a stray file is not a host's claims
+        for p in host_dir.iterdir():
+            if p.is_file() and p.suffix.lower() == ".mp4":
+                s = normalize_video_stem(p)
+                if s:
+                    hosts.setdefault(s, []).append(host_dir.name)
+    # Two hosts holding the same name should not happen (the claim is one
+    # rename); if it does, name both rather than hide one.
+    return {s: ", ".join(sorted(h)) for s, h in hosts.items()}
+
+
 def bundles_in(d) -> Set[str]:
     """Review-bundle stems in a queue folder. Only date-named directories
     count: dot-dirs, underscore-prefixed archives and other scratch folders
@@ -314,12 +383,19 @@ def run_census(window_days: int = 14) -> dict:
     # openable, not jargon. Sessions being worked on another node's local
     # disk are invisible to this scan and show in the NAS stage they were
     # claimed from -- a short-lived, self-healing discrepancy.
+    # A single a GPU node has claimed for pose sits in the singles folder's
+    # .inflight/<host>/ dot-folder, which the top-level listing never reads.
+    # It is still waiting for its pose, so it counts in crop_dlc exactly like
+    # an unclaimed single (claimed_singles) -- otherwise every claim would
+    # make a video drop out of the census until its pose came back.
+    crop_dlc = (ids_in_dir(_root("dlc_queue_nas",
+                                 (nas / "DLC_Queue") if nas else None))
+                | ids_in_dir(_root("dlc_queue_local", Paths.DLC_QUEUE)))
+    single_root = _root("single_animal", Paths.SINGLE_ANIMAL_OUTPUT)
+    if single_root:
+        crop_dlc |= ids_in_dir(single_root) | set(claimed_singles(single_root))
     locations = {
-        "crop_dlc": (ids_in_dir(_root("dlc_queue_nas",
-                                      (nas / "DLC_Queue") if nas else None))
-                     | ids_in_dir(_root("dlc_queue_local", Paths.DLC_QUEUE))
-                     | ids_in_dir(_root("single_animal",
-                                        Paths.SINGLE_ANIMAL_OUTPUT))),
+        "crop_dlc": crop_dlc,
         "mousereach": (ids_in_dir(_root("dlc_complete", Paths.DLC_STAGING))
                        | ids_in_dir(_root("processing_local", Paths.PROCESSING))),
         "triage": bundles_in(_root("triage_queue", Paths.TRIAGE_REVIEW)),
@@ -429,8 +505,11 @@ def _print_table(c: dict) -> None:
         # Folder names as they appear on the share, so an operator can open
         # them: singles wait for a pose in Unanalyzed/Single_Animal and wait
         # for the algorithms in Processing/Posed ("Processing" alone is a
-        # node's local working folder).
-        "crop_dlc": "cropping / pose estimation (DLC_Queue, Unanalyzed/Single_Animal)",
+        # node's local working folder). Singles a GPU node has claimed for
+        # pose sit in Unanalyzed/Single_Animal/.inflight/<machine>/ and are
+        # counted here too.
+        "crop_dlc": "cropping / pose estimation (DLC_Queue, Unanalyzed/Single_Animal"
+                    " incl. its .inflight claims)",
         "mousereach": "analysis algorithms (Processing/Posed, local Processing)",
         "triage": "waiting for a person: triage queue",
         "deep_review": "waiting for a person: deep review queue",

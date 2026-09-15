@@ -554,6 +554,7 @@ named for the state the work is in, not for the tool that produced it:
 ├── Unanalyzed\
 │   ├── Multi-Animal\           # Collages waiting to be cut
 │   └── Single_Animal\          # Single-animal videos waiting for a pose
+│       └── .inflight\<machine>\  # Videos a machine has taken for pose -- leave them alone
 │
 ├── Processing\
 │   ├── Posed\                  # Posed videos waiting for the algorithms
@@ -571,6 +572,24 @@ named for the state the work is in, not for the tool that produced it:
 └── Archive\
     └── historical\             # Read-only source material
 ```
+
+**Dropping new videos:** both `Unanalyzed` folders accept new videos at any time,
+even while the watchers are running on several machines. Copy collages into
+`Multi-Animal` and cut single-animal videos into `Single_Animal` as soon as they
+are recorded. Nothing needs to be stopped first:
+
+- A video is taken only after it has stopped changing for the watcher's
+  stability wait (`watcher.stability_wait_seconds`, 60 s by default). A copy
+  still in progress is never picked up half-finished.
+- Only one machine takes each video. A single that a machine has taken is moved
+  into `Single_Animal\.inflight\<machine>\` while that machine poses it.
+  **Leave these files alone.** The file there may be the only copy on the
+  share. It is deleted automatically once the video has moved on to its next
+  folder. If that machine gives the video up or stops for a day, the video is
+  put back in `Single_Animal` for another machine.
+- If you copy the same video in again while a machine still holds it, the
+  second copy is left where it is and the watcher log says so. Delete the
+  second copy.
 
 Each machine also has a local working folder (`processing_root`):
 

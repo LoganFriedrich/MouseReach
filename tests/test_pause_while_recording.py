@@ -308,6 +308,11 @@ def _node(tmp_path, monkeypatch, scan=None, names=(PROGRAM,), grace=0):
         o._recording_guard = RecordingGuard(list(names), grace_seconds=grace,
                                             scan=scan, cache_seconds=0)
     monkeypatch.setattr(orch, "require_processing_root", lambda: tmp_path)
+    # The scan and the paused loop refresh and sweep claimed singles under
+    # Paths.SINGLE_ANIMAL_OUTPUT (watcher/single_claim.py). Point it at tmp so
+    # a test can never touch or move a real claim on the live share.
+    monkeypatch.setattr(orch.Paths, "SINGLE_ANIMAL_OUTPUT", tmp_path / "Single_Animal",
+                        raising=False)
     o._reclaim_orphaned_work = lambda: {}
     o._maybe_review_reprocess_scan = lambda *a, **k: None
     o.shutdown = lambda: None

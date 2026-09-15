@@ -1082,11 +1082,33 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
                 continue
             singles.append(f)
 
+    # Singles a GPU node has already claimed for pose. WHY looked up: a claim
+    # MOVES the video into Single_Animal/.inflight/<machine>/, out of the
+    # top-level listing above. Those videos are being posed right now, so they
+    # are never queued again here -- but they still count as "we have this as
+    # a single", or the collage they were cut from would be sent to be cut
+    # (and posed) a second time.
+    claimed = {}
+    if single_dir:
+        try:
+            from mousereach.census.runner import claimed_singles
+            claimed = {vid: host for vid, host in claimed_singles(single_dir).items()
+                       if f"_{animal_id}_" in f"{vid}.mp4"}
+        except Exception as e:
+            print(f"[!] Could not read singles claimed for pose: {_ascii(e)}",
+                  file=sys.stderr)
+
     single_keys = set()  # date + tray combos we already have as singles
-    for f in singles:
-        result = validate_single_filename(f.name)
+    for name in [f.name for f in singles] + [f"{vid}.mp4" for vid in claimed]:
+        result = validate_single_filename(name)
         if result.valid:
             single_keys.add(f"{result.parsed['date']}_{result.parsed['tray_type']}")
+
+    if claimed:
+        print(f"\nAlready being posed by another machine ({len(claimed)}), "
+              f"not queued again:")
+        for vid in sorted(claimed):
+            print(f"  {vid}  (claimed by {_ascii(claimed[vid])})")
 
     # --- Phase 2: Find collages containing this animal ---
     collages = []  # (collage_path, collage_filename)
@@ -1178,6 +1200,15 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
     print("\nQueuing singles...")
     for f in singles:
         video_id = get_video_id(f.name)
+        if not f.is_file():
+            # WHY checked again: the listing above was taken before the person
+            # confirmed. In the meantime a GPU node may have claimed this single
+            # (moved it into .inflight/<machine>/) and be posing it; registering
+            # or copying it here would pose it twice.
+            print(f"  SKIP {video_id} (no longer in the singles folder -- claimed "
+                  f"for pose by another machine, or removed)")
+            skipped += 1
+            continue
         existing = db.get_video(video_id)
         if existing:
             state = existing['state']

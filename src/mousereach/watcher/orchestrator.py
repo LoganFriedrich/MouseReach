@@ -36,6 +36,7 @@ from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
 from mousereach.watcher.transfer import safe_copy, safe_move
+from mousereach.watcher import single_claim
 from mousereach.watcher.locate import (
     resolve_pose_input, locate_pose_file, locate_video_file, node_search_dirs,
 )
@@ -1481,6 +1482,16 @@ class DLCOrchestrator(BaseOrchestrator):
         DeepLabCut writes its output beside its input, and the input is on the
         shared drive. Posing in place would scatter pose files across a folder
         every machine reads.
+
+        CLAIM FIRST (watcher/single_claim.py). Several GPU nodes poll the same
+        folder, and each used to copy and pose every video it saw. The video is
+        now renamed into ``.inflight/<this host>/`` before it is copied; a node
+        whose rename finds nothing lost the race and leaves the video to the
+        winner, recording nothing against it. The claimed file stays there
+        until this node has handed the video on, and is then removed as a
+        duplicate (_retire_claimed_single). Order of checks: finished or held
+        first (no claim for a video that needs no pose), then the claim, then
+        the copy.
         """
         video_id = work['id']
         data = work['data']
@@ -1516,17 +1527,91 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_unresolvable(
                 video_id, "no local DLC queue is configured on this node")
             return False
-        # search_staging=False: Processing/Posed is the processing server's
-        # intake. Adopting from it would copy another node's hand-off into this
-        # node's queue and pose the same video twice (watcher/locate.py).
-        src = locate_video_file(video_id, raw=data.get('current_path'),
-                                extra_dirs=[Paths.SINGLE_ANIMAL_OUTPUT],
-                                search_archive=False, search_staging=False)
+
+        # A copy already in THIS node's claim folder is this node's own claim:
+        # the watcher stopped between claiming and queuing. Carry on from it
+        # instead of claiming again (a second claim would find nothing).
+        mine = single_claim.claimed_path(video_id, self.hostname)
+        try:
+            held_here = mine is not None and mine.is_file()
+        except OSError:
+            held_here = False
+        if held_here:
+            src = mine
+        else:
+            # search_staging=False: Processing/Posed is the processing server's
+            # intake. Adopting from it would copy another node's hand-off into
+            # this node's queue and pose the same video twice (watcher/locate.py).
+            src = locate_video_file(video_id, raw=data.get('current_path'),
+                                    extra_dirs=[Paths.SINGLE_ANIMAL_OUTPUT],
+                                    search_archive=False, search_staging=False)
+            holder = single_claim.claim_holder(src) if src is not None else None
+            if holder is not None and holder != self.hostname:
+                src = None              # another node's claimed copy is never ours
         if src is None:
+            # Gone from the folder. Say who has it when a node's claim shows it;
+            # the reason's fixed start lets the intake scan validate the row
+            # again if the video comes back (state.discover_new_singles).
+            try:
+                holder = single_claim.inflight_ids().get(video_id)
+            except Exception:
+                holder = None
+            if holder and holder != self.hostname:
+                where = (f"{holder} took it for pose (it is in "
+                         f"{single_claim.INFLIGHT_DIR}/{holder})")
+            else:
+                where = "the file is no longer there"
             self.db.mark_unresolvable(
-                video_id, "registered from the shared singles folder, but the "
-                          "file is no longer there")
+                video_id, f"{single_claim.LEFT_FOLDER_REASON}: {where}")
             return False
+
+        claimed_here = held_here
+        if single_claim.in_front_door(src):
+            # A same-named video another node ALREADY holds in .inflight: this
+            # file is a second copy (normally the batch was copied in again
+            # while the first copy was out). Claiming it would pose the video
+            # twice, and both poses would then land in Processing/Posed under
+            # one name. Left where it is for a person; recorded with a reason
+            # the intake scan never re-drives.
+            # Only when the file really is still here: a node whose view is a
+            # moment old sees the path of a video another node has just
+            # claimed, and that is a lost race, not a second copy.
+            try:
+                other = single_claim.inflight_ids().get(video_id)
+                if other and not Path(src).is_file():
+                    other = None
+            except Exception:
+                other = None
+            if other and other != self.hostname:
+                self.db.mark_unresolvable(
+                    video_id, f"{single_claim.DUPLICATE_OF_CLAIM_REASON}: {other} "
+                              f"is posing it (it is in {single_claim.INFLIGHT_DIR}/"
+                              f"{other}); remove the second copy at {src}")
+                logger.warning(f"{video_id}: {src} is a second copy of a video {other} "
+                               f"already holds for pose; not taken. A person should "
+                               f"delete this second copy (the first is being posed).")
+                return False
+            claimed = single_claim.claim_single(src, self.hostname)
+            if claimed is None:
+                try:
+                    still_there = Path(src).is_file()
+                except OSError:
+                    still_there = False
+                if still_there:
+                    # Refused while the file is still here: a program has it
+                    # open, or this account may not rename in the folder. Park
+                    # the row for a while so the collages behind it are not
+                    # starved (_single_claim_backoff_active).
+                    self._note_single_claim_refused(video_id, src)
+                else:
+                    # Lost the race. Nothing destructive is recorded: the row
+                    # stays 'validated', and the next pass records who has it.
+                    self._note_single_claim_lost(video_id)
+                return False
+            self._clear_single_claim_refused(video_id)
+            src = claimed
+            claimed_here = True
+
         dest = Path(dlc_queue) / f"{video_id}.mp4"
         try:
             Path(dlc_queue).mkdir(parents=True, exist_ok=True)
@@ -1534,15 +1619,293 @@ class DLCOrchestrator(BaseOrchestrator):
         except OSError:
             same = False
         if not same and not safe_copy(Path(src), dest, verify=True):
-            self.db.mark_failed(video_id, f"could not copy {src} into the DLC queue")
+            # Give the video back so another node can take it; a claim this
+            # node cannot use must not keep it from everyone. THIS node does
+            # not retry it by itself: its row is 'failed', and the GPU role
+            # has no job list for failed rows (a full local disk would
+            # otherwise copy a whole video every minute). A person resets it.
+            released = claimed_here and single_claim.release_single(src)
+            back = (Path(src).parent.parent.parent / Path(src).name) if released else src
+            self.db.mark_failed(
+                video_id, f"could not copy {back} into the DLC queue"
+                          + ("; put back in the shared singles folder, where another "
+                             "GPU node can take it. This node does not retry it on "
+                             "its own: fix the cause, then run "
+                             f"mousereach-watch-reprocess {video_id}"
+                             if released else ""))
             return False
         self.db.update_state(video_id, 'dlc_queued',
                              current_path=str(dest), source_path=str(dest))
+        held_note = (f"; the shared copy is held in {Path(src).parent} until this "
+                     f"node hands the video on" if claimed_here else "")
         self.db.log_step(video_id, 'adopt', 'completed',
-                         message=f"taken from the shared singles folder into {dlc_queue}")
-        logger.info(f"{video_id}: left in the shared singles folder; adopted "
-                    f"onto this node and queued for DLC")
+                         message=f"taken from the shared singles folder into "
+                                 f"{dlc_queue}{held_note}")
+        if claimed_here:
+            logger.info(f"{video_id}: taken from the shared singles folder (held in "
+                        f"{Path(src).parent} until handed on); adopted onto this "
+                        f"node and queued for DLC")
+        else:
+            logger.info(f"{video_id}: left in the shared singles folder; adopted "
+                        f"onto this node and queued for DLC")
         return True
+
+    def _note_single_claim_lost(self, video_id: str) -> None:
+        """Say once per video that its claim was not taken. WHY once: the row
+        stays 'validated' and is offered again next poll, and a still-copying
+        file can refuse the claim for many polls in a row."""
+        logged = getattr(self, '_single_claim_lost_logged', None)
+        if logged is None:
+            logged = self._single_claim_lost_logged = set()
+        if video_id in logged:
+            return
+        logged.add(video_id)
+        logger.info(f"{video_id}: not taken from the shared singles folder -- another "
+                    f"node claimed it first, or it is still in use (being copied "
+                    f"in). Nothing is recorded against it here; it is left to "
+                    f"whoever has it.")
+
+    # A refused claim (the file is still in the folder but cannot be renamed)
+    # parks the row this long before it is offered again, and after a refusal
+    # has lasted _SINGLE_REFUSED_WARN_S it is reported once as a WARNING.
+    # WHY a backoff: 'validated' rows are picked before collages, so a single a
+    # media player keeps open would otherwise be picked every poll and no
+    # collage would ever be cropped on this node. WHY a WARNING only later: a
+    # file still being copied in refuses for a minute or two, which is normal.
+    _SINGLE_REFUSED_BACKOFF_S = 120
+    _SINGLE_REFUSED_WARN_S = 600
+
+    def _single_claim_backoff_active(self, video_id: str) -> bool:
+        entry = getattr(self, '_single_claim_refused', {}).get(video_id)
+        return entry is not None and time.monotonic() < entry[0]
+
+    def _clear_single_claim_refused(self, video_id: str) -> None:
+        getattr(self, '_single_claim_refused', {}).pop(video_id, None)
+
+    def _note_single_claim_refused(self, video_id: str, src) -> None:
+        """Park a single whose claim was refused, and say so: INFO the first
+        time, one WARNING once the refusal has lasted _SINGLE_REFUSED_WARN_S
+        (naming the file and the usual causes)."""
+        refused = getattr(self, '_single_claim_refused', None)
+        if refused is None:
+            refused = self._single_claim_refused = {}
+        now = time.monotonic()
+        _, first, warned = refused.get(video_id, (0.0, now, False))
+        if video_id not in refused:
+            logger.info(f"{video_id}: could not be taken from the shared singles folder "
+                        f"yet (normally it is still being copied in); tried again in "
+                        f"{self._SINGLE_REFUSED_BACKOFF_S // 60} min")
+        if not warned and now - first >= self._SINGLE_REFUSED_WARN_S:
+            warned = True
+            logger.warning(
+                f"{video_id}: {src} has refused to be taken for "
+                f"{(now - first) / 60:.0f} min. Usually a program has it open (a "
+                f"video player, or a copy that stalled), or this computer's account "
+                f"may read the folder but not rename files in it. Close the program "
+                f"or fix the folder permissions; it is tried again every "
+                f"{self._SINGLE_REFUSED_BACKOFF_S // 60} min meanwhile.")
+        refused[video_id] = (now + self._SINGLE_REFUSED_BACKOFF_S, first, warned)
+
+    # After this many pose failures in a row, stop taking NEW singles from the
+    # shared folder for _POSE_FAILURE_PAUSE_S. WHY: a node whose DeepLabCut is
+    # broken (a driver or DLL error) would otherwise claim every single dropped
+    # on the share and fail each one in turn, taking them from healthy nodes.
+    _POSE_FAILURE_BRAKE = 3
+    _POSE_FAILURE_PAUSE_S = 1800
+
+    def _note_pose_result(self, ok: bool) -> None:
+        if ok:
+            self._pose_failure_streak = 0
+            return
+        streak = getattr(self, '_pose_failure_streak', 0) + 1
+        self._pose_failure_streak = streak
+        if streak >= self._POSE_FAILURE_BRAKE:
+            self._singles_paused_until = time.monotonic() + self._POSE_FAILURE_PAUSE_S
+            logger.warning(
+                f"{streak} pose runs in a row have failed on this node. It takes no new "
+                f"videos from the shared singles folder for "
+                f"{self._POSE_FAILURE_PAUSE_S // 60} min, so other GPU nodes can pose "
+                f"them. Check this node's DeepLabCut setup (see the failures above).")
+
+    def _singles_braked(self) -> bool:
+        until = getattr(self, '_singles_paused_until', None)
+        return until is not None and time.monotonic() < until
+
+    # How often the singles claim area is swept for claims nobody has touched
+    # for single_claim.STALE_S. WHY minutes, not every poll: the sweep lists
+    # every node's claim folder on the share, and a claim only counts as stale
+    # after a day, so a few minutes' delay costs nothing.
+    _SINGLE_RECLAIM_S = 300
+
+    def _single_claim_upkeep(self, force: bool = False, sweep: bool = True) -> None:
+        """Touch this node's claimed singles, and (``sweep``) every
+        _SINGLE_RECLAIM_S hand back any node's claim left untouched for a day.
+        Never raises.
+
+        Called from every scan (forced, with the sweep) and from the paused
+        loop (heartbeat only). WHY the heartbeat while paused: a long
+        recording day skips the scan, and a claim without a heartbeat for a
+        day is handed back -- another node would then pose a video this node
+        has already copied. WHY no sweep while paused: a paused node takes no
+        new work, so handing videos back only helps nodes that are running,
+        and those sweep for themselves. The heartbeat is rate-limited to one
+        per poll interval unless forced (it lists a folder on the share). It
+        runs before the sweep, so a node back from a long stop refreshes its
+        own claims before it could count them stale.
+        """
+        now = time.monotonic()
+        interval = float(getattr(getattr(self, 'config', None),
+                                 'poll_interval_seconds', 30) or 30)
+        last = getattr(self, '_last_single_heartbeat', None)
+        if force or last is None or now - last >= interval:
+            self._last_single_heartbeat = now
+            try:
+                single_claim.heartbeat_claims(self.hostname,
+                                              only=self._claims_to_keep_alive())
+            except Exception as e:
+                logger.warning(f"Heartbeat of claimed singles failed (non-fatal): {e}")
+        if not sweep:
+            return
+        last_sweep = getattr(self, '_last_single_reclaim', None)
+        if last_sweep is None or now - last_sweep >= self._SINGLE_RECLAIM_S:
+            self._last_single_reclaim = now
+            try:
+                single_claim.reclaim_stale()
+            except Exception as e:
+                logger.warning(f"Sweep for stale single claims failed (non-fatal): {e}")
+
+    # Row states whose claimed single this node keeps alive. Working states:
+    # the node is still posing or processing the video from its local copy.
+    # Handed-on states: the video has moved on but its claimed copy could not
+    # be confirmed against the next copy and was kept; returning it to the
+    # folder could have it posed again before the server has filed it.
+    _CLAIM_KEEPALIVE_STATES = frozenset({
+        'validated', 'dlc_queued', 'dlc_running', 'dlc_complete', 'processing',
+        'processed', 'archiving', 'archived', 'triage', 'deep_review',
+    })
+
+    def _claims_to_keep_alive(self):
+        """Video ids of this host's claims that the heartbeat refreshes, or
+        None (refresh all) when this node's database cannot be read.
+
+        A claim whose row is failed, unresolvable, quarantined or missing is
+        NOT refreshed: this node has given up on that video (or never knew
+        it), and refreshing the claim would hold the only shared copy from
+        every other node for as long as this node runs. Left alone, it goes
+        stale after single_claim.STALE_S and a running GPU node returns it.
+        Each one is named once at WARNING. WHY None on a database error: a
+        database hiccup must never hand back videos this node is posing.
+        """
+        claims = single_claim.host_claims(self.hostname)
+        if not claims:
+            return set()
+        keep = set()
+        warned = getattr(self, '_claim_abandon_warned', None)
+        if warned is None:
+            warned = self._claim_abandon_warned = set()
+        for vid, path in claims.items():
+            try:
+                row = self.db.get_video(vid)
+            except Exception:
+                return None
+            state = row.get('state') if row else None
+            if state in self._CLAIM_KEEPALIVE_STATES:
+                keep.add(vid)
+                continue
+            if (vid, state) not in warned:
+                warned.add((vid, state))
+                logger.warning(
+                    f"{vid}: this node's claimed copy {path} is no longer refreshed "
+                    f"(this node's row is {state or 'missing'}); it goes back to the "
+                    f"shared singles folder for another node after "
+                    f"{single_claim.STALE_S // 3600} h without a refresh")
+        return keep
+
+    def _release_claim_given_up(self, video_id: str, why: str) -> bool:
+        """Give a claimed single back to the folder at once when this node
+        stops working it (pose failed, or no local file any more). Never
+        raises. WHY at once rather than waiting for it to go stale: another
+        GPU node can pose it now, instead of a day later."""
+        try:
+            claimed = single_claim.claimed_path(video_id, self.hostname)
+            if claimed is None or not claimed.is_file():
+                return False
+            if single_claim.release_single(claimed):
+                logger.warning(f"{video_id}: {why}; its claimed copy went back to the "
+                               f"shared singles folder for another node to take")
+                return True
+        except Exception as e:
+            logger.warning(f"{video_id}: could not release its claimed copy ({e})")
+        return False
+
+    def _retire_claimed_single(self, video_id: str, handed_on,
+                               verified: bool = False) -> bool:
+        """Remove this node's claimed copy of a single once the video has
+        moved on. True when removed.
+
+        The claimed copy (``<Single_Animal>/.inflight/<host>/<stem>.mp4``) is
+        the file this node took from the shared singles folder. It is kept
+        until the video reaches its next stage because until then it may be
+        the only copy on the share -- this node's queue is on its own disk.
+        It is removed only when that next copy is confirmed: ``handed_on``
+        exists with the same size, or, when it has already been taken onward
+        (the processing server can take a staged video in within seconds),
+        ``verified`` says the step that wrote it checked its copy. Otherwise
+        it is kept with a WARNING naming it, and the heartbeat keeps it
+        claimed so no other node poses it again.
+
+        Never raises: it runs after the work itself has succeeded.
+        """
+        claimed = None
+        try:
+            claimed = single_claim.claimed_path(video_id, self.hostname)
+            if claimed is None or not claimed.is_file():
+                return False
+            basis = None
+            if handed_on is not None and Path(handed_on).is_file():
+                if Path(handed_on).stat().st_size == claimed.stat().st_size:
+                    basis = f"its copy at {handed_on} is complete"
+            elif verified:
+                basis = "the step that handed it on verified its copy"
+            if basis is None:
+                logger.warning(
+                    f"{video_id}: this node's claimed copy {claimed} is KEPT: the "
+                    f"video's next copy could not be confirmed ({handed_on}). "
+                    f"Nothing is removed without that; delete it by hand once the "
+                    f"video is safely on.")
+                return False
+            claimed.unlink()
+        except FileNotFoundError:
+            return False
+        except Exception as e:
+            logger.warning(f"{video_id}: could not remove this node's claimed copy "
+                           f"{claimed} ({type(e).__name__}: {e}); it stays claimed "
+                           f"and can be deleted by hand once the video is safely on")
+            return False
+        logger.info(f"{video_id}: removed this node's claimed copy from the shared "
+                    f"singles folder ({claimed}); {basis}")
+        try:
+            self.db.log_step(video_id, 'single_claim', 'completed',
+                             message=f"removed claimed shared copy {claimed}; {basis}")
+        except Exception:
+            pass
+        return True
+
+    def _retire_claim_after_hold(self, video_id: str) -> bool:
+        """A video routed to a review queue took its mp4 into the bundle
+        (``<queue>/<stem>/<stem>.mp4``, watcher/review_routing.py): retire the
+        claimed copy against that. Without a bundle mp4 the copy is kept."""
+        for qroot in (getattr(Paths, 'TRIAGE_REVIEW', None),
+                      getattr(Paths, 'DEEP_REVIEW', None)):
+            if not qroot:
+                continue
+            candidate = Path(qroot) / video_id / f"{video_id}.mp4"
+            try:
+                if candidate.is_file():
+                    return self._retire_claimed_single(video_id, candidate)
+            except OSError:
+                continue
+        return self._retire_claimed_single(video_id, None)
 
     def _adopt_untracked_queue_files(self) -> int:
         """Pick up anything dropped straight into this node's DLC queue.
@@ -1711,6 +2074,11 @@ class DLCOrchestrator(BaseOrchestrator):
 
     def _scan_phase(self):
         """Scan NAS for new collages/singles and check for DLC completions."""
+        # Phase 0: keep this node's claims on shared singles alive and hand back
+        # claims a dead node left (watcher/single_claim.py). First, because the
+        # scan below can take many minutes on a shared drive.
+        self._single_claim_upkeep(force=True)
+
         # Phase A: Scan for new files and check stability
         scan_result = self.file_watcher.scan()
         if scan_result.new_collages or scan_result.new_singles or scan_result.stable_ready:
@@ -1795,9 +2163,10 @@ class DLCOrchestrator(BaseOrchestrator):
             logger.warning(f"Re-pose heartbeat failed (non-fatal): {e}")
 
     def _while_paused(self) -> None:
-        """Keep claimed re-pose requests alive while paused (see
-        _repose_heartbeat)."""
+        """Keep claimed re-pose requests and claimed singles alive while
+        paused (see _repose_heartbeat and _single_claim_upkeep)."""
         self._repose_heartbeat()
+        self._single_claim_upkeep(sweep=False)
 
     # =========================================================================
     # WORK QUEUE
@@ -1905,7 +2274,16 @@ class DLCOrchestrator(BaseOrchestrator):
         # written into the database, and then ignored for good. Somebody
         # dropping a video where the folder layout says videos go is the most
         # ordinary thing a person can do, and it has to work.
-        videos = self.db.get_videos_in_state('validated')
+        #
+        # Two filters (both kept in memory): a single whose claim was just
+        # refused waits out its backoff so the collages below still get cropped
+        # (_note_single_claim_refused), and none are taken at all while this
+        # node's recent poses keep failing (_note_pose_result).
+        if self._singles_braked():
+            videos = []
+        else:
+            videos = [v for v in self.db.get_videos_in_state('validated')
+                      if not self._single_claim_backoff_active(v['video_id'])]
         pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
                                     allow_deferred=admit_deferred)
         if pick is not None:
@@ -2468,6 +2846,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 video_id,
                 "queued for DLC but no video file for it on this node "
                 "(recorded path: %r)" % (video_data.get('current_path'),))
+            self._release_claim_given_up(video_id, "no local copy left to pose")
             return False
 
         logger.info(f"Running DLC on {video_id}")
@@ -2585,6 +2964,7 @@ class DLCOrchestrator(BaseOrchestrator):
                     duration=duration
                 )
                 logger.info(f"DLC completed for {video_id} ({duration:.1f}s)")
+                self._note_pose_result(True)
                 self._sync_to_connectome(video_id, 'dlc_complete',
                                          dlc_completed_at=datetime.now().isoformat())
             else:
@@ -2601,6 +2981,12 @@ class DLCOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
             self.db.mark_failed(video_id, str(e))
             self.db.log_step(video_id, 'dlc', 'failed', message=str(e), duration=duration)
+            # A failed pose gives a claimed single back to the folder at once,
+            # and counts towards the brake on taking new singles. The GPU role
+            # never retries a 'failed' row by itself, so holding the claim
+            # would keep the video from every healthy node.
+            self._release_claim_given_up(video_id, f"pose failed here ({e})")
+            self._note_pose_result(False)
             # If a re-pose was requested over shared storage, leave the
             # requester a note there: its own row just says "waiting".
             try:
@@ -2781,6 +3167,9 @@ class DLCOrchestrator(BaseOrchestrator):
                     logger.warning(f"Deep-review routing failed for {video_id}: {route_err}")
                     self.db.mark_failed(video_id, f"Segmentation failed: {error}")
                     return False
+                # The bundle carries the video now; a shared copy this node
+                # claimed for it is a duplicate (kept if that is unconfirmed).
+                self._retire_claim_after_hold(video_id)
                 return True
 
             # Step 2: Reach Detection
@@ -2885,6 +3274,7 @@ class DLCOrchestrator(BaseOrchestrator):
             if decision != DECISION_CLEAN:
                 logger.info(f"Local pipeline held: {video_id} -> {decision} "
                             f"(no kinematics until cleared)")
+                self._retire_claim_after_hold(video_id)
                 return True
 
             # Step 4: Feature Extraction + DB sync (CLEAN videos ONLY)
@@ -3008,6 +3398,13 @@ class DLCOrchestrator(BaseOrchestrator):
                             f.unlink()
                         except Exception:
                             pass
+                # The archive holds the video now. A shared copy this node
+                # claimed for it is removed only against the archived mp4 (the
+                # move is not size-checked, so no 'verified' shortcut here).
+                archived_in = result.get('destination')
+                self._retire_claimed_single(
+                    video_id,
+                    Path(archived_in) / f"{video_id}.mp4" if archived_in else None)
                 return True
             else:
                 error = result.get('error', 'archive failed')
@@ -3144,6 +3541,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 "(recorded path: %r)" % (video_data.get('current_path'),))
             self.db.log_step(video_id, 'stage_to_nas', 'skipped',
                              message="no file on this node")
+            self._release_claim_given_up(video_id, "no local copy left to stage")
             return False
 
         self.db.log_step(video_id, 'stage_to_nas', 'started')
@@ -3193,6 +3591,12 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, str(e))
             self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e), duration=duration)
             raise
+        # Staged: the processing server has the video. A shared copy this node
+        # claimed for it is a duplicate now. _stage_files size-checked every
+        # copy it made, which stands in when the server has already taken the
+        # staged mp4 in.
+        self._retire_claimed_single(video_id, self.staging_dir / f"{video_id}.mp4",
+                                    verified=f"{video_id}.mp4" in staged_files)
         return True
 
     def _own_staged_pose(self, staged_names) -> Optional[Path]:
@@ -3237,6 +3641,10 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_unresolvable(video_id, reason)
             self.db.log_step(video_id, 'stage_to_nas', 'skipped', message=reason)
             logger.info(f"{video_id}: {reason}")
+            # The video is with the processing server already; a claimed copy
+            # of it is a duplicate if the staged mp4 matches it. Kept (and left
+            # to go stale) otherwise.
+            self._retire_claimed_single(video_id, staged_mp4)
             return False
         self.db.log_step(video_id, 'stage_to_nas', 'started', message="resuming")
         start_time = time.time()
@@ -3262,6 +3670,7 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'stage_to_nas', 'failed', message=str(e),
                              duration=time.time() - start_time)
             raise
+        self._retire_claimed_single(video_id, staged_mp4)
         return True
 
 
@@ -3366,6 +3775,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except OSError as e:
             logger.debug(f"could not read the staging folder: {e}")
             return 0
+        # Videos a GPU node has already claimed out of the singles folder
+        # (watcher/single_claim.py). Moving a same-named video to the front
+        # door would have it taken and posed a second time.
+        try:
+            claimed = single_claim.inflight_ids()
+        except Exception:
+            claimed = {}
         moved = 0
         now = time.time()
         for mp4 in candidates:
@@ -3388,6 +3804,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     continue                  # known already, not a stray drop
             except Exception:
                 continue
+            if video_id in claimed:
+                continue                      # a GPU node already holds this video
+            # Only ever the TOP of the singles folder, never its claim area
+            # (.inflight/<host>/): a file put there would read as a claim no
+            # node made, so no node would ever pose it.
             dest = Path(front_door) / mp4.name
             if dest.exists():
                 continue

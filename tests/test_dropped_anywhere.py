@@ -101,7 +101,12 @@ def test_a_video_left_in_the_shared_folder_is_taken_on_and_queued(node):
     # copied onto the node, not posed where it lay: DLC writes beside its input
     dest = node.local / f"{VID}.mp4"
     assert dest.read_bytes() == b"a video"
-    assert src.exists(), "the shared copy must not be moved out from under anyone"
+    # Claimed, not left in place (watcher/single_claim.py): the shared copy is
+    # held in this node's claim folder until the video is handed on, so no
+    # other GPU node sees it and poses it a second time.
+    claimed = node.shared / ".inflight" / "test-node" / f"{VID}.mp4"
+    assert not src.exists(), "the shared copy is claimed, so no other node poses it"
+    assert claimed.read_bytes() == b"a video", "kept on the share until handed on"
     assert node.db.moves == [(VID, "dlc_queued", str(dest))]
     assert (VID, "adopt", "completed") in node.db.logged
 

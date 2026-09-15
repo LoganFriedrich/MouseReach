@@ -93,7 +93,15 @@ a video's position: `Processing/Repose_Queue/` (request files, not videos),
 `Unanalyzed/Unsupported_Tray_Type/` (tray types this pipeline does not
 analyse), any folder whose name starts with `.` or `_` (claims, in-flight
 work, retired bundles), and any leftover folder from the previous layout while
-it waits for cleanup.
+it waits for cleanup. One such folder holds videos:
+`Unanalyzed/Single_Animal/.inflight/<machine>/` holds singles a GPU node has
+claimed for pose (watcher/single_claim.py). A scan counts each one as still
+waiting in `Unanalyzed/Single_Animal`, never as a stage of its own and never
+as lost (2026-09-15).
+
+Both `Unanalyzed/` folders accept new videos at any time, even while nodes run.
+A video is taken only once it has stopped changing, and singles are claimed by
+a rename so only one node poses each one.
 
 The video and every output it has so far travel together as one bundle.
 
