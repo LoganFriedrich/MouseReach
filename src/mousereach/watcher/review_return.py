@@ -39,26 +39,45 @@ from ..config import Paths
 from ..review.triage_status import triage_status
 from .review_routing import _safe_move
 
+try:
+    from .review_routing import INCOMING_DIR_NAME
+except ImportError:  # a review_routing that predates the staging folder
+    INCOMING_DIR_NAME = ".incoming"
+
 logger = logging.getLogger(__name__)
 
-# Queue-only metadata that must NOT follow the bundle back into Processing.
-_QUEUE_METADATA_SUFFIXES = ("_manifest.json", "_routing.json")
+# Queue-only metadata that must NOT follow the bundle back into Processing,
+# matched by EXACT name ({stem} + suffix, or the bare name). WHY exact: a plain
+# endswith("_manifest.json") also matched {stem}_processing_manifest.json -- the
+# provenance record -- and deleted it from every returned bundle. Every writer
+# of queue metadata uses exactly these names (review_gate and review staging
+# write {stem}_manifest.json, review_routing writes {stem}_routing.json).
+# Keeping the old processing manifest is the lesser risk, not a free one. Stage
+# reuse is decided from the stage outputs, never from this file, and a normal
+# re-run regenerates it before the review gate. But that regeneration is
+# best-effort (a failure is only a warning in the pipeline runners), and a
+# segmentation failure is routed to deep review before it runs: in those cases
+# the OLD manifest stays beside the new outputs, and kinematics stamps its
+# version onto it. Deleting it lost the provenance of EVERY return, which is
+# worse. Setting a stale manifest aside before regenerating it is not yet done.
+_QUEUE_METADATA_STEM_SUFFIXES = ("_manifest.json", "_routing.json")
 _QUEUE_METADATA_NAMES = ("manifest.json",)
 
 
 def _resolve_inputs(bundle: Path, stem: str):
     """Find the mp4 and pose file for a bundle that is being returned.
 
-    Bundles are staged NOT self-contained: the mp4 and pose normally stay in
-    Analyzed and the bundle carries only the algo JSONs plus a ``_manifest.json``
-    naming the canonical paths. Returning a bundle without resolving those means
-    the pipeline re-runs the video with no pose at all -- which is how 723
-    videos ended up in the deep-review queue as "segmentation_failed" on
-    2026-08-19.
+    Gate-routed bundles (review_gate -> review_routing) ARE self-contained: the
+    mp4 and pose moved into the bundle with the algo JSONs, beside a
+    bundle-local ``{stem}_manifest.json``. Only LEGACY staged bundles carry the
+    algo JSONs alone, with a ``{stem}_manifest.json`` pointing at the mp4 and
+    pose in Analyzed. Returning a bundle without resolving the inputs means the
+    pipeline re-runs the video with no pose at all -- which is how 723 videos
+    ended up in the deep-review queue as "segmentation_failed" on 2026-08-19.
 
-    Note this must run BEFORE the bundle is emptied: ``_manifest.json`` is in
-    _QUEUE_METADATA_SUFFIXES, so the move loop deletes the very file that says
-    where the inputs live.
+    Note this must run BEFORE the bundle is emptied: ``{stem}_manifest.json`` is
+    queue metadata (_is_queue_metadata), so the move loop deletes the very file
+    that says where a legacy bundle's inputs live.
 
     Looks in: the bundle itself -> the manifest's canonical paths -> Analyzed,
     by stem. Nothing is copied; the returned paths are used as-is, so a pose
@@ -154,8 +173,9 @@ def _bundles(queue_root: Optional[Path]) -> List[Path]:
         return sorted(found)
 
 
-def _is_queue_metadata(name: str) -> bool:
-    return name in _QUEUE_METADATA_NAMES or any(name.endswith(s) for s in _QUEUE_METADATA_SUFFIXES)
+def _is_queue_metadata(name: str, stem: str) -> bool:
+    return (name in _QUEUE_METADATA_NAMES
+            or any(name == f"{stem}{s}" for s in _QUEUE_METADATA_STEM_SUFFIXES))
 
 
 def _deep_review_cleared(bundle: Path, stem: str) -> bool:
@@ -278,6 +298,26 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     video to ``processing`` so the pipeline re-runs it. Queue-only metadata
     (manifest / routing) is dropped so the bundle disappears from the queue.
     Returns True on success."""
+    # Refuse while this video still has files in the queue's build folder
+    # (<queue>/.incoming/<stem>). WHY: a route whose publish fell back to moving
+    # files in one by one leaves a file it could not move there -- most likely
+    # the mp4, held open by a scanner or indexer -- beside the published
+    # bundle, and later routes write straight into the visible bundle and never
+    # read staging. Returning now would re-run the video without that file (the
+    # Analyzed search no longer finds it either). A person folds it in first.
+    leftover = Path(bundle).parent / INCOMING_DIR_NAME / stem
+    try:
+        stuck = sorted(p.name for p in leftover.iterdir() if p.is_file())
+    except OSError:
+        stuck = []
+    if stuck:
+        logger.error(
+            f"Return {stem}: {len(stuck)} file(s) of this video are still in "
+            f"{leftover} ({', '.join(stuck)}), left there by a route that did "
+            f"not finish. Leaving the bundle in the queue -- move them into "
+            f"{bundle} first.")
+        return False
+
     processing_dir = Path(processing_dir)
     processing_dir.mkdir(parents=True, exist_ok=True)
 
@@ -348,12 +388,18 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # durable copy before touching anything.
     _ensure_durable_review(bundle, stem)
 
+    # dlc_output_path must name the pose _resolve_inputs SELECTED. A bundle can
+    # hold two poses (a re-pose leaves the old model's file beside the new one),
+    # and recording "whichever .h5 was moved last" re-ran such videos on the
+    # wrong -- often the old -- pose. A selected pose inside the bundle is
+    # recorded at its destination; one outside the bundle (legacy manifest,
+    # Analyzed, staging) is used in place, so pose_src stands.
     h5_dest: Optional[Path] = pose_src
     moved = 0
     for f in list(bundle.iterdir()):
         if not f.is_file():
             continue
-        if _is_queue_metadata(f.name):
+        if _is_queue_metadata(f.name, stem):
             try:
                 f.unlink()
             except OSError:
@@ -363,7 +409,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         try:
             _safe_move(f, dest)
             moved += 1
-            if f.name.endswith(".h5"):
+            if Path(f) == Path(pose_src):
                 h5_dest = dest
         except Exception as e:
             logger.warning(f"Return {stem}: could not move {f.name}: {e}")
@@ -479,6 +525,51 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
 # than running -- interleave them.
 MAX_RETURNS_PER_SCAN = 10
 
+# An EMPTY queue folder is only treated as residue once it is this old. WHY: a
+# router may have just created it and still be copying files in (cross-volume
+# copies take seconds) -- the return scan retired exactly such a folder
+# mid-route on 2026-09-14 and every remaining move failed. Age is judged
+# conservatively because the share's clock can run ahead of this machine's by
+# many minutes: an mtime in the future counts as young, and so does a folder
+# whose age cannot be read. Real residue just waits for a later scan.
+EMPTY_DIR_GRACE_SECONDS = 30 * 60
+
+# <queue>/.incoming/<stem> folders already named in a warning, so a stuck one is
+# reported once per process instead of on every scan.
+_WARNED_INCOMING: set = set()
+
+
+def _younger_than_grace(path: Path) -> bool:
+    try:
+        age = time.time() - Path(path).stat().st_mtime
+    except OSError:
+        return True
+    return age < EMPTY_DIR_GRACE_SECONDS
+
+
+def _warn_stale_incoming() -> None:
+    """Name any bundle still being assembled in a queue's staging folder long
+    after a route should have finished. Never moves or deletes it: the files
+    are a video's only copy (it has already left Processing), and whether the
+    route is still running or died half-way is for a person to judge."""
+    for queue_root in (getattr(Paths, "TRIAGE_REVIEW", None),
+                       getattr(Paths, "DEEP_REVIEW", None)):
+        if not queue_root:
+            continue
+        try:
+            building = [d for d in (Path(queue_root) / INCOMING_DIR_NAME).iterdir()
+                        if d.is_dir()]
+        except OSError:
+            continue
+        for d in building:
+            if str(d) in _WARNED_INCOMING or _younger_than_grace(d):
+                continue
+            _WARNED_INCOMING.add(str(d))
+            logger.warning(
+                "Return scan: %s is older than %d minutes -- being routed or an "
+                "interrupted route; a person should check",
+                d, EMPTY_DIR_GRACE_SECONDS // 60)
+
 
 def scan_review_queues(db, processing_dir: Path,
                        limit: int = MAX_RETURNS_PER_SCAN) -> Dict[str, int]:
@@ -493,6 +584,8 @@ def scan_review_queues(db, processing_dir: Path,
     def _budget_left():
         return (summary["triage_returned"] + summary["deep_returned"]
                 + summary["diverted_to_deep"]) < limit
+
+    _warn_stale_incoming()
 
     # TRIAGE: every triaged element resolved (and segmentation sound).
     for bundle in _bundles(Paths.TRIAGE_REVIEW):
@@ -509,7 +602,13 @@ def scan_review_queues(db, processing_dir: Path,
                 # video the moment its twin side cleared (2026-09-08).
                 # Routing zero files while flipping db state is pure phantom
                 # action; retire the folder instead, whatever the video's
-                # state.
+                # state -- but only once it is past EMPTY_DIR_GRACE_SECONDS:
+                # a young empty folder may be a route still filling it.
+                if _younger_than_grace(bundle):
+                    logger.debug("Return scan: %s is an empty dir younger than "
+                                 "%d s; left alone (may be mid-route)",
+                                 stem, EMPTY_DIR_GRACE_SECONDS)
+                    continue
                 if _retire_stale_bundle(
                         bundle, stem, "(empty dir)",
                         why="empty directory left behind by an earlier "
@@ -650,6 +749,8 @@ def scan_review_queues(db, processing_dir: Path,
             summary["deferred"] += 1
             continue
         stem = bundle.name
+        # No empty-dir retire here: an empty folder has no clear marker, so it
+        # is never acted on, and EMPTY_DIR_GRACE_SECONDS has nothing to guard.
         if _deep_review_cleared(bundle, stem):
             if _return_to_processing(bundle, stem, processing_dir, db, "deep_review_cleared"):
                 summary["deep_returned"] += 1

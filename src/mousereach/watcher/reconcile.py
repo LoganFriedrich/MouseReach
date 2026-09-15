@@ -46,6 +46,14 @@ WHERE IT LOOKS
     the algorithms). Never restated here, so this check and the watcher cannot
     disagree about where a single waits;
   - the review queues, Failed and Quarantine;
+  - each queue's build folder, <queue>/.incoming/<stem>/. The router assembles
+    a bundle there and renames it into the queue in one step, so the files have
+    already left Analyzed while the bundle is not yet a queue bundle. Unread,
+    a video mid-route -- or one whose route was interrupted -- would vanish
+    from the report. It is listed as held for a person, with a note to check
+    whether it persists. A video that is in a queue AND has files in a build
+    folder keeps its queue verdict, with a note naming the leftover (the return
+    path refuses that bundle until a person folds the files in);
   - Analyzed/, minus the folders every walk of it skips;
   - leftovers: every folder at Processing/_leftovers_pending_cleanup_*/*. When
     the folder layout changed, the retired stage folders were set aside there.
@@ -76,6 +84,15 @@ from typing import Dict, List, Optional
 from mousereach.census.runner import bundles_in, ids_in_dir
 from mousereach.pipeline.analyzed_tree import SUPERSEDED_DIR_NAMES
 from mousereach.pipeline.pipe_structure import UNMIGRATED_MESSAGE, retired_folders_present
+
+# The folder inside each queue where the router builds a bundle before renaming
+# it into place. Taken from the router so the two cannot disagree about where
+# a route in progress sits; the literal is only a fallback for a router that
+# predates the constant.
+try:
+    from mousereach.watcher.review_routing import INCOMING_DIR_NAME
+except ImportError:
+    INCOMING_DIR_NAME = ".incoming"
 
 _MANIFEST = "_processing_manifest.json"
 _FEATURES = "_features.json"
@@ -224,16 +241,37 @@ def judge(stem: str, where: set, files: dict, scanner, current: dict, nas) -> di
     row = {"video_id": stem, "found_in": sorted(where), "should_be": None,
            "verdict": None, "detail": ""}
 
+    queues = sorted(where & {"triage", "deep_review"})
+    incoming = sorted(w.split(":", 1)[1] for w in where if w.startswith("incoming:"))
+
     def verdict(v, detail=""):
+        if incoming and queues:
+            # A queue bundle AND files in a build folder: a route did not
+            # finish, and the return path refuses such a bundle until a person
+            # folds the leftover in. Named here, or nobody learns why it never
+            # comes back.
+            note = ("files also left in " + ", ".join(
+                q + "/" + INCOMING_DIR_NAME for q in incoming)
+                + " -- a route did not finish; check them")
+            detail = detail + "; " + note if detail else note
         row["verdict"], row["detail"] = v, detail
         return row
 
     if not is_supported_tray_type(f"{stem}.mp4"):
         return verdict(UNSUPPORTED_TRAY, "tray type this pipeline does not analyse")
 
-    queues = sorted(where & {"triage", "deep_review"})
     person = sorted(where & {"failed", "quarantine"})
     manifests = files.get("manifest") or []
+
+    # Only in a queue's build folder: the router has taken the files out of
+    # Analyzed and not yet renamed the bundle into the queue. Judged before the
+    # analysis, because whatever is still in Analyzed is the route's half-moved
+    # residue (a manifest without its video reads as wrong_place). A route takes
+    # seconds, so one that is still here on a later run was interrupted.
+    if incoming and not queues:
+        return verdict(HELD, "; ".join(
+            "being routed into " + q + ", or an interrupted route -- check if this persists"
+            for q in incoming))
 
     if not manifests:
         if queues:
@@ -325,6 +363,12 @@ def reconcile() -> dict:
         mark(ids_in_dir(folder), "old:" + _rel(folder, nas))
     mark(bundles_in(Paths.TRIAGE_REVIEW), "triage")
     mark(bundles_in(Paths.DEEP_REVIEW), "deep_review")
+    # A route in progress (or interrupted) sits in the queue's build folder,
+    # which bundles_in above never lists (not date-named). Its own label, so it
+    # is never mistaken for a finished queue bundle.
+    for queue, root in (("triage", Paths.TRIAGE_REVIEW), ("deep_review", Paths.DEEP_REVIEW)):
+        if root:
+            mark(bundles_in(Path(root) / INCOMING_DIR_NAME), "incoming:" + queue)
     mark(ids_in_dir(Paths.FAILED), "failed")
     mark(ids_in_dir(_quarantine_dir()), "quarantine")
     analyzed = walk_analyzed(Paths.ANALYZED_OUTPUT)

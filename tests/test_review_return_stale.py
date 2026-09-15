@@ -8,6 +8,8 @@ an actively-handled video's bundle is a leftover, retired to _Problematic
 (never deleted), and the video is left alone.
 """
 import json
+import os
+import time
 
 import mousereach.watcher.review_return as rr
 import mousereach.watcher.review_gate as rg
@@ -79,12 +81,16 @@ def test_stale_bundle_is_retired_not_diverted(tmp_path, monkeypatch):
 
 
 def test_empty_dir_is_retired_not_routed(tmp_path, monkeypatch):
-    """An empty dir is residue, not a bundle: routing zero files while
+    """An OLD empty dir is residue, not a bundle: routing zero files while
     flipping db state is phantom action (it re-flipped a parked video the
-    moment its twin side cleared, 2026-09-08). Retired regardless of state."""
+    moment its twin side cleared, 2026-09-08). Retired regardless of state.
+    Only once it is older than EMPTY_DIR_GRACE_SECONDS: a young empty dir may
+    be a route still filling it (retired mid-route on 2026-09-14)."""
     triage, deep = _wire_paths(monkeypatch, tmp_path)
     stem = "20240101_ABC0103_P1"
     (triage / stem).mkdir()
+    t = time.time() - 3 * rr.EMPTY_DIR_GRACE_SECONDS
+    os.utime(triage / stem, (t, t))
     routed = []
     monkeypatch.setattr(rg, "route_to_queue",
                         lambda *a, **k: routed.append(a))

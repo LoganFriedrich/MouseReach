@@ -155,6 +155,62 @@ def test_video_held_for_a_person_is_fine(env):
     assert rc.reconcile()["mismatches"] == []
 
 
+def incoming(queue_root, stem):
+    folder = queue_root / rc.INCOMING_DIR_NAME / stem
+    folder.mkdir(parents=True)
+    (folder / f"{stem}.mp4").write_bytes(b"v")
+    return folder
+
+
+def test_incoming_name_is_the_routers_own():
+    # Reconcile must look where the router builds, not at a copy of the name.
+    from mousereach.watcher import review_routing
+    assert rc.INCOMING_DIR_NAME == getattr(review_routing, "INCOMING_DIR_NAME", ".incoming")
+
+
+@pytest.mark.parametrize("queue, attr", [("triage", "TRIAGE_REVIEW"),
+                                         ("deep_review", "DEEP_REVIEW")])
+def test_video_only_in_a_queue_build_folder_is_held_not_lost(env, queue, attr):
+    # Mid-route the files have left Analyzed but the bundle is not yet in the
+    # queue. The video must still be listed, as held, with a note to check it.
+    incoming(getattr(env, attr), VID)
+    row = verdict_of(VID)
+    assert row["found_in"] == ["incoming:" + queue]
+    assert row["verdict"] == rc.HELD
+    assert row["detail"] == ("being routed into " + queue
+                             + ", or an interrupted route -- check if this persists")
+    assert rc.reconcile()["mismatches"] == []
+
+
+def test_partly_moved_route_is_held_not_a_wrong_place(env):
+    # An interrupted route can leave the analysis in Analyzed without its video
+    # (the mp4 already moved). That is the route's residue, not a misfiled video.
+    put_analyzed(VID, video=False)
+    incoming(env.TRIAGE_REVIEW, VID)
+    row = verdict_of(VID)
+    assert row["verdict"] == rc.HELD
+    assert "being routed into triage" in row["detail"]
+    assert rc.reconcile()["mismatches"] == []
+
+
+def test_video_in_a_queue_and_its_build_folder_is_judged_by_the_queue(env):
+    put_analyzed(VID)
+    (env.DEEP_REVIEW / VID).mkdir()
+    incoming(env.DEEP_REVIEW, VID)
+    row = verdict_of(VID)
+    assert row["found_in"] == ["analyzed", "deep_review", "incoming:deep_review"]
+    assert row["verdict"] == rc.STRAY_BUNDLE
+    # ...but the leftover is named: the return path refuses such a bundle.
+    assert ("files also left in deep_review/" + rc.INCOMING_DIR_NAME) in row["detail"]
+
+
+def test_build_folder_scratch_is_not_a_video(env):
+    build = env.TRIAGE_REVIEW / rc.INCOMING_DIR_NAME
+    (build / "not_a_bundle").mkdir(parents=True)
+    (build / "README.txt").write_text("x")
+    assert rc.reconcile()["rows"] == []
+
+
 def test_done_video_still_in_a_queue_is_a_stray_bundle(env):
     put_analyzed(VID)
     (env.DEEP_REVIEW / VID).mkdir()
@@ -332,6 +388,7 @@ def test_video_without_manifest_names_its_folder(env):
 def test_nothing_is_written(env):
     put_analyzed(VID, seg="1.0")
     (env.TRIAGE_REVIEW / VID2).mkdir()
+    incoming(env.DEEP_REVIEW, "20250101_CNT0103_P1")
 
     def snapshot():
         return {p: p.stat().st_mtime_ns for p in env.nas.rglob("*")}

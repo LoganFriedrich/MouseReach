@@ -694,6 +694,34 @@ class BaseOrchestrator:
                     files.append(file_path)
         return files
 
+    def _set_aside_stale_manifest(self, directory: Path, video_id: str, error) -> None:
+        """A run could not write its processing manifest: move the one already
+        on disk out of the video's file set, so it cannot pass for this run.
+
+        WHY: a manifest left over from an earlier run (a returned review bundle
+        keeps its <stem>_processing_manifest.json) would otherwise be stamped
+        by record_kinematic_version and archived as the provenance of outputs
+        it does not describe -- and reconcile would read the video as current.
+        With no manifest, the video reads as not current and a person sees it.
+        Moved into a _stale_manifests/ subfolder (never deleted): archiving
+        takes only the stem's files at the top of the folder.
+        """
+        logger.error(f"Manifest creation failed for {video_id}: {error}")
+        old = Path(directory) / f"{video_id}_processing_manifest.json"
+        if not old.is_file():
+            return
+        try:
+            aside = Path(directory) / "_stale_manifests"
+            aside.mkdir(parents=True, exist_ok=True)
+            dest = aside / f"{video_id}_processing_manifest.{datetime.now():%Y%m%d_%H%M%S}.json"
+            old.replace(dest)
+            logger.error(f"{video_id}: set the previous run's processing manifest "
+                         f"aside ({dest}); this run has none, so it will read as "
+                         f"not current until it is re-run")
+        except OSError as e:
+            logger.error(f"{video_id}: could not set the stale processing manifest "
+                         f"aside ({e}); it may be archived as this run's provenance")
+
     def shutdown(self):
         """Graceful shutdown."""
         logger.info(f"{self.__class__.__name__} shutting down gracefully")
@@ -1865,7 +1893,7 @@ class DLCOrchestrator(BaseOrchestrator):
                     step_timestamps=step_timestamps,
                 )
             except Exception as e:
-                logger.warning(f"Manifest creation failed for {video_id}: {e}")
+                self._set_aside_stale_manifest(processing_dir, video_id, e)
 
             # Unified QC triage
             qc_verdict = 'auto_approved'
@@ -3235,7 +3263,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 f"(DLC={manifest.get('dlc_model', {}).get('dlc_scorer', '?')})"
             )
         except Exception as e:
-            logger.warning(f"Manifest creation failed for {video_id}: {e}")
+            self._set_aside_stale_manifest(self.processing_dir, video_id, e)
 
         # --- Unified QC triage (DLC coherence / structural / cross-step / outliers) ---
         qc_verdict = 'auto_approved'
@@ -3370,6 +3398,23 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     video_id, qstate,
                     reason=f"bundle found in {qstate} queue on disk at archive time")
                 self._clear_archive_backoff(video_id)
+                return
+            # A route still running (or interrupted) builds the bundle in
+            # <queue>/.incoming/<stem>/ and publishes it with one rename
+            # (review_routing.move_video_bundle), so the check above cannot see
+            # it yet. Archiving now would file the leftovers while the rest of
+            # the bundle is on its way into the queue. Skip this cycle without
+            # touching state: the next cycle sees the published bundle (and
+            # adopts its state above), or the route failed and the video's
+            # files are where they were.
+            try:
+                from mousereach.watcher.review_routing import INCOMING_DIR_NAME
+            except ImportError:
+                INCOMING_DIR_NAME = ".incoming"
+            if qdir and (qdir / INCOMING_DIR_NAME / video_id).is_dir():
+                logger.info(
+                    f"Not archiving {video_id} yet: a route into the {qstate} "
+                    f"queue is building its bundle ({INCOMING_DIR_NAME}).")
                 return
 
         # Let go of the outcome detector's cached video handle first: it keeps

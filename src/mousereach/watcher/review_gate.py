@@ -263,8 +263,17 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
     bundle -- BUNDLE-LOCAL canonical pointers so the video + pose load in place.
     """
     mp4 = bundle / f"{video_id}.mp4"
-    h5s = sorted(bundle.glob(f"{video_id}*.h5"))
-    pose_path = str(h5s[0]) if h5s else None
+    h5s = sorted(p for p in bundle.glob(f"{video_id}DLC*.h5") if p.is_file())
+    # WHY select_pose_file, not the first name: a bundle can hold poses from two
+    # models, and the review tools trust this pointer before choosing for
+    # themselves -- the first name sorted is often the OLD model's pose. Same
+    # choice (declared scorer first) the return path makes.
+    if h5s:
+        from mousereach.pipeline.manifest import select_pose_file
+        chosen = select_pose_file(h5s)
+        pose_path = str(chosen) if chosen is not None else str(h5s[0])
+    else:
+        pose_path = None
     self_contained = bool(h5s)
     if pose_path is None:
         # No pose in the bundle: record where the canonical pose LIVES, so

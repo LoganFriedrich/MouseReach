@@ -17,7 +17,38 @@ What it does, in order:
      given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
      that is what the triage review tool walks,
   3. moves the video's bundle into the queue with a routing manifest
-     (review_gate.route_to_queue), updating the local watcher database.
+     (review_gate.route_to_queue), updating the watcher database.
+
+THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
+-----------------------------------------------------------------------------
+The database is resolved exactly as the daemon resolves it
+(db_location.resolve_watcher_db_path: the configured watcher.db_path, else
+<processing_root>/watcher.db) and printed as "[watcher db] <path>", like every
+other watcher command. This command used to open a bare WatcherDB(), which
+ignores the db_path override: every state write went to an unused decoy
+database while the bundles moved on disk, and the live database never learned
+of any of it.
+
+Routing is REFUSED (exit 1, nothing flagged, nothing moved) when that database
+file does not exist, or exists but cannot be opened. WHY refuse rather than
+"route on disk only": a video moved into a queue while the database still says
+'archived' leaves disk and database disagreeing for that video, and a worklist
+does it for every video at once. A missing file is not created either --
+WatcherDB's constructor would build an empty database, which is just a new
+decoy. Fix the configuration (mousereach-setup) or start the watcher once so
+its database exists, then route again.
+
+A VIDEO THE WATCHER IS WORKING ON IS DEFERRED
+---------------------------------------------
+A video whose watcher state is dlc_queued, dlc_running, dlc_complete,
+processing, processed or archiving is not flagged and not moved; it is
+reported as "wait" (deferred: true with --json). WHY: this command writes the
+daemon's live database. Setting 'triage' underneath a running pipeline makes
+the pipeline's own 'processing' -> 'processed' write an illegal transition, and
+the daemon marks the video failed with fresh outputs in Processing and old ones
+in the queue; a processed or archiving video's Analyzed copy is older than the
+outputs the daemon is about to archive, so a reviewer would judge stale data.
+A deferral is not a failure: offer the video again on a later run.
 
 Usage:
     mousereach-route-to-queue VIDEO_ID --queue triage --reason "bench disagreement" --flag-segments 3,7
@@ -25,8 +56,14 @@ Usage:
     mousereach-route-to-queue --worklist worklist.json --queue triage --reason "..."
         worklist.json: [{"video_id": "...", "segment_nums": [3, 7]}, ...]
 
-Exit code 0 if every requested video was routed (or was already not in
-Analyzed), 1 otherwise. ASCII-only output.
+Exit codes:
+    0  every requested video was routed, was already not in Analyzed, or was
+       deferred because the watcher is working on it
+    1  some video could not be routed, OR routing was refused because the
+       watcher database could not be resolved, does not exist, or cannot be
+       opened (then no video was touched)
+ASCII-only output. With --json, stdout carries only the JSON results; the
+"[watcher db]" line and any refusal message go to stderr.
 """
 from __future__ import annotations
 
@@ -40,6 +77,15 @@ from typing import Iterable, List, Optional
 logger = logging.getLogger(__name__)
 
 QUEUES = ("triage", "deep_review")
+
+# Watcher states in which the daemon itself is about to move this video's files
+# or write its state. WHY: see "A VIDEO THE WATCHER IS WORKING ON IS DEFERRED"
+# in the module docstring -- routing such a video races the daemon over the
+# live database. The DLC states are included because the daemon will re-run
+# the video through the pipeline and gate, producing newer outputs than the
+# Analyzed copy this command would hand a reviewer.
+IN_FLIGHT_STATES = ("dlc_queued", "dlc_running", "dlc_complete",
+                    "processing", "processed", "archiving")
 
 
 def _find_outcomes(analyzed: Path, video_id: str) -> Optional[Path]:
@@ -80,7 +126,8 @@ def route_video(video_id: str, queue: str, reason: str,
     from mousereach.config import Paths
     from mousereach.watcher.review_gate import route_to_queue
 
-    res = {"video_id": video_id, "queue": queue, "flagged": [], "routed": False, "error": None}
+    res = {"video_id": video_id, "queue": queue, "flagged": [], "routed": False,
+           "deferred": False, "error": None}
     try:
         analyzed = Paths.ANALYZED_OUTPUT
         if not analyzed or not Path(analyzed).exists():
@@ -90,6 +137,16 @@ def route_video(video_id: str, queue: str, reason: str,
         if outcomes is None:
             res["error"] = "not found in Analyzed (already routed, or never archived)"
             return res
+        if db is not None:
+            # Checked BEFORE any flag is written or file moved (IN_FLIGHT_STATES
+            # says why). A database that cannot be read raises into the except
+            # below and is reported as a failure, never routed blind.
+            state = (db.get_video(video_id) or {}).get("state")
+            if state in IN_FLIGHT_STATES:
+                res["deferred"] = True
+                res["error"] = ("in flight on the watcher (state '%s'); not "
+                                "routed -- offer it again on a later run" % state)
+                return res
         if segment_nums:
             res["flagged"] = flag_segments(outcomes, segment_nums, reason)
         dest_root = Paths.TRIAGE_REVIEW if queue == "triage" else Paths.DEEP_REVIEW
@@ -99,6 +156,44 @@ def route_video(video_id: str, queue: str, reason: str,
     except Exception as e:  # never break the caller; report instead
         res["error"] = f"{type(e).__name__}: {e}"
     return res
+
+
+def _open_watcher_db(out):
+    """Open the daemon's own watcher database, or print why not and return None.
+
+    Never creates the file and never falls back to routing without a database:
+    see "THE WATCHER DATABASE" in the module docstring for why.
+    ``out`` is where the messages go (stderr in --json mode, so stdout stays
+    parseable).
+    """
+    from mousereach.watcher.db_location import resolve_watcher_db_path
+    try:
+        path = resolve_watcher_db_path()
+    except Exception as e:
+        print("[FAIL] cannot resolve the watcher database (%s: %s). Nothing was "
+              "routed." % (type(e).__name__, e), file=out)
+        return None
+    print("[watcher db] %s" % path, file=out)
+    if not Path(path).is_file():
+        # WHY check before constructing: WatcherDB() creates a missing file as
+        # an empty database -- a fresh decoy the daemon never reads.
+        print("[FAIL] watcher database not found: %s\n"
+              "  Routing is refused: moving videos into a review queue that the "
+              "watcher database does not record leaves disk and database "
+              "disagreeing for every video. Check watcher.db_path "
+              "(mousereach-setup) or start the watcher once so it creates its "
+              "database. Nothing was routed." % path, file=out)
+        return None
+    from mousereach.watcher.db import WatcherDB
+    try:
+        return WatcherDB(path)
+    except Exception as e:
+        # Same WHY: without the database, routing on disk only is the
+        # disagreement this refusal exists to prevent.
+        print("[FAIL] cannot open the watcher database %s (%s: %s). Routing "
+              "is refused. Nothing was routed." % (path, type(e).__name__, e),
+              file=out)
+        return None
 
 
 def main(argv=None) -> int:
@@ -117,12 +212,9 @@ def main(argv=None) -> int:
     if bool(args.video_id) == bool(args.worklist):
         ap.error("give exactly one of VIDEO_ID or --worklist")
 
-    from mousereach.watcher.db import WatcherDB
-    db = None
-    try:
-        db = WatcherDB()
-    except Exception as e:
-        logger.warning("watcher database unavailable (%s); routing on disk only", e)
+    db = _open_watcher_db(sys.stderr if args.json else sys.stdout)
+    if db is None:
+        return 1
 
     items = []
     if args.worklist:
@@ -137,10 +229,12 @@ def main(argv=None) -> int:
         print(json.dumps(results, indent=1))
     else:
         for r in results:
-            tag = "OK  " if r["routed"] else ("skip" if r["error"] and "not found" in r["error"] else "FAIL")
+            tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
+                   else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
             print("%s %s -> %s  flagged=%s  %s" % (tag, r["video_id"], r["queue"],
                                                   r["flagged"] or "-", r["error"] or ""))
-    bad = [r for r in results if not r["routed"] and not (r["error"] and "not found" in r["error"])]
+    bad = [r for r in results if not r["routed"] and not r["deferred"]
+           and not (r["error"] and "not found" in r["error"])]
     return 1 if bad else 0
 
 

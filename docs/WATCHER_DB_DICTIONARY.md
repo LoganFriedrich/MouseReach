@@ -20,8 +20,12 @@ called and what they hold. Behaviour lives in PIPELINE_AS_BUILT.md.
 A node's live database is the `db_path` override in that machine's
 `~/.mousereach/config.json`, else `processing_root/watcher.db`. On a machine
 with the override set, a file named `watcher.db` may also sit beside it holding
-the full schema and zero rows; it is not the live one. `_resolve_db_path`
-(watcher/cli.py) is the only correct way to pick it, and it prints its choice.
+the full schema and zero rows; it is not the live one.
+`resolve_watcher_db_path` (watcher/db_location.py) is the only correct way to
+pick it. The CLI's `_resolve_db_path` calls it and prints its choice, and
+`mousereach-route-to-queue` uses it too, refusing to route when the file is
+missing (2026-09-14: that command used to open the zero-row decoy, so every
+state it set was lost).
 
   nas_root/watcher_state/<hostname>/watcher.db   BACKUP, NOT STATE
       A plain copy of one node's live database (watcher/coordination.py:175),

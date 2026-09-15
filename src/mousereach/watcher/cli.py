@@ -39,14 +39,11 @@ def _resolve_db_path():
     would therefore find no videos and protect nothing.
 
     Prints the resolved path so a wrong database is loud instead of silent.
+    The choice itself lives in db_location.resolve_watcher_db_path, so commands
+    outside this module (mousereach-route-to-queue) pick the same file.
     """
-    from mousereach.config import WatcherConfig, require_processing_root
-    try:
-        cfg = WatcherConfig.load()
-        override = cfg.db_path
-    except Exception:
-        override = None
-    path = override or (require_processing_root() / "watcher.db")
+    from mousereach.watcher.db_location import resolve_watcher_db_path
+    path = resolve_watcher_db_path()
     print(f"[watcher db] {path}")
     return path
 

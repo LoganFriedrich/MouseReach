@@ -536,6 +536,7 @@ means some, 2 means it could not judge (no share configured, or no
 WHAT IT READS, AND WHAT IT DOES NOT
 
 Folders only: the review queues (`bundles_in`, date-named directories only),
+each queue's build folder `<queue>/.incoming/` (see the routing update below),
 Failed, Quarantine, the two folders a single waits in, read from `Paths` when the
 check runs (`Unanalyzed/Single_Animal`, `Processing/Posed`), every leftovers folder
 at `Processing/_leftovers_pending_cleanup_*/*`, and one
@@ -665,3 +666,165 @@ is the staged one, `review_gate._write_review_manifest` copies it into the bundl
 Top-level `Archive/` keeps only `historical/` (read-only source material, still
 the ASPA collage importer's default source) and development material awaiting
 cleanup.
+
+
+---
+
+## Update 2026-09-14: routing into a review queue -- built out of sight, returned with its provenance
+
+The first real run of `mousereach-route-to-queue --worklist` (an integrator's
+bench-vs-pipeline disagreement scan, which moves videos from Analyzed into a
+queue) exposed three defects. What changed, and why:
+
+A QUEUE BUNDLE APPEARS IN ONE RENAME
+
+`review_routing.move_video_bundle` builds a NEW bundle in
+`<queue>/.incoming/<stem>/` and publishes it as `<queue>/<stem>/` with one
+directory rename. WHY: it used to create the empty `<queue>/<stem>/` first and
+move the files in one at a time, and a move onto the share is a copy that takes
+seconds per file. The running watcher's return scan saw the empty folder,
+retired it to `_Problematic` mid-route, and every remaining move failed with
+"No such file or directory". A partly filled folder could also be judged as a
+bundle (`triage_status`) before all its files had arrived.
+
+WHY a dot-folder under the queue root: the queue readers that judge, retire or
+release bundles (`review_return._bundles`, census `bundles_in` and
+`review_completeness`, dashboard `folder_scan`, `release_cli`, `queue_index`,
+`reconcile`) skip names starting with ".", so a bundle being filled is neither
+an empty folder to retire nor a bundle to judge; and staying under the queue
+root keeps the rename on one volume, where a directory rename is a single step.
+Other readers of the queue roots (`collage_provenance`, `reprocess_to_current`'s
+skip list, two review widgets) do not filter dot-folders; they key on
+stem-named files or folder names, so `.incoming` matches no video there by
+accident, not by rule. A new reader must add the filter.
+
+Only `move_video_bundle` builds out of sight.
+`reprocess_to_current._stage_review_bundle` (the bring-current path) still
+creates `<queue>/<stem>/` first and fills it file by file; the 30-minute
+empty-folder grace below covers it only while it is completely empty.
+
+  * A bundle that already exists (a re-route, or a divert into an existing
+    bundle) is already visible, so files move straight into it as before.
+  * If the rename fails (normally because the same stem's bundle appeared
+    meanwhile), the built files are moved in one by one -- same-volume, so
+    milliseconds -- rather than left in the hidden folder where no queue reader
+    would ever see them.
+  * Two routes of the same video share `<queue>/.incoming/<stem>/`. If one
+    publishes it while the other is still filling it, the other moves its
+    remaining files, and writes its routing manifest, into the published
+    bundle. WHY: its moves used to fail and its manifest write raised out of
+    the route, losing its record and leaving files in their source.
+  * Once files have moved, the publish is always attempted, even when writing
+    the routing manifest into the build folder fails; the manifest is then
+    written into the published bundle (with the retrying JSON writer,
+    `fsutil.dump_json_with_retry`). WHY: that exception used to skip the
+    publish and strand every file -- the video's only copy -- in the hidden
+    folder, while the caller marked the video failed with nothing left in
+    Processing to retry.
+  * A file that could not be moved in the fallback stays in
+    `<queue>/.incoming/<stem>/` beside the published bundle (never deleted),
+    and `review_return._return_to_processing` refuses to return that bundle,
+    naming the folder, while the build folder holds files. WHY: the file most
+    likely to be stuck is a locked mp4; later routes write straight into the
+    visible bundle and never read staging, so returning would re-run the video
+    without it. `mousereach-reconcile` adds a note naming the leftover to that
+    video's queue verdict.
+  * The routing manifest `<stem>_routing.json` records `failed_files` beside
+    `moved_files`: each file that could not be moved, with its error. WHY: a
+    part-moved bundle used to be a log warning only, invisible in the record the
+    review tool and audits read.
+  * A route that dies partway leaves its files in `<queue>/.incoming/<stem>/`,
+    and the next route of that video reuses them. `mousereach-reconcile` lists
+    such a video as `held_for_person`, found in `incoming:<queue>`, with "being
+    routed into <queue>, or an interrupted route -- check if this persists". A
+    route takes seconds, so the same video there on a later run means a route
+    died.
+
+AN EMPTY QUEUE FOLDER IS LEFT ALONE FOR 30 MINUTES
+
+The return scan still files an empty triage folder away to `_Problematic`
+(residue of an earlier divert or return), but only once the folder's
+modification time is 30 minutes old (`review_return.EMPTY_DIR_GRACE_SECONDS`).
+WHY: "empty" is not "abandoned". A router may have just created the folder and
+still be moving files in (a bundle that already exists, and a failed rename, are
+filled in place), and the share stamps that time with its own clock, which can
+differ from the scanning node's by many minutes. So age is judged
+conservatively: a time in the future counts as young, and so does a folder whose
+time cannot be read. Real residue just waits for a later scan; an empty folder
+holds no work. The deep-review loop never retires empty folders (an empty folder
+has no clear marker, so it is never acted on).
+
+The same scan names, in a warning once per watcher run, any
+`<queue>/.incoming/<stem>/` older than 30 minutes: "being routed or an
+interrupted route; a person should check". It never moves or deletes one. WHY:
+those files are the video's only copy (it has already left where it came from),
+and whether a route is still running or died half-way is for a person to judge.
+
+RETURNING A CLEARED BUNDLE KEEPS ITS PROVENANCE AND ITS CHOSEN POSE
+
+`review_return._return_to_processing`:
+
+  * Queue-only metadata is matched by exact name (`<stem>_manifest.json`,
+    `<stem>_routing.json`, `manifest.json`). WHY: the old suffix match on
+    `_manifest.json` also caught `<stem>_processing_manifest.json`, the video's
+    provenance record, and deleted it from every returned bundle. Stage reuse
+    is decided from the stage outputs, never from this file, and a normal re-run
+    regenerates it before the review gate. When that regeneration FAILS, the
+    pipeline now moves the old manifest into `<processing dir>/_stale_manifests/`
+    (`_set_aside_stale_manifest`, logged as an ERROR) instead of leaving it to
+    be stamped by kinematics and archived as this run's provenance. WHY: a
+    stale manifest makes reconcile read the video as current; with none, the
+    video reads as not current and a person sees it. Still open: a real
+    segmentation failure is routed to deep review before the manifest is
+    regenerated, so that re-routed bundle carries the previous run's manifest.
+  * The pose recorded for the re-run is the one `_resolve_inputs` selected
+    (`select_pose_file`). WHY: it used to be whichever `.h5` the move loop moved
+    last, so a bundle holding two pose generations re-ran on the wrong, often
+    older, one.
+  * Gate-routed bundles are self-contained (the mp4 and pose move in with the
+    algorithm outputs); only legacy staged bundles point at an mp4 and pose left
+    in Analyzed. The docstring had said the opposite.
+
+MOUSEREACH-ROUTE-TO-QUEUE WRITES THE WATCHER'S OWN DATABASE, OR NOTHING
+
+`route_cli.main` opened a bare `WatcherDB()`, which defaults to
+`<processing_root>/watcher.db` and ignores the node's `db_path` override. Every
+state write went to an unused decoy database while the bundles moved on disk
+("Disk and DB now disagree"). It now resolves the database the way the daemon
+does (`db_location.resolve_watcher_db_path`: the configured `db_path`, else
+`<processing_root>/watcher.db`), prints `[watcher db] <path>` (to stderr with
+`--json`), and REFUSES to route -- exit 1, nothing flagged, nothing moved --
+when that file does not exist or cannot be opened. WHY refuse: routing on disk
+only leaves disk and database disagreeing for every video in a worklist, and
+opening a missing file would create an empty database, which is just a new
+decoy.
+
+A video the daemon is working on is DEFERRED, not routed: watcher state
+`dlc_queued`, `dlc_running`, `dlc_complete`, `processing`, `processed` or
+`archiving` (`route_cli.IN_FLIGHT_STATES`), checked before any flag is written.
+It prints `wait`, carries `deferred: true` with `--json`, and does not make the
+exit code 1. WHY: the command now writes the daemon's live database. Setting
+'triage' underneath a running pipeline makes the pipeline's own 'processing' ->
+'processed' write an illegal transition, and the daemon marks the video failed
+with fresh outputs in Processing and old outputs in the queue; a 'processed' or
+'archiving' video's Analyzed copy is older than what the daemon is about to
+archive. WHY not exit 1: an integrator treats a failing exit as an
+error, and a video that is merely busy should just be offered again on its next
+run.
+
+THE ARCHIVE STEP WAITS FOR A BUNDLE STILL BEING BUILT
+
+`_archive_to_nas` already skips a video whose bundle sits in a queue on disk and
+adopts the queue state. It now also skips -- without touching state -- a video
+with a `<queue>/.incoming/<stem>/` folder. WHY: the queue check looks for
+`<queue>/<stem>/`, which only appears when the route's final rename runs; until
+then, archiving would file the leftovers while the rest of the bundle is on its
+way into the queue. The next cycle sees the published bundle, or the route
+failed and the files are where they were.
+
+THE REVIEW MANIFEST NAMES THE CHOSEN POSE
+
+`review_gate._write_review_manifest` records `select_pose_file` over the bundle's
+`<stem>DLC*.h5` files as `canonical_dlc_h5_path`, not the first name sorted.
+WHY: the review tools trust that pointer before choosing for themselves, and a
+bundle holding two pose generations sorted the OLD model's file first.
