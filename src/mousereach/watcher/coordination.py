@@ -754,6 +754,33 @@ class PipelineCoordinator:
 
                 if (remote_idx > local_idx and local_state != 'failed'
                         and not _is_live_local_work(local_row)):
+                    # The same question the branch above asks before adopting a
+                    # working state: are the files actually HERE? WHY it must be
+                    # asked here too: a row this node already has, with no file,
+                    # was advanced into a working state on every restart, picked
+                    # up by the work loop, failed to stage ("no video file for it
+                    # on this node"), and dropped back to unresolvable -- which is
+                    # BELOW the remote state, so the next restart did it again.
+                    # Measured on a behaviour-room node 2026-09-18: 12 rows, one
+                    # work slot each (~32 s), about six minutes of every startup,
+                    # for ever. Recorded once as unresolvable instead.
+                    if remote_state in NODE_LOCAL_STATES:
+                        local_file = locate_video_file(
+                            video_id, raw=remote.get('source_path'),
+                            search_archive=False, search_staging=False)
+                        if local_file is None:
+                            if local_state != 'unresolvable':
+                                try:
+                                    local_db.mark_unresolvable(
+                                        video_id,
+                                        "no file on this node; %s has it at state '%s'" % (
+                                            remote.get('hostname') or 'another node',
+                                            remote_state))
+                                    stats['videos_elsewhere'] += 1
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Could not record {video_id} as elsewhere: {e}")
+                            continue
                     try:
                         local_db.force_state(video_id, remote_state)
                         stats['videos_advanced'] += 1
