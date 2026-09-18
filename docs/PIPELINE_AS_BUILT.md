@@ -1432,10 +1432,25 @@ each per recording episode:
     is only reached between work items. So by then the pose or crop has already
     been killed and nothing of ours is running: the GPU and disk are free.
 
-Both reset when the watcher resumes (`RecordNotices.back_to_work`), so the next
-recording is announced again. A box that cannot be shown (no desktop, not
-Windows, a failing call) is logged at DEBUG and changes nothing -- the INFO log
-lines are written either way. Turned off with `watcher.notify_safe_to_record:
+When the watcher resumes, `RecordNotices.back_to_work` CLOSES both boxes (found
+by window title, only our own titles) and then arms the next episode. WHY closing
+them: nothing dismisses a message box by itself, and on the first live test
+(2026-09-18, added in a later commit) the "Safe to record" box was still on screen
+minutes after the recording program was closed and the node had gone back to work
+-- the last thing the operator saw said the machine was free while it was posing
+again. A box that cannot be shown OR closed (no desktop, not Windows, a failing
+call) is logged at DEBUG and changes nothing -- the INFO log lines are written
+either way.
+
+FIRST LIVE TEST (2026-09-18, a behaviour-room node). Opening the recording program
+paused the watcher within 3 s and showed the "Safe to record" box; closing it
+resumed work 2 min 04 s later (the 120 s grace plus one 30 s poll). The
+"MouseReach is stopping" box did NOT appear, correctly: it is raised from
+`_recording_abort_reason`, which only runs from inside a pose or crop, and that
+node had nothing in flight (every video in its queue resolved to a skip). So the
+two statements above about stopping a pose or crop PART-WAY for a recording --
+and the video going back to its queue rather than being failed -- are proven by
+tests but NOT yet by a live recording on a node doing real work. Turned off with `watcher.notify_safe_to_record:
 false`; it is on by default but says nothing at all on a node with no recording
 programs listed, which is every node that does not record.
 
