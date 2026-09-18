@@ -10,13 +10,14 @@ from mousereach.watcher import record_notice as rn
 
 
 def _recorder():
-    said = []
-    return said, (lambda title, text: said.append(title) or True)
+    said, closed = [], []
+    return said, closed, (lambda title, text: said.append(title) or True), \
+        (lambda title: closed.append(title) or True)
 
 
 def test_one_of_each_message_per_episode():
-    said, fake = _recorder()
-    n = rn.RecordNotices(enabled=True, notify_fn=fake)
+    said, closed, fake, fake_close = _recorder()
+    n = rn.RecordNotices(enabled=True, notify_fn=fake, dismiss_fn=fake_close)
 
     assert n.stopping() and not n.stopping()
     assert n.safe_to_record() and not n.safe_to_record()
@@ -27,11 +28,35 @@ def test_one_of_each_message_per_episode():
     assert said.count(rn.SAFE_TITLE) == 2
 
 
+def test_going_back_to_work_takes_the_boxes_off_the_screen():
+    """WHY: nothing dismisses a message box by itself. On the first live test the
+    'Safe to record' box was still up while the node had gone back to posing."""
+    said, closed, fake, fake_close = _recorder()
+    n = rn.RecordNotices(enabled=True, notify_fn=fake, dismiss_fn=fake_close)
+    n.safe_to_record()
+    n.back_to_work()
+    assert closed == [rn.SAFE_TITLE, rn.STOPPING_TITLE]
+
+    closed.clear()
+    n.back_to_work()                 # nothing was shown since, so nothing to close
+    assert closed == []
+
+
 def test_turned_off_says_nothing():
-    said, fake = _recorder()
-    n = rn.RecordNotices(enabled=False, notify_fn=fake)
+    said, closed, fake, fake_close = _recorder()
+    n = rn.RecordNotices(enabled=False, notify_fn=fake, dismiss_fn=fake_close)
     assert not n.stopping() and not n.safe_to_record()
-    assert said == []
+    assert said == [] and closed == []
+
+
+def test_a_dismissal_that_fails_never_raises():
+    def boom(title):
+        raise OSError("no window here")
+
+    n = rn.RecordNotices(enabled=True, notify_fn=lambda *a: True, dismiss_fn=boom)
+    n.safe_to_record()
+    n.back_to_work()                 # must not escape into the watcher's pause check
+    assert n.stopping(), "the next episode is still announced"
 
 
 def test_a_message_that_cannot_be_shown_never_raises():

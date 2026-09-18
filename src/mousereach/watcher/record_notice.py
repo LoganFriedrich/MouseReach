@@ -46,6 +46,7 @@ _MB_ICONINFORMATION = 0x00000040
 _MB_SETFOREGROUND = 0x00010000
 _MB_TOPMOST = 0x00040000
 _MB_SERVICE_NOTIFICATION = 0x00200000
+_WM_CLOSE = 0x0010
 
 
 def _show_windows_box(title: str, text: str) -> None:
@@ -53,6 +54,33 @@ def _show_windows_box(title: str, text: str) -> None:
     ctypes.windll.user32.MessageBoxW(
         None, text, title,
         _MB_OK | _MB_ICONINFORMATION | _MB_SETFOREGROUND | _MB_TOPMOST)
+
+
+def _close_windows_box(title: str) -> bool:
+    """Close a message box of ours that is still on screen. True if one was closed.
+
+    WHY: nothing dismisses a message box by itself, so the "Safe to record" box
+    stayed up after the recording program was closed and the node went back to
+    work -- the last thing the operator saw said the machine was free while it
+    was posing again (seen on the first live test, 2026-09-18). Found by window
+    title, and only our own titles are ever passed in.
+    """
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                    wintypes.WPARAM, wintypes.LPARAM]
+    closed = False
+    # A loop: an operator may have left more than one of ours open.
+    for _ in range(5):
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd:
+            break
+        user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)
+        closed = True
+    return closed
 
 
 def notify(title: str, text: str, show=None) -> bool:
@@ -75,6 +103,22 @@ def notify(title: str, text: str, show=None) -> bool:
         return False
 
 
+def dismiss(title: str, close=None) -> bool:
+    """Take one of our message boxes off the screen, if it is still up.
+
+    Never raises: this runs from the watcher's pause check.
+    """
+    import sys
+    close = close or (_close_windows_box if sys.platform == "win32" else None)
+    if close is None:
+        return False
+    try:
+        return bool(close(title))
+    except Exception as e:
+        logger.debug(f"could not close the '{title}' message: {e}")
+        return False
+
+
 def _guarded(show, title, text) -> None:
     try:
         show(title, text)
@@ -90,9 +134,10 @@ class RecordNotices:
     once, not every thirty seconds. ``enabled`` False says nothing at all.
     """
 
-    def __init__(self, enabled: bool = True, notify_fn=notify):
+    def __init__(self, enabled: bool = True, notify_fn=notify, dismiss_fn=None):
         self.enabled = bool(enabled)
         self._notify = notify_fn
+        self._dismiss = dismiss_fn or dismiss
         self._said_stopping = False
         self._said_safe = False
 
@@ -123,6 +168,18 @@ class RecordNotices:
         return self._say(SAFE_TITLE, SAFE_TEXT)
 
     def back_to_work(self) -> None:
-        """The pause is over; the next recording gets its own messages."""
+        """The pause is over: take our boxes off the screen and arm the next episode.
+
+        WHY the boxes are closed: nothing dismisses a message box by itself. On the
+        first live test (2026-09-18) the "Safe to record" box was still on screen
+        minutes after the recording program was closed and the node had gone back to
+        work -- telling the operator the machine was free while it was posing again.
+        """
+        if self._said_safe or self._said_stopping:
+            try:
+                self._dismiss(SAFE_TITLE)
+                self._dismiss(STOPPING_TITLE)
+            except Exception as e:
+                logger.debug(f"could not take the recording messages off the screen: {e}")
         self._said_stopping = False
         self._said_safe = False
