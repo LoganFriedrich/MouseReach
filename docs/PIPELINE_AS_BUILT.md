@@ -1460,3 +1460,31 @@ An archive or staging copy already running finishes (seconds to minutes; a
 half-copied file on the share is worse than the wait), and so does a local
 pipeline run on an also_process node -- segmentation, reaches, outcomes and
 assignment together take a few seconds per video.
+
+---
+
+## Update 2026-09-18: startup recovery no longer re-adopts pathless rows
+
+WHY. `PipelineCoordinator.recover_local_db` has two branches. The one that
+registers a video the local database has never seen already asked "are the files
+actually on this node?" before adopting a working state (NODE_LOCAL_STATES), and
+recorded the row as unresolvable when they were not. The branch that ADVANCES a
+row the database already has did not ask. So a pathless local row was forced to
+the remote working state on every restart, selected by the work loop, failed to
+stage ("no video file for it on this node"), and dropped back to unresolvable --
+which sorts below the remote state, so the next restart repeated it.
+
+Measured on a behaviour-room node on 2026-09-18: 12 rows, one work slot each
+(about 32 s), roughly six minutes of every startup, indefinitely. Nothing was
+lost and no video was harmed; the node simply could not reach real work for the
+first few minutes after each start.
+
+The advance branch now applies the same test: a remote state in
+NODE_LOCAL_STATES whose file cannot be located here (search_archive=False,
+search_staging=False, as in the other branch) marks the row unresolvable once --
+and leaves it alone if it already says unresolvable -- instead of advancing it.
+States that live on the share (archived, crystallized, triage, deep_review) are
+adopted exactly as before, with no file search at all, because adopting them is
+how a node learns not to redo finished work.
+
+Tests: `tests/test_coordination_recovery_pathless.py`.
