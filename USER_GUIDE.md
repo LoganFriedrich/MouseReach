@@ -591,6 +591,23 @@ are recorded. Nothing needs to be stopped first:
   second copy is left where it is and the watcher log says so. Delete the
   second copy.
 
+**On a machine that also records behaviour:** tell it which program you record
+with (`mousereach-watch-recorders --add <program>.exe`, or the Watcher Control
+panel). From then on that machine does no processing while the recording
+program is open -- you do not have to close it, and you do not have to wait:
+
+- Open the recording program and a box says **MouseReach is stopping**. The
+  pose or crop running at that moment is stopped within seconds and thrown
+  away (the video simply goes back in the queue; nothing is lost but a few
+  minutes of machine time).
+- A second box says **Safe to record**. That one means nothing of ours is
+  running any more: the graphics card and disk are yours.
+- Processing starts again on its own a couple of minutes after the recording
+  program is closed (`watcher.pause_resume_grace_seconds`).
+- To silence the boxes on a machine, set `watcher.notify_safe_to_record` to
+  `false` in `~/.mousereach/config.json`. The same information is always in the
+  watcher log and in the Watcher Control panel.
+
 Each machine also has a local working folder (`processing_root`):
 
 ```

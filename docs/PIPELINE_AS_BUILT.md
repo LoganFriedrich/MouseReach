@@ -1174,14 +1174,15 @@ A POSE ALREADY RUNNING
     returns `dlc_running` rows to the queue, so a second pose of the same video
     cannot start beside a leftover one.
 
-WHAT IS NOT STOPPED PART-WAY (known gap)
+WHAT IS NOT STOPPED PART-WAY
 
-A collage crop already running finishes: `crop_collage` copies the collage and
-runs up to 8 back-to-back ffmpeg re-encodes through `os.system`, which cannot
-be stopped from outside, for minutes to an hour or two of CPU and disk. A local
-pipeline run on an also_process node, and an archive or staging copy already
-running, also finish. The pause takes effect after them. Only new work is
-blocked. The panel's help text says so.
+(Corrected 2026-09-18: a crop IS now stopped part-way -- see the update
+"a crop stops too, and the node says when it is safe to record" at the end.)
+
+An archive or staging copy already running finishes, and so does a local
+pipeline run on an also_process node (segmentation, reaches, outcomes and
+assignment together take a few seconds per video). The pause takes effect
+after them. Only new work is blocked.
 
 RE-POSE CLAIMS WHILE PAUSED
 
@@ -1205,8 +1206,8 @@ caught mid-save) changes nothing and gives one WARNING per change. Log (INFO):
 `Recording-program settings changed: ...`. Every other setting still applies
 at the next start. WHY: the panel, the CLI and the status commands all read the
 file; a watcher that kept its start-up list would pose on top of a recording
-while every screen said PAUSED. A pose that was started in-process before a
-program was first listed runs to its end, since it cannot be stopped.
+while every screen said PAUSED. A pose or crop that was started in-process
+before a program was first listed runs to its end, since it cannot be stopped.
 
 WHAT A PERSON SEES
 
@@ -1374,3 +1375,73 @@ Known gaps:
   * Rows parked before 2026-09-15 under the old text ("registered from the
     shared singles folder, but the file is no longer there") are not re-driven
     automatically.
+
+---
+
+## Update 2026-09-18: a crop stops too, and the node says when it is safe to record
+
+WHY. Pausing for a recording program was not immediate. A pose stopped within
+seconds, but a crop already running finished first -- up to eight ffmpeg
+re-encodes, minutes of CPU and disk -- so an operator who opened the recording
+program had to wait, with nothing on screen telling them when the machine was
+theirs. Re-cropping a collage costs minutes of a machine nobody is using; a
+recording that drops frames is behaviour that can never be filmed again. Code:
+`video_prep/core/crop_interruptible.py` and `crop_worker.py`,
+`watcher/record_notice.py`, and `BaseOrchestrator` in `watcher/orchestrator.py`.
+
+A CROP ALREADY RUNNING
+
+  * No programs listed: the crop runs in-process through `crop_collage`,
+    exactly as before, and cannot be stopped part-way.
+  * Programs listed: the crop runs in a child process, `python -m
+    mousereach.video_prep.core.crop_worker <args.json>`, through
+    `run_crop_collage_interruptible`. The parent asks
+    `BaseOrchestrator._recording_abort_reason` once before starting (a reason
+    means the child never starts) and then every 2 s. On a reason it kills the
+    child and everything it started, and removes ONLY this run's output in the
+    working folder: files ending .mp4 (a cropped single) or .json (the crop
+    manifest) that were not in the listing taken just before the child started
+    AND whose modified time is at or after that start (2 s allowance). The
+    collage copy itself (.mkv) and every older file survive. The child is tied
+    to the watcher by the same Job Object as a pose, so it cannot outlive it.
+  * The collage is then put back to `stable` with `force_collage_state` (WHY
+    forced: `cropping` may only move to `cropped` or `failed`, and this is
+    neither -- the collage is simply waiting again), a processing_log row step
+    `crop`, status `aborted`, message = the reason is written, and the local
+    copy of the collage is deleted. The collage is NOT marked failed, so it
+    keeps its retries, and `_release_claim_after_failed_crop` is NOT called:
+    the shared claim stays with this node, which comes back to the collage.
+    The handler reports no progress, so the loop sleeps and then finds itself
+    paused. Log (INFO): `Collage <name>: crop stopped after N s because
+    <reason>; partial singles removed, waiting to be cropped again (not counted
+    as a failure)`.
+  * A crop that finishes by itself is kept even if a stop was asked for in the
+    same instant. A child that exits without writing a result is a failed crop,
+    with the end of its output quoted and its log kept.
+
+WHAT THE PERSON AT THE MACHINE SEES
+
+`watcher/record_notice.py` shows two Windows message boxes on that machine,
+from a background thread (the watcher never waits for a click), at most one of
+each per recording episode:
+
+  * "MouseReach is stopping" -- the first time the recording guard gives a
+    reason while work is running (asked from `_recording_abort_reason`, which
+    the running pose or crop polls). It says to wait for the next message.
+  * "Safe to record" -- from the pause check at the top of the main loop, which
+    is only reached between work items. So by then the pose or crop has already
+    been killed and nothing of ours is running: the GPU and disk are free.
+
+Both reset when the watcher resumes (`RecordNotices.back_to_work`), so the next
+recording is announced again. A box that cannot be shown (no desktop, not
+Windows, a failing call) is logged at DEBUG and changes nothing -- the INFO log
+lines are written either way. Turned off with `watcher.notify_safe_to_record:
+false`; it is on by default but says nothing at all on a node with no recording
+programs listed, which is every node that does not record.
+
+STILL NOT STOPPED PART-WAY
+
+An archive or staging copy already running finishes (seconds to minutes; a
+half-copied file on the share is worse than the wait), and so does a local
+pipeline run on an also_process node -- segmentation, reaches, outcomes and
+assignment together take a few seconds per video.

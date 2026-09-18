@@ -760,6 +760,13 @@ class WatcherConfig:
                 0, int(cfg.get('pause_resume_grace_seconds', 120)))
         except (TypeError, ValueError):
             self.pause_resume_grace_seconds = 120
+        # Say on this machine's screen when its work has actually stopped for a
+        # recording program ("safe to record"), and when it starts stopping.
+        # WHY: the pause is not instant -- the pose or crop running at that
+        # moment is killed first -- and the operator cannot otherwise tell when
+        # the GPU and disk are free. Only ever shown when programs are listed
+        # above. See mousereach.watcher.record_notice.
+        self.notify_safe_to_record: bool = bool(cfg.get('notify_safe_to_record', True))
         # The file these settings were read from, and its modified time then.
         # Set only by load(). WHY: a running watcher re-reads the two recording
         # settings above when that file changes (see
@@ -803,6 +810,10 @@ class WatcherConfig:
         # config file that says nothing about recording programs.
         if self.pause_while_running:
             d['pause_while_running'] = list(self.pause_while_running)
+        # Only when turned OFF: on is the default, and a file full of defaults
+        # hides the settings someone actually chose.
+        if not self.notify_safe_to_record:
+            d['notify_safe_to_record'] = False
         if self.dlc_shuffle is not None:
             d['dlc_shuffle'] = self.dlc_shuffle
         if self.dlc_config_path:

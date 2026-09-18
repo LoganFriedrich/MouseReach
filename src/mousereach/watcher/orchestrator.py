@@ -85,6 +85,15 @@ class _PoseAborted(Exception):
     one is marked failed and spends a retry."""
 
 
+class _CropAborted(Exception):
+    """A crop was stopped part-way on purpose (a recording program started).
+
+    Same idea as _PoseAborted, for the other long step: the half-made single
+    videos are deleted and the collage goes back to waiting, without being
+    marked failed. Cropping again costs minutes of an idle machine; a recording
+    that drops frames cannot be filmed again."""
+
+
 # =============================================================================
 # BASE ORCHESTRATOR
 # =============================================================================
@@ -259,6 +268,17 @@ class BaseOrchestrator:
         previous = getattr(self, '_pause_reason', None)
         self._pause_reason = reason
         kind, previous_kind = self._pause_kind(reason), self._pause_kind(previous)
+        # On-screen messages for the person at a recording machine. This runs
+        # between work items, so reaching here paused for a recording means
+        # nothing of ours is running any more -- which is exactly what "safe to
+        # record" claims. Each is said once per recording episode.
+        try:
+            if kind == 'recording':
+                self._record_notices().safe_to_record()
+            elif not reason:
+                self._record_notices().back_to_work()
+        except Exception as e:
+            logger.debug(f"could not update the recording messages: {e}")
         if reason and not previous:
             logger.info("Watcher PAUSED: %s. No new work starts; %s.",
                         reason, self._pause_hint(kind))
@@ -376,7 +396,27 @@ class BaseOrchestrator:
         and a pose already half done is kept. Only an open recording program
         stops one part-way, because only a recording cannot be redone."""
         self._refresh_recording_settings()
-        return self._get_recording_guard().reason()
+        reason = self._get_recording_guard().reason()
+        if reason:
+            # Said on this machine's screen, once, while the work is being
+            # stopped: the operator is standing there waiting for the GPU.
+            self._record_notices().stopping()
+        return reason
+
+    def _record_notices(self):
+        """This node's on-screen messages about recording (watcher/record_notice.py).
+
+        Built on first use from the config, and only ever says anything when
+        recording programs are configured -- a node that never records has
+        nobody standing at it waiting for the GPU."""
+        notices = getattr(self, '_notices', None)
+        if notices is None:
+            from mousereach.watcher.record_notice import RecordNotices
+            config = getattr(self, 'config', None)
+            enabled = (bool(getattr(config, 'pause_while_running', None))
+                       and bool(getattr(config, 'notify_safe_to_record', True)))
+            notices = self._notices = RecordNotices(enabled=enabled)
+        return notices
 
     def _while_paused(self) -> None:
         """Upkeep that must continue while the watcher is paused. Nothing on
@@ -2598,13 +2638,33 @@ class DLCOrchestrator(BaseOrchestrator):
             if not safe_copy(source_path, local_collage, verify=True):
                 raise IOError(f"Failed to copy collage to working directory")
 
-            # Crop collage to singles
+            # Crop collage to singles. Two ways to run it, exactly as the pose
+            # has: with no recording programs configured, in this process as
+            # before; with programs configured, in a child process this node can
+            # stop part-way (video_prep/core/crop_interruptible.py), asking the
+            # recording guard every couple of seconds. WHY: ffmpeg runs once per
+            # animal for minutes, and an operator who opened the recording
+            # program should not have to wait for that.
             logger.info(f"Cropping collage: {collage_filename}")
-            crop_results = crop_collage(
-                input_path=local_collage,
-                output_dir=self.working_dir,
-                verbose=False
-            )
+            if getattr(self.config, 'pause_while_running', None):
+                from mousereach.video_prep.core.crop_interruptible import (
+                    run_crop_collage_interruptible)
+                crop_outcome = run_crop_collage_interruptible(
+                    input_path=local_collage,
+                    output_dir=self.working_dir,
+                    should_abort=self._recording_abort_reason,
+                )
+                if crop_outcome.get('status') == 'aborted':
+                    raise _CropAborted(crop_outcome.get('abort_reason') or 'stopped part-way')
+                if crop_outcome.get('status') != 'success':
+                    raise RuntimeError(f"crop failed: {crop_outcome.get('error')}")
+                crop_results = crop_outcome.get('results') or []
+            else:
+                crop_results = crop_collage(
+                    input_path=local_collage,
+                    output_dir=self.working_dir,
+                    verbose=False
+                )
 
             # Register each cropped single and move to DLC_Queue
             videos_created = 0
@@ -2729,6 +2789,32 @@ class DLCOrchestrator(BaseOrchestrator):
             for result in crop_results:
                 if result['status'] == 'success':
                     Path(result['output_path']).unlink(missing_ok=True)
+
+        except _CropAborted as stopped:
+            # Caught BEFORE the generic handler: stopping for a recording is not
+            # a failure of this collage. Its half-made singles are already
+            # deleted; the local copy of the collage goes too, and the collage
+            # waits to be cropped again. The shared claim is KEPT (this node
+            # comes back to it, and nothing of it exists anywhere else).
+            duration = time.time() - start_time
+            local = locals().get('local_collage')
+            if local is not None:
+                Path(local).unlink(missing_ok=True)
+            try:
+                # force_: 'cropping' may only go to 'cropped' or 'failed', and
+                # this is neither -- the collage is simply waiting again.
+                self.db.force_collage_state(collage_filename, 'stable')
+                self.db.log_step(collage_filename, 'crop', 'aborted',
+                                 message=str(stopped), duration=duration)
+            except Exception as e:
+                logger.error(f"Collage {collage_filename}: crop was stopped ({stopped}) "
+                             f"but the row could not be put back to waiting "
+                             f"({type(e).__name__}: {e}); the next watcher start "
+                             f"recovers it")
+            logger.info(f"Collage {collage_filename}: crop stopped after {duration:.0f} s "
+                        f"because {stopped}; partial singles removed, waiting to be "
+                        f"cropped again (not counted as a failure)")
+            return False
 
         except Exception as e:
             duration = time.time() - start_time
