@@ -1488,3 +1488,21 @@ adopted exactly as before, with no file search at all, because adopting them is
 how a node learns not to redo finished work.
 
 Tests: `tests/test_coordination_recovery_pathless.py`.
+
+ONE LAYER DOWN: THE WORK LOOP STILL SELECTED THEM (fixed the same day)
+
+Recovery no longer creates such rows, but the GPU node's staging bucket still
+OFFERED every `dlc_complete` row, placeholder included. The handler then spent a
+whole poll interval rediscovering what the row already said -- one row per poll.
+On the same node: six rows, 2 min 41 s of work slots after an unpause (18:14:56 ->
+18:17:38, one every ~32 s against `poll_interval_seconds` 30), delaying the real
+work queued behind them.
+
+`DLCOrchestrator._select_work_item` now filters that bucket on the NO_FILE_HERE
+placeholder before `_pick_from_pool` sees it. A row with NO recorded path is still
+offered, because `locate_video_file` may find its file -- that is how a node picks
+up work which genuinely is here. The retirement path itself is unchanged. The
+constant is read from `watcher.db` with a getattr fallback rather than through
+`self.db`, so a caller holding a database double is not coupled to it.
+
+Tests: `tests/test_work_selection_skips_known_pathless.py`.
