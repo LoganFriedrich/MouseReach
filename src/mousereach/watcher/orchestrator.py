@@ -2279,6 +2279,20 @@ class DLCOrchestrator(BaseOrchestrator):
         # is finishing a video this node already has.
         # For staging, prefer priority animal but no randomization (stage ASAP).
         videos = self.db.get_videos_in_state('dlc_complete')
+        # Rows already KNOWN to have no file here never get a work slot. WHY:
+        # cross-node recovery learns about videos another machine holds, and
+        # registers them with the NO_FILE_HERE placeholder. Each such row was
+        # still selected, and the handler then spent the whole poll interval
+        # discovering there was no file -- one row per poll, so six of them cost
+        # six polls (2 min 41 s measured on a behaviour-room node, 2026-09-18).
+        # The retirement itself is right and is left alone; only the cost of
+        # rediscovering a fact already written in the row is removed. A row with
+        # NO recorded path is NOT skipped: locate_video_file may still find its
+        # file, which is how a node picks up work that really is here.
+        from mousereach.watcher.db import WatcherDB as _WatcherDB
+        _no_file_here = getattr(self.db, 'NO_FILE_HERE', _WatcherDB.NO_FILE_HERE)
+        videos = [v for v in videos
+                  if (v.get('current_path') or v.get('source_path')) != _no_file_here]
         stage = 'local_pipeline' if self.config.also_process else 'stage_to_nas'
         pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
                                     randomize=False)
