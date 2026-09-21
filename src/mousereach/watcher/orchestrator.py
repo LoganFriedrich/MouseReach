@@ -2333,6 +2333,23 @@ class DLCOrchestrator(BaseOrchestrator):
         # refused waits out its backoff so the collages below still get cropped
         # (_note_single_claim_refused), and none are taken at all while this
         # node's recent poses keep failing (_note_pose_result).
+        #
+        # Deliberately NOT a third filter: whether the row's recorded path
+        # exists. The staging bucket above skips rows whose path is the
+        # NO_FILE_HERE placeholder, and extending that to a real path test here
+        # would be wrong. A validated row's recorded path is often ANOTHER
+        # node's local path, copied from the shared record as a breadcrumb,
+        # while the file itself sits in the shared singles folder ready to be
+        # adopted -- so an unresolvable path is not evidence of an unadoptable
+        # video, and only locate_video_file (which searches that folder) can
+        # tell them apart. The handler already calls it.
+        # The cost of leaving this unfiltered is bounded and self-clearing:
+        # every path through _adopt_single_for_dlc takes the row OUT of
+        # 'validated' -- a finished or held video is recorded as such and costs
+        # no poll at all (the handler returns True), a vanished file is marked
+        # unresolvable, a second copy of another node's claim likewise. So a
+        # raced row costs one poll, once, not a poll per cycle for ever.
+        # (tests/test_adopt_single_offers_rows_with_stale_paths.py)
         if self._singles_braked():
             videos = []
         else:
