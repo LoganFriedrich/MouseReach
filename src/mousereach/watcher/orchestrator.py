@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime
 
+from mousereach.watcher import node_status
 from mousereach.watcher.db import WatcherDB
 from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
@@ -521,6 +522,26 @@ class BaseOrchestrator:
                 ", ".join(f"{n} from '{s}'" for s, n in sorted(reclaimed.items())))
         return reclaimed
 
+    def _report_node_status(self, state: str, reason=None) -> None:
+        """Say on the shared drive what this node is doing, so silence means something.
+
+        WHY: a paused node and a dead node are indistinguishable from any other
+        machine -- both simply stop appearing in the shared record -- and a node
+        pauses whenever a recording program is open, which is routinely left open
+        after the recording is finished. So a quiet machine is usually correct and
+        occasionally a dead watcher, and nobody could tell which (see node_status).
+
+        Never raises and never blocks work: a status report that can stop the thing
+        it reports on is worse than no status report.
+        """
+        try:
+            nas_root = Paths.NAS_ROOT
+            if not nas_root:
+                return
+            node_status.write(nas_root, state, reason, hostname=self.hostname)
+        except Exception as e:
+            logger.debug(f"could not write node status: {e}")
+
     def run(self, shutdown_event: threading.Event):
         """Main orchestrator loop: scan + process in a single thread."""
         logger.info(f"{self.__class__.__name__} starting main loop")
@@ -546,9 +567,12 @@ class BaseOrchestrator:
                 # Paused by hand, or a recording program is running. _is_paused
                 # logs once on entering and once on leaving, not every poll.
                 if self._is_paused():
+                    self._report_node_status(node_status.PAUSED,
+                                             getattr(self, '_pause_reason', None))
                     self._while_paused()
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
+                self._report_node_status(node_status.WORKING)
 
                 # Periodically pick up freshly-saved reviews / version staleness.
                 self._maybe_review_reprocess_scan()
@@ -588,6 +612,7 @@ class BaseOrchestrator:
                 logger.error(f"Error in main loop: {e}", exc_info=True)
                 time.sleep(5)
 
+        self._report_node_status(node_status.STOPPING, "shutting down")
         self.shutdown()
         logger.info(f"{self.__class__.__name__} stopped")
 

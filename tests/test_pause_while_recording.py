@@ -313,6 +313,11 @@ def _node(tmp_path, monkeypatch, scan=None, names=(PROGRAM,), grace=0):
     # a test can never touch or move a real claim on the live share.
     monkeypatch.setattr(orch.Paths, "SINGLE_ANIMAL_OUTPUT", tmp_path / "Single_Animal",
                         raising=False)
+    # Same reason for the share root: the loop reports what this node is doing to
+    # <nas>/Processing/.node_status (watcher/node_status.py), and a test must never
+    # write a status file onto the live share -- another machine reads those to decide
+    # whether a node is alive.
+    monkeypatch.setattr(orch.Paths, "NAS_ROOT", tmp_path / "nas", raising=False)
     o._reclaim_orphaned_work = lambda: {}
     o._maybe_review_reprocess_scan = lambda *a, **k: None
     o.shutdown = lambda: None

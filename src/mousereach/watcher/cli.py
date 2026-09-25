@@ -640,6 +640,22 @@ def main_status():
             print("Recent Activity: (none)")
         print()
 
+        # Every node, and whether its quiet is deliberate. WHY this is here: a
+        # paused node and a dead node both simply stop appearing above, and a node
+        # pauses whenever a recording program is open -- which is routinely left
+        # open after the recording is finished. Without this, the only way to tell
+        # a normal quiet machine from a dead watcher is to walk to it.
+        try:
+            from mousereach.watcher import node_status
+            from mousereach.config import Paths
+            if Paths.NAS_ROOT:
+                print("Nodes:")
+                print(node_status.describe(Paths.NAS_ROOT))
+                print()
+        except Exception as e:
+            print("Nodes: (could not be read: %s)" % e)
+            print()
+
 
 # =============================================================================
 # REPROCESS COMMAND
