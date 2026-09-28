@@ -1903,6 +1903,64 @@ class DLCOrchestrator(BaseOrchestrator):
             logger.warning(f"{video_id}: could not release its claimed copy ({e})")
         return False
 
+    def _publish_cropped_single(self, output_path, video_id: str):
+        """Put a freshly cut single on the SHARED drive, already claimed by this node.
+
+        WHY THIS EXISTS
+        ---------------
+        Cropping used to publish only the FACT that a single existed -- the row was
+        synced to the shared table -- while the file itself went straight to this
+        node's LOCAL queue. No other machine could see it, so no other machine could
+        ever help with it or take it over. If the cropping node then stalled, its
+        poses waited for that one machine and nothing else could be done about them:
+        on 2026-09-28 eight videos sat that way for a week on a node that was alive
+        but not progressing, and every other GPU was idle.
+
+        That is the one place the design was asymmetric. Singles arriving through the
+        shared front door are claimed by rename and returned automatically if their
+        holder goes quiet; collage claims have a stale takeover; re-pose requests
+        travel over shared storage precisely because local queues are invisible. Only
+        the crop path skipped all of it.
+
+        WHY DIRECTLY INTO THIS NODE'S CLAIM FOLDER, not the front door
+        --------------------------------------------------------------
+        Writing to the front door and then claiming it leaves a window in which
+        another node can rename the file away and pose a video this node is already
+        posing. A node's own claim folder is written by nobody else, so putting it
+        there IS the claim, with no race to lose. Everything downstream then works
+        unchanged: 'dlc_queued' is already a keep-alive state, so the heartbeat holds
+        the claim while this node works; if this node dies the heartbeat stops and
+        reclaim_stale returns the video to the front door for anyone; and when the
+        video is handed on, _retire_claimed_single removes this copy as it always has.
+
+        COST: one extra write of each single to the share (the local copy is still
+        made from the local file). That is the trade -- bandwidth for recoverability.
+
+        Never raises and never blocks the crop: a single that cannot be published is
+        still processed locally exactly as before, which is the old behaviour and no
+        worse than it.
+        """
+        try:
+            hdir = single_claim.host_dir(self.hostname)
+            if hdir is None:
+                return None          # no shared singles folder configured here
+            dest = hdir / Path(output_path).name
+            try:
+                if dest.is_file():
+                    return dest      # already published (a re-claimed collage)
+            except OSError:
+                pass
+            hdir.mkdir(parents=True, exist_ok=True)
+            if safe_copy(output_path, dest, verify=True):
+                logger.debug(f"{video_id}: published to the share as a claim of this node")
+                return dest
+            logger.warning(f"{video_id}: could not publish to the share; it stays local "
+                           f"to this node, which no other node can take over")
+        except Exception as e:
+            logger.warning(f"{video_id}: could not publish to the share ({e}); it stays "
+                           f"local to this node")
+        return None
+
     def _retire_claimed_single(self, video_id: str, handed_on,
                                verified: bool = False) -> bool:
         """Remove this node's claimed copy of a single once the video has
@@ -2787,7 +2845,14 @@ class DLCOrchestrator(BaseOrchestrator):
 
                 self.db.update_state(video_id, 'validated', current_path=str(output_path))
 
-                # Move single to DLC_Queue on local drive (A:)
+                # Put the ARTEFACT where another node could take it over, not just
+                # the fact that it exists (see _publish_cropped_single).
+                self._publish_cropped_single(output_path, video_id)
+
+                # Move single to DLC_Queue on local drive. Copied from the LOCAL
+                # working file, not from the shared copy just made: this node
+                # already has the bytes, and reading them back over the network
+                # would pay the cost twice.
                 if Paths.DLC_QUEUE:
                     Paths.DLC_QUEUE.mkdir(parents=True, exist_ok=True)
                     dlc_queue_path = Paths.DLC_QUEUE / output_path.name
