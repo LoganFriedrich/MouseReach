@@ -3695,7 +3695,15 @@ class DLCOrchestrator(BaseOrchestrator):
             all_files = self._get_associated_files(source_dir, video_id)
 
             if not all_files:
-                raise FileNotFoundError(f"No files found for {video_id} in {source_dir}")
+                # Same reasoning as the intake path: nothing to stage is a fact
+                # about this node, not a verdict about the data.
+                self.db.mark_unresolvable(
+                    video_id,
+                    "no files for it in %s when staging looked" % source_dir)
+                self.db.log_step(video_id, 'stage_to_nas', 'skipped',
+                                 message="files not all present yet")
+                self._release_claim_given_up(video_id, "no files left to stage")
+                return False
 
             staged_files = self._stage_files(video_id, all_files)
 
@@ -4558,7 +4566,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
             all_files = self._get_associated_files(source_dir, video_id)
             if not all_files:
-                raise FileNotFoundError(f"No files found for {video_id} in {source_dir}")
+                # NOT a failure. 'failed' is a scientific verdict about an animal's
+                # data; a file this node cannot see is an infrastructure fact, and
+                # conflating them burns the video's retry and parks it for good.
+                # This is a real and ordinary race: a node stages a video's pose
+                # files while another node is already looking for them, so the set
+                # is briefly incomplete. Marked unresolvable, it costs no retry and
+                # the intake scan drives it again once the files are all there.
+                # (2026-09-19: one video sat 'failed' for nine days after a race of
+                # about one minute, with its files present the whole time.)
+                self.db.mark_unresolvable(
+                    video_id,
+                    "no files for it in %s when intake looked" % source_dir)
+                self.db.log_step(video_id, 'intake', 'skipped',
+                                 message="files not all present yet")
+                return False
 
             self.processing_dir.mkdir(parents=True, exist_ok=True)
 
