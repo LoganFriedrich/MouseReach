@@ -73,25 +73,65 @@ def _close_windows_box(title: str) -> bool:
     user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
                                     wintypes.WPARAM, wintypes.LPARAM]
     closed = False
-    # A loop: an operator may have left more than one of ours open.
-    for _ in range(5):
+    # A loop: an operator may have left more than one of ours open, and older
+    # versions of this code could stack them up. Each window is asked to close
+    # once and then skipped by handle: PostMessageW only QUEUES the close, so the
+    # same window is still found on the next turn and would otherwise be sent the
+    # message five times over.
+    seen = set()
+    for _ in range(20):
         hwnd = user32.FindWindowW(None, title)
-        if not hwnd:
+        if not hwnd or hwnd in seen:
             break
+        seen.add(hwnd)
         user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)
         closed = True
     return closed
 
 
-def notify(title: str, text: str, show=None) -> bool:
+def already_on_screen(title: str, find=None) -> bool:
+    """Is one of our boxes with this title already up? Never raises.
+
+    WHY this has to be asked of the SCREEN and not of a Python flag: the
+    "say it once" flag lives on one RecordNotices object in one process, so it
+    knows nothing about a box left up by a previous run, by a watcher that was
+    restarted, or by a second watcher process on the same machine. Every one of
+    those puts another identical box on top of the last, and nothing takes them
+    down, so they stack up until someone closes fifteen of them by hand
+    (reported 2026-09-28). The window itself is the only state all of those
+    share.
+    """
+    import sys
+    if find is None:
+        if sys.platform != "win32":
+            return False
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        find = lambda t: user32.FindWindowW(None, t)
+    try:
+        return bool(find(title))
+    except Exception as e:
+        logger.debug(f"could not check whether '{title}' is already up: {e}")
+        return False
+
+
+def notify(title: str, text: str, show=None, is_up=None) -> bool:
     """Show one message without waiting for it. True if a box was started.
 
-    Never raises: a message that cannot be shown must not stop a watcher, and
-    the same words are always in the log.
+    A box with this title already on screen means this message is already being
+    made; a second identical box tells the operator nothing and has to be closed
+    by hand. Never raises: a message that cannot be shown must not stop a
+    watcher, and the same words are always in the log.
     """
     import sys
     show = show or (_show_windows_box if sys.platform == "win32" else None)
     if show is None:
+        return False
+    if (is_up or already_on_screen)(title):
+        logger.debug(f"'{title}' is already on screen; not opening another")
         return False
     try:
         thread = threading.Thread(target=_guarded, args=(show, title, text),

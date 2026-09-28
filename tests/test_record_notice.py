@@ -76,3 +76,56 @@ def test_words_say_what_the_operator_needs():
     assert "safe to record" in rn.SAFE_TEXT.lower()
     assert "stopping" in rn.STOPPING_TEXT.lower()
     assert "wait" in rn.STOPPING_TEXT.lower()
+
+
+# ---------------------------------------------------------------------------
+# Only one box per message, whatever else is running (reported 2026-09-28:
+# about fifteen identical windows waiting for the operator).
+# ---------------------------------------------------------------------------
+
+def test_a_second_box_is_not_opened_when_one_is_already_up():
+    """The 'say it once' flag cannot see a box left by another process or a
+    previous run; the window can."""
+    from mousereach.watcher import record_notice as rn
+    started = []
+    ok = rn.notify("A title", "text",
+                   show=lambda t, x: started.append(t),
+                   is_up=lambda t: True)          # one is already on screen
+    assert ok is False
+    assert started == [], "a duplicate box tells the operator nothing and must be closed by hand"
+
+
+def test_a_box_is_opened_when_none_is_up():
+    from mousereach.watcher import record_notice as rn
+    started = []
+    ok = rn.notify("A title", "text",
+                   show=lambda t, x: started.append(t),
+                   is_up=lambda t: False)
+    assert ok is True
+
+
+def test_a_restarted_watcher_does_not_stack_another_box():
+    """The exact reported shape: a fresh RecordNotices (new process, flags clear)
+    finding the previous run's box still up."""
+    from mousereach.watcher.record_notice import RecordNotices, SAFE_TITLE
+    on_screen = {SAFE_TITLE}
+    started = []
+
+    def notify_fn(title, text):
+        if title in on_screen:
+            return False
+        on_screen.add(title)
+        started.append(title)
+        return True
+
+    for _ in range(15):                     # fifteen restarts
+        RecordNotices(enabled=True, notify_fn=notify_fn).safe_to_record()
+    assert started == [], "the box was already up; not one more should have opened"
+
+
+def test_checking_the_screen_never_raises():
+    from mousereach.watcher import record_notice as rn
+
+    def boom(title):
+        raise OSError("no window system")
+    assert rn.already_on_screen("A title", find=boom) is False
