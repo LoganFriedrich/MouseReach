@@ -83,3 +83,45 @@ def test_the_latest_report_replaces_the_previous_one(tmp_path):
 
 def test_nothing_reported_yet_says_so_plainly(tmp_path):
     assert "No node has reported" in ns.describe(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Clock and cadence realities, measured on the live share 2026-09-29.
+# ---------------------------------------------------------------------------
+
+def test_a_node_mid_scan_is_not_called_dead(tmp_path):
+    """One turn of the work loop includes a share scan measured at 37 minutes, so a
+    healthy node goes quiet for that long every cycle. Calling it dead is the false
+    alarm this module exists to prevent."""
+    ns.write(tmp_path, ns.WORKING, hostname="NODE-SCANNING")
+    f = ns.status_dir(tmp_path) / "NODE-SCANNING.json"
+    rec = json.loads(f.read_text())
+    rec["at"] = (datetime.now() - timedelta(minutes=40)).isoformat()
+    f.write_text(json.dumps(rec))
+    assert ns.read_all(tmp_path)[0]["running"] is True
+    assert ns.STALE_AFTER > timedelta(minutes=37)
+
+
+def test_staleness_ignores_the_file_timestamp(tmp_path):
+    """The share stamps files with its own clock, measured 21 minutes ahead of every
+    machine. An mtime reading would be wrong by whatever that gap is that day."""
+    import os
+    ns.write(tmp_path, ns.WORKING, hostname="NODE-SKEWED")
+    f = ns.status_dir(tmp_path) / "NODE-SKEWED.json"
+    ahead = (datetime.now() + timedelta(minutes=21)).timestamp()
+    os.utime(f, (ahead, ahead))                 # the share's clock, running ahead
+    row = ns.read_all(tmp_path)[0]
+    assert row["running"] is True
+    assert row["age_minutes"] is not None and row["age_minutes"] < 5, (
+        "age must come from the node's own 'at', not from the file's mtime")
+
+
+def test_a_report_from_the_future_reads_as_just_written(tmp_path):
+    ns.write(tmp_path, ns.WORKING, hostname="NODE-FAST-CLOCK")
+    f = ns.status_dir(tmp_path) / "NODE-FAST-CLOCK.json"
+    rec = json.loads(f.read_text())
+    rec["at"] = (datetime.now() + timedelta(minutes=10)).isoformat()
+    f.write_text(json.dumps(rec))
+    row = ns.read_all(tmp_path)[0]
+    assert row["age_minutes"] == 0.0
+    assert row["running"] is True

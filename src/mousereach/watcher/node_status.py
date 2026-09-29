@@ -43,15 +43,28 @@ DIR_NAME = ".node_status"
 
 # States a node can report. Deliberately few -- this answers "should anyone care?",
 # not "what exactly is it doing", which the shared record already says.
-WORKING = "working"      # running, taking work
+# WORKING means the loop is alive and not paused. It does NOT mean the node has work
+# in hand: a node with an empty queue reports "working" and logs nothing, which is
+# correct and easily misread as busy. The shared record says what is being processed;
+# this says only whether anyone is home.
+WORKING = "working"      # running and willing, whether or not it has anything to do
 PAUSED = "paused"        # running, deliberately not taking work (with a reason)
 STOPPING = "stopping"    # shutting down cleanly
 
-# A file older than this means nobody has written it recently, so the node is not
-# running. Generous on purpose: a node polls on its own interval, a shared drive can be
-# slow, and clocks between machines disagree -- a threshold that is too tight
-# manufactures exactly the false alarm this module exists to prevent.
-STALE_AFTER = timedelta(minutes=30)
+# A report older than this means nobody has written it recently, so the node is not
+# running.
+#
+# NINETY MINUTES, not the obvious few. A node writes its report once per turn of its
+# work loop, and one turn includes a scan of the shared drive that has been measured at
+# 37 minutes. So a perfectly healthy node goes quiet for that long every cycle, and a
+# threshold near the poll interval would report it dead -- manufacturing precisely the
+# false alarm this module exists to prevent, on the machines that are working hardest.
+# Measured on the processing server 2026-09-29: a live node's report was already six
+# minutes old mid-scan.
+#
+# The cost of the generous bound is small. The outage this is for ran sixty hours; the
+# question is never "is it late by a minute" but "has it been gone since yesterday".
+STALE_AFTER = timedelta(minutes=90)
 
 
 def status_dir(nas_root) -> Optional[Path]:
@@ -116,6 +129,17 @@ def read_all(nas_root) -> List[dict]:
 
     Each entry gains ``age_minutes`` and ``running`` (False once the report is older
     than STALE_AFTER, which is what "this node is not running" looks like).
+
+    Age comes from the ``at`` field the node wrote, NEVER from the file's modification
+    time. They are not interchangeable: the shared drive stamps files with its own
+    clock, measured 21 minutes ahead of every machine's on 2026-09-29, so an mtime
+    reading would call a live node's report stale, or a dead one fresh, by whatever
+    that difference happens to be that day. ``at`` is written by the node itself, so
+    this only assumes the machines roughly agree with each other -- which is a far
+    weaker assumption, and one that is easy to check.
+
+    A report from the future (a node whose clock runs ahead) is treated as brand new
+    rather than as a negative age, because "just written" is what it means.
     """
     d = status_dir(nas_root)
     out: List[dict] = []
@@ -137,6 +161,8 @@ def read_all(nas_root) -> List[dict]:
             age = (now - datetime.fromisoformat(str(record.get("at")))).total_seconds() / 60.0
         except (TypeError, ValueError):
             age = None
+        if age is not None and age < 0:
+            age = 0.0        # a node whose clock runs ahead of ours; just written
         record["age_minutes"] = round(age, 1) if age is not None else None
         record["running"] = (age is not None and age <= STALE_AFTER.total_seconds() / 60.0)
         record.setdefault("hostname", p.stem)
