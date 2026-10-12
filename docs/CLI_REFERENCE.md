@@ -2191,21 +2191,50 @@ options:
 ### `mousereach-aspa-feed`
 
 ```
-usage: mousereach-aspa-feed [-h] (--cohort COHORT | --all) [--dry-run]
+usage: mousereach-aspa-feed [-h] (--cohort COHORT | --all) [--subjects LIST]
+                            [--subjects-file PATH] [--dry-run]
                             [--batch-size N] [--queue-dir PATH]
 
 Copy old ASPA single-animal mp4s to the DLC queue for reprocessing. Copies
 files (does NOT move originals).
 
 options:
-  -h, --help        show this help message and exit
-  --cohort COHORT   Feed single cohort (e.g. H)
-  --all             Feed all cohorts found under Analyzed/
-  --dry-run         Show what would be copied without actually copying
-  --batch-size N    Maximum number of files to copy per run (default: 50)
-  --queue-dir PATH  Override DLC queue directory (default:
-                    MouseReach_PROCESSING_ROOT/DLC_Queue)
+  -h, --help            show this help message and exit
+  --cohort COHORT       Feed single cohort (e.g. H)
+  --all                 Feed all cohorts found under Analyzed/
+  --subjects LIST       Feed only these animals, e.g. 'A01,A02,A07'. Either the
+                        lab's own ids or the encoded ids; both work. Without
+                        this, every animal in the chosen cohorts is fed.
+  --subjects-file PATH  Same, read from a file: commas, spaces or one per line,
+                        '#' starts a comment. Use this for a list worth keeping
+                        -- and keep it with your own records, not in this
+                        repository.
+  --dry-run             Show what would be copied without actually copying
+  --batch-size N        Maximum number of files to copy per run (default: 50)
+  --queue-dir PATH      Override DLC queue directory (default:
+                        MouseReach_PROCESSING_ROOT/DLC_Queue)
 ```
+
+**Feeding only the animals you care about.** A cohort is how the archive is
+filed, not the unit anyone wants to process. A study is usually built from some
+of the animals in several cohorts, so feeding whole cohorts to reach them pulls
+in every other animal -- and each of those costs the same processing hours and
+then lands in the same review queues for a person to work through. Restricting
+the run is the only place that cost can be avoided:
+
+```
+mousereach-aspa-feed --all --subjects-file my_animals.txt --dry-run
+```
+
+Which animals a lab wants is a lab fact, so no list ships with this tool; keep
+yours wherever you keep your own records.
+
+The run reports back on the list itself. Any animal you named that produced no
+videos is printed by name at the end, because a typo in a list is otherwise
+indistinguishable from an animal with no data -- and so is a cohort that this
+run did not look at (if you used `--cohort`, try `--all`). Files whose names
+carry no readable animal id are reported too, rather than quietly counted as
+"does not match".
 
 ### `mousereach-aspa-sync`
 
