@@ -1506,3 +1506,36 @@ constant is read from `watcher.db` with a getattr fallback rather than through
 `self.db`, so a caller holding a database double is not coupled to it.
 
 Tests: `tests/test_work_selection_skips_known_pathless.py`.
+
+## Update 2026-10-21: every cycle says where its time went
+
+**What was wrong.** The watcher's loop scans for work, picks ONE item, does it,
+and starts again. None of the scans recorded how long it took. On the
+processing server, a video's pipeline step took about 20 seconds and the next
+item started a median 8 minutes later (90th percentile 11 minutes); from
+2026-10-18 to 10-21, 88.7 of 89.4 logged hours fell in gaps longer than two
+minutes. The log showed a version scan of about 80 seconds, then roughly eight
+minutes with no line at all, so the time could not be attributed to any step.
+
+**What changed.** `src/mousereach/watcher/cycle_timer.py` times every phase of
+a cycle (`version and review scan`, `scan`, `pick`, `work`) and, on the
+processing server, each part of the scan separately (`stale claims`,
+`re-pose adoption`, `misfiled singles`, `posed discovery`, `review return`,
+`collage retirement`). When a cycle takes 5 seconds or more, one INFO line
+names every step:
+
+    Cycle 512.4 s: scan 491.0 s [stale claims 0.1, re-pose adoption 2.0,
+    misfiled singles 1.2, posed discovery 9.8, review return 477.6],
+    pick 0.4 s, work 21.0 s
+
+A single step of 5 seconds or more is also logged as it finishes
+(`Cycle step scan/review return took 477.6 s`), so a step that never finishes
+can be found from the last one that did.
+
+**How to use it.** Search the watcher log for `Cycle ` to see the time budget
+of each cycle. Nothing about what the watcher does has changed; it only says
+how long each part took.
+
+Tests: `tests/test_cycle_timer.py`.
+
+---

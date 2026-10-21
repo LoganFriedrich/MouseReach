@@ -32,6 +32,7 @@ from typing import Optional, Tuple
 from datetime import datetime
 
 from mousereach.watcher import node_status
+from mousereach.watcher.cycle_timer import CycleTimer
 from mousereach.watcher.db import WatcherDB
 from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
@@ -574,16 +575,24 @@ class BaseOrchestrator:
                     continue
                 self._report_node_status(node_status.WORKING)
 
+                # Every phase of the cycle is timed (cycle_timer explains why:
+                # a node once spent ~95% of its time in scans nobody measured).
+                self._cycle = CycleTimer()
+
                 # Periodically pick up freshly-saved reviews / version staleness.
-                self._maybe_review_reprocess_scan()
+                with self._cycle.step("version and review scan"):
+                    self._maybe_review_reprocess_scan()
 
                 # Phase A: Scan for new work
-                self._scan_phase()
+                with self._cycle.step("scan"):
+                    self._scan_phase()
 
                 # Phase B: Process the highest-priority work item
-                work = self._get_next_work_item()
+                with self._cycle.step("pick"):
+                    work = self._get_next_work_item()
 
                 if work is None:
+                    self._cycle.log_if_slow()
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
                     continue
 
@@ -605,7 +614,10 @@ class BaseOrchestrator:
                 # elsewhere collapses (2026-09-04: a stuck priority-1 row +
                 # a cycle-counted scan gate = 15 back-to-back 37-minute
                 # scans overnight, ~6 videos processed in 12 hours).
-                if self._dispatch_work(work) is False:
+                with self._cycle.step("work"):
+                    accomplished = self._dispatch_work(work)
+                self._cycle.log_if_slow()
+                if accomplished is False:
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
 
             except Exception as e:
@@ -4044,8 +4056,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not self.staging_dir:
             return
 
+        cycle = getattr(self, "_cycle", None) or CycleTimer()
+
         # Clean up stale claims from crashed nodes
-        self._cleanup_stale_claims()
+        with cycle.step("scan/stale claims"):
+            self._cleanup_stale_claims()
 
         # A video this node already knows about, parked 'outdated' because it
         # needed a NEW pose, is invisible to discover_dlc_staged (which only
@@ -4057,7 +4072,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # of the re-pose round trip).
         try:
             from mousereach.watcher import repose
-            adopted = repose.adopt_staged_reposes(self.db, self.staging_dir)
+            with cycle.step("scan/re-pose adoption"):
+                adopted = repose.adopt_staged_reposes(self.db, self.staging_dir)
             if adopted:
                 logger.info(f"Adopted {len(adopted)} re-posed video(s) from staging: "
                             f"{', '.join(adopted[:5])}"
@@ -4069,11 +4085,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # invisible to the scan below, which finds videos BY their pose file.
         # Send it back to the front door rather than leave it sitting.
         try:
-            self._rescue_misfiled_singles()
+            with cycle.step("scan/misfiled singles"):
+                self._rescue_misfiled_singles()
         except Exception as e:
             logger.warning(f"Could not check staging for misfiled videos: {e}")
 
-        newly_found = self.state.discover_dlc_staged(self.staging_dir)
+        with cycle.step("scan/posed discovery"):
+            newly_found = self.state.discover_dlc_staged(self.staging_dir)
         if newly_found:
             logger.info(f"Discovered {len(newly_found)} new DLC outputs in staging")
 
@@ -4089,7 +4107,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 >= self._review_return_min_s):
             try:
                 from mousereach.watcher.review_return import scan_review_queues
-                scan_review_queues(self.db, self.processing_dir)
+                with cycle.step("scan/review return"):
+                    scan_review_queues(self.db, self.processing_dir)
             except Exception as e:
                 logger.warning(f"Review-return scan failed: {e}")
             finally:
@@ -4100,7 +4119,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # storage (Analyzed/Multi-Animal, backup-synced). Slow cadence.
         if time.monotonic() - self._last_retire_mono >= self._retire_min_s:
             try:
-                self._retire_completed_collages()
+                with cycle.step("scan/collage retirement"):
+                    self._retire_completed_collages()
             finally:
                 self._last_retire_mono = time.monotonic()
 
