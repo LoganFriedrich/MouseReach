@@ -242,3 +242,14 @@ where = ["src"]
 [tool.setuptools.package-data]
 "*" = ["napari.yaml"]
 "mousereach.reach.v8" = ["models/*.joblib", "models/*.meta.json"]
+
+# -p no:cacheprovider: pytest's cache plugin makes a pytest-cache-files-*
+# temporary folder and renames it to .pytest_cache. When the repo sits on a
+# network share the rename can fail, leaving the folder behind with permissions
+# only an administrator can clear (dozens accumulated). The suite needs no cache.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+# pytest's default skip list, plus folders a failed cache rename left behind.
+norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules",
+                 "venv", "{arch}", "pytest-cache-files-*"]
