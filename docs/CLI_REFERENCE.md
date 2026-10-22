@@ -2201,28 +2201,39 @@ options:
 ### `mousereach-aspa-feed`
 
 ```
-usage: mousereach-aspa-feed [-h] (--cohort COHORT | --all) [--subjects LIST]
+usage: mousereach-aspa-feed [-h] [--cohort COHORT | --all] [--subjects LIST]
                             [--subjects-file PATH] [--dry-run]
-                            [--batch-size N] [--queue-dir PATH]
+                            [--batch-size N] [--sessions-file PATH]
+                            [--source PATH] [--dest PATH]
 
-Copy old ASPA single-animal mp4s to the DLC queue for reprocessing. Copies
+Copy ASPA's own single-animal cuts from the historical archive into the shared
+singles folder, renamed into pipeline form, for any GPU node to pose. Copies
 files (does NOT move originals).
 
 options:
   -h, --help            show this help message and exit
   --cohort COHORT       Feed single cohort (e.g. H)
-  --all                 Feed all cohorts found under Analyzed/
-  --subjects LIST       Feed only these animals, e.g. 'A01,A02,A07'. Either the
-                        lab's own ids or the encoded ids; both work. Without
-                        this, every animal in the chosen cohorts is fed.
-  --subjects-file PATH  Same, read from a file: commas, spaces or one per line,
-                        '#' starts a comment. Use this for a list worth keeping
-                        -- and keep it with your own records, not in this
-                        repository.
+  --all                 Feed every cohort found in the source
+  --subjects LIST       Feed only these animals, e.g. 'A01,A02,A07'. Either
+                        the lab's own ids or the encoded ids; both work.
+                        Without this, every animal in the chosen cohorts is
+                        fed.
+  --subjects-file PATH  Same, read from a file: commas, spaces or one per
+                        line, '#' starts a comment. Use this for a list worth
+                        keeping -- and keep it with your own records, not in
+                        this repository.
   --dry-run             Show what would be copied without actually copying
   --batch-size N        Maximum number of files to copy per run (default: 50)
-  --queue-dir PATH      Override DLC queue directory (default:
-                        MouseReach_PROCESSING_ROOT/DLC_Queue)
+  --sessions-file PATH  Feed only these sessions, one
+                        {date}_{animal}_{tray}{position} per line (lab or
+                        pipeline naming); every listed session not found is
+                        named. Searches every cohort unless --cohort is given.
+  --source PATH         Folder holding {cohort}/Single_Animal (default: the
+                        NAS root's Archive/historical/ASPA).
+  --dest PATH, --queue-dir PATH
+                        Where the copies go (default: the shared singles
+                        folder, Unanalyzed/Single_Animal, where any GPU node
+                        takes them).
 ```
 
 **Feeding only the animals you care about.** A cohort is how the archive is
@@ -2245,6 +2256,24 @@ indistinguishable from an animal with no data -- and so is a cohort that this
 run did not look at (if you used `--cohort`, try `--all`). Files whose names
 carry no readable animal id are reported too, rather than quietly counted as
 "does not match".
+
+**Where it reads and writes (since 2026-10-21).** It reads ASPA's cuts from the
+historical archive (`<NAS root>/Archive/historical/ASPA/{cohort}/Single_Animal`) and
+copies only the videos into the shared singles folder (`Unanalyzed/Single_Animal`),
+renamed into pipeline form (`20220602_H09_P1.mp4` -> `20220602_ASPA0809_P1.mp4`),
+where any GPU node takes them. It used to read a pipeline root retired in February,
+copy into one node's private queue, and keep ASPA's names, which the intake rejects.
+A video the pipeline already has (in the shared folder, claimed by a node, waiting
+posed, or analysed) is skipped and the reason printed.
+
+**Feeding listed sessions.** `--sessions-file` takes one session per line
+(`{date}_{animal}_{tray}{position}`, either naming) and names every listed session
+with no cut in the source. Use it for sessions that survive only as ASPA's cut:
+
+```
+mousereach-aspa-feed --sessions-file sessions_without_recording.txt --dry-run
+mousereach-aspa-feed --sessions-file sessions_without_recording.txt
+```
 
 ### `mousereach-aspa-sync`
 

@@ -1,13 +1,29 @@
 """
-mousereach.aspa.feed - Feed old single-animal mp4s into DLC queue for reprocessing.
+mousereach.aspa.feed - Feed ASPA's own single-animal cuts into the pipeline for posing.
 
-Old mp4s live under the configured NAS output root, one folder per cohort:
-    <nas output root>/Analyzed/{cohort}/Single_Animal/
+ASPA's cuts live in the historical archive, one folder per cohort:
+    <NAS root>/Archive/historical/ASPA/{cohort}/Single_Animal/
 
-Copies (does NOT move) mp4s to local DLC_Queue or a staging area. The originals
-and any retained analyses beside them are never touched: a lab may be required
-to keep an old generation of results intact, so everything here works on copies.
+Copies (does NOT move) mp4s into the shared singles folder
+(``Unanalyzed/Single_Animal``), where any GPU node takes them, RENAMED into
+pipeline form (``20220602_H09_P1`` -> ``20220602_ASPA0809_P1``, see
+:mod:`mousereach.aspa.identity`). Only the videos are copied; ASPA's old pose
+files are from a model the pipeline does not use. The originals and any
+retained analyses beside them are never touched: a lab may be required to keep
+an old generation of results intact, so everything here works on copies.
 Default batch size is 50 to avoid overwhelming the queue.
+
+WHY these defaults (changed 2026-10-21): the tool used to read
+``<NAS drive>/! DLC Output/Analyzed/{cohort}/Single_Animal`` -- a pipeline root
+retired in February -- copy into ONE node's private DLC queue, where no other
+node could see or take the videos, and keep ASPA's own names, which the intake
+does not accept. ``--source`` and ``--dest`` still point it anywhere.
+
+``--sessions-file <list>`` feeds only the listed sessions (one
+``{date}_{animal}_{tray}{position}`` per line, either naming) and names every
+listed session it could not find. A video the pipeline already has -- in the
+shared folder, claimed by a node, waiting posed, or in its Analyzed folder --
+is never fed again.
 
 A cohort is how the archive is FILED, not necessarily what anyone wants to
 process. ``--subjects`` / ``--subjects-file`` restrict a run to named animals,
@@ -18,9 +34,11 @@ the same review queues for a person to work through.
 CLI:
     mousereach-aspa-feed --cohort COHORT [--dry-run] [--batch-size 50]
     mousereach-aspa-feed --all --subjects-file my_animals.txt
+    mousereach-aspa-feed --sessions-file my_sessions.txt [--dry-run]
 """
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -35,43 +53,89 @@ def find_single_animal_videos(
     nas_root: Path,
     cohort: Optional[str] = None,
 ) -> Iterator[Tuple[str, Path]]:
-    """Yield (cohort, mp4_path) for all mp4s under nas_root/Analyzed/{cohort}/Single_Animal/.
+    """Yield (cohort, mp4) under the OLD layout ``nas_root/Analyzed/{cohort}/Single_Animal``.
 
-    Args:
-        nas_root: Root of NAS output tree (contains Analyzed/ subfolder).
-        cohort:   If given, restrict to that cohort only.
+    Kept for a root still laid out that way; the default source is now the
+    historical archive (iter_cohort_singles). Never enters Analyzed/Archive/:
+    superseded outputs keep their original names there, and feeding them would
+    put an older generation's videos back into DLC as if they were live.
     """
-    analyzed = nas_root / "Analyzed"
-    if not analyzed.exists():
-        print(f"[!] Analyzed directory not found: {analyzed}")
-        return
+    yield from iter_cohort_singles(Path(nas_root) / "Analyzed", cohort)
 
-    # WHY: superseded outputs live under Analyzed/Archive/ with their original
-    # names. That folder is not a cohort, and walking into it would feed an
-    # older generation's videos back into DLC as if they were live.
+
+def iter_cohort_singles(source_root: Path, cohort: Optional[str] = None
+                        ) -> Iterator[Tuple[str, Path]]:
+    """Yield (cohort, mp4) for every mp4 under ``source_root/{cohort}/Single_Animal``
+    -- the layout of the historical ASPA archive. Never enters a superseded
+    folder (same reason as find_single_animal_videos)."""
     from mousereach.pipeline.analyzed_tree import is_superseded_dir, iter_files
 
-    if cohort:
-        cohort_dirs = [analyzed / cohort]
-    else:
-        cohort_dirs = sorted(
-            d for d in analyzed.iterdir()
-            if d.is_dir() and not is_superseded_dir(d.name)
-        )
-
-    for cohort_dir in cohort_dirs:
+    source_root = Path(source_root)
+    if not source_root.exists():
+        print(f"[!] Source not found: {source_root}")
+        return
+    dirs = [source_root / cohort] if cohort else sorted(
+        d for d in source_root.iterdir() if d.is_dir() and not is_superseded_dir(d.name))
+    for cohort_dir in dirs:
         sa_dir = cohort_dir / "Single_Animal"
         if not sa_dir.exists():
             continue
-        # iter_files, not rglob: same *.mp4 files, but never inside a nested
-        # superseded folder (same reason as above).
         for mp4 in sorted(iter_files(sa_dir, "*.mp4")):
             yield cohort_dir.name, mp4
 
 
-def already_in_queue(mp4_path: Path, queue_dir: Path) -> bool:
-    """Check whether the mp4 filename already exists in queue_dir (flat copy)."""
-    return (queue_dir / mp4_path.name).exists()
+def pipeline_name(mp4_name) -> Optional[str]:
+    """The pipeline's file name for an ASPA cut (``20220602_H09_P1.mp4`` ->
+    ``20220602_ASPA0809_P1.mp4``); None when the name is not a session."""
+    from mousereach.aspa.import_collages import normalise_session
+
+    s = normalise_session(Path(str(mp4_name)).stem)
+    return f"{s}.mp4" if s else None
+
+
+def already_in_pipeline(name: str) -> Optional[str]:
+    """Where the pipeline already has the video ``name`` (pipeline form), or
+    None. WHY: feeding it again would pose and analyse it twice."""
+    from mousereach.config import Paths
+    from mousereach.watcher import single_claim
+
+    stem = Path(name).stem
+    try:
+        door = Paths.SINGLE_ANIMAL_OUTPUT
+        if door and (Path(door) / name).exists():
+            return "waiting in the shared singles folder"
+        holder = single_claim.inflight_ids().get(stem)
+        if holder:
+            return f"claimed by {holder} for posing"
+        if Paths.DLC_STAGING and (Path(Paths.DLC_STAGING) / name).exists():
+            return "posed, waiting for analysis"
+        if Paths.ANALYZED_OUTPUT:
+            from mousereach.archive.core import get_archive_destination
+            if (get_archive_destination(stem) / name).exists():
+                return "analysed"
+    except Exception as e:
+        return f"could not check ({e}); not fed"
+    return None
+
+
+def feed_one(mp4_path: Path, dest_dir: Path, dry_run: bool = False) -> Tuple[bool, str]:
+    """Copy one ASPA cut into ``dest_dir`` under its pipeline name, through a
+    temporary name, never overwriting. Returns (copied, what happened)."""
+    name = pipeline_name(mp4_path.name)
+    if name is None:
+        return False, "name is not {date}_{animal}_{tray}{position}"
+    why = already_in_pipeline(name)
+    if why:
+        return False, why
+    dest = Path(dest_dir) / name
+    if dry_run:
+        return True, f"would copy as {name}"
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
+    temp = Path(dest_dir) / (name + ".part")
+    shutil.copy2(str(mp4_path), str(temp))
+    os.utime(temp, None)          # a fresh arrival, not a week-old file
+    os.rename(temp, dest)         # refuses an existing destination on Windows
+    return True, f"copied as {name}"
 
 
 # ---------------------------------------------------------------------------
@@ -176,51 +240,24 @@ def select_subjects(pairs, subjects, seen=None, unparsed=None):
 
 
 # ---------------------------------------------------------------------------
-# Copy helper
-# ---------------------------------------------------------------------------
-
-def copy_to_queue(
-    mp4_path: Path,
-    queue_dir: Path,
-    dry_run: bool = False,
-) -> bool:
-    """Copy a single mp4 to queue_dir.
-
-    Returns:
-        True if the file was copied (or would be in dry_run), False if skipped.
-    """
-    dest = queue_dir / mp4_path.name
-
-    if dest.exists():
-        # Already present - skip silently
-        return False
-
-    if dry_run:
-        print(f"  [DRY-RUN] Would copy: {mp4_path.name}")
-        return True
-
-    queue_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(mp4_path), str(dest))
-    return True
-
-
-# ---------------------------------------------------------------------------
 # CLI main
 # ---------------------------------------------------------------------------
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
+        prog="mousereach-aspa-feed",
         description=(
-            "Copy old ASPA single-animal mp4s to the DLC queue for reprocessing.\n"
+            "Copy ASPA's own single-animal cuts from the historical archive into the "
+            "shared singles folder, renamed into pipeline form, for any GPU node to pose. "
             "Copies files (does NOT move originals)."
         )
     )
 
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument("--cohort", metavar="COHORT",
                        help="Feed single cohort (e.g. H)")
     group.add_argument("--all", action="store_true",
-                       help="Feed all cohorts found under Analyzed/")
+                       help="Feed every cohort found in the source")
 
     parser.add_argument("--subjects", metavar="LIST",
                         help="Feed only these animals, e.g. 'A01,A02,A07'. "
@@ -236,102 +273,98 @@ def main():
                         help="Show what would be copied without actually copying")
     parser.add_argument("--batch-size", type=int, default=50, metavar="N",
                         help="Maximum number of files to copy per run (default: 50)")
-    parser.add_argument("--queue-dir", metavar="PATH",
-                        help="Override DLC queue directory (default: MouseReach_PROCESSING_ROOT/DLC_Queue)")
+    parser.add_argument("--sessions-file", metavar="PATH",
+                        help="Feed only these sessions, one {date}_{animal}_{tray}{position} "
+                             "per line (lab or pipeline naming); every listed session not "
+                             "found is named. Searches every cohort unless --cohort is given.")
+    parser.add_argument("--source", metavar="PATH",
+                        help="Folder holding {cohort}/Single_Animal (default: the NAS root's "
+                             "Archive/historical/ASPA).")
+    parser.add_argument("--dest", "--queue-dir", dest="dest", metavar="PATH",
+                        help="Where the copies go (default: the shared singles folder, "
+                             "Unanalyzed/Single_Animal, where any GPU node takes them).")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if not (args.cohort or args.all or args.sessions_file):
+        parser.error("one of --cohort, --all or --sessions-file is required")
 
-    # Resolve NAS root
-    from mousereach.config import Paths, require_nas_drive, require_processing_root
+    from mousereach.aspa.import_collages import default_source_root, read_sessions_file
+    from mousereach.config import Paths
 
-    try:
-        nas_drive = require_nas_drive()
-        nas_root  = nas_drive / "! DLC Output"
-    except Exception as e:
-        print(f"[FAIL] Could not resolve NAS root: {e}")
-        print("       Set MouseReach_NAS_DRIVE or run mousereach-setup.")
-        sys.exit(1)
-
-    # Resolve queue directory
-    if args.queue_dir:
-        queue_dir = Path(args.queue_dir)
-    else:
-        try:
-            queue_dir = require_processing_root() / "DLC_Queue"
-        except Exception as e:
-            print(f"[FAIL] Could not resolve DLC_Queue: {e}")
-            print("       Set MouseReach_PROCESSING_ROOT, run mousereach-setup, or use --queue-dir.")
-            sys.exit(1)
+    source_root = Path(args.source) if args.source else default_source_root()
+    dest_dir = Path(args.dest) if args.dest else (
+        Path(Paths.SINGLE_ANIMAL_OUTPUT) if Paths.SINGLE_ANIMAL_OUTPUT else None)
+    if source_root is None or dest_dir is None:
+        print("[FAIL] Source or destination not configured: run mousereach-setup, "
+              "or pass --source and --dest.")
+        return 1
 
     try:
         subjects = load_subjects(args.subjects, args.subjects_file)
+        sessions, bad = (read_sessions_file(Path(args.sessions_file))
+                         if args.sessions_file else ([], []))
     except OSError as e:
-        print(f"[FAIL] Could not read the subject list: {e}")
-        sys.exit(1)
+        print(f"[FAIL] Could not read a list: {e}")
+        return 1
+    wanted = set(sessions)
 
-    print(f"Source NAS root : {nas_root}")
-    print(f"Destination     : {queue_dir}")
-    print(f"Batch size      : {args.batch_size}")
+    print(f"Source      : {source_root}")
+    print(f"Destination : {dest_dir}")
+    print(f"Batch size  : {args.batch_size}")
+    if sessions:
+        print(f"Sessions    : {len(sessions)} listed")
+        for b in bad[:10]:
+            print(f"  [!] not a session name, ignored: {b[:80]}")
     if subjects:
-        print(f"Animals         : {len(subjects)} named "
-              f"(others in these cohorts are left alone)")
-    else:
-        print("Animals         : every animal in the chosen cohorts")
+        print(f"Animals     : {len(subjects)} named")
     if args.dry_run:
-        print("Mode            : DRY-RUN (no files will be copied)")
+        print("Mode        : DRY-RUN (nothing is copied)")
     print()
 
-    cohort_filter = args.cohort if not args.all else None
-
-    copied  = 0
-    skipped = 0
-    errors  = 0
-    seen = set()
-    unparsed = set()
-
-    found = find_single_animal_videos(nas_root, cohort_filter)
-    for cohort, mp4_path in select_subjects(found, subjects, seen, unparsed):
+    copied = skipped = errors = 0
+    seen, unparsed, found_sessions = set(), set(), set()
+    pairs = select_subjects(iter_cohort_singles(source_root, args.cohort), subjects,
+                            seen, unparsed)
+    for cohort, mp4_path in pairs:
+        if wanted:
+            name = pipeline_name(mp4_path.name)
+            if name is None or Path(name).stem not in wanted:
+                continue
+            found_sessions.add(Path(name).stem)
         if copied >= args.batch_size:
-            print(f"\n[!] Batch size limit ({args.batch_size}) reached. Stopping.")
-            print(f"    Run again to continue with the next batch.")
+            print(f"\n[!] Batch size limit ({args.batch_size}) reached. Run again for the next batch.")
             break
-
         try:
-            was_copied = copy_to_queue(mp4_path, queue_dir, dry_run=args.dry_run)
-            if was_copied:
-                if not args.dry_run:
-                    print(f"  [OK] {cohort} / {mp4_path.name}")
-                copied += 1
-            else:
-                skipped += 1
+            ok, what = feed_one(mp4_path, dest_dir, dry_run=args.dry_run)
         except Exception as exc:
             print(f"  [FAIL] {mp4_path.name}: {exc}")
             errors += 1
+            continue
+        print(f"  [{'OK' if ok else 'SKIP'}] {cohort} / {mp4_path.name}: {what}")
+        if ok:
+            copied += 1
+        else:
+            skipped += 1
 
-    print(f"\nDone.")
-    print(f"  Copied : {copied}")
-    print(f"  Skipped (already in queue): {skipped}")
-    print(f"  Errors : {errors}")
-    if args.dry_run:
-        print("  (dry-run: no files were actually copied)")
-
-    # A list is a claim about what exists. Checking it costs nothing here and
-    # the alternative is a typo that looks exactly like an animal with no data.
+    print(f"\nDone. {'Would copy' if args.dry_run else 'Copied'}: {copied}  "
+          f"Skipped: {skipped}  Errors: {errors}")
+    if sessions:
+        missing = [s for s in sessions if s not in found_sessions]
+        if missing:
+            print(f"[!] {len(missing)} listed session(s) have no ASPA cut in {source_root}:")
+            for s in missing[:20]:
+                print(f"    {s}")
+        else:
+            print(f"[OK] every listed session was found.")
     if subjects:
         missing = sorted(subjects - seen)
         if missing:
-            print(f"\n  [!] {len(missing)} of the {len(subjects)} animals you "
-                  f"named have no single-animal videos in what was searched:")
-            print("      %s" % ", ".join(missing))
-            print("      Either they are filed under a cohort this run did not "
-                  "look at (try --all), or the id is not spelled as the "
-                  "filenames spell it.")
-        else:
-            print(f"\n  All {len(subjects)} named animals were found.")
+            print(f"[!] {len(missing)} named animal(s) have no single-animal videos here: "
+                  + ", ".join(missing))
     if unparsed:
-        print(f"\n  [!] {len(unparsed)} file(s) have no readable animal id in "
-              f"their name and were left alone, e.g. {sorted(unparsed)[0]}")
+        print(f"[!] {len(unparsed)} file name(s) could not be read; not fed.")
+    return 0 if errors == 0 else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
