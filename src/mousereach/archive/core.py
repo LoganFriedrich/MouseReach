@@ -198,7 +198,7 @@ def archive_video(
 
     # Get files
     if source_dir:
-        files = [f for f in source_dir.iterdir() if f.is_file() and f.name.startswith(video_id)]
+        files = [f for f in source_dir.iterdir() if f.name.startswith(video_id) and f.is_file()]
     else:
         files = get_video_files(video_id)
     if not files:

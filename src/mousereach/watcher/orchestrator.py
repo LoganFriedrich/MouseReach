@@ -145,12 +145,21 @@ def _reprocess_copy_set(source_dirs, pose_dir, video_id):
     dirs = [Path(d) for d in source_dirs]
     filter_pose = len(dirs) > 1
     for d in dirs:
-        for f in d.iterdir():
-            if not (f.is_file() and f.stem.startswith(video_id)):
-                continue
-            if filter_pose and d == Path(pose_dir) and "DLC" not in f.name:
-                continue
-            out.append(f)
+        # The NAME first, then the listing's own file flag. A cohort folder in
+        # Analyzed holds tens of thousands of files, and Path.is_file() on every
+        # entry was one network stat each: 175 s of a re-run whose own work
+        # takes 3 s (2026-10-22). DirEntry.is_file() costs no extra round trip
+        # on Windows, and it is asked only of this video's few files.
+        with os.scandir(d) as entries:
+            for e in entries:
+                if not e.name.startswith(video_id) or not e.is_file():
+                    continue
+                f = Path(e.path)
+                if not f.stem.startswith(video_id):
+                    continue
+                if filter_pose and d == Path(pose_dir) and "DLC" not in f.name:
+                    continue
+                out.append(f)
     return out
 
 

@@ -2079,6 +2079,12 @@ computable from the video id. `archived_pose_candidates` looks there first and w
 only when no pose from the declared model is found there, which is the old behaviour. Tests:
 `tests/test_reprocess_pose_lookup.py`.
 
+Correction, measured the same morning on a live re-run: the archive walk was about 30 s of it.
+Most of the time went to `_reprocess_copy_set`, which decides which files to copy down. It asked
+`Path.is_file()` of every entry in the cohort folder, tens of thousands of network stats, before
+looking at the name: 175 s. It now checks the name first and uses the directory listing's own
+file flag (no extra round trip on Windows). Test: `tests/test_reprocess_copy_set.py`.
+
 ## Update 2026-10-22: re-archiving leaves unchanged files where they are
 
 `archive_video` swept everything already at the destination into the versioned Archive before

@@ -36,3 +36,24 @@ def test_single_source_keeps_its_jsons(tmp_path):
     seg.write_text("{}", encoding="utf-8")
     files = _reprocess_copy_set({pose}, pose, stem)
     assert h5 in files and seg in files                    # all we have
+
+
+def test_other_videos_files_are_never_statted(tmp_path, monkeypatch):
+    """WHY (2026-10-22): a cohort folder holds tens of thousands of files and
+    Path.is_file() on every entry cost 175 s per re-run over the share. Only
+    this video's files may be asked anything beyond their name."""
+    import pathlib
+    stem = "20250709_CNT0206_P2"
+    res = tmp_path / "CNT02"
+    res.mkdir()
+    for i in range(50):
+        (res / f"20250709_CNT0207_P{i}_segments.json").write_text("{}")
+    (res / f"{stem}.mp4").write_bytes(b"v")
+    (res / f"{stem}_segments.json").write_text("{}")
+
+    def no_stat(self):
+        raise AssertionError("Path.is_file called on %s" % self.name)
+
+    monkeypatch.setattr(pathlib.Path, "is_file", no_stat)
+    files = _reprocess_copy_set({res}, res, stem)
+    assert sorted(f.name for f in files) == [f"{stem}.mp4", f"{stem}_segments.json"]
