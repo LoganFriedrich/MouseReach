@@ -245,6 +245,45 @@ def status_headline(panel_running: bool, external_pid: Optional[int],
 _HAND_PAUSE_REASON = "paused by hand (watcher_paused.flag)"
 
 
+# The "?" beside the work-priority box. Plain words for someone who has never
+# seen the order file; the full story is docs/WORK_PRIORITY.md.
+WORK_PRIORITY_HELP = """# Work priority -- what gets done first
+
+This box sets ONE order for the whole lab: which videos the machines cut, pose
+and analyse first, and which videos the review tools show a person first.
+Saving writes priority_order.json in the shared pipeline folder; every machine
+picks the change up within about a minute. Nothing has to be restarted.
+
+## The four boxes, read top to bottom
+
+- **projects, best first** -- e.g. PROJECT_A, PROJECT_B. Everything of the first
+  project goes before anything of the second.
+- **session lists within a project** -- e.g. PROJECT_B: priority_lists/study_a.txt.
+  A text file of sessions (one per line, like 20220811_J11_P3) that a study needs.
+  Those sessions go first within their project, before its cohorts.
+  Several projects: separate them with ";". Several files: separate with ",".
+- **cohorts within a project** -- e.g. PROJECT_A: 01, 02. These cohorts go first
+  within their project.
+- **tray types first** -- e.g. P. These tray letters are worked first.
+
+Easy and Flat trays are "not taken on until nothing else is waiting" by
+default: they come after everything else, whatever project they belong to.
+
+## Buttons
+
+- **Reload** -- show what the order file says now (another person may have
+  changed it).
+- **Save priority order** -- write the boxes to the order file. Settings this
+  box does not show (notes, a hand-written order) are kept.
+
+If the line under the boxes shows a complaint (an unknown key, a list file
+that was not found), the order still works for everything else; fix the
+named item and save again.
+
+Full description: docs/WORK_PRIORITY.md in the MouseReach folder.
+"""
+
+
 class WatcherControlWidget(QWidget):
     """The pipeline's control panel: run/monitor/configure the watcher daemon."""
 
@@ -470,6 +509,8 @@ class WatcherControlWidget(QWidget):
         psave.clicked.connect(self._save_priority)
         pbtns.addWidget(preload)
         pbtns.addWidget(psave)
+        from mousereach.ui.utils import create_help_button
+        pbtns.addWidget(create_help_button(WORK_PRIORITY_HELP, "Work priority"))
         pform.addRow(pbtns)
         root.addWidget(pri)
 

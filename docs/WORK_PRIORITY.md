@@ -37,7 +37,7 @@ NAS, running the local pipeline, and archiving locally do not.
 ## One order for the whole lab
 
 Set it once, in the MouseReach window: **Watcher Control -> Work priority
-(whole lab)**. Four boxes:
+(whole lab)** (the **?** beside its Save button is a one-page guide to it). Four boxes:
 
 | Box | Means | Example |
 |-----|-------|---------|
