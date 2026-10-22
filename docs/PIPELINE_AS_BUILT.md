@@ -1960,3 +1960,13 @@ work order is shown, and the next pick is worked out by the watcher's own select
 stand-in database that has no write methods. It can run beside a live watcher. The two old
 `dry_run` methods print the same preview. Tests: `tests/test_dry_run_is_read_only.py` (the
 database bytes and the folder tree are unchanged after a preview).
+
+## Update 2026-10-22: a node's status report says what it is doing
+
+Each node's report on the shared drive (`Processing/.node_status/<host>.json`) said "working"
+every loop turn and nothing else, so a node churning on nothing looked exactly like a
+productive one, and a node deep in a 14-minute pose looked like one whose report had gone stale
+(plan gap G14). It now also carries `doing` (the item in hand: type, video, since when -- written
+as the item starts), `last_done` (the last item finished) and `done_last_hour`. The Nodes
+section of `mousereach-watch-status` shows them on each node's line. A node shows them once it
+runs this code. Tests: `tests/test_node_status_says_what_it_is_doing.py`.

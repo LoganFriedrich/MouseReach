@@ -41,12 +41,13 @@ from typing import List, Optional
 
 DIR_NAME = ".node_status"
 
-# States a node can report. Deliberately few -- this answers "should anyone care?",
-# not "what exactly is it doing", which the shared record already says.
+# States a node can report. Deliberately few -- the state answers "should anyone care?".
 # WORKING means the loop is alive and not paused. It does NOT mean the node has work
-# in hand: a node with an empty queue reports "working" and logs nothing, which is
-# correct and easily misread as busy. The shared record says what is being processed;
-# this says only whether anyone is home.
+# in hand: a node with an empty queue reports "working" too. Since 2026-10-22 the report
+# also says what work is in hand ("doing": type, video, since when -- written as the item
+# starts, so a long pose reads as busy, not stale), the last item finished ("last_done")
+# and how many finished in the past hour ("done_last_hour"); before that, a node
+# churning on nothing looked exactly like a productive one.
 WORKING = "working"      # running and willing, whether or not it has anything to do
 PAUSED = "paused"        # running, deliberately not taking work (with a reason)
 STOPPING = "stopping"    # shutting down cleanly
@@ -189,5 +190,9 @@ def describe(nas_root) -> str:
         elif r.get("state") == PAUSED:
             lines.append("  %-20s paused        %s" % (host, r.get("reason") or "no reason given"))
         else:
-            lines.append("  %-20s %-13s %s" % (host, r.get("state", "?"), r.get("reason") or ""))
+            doing = r.get("doing") or {}
+            now = ("%s %s since %s" % (doing.get("type"), doing.get("id"), doing.get("since"))
+                   if doing else "idle")
+            lines.append("  %-20s %-13s %s; %s done in the last hour"
+                         % (host, r.get("state", "?"), now, r.get("done_last_hour", "?")))
     return "\n".join(lines)

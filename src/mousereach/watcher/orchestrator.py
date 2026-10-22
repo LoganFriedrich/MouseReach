@@ -539,9 +539,41 @@ class BaseOrchestrator:
             nas_root = Paths.NAS_ROOT
             if not nas_root:
                 return
-            node_status.write(nas_root, state, reason, hostname=self.hostname)
+            node_status.write(nas_root, state, reason, hostname=self.hostname,
+                              extra=self._work_report())
         except Exception as e:
             logger.debug(f"could not write node status: {e}")
+
+    def _work_report(self) -> dict:
+        """What this node is doing and has done, for its status report.
+
+        WHY (plan gap G14, 2026-10-22): "working" was written every loop turn
+        with nothing else, so a node churning on nothing looked exactly like a
+        productive one, and a node deep in a 14-minute pose looked like one
+        whose report had gone stale. ``doing`` is the item in hand and since
+        when (written as it starts), ``last_done`` the last one finished, and
+        ``done_last_hour`` how many finished in the past hour.
+        """
+        now = time.monotonic()
+        done = [t for t in getattr(self, "_done_times", []) if now - t <= 3600]
+        self._done_times = done
+        return {"doing": getattr(self, "_doing", None),
+                "last_done": getattr(self, "_last_done", None),
+                "done_last_hour": len(done)}
+
+    def _begin_work(self, work: dict) -> None:
+        """Mark an item as in hand and say so on the shared drive before it starts."""
+        self._doing = {"type": work.get("type"), "id": work.get("id"),
+                       "since": datetime.now().isoformat(timespec="seconds")}
+        self._report_node_status(node_status.WORKING)
+
+    def _end_work(self, work: dict, accomplished) -> None:
+        """Clear the item in hand; count it when it got anywhere."""
+        self._doing = None
+        if accomplished is not False:
+            self._done_times = list(getattr(self, "_done_times", [])) + [time.monotonic()]
+            self._last_done = {"type": work.get("type"), "id": work.get("id"),
+                               "at": datetime.now().isoformat(timespec="seconds")}
 
     def run(self, shutdown_event: threading.Event):
         """Main orchestrator loop: scan + process in a single thread."""
@@ -614,8 +646,13 @@ class BaseOrchestrator:
                 # elsewhere collapses (2026-09-04: a stuck priority-1 row +
                 # a cycle-counted scan gate = 15 back-to-back 37-minute
                 # scans overnight, ~6 videos processed in 12 hours).
-                with self._cycle.step("work"):
-                    accomplished = self._dispatch_work(work)
+                self._begin_work(work)
+                accomplished = False          # stays False if the dispatch raises
+                try:
+                    with self._cycle.step("work"):
+                        accomplished = self._dispatch_work(work)
+                finally:
+                    self._end_work(work, accomplished)
                 self._cycle.log_if_slow()
                 if accomplished is False:
                     shutdown_event.wait(timeout=self.config.poll_interval_seconds)
