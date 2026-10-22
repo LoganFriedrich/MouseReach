@@ -255,11 +255,6 @@ class BaseOrchestrator:
                 "Pauses while any of these programs run: %s (work resumes %d s "
                 "after the last one closes).",
                 _ascii(", ".join(guard.names)), guard.grace_seconds)
-            if guard.write_folders:
-                logger.info(
-                    "...but only while a recording is being written in: %s "
-                    "(work resumes %d s after the last write).",
-                    _ascii(", ".join(guard.write_folders)), guard.quiet_seconds)
 
     # =========================================================================
     # MAIN LOOP
@@ -278,9 +273,7 @@ class BaseOrchestrator:
             config = getattr(self, 'config', None)
             guard = self._recording_guard = RecordingGuard(
                 getattr(config, 'pause_while_running', None) or [],
-                grace_seconds=getattr(config, 'pause_resume_grace_seconds', 120),
-                write_folders=getattr(config, 'pause_only_while_writing_to', None) or [],
-                quiet_seconds=getattr(config, 'pause_recording_quiet_seconds', 120))
+                grace_seconds=getattr(config, 'pause_resume_grace_seconds', 120))
         return guard
 
     def _is_paused(self) -> bool:
@@ -410,31 +403,20 @@ class BaseOrchestrator:
 
         names = list(fresh.pause_while_running)
         grace = fresh.pause_resume_grace_seconds
-        folders = list(fresh.pause_only_while_writing_to)
-        quiet = fresh.pause_recording_quiet_seconds
         old_names = list(getattr(config, 'pause_while_running', None) or [])
         old_grace = getattr(config, 'pause_resume_grace_seconds', 120)
-        old_folders = list(getattr(config, 'pause_only_while_writing_to', None) or [])
-        old_quiet = getattr(config, 'pause_recording_quiet_seconds', 120)
-        if (names == old_names and grace == old_grace
-                and folders == old_folders and quiet == old_quiet):
+        if names == old_names and grace == old_grace:
             return
         config.pause_while_running = names
         config.pause_resume_grace_seconds = grace
-        config.pause_only_while_writing_to = folders
-        config.pause_recording_quiet_seconds = quiet
 
         old_guard = getattr(self, '_recording_guard', None)
         same_programs = (old_guard is not None and
                          [_match_key(n) for n in old_guard.names] ==
                          [_match_key(n) for n in clean_names(names)])
         if same_programs:
-            # Only the grace or the recording folders changed: keep the guard,
-            # and with it the timer; look at the folders afresh.
+            # Only the grace changed: keep the guard, and with it the timer.
             old_guard.grace_seconds = max(0, int(grace))
-            old_guard.write_folders = list(folders)
-            old_guard.quiet_seconds = max(0, int(quiet))
-            old_guard._activity_checked = None
         else:
             self._recording_guard = None
             self._get_recording_guard().inherit_history(old_guard)
@@ -443,11 +425,6 @@ class BaseOrchestrator:
                 f"Recording-program settings changed: now pauses while any of "
                 f"these run: {', '.join(names)} (work resumes {grace} s after the "
                 f"last one closes)."))
-            if folders:
-                logger.info(_ascii(
-                    f"...but only while a recording is being written in: "
-                    f"{', '.join(folders)} (work resumes {quiet} s after the last "
-                    f"write)."))
         else:
             logger.info("Recording-program settings changed: no programs listed; "
                         "this watcher no longer pauses for one.")

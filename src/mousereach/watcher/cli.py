@@ -1676,7 +1676,6 @@ def main_toggle():
 
 _RECORDERS_USAGE = """
 usage: mousereach-watch-recorders [--list] [--add NAME] [--remove NAME] [--grace SECONDS]
-                                  [--folder PATH] [--remove-folder PATH] [--quiet SECONDS]
 
 Show or change the recording programs that pause THIS machine's watcher.
 While any listed program is open the watcher starts no new work, and a pose
@@ -1695,22 +1694,7 @@ by itself within about a minute.
                     work starts again (default 120). WHY: people often close
                     the recording program and open it again a moment later.
 
-Optional -- pause only while a recording is being WRITTEN (off by default):
-  --folder PATH         A folder the recording program saves its videos into.
-                        Once any folder is listed, an open recording program
-                        pauses the watcher only while a file there was written
-                        in the last --quiet seconds. WHY: the program is often
-                        left open after recording, and the PC then sat idle
-                        until someone closed it. A folder that cannot be read
-                        keeps the watcher paused. Prove this on the machine,
-                        with someone watching a test recording, before relying
-                        on it: a pose already running needs ~10-15 s to stop.
-  --remove-folder PATH  Take a folder off; with none left, an open program is
-                        enough to pause again (the default).
-  --quiet SECONDS       How long after the last write the watcher may work
-                        again (default 120).
-
---add, --remove, --folder and --remove-folder may each be given more than once. The settings are saved in
+--add and --remove may each be given more than once. The settings are saved in
 the 'watcher' section of ~/.mousereach/config.json; nothing else in that file
 changes. An empty list (the default) means the watcher never pauses for a
 program.
@@ -1720,7 +1704,6 @@ Examples:
   mousereach-watch-recorders --add recorder.exe
   mousereach-watch-recorders --remove recorder.exe
   mousereach-watch-recorders --grace 300
-  mousereach-watch-recorders --folder "D:\\Recordings"
 """
 
 
@@ -1837,36 +1820,26 @@ def main_recorders():
     # Every argument is checked before anything is written, so a typo in the
     # last one cannot leave a half-applied change behind.
     adds, removes, grace = [], [], None
-    folder_adds, folder_removes, quiet = [], [], None
     i = 0
     while i < len(args):
         arg = args[i]
         if arg == '--list':
             i += 1
             continue
-        if arg not in ('--add', '--remove', '--grace',
-                       '--folder', '--remove-folder', '--quiet'):
+        if arg not in ('--add', '--remove', '--grace'):
             usage_error(f"unknown argument: {arg}")
         if i + 1 >= len(args) or args[i + 1].startswith('--'):
             usage_error(f"{arg} needs a value")
         value = args[i + 1].strip()
         i += 2
-        if arg in ('--grace', '--quiet'):
+        if arg == '--grace':
             try:
-                number = int(value)
+                grace = int(value)
             except ValueError:
-                number = -1
-            if number < 0:
-                usage_error(f"{arg} needs a whole number of seconds, 0 or more "
+                grace = -1
+            if grace < 0:
+                usage_error(f"--grace needs a whole number of seconds, 0 or more "
                             f"(got '{value}')")
-            if arg == '--grace':
-                grace = number
-            else:
-                quiet = number
-        elif arg in ('--folder', '--remove-folder'):
-            if not value:
-                usage_error(f"{arg} needs a folder path")
-            (folder_adds if arg == '--folder' else folder_removes).append(value)
         elif not rg.clean_names([value]):
             usage_error(f"{arg} needs a program name, for example recorder.exe")
         else:
@@ -1884,10 +1857,6 @@ def main_recorders():
         if current is not None and not isinstance(current, (str, list, tuple)):
             raise _ConfigEditError(
                 f"watcher.pause_while_running in {cfg_file} is not a list of names")
-        current_folders = watcher.get('pause_only_while_writing_to')
-        if current_folders is not None and not isinstance(current_folders, (str, list, tuple)):
-            raise _ConfigEditError(
-                f"watcher.pause_only_while_writing_to in {cfg_file} is not a list of folders")
     except _ConfigEditError as e:
         print(f"ERROR: {_ascii(e)}", file=sys.stderr)
         print("Nothing was changed. Fix that file (or re-run mousereach-setup) "
@@ -1917,38 +1886,8 @@ def main_recorders():
         messages.append(f"Resume grace set to {grace} s." if grace_changed
                         else f"Resume grace is already {grace} s.")
 
-    # Recording folders: compared as Windows compares paths (case and slashes
-    # do not matter), kept as the person typed them.
-    def _same_folder(a, b):
-        return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
-
-    folders = [f for f in WatcherConfig(dict(watcher)).pause_only_while_writing_to]
-    folders_changed = False
-    for folder in folder_adds:
-        if any(_same_folder(folder, f) for f in folders):
-            messages.append(f"{folder} is already listed -- not added again.")
-            continue
-        folders.append(folder)
-        folders_changed = True
-        messages.append(f"Added recording folder {folder}.")
-        if not os.path.isdir(folder):
-            messages.append(f"  Note: {folder} cannot be found right now. While a listed "
-                            f"program runs, the watcher stays PAUSED until it can read it.")
-    for folder in folder_removes:
-        kept = [f for f in folders if not _same_folder(folder, f)]
-        if len(kept) == len(folders):
-            messages.append(f"{folder} was not listed -- nothing to remove.")
-        else:
-            folders = kept
-            folders_changed = True
-            messages.append(f"Removed recording folder {folder}.")
-    quiet_changed = quiet is not None and watcher.get('pause_recording_quiet_seconds') != quiet
-    if quiet is not None:
-        messages.append(f"Quiet period set to {quiet} s." if quiet_changed
-                        else f"Quiet period is already {quiet} s.")
-
     saved = False
-    if names_changed or grace_changed or folders_changed or quiet_changed:
+    if names_changed or grace_changed:
         # Change only these two keys; every other watcher setting, and every
         # other section of the file, is written back exactly as it was read.
         new_watcher = dict(watcher)
@@ -1960,13 +1899,6 @@ def main_recorders():
                 new_watcher.pop('pause_while_running', None)
         if grace_changed:
             new_watcher['pause_resume_grace_seconds'] = grace
-        if folders_changed:
-            if folders:
-                new_watcher['pause_only_while_writing_to'] = folders
-            else:
-                new_watcher.pop('pause_only_while_writing_to', None)
-        if quiet_changed:
-            new_watcher['pause_recording_quiet_seconds'] = quiet
         data['watcher'] = new_watcher
         try:
             _write_config_atomically(cfg_file, data)
@@ -2016,22 +1948,6 @@ def main_recorders():
             print(f"  {_ascii(n):<{width}}   {status}")
         print(f"Resume grace: {grace_now} s -- after the last listed program closes, "
               f"the watcher waits this long before it starts work again.")
-        folders_now = list(view.pause_only_while_writing_to or [])
-        if folders_now:
-            print("Only while a recording is being written in:")
-            for f in folders_now:
-                print(f"  {_ascii(f)}")
-            last, _sizes, ferr = rg.recording_activity(folders_now, {}, time.time())
-            if ferr:
-                print(f"  Right now the folder cannot be checked ({_ascii(ferr)}): an open "
-                      f"listed program keeps the watcher PAUSED.")
-            elif last is None:
-                print("  No file there yet.")
-            else:
-                print(f"  Newest write: {int(max(0, time.time() - last))} s ago "
-                      f"(quiet period {view.pause_recording_quiet_seconds} s).")
-        else:
-            print("Only while writing: off -- an open listed program is enough to pause.")
         print()
         if error:
             print(f"Right now: cannot check for recording programs ({_ascii(error)}).")

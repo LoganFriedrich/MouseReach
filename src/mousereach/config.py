@@ -770,23 +770,6 @@ class WatcherConfig:
                 0, int(cfg.get('pause_resume_grace_seconds', 120)))
         except (TypeError, ValueError):
             self.pause_resume_grace_seconds = 120
-        # Optional: the folders the recording program writes into. When set, an
-        # open recording program pauses this node only while a file there was
-        # written in the last pause_recording_quiet_seconds. WHY: the program is
-        # routinely left open after recording, and the node then idled until a
-        # person closed it (G12). EMPTY BY DEFAULT = the program being open is
-        # enough, as before. See mousereach.watcher.recording_guard.
-        raw_folders = cfg.get('pause_only_while_writing_to') or []
-        if isinstance(raw_folders, str):
-            raw_folders = [raw_folders]
-        self.pause_only_while_writing_to: List[str] = [
-            str(f).strip() for f in raw_folders
-            if isinstance(f, str) and f.strip()]
-        try:
-            self.pause_recording_quiet_seconds: int = max(
-                0, int(cfg.get('pause_recording_quiet_seconds', 120)))
-        except (TypeError, ValueError):
-            self.pause_recording_quiet_seconds = 120
         # Say on this machine's screen when its work has actually stopped for a
         # recording program ("safe to record"), and when it starts stopping.
         # WHY: the pause is not instant -- the pose or crop running at that
@@ -837,9 +820,6 @@ class WatcherConfig:
         # config file that says nothing about recording programs.
         if self.pause_while_running:
             d['pause_while_running'] = list(self.pause_while_running)
-        if self.pause_only_while_writing_to:
-            d['pause_only_while_writing_to'] = list(self.pause_only_while_writing_to)
-            d['pause_recording_quiet_seconds'] = self.pause_recording_quiet_seconds
         # Only when turned OFF: on is the default, and a file full of defaults
         # hides the settings someone actually chose.
         if not self.notify_safe_to_record:

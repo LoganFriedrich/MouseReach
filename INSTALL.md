@@ -922,28 +922,6 @@ From then on:
 To stop pausing for a program: remove the name in Watcher Control and press
 **Save config**, or run `mousereach-watch-recorders --remove recorder.exe`.
 
-**A2. Optional: pause only while a recording is actually being written**
-
-If the recording program is often left open after the day's recording, the PC
-sits idle until someone closes it. You can tell MouseReach which folder the
-recording program saves its videos into. From then on, an open recording program
-pauses the PC only while a video there is being written; once no file there has
-been written for 2 minutes, the PC works again even though the program is still
-open.
-
-- In Watcher Control, type the folder into **...but only while files are written
-  to** (several folders: separate them with `;`) and press **Save config**. Or
-  run `mousereach-watch-recorders --folder "D:\Recordings"` (with your folder).
-- **Recording counts as stopped after (seconds)** (or `--quiet 300`) changes the
-  2-minute wait.
-- If the folder cannot be read, the PC stays paused while the program is open,
-  on purpose.
-- Before relying on it, try it once with someone present: start a pose, start a
-  short test recording, and check the recording program's dropped-frame count.
-  A pose that is already running needs about 10-15 seconds to stop after a
-  recording starts. If frames drop, empty the folder box again (Save config),
-  which returns the PC to pausing whenever the program is open.
-
 **B. Pause by hand**
 
 Press **Pause** in Watcher Control, double-click the **MouseReach Toggle**

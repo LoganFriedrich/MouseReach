@@ -422,24 +422,6 @@ class WatcherControlWidget(QWidget):
         self._f_pause_grace.setToolTip(
             "After the last recording program closes, wait this many seconds "
             "before starting work again -- in case recording starts again.")
-        # Optional: pause only while the recording program is WRITING here
-        # (watcher.pause_only_while_writing_to). Empty = the program being open
-        # is enough, as before. See recording_guard for why and what it costs.
-        self._f_pause_folders = QLineEdit()
-        self._f_pause_folders.setPlaceholderText(
-            "optional, e.g. D:\\Recordings  (separate several with ;)")
-        self._f_pause_folders.setToolTip(
-            "Leave empty: the PC pauses whenever a listed program is open.\n"
-            "Fill in the folder(s) the recording program saves videos into: the PC "
-            "then pauses only while a file there is being written, so a program "
-            "left open after recording no longer keeps it idle.\n"
-            "A folder that cannot be read keeps the PC paused. Try it once with "
-            "someone watching a test recording: a pose already running needs "
-            "about 10-15 seconds to stop when recording starts.")
-        self._f_pause_quiet = QSpinBox(); self._f_pause_quiet.setRange(0, 86400)
-        self._f_pause_quiet.setToolTip(
-            "When folders are listed: how long after the last file write the PC "
-            "may start work again.")
         form.addRow("enabled", self._f_enabled)
         form.addRow("mode", self._f_mode)
         form.addRow("poll_interval_seconds", self._f_poll)
@@ -456,8 +438,6 @@ class WatcherControlWidget(QWidget):
         form.addRow("staging_path", self._f_staging)
         form.addRow("Pause while these programs are running", self._f_pause_programs)
         form.addRow("Resume after (seconds)", self._f_pause_grace)
-        form.addRow("...but only while files are written to", self._f_pause_folders)
-        form.addRow("Recording counts as stopped after (seconds)", self._f_pause_quiet)
         pause_help = QLabel(PAUSE_PROGRAMS_HELP)
         pause_help.setWordWrap(True)
         pause_help.setStyleSheet("color:#888;")
@@ -923,9 +903,6 @@ class WatcherControlWidget(QWidget):
         grace = d.get("pause_resume_grace_seconds")
         self._f_pause_grace.setValue(
             DEFAULT_RESUME_GRACE_SECONDS if grace is None else int(grace))
-        self._f_pause_folders.setText("; ".join(d.get("pause_only_while_writing_to") or []))
-        quiet = d.get("pause_recording_quiet_seconds")
-        self._f_pause_quiet.setValue(120 if quiet is None else int(quiet))
 
     # Every watcher setting this form owns. Anything else in the config file
     # is preserved on save. WHY: the form rebuilds the watcher section from
@@ -941,7 +918,6 @@ class WatcherControlWidget(QWidget):
         "auto_archive_approved", "also_process", "dlc_config_path",
         "quarantine_dir", "log_dir", "db_path", "staging_path",
         "pause_while_running", "pause_resume_grace_seconds",
-        "pause_only_while_writing_to", "pause_recording_quiet_seconds",
     })
 
     def _form_to_dict(self) -> dict:
@@ -974,11 +950,6 @@ class WatcherControlWidget(QWidget):
         programs = parse_program_list(self._f_pause_programs.text())
         if programs:
             d["pause_while_running"] = programs
-        # Same rule: absent unless chosen, so clearing the box turns it off.
-        folders = [f.strip() for f in self._f_pause_folders.text().split(";") if f.strip()]
-        if folders:
-            d["pause_only_while_writing_to"] = folders
-            d["pause_recording_quiet_seconds"] = self._f_pause_quiet.value()
         return d
 
     def _save_config(self):

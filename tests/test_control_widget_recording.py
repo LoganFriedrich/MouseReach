@@ -178,7 +178,7 @@ class _Field:
     def currentText(self): return self.value_
 
 
-def _form_self(programs="", grace=120, folders="", quiet=120):
+def _form_self(programs="", grace=120):
     s = SimpleNamespace(
         _f_enabled=_Field(True), _f_mode=_Field("dlc_pc"), _f_poll=_Field(30),
         _f_stability=_Field(60), _f_retries=_Field(3), _f_maxpending=_Field(200),
@@ -186,7 +186,6 @@ def _form_self(programs="", grace=120, folders="", quiet=120):
         _f_dlccfg=_Field(""), _f_quarantine=_Field(""), _f_logdir=_Field(""),
         _f_dbpath=_Field(""), _f_staging=_Field(""), _mode_select=_Field(),
         _f_pause_programs=_Field(programs), _f_pause_grace=_Field(grace),
-        _f_pause_folders=_Field(folders), _f_pause_quiet=_Field(quiet),
         _FORM_MANAGED_KEYS=W._FORM_MANAGED_KEYS,
     )
     s._form_to_dict = lambda: W._form_to_dict(s)
@@ -206,18 +205,7 @@ def test_form_writes_program_list_only_when_non_empty():
 def test_both_new_keys_are_form_managed():
     # Managed = the form may CLEAR it. Without this, blanking the list would
     # keep the old list in the file and the PC would go on pausing.
-    assert {"pause_while_running", "pause_resume_grace_seconds",
-            "pause_only_while_writing_to", "pause_recording_quiet_seconds"} <= W._FORM_MANAGED_KEYS
-
-
-def test_recording_folders_are_written_only_when_listed():
-    d = W._form_to_dict(_form_self(programs="recorder.exe",
-                                   folders=" D:/Rec ; E:/Two ", quiet=90))
-    assert d["pause_only_while_writing_to"] == ["D:/Rec", "E:/Two"]
-    assert d["pause_recording_quiet_seconds"] == 90
-    d = W._form_to_dict(_form_self(programs="recorder.exe", folders="  "))
-    assert "pause_only_while_writing_to" not in d
-    assert "pause_recording_quiet_seconds" not in d
+    assert {"pause_while_running", "pause_resume_grace_seconds"} <= W._FORM_MANAGED_KEYS
 
 
 @pytest.fixture
@@ -297,15 +285,6 @@ def test_load_fills_the_new_fields(monkeypatch):
     W._load_config_into_form(s)
     assert s._f_pause_programs.value_ == ""
     assert s._f_pause_grace.value_ == cw.DEFAULT_RESUME_GRACE_SECONDS
-    assert s._f_pause_folders.value_ == "" and s._f_pause_quiet.value_ == 120
-
-    monkeypatch.setattr(mr_config.WatcherConfig, "load", classmethod(
-        lambda cls: _Cfg({"pause_while_running": ["recorder.exe"],
-                          "pause_only_while_writing_to": ["D:/Rec", "E:/Two"],
-                          "pause_recording_quiet_seconds": 45})))
-    W._load_config_into_form(s)
-    assert s._f_pause_folders.value_ == "D:/Rec; E:/Two"
-    assert s._f_pause_quiet.value_ == 45
 
 
 # --- pause reason and the guard's lifetime ------------------------------------

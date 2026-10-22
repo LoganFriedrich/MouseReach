@@ -1741,7 +1741,6 @@ Pause or resume the watcher by hand, or show why it is paused.
 
 ```
 usage: mousereach-watch-recorders [--list] [--add NAME] [--remove NAME] [--grace SECONDS]
-                                  [--folder PATH] [--remove-folder PATH] [--quiet SECONDS]
 
 Show or change the recording programs that pause THIS machine's watcher.
 While any listed program is open the watcher starts no new work, and a pose
@@ -1760,22 +1759,7 @@ by itself within about a minute.
                     work starts again (default 120). WHY: people often close
                     the recording program and open it again a moment later.
 
-Optional -- pause only while a recording is being WRITTEN (off by default):
-  --folder PATH         A folder the recording program saves its videos into.
-                        Once any folder is listed, an open recording program
-                        pauses the watcher only while a file there was written
-                        in the last --quiet seconds. WHY: the program is often
-                        left open after recording, and the PC then sat idle
-                        until someone closed it. A folder that cannot be read
-                        keeps the watcher paused. Prove this on the machine,
-                        with someone watching a test recording, before relying
-                        on it: a pose already running needs ~10-15 s to stop.
-  --remove-folder PATH  Take a folder off; with none left, an open program is
-                        enough to pause again (the default).
-  --quiet SECONDS       How long after the last write the watcher may work
-                        again (default 120).
-
---add, --remove, --folder and --remove-folder may each be given more than once. The settings are saved in
+--add and --remove may each be given more than once. The settings are saved in
 the 'watcher' section of ~/.mousereach/config.json; nothing else in that file
 changes. An empty list (the default) means the watcher never pauses for a
 program.
@@ -1785,7 +1769,6 @@ Examples:
   mousereach-watch-recorders --add recorder.exe
   mousereach-watch-recorders --remove recorder.exe
   mousereach-watch-recorders --grace 300
-  mousereach-watch-recorders --folder "<path>"
 ```
 
 ## Version tracking and reprocessing
