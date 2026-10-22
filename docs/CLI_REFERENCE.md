@@ -2024,24 +2024,34 @@ Archived video status:
 ### `mousereach-aspa-import-collages`
 
 ```
-usage: mousereach-aspa-import [-h] [--apply] [--source SOURCE] [--dest DEST]
-                              [--cohorts COHORTS] [--limit LIMIT]
+usage: mousereach-aspa-import-collages [-h] [--apply] [--source SOURCE]
+                                       [--dest DEST] [--cohorts COHORTS]
+                                       [--limit LIMIT]
+                                       [--sessions-file SESSIONS_FILE]
 
 Copy ASPA historical collages (cohorts D and later) into the watcher's intake, renamed into pipeline form. The archive is only ever READ -- originals and old ASPA analyses are never modified. Dry run by default.
 
 options:
-  -h, --help         show this help message and exit
-  --apply            Actually copy. Without this, prints the plan and changes
-                     nothing.
-  --source SOURCE    ASPA archive root (default: NAS Archive/historical/ASPA).
-  --dest DEST        Intake dir (default: Unanalyzed/Multi-Animal).
-  --cohorts COHORTS  Comma-separated cohort dirs to import (default:
-                     OptD,OptE,OptF,OptG,H,I,J,K,L,M).
-  --limit LIMIT      Only act on the first N sessions (testing).
+  -h, --help            show this help message and exit
+  --apply               Actually copy. Without this, prints the plan and
+                        changes nothing.
+  --source SOURCE       ASPA archive root (default: NAS
+                        Archive/historical/ASPA).
+  --dest DEST           Intake dir (default: Unanalyzed/Multi-Animal).
+  --cohorts COHORTS     Comma-separated cohort dirs to import (default:
+                        OptD,OptE,OptF,OptG,H,I,J,K,L,M).
+  --limit LIMIT         Only act on the first N sessions (testing).
+  --sessions-file SESSIONS_FILE
+                        Import only the recordings holding at least one
+                        session listed in this file (one
+                        {date}_{animal}_{tray}{position} per line), in list
+                        order.
 
 Examples:
   python -m mousereach.aspa.import_collages
   python -m mousereach.aspa.import_collages --apply
+  mousereach-aspa-import-collages --sessions-file sessions.txt
+  mousereach-aspa-import-collages --sessions-file sessions.txt --apply
 ```
 
 ### `mousereach-backfill-kinematic-versions`

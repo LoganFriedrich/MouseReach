@@ -37,10 +37,27 @@ Preference: the clean ``_P{n}.mkv`` wins. If a session has no trimmed version, t
 original is the only candidate and is used. LosslessCut ``-seg`` exports, ``(2)``
 duplicates and ``.llc`` project files are always skipped.
 
+Bringing in only the recordings some sessions need
+---------------------------------------------------
+``--sessions-file <list>`` imports only the recordings that hold at least one
+listed session, in the order of the list. A session is one animal's tray run,
+``{date}_{animal}_{tray}{position}``, written either the lab's way
+(``20220811_J11_P3``) or the pipeline's (``20220811_ASPA1011_P3``); one per line,
+blank lines and ``#`` comments ignored. WHY: a recording holds eight animals,
+and the sessions a question needs are scattered across far fewer recordings than
+a whole cohort -- for one study, 346 recordings instead of 959. The dry run names
+every listed session that has no recording, so nothing a list asks for goes
+missing without being said.
+
+A recording the pipeline already has -- still in the intake folder, or cut and
+moved to ``Analyzed/Multi-Animal`` -- is never brought in again.
+
 Usage
 -----
     python -m mousereach.aspa.import_collages            # dry run (default)
     python -m mousereach.aspa.import_collages --apply    # actually copy
+    mousereach-aspa-import-collages --sessions-file <list>            # dry run
+    mousereach-aspa-import-collages --sessions-file <list> --apply
 
 Dry run is the default on purpose: it prints exactly what would be copied,
 skipped, and why, plus every session where more than one source competed.
@@ -59,7 +76,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .identity import encode_collage_stem
+from .identity import encode_animal, encode_collage_stem, is_encoded
 
 # Cohort directories in scope (see module docstring for the exclusions).
 IN_SCOPE_COHORTS = ["OptD", "OptE", "OptF", "OptG", "H", "I", "J", "K", "L", "M"]
@@ -175,6 +192,86 @@ def build_plan(source_root: Path, dest: Path, cohorts: List[str]) -> dict:
             "unparseable": unparseable}
 
 
+_SINGLE = re.compile(r"^(\d{8})_([A-Za-z]+\d+)_([A-Za-z]\d+)$")
+
+
+def normalise_session(text: str) -> Optional[str]:
+    """One listed session in pipeline form, or None when it is not a session name.
+
+    ``20220811_J11_P3`` and ``20220811_ASPA1011_P3`` both give
+    ``20220811_ASPA1011_P3``."""
+    m = _SINGLE.match((text or "").strip())
+    if not m:
+        return None
+    date, animal, tray = m.groups()
+    if not is_encoded(animal):
+        animal = encode_animal(animal)
+        if not animal:
+            return None
+    return f"{date}_{animal}_{tray.upper()}"
+
+
+def read_sessions_file(path: Path) -> Tuple[List[str], List[str]]:
+    """``(sessions in file order, lines that are not a session name)``.
+    Duplicates are kept once, at their first position."""
+    sessions, bad, seen = [], [], set()
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        s = normalise_session(line)
+        if s is None:
+            bad.append(line)
+        elif s not in seen:
+            seen.add(s)
+            sessions.append(s)
+    return sessions, bad
+
+
+def sessions_in(encoded_stem: str) -> List[str]:
+    """The single-animal sessions a recording holds: one per animal in its name."""
+    m = re.match(r"^(\d{8})_(.+)_([A-Za-z]\d+)$", encoded_stem)
+    if not m:
+        return []
+    date, animals, tray = m.groups()
+    return [f"{date}_{a.strip()}_{tray.upper()}" for a in animals.split(",") if a.strip()]
+
+
+def select_for_sessions(plan: List[dict], sessions: List[str]) -> Tuple[List[dict], List[str]]:
+    """The recordings holding at least one listed session, in list order (a
+    recording is placed where the first session needing it is listed), and the
+    listed sessions no recording holds."""
+    holder = {}
+    for item in plan:
+        for s in sessions_in(item["encoded_stem"]):
+            holder.setdefault(s, item)
+    chosen, placed, missing = [], set(), []
+    for s in sessions:
+        item = holder.get(s)
+        if item is None:
+            missing.append(s)
+        elif item["encoded_stem"] not in placed:
+            placed.add(item["encoded_stem"])
+            chosen.append(item)
+    return chosen, missing
+
+
+def already_in_pipeline(item: dict, retired_dir: Optional[Path]) -> Optional[str]:
+    """Where the pipeline already has this recording, or None. WHY: a recording
+    copied in again after it was cut would sit in the intake as a stray, or be
+    cut twice."""
+    if item["dst"].exists():
+        return "in the intake folder"
+    if retired_dir is not None and (retired_dir / item["dst"].name).exists():
+        return "cut, and moved to " + str(retired_dir)
+    return None
+
+
+def default_retired_dir() -> Optional[Path]:
+    from ..config import Paths
+    return (Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal") if Paths.ANALYZED_OUTPUT else None
+
+
 def write_mapping(plan: List[dict], dest_root: Path) -> Path:
     """Write the versioned source -> encoded mapping next to the imported videos.
 
@@ -214,14 +311,16 @@ def _fmt_gb(n: int) -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="mousereach-aspa-import",
+        prog="mousereach-aspa-import-collages",
         description=(
             "Copy ASPA historical collages (cohorts D and later) into the watcher's "
             "intake, renamed into pipeline form. The archive is only ever READ -- "
             "originals and old ASPA analyses are never modified. Dry run by default."),
         epilog="Examples:\n"
                "  python -m mousereach.aspa.import_collages\n"
-               "  python -m mousereach.aspa.import_collages --apply\n",
+               "  python -m mousereach.aspa.import_collages --apply\n"
+               "  mousereach-aspa-import-collages --sessions-file sessions.txt\n"
+               "  mousereach-aspa-import-collages --sessions-file sessions.txt --apply\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true",
                         help="Actually copy. Without this, prints the plan and changes nothing.")
@@ -230,6 +329,9 @@ def main(argv=None) -> int:
     parser.add_argument("--cohorts", default=None,
                         help="Comma-separated cohort dirs to import (default: %s)." % ",".join(IN_SCOPE_COHORTS))
     parser.add_argument("--limit", type=int, default=0, help="Only act on the first N sessions (testing).")
+    parser.add_argument("--sessions-file", default=None,
+                        help="Import only the recordings holding at least one session listed in "
+                             "this file (one {date}_{animal}_{tray}{position} per line), in list order.")
     args = parser.parse_args(argv)
 
     source_root = Path(args.source) if args.source else default_source_root()
@@ -249,12 +351,25 @@ def main(argv=None) -> int:
     print("Scanning...")
     result = build_plan(source_root, dest, cohorts)
     plan = result["plan"]
+    missing_sessions: List[str] = []
+    if args.sessions_file:
+        sessions, bad = read_sessions_file(Path(args.sessions_file))
+        print(f"Sessions listed: {len(sessions)}  ({args.sessions_file})")
+        if bad:
+            print(f"[!] Lines that are not a session name (ignored): {len(bad)}")
+            for b in bad[:10]:
+                print(f"  {b[:80]}")
+        plan, missing_sessions = select_for_sessions(plan, sessions)
+    retired = default_retired_dir()
+    have = [(p, already_in_pipeline(p, retired)) for p in plan]
+    already = [(p, why) for p, why in have if why]
+    plan = [p for p, why in have if not why]
     if args.limit:
         plan = plan[:args.limit]
 
     total = sum(p["size"] for p in plan)
     print("")
-    print(f"Sessions to import: {len(plan)}  ({_fmt_gb(total)})")
+    print(f"Recordings to import: {len(plan)}  ({_fmt_gb(total)})")
     by_cohort = defaultdict(int)
     for p in plan:
         by_cohort[p["cohort"]] += 1
@@ -287,10 +402,22 @@ def main(argv=None) -> int:
         if len(result["unparseable"]) > 10:
             print(f"  ... and {len(result['unparseable']) - 10} more")
 
-    already = [p for p in plan if p["dst"].exists()]
     if already:
         print("")
-        print(f"Already present at the destination (will skip): {len(already)}")
+        print(f"Already in the pipeline (not imported again): {len(already)}")
+        for p, why in already[:5]:
+            print(f"  {p['encoded_stem'][:70]}  -- {why}")
+
+    if args.sessions_file:
+        print("")
+        if missing_sessions:
+            print(f"[!] Listed sessions with NO recording in the archive: {len(missing_sessions)}")
+            for s in missing_sessions[:20]:
+                print(f"  {s}")
+            if len(missing_sessions) > 20:
+                print(f"  ... and {len(missing_sessions) - 20} more")
+        else:
+            print("[OK] Every listed session has a recording.")
 
     if not args.apply:
         print("")
@@ -300,7 +427,7 @@ def main(argv=None) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     copied = skipped = failed = 0
     for n, item in enumerate(plan, 1):
-        if item["dst"].exists():
+        if already_in_pipeline(item, retired):
             skipped += 1
             continue
         try:

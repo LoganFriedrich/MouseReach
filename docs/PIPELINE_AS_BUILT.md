@@ -1657,3 +1657,19 @@ videos come back").
    -- a person saving an answer changes the bundle, so it is read on the next scan.
 
 Tests: `tests/test_review_return_local_pose.py`.
+
+## Update 2026-10-21: ASPA recordings can be brought in by a list of sessions
+
+`mousereach-aspa-import-collages --sessions-file <list>` (`aspa/import_collages.py`) copies
+in only the archive recordings that hold at least one listed session, in the list's order,
+instead of whole cohorts. A session is one animal's tray run, `{date}_{animal}_{tray}{position}`,
+written the lab's way or the pipeline's; one per line, `#` comments allowed. WHY: a recording
+holds eight animals, and the sessions one question needs sit in far fewer recordings than
+their cohorts (for one study: 338 recordings, 316 GB, instead of whole cohorts at about three
+times that). The dry run prints how many recordings would come in, every listed session that
+has no recording in the archive, and every recording the pipeline already has. A recording
+already in the intake folder, or cut and moved to `Analyzed/Multi-Animal`, is never copied
+again (this also applies without a list).
+
+Lists live in the pipeline's `priority_lists/` folder (data only; each list is written by a
+lab script, never edited by hand). Tests: `tests/test_aspa_import_by_sessions.py`.
