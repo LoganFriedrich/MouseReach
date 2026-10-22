@@ -1820,6 +1820,21 @@ each session's stage) and prints the counts. Read-only. WHY: once a list's recor
 imported its sessions spread across the pipeline, and nothing said how far the list had got
 without asking every machine. Tests: `tests/test_session_coverage.py`.
 
+## Update 2026-10-22: a queue bundle of an archived video is filed away
+
+The return scan reads every queued video's state in one query per queue
+(`WatcherDB.states_of`). For a video this node has `archived`, a bundle holding
+nothing a person wrote is moved to `_Problematic` with a note when it holds no
+results at all (no `<stem>_segments.json` -- a file a return could not take
+along) or when every file in it is older than the video's processing manifest in
+Analyzed (`_superseded_by_archive`, `review_return.py`; both queues, under the
+same per-video claim as every other move). Analyzed is read once per bundle and
+row change, not on every scan. Bundles the bench-disagreement router places are
+never caught: their results leave Analyzed and their routing record postdates the
+archive. Companion to the archive-step fix above (`queue_folder_holds_this_run`):
+that one stops new husks from derailing a run; this one clears the ones already
+sitting in a person's queue. Tests: `tests/test_review_return_superseded.py`.
+
 ## Update 2026-10-22: a leftover triage copy of a deep-review bundle is filed away
 
 When a video has a folder in both review queues and its segmentation failed, the return scan

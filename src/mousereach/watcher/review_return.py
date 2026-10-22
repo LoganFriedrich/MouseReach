@@ -698,6 +698,54 @@ def _person_touched(signature: tuple) -> bool:
                for name, _, _ in signature)
 
 
+# bundle path -> ((signature, row updated_at), verdict), so Analyzed is read once
+# per bundle and row change, not on every scan.
+_superseded_cache: Dict[str, tuple] = {}
+
+
+def _superseded_by_archive(bundle: Path, stem: str, row: Optional[tuple],
+                           signature: tuple) -> Optional[str]:
+    """Why this queue bundle is a leftover of a video that has since been
+    archived, or None when it is not (or that cannot be told).
+
+    ``row`` is (state, updated_at) from this node's database. Only an
+    'archived' video qualifies, and only a bundle holding nothing a person
+    wrote (no review, clear marker or ground truth). Then the bundle is a
+    leftover when it holds no results at all -- a file a return could not
+    take along, typically the .mp4 the review tool still had open -- or when
+    every file in it is older than the video's archived results.
+
+    WHY: such a bundle sat in a person's queue and asked for work already
+    done. 2026-09-10..29 twenty videos a person had cleared were sent back to
+    deep review as a bare .mp4 (see orchestrator.queue_folder_holds_this_run);
+    fifteen were cleared a second time by hand. Bundles the bench-disagreement
+    router puts in a queue are never caught: their results leave Analyzed, and
+    their routing record is written after the archive.
+    """
+    if not row or row[0] != "archived" or _person_touched(signature):
+        return None
+    key = (signature, row[1])
+    hit = _superseded_cache.get(str(bundle))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    names = {name for name, _, _ in signature}
+    why = None
+    if f"{stem}_segments.json" not in names:
+        why = ("holds no results (a file a return could not take along); the "
+               "video has since been archived")
+    else:
+        try:
+            from mousereach.archive.core import get_archive_destination
+            archived = (Path(get_archive_destination(stem))
+                        / f"{stem}_processing_manifest.json").stat().st_mtime_ns
+            if max(m for _, _, m in signature) < archived:
+                why = "every file predates the video's archived results"
+        except Exception:
+            why = None
+    _superseded_cache[str(bundle)] = (key, why)
+    return why
+
+
 def _qc_hold_lifted(bundle: Path, stem: str, signature: tuple) -> Optional[bool]:
     """True when the bundle was held by the quality check alone and the current
     check would not hold it, False when it still would (or the hold was for
@@ -916,9 +964,32 @@ def scan_review_queues(db, processing_dir: Path,
 
     _warn_stale_incoming()
 
+    def _states(bundles):
+        # One query for the whole queue (_superseded_by_archive needs each
+        # video's state); without a database it is an empty map and that
+        # check simply never fires.
+        try:
+            return db.states_of(b.name for b in bundles) if db is not None else {}
+        except Exception:
+            return {}
+
+    def _retire_if_superseded(bundle, stem, row, signature, queue):
+        """True when the bundle is a leftover of an archived video (it is
+        filed away, or left for the next scan if a file is still held open)."""
+        why = _superseded_by_archive(bundle, stem, row, signature)
+        if not why:
+            return False
+        if _retire_stale_bundle(bundle, stem, "archived", why=why):
+            summary["superseded_retired"] = summary.get("superseded_retired", 0) + 1
+            logger.info("Return scan: %s %s bundle retired to _Problematic: %s",
+                        stem, queue, why)
+        return True
+
     # TRIAGE: every triaged element resolved (and segmentation sound).
     seen_bundles = set()
-    for bundle in _bundles(Paths.TRIAGE_REVIEW):
+    triage_bundles = _bundles(Paths.TRIAGE_REVIEW)
+    triage_states = _states(triage_bundles)
+    for bundle in triage_bundles:
         if not _budget_left():
             summary["deferred"] += 1
             continue
@@ -950,6 +1021,9 @@ def scan_review_queues(db, processing_dir: Path,
                                 "bundle; retired to _Problematic", stem)
                 continue
         except OSError:
+            continue
+        if _retire_if_superseded(bundle, stem, triage_states.get(stem), signature,
+                                 "triage"):
             continue
         try:
             st = _cached_triage_status(bundle, stem, signature)
@@ -1100,7 +1174,9 @@ def scan_review_queues(db, processing_dir: Path,
     # finished human work must never queue behind machine-initiated moves.
     recheck_deadline = time.monotonic() + QC_RECHECK_BUDGET_S
     summary.setdefault("qc_released", 0)
-    for bundle in _bundles(Paths.DEEP_REVIEW):
+    deep_bundles = _bundles(Paths.DEEP_REVIEW)
+    deep_states = _states(deep_bundles)
+    for bundle in deep_bundles:
         if summary["deep_returned"] >= limit:
             summary["deferred"] += 1
             continue
@@ -1112,6 +1188,15 @@ def scan_review_queues(db, processing_dir: Path,
                     bundle, stem, processing_dir, db, "deep_review_cleared"):
                 summary["deep_returned"] += 1
             continue
+        row = deep_states.get(stem)
+        if row and row[0] == "archived":
+            try:
+                signature = _bundle_signature(bundle)
+            except OSError:
+                signature = ()
+            if signature and _retire_if_superseded(bundle, stem, row, signature,
+                                                   "deep review"):
+                continue
         # A quality hold the current check would not make (block comment at
         # QC_RECHECK_BUDGET_S). Its own budget, after human-cleared returns
         # in the same pass, and bounded in time so re-checks never hold up

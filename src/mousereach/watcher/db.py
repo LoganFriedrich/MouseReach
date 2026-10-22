@@ -1007,6 +1007,30 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
+    def states_of(self, video_ids) -> Dict[str, tuple]:
+        """{video_id: (state, updated_at)} for those of ``video_ids`` that have
+        a row. One query per 500 ids. WHY: the review-return scan needs the
+        state of every queued video each pass, and one get_video per bundle is
+        a connection per bundle (hundreds per scan)."""
+        ids = list(dict.fromkeys(video_ids))
+        out: Dict[str, tuple] = {}
+        if not ids:
+            return out
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    marks = ",".join("?" * len(chunk))
+                    for row in conn.execute(
+                            f"SELECT video_id, state, updated_at FROM videos "
+                            f"WHERE video_id IN ({marks})", chunk):
+                        out[row["video_id"]] = (row["state"], row["updated_at"])
+                return out
+            finally:
+                conn.close()
+
+    @_retry_network_errors
     def get_collage(self, filename: str) -> Optional[dict]:
         """
         Get single collage by filename.
