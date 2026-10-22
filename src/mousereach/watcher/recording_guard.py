@@ -32,6 +32,25 @@ an operator often closes the recording program and reopens it a moment later
 pose in that gap would either make the new recording compete with it or throw
 the pose away seconds later.
 
+OPTIONAL: PAUSE ONLY WHILE A RECORDING IS BEING WRITTEN
+------------------------------------------------------
+``watcher.pause_only_while_writing_to``: a list of folders the recording
+program writes its files into. EMPTY BY DEFAULT, and empty means the rule above
+exactly: the program being open pauses the node. When folders are listed, an
+open program pauses the node only while a recording is being WRITTEN -- a file
+in one of those folders grew, or was written, within the last
+``watcher.pause_recording_quiet_seconds`` (default 120). WHY: the program is
+routinely left open after the day's recording, and the node then idled until
+someone closed it -- once for two days (G12, 2026-10). The files are what show
+that a recording is happening.
+
+What this mode gives up, and why it is OFF by default: when recording starts,
+a pose already running keeps the GPU until the guard sees the new file and the
+pose stops -- about 10-15 seconds (the guard looks every few seconds and the
+pose asks every 5). Whether a recording drops frames in that overlap has to be
+seen on the machine, with someone present, before the mode is switched on.
+A folder that cannot be read keeps the node PAUSED (the fail-safe rule below).
+
 HOW NAMES ARE MATCHED
 ---------------------
 Case-insensitively (Windows does not care about case, and neither does a
@@ -229,6 +248,45 @@ def _join(names: List[str]) -> str:
     return ", ".join(names)
 
 
+def recording_activity(folders: Iterable[str], previous_sizes: dict,
+                       now: float):
+    """When a recording was last seen being written in ``folders``.
+
+    Returns ``(last_activity, sizes, error)``: ``last_activity`` is the newest
+    wall-clock time at which any file in the folders was written (its modified
+    time, or ``now`` when its size grew since the previous look), None when the
+    folders hold no file; ``sizes`` is {path: size} for the next look; ``error``
+    is a reason when a folder could not be read (the caller stays paused).
+
+    WHY each file is asked directly (os.stat) rather than taken from the
+    folder listing: Windows can report a file's size and time in a listing as
+    they were when the file was last closed, and a recording is a file that
+    stays open while it grows. Growth since the previous look is counted as
+    well, for the same reason.
+    """
+    import os
+    last = None
+    sizes = {}
+    for folder in folders:
+        try:
+            with os.scandir(folder) as entries:
+                paths = [e.path for e in entries if e.is_file()]
+        except OSError as e:
+            return None, previous_sizes, f"cannot read {folder} ({e.strerror or e})"
+        for path in paths:
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue          # removed between the listing and the look
+            sizes[path] = st.st_size
+            seen = st.st_mtime
+            if path in previous_sizes and previous_sizes[path] != st.st_size:
+                seen = max(seen, now)
+            if last is None or seen > last:
+                last = seen
+    return last, sizes, None
+
+
 class RecordingGuard:
     """Answers "is a recording program running, or did one close too
     recently?" for the life of one watcher.
@@ -248,8 +306,26 @@ class RecordingGuard:
     def __init__(self, names, grace_seconds: int = 120,
                  clock: Callable[[], float] = time.monotonic,
                  scan: Callable[[Iterable[str]], List[str]] = running_programs,
-                 cache_seconds: float = 5):
+                 cache_seconds: float = 5,
+                 write_folders: Optional[Iterable[str]] = None,
+                 quiet_seconds: int = 120,
+                 wall_clock: Callable[[], float] = time.time,
+                 activity=recording_activity):
         self.names = clean_names(names)
+        # Optional "only while writing" mode (module docstring). Empty = the
+        # program being open is enough, exactly as before.
+        self.write_folders = [str(f).strip() for f in (write_folders or [])
+                              if isinstance(f, str) and str(f).strip()]
+        try:
+            self.quiet_seconds = max(0, int(quiet_seconds))
+        except (TypeError, ValueError):
+            self.quiet_seconds = 120
+        self._wall_clock = wall_clock
+        self._activity = activity
+        self._sizes: dict = {}
+        self._activity_at: Optional[float] = None
+        self._activity_checked: Optional[float] = None
+        self._activity_error: Optional[str] = None
         try:
             self.grace_seconds = max(0, int(grace_seconds))
         except (TypeError, ValueError):
@@ -328,13 +404,40 @@ class RecordingGuard:
             return _ascii(f"cannot check for recording programs: {self._error}")
         if self._running:
             verb = "is" if len(self._running) == 1 else "are"
-            return _ascii(f"{_join(self._running)} {verb} running")
+            if not self.write_folders:
+                return _ascii(f"{_join(self._running)} {verb} running")
+            return self._writing_reason(now, verb)
         if self._clear_since is not None:
             waited = max(0.0, now - self._clear_since)
             if waited < self.grace_seconds:
                 return _ascii(f"{_join(self._last_seen or self.names)} closed "
                               f"{int(waited)} s ago; resuming after "
                               f"{self.grace_seconds} s")
+        return None
+
+    def _writing_reason(self, now: float, verb: str) -> Optional[str]:
+        """The "only while writing" answer for a listed program that is
+        running: paused while a file in the recording folders was written
+        within quiet_seconds, or while they cannot be read; None otherwise.
+        Looks at most once every cache_seconds, like the process list."""
+        if (self._activity_checked is None
+                or now - self._activity_checked >= self._cache_seconds):
+            self._activity_checked = now
+            last, sizes, error = self._activity(self.write_folders, self._sizes,
+                                                self._wall_clock())
+            self._sizes = sizes
+            self._activity_error = error
+            self._activity_at = last
+        running = _join(self._running)
+        if self._activity_error is not None:
+            return _ascii(f"{running} {verb} running and the recording folder "
+                          f"cannot be checked: {self._activity_error}")
+        if self._activity_at is not None:
+            age = max(0.0, self._wall_clock() - self._activity_at)
+            if age < self.quiet_seconds:
+                return _ascii(f"{running} {verb} recording (a file was written "
+                              f"{int(age)} s ago; resuming {self.quiet_seconds} s "
+                              f"after the last write)")
         return None
 
 
@@ -381,5 +484,7 @@ def pause_reason(processing_root: Optional[Path] = None,
             return None
         guard = RecordingGuard(
             getattr(config, "pause_while_running", None) or [],
-            grace_seconds=getattr(config, "pause_resume_grace_seconds", 120))
+            grace_seconds=getattr(config, "pause_resume_grace_seconds", 120),
+            write_folders=getattr(config, "pause_only_while_writing_to", None) or [],
+            quiet_seconds=getattr(config, "pause_recording_quiet_seconds", 120))
     return guard.reason()

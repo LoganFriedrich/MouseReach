@@ -264,6 +264,12 @@ a set time (default 120 s) after the program closes. Resume cannot override an
 open recording program. The list is empty by default, which means the watcher
 never checks for any program.
 
+Optional: list the folder the recording program writes into (`--folder PATH`,
+or the panel's "...but only while files are written to") and an open program
+pauses the watcher only while a recording is being written there -- for a
+program left open after recording. Off by default; see INSTALL.md (A2) for how
+to try it safely.
+
 The watcher runs on the NAS / DLC PC (the machine with direct NAS access and GPU).
 Set up with `mousereach-setup --set-role "NAS / DLC PC"` then `mousereach-setup`.
 

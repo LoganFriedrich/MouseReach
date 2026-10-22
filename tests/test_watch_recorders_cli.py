@@ -422,3 +422,35 @@ def test_status_says_paused_by_hand(status_node, monkeypatch, capsys):
     assert code == 0
     assert "Pause:  PAUSED -- paused by hand (watcher_paused.flag)" in out
     assert "mousereach-watch-toggle --resume" in out
+
+
+# ---------------------------------------- optional: pause only while writing
+
+def test_a_recording_folder_is_saved_listed_and_removed(node, monkeypatch, capsys, tmp_path):
+    rec = tmp_path / "recordings"
+    rec.mkdir()
+    (rec / "old.mkv").write_bytes(b"x")
+    _write_config(node, {"watcher": {"pause_while_running": ["recorder.exe"], "keep": 1}})
+
+    code, out, _ = recorders(monkeypatch, capsys, "--folder", str(rec), "--quiet", "90")
+    assert code == 0 and "Added recording folder" in out and "Quiet period set to 90 s" in out
+    w = _read_config(node)["watcher"]
+    assert w["pause_only_while_writing_to"] == [str(rec)]
+    assert w["pause_recording_quiet_seconds"] == 90 and w["keep"] == 1
+
+    code, out, _ = recorders(monkeypatch, capsys)
+    assert "Only while a recording is being written in:" in out and "Newest write:" in out
+
+    code, out, _ = recorders(monkeypatch, capsys, "--remove-folder", str(rec).upper())
+    assert code == 0 and "Removed recording folder" in out
+    assert "pause_only_while_writing_to" not in _read_config(node)["watcher"]
+    code, out, _ = recorders(monkeypatch, capsys)
+    assert "Only while writing: off" in out
+
+
+def test_a_bad_quiet_value_changes_nothing(node, monkeypatch, capsys):
+    _write_config(node, {"watcher": {"pause_while_running": ["recorder.exe"]}})
+    before = node.config_file.read_text(encoding="utf-8")
+    code, _, err = recorders(monkeypatch, capsys, "--folder", "D:/x", "--quiet", "-5")
+    assert code == 2 and "Nothing was changed" in err
+    assert node.config_file.read_text(encoding="utf-8") == before

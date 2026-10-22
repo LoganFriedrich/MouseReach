@@ -91,6 +91,7 @@ All of these live in ~/.mousereach/config.json on each machine, and defaults for
   - watcher.dlc_gpu_device - which graphics card number DeepLabCut uses, default 0.
   - watcher.pause_while_running - programs that pause this watcher while they run (process names such as recorder.exe). Empty by default, which means the watcher never checks for any program. A running watcher follows edits to it without a restart.
   - watcher.pause_resume_grace_seconds - how long every listed program must have been closed before work starts again, default 120.
+  - watcher.pause_only_while_writing_to - optional folders the recording program writes into. When set, an open listed program pauses this watcher only while a file there was written within watcher.pause_recording_quiet_seconds (default 120). Empty by default (an open program is enough). Since 2026-10-22.
   - backup.enabled - whether the separate Y:-to-X: backup daemon will start.
 
 ---
@@ -2139,3 +2140,20 @@ same video was still in flight was claimed a second time, and two GPUs posed one
 second machine logs "another node already holds this re-pose" once and leaves both files alone, and
 the leftover request is closed by the existing "already satisfied" check when the pose lands. Plan
 Section 0 item 8. Tests: `tests/test_repose.py`.
+
+## Update 2026-10-22: optional -- pause only while a recording is being written (G12)
+
+A behaviour PC paused whenever its recording program was open, and the program is routinely left
+open after the day's recording, so the PC idled until someone closed it (two days once; over an hour
+on 10-22 with the program open and nothing recorded). New, off by default: `watcher.pause_only_while_writing_to`
+lists the folders the recording program writes into. With it set, an open listed program pauses the
+watcher only while a file there grew or was written within `watcher.pause_recording_quiet_seconds`
+(default 120). Each file is asked directly (`os.stat`) and growth between looks counts, because Windows
+can report an open, growing file's time as it was when last closed. A folder that cannot be read keeps
+the watcher paused. Set from Watcher Control ("...but only while files are written to") or
+`mousereach-watch-recorders --folder PATH [--quiet SECONDS]`; a running watcher follows edits without a
+restart. The cost, which is why it is off: when recording starts, a pose already running needs about
+10-15 s to stop (the guard looks every few seconds, the pose asks every 5). Plan: switch it on one PC
+with someone present and check the recording's dropped frames before relying on it.
+Tests: `tests/test_recording_guard_writing.py`, `tests/test_watch_recorders_cli.py`,
+`tests/test_control_widget_recording.py`.
