@@ -82,6 +82,9 @@ state it set was lost).
       'processed', 'archived'. Read at a GPU node's startup by cross-node
       recovery, and by the claim takeover check above. A GPU node's 'archived'
       means that node staged or filed it, not that the analysis is finished.
+      Recovery moves a node's own row forward to match, but never replaces a
+      'triage' or 'deep_review' row with a record written before it (since
+      2026-10-22; before, an older 'archived' here cleared a newer hold).
 
 For reprocessing questions the processing server's live database decides. It is
 the only role with `reprocesses_partial` true (orchestrator.py:433); GPU nodes

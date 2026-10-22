@@ -120,3 +120,48 @@ def test_states_that_live_on_the_share_are_adopted_without_a_file_search(coordin
     coordinator.recover_local_db(local, "this-node")
 
     assert local.forced == [("20240101_ABC0101_P1", "archived")]
+
+
+# --- Review holds yield only to a record written after them -----------------
+# WHY (2026-10-22): a hold sits outside the ordered states, so it ranked below
+# every remote state. A pose-only node's 'archived' ("handed off", 09-29)
+# overwrote a behaviour-room node's deep-review hold (10-21) on restart, leaving
+# a video marked finished with no results anywhere.
+
+def _remote_archived(coordinator, monkeypatch, updated_at):
+    monkeypatch.setattr(coordinator, "get_all_video_states", lambda: {
+        "20240101_ABC0101_F4": {"state": "archived", "hostname": "pose-node",
+                                "source_path": None, "collage_id": None,
+                                "updated_at": updated_at},
+    }, raising=False)
+
+
+@pytest.mark.parametrize("hold", ["deep_review", "triage"])
+def test_an_older_remote_record_does_not_clear_a_hold(coordinator, monkeypatch, hold):
+    _remote_archived(coordinator, monkeypatch, "2026-09-29T18:29:04.315995")
+    local = FakeLocalDB({"20240101_ABC0101_F4": {
+        "state": hold, "current_path": None, "updated_at": "2026-10-20T09:00:00"}})
+
+    stats = coordinator.recover_local_db(local, "this-node")
+
+    assert local.forced == [] and local.rows["20240101_ABC0101_F4"]["state"] == hold
+    assert stats["videos_advanced"] == 0
+
+
+def test_a_newer_remote_record_does_clear_a_hold(coordinator, monkeypatch):
+    _remote_archived(coordinator, monkeypatch, "2026-10-21T12:00:00")
+    local = FakeLocalDB({"20240101_ABC0101_F4": {
+        "state": "deep_review", "current_path": None, "updated_at": "2026-10-20T09:00:00"}})
+
+    coordinator.recover_local_db(local, "this-node")
+
+    assert local.forced == [("20240101_ABC0101_F4", "archived")]
+
+
+def test_a_hold_with_no_times_to_compare_is_kept(coordinator, monkeypatch):
+    _remote_archived(coordinator, monkeypatch, None)
+    local = FakeLocalDB({"20240101_ABC0101_F4": {"state": "triage", "current_path": None}})
+
+    coordinator.recover_local_db(local, "this-node")
+
+    assert local.forced == []

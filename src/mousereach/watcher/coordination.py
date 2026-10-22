@@ -81,6 +81,31 @@ NODE_LOCAL_STATES = {
 }
 
 
+# A review hold is this node's own verdict that a person must look at the video.
+# Holds sit outside VIDEO_STATE_ORDER, so _state_index ranks them -1 and EVERY
+# remote state used to compare as "ahead" of them: a pose-only node's 'archived'
+# (which means "this node handed it off", not "analysed") overwrote a newer hold
+# on the next restart. Seen on a behaviour-room node 2026-10-21: a deep-review
+# hold became 'archived' with no results anywhere, from a remote record written
+# three weeks BEFORE the hold.
+REVIEW_HOLD_STATES = ('triage', 'deep_review')
+
+
+def _remote_is_newer(local_row, remote) -> bool:
+    """True only when the shared record was written after this node's row.
+
+    Unknown or unreadable times answer False: keeping a video in front of a
+    person is the safe failure, marking it finished is not.
+    """
+    from datetime import datetime
+    try:
+        local_t = datetime.fromisoformat(str((local_row or {}).get('updated_at')))
+        remote_t = datetime.fromisoformat(str((remote or {}).get('updated_at')))
+        return remote_t > local_t
+    except (TypeError, ValueError):
+        return False
+
+
 def _is_live_local_work(local_row) -> bool:
     """A local row in a working state whose recorded file is really on this
     node is this node's LIVE work, not stale bookkeeping to be advanced.
@@ -640,6 +665,8 @@ class PipelineCoordinator:
           - If not in local DB: register + force_state
           - If in local DB but behind: force_state forward
           - Never regress state (only advance)
+          - Never clear a review hold (triage / deep_review) with a record
+            written before it
 
         For each collage in pipeline_collages:
           - If not in local DB: register + force_collage_state
@@ -751,6 +778,10 @@ class PipelineCoordinator:
                 local_state = local_row['state']
                 local_idx = _state_index(local_state, VIDEO_STATE_ORDER)
                 remote_idx = _state_index(remote_state, VIDEO_STATE_ORDER)
+
+                if (local_state in REVIEW_HOLD_STATES
+                        and not _remote_is_newer(local_row, remote)):
+                    continue  # a hold yields only to a record written after it
 
                 if (remote_idx > local_idx and local_state != 'failed'
                         and not _is_live_local_work(local_row)):
@@ -876,7 +907,11 @@ class PipelineCoordinator:
                 local_idx = _state_index(local_state, VIDEO_STATE_ORDER)
                 archived_idx = _state_index('archived', VIDEO_STATE_ORDER)
 
+                # Not a review hold: the reach table cannot say WHEN its rows
+                # were written, so reaches from an earlier run must not clear a
+                # newer hold (REVIEW_HOLD_STATES).
                 if (local_idx < archived_idx and local_state != 'failed'
+                        and local_state not in REVIEW_HOLD_STATES
                         and not _is_live_local_work(local_row)):
                     try:
                         local_db.force_state(

@@ -2008,3 +2008,16 @@ manifest is in Analyzed where the video belongs. Every file of that video moves 
 `<processing_root>/_finished_elsewhere/<date>/<folder>/` -- set aside, never deleted; one log line
 says how many. Tests: `tests/test_set_aside_finished_copies.py`.
 
+
+## Update 2026-10-22: startup recovery no longer clears a review hold with an older record
+
+At start, a graphics-card machine compares each row of its own record with the shared one
+(`watcher_central.db`, `pipeline_videos`) and moves rows forward to match. A review hold
+(triage, deep review) is not among the ordered states, so it ranked below every shared state
+and was overwritten. Shared `archived` from a pose-only machine means "this machine handed it
+off", not "analysed", so a hold could become `archived` with no results anywhere. Seen on a
+behaviour-room machine on 2026-10-21, from a shared record written three weeks before the hold.
+Now a hold is replaced only by a shared record written after it (`REVIEW_HOLD_STATES`,
+`_remote_is_newer` in `watcher/coordination.py`), and never by the optional reach-table
+cross-check, which cannot say when its rows were written. When either time is missing the hold
+is kept. Tests: `tests/test_coordination_recovery_pathless.py`.
