@@ -749,10 +749,25 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
                            "for a person", stem)
             _return_failed(stem)
             return False
-        clash = [f.name for f in inputs if (posed / f.name).exists()]
+        # The posed folder usually still holds this video's files: intake
+        # copies a video in and leaves its posed files there until the video
+        # is archived, and a held video is not archived. A byte-identical copy
+        # there is the one live copy -- the bundle's own is a duplicate, set
+        # aside with the outputs and removed once the release has succeeded.
+        # A copy that differs in any way is for a person. WHY: without this,
+        # 67 of the first 74 releases were refused on 2026-10-22.
+        twins, clash = [], []
+        for f in inputs:
+            there = posed / f.name
+            if there.exists():
+                if (there.stat().st_size == f.stat().st_size
+                        and _file_sha256(there) == _file_sha256(f)):
+                    twins.append(f)
+                else:
+                    clash.append(f.name)
         if clash:
-            logger.warning("Release %s: %s already in the posed folder; left in "
-                           "deep review", stem, ", ".join(clash))
+            logger.warning("Release %s: %s in the posed folder differs from the "
+                           "bundle's copy; left in deep review", stem, ", ".join(clash))
             _return_failed(stem)
             return False
         if not _ensure_registered(db, stem, posed / f"{stem}.mp4"):
@@ -765,8 +780,8 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
         if dest.exists():       # released once already today: keep that copy too
             dest = dest.with_name(f"{stem}_{datetime.now():%H%M%S}")
         dest.mkdir(parents=True, exist_ok=True)
-        plan = ([(f, dest / f.name) for f in files if f not in inputs]
-                + [(f, posed / f.name) for f in inputs])
+        plan = ([(f, dest / f.name) for f in files if f not in inputs or f in twins]
+                + [(f, posed / f.name) for f in inputs if f not in twins])
         done = []
         try:
             for src, dst in plan:
@@ -791,6 +806,11 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
             logger.error("Release %s: could not complete (%s); bundle kept", stem, e)
             _return_failed(stem)
             return False
+        for f in twins:                 # verified identical to the posed copy above
+            try:
+                (dest / f.name).unlink()
+            except OSError:
+                pass
         try:
             (dest / f"{stem}_release_note.json").write_text(json.dumps({
                 "released_at": datetime.now().isoformat(),

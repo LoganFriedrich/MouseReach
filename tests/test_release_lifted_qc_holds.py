@@ -154,3 +154,27 @@ def test_each_bundle_is_rechecked_once_until_it_changes(tmp_path, monkeypatch):
         rr.scan_review_queues(FakeDB(), tmp_path / "proc")
 
     assert len(calls) == 1
+
+
+def test_identical_copies_already_in_the_posed_folder_stay_the_one_copy(tmp_path, monkeypatch):
+    """Intake leaves a video's posed files in the posed folder until it is
+    archived, so a held video usually still has them there (67 of the first 74
+    releases were refused for it, 2026-10-22). Identical copies there are the
+    one live copy; the bundle's duplicates go, its outputs are set aside."""
+    deep, posed, review = _wire(monkeypatch, tmp_path)
+    stem = "20261012_CNT0615_F4"
+    b = _bundle(deep, stem)
+    (posed / f"{stem}.mp4").write_bytes(b"video")
+    for ext in (".h5", ".csv", "_meta.pickle"):
+        (posed / f"{stem}{POSE}{ext}").write_bytes(b"pose")
+    db = FakeDB()
+
+    assert rr.scan_review_queues(db, tmp_path / "proc")["qc_released"] == 1
+
+    assert not b.exists()
+    assert len(list(posed.iterdir())) == 4
+    kept = review / "_Problematic" / f"_released_qc_holds_{datetime.now():%Y-%m-%d}" / stem
+    names = {p.name for p in kept.iterdir()}
+    assert f"{stem}.mp4" not in names and f"{stem}{POSE}.h5" not in names   # no duplicates
+    assert f"{stem}_triage.json" in names and f"{stem}_release_note.json" in names
+    assert db.forced[0][1] == "dlc_complete"

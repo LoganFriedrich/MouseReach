@@ -1876,7 +1876,10 @@ are recomputed. A bundle with nothing critical left goes back to the posed folde
 and its row becomes `dlc_complete`, so intake takes it in its priority turn -- not `processing`,
 which would block intake of new work. The first use: the 469 Easy/Flat bundles held only for the
 outcomes file they never get (fixed the same night). Bounded to 30 s of each scan; one re-check
-per bundle until it changes; nothing in the posed folder is ever replaced. Tests:
+per bundle until it changes; nothing in the posed folder is ever replaced. The posed folder usually
+still holds the held video's files (intake leaves them there until archiving); a byte-identical
+copy there is kept as the one copy and the bundle's duplicate removed, a differing one leaves
+the bundle for a person (67 of the first 74 releases had been refused as a clash). Tests:
 `tests/test_release_lifted_qc_holds.py`.
 
 ## Update 2026-10-22: recordings left on old storage -- inventory and verified bring-in
