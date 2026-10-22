@@ -256,6 +256,49 @@ def _bundle_signature(bundle: Path) -> tuple:
     return tuple(sorted(out))
 
 
+# (bundle signature, twin signature) -> verdict of _is_leftover_copy, so a
+# duplicate that is NOT a leftover is hashed once, not on every scan.
+_leftover_cache: Dict[str, tuple] = {}
+
+
+def _file_sha256(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _is_leftover_copy(bundle: Path, twin: Path, signature: tuple) -> bool:
+    """True when every entry of ``bundle`` is a plain file with a byte-identical
+    file of the same name in ``twin``.
+
+    WHY: historical escalations split a bundle across the queues -- the jsons
+    and pose moved to deep review, the mp4 stayed in triage. What remains in
+    triage then holds nothing the deep-review copy lacks, so archiving it loses
+    nothing, while leaving it made every return scan log the same "exists in
+    BOTH queues" line for weeks (20250808_CNT0113_P1, 231 times from
+    2026-10-19) with nobody ever doing the "deliberate cleanup" it asked for.
+    Sizes are compared before any content is read; a copy that differs in
+    anything stays for a person. Raises OSError.
+    """
+    twin_sig = _bundle_signature(twin)
+    key = (signature, twin_sig)
+    hit = _leftover_cache.get(str(bundle))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    twin_sizes = {name: size for name, size, _ in twin_sig}
+    verdict = bool(signature) and all(
+        size >= 0 and twin_sizes.get(name) == size
+        for name, size, _ in signature)
+    if verdict:
+        verdict = all(_file_sha256(bundle / name) == _file_sha256(twin / name)
+                      for name, _, _ in signature)
+    _leftover_cache[str(bundle)] = (key, verdict)
+    return verdict
+
+
 def _gt_signature(stem: str) -> tuple:
     try:
         from mousereach.review.causal_review_io import find_gt
@@ -734,8 +777,26 @@ def scan_review_queues(db, processing_dir: Path,
                 # reviewer's copy, and retrying the impossible move every
                 # scan consumed the whole return budget -- the queue
                 # live-locked on 2026-09-01 with human-cleared releases
-                # starved behind it. Leave duplicates for deliberate cleanup;
-                # one info line, no budget spent, no route attempted.
+                # starved behind it. A triage copy that is only a byte-identical
+                # leftover of the deep-review bundle is archived (it holds
+                # nothing the reviewer's copy lacks); any other duplicate is
+                # left for a person -- one info line, no budget spent, no
+                # route attempted.
+                try:
+                    leftover = _is_leftover_copy(bundle, Path(_dr) / stem,
+                                                 signature)
+                except OSError:
+                    leftover = False
+                if leftover and _retire_stale_bundle(
+                        bundle, stem, "(copy in deep review)",
+                        why="leftover of a split escalation: every file is a "
+                            "byte-identical copy of one in the deep review "
+                            "bundle, which is the copy being reviewed"):
+                    summary["leftover_retired"] = summary.get("leftover_retired", 0) + 1
+                    logger.info("Return scan: %s triage copy is a byte-identical "
+                                "leftover of its deep review bundle; retired to "
+                                "_Problematic", stem)
+                    continue
                 logger.info("Return scan: %s exists in BOTH queues; divert "
                             "skipped (duplicate needs deliberate cleanup)", stem)
                 continue

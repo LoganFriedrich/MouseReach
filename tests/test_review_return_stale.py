@@ -134,3 +134,73 @@ def test_genuinely_held_video_still_diverts(tmp_path, monkeypatch):
     assert summary.get("diverted_to_deep") == 1
     assert routed                              # the designed divert ran
     assert (triage / stem).exists()            # recorder did not move it
+
+
+def _split_escalation(triage, deep, stem, triage_mp4=b"video"):
+    """The historical split: the full bundle in deep review, the mp4 (plus
+    whatever the escalation left) still in triage."""
+    d = _make_bundle(deep, stem)
+    (d / f"{stem}.mp4").write_bytes(b"video")
+    t = _make_bundle(triage, stem)
+    (t / f"{stem}.mp4").write_bytes(triage_mp4)
+    return t, d
+
+
+def test_byte_identical_leftover_in_triage_is_retired(tmp_path, monkeypatch):
+    """A triage copy holding only byte-identical copies of deep-review files
+    carries nothing the reviewer's copy lacks: archived, never routed, and the
+    deep-review bundle is untouched (20250808_CNT0113_P1, 2026-10-22)."""
+    triage, deep = _wire_paths(monkeypatch, tmp_path)
+    stem = "20240101_ABC0105_P1"
+    t, d = _split_escalation(triage, deep, stem)
+    before = sorted(p.name for p in d.iterdir())
+    routed = []
+    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
+
+    db = FakeDB("deep_review")
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+
+    assert summary.get("leftover_retired") == 1
+    assert not routed and not db.forced
+    assert not t.exists()
+    assert sorted(p.name for p in d.iterdir()) == before
+    archived = list((tmp_path / "Review" / "_Problematic").rglob(f"{stem}.mp4"))
+    assert archived and archived[0].read_bytes() == b"video"
+    note = list((tmp_path / "Review" / "_Problematic").rglob(f"{stem}_stale_retire.json"))
+    assert note and "byte-identical" in note[0].read_text(encoding="utf-8")
+
+
+def test_duplicate_that_differs_is_left_for_a_person(tmp_path, monkeypatch):
+    """Same names and sizes but different bytes: not a leftover. It stays,
+    nothing is routed, and its files are read once, not on every scan."""
+    triage, deep = _wire_paths(monkeypatch, tmp_path)
+    stem = "20240101_ABC0106_P1"
+    t, d = _split_escalation(triage, deep, stem, triage_mp4=b"VIDEO")
+    routed = []
+    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
+    hashed = []
+    real = rr._file_sha256
+    monkeypatch.setattr(rr, "_file_sha256", lambda p: hashed.append(p) or real(p))
+
+    for _ in range(2):
+        summary = rr.scan_review_queues(FakeDB("deep_review"), tmp_path / "proc")
+        assert not summary.get("leftover_retired")
+
+    assert (t / f"{stem}.mp4").read_bytes() == b"VIDEO"
+    assert not routed
+    assert not (tmp_path / "Review" / "_Problematic").exists()
+    first_scan = len(hashed)
+    assert first_scan and first_scan <= 2 * 3          # one pass over the files
+
+
+def test_duplicate_with_a_file_the_twin_lacks_is_left(tmp_path, monkeypatch):
+    triage, deep = _wire_paths(monkeypatch, tmp_path)
+    stem = "20240101_ABC0107_P1"
+    t, d = _split_escalation(triage, deep, stem)
+    (t / f"{stem}_causal_review.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: None)
+
+    summary = rr.scan_review_queues(FakeDB("deep_review"), tmp_path / "proc")
+
+    assert not summary.get("leftover_retired")
+    assert (t / f"{stem}_causal_review.json").is_file()

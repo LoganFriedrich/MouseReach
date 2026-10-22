@@ -1800,3 +1800,16 @@ intake is "not imported". It writes `<list>.coverage.json` beside the list (coun
 each session's stage) and prints the counts. Read-only. WHY: once a list's recordings are
 imported its sessions spread across the pipeline, and nothing said how far the list had got
 without asking every machine. Tests: `tests/test_session_coverage.py`.
+
+## Update 2026-10-22: a leftover triage copy of a deep-review bundle is filed away
+
+When a video has a folder in both review queues and its segmentation failed, the return scan
+used to skip it with "exists in BOTH queues; divert skipped (duplicate needs deliberate
+cleanup)" -- every scan, for good, because nothing ever did that cleanup (one video logged it
+231 times from 2026-10-19). The scan now compares the two folders (`_is_leftover_copy`,
+`review_return.py`): if every file in the triage folder has a byte-identical file of the same
+name in the deep-review folder, the triage folder is moved to `_Problematic` with a note, under
+a return claim like every other move, and the deep-review bundle is untouched. A pair that
+differs in anything stays for a person, as before. Sizes are compared before any bytes are
+read, and a pair's verdict is kept until either folder changes. Tests:
+`tests/test_review_return_stale.py`.
