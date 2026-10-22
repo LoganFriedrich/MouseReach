@@ -2042,6 +2042,13 @@ manifest is in Analyzed where the video belongs. Every file of that video moves 
 `<processing_root>/_finished_elsewhere/<date>/<folder>/` -- set aside, never deleted; one log line
 says how many. Tests: `tests/test_set_aside_finished_copies.py`.
 
+Later the same day the step moved to `BaseOrchestrator` and the processing server runs it at
+startup too: it held three such copies in its own `Processing`, left from 2026-08-26 after the
+videos were filed into Analyzed. On the server only `archived` and `crystallized` count as
+finished, not `outdated`: the server re-runs an outdated video by copying its archived files down
+into `Processing` while the row still says `outdated` (`_reprocess_video`), and those copies are a
+re-run's working set.
+
 
 ## Update 2026-10-22: startup recovery no longer clears a review hold with an older record
 
