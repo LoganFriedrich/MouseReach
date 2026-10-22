@@ -154,6 +154,15 @@ That is deliberate, and it is the fix for two real failures:
 "Do not take on new low-priority work" is the policy. "Refuse to finish
 low-priority work already on your disk" never was.
 
+**A person clearing an Easy or Flat video is the intended exception.** When a
+reviewer clears an E/F video in a review queue, the return scan puts it back
+into `Processing/` on the processing server, and from there it is work already
+on the disk: it is finished at once, ahead of the idle-only wait. That is
+deliberate -- a person clearing a video means "finish this one", and making it
+wait for an idle server would strand the person's decision behind every Pillar
+video in the backlog. It does not let E/F work in generally: only videos a
+person has cleared take this path.
+
 Deferred work already on the disk is still picked **last within its bucket** by
 `order`, so a Pillar video on the same disk is always analysed first.
 
