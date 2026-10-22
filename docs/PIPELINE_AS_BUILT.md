@@ -1850,3 +1850,25 @@ field is the shared pipeline folder and saves `nas_root`. `config.py` no longer 
 says it is not configured and names `mousereach-setup`. A machine that sets `nas_root` sees
 no change. Tests: `tests/test_setup_keeps_settings.py`.
 
+
+## Update 2026-10-22: recordings left on old storage -- inventory and verified bring-in
+
+`mousereach-legacy-inventory --from <old storage root>` (until installed on a machine:
+`python -m mousereach.pipeline.legacy_storage --from <old storage root>`) lists every video
+under a retired pipeline folder and says, for each, whether the pipeline root already has it:
+the same file; the session's cut video, results or shared-record row; or, for a recording,
+every animal session held one of those ways or by a recording under another name (blank
+slots ignored). With `--bring-in` it copies each video that exists only on the old storage
+into the stage folder that picks it up -- a Pillar recording into the intake, a Pillar cut
+video into the shared singles folder, Easy and Flat ones into the unsupported-tray folders
+where those trays wait. A Pillar recording whose cut videos all come in too goes to
+`Analyzed/Multi-Animal` (it is already cut) instead of the intake. Each copy goes to
+`<name>.part`, is checked against the original by size and SHA-256, then renamed; nothing
+is ever replaced, and each copy is logged in `<root>/legacy_inventory/<label>_brought_in.jsonl`.
+Left for a person and named in the report: names that are not pipeline names (extra text,
+animal ranges), malformed animal ids, the same name at a different size, and a recording
+only some of whose cut videos are on the old storage. The old storage is only read. Report:
+`<root>/legacy_inventory/<label>.csv` and `<label>.summary.json`; "only here" reaching zero
+means the old storage holds no pipeline video the pipeline lacks. WHY: videos only in the
+retired folder were invisible to every machine that could process them, and the old storage
+could not be retired while they were there. Tests: `tests/test_legacy_storage.py`.
