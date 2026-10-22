@@ -17,6 +17,7 @@ system, DB tracking, and graceful shutdown.
 
 import json
 import os
+import shutil
 import re
 import time
 import random
@@ -1182,7 +1183,63 @@ class DLCOrchestrator(BaseOrchestrator):
             except Exception as e:
                 logger.warning(f"Could not check for poses left running by an "
                                f"earlier watcher: {e}")
-        return super()._reclaim_orphaned_work()
+        reclaimed = super()._reclaim_orphaned_work()
+        self._set_aside_finished_copies()
+        return reclaimed
+
+    # A row in one of these states is a video this node has no work left on.
+    _FINISHED_STATES = ("archived", "outdated", "crystallized")
+
+    def _set_aside_finished_copies(self) -> int:
+        """Move local copies of videos that are already finished out of this
+        node's queues, at startup. Returns how many videos were set aside.
+
+        WHY (plan Step 7, 2026-10-22): copies of videos finished long ago --
+        their results in Analyzed -- sat in a node's own pose queue and
+        processing folder for good: never picked (their rows are finished),
+        never removed. The Lab DLC PC held 34, the oldest from 2025-07. A copy
+        moves only when BOTH this node's row says the video is finished AND
+        its processing manifest is in Analyzed where the video belongs. It is
+        moved, with every file of that video in the folder, to
+        <processing_root>/_finished_elsewhere/<date>/<folder>/ -- set aside,
+        never deleted. Never raises.
+        """
+        moved = 0
+        try:
+            from datetime import date as _date
+            from mousereach.archive.core import get_archive_destination
+            root = Paths.PROCESSING_ROOT
+            if not root:
+                return 0
+            dest_root = Path(root) / "_finished_elsewhere" / _date.today().isoformat()
+            for folder in (Paths.DLC_QUEUE, Paths.PROCESSING):
+                if not folder or not Path(folder).is_dir():
+                    continue
+                names = [e.name for e in os.scandir(folder) if e.is_file()]
+                for mp4 in [n for n in names if n.lower().endswith(".mp4")]:
+                    stem = mp4[:-4]
+                    try:
+                        row = self.db.get_video(stem)
+                        if not row or row.get("state") not in self._FINISHED_STATES:
+                            continue
+                        manifest = (Path(get_archive_destination(stem))
+                                    / f"{stem}_processing_manifest.json")
+                        if not manifest.is_file():
+                            continue
+                        target = dest_root / Path(folder).name
+                        target.mkdir(parents=True, exist_ok=True)
+                        for n in names:
+                            if n == mp4 or n.startswith(stem + "DLC") or n.startswith(stem + "_"):
+                                shutil.move(str(Path(folder) / n), str(target / n))
+                        moved += 1
+                    except Exception as e:
+                        logger.debug(f"Could not set aside {stem}: {e}")
+            if moved:
+                logger.info(f"Startup: set aside {moved} local copies of videos already "
+                            f"finished (results in Analyzed) -> {dest_root}")
+        except Exception as e:
+            logger.warning(f"Could not check for local copies of finished videos: {e}")
+        return moved
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)

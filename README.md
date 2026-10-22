@@ -409,7 +409,17 @@ Configuration is saved to `~/.mousereach/config.json` and persists across sessio
 DLC_Queue/           -> Videos waiting for DLC processing
 Processing/          -> ALL active videos + analysis files (v2.3+ unified)
 Failed/              -> Processing errors
+_finished_elsewhere/ -> Local copies set aside at watcher start (see below)
 ```
+
+**`_finished_elsewhere/<date>/<folder>/`** -- when a graphics-card machine's
+watcher starts, it looks in its own `DLC_Queue/` and `Processing/` for copies of
+videos that are already finished: the machine's record says so AND the video's
+results (its `_processing_manifest.json`) are in `Analyzed/`. Those copies are
+moved here, never deleted, and the watcher log says how many and where. A copy
+whose results cannot be found in `Analyzed/` is left where it is, whatever the
+record says. Once you are satisfied the results are in `Analyzed/`, the folder can
+be cleared to free space.
 
 **Note:** v2.3+ uses a single Processing/ folder. Status tracked via `validation_status`
 field in JSON files ("needs_review", "auto_approved", "validated").

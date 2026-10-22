@@ -1969,7 +1969,8 @@ productive one, and a node deep in a 14-minute pose looked like one whose report
 (plan gap G14). It now also carries `doing` (the item in hand: type, video, since when -- written
 as the item starts), `last_done` (the last item finished) and `done_last_hour`. The Nodes
 section of `mousereach-watch-status` shows them on each node's line. A node shows them once it
-runs this code. Tests: `tests/test_node_status_says_what_it_is_doing.py`.
+runs this code. The last item and the hourly count are kept by the running watcher, so they
+start again from nothing when it restarts. Tests: `tests/test_node_status_says_what_it_is_doing.py`.
 
 ## Update 2026-10-22: a list of sessions can lead within its project (plan Step 1)
 
@@ -1994,4 +1995,16 @@ idle-only work (Easy/Flat by default) after everything else, whatever its tier (
 sort key, `WorkPriority.rank`. Before, they sorted by tier alone, so an Easy video in a preferred
 project came ahead of Pillar videos of the next. Tests: `tests/test_repose.py`
 (test_consume_takes_requests_in_the_lab_order), `tests/test_session_list_tier.py`.
+
+## Update 2026-10-22: a GPU node sets aside local copies of videos already finished
+
+Copies of videos finished long ago sat in a GPU node's own pose queue and processing folder for
+good: never picked (their rows are finished) and never removed. The Lab DLC PC held 34, all CNT
+01-04 Pillar with results in Analyzed, the oldest from 2025-07; they came from the old behaviour
+where a node kept every video it cut (it keeps 2 since 55e5ad8). At startup a GPU node now moves
+such copies out of `DLC_Queue` and `Processing` (`DLCOrchestrator._set_aside_finished_copies`):
+only when its row is finished (archived, outdated or crystallized) AND the video's processing
+manifest is in Analyzed where the video belongs. Every file of that video moves together to
+`<processing_root>/_finished_elsewhere/<date>/<folder>/` -- set aside, never deleted; one log line
+says how many. Tests: `tests/test_set_aside_finished_copies.py`.
 
