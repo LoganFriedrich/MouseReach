@@ -19,7 +19,7 @@ walkthroughs of the review tools themselves.
 
 ## Contents
 
-- [Main launcher](#main-launcher) -- `mousereach`, `MouseReach`
+- [Main launcher](#main-launcher) -- `mousereach`
 - [Configuration and setup](#configuration-and-setup) -- `mousereach-setup`, `mousereach-fix-powershell`
 - [Pipeline Index (fast startup)](#pipeline-index-fast-startup) -- `mousereach-index-rebuild`, `mousereach-index-status`, `mousereach-index-refresh`
 - [Step 0 - Video Prep](#step-0-video-prep) -- `mousereach-crop`, `mousereach-convert`, `mousereach-prep`, `mousereach-compress`
@@ -136,10 +136,6 @@ PIPELINE STEPS
     4   - View Features (visualize extracted kinematics)
     GT  - Ground Truth Tool (create evaluation datasets)
 ```
-
-### `MouseReach`
-
-Alias of `mousereach` (same entry point: `mousereach.launcher:main`).
 
 ## Configuration and setup
 
