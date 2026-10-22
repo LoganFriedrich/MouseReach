@@ -53,3 +53,16 @@ def test_every_hand_parsed_command_refuses_before_acting(monkeypatch, capsys, en
     with pytest.raises(SystemExit) as e:
         getattr(cli, entry)()
     assert e.value.code == 2
+
+
+@pytest.mark.parametrize("word", ["stop", "start"])
+def test_the_watcher_refuses_a_word_and_says_how_to_stop(monkeypatch, capsys, word):
+    """An install script ran "mousereach-watch stop" meaning to stop it; the
+    word was ignored and the command started the watcher (2026-10-22)."""
+    monkeypatch.setattr(sys, "argv", ["mousereach-watch", word])
+    with pytest.raises(SystemExit) as e:
+        cli.main_watch()
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "takes no words" in err and "watcher_stop.flag" in err
+    err.encode("ascii")

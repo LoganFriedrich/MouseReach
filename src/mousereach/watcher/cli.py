@@ -187,6 +187,19 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 """)
     # Parse command line arguments
     args = sys.argv[1:]
+    # It takes no words, only the options above. A word such as "stop" or
+    # "start" was silently ignored: "mousereach-watch stop" STARTED a watcher
+    # (or, with one already running, said so and did nothing) -- an install
+    # script on the lab PC used it meaning to stop one (found 2026-10-22).
+    # Refuse, and say how stopping actually works.
+    words = [a for a in args if not a.startswith("-")]
+    if words:
+        print("ERROR: mousereach-watch takes no words (got: %s). Nothing was changed.\n"
+              "  To stop the watcher: create watcher_stop.flag in this machine's processing\n"
+              "  folder (or use the Stop button); it stops after the current item.\n"
+              "  To pause it: mousereach-watch-toggle --pause. To start it: mousereach-watch."
+              % " ".join(words), file=sys.stderr)
+        sys.exit(2)
     once = '--once' in args
     dry_run = '--dry-run' in args
     verbose = '--verbose' in args

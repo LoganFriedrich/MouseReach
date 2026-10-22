@@ -2105,3 +2105,8 @@ each prints for `--help` is now also the list of options it accepts: anything el
 before it does anything, with the usage, "ERROR: unknown option(s): ..." and "Nothing was changed."
 (exit 2). `mousereach-watch-toggle` and `mousereach-watch-recorders` already refused unknown
 arguments. Tests: `tests/test_watcher_cli_unknown_options.py`.
+
+`mousereach-watch` itself also refuses any WORD (it takes options only): an install script on the lab PC
+ran `mousereach-watch stop` meaning to stop the watcher, which instead started one (or, with one
+already running, reported it and did nothing). It now exits 2 and says how stopping works
+(`watcher_stop.flag` or the Stop button; `mousereach-watch-toggle --pause` to pause).
