@@ -2021,3 +2021,37 @@ Now a hold is replaced only by a shared record written after it (`REVIEW_HOLD_ST
 `_remote_is_newer` in `watcher/coordination.py`), and never by the optional reach-table
 cross-check, which cannot say when its rows were written. When either time is missing the hold
 is kept. Tests: `tests/test_coordination_recovery_pathless.py`.
+
+## Update 2026-10-22: the review tool restores answers by frames; doubled and misplaced answers
+
+The 2026-10-21 change made the gate, the return scan, the queue views and the queue index count
+an answer by the frames it covers, but the review tool's own resume (`_load_saved_review`) still
+restored saved answers by segment NUMBER. After a re-cut, an answer about other footage sat on
+today's segment N: the tool counted N as done and skipped it, while the release check counted N
+open, so the video could never be finished from the tool. The reviewer's fresh answer for the old
+frames was saved beside the old one, and `_collect_answers` stamped the current segment's frames
+onto the old answer at the next save.
+
+Measured in `review_records/reviews`:
+- 59 files carry two records for the same frames, 118 such stretches in all. 84 resolve the same
+  under any rule. In 13 stretches (12 videos), a placeholder or a left-blank `triaged` record
+  sat first and was applied over a person's decision. In 21 stretches (14 videos), two
+  decisions disagree.
+- 239 touched answers (91 videos, 215 of them saved in 2026-09) name a causal reach
+  wholly outside the frames they record. Applied, they made a neighbouring segment's reach the
+  causal reach.
+
+What changed:
+- `restore_review_for_segments` restores by frames and renumbers each answer to its current segment.
+- `index_review_by_segment`, and so the results step and every "answered?" check:
+  - prefers a decision over a placeholder or a blank;
+  - counts two agreeing decisions once;
+  - applies neither of two disagreeing decisions;
+  - drops an answer whose reach is outside its own frames.
+  Each of these is noted in the log.
+- Answers that match no current segment are carried in the file under `unmatched_answers` and
+  never applied.
+
+Already archived videos keep their stored results until they are next run. Tests:
+`tests/test_review_restore_by_frames.py`.
+

@@ -364,6 +364,7 @@ def save_causal_review(
     provenance: Dict[str, Any],
     reviewer: Optional[str] = None,
     manual_segmentation: Optional[Dict[str, Any]] = None,
+    unmatched_answers: Optional[List[Dict[str, Any]]] = None,
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
 
@@ -381,6 +382,10 @@ def save_causal_review(
         Algo version stamps (from ``collect_provenance``).
     reviewer : str, optional
         Reviewer name; defaults to OS username.
+    unmatched_answers : list of dict, optional
+        Earlier answers whose frames match no current segment
+        (``restore_review_for_segments``). Kept under ``UNMATCHED_ANSWERS_KEY``
+        so a re-cut never deletes what a person decided; nothing applies them.
 
     Returns
     -------
@@ -401,6 +406,8 @@ def save_causal_review(
     }
     if manual_segmentation:
         doc["manual_segmentation"] = manual_segmentation
+    if unmatched_answers:
+        doc[UNMATCHED_ANSWERS_KEY] = list(unmatched_answers)
 
     # The durable copy first. If the process dies between the two writes, the
     # surviving one is the copy nothing else can delete -- the working copy sits
@@ -616,6 +623,7 @@ def index_review_by_segment(review_doc, current_segments=None,
 
     mapping = {}
     claimed = {}
+    conflicted = {}
     for rec in records:
         rspan = _span_of(rec)
         old_num = rec.get("segment_num")
@@ -630,6 +638,21 @@ def index_review_by_segment(review_doc, current_segments=None,
             # No frames recorded; the number is the only handle there is.
             if old_num is not None and int(old_num) in spans:
                 mapping.setdefault(int(old_num), rec)
+            continue
+
+        # An answer whose causal reach lies wholly outside the frames it records
+        # is about other footage: the review tool once put an old answer back on
+        # the wrong segment and the next save stamped that segment's frames on
+        # it (239 answers, mostly saved 2026-09, typically shifted by one
+        # segment). Applied, it would make a neighbouring segment's reach this
+        # segment's causal reach. Not guessed at: dropped, and the segment goes
+        # back to a person.
+        cr = _decided_reach(rec)
+        if cr is not None and (cr[1] < rspan[0] or cr[0] > rspan[1]):
+            notes.append(
+                "segment %s review names causal reach %d-%d, outside the frames it "
+                "records (%d-%d); not applied -- it is about other footage"
+                % (old_num, cr[0], cr[1], rspan[0], rspan[1]))
             continue
 
         scored = []
@@ -661,6 +684,25 @@ def index_review_by_segment(review_doc, current_segments=None,
                 % (old_num, rspan[0], rspan[1]))
             continue
 
+        # Two records for the SAME frames: the review tool used to restore a
+        # saved answer by segment number, so after a re-cut it filed an old
+        # answer under the wrong number and the person's new answer for those
+        # frames beside it (59 files, 2026-10-22). File order is not time order,
+        # so "first wins" could apply the older answer -- or a left-blank
+        # 'triaged' record over the person's real one. A decision beats a
+        # placeholder or a blank; two decisions that agree are one; two that
+        # DISAGREE are neither, and the segment goes back to a person.
+        held = mapping.get(best_num)
+        if held is not None and _span_of(held) == rspan:
+            if not _is_decided(rec):
+                continue
+            if not _is_decided(held):
+                mapping[best_num] = rec
+                continue
+            if _applied_call(held) != _applied_call(rec):
+                conflicted[best_num] = (old_num, held.get("segment_num"), rspan)
+            continue
+
         prev = claimed.get(best_num)
         if prev is not None and prev >= best_frac:
             notes.append(
@@ -677,7 +719,97 @@ def index_review_by_segment(review_doc, current_segments=None,
                 "(frames %d-%d, %.0f%% overlap) -- the segmentation changed"
                 % (old_num, best_num, rspan[0], rspan[1], best_frac * 100))
 
+    for sn, (a, b, rspan) in sorted(conflicted.items()):
+        mapping.pop(sn, None)
+        notes.append(
+            "segment %d: two answers for frames %d-%d disagree (saved as segments "
+            "%s and %s); neither is applied -- a person must answer it again"
+            % (sn, rspan[0], rspan[1], b, a))
     return mapping, notes
+
+
+def _is_answered(rec) -> bool:
+    return ((rec or {}).get("answers") or {}).get("reviewed") is not False
+
+
+def _decided_reach(rec):
+    """(start, end) of a decided touched outcome's causal reach, else None."""
+    human = (rec or {}).get("human") or {}
+    hc = human.get("causal_reach")
+    if (not _is_answered(rec) or human.get("outcome") not in _TOUCHED_OUTCOMES
+            or not isinstance(hc, dict)):
+        return None
+    try:
+        start = int(hc["start"])
+        return start, int(hc.get("end", start))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _is_decided(rec) -> bool:
+    """Answered AND carrying an outcome: a reviewer who leaves an element open
+    saves it as 'triaged', which is not a decision about the footage."""
+    ho = ((rec or {}).get("human") or {}).get("outcome")
+    return _is_answered(rec) and ho not in (None, "triaged")
+
+
+def _applied_call(rec):
+    """What apply_review_overrides would take from a record -- the parts two
+    answers must share to be the same answer."""
+    human = (rec or {}).get("human") or {}
+    ho = human.get("outcome")
+    hc = human.get("causal_reach") or {}
+    reach = None
+    if ho in _TOUCHED_OUTCOMES and isinstance(hc, dict):
+        reach = (hc.get("reach_id"), hc.get("start"), hc.get("end"))
+    ranges = ((rec or {}).get("answers") or {}).get("abnormal_ranges") or []
+    return (ho, reach, json.dumps(ranges, sort_keys=True, default=str))
+
+
+# Earlier answers whose frames match no current segment. A re-cut must never
+# delete what a person decided, and applying them to other footage would be
+# worse, so they ride along in the file under this key and nothing applies them.
+UNMATCHED_ANSWERS_KEY = "unmatched_answers"
+
+
+def restore_review_for_segments(review_doc, current_segments,
+                                human_segmentation: bool = False):
+    """What the review tool restores when it reopens a video.
+
+    Returns ``(restored, unmatched, notes)``: ``restored`` maps each CURRENT
+    segment number to the saved answer whose frames it covers (renumbered to
+    the current number, frames kept as reviewed); ``unmatched`` holds answered
+    records that match no current segment, plus any carried from before.
+
+    WHY by frames: the tool restored by segment number. After a re-cut, an
+    answer about other footage sat on today's segment N, the tool counted N as
+    done and never showed it, while the release check -- which matches by
+    frames -- counted N unanswered and kept the video held: a video nobody
+    could finish (2026-10-22). Both now use index_review_by_segment.
+    """
+    mapping, notes = index_review_by_segment(
+        review_doc, current_segments, human_segmentation=human_segmentation)
+    restored = {}
+    for sn, rec in mapping.items():
+        if not _is_answered(rec):
+            continue
+        r = dict(rec)
+        r["segment_num"] = int(sn)
+        restored[int(sn)] = r
+    used = {id(r) for r in mapping.values()}
+    records = [r for r in (review_doc or {}).get("segments", []) if isinstance(r, dict)]
+    taken = [r for r in records if id(r) in used]
+    unmatched = []
+    for r in records:
+        if id(r) in used or not _is_answered(r):
+            continue
+        # An exact copy of an answer that was restored adds nothing.
+        if any(_span_of(r) == _span_of(k) and _applied_call(r) == _applied_call(k)
+               for k in taken):
+            continue
+        unmatched.append(r)
+    unmatched.extend((review_doc or {}).get(UNMATCHED_ANSWERS_KEY) or [])
+    return restored, unmatched, notes
 
 
 def apply_review_overrides(

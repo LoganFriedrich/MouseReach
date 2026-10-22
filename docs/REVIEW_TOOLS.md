@@ -123,7 +123,13 @@ The consequence: clicking past a `reach_uncertain` segment without touching anyt
 
 `_save_review` (`:2844`) writes `{stem}_causal_review.json` into the bundle directory (`_review_dir`, `:880`) **and, since 2026-08-24, a durable copy at `{NAS}/review_records/reviews/{stem}_causal_review.json` first**. The bundle copy is the one the reviewer edits; the durable copy is the one nothing regenerates. Before this, a bundle-resident review was destroyed by any reprocess that recreated the bundle, and 41 reviewed videos had no other copy anywhere. It contains **one record per segment in the video**, not per reviewed segment: segments the reviewer never visited get a placeholder with `answers: {"reviewed": false}` (`:2867-2880`). It also calls `update_corpus_index` (`causal_review_io.py:690`), which appends to `{NAS}/review_records/causal_review_index.json`; failures there are printed and swallowed (`:2910-2911`).
 
-On reopening, `_load_saved_review` (`:892`) drops the placeholders (`:920-923`) and jumps to the first segment that is either unscored or whose **algorithm outcome has changed since the review** (`:925-937`) — a changed algorithm call is treated as needing another look. Note that this restore matches records to segments **by segment number** (`load_causal_review`, `causal_review_io.py:283-300`), not by frames.
+On reopening, `_load_saved_review` (`:892`) drops the placeholders (`:920-923`) and jumps to the first segment that is either unscored or whose **algorithm outcome has changed since the review** (`:925-937`) — a changed algorithm call is treated as needing another look.
+
+**Since 2026-10-22 the restore matches each saved answer to the segment whose frames it covers** (`restore_review_for_segments`), the same rule the release check and the results step use. Until then it matched by segment number. After a re-cut renumbered the segments, an answer about other footage came back on today's segment N, so the tool counted N as done and never showed it. The release check, which matches by frames, still counted N as unanswered, so the video could never be finished. The reviewer's new answer for the old frames was then saved beside the old one, and the next save stamped segment N's frames onto the old answer. What the restore does now:
+
+- An answer goes back on the segment whose frames it covers, under that segment's current number.
+- An earlier answer whose frames match no current segment is **kept in the file** under `unmatched_answers`. It is never applied to anything, and it is never deleted by a later save.
+- A segment with no answer covering its frames is shown for review, even if an answer once carried its number.
 
 ### The record format
 
@@ -445,7 +451,7 @@ Three specific hazards:
 
 2. **An offset is invisible.** Every segment still looks well formed; only the numbering is shifted, so pellet 7 as scored on the bench is compared against footage of pellet 8. The reviewer can now say so with the "Segmentation says this is segment N" control, and the answer is stored — but nothing reads it (see below), so an offset a person has identified still does not change any number.
 
-3. **A re-cut can silently discard the review.** `index_review_by_segment` drops any review whose frames no longer line up with a current segment, while the release check still counts it as resolved by number. The video finishes carrying the algorithm's call.
+3. **A re-cut can silently discard the review.** `index_review_by_segment` drops any review whose frames no longer line up with a current segment. Until 2026-10-21 the release check still counted such a review as resolved by number, so the video finished carrying the algorithm's call. Since then the release check matches by frames as well, and the segment stays open for a person.
 
 Reaches themselves are grouped by segment in two different ways depending on file shape: nested output is trusted as grouped by the detector (`causal_review_widget.py:1024-1030`), while flat output and any manual re-cut are re-grouped by which segment window contains each reach's midpoint (`:1011-1023`).
 
@@ -488,6 +494,16 @@ A new bundle is built out of sight and appears in one step. `move_video_bundle` 
 ### How a video leaves
 
 **What counts as answered (since 2026-10-21).** A triaged segment counts as answered only when a saved answer is about ITS frames -- the frames the reviewer was shown, stored with every answer -- not merely when an answer carries its number. After a video is re-cut, segment numbers shift; an old answer then counts for the segment whose frames it covers, and any segment no answer covers stays open for review. Short segments a person cut are real segments. The gate, the return scan, this tool's queue and the queue index all use this one rule (`causal_review_io.answered_segments`), so they agree with what the results contain.
+
+**When a file holds two answers for the same frames (since 2026-10-22).** The old number-based restore left 59 review files with two records for one stretch of video, and the results step used whichever came first in the file. That was sometimes the left-blank one and sometimes the older one. The rule now:
+
+| The two records | What counts |
+|---|---|
+| A decision and a placeholder, or a decision and a left-blank `triaged` | The decision |
+| Two decisions that agree | That decision, once |
+| Two decisions that **disagree** (a different outcome, causal reach or ignore windows) | **Neither.** The segment counts as unanswered and goes back to a person, who sees it in this tool like any open segment. |
+
+**An answer whose causal reach lies wholly outside the frames it records is not applied.** It is about other footage: these are mostly September 2026 answers that the old restore put on the wrong segment, typically shifted by one. The segment counts as unanswered, and the answer stays in the file.
 
 Only `scan_review_queues` (`review_return.py`) moves a bundle out. It runs inside the watcher every 10th poll cycle (`orchestrator.py:1345`, `:1391-1395`) and handles at most **10 bundles per scan** (`MAX_RETURNS_PER_SCAN`, `review_return.py`) so returning does not starve the pipeline.
 

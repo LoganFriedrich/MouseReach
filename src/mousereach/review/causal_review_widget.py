@@ -42,6 +42,8 @@ from .causal_review_io import (
     collect_provenance,
     save_causal_review,
     load_causal_review,
+    restore_review_for_segments,
+    segmentation_is_human,
     update_corpus_index,
     flag_session,
     is_session_flagged,
@@ -1093,21 +1095,33 @@ The notes box travels with the video.
             candidates.append(Path(bd))
         if self.video_path.parent not in candidates:
             candidates.append(self.video_path.parent)
-        by_seg = {}
+        self._unmatched_answers = []
+        doc = None
         for d in candidates:
             try:
-                _, bs = load_causal_review(self._video_stem, d)
+                doc_d, bs = load_causal_review(self._video_stem, d)
             except Exception:
-                bs = {}
+                doc_d, bs = None, {}
             if bs:
-                by_seg = bs
+                doc = doc_d
                 break
-        # Keep only ACTUALLY-reviewed segments; the save writes reviewed:False
-        # placeholder rows for un-scored segments, which must not count as done.
-        self._review_records = {
-            sn: rec for sn, rec in by_seg.items()
-            if (rec.get("answers") or {}).get("reviewed") is not False
-        }
+        # Each saved answer goes back on the CURRENT segment whose frames it
+        # covers, as the release check and the results step match it -- never
+        # by segment number, which a re-cut reassigns (restore_review_for_segments
+        # says what went wrong). Placeholders (reviewed: False) do not count as
+        # done; answers that match no segment are carried, never applied.
+        if doc is not None:
+            current = [{"segment_num": s["segment_num"],
+                        "start_frame": s.get("start_frame"),
+                        "end_frame": s.get("end_frame")} for s in self._segment_list]
+            human = (bool(getattr(self, "_manual_boundaries", None))
+                     or segmentation_is_human(getattr(self, "_segments_data", None)))
+            restored, unmatched, notes = restore_review_for_segments(
+                doc, current, human_segmentation=human)
+            for n in notes:
+                print(f"[review restore] {self._video_stem}: {n}")
+            self._review_records = restored
+            self._unmatched_answers = unmatched
 
         def _done(seg):
             rec = self._review_records.get(seg["segment_num"])
@@ -3175,6 +3189,7 @@ The notes box travels with the video.
             provenance=provenance,
             reviewer=reviewer,
             manual_segmentation=manual_seg,
+            unmatched_answers=getattr(self, "_unmatched_answers", None),
         )
 
         # Update corpus index
