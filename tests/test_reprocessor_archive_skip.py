@@ -123,6 +123,7 @@ def no_review(monkeypatch):
     # The real resolver looks at configured queue folders; keep the test on
     # tmp_path only.
     monkeypatch.setattr(crio, "resolve_review_path", lambda *a, **k: None)
+    monkeypatch.setattr(crio, "review_path_index", lambda stems: {})
 
 
 # ------------------------------------------------------------ pose index walk
@@ -212,6 +213,11 @@ def test_scan_features_index_ignores_archived_features(tmp_path, monkeypatch):
     review = _write_json(tmp_path / f"{STEM}_causal_review.json",
                          {"segments": []})
     monkeypatch.setattr(crio, "resolve_review_path", lambda *a, **k: review)
+    # The scan finds reviews through the listing index (review_path_index);
+    # plant the same review there.
+    _st = review.stat()
+    monkeypatch.setattr(crio, "review_path_index",
+                        lambda stems: {STEM: (review, _st.st_mtime, _st.st_size)})
     monkeypatch.setattr(versions_mod, "get_current_versions",
                         lambda root=None: {"versions": {"dlc_scorer": "X"}})
     monkeypatch.setattr(versions_mod, "declaration_drift", lambda cur: [])

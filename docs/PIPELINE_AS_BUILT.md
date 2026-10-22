@@ -1731,3 +1731,27 @@ manifest in Analyzed -- 14 minutes on 2026-10-21 with a busy share -- the work l
 it, and a restart is exactly when a backlog is waiting. Nothing waits on retirement.
 
 Tests: `tests/test_intake_lists_names_first.py`.
+
+## Update 2026-10-21 (night): the version scan reads folder listings, not one file at a time
+
+**What was slow.** The half-hourly version and review scan (`ReprocessingScanner.scan`) checked
+every archived video separately: its manifest's modified time (one network round trip each),
+each place its review might be (`resolve_review_path`: the triage bundle, beside the canonical
+video, the durable store -- several missed lookups each), and the review's sha256 (re-read every
+pass). On 2026-10-21, with a slow share, a warm pass took 14 minutes for 4,597 videos, every 30
+minutes, and the processing server's work loop waited for all of it.
+
+**What changed.** One listing of each `Analyzed/<project>/<cohort>` folder gives every manifest,
+features file and modified time (`ReprocessingScanner._index_archive`; never inside a superseded
+folder). Every video's review comes from `causal_review_io.review_path_index`: the same places in
+the same order with the same newest-wins rule as `resolve_review_path`, from a few listings. Review
+fingerprints are kept between passes until the file changes. Verified on the live archive before
+deploying: identical manifests (4,609) and features (4,553); the review index agreed with the
+per-video lookup on all 400 sampled videos (246 with a review) and took 2 s for all 4,597.
+
+Found on the way: the "beside the canonical video" place in `resolve_review_path` never resolves on
+this lab's layout -- it looks for `Analyzed/CNTnn/<video>.mp4`, while videos live in
+`Analyzed/Connectome/CNTnn/`, and ASPA names fail it outright -- so reviews are found in the triage
+bundle or the durable store. Kept as is (the index follows the same rule); worth a look.
+
+Tests: `tests/test_version_scan_from_listings.py`.

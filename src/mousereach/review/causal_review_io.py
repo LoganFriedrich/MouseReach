@@ -131,6 +131,89 @@ def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
     return max(found, key=lambda p: p.stat().st_mtime)
 
 
+def review_path_index(stems) -> Dict[str, tuple]:
+    """``{stem: (path, mtime, size)}``: for every stem, the review
+    ``resolve_review_path(stem)`` would return, found from a few folder
+    listings instead of several network checks per video.
+
+    Same places, same order, same rule (newest modified time wins; on a tie
+    the earlier place): the routine Pending bundle, next to the canonical video
+    (only where ``resolve_canonical_paths`` resolves), the durable store.
+    WHY: the archive's version scan asks this for every archived video every
+    half hour; per video it cost several missed lookups on the share -- about
+    5 minutes of every scan for 4,597 videos on 2026-10-21, while the work
+    loop waited. Stems with no review are absent. Never raises; a place that
+    cannot be listed contributes nothing, exactly as a failed check does.
+    """
+    suffix = "_causal_review.json"
+    stems = set(stems)
+    places: Dict[str, List[tuple]] = {}
+
+    def add(stem, path):
+        try:
+            st = Path(path).stat()
+        except OSError:
+            return
+        places.setdefault(stem, []).append((Path(path), st.st_mtime, st.st_size))
+
+    try:
+        from mousereach.review.staging import (
+            DEFAULT_PENDING_DIR, resolve_canonical_paths, DEFAULT_CONNECTOME_ROOT,
+            cohort_dir_for_stem)
+    except Exception:
+        DEFAULT_PENDING_DIR = DEFAULT_CONNECTOME_ROOT = None
+    # 1. the routine Pending bundle: <pending>/<stem>/<stem>_causal_review.json
+    if DEFAULT_PENDING_DIR:
+        try:
+            with os.scandir(DEFAULT_PENDING_DIR) as it:
+                bundles = {e.name for e in it if e.is_dir()}
+        except OSError:
+            bundles = set()
+        for stem in stems & bundles:
+            add(stem, Path(DEFAULT_PENDING_DIR) / stem / f"{stem}{suffix}")
+    # 2. beside the canonical video. resolve_canonical_paths needs the video in
+    # <connectome root>/<cohort folder>; a cohort folder that does not exist
+    # cannot resolve for any of its stems, so it is checked once per cohort,
+    # and the per-stem resolution runs only where the folder exists.
+    if DEFAULT_CONNECTOME_ROOT:
+        by_cohort: Dict[str, List[str]] = {}
+        for stem in stems:
+            try:
+                by_cohort.setdefault(cohort_dir_for_stem(stem), []).append(stem)
+            except Exception:
+                continue
+        for cohort, members in by_cohort.items():
+            try:
+                if not (Path(DEFAULT_CONNECTOME_ROOT) / cohort).is_dir():
+                    continue
+            except OSError:
+                continue
+            for stem in members:
+                try:
+                    folder = Path(resolve_canonical_paths(stem, DEFAULT_CONNECTOME_ROOT)["mp4"]).parent
+                except Exception:
+                    continue
+                if (folder / f"{stem}{suffix}").is_file():
+                    add(stem, folder / f"{stem}{suffix}")
+    # 3. the durable store: one listing.
+    try:
+        d = durable_review_dir()
+    except Exception:
+        d = None
+    if d is not None:
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if e.name.endswith(suffix):
+                        stem = e.name[: -len(suffix)]
+                        if stem in stems and e.is_file():
+                            st = e.stat()
+                            places.setdefault(stem, []).append((Path(e.path), st.st_mtime, st.st_size))
+        except OSError:
+            pass
+    return {stem: max(found, key=lambda f: f[1]) for stem, found in places.items()}
+
+
 def _get_timestamp() -> str:
     return datetime.now().isoformat()
 

@@ -15,6 +15,7 @@ Usage:
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -109,6 +110,11 @@ class ReprocessingScanner:
         # pays off on a PERSISTENT scanner instance -- both orchestrator call
         # sites hold one.
         self._manifest_cache: dict = {}
+        # Review fingerprints keyed by (path, size, modified time): the
+        # pending-review check compares a review's sha256 with the one the
+        # archived kinematics applied, and re-hashing every review every scan
+        # cost ~3 minutes a pass on 2026-10-21. Only a changed file is re-read.
+        self._review_sha_cache: dict = {}
 
     def scan(self, mark_outdated: bool = True, adopt_orphans: bool = True,
              full_only: bool = False) -> dict:
@@ -185,24 +191,12 @@ class ReprocessingScanner:
         # the NAS and ran for upwards of half an hour -- and the orchestrator
         # processes nothing while a scan runs, so the stall was total.
         manifest_index: dict = {}
+        manifest_mtime: dict = {}
         feats_mtime: dict = {}
         try:
-            # Superseded hits filtered out: Analyzed/Archive/<folder>/<file> is
-            # also two levels deep, and an archived manifest here would be
-            # version-compared, adopted as a video (its archived mp4
-            # registered), or overwrite the live entry for the same stem.
-            for p in _outside_superseded(self.archive_dir, self.archive_dir.glob(
-                    "*/*/*_processing_manifest.json")):
-                manifest_index[p.name[:-len("_processing_manifest.json")]] = p
-            # Same for features: an archived copy's mtime would stand in for
-            # the live kinematics in the pending-review check.
-            for p in _outside_superseded(self.archive_dir, self.archive_dir.glob(
-                    "*/*/*_features.json")):
-                try:
-                    feats_mtime[p.name[:-len("_features.json")]] = p.stat().st_mtime
-                except OSError:
-                    pass
+            manifest_index, manifest_mtime, feats_mtime = self._index_archive()
         except Exception as e:
+            manifest_index, manifest_mtime, feats_mtime = {}, {}, {}
             logger.warning(
                 f"Archive index build failed ({e}); falling back to per-video walks")
 
@@ -257,6 +251,18 @@ class ReprocessingScanner:
         archived = self.db.get_videos_in_state('archived')
         logger.info(f"Scanning {len(archived)} archived videos for version compliance")
 
+        # Every archived and outdated video's saved review, found once from a
+        # few listings (causal_review_io.review_path_index), not looked up
+        # per video. None -> the per-video lookup, as before.
+        try:
+            from mousereach.review.causal_review_io import review_path_index
+            review_index = review_path_index(
+                [v['video_id'] for v in archived]
+                + [v['video_id'] for v in self.db.get_videos_in_state('outdated')])
+        except Exception as e:
+            review_index = None
+            logger.warning(f"Review index build failed ({e}); looking reviews up per video")
+
         # Built on first need only: a scan where nothing is DLC-stale never walks
         # the archive tree at all.
         pose_index = None
@@ -282,7 +288,8 @@ class ReprocessingScanner:
 
             try:
                 # Load manifest
-                manifest = self._load_manifest_indexed(video_id, manifest_index)
+                manifest = self._load_manifest_indexed(video_id, manifest_index,
+                                                       manifest_mtime)
                 if not manifest:
                     summary['no_manifest'] += 1
                     continue
@@ -297,7 +304,7 @@ class ReprocessingScanner:
                 # resolution flows into features/DB (the extractor applies it;
                 # see orchestrator + resolve_review_path).
                 review_path = self._pending_review_path(
-                    video_id, manifest, feats_mtime)
+                    video_id, manifest, feats_mtime, review_index)
                 review_pending = review_path is not None
 
                 # EXCEPTION: a pending review that declares a segment mislabel
@@ -421,7 +428,8 @@ class ReprocessingScanner:
                 # row carrying a reason; only the drain clears it.
                 continue
             try:
-                manifest = self._load_manifest_indexed(video_id, manifest_index)
+                manifest = self._load_manifest_indexed(video_id, manifest_index,
+                                                       manifest_mtime)
                 if not manifest:
                     continue
                 comparison = compare_manifest_to_current(manifest, current)
@@ -449,7 +457,7 @@ class ReprocessingScanner:
                 # still owes a re-run -- same identity-first check as the mark
                 # side (mtimes lie across the NAS/local clock boundary).
                 if self._pending_review_path(video_id, manifest,
-                                             feats_mtime) is not None:
+                                             feats_mtime, review_index) is not None:
                     continue  # a re-run is still owed for the review
                 if mark_outdated:
                     try:
@@ -484,7 +492,7 @@ class ReprocessingScanner:
         return summary
 
     def _pending_review_path(self, video_id: str, manifest=None,
-                             feats_mtime=None):
+                             feats_mtime=None, review_index=None):
         """Path of a saved human review that the archived kinematics have NOT
         applied -- else None. Such videos are re-run (post_dlc scope); the
         feature extractor then substitutes the human calls. Never raises; any
@@ -503,16 +511,31 @@ class ReprocessingScanner:
         a loop all day (2026-09-09).
 
         ``feats_mtime`` is the scan's one-walk {video_id: mtime} index; pass it
-        to avoid a per-video rglob of the whole archive."""
+        to avoid a per-video rglob of the whole archive. ``review_index`` is
+        the scan's ``causal_review_io.review_path_index``; without it the
+        review is looked up per video."""
         try:
-            from mousereach.review.causal_review_io import resolve_review_path
-            review = resolve_review_path(video_id)
-            if review is None:
-                return None
+            key = None
+            if review_index is not None:
+                hit = review_index.get(video_id)
+                if hit is None:
+                    return None
+                review, r_mtime, r_size = hit
+                key = (str(review), r_size, r_mtime)
+            else:
+                from mousereach.review.causal_review_io import resolve_review_path
+                review = resolve_review_path(video_id)
+                if review is None:
+                    return None
             stamp = (manifest or {}).get('applied_review') or {}
             if stamp.get('sha256'):
                 from mousereach.pipeline.fsutil import sha256_file
-                return None if sha256_file(review) == stamp['sha256'] else review
+                digest = self._review_sha_cache.get(key) if key else None
+                if digest is None:
+                    digest = sha256_file(review)
+                    if key:
+                        self._review_sha_cache[key] = digest
+                return None if digest == stamp['sha256'] else review
             if feats_mtime is not None:
                 ft = feats_mtime.get(video_id)
             else:
@@ -629,13 +652,54 @@ class ReprocessingScanner:
         except Exception as e:
             logger.error("%s: could not divert to deep review: %s", video_id, e)
 
-    def _load_manifest_indexed(self, video_id: str, manifest_index: dict):
+    def _index_archive(self):
+        """``(manifests {stem: path}, manifest mtimes, features mtimes)`` for the
+        live archive, from ONE listing of each Analyzed/<project>/<cohort> folder.
+
+        Same files the two depth-2 globs found (``*/*/*_processing_manifest.json``
+        and ``*/*/*_features.json``), never inside a superseded folder
+        (_outside_superseded says why), and dot-names skipped as glob skips
+        them. The modified times come from the listing itself. WHY: the globs
+        were followed by a separate network stat per file -- every manifest
+        and every features file, every half hour (~2 minutes a pass on
+        2026-10-21)."""
+        from mousereach.pipeline.analyzed_tree import is_superseded_dir
+        man, man_t, feat_t = {}, {}, {}
+        root = self.archive_dir
+        if not root.exists():
+            return man, man_t, feat_t
+
+        def dirs(d):
+            with os.scandir(d) as it:
+                return [e.path for e in it if e.is_dir() and not e.name.startswith(".")
+                        and not is_superseded_dir(e.name)]
+
+        for d1 in dirs(root):
+            for d2 in dirs(d1):
+                with os.scandir(d2) as it:
+                    for e in it:
+                        n = e.name
+                        if n.startswith("."):
+                            continue
+                        if n.endswith("_processing_manifest.json") and e.is_file():
+                            s = n[: -len("_processing_manifest.json")]
+                            man[s] = Path(e.path)
+                            man_t[s] = e.stat().st_mtime
+                        elif n.endswith("_features.json") and e.is_file():
+                            feat_t[n[: -len("_features.json")]] = e.stat().st_mtime
+        return man, man_t, feat_t
+
+    def _load_manifest_indexed(self, video_id: str, manifest_index: dict,
+                               manifest_mtime: Optional[dict] = None):
         """Manifest via the scan's one-walk index; falls back to the per-video
-        walk only for stems the index missed (e.g. archived mid-scan)."""
+        walk only for stems the index missed (e.g. archived mid-scan). The
+        modified time comes from the index's listing when it has one."""
         p = manifest_index.get(video_id)
         if p is not None:
             try:
-                mtime = p.stat().st_mtime
+                mtime = (manifest_mtime or {}).get(video_id)
+                if mtime is None:
+                    mtime = p.stat().st_mtime
                 hit = self._manifest_cache.get(video_id)
                 if hit is not None and hit[0] == mtime:
                     return hit[1]
