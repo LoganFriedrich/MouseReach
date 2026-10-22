@@ -1904,3 +1904,16 @@ folders that differ in size (copies at one size are one video, brought in once).
 means the old storage holds no pipeline video the pipeline lacks. WHY: videos only in the
 retired folder were invisible to every machine that could process them, and the old storage
 could not be retired while they were there. Tests: `tests/test_legacy_storage.py`.
+
+## Update 2026-10-22: the backup says what failed, skips test residue, and fails loudly
+
+From 2026-10-13 the nightly backup reported "Robocopy error ... exit code 11" for the Databases
+tree every night, and nothing else: robocopy runs with its file listing off and its error lines
+were never logged, and `mousereach-backup --once` exited 0 regardless, so the scheduled task
+showed success to every check that reads task results. Run by hand, every failure was a
+`pytest-cache-files-*` folder -- residue pytest leaves, unreadable, in a code checkout on a
+network share; never data. Now (`watcher/backup.py`): those folders and `.pytest_cache` are
+excluded; a failed run logs robocopy's own error lines (the file and the reason, first ten);
+and `--once` exits 1 when any folder did not sync completely, so the task result shows it.
+Checked live: the same run now exits 0 with nothing failed. Tests:
+`tests/test_backup_reports_failures.py`.

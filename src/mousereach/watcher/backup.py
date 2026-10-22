@@ -73,9 +73,9 @@ class BackupWatcher:
 
         logger.info(f"BackupWatcher stopped after {self._sync_count} sync cycles")
 
-    def run_once(self):
-        """Run one sync cycle and exit."""
-        self._sync_all()
+    def run_once(self) -> int:
+        """Run one sync cycle; returns how many folders failed to sync."""
+        return self._sync_all()
 
     def dry_run(self):
         """Show what would be synced without making changes."""
@@ -115,8 +115,9 @@ class BackupWatcher:
                 print(f"  {subdir} -- source does not exist, skipping")
             print()
 
-    def _sync_all(self):
-        """Run robocopy for each sync directory."""
+    def _sync_all(self) -> int:
+        """Run robocopy for each sync directory. Returns the number of
+        directories whose sync reported a failure."""
         total_files = 0
         total_errors = 0
 
@@ -135,10 +136,11 @@ class BackupWatcher:
         self._last_sync_at = datetime.now()
         self._sync_count += 1
 
-        if total_files > 0:
+        if total_files > 0 or total_errors:
             logger.info(f"Sync cycle {self._sync_count}: {total_files} files copied, {total_errors} errors")
         else:
             logger.debug(f"Sync cycle {self._sync_count}: no new/changed files")
+        return total_errors
 
     def _sync_dir(self, src, dst):
         """Sync a single directory using robocopy.
@@ -159,7 +161,11 @@ class BackupWatcher:
                 "/NFL",         # No file listing (quiet mode)
                 "/NJH",         # No job header
                 "/NJS",         # No job summary
-                "/XD", "__pycache__", ".git", ".claims",  # Exclude dirs
+                # Exclude dirs. pytest-cache-files-* are test-run residue that
+                # pytest leaves unreadable on a network share; they are never
+                # data, and copying them failed every night (2026-10-13 on).
+                "/XD", "__pycache__", ".git", ".claims", ".pytest_cache",
+                "pytest-cache-files-*",
                 "/XF", "*.pyc", "watcher.db-journal",     # Exclude files
             ], capture_output=True, text=True, timeout=self.robocopy_timeout)
 
@@ -168,6 +174,17 @@ class BackupWatcher:
             # Codes 0-7 are success; 8+ are errors
             if result.returncode >= 8:
                 logger.warning(f"Robocopy error for {src}: exit code {result.returncode}")
+                # Name what failed. robocopy writes each failure to stdout as
+                # "<time> ERROR <code> (...) Copying File <path>" followed by the
+                # reason; without these lines the log said only "exit code 11"
+                # night after night and nobody could tell which file it was.
+                lines = (result.stdout or "").splitlines()
+                failed = [i for i, l in enumerate(lines) if " ERROR " in l]
+                for i in failed[:10]:
+                    reason = lines[i + 1].strip() if i + 1 < len(lines) else ""
+                    logger.warning(f"  {lines[i].strip()} {reason}")
+                if len(failed) > 10:
+                    logger.warning(f"  ... and {len(failed) - 10} more failures")
                 if result.stderr:
                     logger.warning(f"  stderr: {result.stderr.strip()}")
                 return 0, 1
@@ -261,10 +278,14 @@ def main():
         return
 
     if once:
+        # A failed folder makes the run exit 1, so the scheduled task's result
+        # shows it. WHY: it exited 0 regardless, and one folder failed every
+        # night for weeks while every check that reads task results saw success.
         print("Running one sync cycle...")
-        watcher.run_once()
-        print("Done.")
-        return
+        failed = watcher.run_once()
+        print("Done." if not failed else
+              f"Done, but {failed} folder(s) did not sync completely -- see the warnings above.")
+        return 1 if failed else 0
 
     # Daemon mode
     print("=" * 70)
