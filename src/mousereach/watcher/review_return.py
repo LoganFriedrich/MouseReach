@@ -28,6 +28,7 @@ ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 from __future__ import annotations
 
 import functools
+import os
 import shutil
 import logging
 import socket
@@ -65,7 +66,18 @@ _QUEUE_METADATA_STEM_SUFFIXES = ("_manifest.json", "_routing.json")
 _QUEUE_METADATA_NAMES = ("manifest.json",)
 
 
-def _resolve_inputs(bundle: Path, stem: str):
+def _declared_scorer() -> str:
+    """The pose model the pipeline currently declares, or "" when unknown."""
+    try:
+        from mousereach.pipeline.versions import get_current_versions
+        return ((get_current_versions(Paths.NAS_ROOT) or {})
+                .get("versions") or {}).get("dlc_scorer") or ""
+    except Exception:
+        return ""
+
+
+def _resolve_inputs(bundle: Path, stem: str, processing_dir=None,
+                    recorded_pose=None):
     """Find the mp4 and pose file for a bundle that is being returned.
 
     Gate-routed bundles (review_gate -> review_routing) ARE self-contained: the
@@ -81,8 +93,10 @@ def _resolve_inputs(bundle: Path, stem: str):
     that says where a legacy bundle's inputs live.
 
     Looks in: the bundle itself -> the manifest's canonical paths -> Analyzed,
-    by stem. Nothing is copied; the returned paths are used as-is, so a pose
-    sitting in Analyzed is read from there rather than duplicated locally.
+    by stem -> pose staging -> ``processing_dir`` (where the return delivers the
+    bundle) and ``recorded_pose`` (the pose the video's row names). Nothing is
+    copied; the returned paths are used as-is, so a pose sitting in Analyzed is
+    read from there rather than duplicated locally.
 
     Returns:
         (mp4_path_or_None, pose_path_or_None)
@@ -151,7 +165,53 @@ def _resolve_inputs(bundle: Path, stem: str):
         except OSError as e:
             logger.debug(f"{stem}: could not search staging: {e}")
 
+    # Fifth: this node's own processing folder -- where the return is about to
+    # put the bundle -- and the pose the video's row records. WHY: an older
+    # divert between queues moved only the mp4 and left the pose and every
+    # result in the processing folder of the node that ran the video. Two
+    # human-cleared videos could then never return: each scan searched the
+    # bundle, its manifest, Analyzed and staging, found nothing, and tried
+    # again two minutes later -- thousands of times from 2026-09-28 -- while
+    # the pose sat in the folder the return delivers to. Declared-scorer only,
+    # the staging rule: an old-model pose left behind here is stale.
+    if pose is None and (processing_dir or recorded_pose):
+        declared = _declared_scorer()
+        cands = []
+        if recorded_pose:
+            cands.append(Path(recorded_pose))
+        if processing_dir:
+            try:
+                cands += list(Path(processing_dir).glob(f"{stem}DLC*.h5"))
+            except OSError as e:
+                logger.debug(f"{stem}: could not search {processing_dir}: {e}")
+        cur = [c for c in cands if declared and declared in c.name and c.is_file()]
+        if cur:
+            pose = select_pose_file(cur)
+    if mp4 is None and processing_dir:
+        cand = Path(processing_dir) / f"{stem}.mp4"
+        if cand.is_file():
+            mp4 = cand
+
     return mp4, pose
+
+
+# A return that cannot go ahead -- no pose anywhere, or files of the video
+# still in the queue's build folder -- is not tried again until this long has
+# passed. WHY: nothing a scan does changes either condition, and retrying every
+# two minutes cost seconds of every scan (5 s per such bundle, searching
+# Analyzed) and buried the log under thousands of identical ERRORs. In memory:
+# a restart tries each once more, which is what a person fixing it would want.
+RETURN_RETRY_S = 3600
+_return_retry_after: Dict[str, float] = {}
+
+
+def _return_backing_off(stem: str) -> bool:
+    until = _return_retry_after.get(stem)
+    return until is not None and time.monotonic() < until
+
+
+def _return_failed(stem: str) -> None:
+    _return_retry_after[stem] = time.monotonic() + RETURN_RETRY_S
 
 
 def _bundles(queue_root: Optional[Path]) -> List[Path]:
@@ -172,6 +232,47 @@ def _bundles(queue_root: Optional[Path]) -> List[Path]:
         return order_items(found)
     except Exception:
         return sorted(found)
+
+
+# Each scan read every triage bundle's segments, outcomes, assignments and
+# review files to decide whether it was cleared: 7-8 s of every scan, every two
+# minutes, for a queue that mostly does not change between scans (2026-10-21).
+# A bundle's verdict depends only on its own files and on the video's ground
+# truth (triage_status), so it is reused until either changes: the bundle's
+# files are listed with their sizes and modified times (one listing per bundle,
+# about 2 s for the whole queue) and the ground-truth file's path and time.
+_status_cache: Dict[str, tuple] = {}
+
+
+def _bundle_signature(bundle: Path) -> tuple:
+    """(name, size, modified time) of every entry in ``bundle`` -- folders too,
+    so an empty signature means an empty folder exactly as ``any(iterdir())``
+    did. Raises OSError."""
+    out = []
+    with os.scandir(bundle) as it:
+        for e in it:
+            st = e.stat()
+            out.append((e.name, st.st_size if e.is_file() else -1, st.st_mtime_ns))
+    return tuple(sorted(out))
+
+
+def _gt_signature(stem: str) -> tuple:
+    try:
+        from mousereach.review.causal_review_io import find_gt
+        g = find_gt(stem)
+        return (str(g), Path(g).stat().st_mtime_ns) if g else ()
+    except Exception:
+        return ()
+
+
+def _cached_triage_status(bundle: Path, stem: str, signature: tuple):
+    key = (signature, _gt_signature(stem))
+    hit = _status_cache.get(str(bundle))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    st = triage_status(bundle, stem)
+    _status_cache[str(bundle)] = (key, st)
+    return st
 
 
 def _is_queue_metadata(name: str, stem: str) -> bool:
@@ -296,7 +397,8 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
             f"Return {stem}: {len(stuck)} file(s) of this video are still in "
             f"{leftover} ({', '.join(stuck)}), left there by a route that did "
             f"not finish. Leaving the bundle in the queue -- move them into "
-            f"{bundle} first.")
+            f"{bundle} first. (Tried again in {RETURN_RETRY_S // 60} min.)")
+        _return_failed(stem)
         return False
 
     processing_dir = Path(processing_dir)
@@ -349,13 +451,20 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # _manifest.json, which is what names them. Returning a video whose pose
     # cannot be found guarantees the pipeline fails on it, so refuse and leave
     # the clearance in the queue rather than spend it on a doomed run.
-    mp4_src, pose_src = _resolve_inputs(bundle, stem)
+    try:
+        recorded_pose = (db.get_video(stem) or {}).get('dlc_output_path')
+    except Exception:
+        recorded_pose = None
+    mp4_src, pose_src = _resolve_inputs(bundle, stem, processing_dir=processing_dir,
+                                        recorded_pose=recorded_pose)
     if pose_src is None:
         logger.error(
-            f"Return {stem}: no pose file found (bundle, manifest, or Analyzed). "
+            f"Return {stem}: no pose file of the current model found (bundle, "
+            f"manifest, Analyzed, staging, or this node's processing folder). "
             f"Leaving the bundle in the queue -- returning it would re-run the "
-            f"video with no pose."
+            f"video with no pose. (Tried again in {RETURN_RETRY_S // 60} min.)"
         )
+        _return_failed(stem)
         return False
 
     # This function is where a review leaves shared storage: every bundle file is
@@ -450,6 +559,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     except OSError:
         pass
 
+    _return_retry_after.pop(stem, None)
     logger.info(f"Returned {stem} to Processing ({moved} files) reason={reason}")
     return True
 
@@ -569,13 +679,16 @@ def scan_review_queues(db, processing_dir: Path,
     _warn_stale_incoming()
 
     # TRIAGE: every triaged element resolved (and segmentation sound).
+    seen_bundles = set()
     for bundle in _bundles(Paths.TRIAGE_REVIEW):
         if not _budget_left():
             summary["deferred"] += 1
             continue
         stem = bundle.name
+        seen_bundles.add(str(bundle))
         try:
-            if not any(bundle.iterdir()):
+            signature = _bundle_signature(bundle)
+            if not signature:
                 # An EMPTY dir is not a bundle -- it is residue of an earlier
                 # divert/return that moved the files and left the folder.
                 # Sep-04 left several; one hid behind the both-queues skip all
@@ -601,7 +714,7 @@ def scan_review_queues(db, processing_dir: Path,
         except OSError:
             continue
         try:
-            st = triage_status(bundle, stem)
+            st = _cached_triage_status(bundle, stem, signature)
         except Exception:
             continue
         # A human's deep-review clearance outranks the machine's seg self-check
@@ -717,8 +830,12 @@ def scan_review_queues(db, processing_dir: Path,
             finally:
                 _release_return_claim(stem)
             continue
+        if _return_backing_off(stem):
+            continue
         if _return_to_processing(bundle, stem, processing_dir, db, "triage_cleared"):
             summary["triage_returned"] += 1
+    for gone in [k for k in _status_cache if k not in seen_bundles]:
+        _status_cache.pop(gone, None)
 
     # DEEP_REVIEW: an explicit clear marker or in-bundle GT.
     # Own budget, NOT shared with the triage loop's: on 2026-09-01 the triage
@@ -732,7 +849,7 @@ def scan_review_queues(db, processing_dir: Path,
         stem = bundle.name
         # No empty-dir retire here: an empty folder has no clear marker, so it
         # is never acted on, and EMPTY_DIR_GRACE_SECONDS has nothing to guard.
-        if _deep_review_cleared(bundle, stem):
+        if _deep_review_cleared(bundle, stem) and not _return_backing_off(stem):
             if _return_to_processing(bundle, stem, processing_dir, db, "deep_review_cleared"):
                 summary["deep_returned"] += 1
 

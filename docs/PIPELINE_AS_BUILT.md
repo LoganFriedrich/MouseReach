@@ -1627,3 +1627,33 @@ Every node should run this code for the sharing to be complete.
 
 Tests: `tests/test_singles_intake_claim.py` (the tests after "a stopped node's
 videos come back").
+
+## Update 2026-10-21: the review-return scan finds a pose left on this node, retries failures hourly, and re-reads only what changed
+
+**What was wrong.** Three things, all measured on the processing server on 2026-10-21:
+
+1. Two human-cleared deep-review videos (one CNT, one ASPA) could never return. An
+   older divert between the queues had moved only the mp4 into deep review and left
+   the pose and every result in the processing folder of the node that ran the video.
+   The return searched the bundle, its manifest, Analyzed and pose staging -- not the
+   folder it delivers to, nor the pose the video's own row names -- found nothing,
+   logged an ERROR and tried again on the next scan, two minutes later. 4,660 and 3,423
+   such ERRORs are in the kept logs; each try spent about 5 s searching Analyzed.
+2. Every scan re-read every triage bundle's segments, outcomes, assignments and review
+   files to decide whether it was cleared: 7-8 s of each two-minute scan, although
+   almost no bundle changes between scans.
+
+**What changed** (`watcher/review_return.py`):
+
+1. The resolver also looks in the processing folder the return delivers to, and at the
+   pose the video's row records, accepting only a pose of the declared model (the rule
+   pose staging already had). Such a pose is used in place.
+2. A return that cannot go ahead (no pose, or files still in the queue's build folder)
+   is tried again after an hour (`RETURN_RETRY_S`), not every scan. The ERROR says so.
+   The wait is kept in memory, so a watcher restart tries each once more.
+3. A triage bundle's verdict is reused until the bundle changes: each scan lists the
+   bundle's files with their sizes and modified times (about 2 s for the whole queue)
+   and the video's ground-truth file, and re-reads the bundle only when either changed
+   -- a person saving an answer changes the bundle, so it is read on the next scan.
+
+Tests: `tests/test_review_return_local_pose.py`.
