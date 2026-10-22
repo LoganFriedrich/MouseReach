@@ -1864,3 +1864,17 @@ only when the per-tray step table (`watcher/router.SKIP_STEPS`) runs outcome det
 tray; a Pillar video without one is still critical, and a name with no recognisable tray is
 held to the full set. Checked on copies of eight held Flat bundles: each now passes the check
 and the gate. Tests: `tests/test_qc_easy_flat_no_outcomes.py`.
+
+## Update 2026-10-22: a quality hold the current check would not make leaves the person's queue
+
+When the quality check is corrected, the holds it made by mistake used to stay in deep review
+until a person cleared each one. The return scan now re-checks every deep-review bundle routed
+`qc_needs_review` that holds no file a person wrote: the pose-tracking layer's stored flags are
+carried over (that layer reads the whole pose file; a hold it made stays), the file-based layers
+are recomputed. A bundle with nothing critical left goes back to the posed folder for a fresh run
+(mp4 and pose files; its other files are set aside under `_Problematic/_released_qc_holds_<date>/`)
+and its row becomes `dlc_complete`, so intake takes it in its priority turn -- not `processing`,
+which would block intake of new work. The first use: the 469 Easy/Flat bundles held only for the
+outcomes file they never get (fixed the same night). Bounded to 30 s of each scan; one re-check
+per bundle until it changes; nothing in the posed folder is ever replaced. Tests:
+`tests/test_release_lifted_qc_holds.py`.

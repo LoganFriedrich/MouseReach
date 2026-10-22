@@ -323,6 +323,51 @@ def _is_queue_metadata(name: str, stem: str) -> bool:
             or any(name == f"{stem}{s}" for s in _QUEUE_METADATA_STEM_SUFFIXES))
 
 
+def _ensure_registered(db, stem: str, source_path: Path) -> bool:
+    """Give this node a row for ``stem`` if it has none. False (and the bundle
+    must stay in its queue) when that fails.
+
+    WHY before touching the queue: a node that has never seen the video (fresh
+    DB, or the review was cleared on a different machine) has no row to update
+    -- and the return used to move the bundle's files out, delete the bundle,
+    and only then discover it could not record the state. The clearance was
+    consumed, the files landed in Processing with nothing referencing them, and
+    the function returned True. 274 bundles went that way in one run before it
+    was caught."""
+    try:
+        if db.get_video(stem) is None:
+            # Parse the stem's own metadata into the row. Rows registered here
+            # used to carry only the id and path -- no tray_type/date/animal --
+            # and tray-aware work selection silently degrades to a random pick
+            # on a NULL tray_type. This stops NEW metadata-less rows; rows that
+            # already exist with NULLs are handled by the orchestrator's
+            # read-side filename fallback -- both halves are required.
+            meta = {}
+            try:
+                from .validator import validate_single_filename
+                result = validate_single_filename(f"{stem}.mp4")
+                if result.valid and result.parsed:
+                    meta = {
+                        'date': result.parsed['date'],
+                        'animal_id': result.parsed['animal_id'],
+                        'experiment': result.parsed['experiment'],
+                        'cohort': result.parsed['cohort'],
+                        'subject': result.parsed['subject'],
+                        'tray_type': result.parsed['tray_type'],
+                    }
+            except Exception:
+                meta = {}
+            db.register_video(video_id=stem, source_path=str(source_path), **meta)
+            logger.info(f"Return {stem}: registered (not previously known to this node)")
+        return True
+    except Exception as e:
+        logger.error(
+            f"Return {stem}: cannot register video, leaving the bundle in the "
+            f"queue for a later attempt: {e}"
+        )
+        return False
+
+
 def _deep_review_cleared(bundle: Path, stem: str) -> bool:
     """True if a reviewer has cleared this deep-review bundle."""
     if (bundle / f"{stem}_deep_review_cleared.json").exists():
@@ -447,47 +492,9 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     processing_dir = Path(processing_dir)
     processing_dir.mkdir(parents=True, exist_ok=True)
 
-    # Make sure the DB can hold this video BEFORE touching the queue. A node
-    # that has never seen the video (fresh DB, or the review was cleared on a
-    # different machine) has no row to update -- and this function used to move
-    # the bundle's files out, delete the bundle, and only then discover it could
-    # not record the state. The clearance was consumed, the files landed in
-    # Processing with nothing referencing them, and the function returned True.
-    # 274 bundles went that way in one run before it was caught.
-    try:
-        if db.get_video(stem) is None:
-            # Parse the stem's own metadata into the row. Rows registered here
-            # used to carry only the id and path -- no tray_type/date/animal --
-            # and tray-aware work selection silently degrades to a random pick
-            # on a NULL tray_type. This stops NEW metadata-less rows; rows that
-            # already exist with NULLs are handled by the orchestrator's
-            # read-side filename fallback -- both halves are required.
-            meta = {}
-            try:
-                from .validator import validate_single_filename
-                result = validate_single_filename(f"{stem}.mp4")
-                if result.valid and result.parsed:
-                    meta = {
-                        'date': result.parsed['date'],
-                        'animal_id': result.parsed['animal_id'],
-                        'experiment': result.parsed['experiment'],
-                        'cohort': result.parsed['cohort'],
-                        'subject': result.parsed['subject'],
-                        'tray_type': result.parsed['tray_type'],
-                    }
-            except Exception:
-                meta = {}
-            db.register_video(
-                video_id=stem,
-                source_path=str(processing_dir / f"{stem}.mp4"),
-                **meta,
-            )
-            logger.info(f"Return {stem}: registered (not previously known to this node)")
-    except Exception as e:
-        logger.error(
-            f"Return {stem}: cannot register video, leaving the bundle in the "
-            f"queue for a later attempt: {e}"
-        )
+    # Make sure the DB can hold this video BEFORE touching the queue (see
+    # _ensure_registered for why).
+    if not _ensure_registered(db, stem, processing_dir / f"{stem}.mp4"):
         return False
 
     # Resolve the inputs BEFORE emptying the bundle -- the move loop deletes
@@ -649,6 +656,163 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
     except Exception as e:
         logger.warning("Return scan: could not retire stale bundle %s: %s",
                        stem, e)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Machine-only quality holds the current check would not make
+# ---------------------------------------------------------------------------
+# A deep-review bundle routed "qc_needs_review" is held by the machine's own
+# quality check, not by a person. When that check is corrected, a hold it
+# would no longer make is a machine error sitting in a person's queue. WHY
+# (2026-10-22): the check demanded an outcomes file Easy and Flat trays never
+# get, and 469 Easy/Flat bundles were held in deep review for that alone.
+#
+# So a bundle with that reason and no file a person wrote has the check re-run
+# on it. The pose-tracking layer is NOT re-run (it would read every pose file
+# over the share): its flags are carried over from the bundle's stored
+# verdict, so a hold that layer made stays a hold. The file-based layers
+# (structural, cross-step, statistical) are recomputed. If nothing critical
+# remains, the video goes back to the posed folder and re-runs in its priority
+# turn -- NOT straight into 'processing', because anything there blocks intake
+# (max_local_pending), and released low-priority videos would hold up new
+# work. The bundle's machine outputs are archived under _Problematic, never
+# deleted.
+QC_RECHECK_BUDGET_S = 30            # seconds of re-checks per scan
+_qc_recheck_cache: Dict[str, tuple] = {}
+_PERSON_FILE_SUFFIXES = ("_causal_review.json", "_deep_review_cleared.json",
+                         "_unified_ground_truth.json")
+
+
+def _routed_reason(bundle: Path, stem: str) -> str:
+    import json
+    try:
+        return (json.loads((bundle / f"{stem}_routing.json").read_text(encoding="utf-8"))
+                .get("routed_reason") or "")
+    except Exception:
+        return ""
+
+
+def _person_touched(signature: tuple) -> bool:
+    return any(name.endswith(_PERSON_FILE_SUFFIXES) or "ground_truth" in name
+               for name, _, _ in signature)
+
+
+def _qc_hold_lifted(bundle: Path, stem: str, signature: tuple) -> Optional[bool]:
+    """True when the bundle was held by the quality check alone and the current
+    check would not hold it, False when it still would (or the hold was for
+    another reason), None when it cannot tell (no stored verdict). Remembered
+    per bundle until the bundle changes, so a scan reads each bundle once."""
+    import json
+    hit = _qc_recheck_cache.get(str(bundle))
+    if hit is not None and hit[0] == signature:
+        return hit[1]
+    verdict: Optional[bool]
+    try:
+        if _routed_reason(bundle, stem) != "qc_needs_review":
+            verdict = False
+            _qc_recheck_cache[str(bundle)] = (signature, verdict)
+            return verdict
+        stored = json.loads((bundle / f"{stem}_triage.json").read_text(encoding="utf-8"))
+        if any(f.get("category") == "dlc_coherence" and f.get("severity") == "critical"
+               for f in stored.get("flags", [])):
+            verdict = False
+        else:
+            from mousereach.pipeline.triage import triage_video
+            verdict = triage_video(stem, bundle, skip_dlc_check=True).n_critical == 0
+    except Exception:
+        verdict = None
+    _qc_recheck_cache[str(bundle)] = (signature, verdict)
+    return verdict
+
+
+@_with_return_claim
+def _release_to_posed(bundle: Path, stem: str, db) -> bool:
+    """Send a lifted hold back to the posed folder for a fresh run (see the
+    block comment above). The mp4 and pose files go to the posed folder; every
+    other file goes to _Problematic/_released_qc_holds_<date>/<stem>/ with a
+    note. Nothing in the posed folder is ever replaced. Never raises."""
+    import json
+    from datetime import datetime
+    posed = getattr(Paths, "DLC_STAGING", None)
+    root = getattr(Paths, "REVIEW_ROOT", None)
+    if not posed or not root or db is None:
+        return False
+    posed = Path(posed)
+    try:
+        files = [f for f in bundle.iterdir() if f.is_file()]
+        inputs = [f for f in files
+                  if f.name == f"{stem}.mp4" or f.name.startswith(f"{stem}DLC")]
+        poses = [f for f in inputs if f.suffix == ".h5"]
+        if not any(f.suffix == ".mp4" for f in inputs) or not poses:
+            logger.warning("Release %s: no mp4 or no pose file in the bundle; left "
+                           "for a person", stem)
+            _return_failed(stem)
+            return False
+        clash = [f.name for f in inputs if (posed / f.name).exists()]
+        if clash:
+            logger.warning("Release %s: %s already in the posed folder; left in "
+                           "deep review", stem, ", ".join(clash))
+            _return_failed(stem)
+            return False
+        if not _ensure_registered(db, stem, posed / f"{stem}.mp4"):
+            return False
+        from mousereach.pipeline.manifest import select_pose_file
+        pose = select_pose_file(poses, expected_scorer=_declared_scorer() or None)
+
+        dest = (Path(root) / "_Problematic"
+                / f"_released_qc_holds_{datetime.now():%Y-%m-%d}" / stem)
+        if dest.exists():       # released once already today: keep that copy too
+            dest = dest.with_name(f"{stem}_{datetime.now():%H%M%S}")
+        dest.mkdir(parents=True, exist_ok=True)
+        plan = ([(f, dest / f.name) for f in files if f not in inputs]
+                + [(f, posed / f.name) for f in inputs])
+        done = []
+        try:
+            for src, dst in plan:
+                _safe_move(src, dst)
+                done.append((src, dst))
+            db.force_state(stem, "dlc_complete",
+                           reason="quality hold lifted by the current check; "
+                                  "returned to the posed folder",
+                           current_path=str(posed / f"{stem}.mp4"),
+                           dlc_output_path=str(posed / pose.name))
+        except Exception as e:
+            # Undo every move: the bundle stays exactly as it was, in the queue.
+            for src, dst in reversed(done):
+                try:
+                    _safe_move(dst, src)
+                except Exception:
+                    pass
+            try:
+                dest.rmdir()            # only if the undo left it empty
+            except OSError:
+                pass
+            logger.error("Release %s: could not complete (%s); bundle kept", stem, e)
+            _return_failed(stem)
+            return False
+        try:
+            (dest / f"{stem}_release_note.json").write_text(json.dumps({
+                "released_at": datetime.now().isoformat(),
+                "why": "held in deep review by the quality check alone, with no "
+                       "file a person wrote; the current check no longer holds "
+                       "it, so the video was sent back to the posed folder for a "
+                       "fresh run and these machine outputs were set aside here",
+                "returned_to": str(posed),
+            }, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            bundle.rmdir()
+        except OSError:
+            pass
+        _return_retry_after.pop(stem, None)
+        logger.info("Released %s: quality hold lifted by the current check; back "
+                    "in the posed folder for a fresh run", stem)
+        return True
+    except Exception as e:
+        logger.warning("Release %s: %s", stem, e)
+        _return_failed(stem)
         return False
 
 
@@ -903,6 +1067,8 @@ def scan_review_queues(db, processing_dir: Path,
     # loop's diverts consumed the whole shared budget every scan and 46
     # human-released deep bundles were starved indefinitely. Releases of
     # finished human work must never queue behind machine-initiated moves.
+    recheck_deadline = time.monotonic() + QC_RECHECK_BUDGET_S
+    summary.setdefault("qc_released", 0)
     for bundle in _bundles(Paths.DEEP_REVIEW):
         if summary["deep_returned"] >= limit:
             summary["deferred"] += 1
@@ -910,15 +1076,34 @@ def scan_review_queues(db, processing_dir: Path,
         stem = bundle.name
         # No empty-dir retire here: an empty folder has no clear marker, so it
         # is never acted on, and EMPTY_DIR_GRACE_SECONDS has nothing to guard.
-        if _deep_review_cleared(bundle, stem) and not _return_backing_off(stem):
-            if _return_to_processing(bundle, stem, processing_dir, db, "deep_review_cleared"):
+        if _deep_review_cleared(bundle, stem):
+            if not _return_backing_off(stem) and _return_to_processing(
+                    bundle, stem, processing_dir, db, "deep_review_cleared"):
                 summary["deep_returned"] += 1
+            continue
+        # A quality hold the current check would not make (block comment at
+        # QC_RECHECK_BUDGET_S). Its own budget, after human-cleared returns
+        # in the same pass, and bounded in time so re-checks never hold up
+        # the work loop.
+        if (summary["qc_released"] >= limit or _return_backing_off(stem)
+                or time.monotonic() > recheck_deadline):
+            continue
+        try:
+            signature = _bundle_signature(bundle)
+        except OSError:
+            continue
+        if _person_touched(signature):
+            continue
+        if _qc_hold_lifted(bundle, stem, signature) and _release_to_posed(bundle, stem, db):
+            summary["qc_released"] += 1
 
-    if summary["triage_returned"] or summary["deep_returned"] or summary["diverted_to_deep"]:
+    if (summary["triage_returned"] or summary["deep_returned"]
+            or summary["diverted_to_deep"] or summary["qc_released"]):
         logger.info(
             f"Review-return scan: {summary['triage_returned']} triage + "
             f"{summary['deep_returned']} deep-review videos re-injected, "
-            f"{summary['diverted_to_deep']} diverted to deep review"
+            f"{summary['diverted_to_deep']} diverted to deep review, "
+            f"{summary['qc_released']} lifted quality holds sent back to the posed folder"
             + (f" ({summary['deferred']} left for later cycles)"
                if summary["deferred"] else "")
         )
