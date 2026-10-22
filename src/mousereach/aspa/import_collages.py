@@ -272,6 +272,26 @@ def default_retired_dir() -> Optional[Path]:
     return (Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal") if Paths.ANALYZED_OUTPUT else None
 
 
+def copy_file(src: Path, dst: Path) -> None:
+    """Copy ``src`` to ``dst`` (replacing ``dst``), keeping the modified time.
+
+    On Windows this is the system copy (``CopyFileW``). WHY: when both paths
+    are on the same network share, the file server copies the file itself and
+    no data passes through this machine. Measured on the lab share 2026-10-21:
+    a 1 GB recording took 3 s that way against 41 s read and written back
+    through this machine -- and the read-and-write copy of a large import
+    filled the processing server's network link, slowing its own work tenfold
+    for as long as the import ran. Elsewhere, ``shutil.copy2``.
+    """
+    import os
+    if os.name == "nt":
+        import ctypes
+        if ctypes.windll.kernel32.CopyFileW(str(src), str(dst), False):
+            return
+        raise OSError(ctypes.GetLastError(), f"CopyFileW failed: {src} -> {dst}")
+    shutil.copy2(src, dst)
+
+
 def write_mapping(plan: List[dict], dest_root: Path) -> Path:
     """Write the versioned source -> encoded mapping next to the imported videos.
 
@@ -432,7 +452,7 @@ def main(argv=None) -> int:
             continue
         try:
             tmp = item["dst"].with_suffix(item["dst"].suffix + ".partial")
-            shutil.copy2(item["src"], tmp)
+            copy_file(item["src"], tmp)
             tmp.rename(item["dst"])
             copied += 1
         except Exception as e:

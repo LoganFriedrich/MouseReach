@@ -95,3 +95,15 @@ def test_the_dry_run_copies_nothing_and_apply_copies_only_what_the_list_needs(tm
     copied = sorted(p.name for p in dest.glob("*.mkv"))
     assert len(copied) == 1 and "ASPA0409" in copied[0]
     assert not list(dest.glob("*.partial"))
+
+
+def test_the_copy_replaces_a_half_written_file_from_a_stopped_run(tmp_path):
+    """A stopped import leaves `<name>.partial`; the next run's copy must
+    replace it, and the result must match the source byte for byte."""
+    src = tmp_path / "rec.mkv"
+    src.write_bytes(b"x" * 100000)
+    dst = tmp_path / "rec.mkv.partial"
+    dst.write_bytes(b"half")
+    ic.copy_file(src, dst)
+    assert dst.read_bytes() == src.read_bytes()
+    assert abs(dst.stat().st_mtime - src.stat().st_mtime) < 2

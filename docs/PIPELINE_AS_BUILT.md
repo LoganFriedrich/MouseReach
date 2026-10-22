@@ -1705,3 +1705,13 @@ are answered; the review tool lists it as not done. An answer is never applied t
 nobody looked at.
 
 Tests: `tests/test_answered_means_matched_by_frames.py`.
+
+**Update the same evening: the import copies on the file server.** The first full run of
+`--sessions-file` (338 recordings) copied each recording by reading it into the
+processing server and writing it back to the same share. That filled the server's network
+link: taking in one posed video went from seconds to 461 s and a video's work from ~20 s
+to ~170 s, for as long as the import ran. The import now copies with the system copy
+(`CopyFileW`), which, between folders on the same share, the file server performs itself:
+3 s for a 1 GB recording instead of 41 s, with no data through the processing server
+(`aspa/import_collages.copy_file`). A stopped run's half-written `.partial` file is replaced
+by the next run.
