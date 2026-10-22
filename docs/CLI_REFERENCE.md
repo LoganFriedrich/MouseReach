@@ -183,12 +183,15 @@ Lab profiles file: <repo>\src\mousereach\setup\lab_profiles.json
 ### `mousereach-fix-powershell`
 
 ```
-Fixing PowerShell execution policy for network drives...
+usage: mousereach-fix-powershell [-h]
 
-SUCCESS: PowerShell execution policy set to Bypass
+Fix PowerShell execution policy for network drives.
 
-You can now run conda activate without errors.
-Restart your PowerShell terminal for changes to take effect.
+This sets the execution policy to Bypass for the current user,
+which allows conda activate scripts to run from network drives (Y:, etc.)
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## Pipeline Index (fast startup)
@@ -208,25 +211,13 @@ options:
 ### `mousereach-index-status`
 
 ```
-============================================================
-MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
-============================================================
-Index file: <repo>_Pipeline\pipeline_index.json
-Exists: True
-Version: 2.0
-Generated: 2026-10-22T03:48:25.860693
-Total videos: 1517
+usage: mousereach-index-status [-h]
 
-Videos by folder:
-  Processing: 1515
+Show the pipeline index: how many videos are in each folder and how far each
+one has got. Read-only.
 
-Validation status:
-  SEG: 0 validated, 303 need review, 0 not started
-  REACH: 0 validated, 42 need review, 1475 not started
-  OUTCOME: 0 validated, 42 need review, 1475 not started
-
-Stale folders (need refresh): ['Processing']
-============================================================
+options:
+  -h, --help  show this help message and exit
 ```
 
 ### `mousereach-index-refresh`
@@ -756,6 +747,17 @@ What it does, in order:
   3. moves the video's bundle into the queue with a routing manifest
      (review_gate.route_to_queue), updating the watcher database.
 
+A SEGMENT A PERSON HAS ANSWERED IS NEVER FLAGGED
+------------------------------------------------
+Before flagging, the video's saved review is read and every requested segment
+a person (or ground truth) has already answered -- matched by the FRAMES the
+answer is about, the rule the release check uses -- is dropped from the list
+and reported as "answered". If nothing is left, the video is not routed.
+WHY: the release check counts such a segment answered, so a routed video went
+straight back out with nobody looking, and the next night's scan sent it again
+(2026-10). A caller cannot always know what a person answered; this command
+reads the review itself, so the rule holds whoever asks.
+
 THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
 -----------------------------------------------------------------------------
 The database is resolved exactly as the daemon resolves it
@@ -795,7 +797,8 @@ Usage:
 
 Exit codes:
     0  every requested video was routed, was already not in Analyzed, or was
-       deferred because the watcher is working on it
+       deferred because the watcher is working on it, or had
+       every requested segment already answered by a person ("done")
     1  some video could not be routed, OR routing was refused because the
        watcher database could not be resolved, does not exist, or cannot be
        opened (then no video was touched)
@@ -1274,41 +1277,41 @@ specified directory or the MouseReach processing root.
 ### `mousereach-eval-direct`
 
 ```
-======================================================================
-GT FILES FOUND
-======================================================================
-Unified GT: 0
-Reach GT: 0
+usage: mousereach-eval-direct [-h]
+
+Quick direct evaluation - evaluate GT files against algorithm output.
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ### `mousereach-update-algo-ref`
 
 ```
-Error: ALGORITHM_REFERENCE.md not found
+usage: mousereach-update-algo-ref [-h]
+
+Auto-update the Current Performance section of ALGORITHM_REFERENCE.md.
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ### `mousereach-algo-vs-human`
 
 ```
-======================================================================
-COMPREHENSIVE ALGORITHM vs HUMAN COMPARISON
-======================================================================
+usage: mousereach-algo-vs-human [-h]
 
-Found 0 outcome ground truth files
-Found 0 segmentation ground truth files
-Found 0 reach ground truth files
+Comprehensive comparison: Algorithm vs Human Ground Truth
 
-======================================================================
-SUMMARY
-======================================================================
+Compares:
+- Segment boundaries (frame accuracy)
+- Outcome classification (accuracy, confusion matrix)
+- Interaction frame detection (frame error)
+- Reach count per segment
+- Reach timing (start/apex/end frame errors) when GT available
 
-======================================================================
-OUTPUT FILES:
-  comparison_outcomes.csv  - Per-segment outcome comparison
-  comparison_segments.csv  - Segment boundary comparison
-  comparison_reaches.csv   - Reach count per segment
-  comparison_summary.csv   - Overall accuracy metrics
-======================================================================
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## Export Utilities
@@ -1316,32 +1319,23 @@ OUTPUT FILES:
 ### `mousereach-quick-summary`
 
 ```
-============================================================
-MOUSEREACH SUMMARY
-============================================================
+usage: mousereach-quick-summary [-h]
 
-Processed 9 videos
-Total segments (trials): 180
-Total reaches detected: 1192
+Quick summary for PI - run this to generate a CSV and stats
 
-OUTCOME BREAKDOWN:
-----------------------------------------
-  displaced_sa        :   46 ( 25.6%)
-  retrieved           :   13 (  7.2%)
-  triaged             :   28 ( 15.6%)
-  untouched           :   93 ( 51.7%)
-
-OVERALL SUCCESS RATE: 7.2%
-
-CSV saved to: <repo>_Pipeline\summary_for_PI.csv
-============================================================
+options:
+  -h, --help  show this help message and exit
 ```
 
 ### `mousereach-features-csv`
 
 ```
-No *_grasp_features.json files found!
-Run: mousereach-grasp-analyze -i Processing/
+usage: mousereach-features-csv [-h]
+
+Convert grasp_features.json files to CSV for easy viewing
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## Kinematic Analysis Utilities
@@ -1674,11 +1668,27 @@ Handle DB rows whose video file this node cannot find anywhere.
 ### `mousereach-watch-prioritize`
 
 ```
-No priority animal set. Watcher uses default ordering.
+usage: mousereach-watch-prioritize [-h] [--clear] [animal]
 
-Usage:
-  mousereach-watch-prioritize CNT0107    Set priority
-  mousereach-watch-prioritize --clear     Clear priority
+Set, show, or clear the priority animal for the watcher.
+
+    When a priority animal is set, the watcher processes that animal's
+    videos first within each work tier (crop, DLC, pipeline, archive).
+    Other animals' videos still get processed — just after the priority
+    animal's items are handled.
+
+    Usage:
+        mousereach-watch-prioritize                Show current priority
+        mousereach-watch-prioritize CNT0107        Set priority to CNT0107
+        mousereach-watch-prioritize --clear        Remove priority
+    
+
+positional arguments:
+  animal      animal id to put first, e.g. CNT0107
+
+options:
+  -h, --help  show this help message and exit
+  --clear     remove the priority animal
 ```
 
 ### `mousereach-watch-process-animal`
