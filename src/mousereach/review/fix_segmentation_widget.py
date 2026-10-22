@@ -565,7 +565,7 @@ automatic.
             from mousereach.watcher.work_priority import load_lab_policy
             _policy = load_lab_policy()
             self._queue.sort(
-                key=lambda t: (_policy.tier({"video_id": t[0].name}), -t[1]))
+                key=lambda t: (_policy.rank({"video_id": t[0].name}), -t[1]))
         except Exception:
             self._queue.sort(key=lambda t: -t[1])
         n_blind = sum(1 for _, spare in self._queue if spare == 0)

@@ -1982,3 +1982,16 @@ and `session_list`; list files are re-read at most once a minute. The priority p
 for it. A panel Save now keeps keys it does not manage (notes, hand-written selectors; plan gap
 G4), and keys or list files the order cannot use are named in its status line (G8). Tests:
 `tests/test_session_list_tier.py`.
+
+## Update 2026-10-22: the lab's order at the remaining selection points (plan Step 3)
+
+Re-pose requests were taken from the shared queue alphabetically (plan gap G2), so 2022 ASPA
+videos went to the graphics cards ahead of 2025 CNT ones whatever the order said; a GPU machine
+now takes them in the lab's order (`repose._in_lab_order`: idle-only work last, then tier, then
+oldest first). And every place that sorts work by the order -- the review-return scan's order,
+the review tools' queue listings and next-video choice, the re-segmentation queue -- now puts
+idle-only work (Easy/Flat by default) after everything else, whatever its tier (G7), through one
+sort key, `WorkPriority.rank`. Before, they sorted by tier alone, so an Easy video in a preferred
+project came ahead of Pillar videos of the next. Tests: `tests/test_repose.py`
+(test_consume_takes_requests_in_the_lab_order), `tests/test_session_list_tier.py`.
+

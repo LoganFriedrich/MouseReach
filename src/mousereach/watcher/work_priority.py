@@ -363,6 +363,16 @@ class WorkPriority:
                 return index
         return len(self.order)
 
+    def rank(self, item: dict, is_collage: bool = False) -> tuple:
+        """Sort key for anything that orders work by the lab's order: idle-only
+        work (Easy/Flat by default) after everything else, whatever its tier,
+        then the tier. WHY (plan gap G7): listings and the review tools sorted by
+        tier alone, so an Easy video in a preferred project came ahead of Pillar
+        videos from the next one -- the opposite of "only when nothing else is
+        waiting"."""
+        return (self.is_deferred(item, is_collage=is_collage),
+                self.tier(item, is_collage=is_collage))
+
     def is_deferred(self, item: dict, is_collage: bool = False) -> bool:
         """True when this item is not taken ON until the node is idle.
 
@@ -768,7 +778,7 @@ def order_items(items, key=None, policy=None, is_collage: bool = False) -> list:
     policy = policy or load_lab_policy()
     to_item = key or as_item
     return [obj for _, _, obj in sorted(
-        ((policy.tier(to_item(o), is_collage=is_collage), i, o)
+        ((policy.rank(to_item(o), is_collage=is_collage), i, o)
          for i, o in enumerate(items)),
         key=lambda t: (t[0], t[1]))]
 
@@ -787,7 +797,7 @@ def best_tier_choice(items, key=None, policy=None, rng=None,
         return None
     policy = policy or load_lab_policy()
     to_item = key or as_item
-    tiers = [policy.tier(to_item(o), is_collage=is_collage) for o in items]
-    best = min(tiers)
-    candidates = [o for o, t in zip(items, tiers) if t == best]
+    ranks = [policy.rank(to_item(o), is_collage=is_collage) for o in items]
+    best = min(ranks)
+    candidates = [o for o, r in zip(items, ranks) if r == best]
     return (rng or random).choice(candidates)

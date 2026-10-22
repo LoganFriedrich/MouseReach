@@ -77,7 +77,12 @@ video they hand out. Nothing needs restarting.
 between. The triage review tool and the deep review tool, when they choose which
 video to show next. The re-segmentation queue. And the order in which videos a
 reviewer has cleared re-enter the pipeline, which matters because only ten of
-them go back per cycle.
+them go back per cycle. And which re-pose requests a graphics-card machine takes
+from the shared queue (since 2026-10-22; they were taken alphabetically, so the
+oldest project's videos went first whatever the order said). Everywhere, work the
+order names as "not taken on until nothing else is waiting" (Easy and Flat by
+default) comes after everything else, whatever group it belongs to -- in queue
+listings and in the review tools' choice of the next video too.
 
 **One deliberate exception.** Inside the most important group, the review tools
 still pick at random. That randomness is not an oversight: it is what keeps the

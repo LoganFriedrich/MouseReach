@@ -82,3 +82,15 @@ def test_the_panel_reads_lists_with_spaces_and_drive_letters():
     parse = cw.WatcherControlWidget._parse_lists_text
     assert parse("ASPA: priority_lists/my study.txt, C:\\lists\\b.txt; CNT: x.txt") == {
         "ASPA": ["priority_lists/my study.txt", "C:\\lists\\b.txt"], "CNT": ["x.txt"]}
+
+
+def test_idle_only_work_comes_after_everything_else_in_every_listing():
+    """Plan gap G7: listings and the review tools sorted by tier alone, so an
+    Easy video in a preferred project came before Pillar videos of the next."""
+    policy = wp.load_policy({"order": [{"project": ["CNT"]}],
+                             "idle_only": [{"tray_type": ["E", "F"]}]})
+    items = ["20250101_CNT0101_E1", "20220101_ASPA0401_P1", "20250101_CNT0101_P1"]
+    assert wp.order_items(items, policy=policy) == [
+        "20250101_CNT0101_P1", "20220101_ASPA0401_P1", "20250101_CNT0101_E1"]
+    assert wp.best_tier_choice(["20250101_CNT0101_E1", "20220101_ASPA0401_P1"],
+                               policy=policy) == "20220101_ASPA0401_P1"

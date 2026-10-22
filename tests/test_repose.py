@@ -947,3 +947,23 @@ def test_declared_scorer_expires_instead_of_lasting_the_process(monkeypatch):
     assert len(seen) == 1
     assert repose.declared_scorer() == NEW        # the round trip always reads fresh
     assert mf.declared_dlc_scorer() == NEW        # and the shared cache is updated
+
+
+def test_consume_takes_requests_in_the_lab_order(env, monkeypatch):
+    """Plan gap G2: requests were taken alphabetically, whatever the lab's
+    order said. With one slot, the video the order puts first is taken."""
+    from mousereach.watcher import work_priority as wp
+    policy = wp.load_policy({"order": [{"animal_id": ["ABC0103"]}],
+                             "idle_only": [{"tray_type": ["E", "F"]}]})
+    monkeypatch.setattr(wp, "load_lab_policy", lambda *a, **k: policy)
+    for v in (VID, VID2, VID3):
+        _row(env.db, v, "archived")
+    _publish(env, [_outdated_full_row(v) for v in (VID, VID2, VID3)])
+    out = _consume(env, batch=1)
+    assert out["queued"] == 1
+    assert env.db.get_video(VID3)["state"] == "dlc_queued"
+    assert env.db.get_video(VID)["state"] == "archived"
+    # Easy/Flat (idle-only) go after everything else, whatever their tier
+    assert repose._in_lab_order(["20240101_ABC0103_E1", "20240101_ABC0101_P1",
+                                 "20240101_ABC0103_P1"]) == [
+        "20240101_ABC0103_P1", "20240101_ABC0101_P1", "20240101_ABC0103_E1"]

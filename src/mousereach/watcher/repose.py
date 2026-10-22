@@ -722,6 +722,25 @@ def heartbeat(db, *, hostname: str, repose_dir: Optional[Path] = None) -> int:
     return n
 
 
+def _in_lab_order(video_ids) -> list:
+    """Re-pose requests in the lab's work order: everything not idle-only
+    first, then by tier, then oldest first (the date leads the name).
+
+    WHY (plan gap G2, 2026-10-22): requests were taken alphabetically, so 2022
+    ASPA videos went to the GPUs ahead of 2025 CNT ones whatever the lab's
+    order said. An unreadable order falls back to the old name order."""
+    try:
+        from mousereach.watcher.work_priority import load_lab_policy
+        policy = load_lab_policy()
+    except Exception:
+        return sorted(video_ids)
+
+    def key(video_id):
+        item = {"video_id": video_id}
+        return (policy.is_deferred(item), policy.tier(item), video_id)
+    return sorted(video_ids, key=key)
+
+
 def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
                      repose_dir: Optional[Path] = None,
                      declared: Optional[str] = None,
@@ -766,7 +785,7 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
         return summary
     now = time.time()
 
-    for video_id in sorted(queued):
+    for video_id in _in_lab_order(queued):
         if slots <= 0:
             summary["skipped_cap"] += 1
             continue
