@@ -160,6 +160,13 @@ def _review_pending(stem: str, manifest_dir: Path) -> bool:
         return False
 
 
+# Parsed processing manifests, kept for the life of the process and reused
+# while a manifest's modified time is unchanged. WHY: the retirement pass read
+# all ~4,600 manifests in Analyzed every time it ran -- 14 minutes on 2026-10-21
+# with a slow share, while the processing server's work loop waited.
+_MANIFEST_CACHE: Dict[str, tuple] = {}
+
+
 def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     """Set of single-animal stems that are TRULY complete -- i.e. safe to treat a
     collage as retirement-eligible on.
@@ -180,21 +187,56 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     if not analyzed_root.exists():
         return complete
     current = get_current_versions(nas_root)
-    # WHY iter_files and not rglob: an archived manifest under Analyzed/Archive/
-    # keeps its ORIGINAL name, and one that compares current made a stem with
-    # no live output (or an outdated live one) "complete" -- enough to retire
-    # its collage. iter_files never enters a superseded folder.
-    from mousereach.pipeline.analyzed_tree import iter_files
-    for mp in iter_files(analyzed_root, f"*{_PROC_MANIFEST_SUFFIX}"):
-        stem = mp.name[: -len(_PROC_MANIFEST_SUFFIX)]
-        try:
-            manifest = json.loads(mp.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    # WHY a walk that never enters a superseded folder, not rglob: an archived
+    # manifest under Analyzed/Archive/ keeps its ORIGINAL name, and one that
+    # compares current made a stem with no live output (or an outdated live
+    # one) "complete" -- enough to retire its collage.
+    #
+    # One walk collects every live manifest and features file with its modified
+    # time from the listing (iter_file_entries); manifests are re-read only
+    # when they changed (_MANIFEST_CACHE); each offspring's review comes from
+    # one index built from a few listings (causal_review_io.review_path_index,
+    # the same places and rule as resolve_review_path). Same answers as one
+    # check per file, at a fraction of the round trips.
+    import fnmatch
+    import os
+    from mousereach.pipeline.analyzed_tree import iter_file_entries
+    found, feats = [], {}
+    for e in iter_file_entries(analyzed_root):
+        if fnmatch.fnmatch(e.name, f"*{_PROC_MANIFEST_SUFFIX}"):
+            found.append((e.name[: -len(_PROC_MANIFEST_SUFFIX)], Path(e.path),
+                          e.stat().st_mtime))
+        elif e.name.endswith("_features.json"):
+            feats[(os.path.dirname(e.path), e.name[: -len("_features.json")])] = \
+                e.stat().st_mtime
+    try:
+        from mousereach.review.causal_review_io import review_path_index
+        reviews = review_path_index({stem for stem, _, _ in found})
+    except Exception:
+        reviews = None
+    for stem, mp, mtime in found:
+        hit = _MANIFEST_CACHE.get(str(mp))
+        if hit is not None and hit[0] == mtime:
+            manifest = hit[1]
+        else:
+            try:
+                manifest = json.loads(mp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            _MANIFEST_CACHE[str(mp)] = (mtime, manifest)
         cmp = compare_manifest_to_current(manifest, current)
         if not cmp.get("is_current"):
             continue  # outdated version -> not done
-        if _review_pending(stem, mp.parent):
+        if reviews is None:
+            pending = _review_pending(stem, mp.parent)
+        else:
+            review = reviews.get(stem)
+            if review is None:
+                pending = False
+            else:
+                ft = feats.get((str(mp.parent), stem))
+                pending = True if ft is None else review[1] > ft
+        if pending:
             continue  # a human review still to apply -> not done
         complete.add(stem)
     return complete

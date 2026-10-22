@@ -1769,3 +1769,13 @@ in none of them (unresolvable, "gone from the shared singles folder", re-driven 
 comes back), exactly as the handler would. A row whose file IS in the shared folder is offered
 whatever its recorded path says (`DLCOrchestrator._split_gone_singles`). With no shared folder
 configured, every row is offered as before.
+
+## Update 2026-10-22: the collage-retirement check finds its facts from listings
+
+`collage_provenance.build_complete_stems` (which offspring are truly done, so their collage can be
+retired) read all ~4,600 processing manifests in Analyzed every run and looked each offspring's
+review up separately: 14 minutes on 2026-10-21 with a slow share, while the processing server's
+work loop waited. One walk now collects every live manifest and features file with its modified
+time from the listing (`analyzed_tree.iter_file_entries`, same files and rules as `iter_files`);
+manifests are re-read only when they changed (kept for the life of the process); reviews come
+from `causal_review_io.review_path_index`. Same answers. Tests: `tests/test_retirement_from_listings.py`.

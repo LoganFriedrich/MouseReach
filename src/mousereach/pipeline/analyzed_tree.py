@@ -84,6 +84,34 @@ def iter_files(root, pattern: str = "*") -> Iterator[Path]:
                 yield Path(dirpath) / name
 
 
+def iter_file_entries(root, pattern: str = "*") -> Iterator["os.DirEntry"]:
+    """``iter_files``, yielding each file's ``os.DirEntry`` instead of a Path.
+
+    Same files, same rules (fnmatch with the platform's case rules; never into a
+    superseded folder; PermissionError on a folder skipped, any other listing
+    error raised). WHY: an entry's ``stat()`` comes with the folder listing on
+    Windows, while ``Path.stat()`` is a separate network round trip -- per file,
+    over thousands of files on the share, that was minutes of every scan.
+    """
+    root = Path(root) if root else None
+    if root is None or not root.is_dir():
+        return
+    stack = [str(root)]
+    while stack:
+        folder = stack.pop()
+        try:
+            with os.scandir(folder) as it:
+                entries = list(it)
+        except PermissionError:
+            continue
+        for e in entries:
+            if e.is_dir():
+                if not is_superseded_dir(e.name) and not e.is_symlink():
+                    stack.append(e.path)
+            elif fnmatch.fnmatch(e.name, pattern):
+                yield e
+
+
 def first_file(root, pattern: str) -> Optional[Path]:
     """The first matching file, or None -- the replacement for
     ``next(root.rglob(pattern), None)``."""
