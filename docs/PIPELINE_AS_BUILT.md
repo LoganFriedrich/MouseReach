@@ -1820,6 +1820,20 @@ each session's stage) and prints the counts. Read-only. WHY: once a list's recor
 imported its sessions spread across the pipeline, and nothing said how far the list had got
 without asking every machine. Tests: `tests/test_session_coverage.py`.
 
+## Update 2026-10-22: a GPU node retries the shared-record writes that failed
+
+A GPU node writes each video's state to the shared record (`watcher_central.db`,
+`pipeline_videos`) as it cuts, poses and hands it off. Those writes were best-effort: a failure
+(the shared database locked) was logged at DEBUG and dropped, and the record fell behind for good --
+one collage's 8 singles all existed, but only 3 were on record a day after the 10-21 lock
+failures. Other nodes read that record before cutting a collage, so a missing child is a collage
+another node may cut and pose again. Now `DLCOrchestrator._sync_to_connectome` keeps the latest
+failed state of each video and retries it at the start of every scan; a newer successful write
+for the same video drops it, and a retry never replaces a row updated since the original attempt
+(`PipelineCoordinator.sync_video_state_unless_newer`, stamped with the attempt time). At startup
+the node puts on record every video it has that the record lacks entirely, never touching an
+existing row (`insert_video_state_if_absent`). Tests: `tests/test_shared_record_writes_retried.py`.
+
 ## Update 2026-10-22: work-order selectors take ASPA lab ids
 
 An ASPA video carries an encoded id (ASPA0401); the lab names the animal D01. Session lists

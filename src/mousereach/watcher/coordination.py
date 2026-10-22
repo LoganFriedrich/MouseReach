@@ -392,6 +392,52 @@ class PipelineCoordinator:
             ), fields)
             conn.commit()
 
+    def sync_video_state_unless_newer(self, video_id: str, hostname: str, state: str,
+                                      attempted_at: str, **kwargs) -> bool:
+        """Write a state that could not be written when it happened, unless the
+        shared row has been updated since. Returns True when it was written.
+
+        WHY the condition: the table is last-writer-wins. A retry of an old write
+        must never replace a newer one -- this node's own later state, or another
+        node's (the processing server's, after a hand-off). ``attempted_at`` is
+        the time of the original write (ISO, as _now() writes it), and the row is
+        stamped with it, not with the retry time.
+        """
+        self.ensure_tables()
+        fields = {'video_id': video_id, 'hostname': hostname, 'state': state,
+                  'updated_at': attempted_at}
+        fields.update(kwargs)
+        columns = ', '.join(fields.keys())
+        placeholders = ', '.join(f':{k}' for k in fields.keys())
+        updates = ', '.join(f'{k} = excluded.{k}' for k in fields if k != 'video_id')
+        with self.engine.connect() as conn:
+            result = conn.execute(text(
+                f"INSERT INTO pipeline_videos ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT(video_id) DO UPDATE SET {updates} "
+                f"WHERE pipeline_videos.updated_at IS NULL "
+                f"OR pipeline_videos.updated_at <= excluded.updated_at"
+            ), fields)
+            conn.commit()
+            return (result.rowcount or 0) > 0
+
+    def insert_video_state_if_absent(self, video_id: str, hostname: str, state: str,
+                                     updated_at: str, **kwargs) -> bool:
+        """Put a video on record only when the shared table has no row for it;
+        an existing row is never touched. Returns True when inserted. Used at
+        startup to fill in what earlier failed writes left out."""
+        self.ensure_tables()
+        fields = {'video_id': video_id, 'hostname': hostname, 'state': state,
+                  'updated_at': updated_at}
+        fields.update(kwargs)
+        columns = ', '.join(fields.keys())
+        placeholders = ', '.join(f':{k}' for k in fields.keys())
+        with self.engine.connect() as conn:
+            result = conn.execute(text(
+                f"INSERT OR IGNORE INTO pipeline_videos ({columns}) VALUES ({placeholders})"
+            ), fields)
+            conn.commit()
+            return (result.rowcount or 0) > 0
+
     def get_all_video_states(self) -> Dict[str, dict]:
         """Read all pipeline_videos. Returns {video_id: row_dict}."""
         self.ensure_tables()

@@ -1352,6 +1352,7 @@ class DLCOrchestrator(BaseOrchestrator):
                                f"earlier watcher: {e}")
         reclaimed = super()._reclaim_orphaned_work()
         self._set_aside_finished_copies()
+        self._put_missing_on_shared_record()
         return reclaimed
 
     # A row in one of these states is a video this node has no work left on.
@@ -1433,13 +1434,106 @@ class DLCOrchestrator(BaseOrchestrator):
     # =========================================================================
 
     def _sync_to_connectome(self, video_id, state, **kwargs):
-        """Best-effort sync video state to connectome.db after local DB update."""
+        """Write this video's state to the shared record (watcher_central.db).
+
+        A failure no longer just disappears: the latest state of each video
+        whose write failed is kept and retried at the start of every scan
+        (_retry_failed_shared_writes), and at startup any video this node has
+        that the shared record lacks entirely is put on record
+        (_put_missing_on_shared_record). WHY: the writes failed whenever the
+        shared database was locked, nothing retried them, and the record fell
+        behind for good -- a GPU PC found a collage whose 8 singles all existed
+        but only 3 were on record a day after the 10-21 lock failures. Other
+        nodes read that record before cutting a collage, so a missing child is
+        a collage another node may cut and pose a second time.
+        """
         if not self.coordinator:
             return
+        pending = self._failed_shared_writes()
         try:
             self.coordinator.sync_video_state(video_id, self.hostname, state, **kwargs)
+            pending.pop(video_id, None)       # a newer write supersedes a failed one
         except Exception as e:
-            logger.debug(f"Connectome sync failed (non-fatal): {e}")
+            pending[video_id] = (state, dict(kwargs), datetime.now().isoformat())
+            logger.debug(f"Shared-record write failed for {video_id} ({e}); "
+                         f"retried at the next scan")
+
+    def _failed_shared_writes(self) -> dict:
+        """{video_id: (state, kwargs, attempted_at)} of writes still to retry."""
+        pending = getattr(self, '_pending_shared_writes', None)
+        if pending is None:
+            pending = self._pending_shared_writes = {}
+        return pending
+
+    def _retry_failed_shared_writes(self) -> int:
+        """Retry the failed shared-record writes, oldest first; stop at the first
+        failure (the record is still unavailable). Returns how many landed.
+        A retry never replaces a row updated since the original attempt."""
+        pending = self._failed_shared_writes()
+        if not pending or not self.coordinator:
+            return 0
+        landed = 0
+        for video_id, (state, kwargs, attempted_at) in sorted(
+                pending.items(), key=lambda kv: kv[1][2]):
+            try:
+                self.coordinator.sync_video_state_unless_newer(
+                    video_id, self.hostname, state, attempted_at, **kwargs)
+            except Exception as e:
+                logger.debug(f"Shared record still unavailable ({e}); "
+                             f"{len(pending)} write(s) wait for the next scan")
+                break
+            pending.pop(video_id, None)
+            landed += 1
+        if landed:
+            logger.info(f"Shared record: {landed} earlier failed write(s) landed"
+                        + (f", {len(pending)} still waiting" if pending else ""))
+        return landed
+
+    # States this node writes to the shared record as a video moves through it.
+    _SHARED_RECORD_STATES = ('validated', 'dlc_queued', 'dlc_running', 'dlc_complete',
+                             'processed', 'archived')
+
+    def _put_missing_on_shared_record(self) -> int:
+        """At startup, put on the shared record every video this node has that
+        the record lacks entirely (see _sync_to_connectome for why). Existing
+        rows are never touched. Never raises; returns how many were added."""
+        if not getattr(self, 'coordinator', None):
+            return 0
+        try:
+            on_record = set(self.coordinator.get_all_video_states())
+        except Exception as e:
+            logger.warning(f"Startup: could not read the shared record to fill in "
+                           f"missing videos ({e}); will try at the next start")
+            return 0
+        added = 0
+        for state in self._SHARED_RECORD_STATES:
+            try:
+                rows = self.db.get_videos_in_state(state)
+            except Exception:
+                continue
+            for row in rows:
+                video_id = row['video_id']
+                if video_id in on_record:
+                    continue
+                extra = {k: row.get(k) for k in ('collage_id',) if row.get(k)}
+                path = row.get('current_path') or row.get('source_path')
+                if path:
+                    extra['source_path'] = path
+                try:
+                    if self.coordinator.insert_video_state_if_absent(
+                            video_id, self.hostname, state,
+                            row.get('updated_at') or datetime.now().isoformat(), **extra):
+                        added += 1
+                        on_record.add(video_id)
+                except Exception as e:
+                    logger.warning(f"Startup: the shared record became unavailable "
+                                   f"after {added} addition(s) ({e}); the rest at the "
+                                   f"next start")
+                    return added
+        if added:
+            logger.info(f"Startup: put {added} video(s) on the shared record that it "
+                        f"lacked (earlier writes had failed)")
+        return added
 
     def _backup_local_db(self):
         """Best-effort backup of local watcher.db to NAS."""
@@ -2642,6 +2736,9 @@ class DLCOrchestrator(BaseOrchestrator):
         # claims a dead node left (watcher/single_claim.py). First, because the
         # scan below can take many minutes on a shared drive.
         self._single_claim_upkeep(force=True)
+        # Shared-record writes that failed since the last scan (see
+        # _sync_to_connectome). Before the scan, so other nodes see them sooner.
+        self._retry_failed_shared_writes()
 
         # Phase A: Scan for new files and check stability
         scan_result = self.file_watcher.scan()
