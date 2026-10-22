@@ -137,6 +137,23 @@ def get_archive_destination(video_id: str) -> Path:
     return Paths.ANALYZED_OUTPUT / project / cohort
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """Same content: same size and modified times within 2 s (the quick check
+    rsync and robocopy use -- every copy in this pipeline keeps the modified
+    time), else, at the same size, the same SHA-256. WHY not always hash:
+    hashing reads both copies in full over the share."""
+    from mousereach.watcher.transfer import verify_file_hash
+    try:
+        sa, sb = a.stat(), b.stat()
+    except OSError:
+        return False
+    if sa.st_size != sb.st_size:
+        return False
+    if abs(sa.st_mtime - sb.st_mtime) < 2:
+        return True
+    return verify_file_hash(a, b, "sha256")
+
+
 def archive_video(
     video_id: str,
     dry_run: bool = False,
@@ -228,15 +245,22 @@ def archive_video(
     #
     # Failing to archive must not cost the results: if the sweep reports failures
     # we stop rather than move new files on top of the old ones.
+    # A file identical to the one already archived is not a new generation --
+    # a re-run copies the video and pose down from here and hands them back
+    # unchanged. Sweeping them into the versioned Archive and moving them back
+    # stored a duplicate pose for every re-run and cost 60-100 s of copying
+    # (2026-10-22). They are left in place and the local copy dropped.
+    identical = {f.name for f in files
+                 if (dest / f.name).exists() and _same_file(f, dest / f.name)}
     superseded = None
-    if any(dest.glob(f"{video_id}*")):
+    if any(dest.glob(f"{video_id}*")) and any(f.name not in identical for f in files):
         try:
             from mousereach.archive.supersede import supersede_video_outputs
             # only=: sweep just the destination files this archive is about to
             # replace. Without the scope, a retry after a partial move sweeps
             # the files its own first attempt archived (2026-08-30).
             superseded = supersede_video_outputs(
-                video_id, dest, only={f.name for f in files})
+                video_id, dest, only={f.name for f in files} - identical)
             if superseded.get("failed"):
                 result["error"] = (
                     "refusing to archive: could not preserve the previous "
@@ -264,13 +288,12 @@ def archive_video(
     #    failure left a video's retry loop failing forever.
     #  - A per-file failure is named in result["error"], never swallowed
     #    into a bare success=False with error=None.
-    from mousereach.watcher.transfer import verify_file_hash
     moved = []
     failed = []
     for f in files:
         dest_path = dest / f.name
         try:
-            if dest_path.exists() and verify_file_hash(f, dest_path, "sha256"):
+            if f.name in identical or (dest_path.exists() and _same_file(f, dest_path)):
                 f.unlink()  # identical copy already archived
                 moved.append(f.name)
                 if verbose:
