@@ -48,7 +48,7 @@ Three more files in `review/` are worth naming, and none of them is a review too
 
 ### How a video is chosen
 
-`load_pending_queue` (`:2756`) picks a video **at random** from the pool of bundles that still need review, and caches that pool (`:2771-2775`). Each "next video" draws from the cache, and the cache is only rebuilt when it runs out (`_load_next_video`, `:2781`). Random is deliberate — it keeps the reviewed set spread across cohorts and dates.
+`load_pending_queue` picks the next video from the pool of bundles that still need review **in the lab's work order** (the order file and panel described in WORK_PRIORITY.md): it takes the highest-priority group that has a video waiting -- for example the first project, or a study's session list within a project -- and picks **at random inside that group** (`_pick_by_priority`, which sorts by `WorkPriority.rank`). Work the order marks "not taken on until nothing else is waiting" (Easy and Flat trays by default) comes after everything else, whatever its group. The pool is cached at launch; each "next video" draws from the cache minus what was already reviewed, and the cache is rebuilt when it runs out (`_load_next_video`). The random draw inside a group is deliberate: it keeps the reviewed set spread across cohorts and dates within that group. The status line says how the video was chosen ("top-priority pick", "priority pick (group N)", or "random pick" when no order is set). Until 2026-10 the pick was random over the whole pool.
 
 A bundle is in the pool when all of these hold (`_needs_review_pool`, `:2658`; `_bundle_needs_review`, `:2598`):
 
