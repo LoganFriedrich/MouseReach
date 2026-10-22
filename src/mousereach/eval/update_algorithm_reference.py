@@ -231,6 +231,11 @@ def update_file(doc_path: Path, results) -> bool:
 
 def main():
     """CLI entry point: update ALGORITHM_REFERENCE.md with current eval data."""
+    # --help answers before any work: generating the CLI reference runs every
+    # command with --help, and this one used to run instead (2026-10-22).
+    import argparse
+    argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     from mousereach.config import require_processing_root
     from .collect_results import collect_all
 

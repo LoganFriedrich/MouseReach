@@ -418,6 +418,12 @@ def cli_rebuild():
 
 def cli_status():
     """CLI entry point for mousereach-index-status."""
+    # --help answers before any work: generating the CLI reference runs every
+    # command with --help, and this one printed the live index instead.
+    import argparse
+    argparse.ArgumentParser(
+        description="Show the pipeline index: how many videos are in each folder "
+                    "and how far each one has got. Read-only.").parse_args()
     from .index import PipelineIndex
 
     index = PipelineIndex()

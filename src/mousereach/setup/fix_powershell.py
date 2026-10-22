@@ -44,6 +44,11 @@ def fix_powershell_policy():
 
 def main():
     """Entry point."""
+    # --help answers before any work: generating the CLI reference runs every
+    # command with --help, and this one used to run instead (2026-10-22).
+    import argparse
+    argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     sys.exit(fix_powershell_policy())
 
 

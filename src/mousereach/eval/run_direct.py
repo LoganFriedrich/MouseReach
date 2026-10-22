@@ -8,6 +8,11 @@ from mousereach.config import require_processing_root
 
 def main():
     """Run direct evaluation of ground truth files."""
+    # --help answers before any work: generating the CLI reference runs every
+    # command with --help, and this one used to run instead (2026-10-22).
+    import argparse
+    argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     try:
         processing_dir = require_processing_root() / "Processing"
 

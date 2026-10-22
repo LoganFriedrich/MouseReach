@@ -10,6 +10,11 @@ from mousereach.config import Paths
 
 
 def main():
+    # --help answers before any work: generating the CLI reference runs every
+    # command with --help, and this one used to run instead (2026-10-22).
+    import argparse
+    argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     PROCESSING = Paths.PROCESSING
     OUTPUT_CSV = PROCESSING.parent / "summary_for_PI.csv"
 

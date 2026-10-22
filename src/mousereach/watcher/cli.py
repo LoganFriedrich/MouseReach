@@ -929,9 +929,16 @@ def main_prioritize():
         mousereach-watch-prioritize CNT0107        Set priority to CNT0107
         mousereach-watch-prioritize --clear        Remove priority
     """
-    args = sys.argv[1:]
-    clear = '--clear' in args
-    positional = [a for a in args if not a.startswith('--')]
+    # Real argument parsing so --help prints this text instead of acting
+    # (generating the CLI reference runs every command with --help).
+    import argparse
+    ap = argparse.ArgumentParser(description=main_prioritize.__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("animal", nargs="?", help="animal id to put first, e.g. CNT0107")
+    ap.add_argument("--clear", action="store_true", help="remove the priority animal")
+    ns = ap.parse_args()
+    clear = ns.clear
+    positional = [ns.animal] if ns.animal else []
 
     from mousereach.config import require_processing_root, AnimalID
     from datetime import datetime
