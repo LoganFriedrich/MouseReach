@@ -1,6 +1,6 @@
 # MouseReach CLI Reference
 
-Generated 2026-08-30 by `python -m mousereach.docs.generate_cli_reference` --
+Generated 2026-10-22 by `python -m mousereach.docs.generate_cli_reference` --
 every entry below is the command's own `--help` output, harvested from
 the installed executables, so this file cannot say something the code
 does not. **Do not edit by hand; rerun the generator.**
@@ -28,6 +28,8 @@ walkthroughs of the review tools themselves.
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
+- [Bulk release check for deep-review bundles (human-invoked; gates on human.outcome)](#bulk-release-check-for-deep-review-bundles-human-invoked-gates-on-human-outcome) -- `mousereach-review-release`
+- [Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)](#pipeline-census-total-workload-per-stage-breakdown-pace-and-eta-headless-json) -- `mousereach-census`
 - [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
 - [Triage auto-resolve (pre-check before human review): if a triaged segment has a matching unified GT entry, lift the flag and copy the GT outcome. Runs as a step in the normal processing pipeline; only segments without GT remain triaged for the napari review tool.](#triage-auto-resolve-pre-check-before-human-review-if-a-triaged-segment-has-a-matching-unified-gt-entry-lift-the-flag-and-copy-the-gt-outcome-runs-as-a-step-in-the-normal-processing-pipeline-only-segments-without-gt-remain-triaged-for-the-napari-review-tool) -- `mousereach-resolve-triage-from-gt`
@@ -45,10 +47,10 @@ walkthroughs of the review tools themselves.
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
 - [Database Sync - Automatic sync to central connectome database](#database-sync-automatic-sync-to-central-connectome-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
 - [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`
-- [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
+- [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-reconcile`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
 - [Archive migration - One-time Sort/ -> project/cohort restructure](#archive-migration-one-time-sort-project-cohort-restructure) -- `mousereach-migrate-archive`
-- [ASPA reprocessing tools](#aspa-reprocessing-tools) -- `mousereach-aspa-import`, `mousereach-aspa-feed`, `mousereach-aspa-sync`, `mousereach-aspa-compare`
+- [ASPA reprocessing tools](#aspa-reprocessing-tools) -- `mousereach-aspa-import`, `mousereach-aspa-feed`, `mousereach-aspa-sync`, `mousereach-aspa-compare`, `mousereach-session-coverage`, `mousereach-legacy-inventory`
 
 ## Main launcher
 
@@ -162,9 +164,20 @@ Machine identification priority:
 When a role is identified, the wizard pre-fills defaults from the
 matching lab profile. You can override any default during setup.
 
+The wizard asks, in order: the data repository (nas_drive); the shared
+pipeline folder (nas_root -- the folder holding Unanalyzed, Processing,
+Analyzed and pipeline_versions.json, the same one on every machine); the
+local processing root; and the watcher settings. It then offers to create
+the pipeline folders inside the shared pipeline folder.
+
+Saving writes only those settings and keeps every other one already in the
+config file (backup folders, watcher settings it does not ask about). There
+is no guessed pipeline folder: with nas_root unset, every tool that needs
+the shared folders stops and says so.
+
 Configuration is saved to: ~\.mousereach\config.json
 Identity file: ~\.mousereach\machine_role.json
-Lab profiles file: <path>
+Lab profiles file: <repo>\src\mousereach\setup\lab_profiles.json
 ```
 
 ### `mousereach-fix-powershell`
@@ -198,19 +211,19 @@ options:
 ============================================================
 MouseReach Pipeline Index Status (v2.0 - Single Folder Architecture)
 ============================================================
-Index file: <processing_root>\pipeline_index.json
+Index file: <repo>_Pipeline\pipeline_index.json
 Exists: True
 Version: 2.0
-Generated: 2026-08-30T20:42:42.205717
-Total videos: 882
+Generated: 2026-10-22T03:48:25.860693
+Total videos: 1517
 
 Videos by folder:
-  Processing: 613
+  Processing: 1515
 
 Validation status:
-  SEG: 0 validated, 135 need review, 31 not started
-  REACH: 0 validated, 82 need review, 800 not started
-  OUTCOME: 0 validated, 82 need review, 800 not started
+  SEG: 0 validated, 303 need review, 0 not started
+  REACH: 0 validated, 42 need review, 1475 not started
+  OUTCOME: 0 validated, 42 need review, 1475 not started
 
 Stale folders (need refresh): ['Processing']
 ============================================================
@@ -677,6 +690,41 @@ options:
                         (slower: decodes each loaded video over the NAS).
 ```
 
+## Bulk release check for deep-review bundles (human-invoked; gates on human.outcome)
+
+### `mousereach-review-release`
+
+```
+usage: mousereach-review-release [-h] [--clear]
+
+List deep-review bundles by review completeness (human.outcome per segment);
+--clear writes the release marker for fully-answered bundles so the watcher's
+return scan re-injects them.
+
+options:
+  -h, --help  show this help message and exit
+  --clear     write {stem}_deep_review_cleared.json for every COMPLETE bundle
+              (all segments carry a human outcome). Without this flag, list
+              only.
+```
+
+## Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)
+
+### `mousereach-census`
+
+```
+usage: mousereach-census [-h] [--json] [--out OUT] [--days DAYS]
+
+Pipeline census: total workload, per-stage breakdown, pace and completion
+estimates.
+
+options:
+  -h, --help   show this help message and exit
+  --json       emit the full machine-readable census on stdout
+  --out OUT    also write the JSON to this file
+  --days DAYS  trailing window for pace measurement (default 14)
+```
+
 ## Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)
 
 ### `mousereach-route-to-queue`
@@ -706,7 +754,38 @@ What it does, in order:
      given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
      that is what the triage review tool walks,
   3. moves the video's bundle into the queue with a routing manifest
-     (review_gate.route_to_queue), updating the local watcher database.
+     (review_gate.route_to_queue), updating the watcher database.
+
+THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
+-----------------------------------------------------------------------------
+The database is resolved exactly as the daemon resolves it
+(db_location.resolve_watcher_db_path: the configured watcher.db_path, else
+<processing_root>/watcher.db) and printed as "[watcher db] <path>", like every
+other watcher command. This command used to open a bare WatcherDB(), which
+ignores the db_path override: every state write went to an unused decoy
+database while the bundles moved on disk, and the live database never learned
+of any of it.
+
+Routing is REFUSED (exit 1, nothing flagged, nothing moved) when that database
+file does not exist, or exists but cannot be opened. WHY refuse rather than
+"route on disk only": a video moved into a queue while the database still says
+'archived' leaves disk and database disagreeing for that video, and a worklist
+does it for every video at once. A missing file is not created either --
+WatcherDB's constructor would build an empty database, which is just a new
+decoy. Fix the configuration (mousereach-setup) or start the watcher once so
+its database exists, then route again.
+
+A VIDEO THE WATCHER IS WORKING ON IS DEFERRED
+---------------------------------------------
+A video whose watcher state is dlc_queued, dlc_running, dlc_complete,
+processing, processed or archiving is not flagged and not moved; it is
+reported as "wait" (deferred: true with --json). WHY: this command writes the
+daemon's live database. Setting 'triage' underneath a running pipeline makes
+the pipeline's own 'processing' -> 'processed' write an illegal transition, and
+the daemon marks the video failed with fresh outputs in Processing and old ones
+in the queue; a processed or archiving video's Analyzed copy is older than the
+outputs the daemon is about to archive, so a reviewer would judge stale data.
+A deferral is not a failure: offer the video again on a later run.
 
 Usage:
     mousereach-route-to-queue VIDEO_ID --queue triage --reason "bench disagreement" --flag-segments 3,7
@@ -714,8 +793,14 @@ Usage:
     mousereach-route-to-queue --worklist worklist.json --queue triage --reason "..."
         worklist.json: [{"video_id": "...", "segment_nums": [3, 7]}, ...]
 
-Exit code 0 if every requested video was routed (or was already not in
-Analyzed), 1 otherwise. ASCII-only output.
+Exit codes:
+    0  every requested video was routed, was already not in Analyzed, or was
+       deferred because the watcher is working on it
+    1  some video could not be routed, OR routing was refused because the
+       watcher database could not be resolved, does not exist, or cannot be
+       opened (then no video was touched)
+ASCII-only output. With --json, stdout carries only the JSON results; the
+"[watcher db]" line and any refusal message go to stderr.
 
 positional arguments:
   video_id              e.g. 20250624_CNT0115_P2
@@ -1192,288 +1277,8 @@ specified directory or the MouseReach processing root.
 ======================================================================
 GT FILES FOUND
 ======================================================================
-Unified GT: 17
-  - 20250625_CNT0102_P4_unified_ground_truth.json
-  - 20250625_CNT0106_P2_unified_ground_truth.json
-  - 20250711_CNT0216_P1_unified_ground_truth.json
-  - 20250715_CNT0209_P2_unified_ground_truth.json
-  - 20250718_CNT0206_P1_unified_ground_truth.json
-  - 20250718_CNT0214_P1_unified_ground_truth.json
-  - 20250806_CNT0316_P3_unified_ground_truth.json
-  - 20250811_CNT0310_P2_unified_ground_truth.json
-  - 20250812_CNT0314_P2_unified_ground_truth.json
-  - 20250819_CNT0104_P4_unified_ground_truth.json
-  - 20250912_CNT0210_P2_unified_ground_truth.json
-  - 20250919_CNT0311_P2_unified_ground_truth.json
-  - 20251022_CNT0402_P4_unified_ground_truth.json
-  - 20251023_CNT0407_P3_unified_ground_truth.json
-  - 20251027_CNT0404_P4_unified_ground_truth.json
-  - 20251224_CNT0403_P3_unified_ground_truth.json
-  - 20251224_CNT0413_P2_unified_ground_truth.json
+Unified GT: 0
 Reach GT: 0
-
-======================================================================
-EVALUATING: 20250625_CNT0102_P4_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250625_CNT0102_P4_reaches.json
-======================================================================
-EVALUATING: 20250625_CNT0106_P2_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250625_CNT0106_P2_reaches.json
-======================================================================
-EVALUATING: 20250711_CNT0216_P1_unified_ground_truth.json
-======================================================================
-----------------------------------------------------------------------
-SEGMENT BOUNDARIES
-----------------------------------------------------------------------
-  GT boundaries: 21
-  Algorithm boundaries: 21
-  Matched: 20/21 (95.2%)
-  Timing: 10/20 exact, 14 +/-1fr, 14 +/-2fr
-  Average error: -1.2 frames
-
-----------------------------------------------------------------------
-OUTCOMES
-----------------------------------------------------------------------
-  GT outcomes: 20
-  Algorithm outcomes: 20
-  Correct: 16/20 (80.0%)
-  Misclassified (4):
-    Segment 1: GT=displaced_sa, Algo=retrieved
-    Segment 10: GT=displaced_sa, Algo=triaged
-    Segment 17: GT=displaced_sa, Algo=triaged
-    Segment 18: GT=displaced_sa, Algo=retrieved
-
-----------------------------------------------------------------------
-REACHES
-----------------------------------------------------------------------
-  GT reaches: 351
-  Algorithm reaches: 358
-
-  RESULTS (tolerance=10 frames):
-    True Positives (matches): 350
-    False Negatives (missed): 1
-    False Positives (extra): 8
-
-    Precision: 97.8%
-    Recall:    99.7%
-    F1 Score:  0.99
-
-  TIMING ACCURACY:
-    Start frame accuracy:
-      Exact:    254/350 (72.6%)
-      +/-1 frame: 323/350 (92.3%)
-      +/-2 frame: 340/350 (97.1%)
-      +/-5 frame: 350/350 (100.0%)
-    End frame accuracy:
-      Exact:    264/350 (75.4%)
-      +/-1 frame: 299/350 (85.4%)
-      +/-2 frame: 330/350 (94.3%)
-      +/-5 frame: 348/350 (99.4%)
-    Average start error: -0.3 frames
-    Average end error:   +0.5 frames
-
-  MISSED REACHES (algorithm didn't detect):
-    Reach 359: frames 9845-9846 (duration=1, extent=?)
-    Missed reach durations: avg=1.0, min=1, max=1
-
-  FALSE POSITIVES (algorithm detected, not in GT):
-    Reach 36: frames 2940-2943
-    Reach 98: frames 9764-9766
-    Reach 99: frames 9856-9860
-    Reach 114: frames 11234-11236
-    Reach 155: frames 13995-14000
-    Reach 165: frames 15187-15191
-    Reach 191: frames 17577-17580
-    Reach 237: frames 21616-21620
-
-======================================================================
-EVALUATING: 20250715_CNT0209_P2_unified_ground_truth.json
-======================================================================
-----------------------------------------------------------------------
-SEGMENT BOUNDARIES
-----------------------------------------------------------------------
-  GT boundaries: 21
-  Algorithm boundaries: 21
-  Matched: 21/21 (100.0%)
-  Timing: 0/21 exact, 7 +/-1fr, 13 +/-2fr
-  Average error: -2.3 frames
-
-----------------------------------------------------------------------
-OUTCOMES
-----------------------------------------------------------------------
-  GT outcomes: 20
-  Algorithm outcomes: 20
-  Correct: 17/20 (85.0%)
-  Misclassified (3):
-    Segment 4: GT=retrieved, Algo=triaged
-    Segment 17: GT=displaced_outside, Algo=retrieved
-    Segment 19: GT=displaced_sa, Algo=triaged
-
-----------------------------------------------------------------------
-REACHES
-----------------------------------------------------------------------
-  GT reaches: 316
-  Algorithm reaches: 323
-
-  RESULTS (tolerance=10 frames):
-    True Positives (matches): 312
-    False Negatives (missed): 4
-    False Positives (extra): 11
-
-    Precision: 96.6%
-    Recall:    98.7%
-    F1 Score:  0.98
-
-  TIMING ACCURACY:
-    Start frame accuracy:
-      Exact:    170/312 (54.5%)
-      +/-1 frame: 235/312 (75.3%)
-      +/-2 frame: 298/312 (95.5%)
-      +/-5 frame: 312/312 (100.0%)
-    End frame accuracy:
-      Exact:    241/312 (77.2%)
-      +/-1 frame: 274/312 (87.8%)
-      +/-2 frame: 300/312 (96.2%)
-      +/-5 frame: 311/312 (99.7%)
-    Average start error: -0.7 frames
-    Average end error:   +0.4 frames
-
-  MISSED REACHES (algorithm didn't detect):
-    Reach 2: frames 238-241 (duration=3, extent=?)
-    Reach 72: frames 5861-5862 (duration=1, extent=?)
-    Reach 338: frames 11391-11392 (duration=1, extent=?)
-    Reach 339: frames 21427-21428 (duration=1, extent=?)
-    Missed reach durations: avg=1.5, min=1, max=3
-
-  FALSE POSITIVES (algorithm detected, not in GT):
-    Reach 51: frames 3976-3979
-    Reach 54: frames 5233-5239
-    Reach 63: frames 5843-5862
-    Reach 84: frames 8361-8364
-    Reach 104: frames 10430-10434
-    Reach 165: frames 17209-17211
-    Reach 193: frames 22507-22510
-    Reach 205: frames 25672-25679
-    Reach 219: frames 26309-26311
-    Reach 220: frames 26318-26320
-    ... and 1 more
-
-======================================================================
-EVALUATING: 20250718_CNT0206_P1_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250718_CNT0206_P1_reaches.json
-======================================================================
-EVALUATING: 20250718_CNT0214_P1_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250718_CNT0214_P1_reaches.json
-======================================================================
-EVALUATING: 20250806_CNT0316_P3_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250806_CNT0316_P3_reaches.json
-======================================================================
-EVALUATING: 20250811_CNT0310_P2_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250811_CNT0310_P2_reaches.json
-======================================================================
-EVALUATING: 20250812_CNT0314_P2_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250812_CNT0314_P2_reaches.json
-======================================================================
-EVALUATING: 20250819_CNT0104_P4_unified_ground_truth.json
-======================================================================
-----------------------------------------------------------------------
-SEGMENT BOUNDARIES
-----------------------------------------------------------------------
-  GT boundaries: 21
-  Algorithm boundaries: 21
-  Matched: 21/21 (100.0%)
-  Timing: 11/21 exact, 15 +/-1fr, 19 +/-2fr
-  Average error: -0.8 frames
-
-----------------------------------------------------------------------
-OUTCOMES
-----------------------------------------------------------------------
-  GT outcomes: 20
-  Algorithm outcomes: 20
-  Correct: 19/20 (95.0%)
-  Misclassified (1):
-    Segment 1: GT=displaced_sa, Algo=triaged
-
-----------------------------------------------------------------------
-REACHES
-----------------------------------------------------------------------
-  GT reaches: 47
-  Algorithm reaches: 64
-
-  RESULTS (tolerance=10 frames):
-    True Positives (matches): 46
-    False Negatives (missed): 1
-    False Positives (extra): 18
-
-    Precision: 71.9%
-    Recall:    97.9%
-    F1 Score:  0.83
-
-  TIMING ACCURACY:
-    Start frame accuracy:
-      Exact:    29/46 (63.0%)
-      +/-1 frame: 34/46 (73.9%)
-      +/-2 frame: 41/46 (89.1%)
-      +/-5 frame: 46/46 (100.0%)
-    End frame accuracy:
-      Exact:    41/46 (89.1%)
-      +/-1 frame: 43/46 (93.5%)
-      +/-2 frame: 46/46 (100.0%)
-      +/-5 frame: 46/46 (100.0%)
-    Average start error: -0.8 frames
-    Average end error:   +0.2 frames
-
-  MISSED REACHES (algorithm didn't detect):
-    Reach 53: frames 17911-17912 (duration=1, extent=?)
-    Missed reach durations: avg=1.0, min=1, max=1
-
-  FALSE POSITIVES (algorithm detected, not in GT):
-    Reach 7: frames 2015-2021
-    Reach 8: frames 2060-2066
-    Reach 10: frames 2735-2741
-    Reach 13: frames 3952-3956
-    Reach 14: frames 3979-3981
-    Reach 18: frames 4618-4620
-    Reach 22: frames 4782-4784
-    Reach 24: frames 5836-5838
-    Reach 28: frames 7985-7989
-    Reach 34: frames 10251-10256
-    ... and 8 more
-
-======================================================================
-EVALUATING: 20250912_CNT0210_P2_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250912_CNT0210_P2_reaches.json
-======================================================================
-EVALUATING: 20250919_CNT0311_P2_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20250919_CNT0311_P2_reaches.json
-======================================================================
-EVALUATING: 20251022_CNT0402_P4_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20251022_CNT0402_P4_reaches.json
-======================================================================
-EVALUATING: 20251023_CNT0407_P3_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20251023_CNT0407_P3_reaches.json
-======================================================================
-EVALUATING: 20251027_CNT0404_P4_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20251027_CNT0404_P4_reaches.json
-======================================================================
-EVALUATING: 20251224_CNT0403_P3_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20251224_CNT0403_P3_reaches.json
-======================================================================
-EVALUATING: 20251224_CNT0413_P2_unified_ground_truth.json
-======================================================================
-  WARNING: No algorithm file found: 20251224_CNT0413_P2_reaches.json
 ```
 
 ### `mousereach-update-algo-ref`
@@ -1515,22 +1320,20 @@ OUTPUT FILES:
 MOUSEREACH SUMMARY
 ============================================================
 
-Processed 69 videos
-Total segments (trials): 1380
-Total reaches detected: 7677
+Processed 9 videos
+Total segments (trials): 180
+Total reaches detected: 1192
 
 OUTCOME BREAKDOWN:
 ----------------------------------------
-  displaced_outside   :    1 (  0.1%)
-  displaced_sa        :  481 ( 34.9%)
-  retrieved           :   90 (  6.5%)
-  triaged             :   63 (  4.6%)
-  uncertain           :    1 (  0.1%)
-  untouched           :  744 ( 53.9%)
+  displaced_sa        :   46 ( 25.6%)
+  retrieved           :   13 (  7.2%)
+  triaged             :   28 ( 15.6%)
+  untouched           :   93 ( 51.7%)
 
-OVERALL SUCCESS RATE: 6.5%
+OVERALL SUCCESS RATE: 7.2%
 
-CSV saved to: <processing_root>\summary_for_PI.csv
+CSV saved to: <repo>_Pipeline\summary_for_PI.csv
 ============================================================
 ```
 
@@ -1821,47 +1624,14 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 ### `mousereach-watch-status`
 
 ```
-[watcher db] <processing_root>\watcher_local.db
-======================================================================
-MouseReach Watcher Status
-======================================================================
+usage: mousereach-watch-status [--by-animal] [--json] [--log N]
 
-Collages:
-  Total:        0
-  Discovered:   0
-  Validated:    0
-  Stable:       0
-  Cropping:     0
-  Cropped:      0
-  Quarantined:  0
-  Failed:       0
+Show this node's pipeline state: counts by state, recent activity, and the
+status every node last reported.
 
-Videos:
-  Total:        1863
-  Discovered:   0
-  Validated:    0
-  DLC Queued:   0
-  DLC Running:  0
-  DLC Complete: 1
-  Processing:   64
-  Processed:    295
-  Archived:     85
-  Outdated:     1199
-  Crystallized: 0
-  Quarantined:  0
-  Failed:       0
-
-Recent Activity (last 10 entries):
-  [2026-08-31 01:48:43] 20260721_CNT0506_P4 - archive: started
-  [2026-08-31 01:48:43] 20260721_CNT0506_P4 - archive: failed (Not ready: seg, reach, outcome not validated)
-  [2026-08-31 01:48:42] 20260721_CNT0507_P4 - archive: started
-  [2026-08-31 01:48:42] 20260721_CNT0507_P4 - archive: failed (Not ready: seg, reach, outcome not validated)
-  [2026-08-31 01:48:41] 20260721_CNT0505_P4 - archive: started
-  [2026-08-31 01:48:41] 20260721_CNT0505_P4 - archive: failed (Not ready: seg, reach, outcome not validated) [0.0s]
-  [2026-08-31 01:48:40] 20260724_CNT0508_P2 - archive: started
-  [2026-08-31 01:48:40] 20260724_CNT0508_P2 - archive: failed (Not ready: seg, reach, outcome not validated)
-  [2026-08-31 01:48:39] 20260724_CNT0504_P2 - archive: started
-  [2026-08-31 01:48:39] 20260724_CNT0504_P2 - archive: failed (Not ready: seg, reach, outcome not validated)
+  --by-animal   Per-animal breakdown with QC.
+  --json        JSON output.
+  --log N       Show the last N log entries (default 10).
 ```
 
 ### `mousereach-watch-reprocess`
@@ -1996,29 +1766,27 @@ Examples:
 ### `mousereach-version-check`
 
 ```
-[watcher db] <processing_root>\watcher_local.db
-======================================================================
-Pipeline Version Compliance Report
-======================================================================
+usage: mousereach-version-check [--mark] [--init]
 
-Current pipeline versions:
-  mousereach          : 2.16.0-dev
-  dlc_scorer          : DLC_resnet101_MPSAOct27shuffle3_100000
-  segmenter           : 2.2.3
-  reach_detector      : 8.1.0
-  outcome_detector    : 6.1.0
-  assignment          : 2.1.0
-  kinematic_extractor : 2.1.0
-  Last updated: 2026-08-29T08:31:26.610748
+Compare each archived video's processing manifest with the declared current
+versions (pipeline_versions.json) and report which videos are out of date.
 
-Archived video status:
-  Total archived:     85
-  Current (up-to-date): 85
-  Outdated:           0
-  Crystallized:       0
-  Unsupported tray:   0 (E/F sessions -- not this pipeline's work)
-  No manifest:        0
-  Errors:             0
+  --mark   Also mark outdated videos for reprocessing.
+  --init   Create pipeline_versions.json from the installed code's versions.
+```
+
+### `mousereach-reconcile`
+
+```
+usage: mousereach-reconcile [-h] [--json] [--all]
+
+Check every single-animal video against the definition of done, from the files
+alone. Read-only.
+
+options:
+  -h, --help  show this help message and exit
+  --json      print everything as JSON
+  --all       also list every video that is fine, and every leftover copy
 ```
 
 ### `mousereach-aspa-import-collages`
@@ -2236,45 +2004,6 @@ options:
                         takes them).
 ```
 
-**Feeding only the animals you care about.** A cohort is how the archive is
-filed, not the unit anyone wants to process. A study is usually built from some
-of the animals in several cohorts, so feeding whole cohorts to reach them pulls
-in every other animal -- and each of those costs the same processing hours and
-then lands in the same review queues for a person to work through. Restricting
-the run is the only place that cost can be avoided:
-
-```
-mousereach-aspa-feed --all --subjects-file my_animals.txt --dry-run
-```
-
-Which animals a lab wants is a lab fact, so no list ships with this tool; keep
-yours wherever you keep your own records.
-
-The run reports back on the list itself. Any animal you named that produced no
-videos is printed by name at the end, because a typo in a list is otherwise
-indistinguishable from an animal with no data -- and so is a cohort that this
-run did not look at (if you used `--cohort`, try `--all`). Files whose names
-carry no readable animal id are reported too, rather than quietly counted as
-"does not match".
-
-**Where it reads and writes (since 2026-10-21).** It reads ASPA's cuts from the
-historical archive (`<NAS root>/Archive/historical/ASPA/{cohort}/Single_Animal`) and
-copies only the videos into the shared singles folder (`Unanalyzed/Single_Animal`),
-renamed into pipeline form (`20220602_H09_P1.mp4` -> `20220602_ASPA0809_P1.mp4`),
-where any GPU node takes them. It used to read a pipeline root retired in February,
-copy into one node's private queue, and keep ASPA's names, which the intake rejects.
-A video the pipeline already has (in the shared folder, claimed by a node, waiting
-posed, or analysed) is skipped and the reason printed.
-
-**Feeding listed sessions.** `--sessions-file` takes one session per line
-(`{date}_{animal}_{tray}{position}`, either naming) and names every listed session
-with no cut in the source. Use it for sessions that survive only as ASPA's cut:
-
-```
-mousereach-aspa-feed --sessions-file sessions_without_recording.txt --dry-run
-mousereach-aspa-feed --sessions-file sessions_without_recording.txt
-```
-
 ### `mousereach-aspa-sync`
 
 ```
@@ -2307,5 +2036,43 @@ options:
   --db-path PATH       Override ASPA.db path
   --min-overlap RATIO  Minimum frame overlap ratio to count as a match
                        (default: 0.3)
+```
+
+### `mousereach-session-coverage`
+
+```
+usage: mousereach-session-coverage [-h] --sessions-file SESSIONS_FILE
+                                   [--out OUT]
+
+Where each session of a list is in the pipeline, from shared storage only.
+Read-only.
+
+options:
+  -h, --help            show this help message and exit
+  --sessions-file SESSIONS_FILE
+                        One {date}_{animal}_{tray}{position} per line (lab or
+                        pipeline naming), '#' comments allowed.
+  --out OUT             Write the result as JSON here (default: beside the
+                        list, <list>.coverage.json).
+```
+
+### `mousereach-legacy-inventory`
+
+```
+usage: mousereach-legacy-inventory [-h] --from OLD_ROOT [--bring-in]
+                                   [--limit LIMIT] [--label LABEL]
+
+List every video on an old storage root, say whether the pipeline has it, and
+(with --bring-in) copy what is missing into the stage folder that picks it up.
+The old storage is only read.
+
+options:
+  -h, --help       show this help message and exit
+  --from OLD_ROOT  The old storage root to inventory (only read).
+  --bring-in       Copy every 'only here' pipeline video to its stage folder,
+                   verified. Without it, only the report is written.
+  --limit LIMIT    With --bring-in: copy at most this many files this run.
+  --label LABEL    Name for the report files (default: from the old root's
+                   name).
 ```
 
