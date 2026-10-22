@@ -272,6 +272,17 @@ Machine identification priority:
 When a role is identified, the wizard pre-fills defaults from the
 matching lab profile. You can override any default during setup.
 
+The wizard asks, in order: the data repository (nas_drive); the shared
+pipeline folder (nas_root -- the folder holding Unanalyzed, Processing,
+Analyzed and pipeline_versions.json, the same one on every machine); the
+local processing root; and the watcher settings. It then offers to create
+the pipeline folders inside the shared pipeline folder.
+
+Saving writes only those settings and keeps every other one already in the
+config file (backup folders, watcher settings it does not ask about). There
+is no guessed pipeline folder: with nas_root unset, every tool that needs
+the shared folders stops and says so.
+
 Configuration is saved to: {CONFIG_FILE}
 Identity file: {MACHINE_ROLE_FILE}
 Lab profiles file: {LAB_PROFILES_FILE}

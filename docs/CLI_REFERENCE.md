@@ -167,15 +167,6 @@ Identity file: ~\.mousereach\machine_role.json
 Lab profiles file: <path>
 ```
 
-The wizard asks, in order: the data repository (`nas_drive`), the shared pipeline
-folder (`nas_root`, the folder holding `Unanalyzed`, `Processing`, `Analyzed` and
-`pipeline_versions.json`), the local processing root, and the watcher settings. It
-then offers to create the pipeline folders in the shared pipeline folder. Saving
-writes only those settings into the config file and keeps every other one (since
-2026-10-22; before that a save deleted `nas_root`, the backup folders and anything
-else it did not ask about). There is no guessed pipeline folder: with `nas_root`
-unset, tools that need shared folders stop and say so.
-
 ### `mousereach-fix-powershell`
 
 ```
