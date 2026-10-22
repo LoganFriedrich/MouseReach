@@ -1564,6 +1564,71 @@ class DLCOrchestrator(BaseOrchestrator):
             conn.close()
         return [r[0] for r in rows]
 
+    def _split_gone_singles(self, rows):
+        """Return the 'validated' rows whose video is still where the adopt
+        handler takes it from; set the others aside as gone, as the handler
+        would (unresolvable, single_claim.LEFT_FOLDER_REASON -- re-driven if the
+        file comes back). Never raises.
+
+        The places are exactly the handler's: this node's own claim folder,
+        its local Processing and DLC queue, the top of the shared singles
+        folder (one listing each), and the row's recorded path where it is not
+        in the processing server's intake. When a place cannot be listed,
+        nothing is set aside: every row is offered, as before.
+        """
+        if not rows:
+            return rows
+        names = set()
+        try:
+            door = Paths.SINGLE_ANIMAL_OUTPUT
+            if not door or not Path(door).is_dir():
+                return rows             # no shared folder to judge by: offer all
+            places = [Paths.PROCESSING, Paths.DLC_QUEUE, door,
+                      single_claim.host_dir(getattr(self, 'hostname', None))]
+            for d in places:
+                if not d or not Path(d).is_dir():
+                    continue
+                with os.scandir(d) as it:
+                    names.update(e.name for e in it if e.is_file())
+        except OSError as e:
+            logger.debug(f"could not list where singles are taken from ({e}); "
+                         f"offering every validated row")
+            return rows
+        from mousereach.watcher.locate import is_in_staging
+        keep, gone = [], []
+        for v in rows:
+            if f"{v['video_id']}.mp4" in names:
+                keep.append(v)
+                continue
+            raw = v.get('current_path')
+            try:
+                if raw and not is_in_staging(Path(raw)) and Path(raw).is_file():
+                    keep.append(v)
+                    continue
+            except OSError:
+                keep.append(v)          # cannot tell: leave it to the handler
+                continue
+            gone.append(v)
+        if gone:
+            try:
+                held = single_claim.inflight_ids()
+            except Exception:
+                held = {}
+            for v in gone:
+                holder = held.get(v['video_id'])
+                where = (f"{holder} took it for pose (it is in "
+                         f"{single_claim.INFLIGHT_DIR}/{holder})"
+                         if holder and holder != self.hostname
+                         else "the file is no longer there")
+                try:
+                    self.db.mark_unresolvable(
+                        v['video_id'], f"{single_claim.LEFT_FOLDER_REASON}: {where}")
+                except Exception as e:
+                    logger.debug(f"could not set aside {v['video_id']} ({e})")
+            logger.info(f"{len(gone)} shared video(s) already taken by another node "
+                        f"or gone; set aside without using a work slot")
+        return keep
+
     def _adopt_single_for_dlc(self, work: dict):
         """Bring a video someone left in the shared singles folder onto this
         node and queue it for pose.
@@ -2581,11 +2646,22 @@ class DLCOrchestrator(BaseOrchestrator):
         # unresolvable, a second copy of another node's claim likewise. So a
         # raced row costs one poll, once, not a poll per cycle for ever.
         # (tests/test_adopt_single_offers_rows_with_stale_paths.py)
+        #
+        # One poll per raced row stopped being small once nodes shared what they
+        # cut (2026-10-21): every node registers every shared video, and each
+        # video another node takes first cost every other node one whole work
+        # cycle -- twelve in a row on one node that night while 337 recordings
+        # waited to be cut. So the rows are first checked against a LISTING of
+        # the places the handler takes a video from (_split_gone_singles: the
+        # same places locate_video_file searches, plus this node's own claim
+        # folder), and the ones whose file is in none of them are set aside in
+        # one pass, exactly as the handler would have, without a work slot.
         if self._singles_braked():
             videos = []
         else:
             videos = [v for v in self.db.get_videos_in_state('validated')
                       if not self._single_claim_backoff_active(v['video_id'])]
+            videos = self._split_gone_singles(videos)
         pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
                                     allow_deferred=admit_deferred)
         if pick is not None:

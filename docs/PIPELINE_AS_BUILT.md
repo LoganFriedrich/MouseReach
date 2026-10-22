@@ -1755,3 +1755,17 @@ this lab's layout -- it looks for `Analyzed/CNTnn/<video>.mp4`, while videos liv
 bundle or the durable store. Kept as is (the index follows the same rule); worth a look.
 
 Tests: `tests/test_version_scan_from_listings.py`.
+
+## Update 2026-10-21 (night): a shared video another node took costs no work slot
+
+Every GPU node registers every video it sees in the shared singles folder ('validated').
+When another node takes one first, the file is gone; the adopt handler found that out and
+set the row aside -- one row per work cycle. Once nodes shared what they cut (keep 2, share
+the rest), that became routine: one node spent twelve cycles in a row on it on 2026-10-21
+while 337 recordings waited to be cut. Now, before choosing, the node lists the places the
+handler takes a video from -- its own claim folder, its local Processing and DLC queue, the
+top of the shared folder -- and sets aside, in one pass, every 'validated' row whose file is
+in none of them (unresolvable, "gone from the shared singles folder", re-driven if the file
+comes back), exactly as the handler would. A row whose file IS in the shared folder is offered
+whatever its recorded path says (`DLCOrchestrator._split_gone_singles`). With no shared folder
+configured, every row is offered as before.

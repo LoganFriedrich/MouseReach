@@ -892,3 +892,35 @@ def test_a_database_error_never_gives_back_on_pausing(env):
     a.db.get_video = broken
     assert a._give_back_unstarted() == 0
     assert mine.is_file()
+
+
+# ------------------------------- a shared video another node took costs no work slot
+
+def test_a_shared_video_another_node_took_is_set_aside_without_a_work_slot(env):
+    """Every node registers every shared video; each one another node takes
+    first used to cost every other node a whole work cycle (twelve in a row on
+    one node on 2026-10-21 while recordings waited to be cut)."""
+    a = _as(env, _node(env, HOST))
+    taken = single_claim.claim_single(_drop(env), OTHER)          # OTHER took it
+    _row(a, VID, "validated", env.door / f"{VID}.mp4")
+    waiting = _drop(env, vid=VID2)                                # still there
+    _row(a, VID2, "validated", waiting)
+    mine = single_claim.claim_single(_drop(env, vid=VID3), HOST)  # this node's own claim
+    _row(a, VID3, "validated", env.door / f"{VID3}.mp4")
+
+    kept = a._split_gone_singles(a.db.get_videos_in_state("validated"))
+    assert sorted(v["video_id"] for v in kept) == [VID2, VID3]
+    row = a.db.get_video(VID)
+    assert row["state"] == "unresolvable"
+    assert row["error_message"].startswith(single_claim.LEFT_FOLDER_REASON)
+    assert OTHER in row["error_message"]
+    assert taken.is_file() and mine.is_file()
+
+
+def test_a_video_in_this_nodes_own_queue_is_still_offered(env):
+    a = _as(env, _node(env, HOST))
+    q = a.queue / f"{VID}.mp4"
+    q.write_bytes(b"queued")
+    _row(a, VID, "validated", q)
+    assert [v["video_id"] for v in a._split_gone_singles(
+        a.db.get_videos_in_state("validated"))] == [VID]

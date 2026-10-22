@@ -180,6 +180,7 @@ def test_the_work_loop_actually_selects_it(node, monkeypatch):
     node.db._by_state = {"validated": [VID]}
     node.db._rows[VID] = {"video_id": VID, "state": "validated",
                           "animal_id": "ABC0101"}
+    (node.shared / f"{VID}.mp4").write_bytes(b"a video")    # it IS in the shared folder
 
     work = node._select_work_item()
     assert work is not None, "a video in the shared folder must be selected as work"

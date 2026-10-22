@@ -21,8 +21,28 @@ The cost of leaving the bucket unfiltered is bounded and self-clearing: every ha
 path takes the row out of 'validated' -- finished or held rows are recorded as such
 (and cost no poll, the handler returns True), a vanished file is marked unresolvable,
 a second copy of another node's claim likewise. See test_singles_intake_claim.py.
+
+Since 2026-10-21 the bucket IS checked against a listing of the places the handler
+takes a video from (the shared folder among them) -- never against the recorded path
+alone -- so a row whose file is in the shared folder is offered whatever its recorded
+path says, which is what these tests pin. They put the file in a test shared folder.
 """
 import pytest
+
+import mousereach.watcher.orchestrator as orch
+
+
+@pytest.fixture(autouse=True)
+def shared(tmp_path, monkeypatch):
+    """A test shared singles folder (never the real share)."""
+    door = tmp_path / "Single_Animal"
+    door.mkdir()
+    for name, d in (("SINGLE_ANIMAL_OUTPUT", door), ("DLC_QUEUE", tmp_path / "q"),
+                    ("PROCESSING", tmp_path / "p")):
+        if d != door:
+            d.mkdir()
+        monkeypatch.setattr(orch.Paths, name, d)
+    return door
 
 from mousereach.watcher.orchestrator import DLCOrchestrator
 
@@ -63,7 +83,8 @@ def _node(rows):
     return node
 
 
-def test_a_validated_row_whose_recorded_path_is_another_nodes_is_still_offered():
+def test_a_validated_row_whose_recorded_path_is_another_nodes_is_still_offered(shared):
+    (shared / "20240101_ABC0101_P1.mp4").write_bytes(b"v")
     node = _node([
         {"video_id": "20240101_ABC0101_P1", "state": "validated",
          "source_path": r"A:\Behavior\MouseReach_Pipeline\DLC_Queue\20240101_ABC0101_P1.mp4",
@@ -78,7 +99,8 @@ def test_a_validated_row_whose_recorded_path_is_another_nodes_is_still_offered()
     assert work["id"] == "20240101_ABC0101_P1"
 
 
-def test_a_validated_row_with_no_recorded_path_at_all_is_offered():
+def test_a_validated_row_with_no_recorded_path_at_all_is_offered(shared):
+    (shared / "20240101_ABC0102_P1.mp4").write_bytes(b"v")
     node = _node([
         {"video_id": "20240101_ABC0102_P1", "state": "validated",
          "source_path": None, "current_path": None, "animal_id": "ABC0102"},
