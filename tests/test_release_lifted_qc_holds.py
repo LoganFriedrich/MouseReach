@@ -178,3 +178,42 @@ def test_identical_copies_already_in_the_posed_folder_stay_the_one_copy(tmp_path
     assert f"{stem}.mp4" not in names and f"{stem}{POSE}.h5" not in names   # no duplicates
     assert f"{stem}_triage.json" in names and f"{stem}_release_note.json" in names
     assert db.forced[0][1] == "dlc_complete"
+
+
+def _copy_times(src_dir, dst_dir, stem):
+    import os
+    for f in src_dir.iterdir():
+        if f.name == f"{stem}.mp4" or f.name.startswith(f"{stem}DLC"):
+            st = f.stat()
+            os.utime(dst_dir / f.name, (st.st_atime, st.st_mtime))
+
+
+def test_same_size_and_time_needs_no_hashing(tmp_path, monkeypatch):
+    """The quick check rsync and robocopy use: every copy in the chain keeps
+    the modified time, so matching size and time is the same file -- no
+    reading of either copy (that cost ~10 s a release over the share)."""
+    deep, posed, _ = _wire(monkeypatch, tmp_path)
+    stem = "20261012_CNT0615_F4"
+    b = _bundle(deep, stem)
+    (posed / f"{stem}.mp4").write_bytes(b"video")
+    for ext in (".h5", ".csv", "_meta.pickle"):
+        (posed / f"{stem}{POSE}{ext}").write_bytes(b"pose")
+    _copy_times(b, posed, stem)
+    hashed = []
+    monkeypatch.setattr(rr, "_file_sha256", lambda p: hashed.append(p) or "x")
+
+    assert rr.scan_review_queues(FakeDB(), tmp_path / "proc")["qc_released"] == 1
+    assert hashed == [] and not b.exists()
+
+
+def test_same_size_but_different_bytes_is_left_for_a_person(tmp_path, monkeypatch):
+    deep, posed, _ = _wire(monkeypatch, tmp_path)
+    stem = "20261012_CNT0615_F4"
+    b = _bundle(deep, stem)
+    (posed / f"{stem}.mp4").write_bytes(b"VIDEO")          # same size, other bytes
+    import os
+    t = (b / f"{stem}.mp4").stat().st_mtime - 3600
+    os.utime(posed / f"{stem}.mp4", (t, t))                 # and another time
+
+    assert rr.scan_review_queues(FakeDB(), tmp_path / "proc")["qc_released"] == 0
+    assert b.exists() and (posed / f"{stem}.mp4").read_bytes() == b"VIDEO"

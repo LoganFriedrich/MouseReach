@@ -751,17 +751,28 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
             return False
         # The posed folder usually still holds this video's files: intake
         # copies a video in and leaves its posed files there until the video
-        # is archived, and a held video is not archived. A byte-identical copy
-        # there is the one live copy -- the bundle's own is a duplicate, set
-        # aside with the outputs and removed once the release has succeeded.
-        # A copy that differs in any way is for a person. WHY: without this,
-        # 67 of the first 74 releases were refused on 2026-10-22.
+        # is archived, and a held video is not archived. The same file there
+        # is the one live copy -- the bundle's own is a duplicate, set aside
+        # with the outputs and removed once the release has succeeded. A copy
+        # that differs is for a person. WHY: without this, 67 of the first 74
+        # releases were refused on 2026-10-22.
+        #
+        # "The same file": same size and same modified time -- the quick check
+        # rsync and robocopy use; every copy in this chain (posed folder ->
+        # processing -> review bundle) keeps the modified time, and 1,558 of
+        # 1,559 real pairs matched that way. Same size with a different time
+        # is settled by comparing SHA-256. WHY not always hash: reading both
+        # copies (~160 MB a video over the share) made each release take ~10 s
+        # and the backlog of 469 a half-day trickle.
         twins, clash = [], []
         for f in inputs:
             there = posed / f.name
             if there.exists():
-                if (there.stat().st_size == f.stat().st_size
-                        and _file_sha256(there) == _file_sha256(f)):
+                a_st, b_st = there.stat(), f.stat()
+                if a_st.st_size != b_st.st_size:
+                    clash.append(f.name)
+                elif (abs(a_st.st_mtime - b_st.st_mtime) < 2
+                        or _file_sha256(there) == _file_sha256(f)):
                     twins.append(f)
                 else:
                     clash.append(f.name)
@@ -806,7 +817,7 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
             logger.error("Release %s: could not complete (%s); bundle kept", stem, e)
             _return_failed(stem)
             return False
-        for f in twins:                 # verified identical to the posed copy above
+        for f in twins:                 # the same file as the posed copy (see above)
             try:
                 (dest / f.name).unlink()
             except OSError:
