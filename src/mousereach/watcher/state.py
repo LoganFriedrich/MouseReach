@@ -446,6 +446,7 @@ class WatcherStateManager:
                 # Bypass normal transition chain (validated→dlc_queued→...→dlc_complete)
                 self.db.force_state(
                     video_id, 'dlc_complete',
+                    reason="posed on another machine; found in the posed folder",
                     dlc_output_path=str(h5_path),
                     current_path=str(mp4_path)
                 )

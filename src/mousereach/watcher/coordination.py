@@ -782,7 +782,10 @@ class PipelineCoordinator:
                                         f"Could not record {video_id} as elsewhere: {e}")
                             continue
                     try:
-                        local_db.force_state(video_id, remote_state)
+                        local_db.force_state(
+                            video_id, remote_state,
+                            reason="cross-node recovery: %s has it at '%s'" % (
+                                remote.get('hostname') or 'another node', remote_state))
                         stats['videos_advanced'] += 1
                         logger.debug(f"Advanced video {video_id}: {local_state} -> {remote_state}")
                     except Exception as e:
@@ -876,7 +879,10 @@ class PipelineCoordinator:
                 if (local_idx < archived_idx and local_state != 'failed'
                         and not _is_live_local_work(local_row)):
                     try:
-                        local_db.force_state(video_name, 'archived')
+                        local_db.force_state(
+                            video_name, 'archived',
+                            reason="its results are already in the database "
+                                   "(stuck at '%s' on this node)" % local_state)
                         stats['mousedb_confirmed'] += 1
                         logger.debug(f"MouseDB confirmed {video_name}: {local_state} -> archived")
                     except Exception as e:

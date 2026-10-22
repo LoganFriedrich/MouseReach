@@ -334,6 +334,7 @@ def crystallize_videos(
 
             db.force_state(
                 vid, 'crystallized',
+                reason=f"crystallized: locked against reprocessing ({label})",
                 crystallized_at=now,
                 crystallized_by=by,
                 crystallized_label=label,
@@ -383,6 +384,7 @@ def uncrystallize_videos(
 
             db.force_state(
                 vid, 'archived',
+                reason="uncrystallized: lock removed, back to archived",
                 crystallized_at=None,
                 crystallized_by=None,
                 crystallized_label=None,

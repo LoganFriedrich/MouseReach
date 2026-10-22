@@ -1928,3 +1928,12 @@ watcher only when it was restarted. `BaseOrchestrator.work_priority` now re-reso
 a minute (`PRIORITY_REREAD_S`; the file read itself was already cached for a minute) and logs the
 order at the first resolve and again, marked "(changed)", whenever it changes. Applies to every
 watcher once it runs this code. Tests: `tests/test_work_priority.py` (TestRunningWatcherFollowsEdits).
+
+## Update 2026-10-22: every bypass of the video state rules says why
+
+`force_state` (the escape hatch from the state machine) logs each use at WARNING with the reason
+it is given -- the only record of why a video skipped its normal transitions. Seven call sites
+gave none, so the server log read "reason: not given" 150 times on 2026-10-22: posed-folder
+discovery, orphan recovery, cross-node recovery, database-confirmed archiving, re-runs of
+archived videos, crystallize and uncrystallize. Each now states its reason, and
+`tests/test_state_bypasses_give_reasons.py` reads the source so a new call without one fails.

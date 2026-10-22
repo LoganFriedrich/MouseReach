@@ -2410,7 +2410,10 @@ class DLCOrchestrator(BaseOrchestrator):
                     current_path=str(mp4),
                 )
                 if target_state != 'discovered':
-                    self.db.force_state(video_id, target_state)
+                    self.db.force_state(
+                        video_id, target_state,
+                        reason="recovered from files on this node's disk that "
+                               "had no database row")
                 recovered += 1
                 logger.debug(f"Recovered orphan {video_id} as {target_state}")
             except Exception as e:
@@ -4719,6 +4722,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             expected_scorer=declared or None)
         self.db.force_state(
             video_id, 'processing',
+            reason="re-run: archived results copied down to bring it current",
             dlc_output_path=str(local_h5) if local_h5 else '',
             current_path=str(self.processing_dir / f"{video_id}.mp4")
         )
