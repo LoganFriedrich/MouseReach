@@ -153,3 +153,28 @@ def test_several_at_once(server):
     assert server._rescue_misfiled_singles() == 2
     assert sorted(p.name for p in server.front_door.iterdir()) == [
         "20240101_ABC0101_P1.mp4", "20240102_ABC0102_P1.mp4"]
+
+
+# ---------------------------------------------------------------- cost
+
+def test_the_folder_is_listed_once_per_pass_not_once_per_video(server, monkeypatch):
+    """WHY: this check runs every cycle, and the folder is on a shared drive
+    holding every posed video waiting to be analysed. Listing it again for each
+    video (to look for its pose, then for a half-written file) cost 566 s of a
+    1,094 s cycle with 1,263 videos waiting. One listing, then lookups."""
+    for i in range(40):
+        vid = f"20240101_ABC01{i:02d}_P1"
+        _settled(_drop(server, name=f"{vid}.mp4"))
+        (server.staging / f"{vid}{POSE}.h5").write_bytes(b"pose")
+    listings = []
+    real_scandir = orch.os.scandir
+
+    def counting_scandir(path):
+        listings.append(path)
+        return real_scandir(path)
+
+    monkeypatch.setattr(orch.os, "scandir", counting_scandir)
+    monkeypatch.setattr(orch.Path, "glob", lambda *a, **k: pytest.fail(
+        "the staging folder must not be globbed once per video"))
+    assert server._rescue_misfiled_singles() == 0
+    assert len(listings) == 1

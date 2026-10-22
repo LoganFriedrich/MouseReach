@@ -3992,16 +3992,33 @@ class ProcessingOrchestrator(BaseOrchestrator):
         Only a video this database has never heard of, with no pose beside it,
         nothing half-written alongside, and settled long enough that it cannot
         be a handover in progress.
+
+        The folder is listed ONCE per pass and every check below looks names
+        up in that one listing. WHY: this runs on every cycle, and it used to
+        list the whole folder again for each video in it (once for a pose
+        file, once for a half-written file). The folder sits on a shared
+        drive and holds every posed video waiting to be analysed with its
+        pose files; with 1,263 videos waiting that was over a thousand
+        listings per cycle, 566 seconds of a 1,094-second cycle whose actual
+        work took 17 (2026-10-21, the first cycle timed by cycle_timer).
         """
         staging = self.staging_dir
         front_door = Paths.SINGLE_ANIMAL_OUTPUT
         if not staging or not front_door or not Path(staging).exists():
             return 0
         try:
-            candidates = list(Path(staging).glob("*.mp4"))
+            with os.scandir(staging) as entries:
+                names = [e.name for e in entries if e.is_file()]
         except OSError as e:
             logger.debug(f"could not read the staging folder: {e}")
             return 0
+        candidates = [Path(staging) / n for n in names if n.endswith(".mp4")]
+        # A pose file is <video_id>DLC...h5, so the text before its first
+        # "DLC" is the id of the video it belongs to (a video id never
+        # contains "DLC"; names that do are skipped below as by-products).
+        posed_ids = {n[:n.index("DLC")] for n in names
+                     if n.endswith(".h5") and "DLC" in n}
+        partial = [n for n in names if n.endswith(".part")]
         # Videos a GPU node has already claimed out of the singles folder
         # (watcher/single_claim.py). Moving a same-named video to the front
         # door would have it taken and posed a second time.
@@ -4017,9 +4034,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             video_id = get_video_id(mp4.name)
             if not video_id:
                 continue
-            if list(Path(staging).glob(f"{video_id}DLC*.h5")):
+            if video_id in posed_ids:
                 continue                      # posed: an ordinary handover
-            if list(Path(staging).glob(f"{video_id}*.part")):
+            if any(n.startswith(video_id) for n in partial):
                 continue                      # still being written
             try:
                 if now - mp4.stat().st_mtime < self._MISFILED_SETTLE_S:

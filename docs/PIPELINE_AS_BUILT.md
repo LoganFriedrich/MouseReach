@@ -1538,4 +1538,31 @@ how long each part took.
 
 Tests: `tests/test_cycle_timer.py`.
 
+## Update 2026-10-21: the posed-video folder is listed once per pass
+
+**What the cycle timing showed.** The first timed cycle on the processing server
+took 1,094 seconds, of which 17 were spent on a video. The rest:
+
+    Cycle 1094.1 s: version and review scan 270.2 s, scan 807.2 s [stale claims 0.0,
+    re-pose adoption 1.5, misfiled singles 566.2, posed discovery 1.9,
+    review return 34.8, collage retirement 202.7], pick 0.0 s, work 16.6 s
+
+**What was wrong.** `misfiled singles` (`ProcessingOrchestrator._rescue_misfiled_singles`)
+runs on every cycle and looks for a video left in `Processing/Posed` without a
+pose. For each video in that folder it listed the whole folder again, twice: once
+to look for the video's pose file, once for a half-written file. The folder is on
+the shared drive and holds every posed video waiting to be analysed together with
+its pose files, so with 1,263 videos waiting that was over a thousand listings of
+a folder of thousands of files, every cycle.
+
+**What changed.** The folder is listed once per pass; the pose and half-written
+checks look names up in that one listing. What the check decides is unchanged (all
+its earlier tests pass unchanged); only the number of listings is.
+
+Still to address, from the same line: the 30-minute version and review scan
+(270 s) and the 3-hourly collage retirement (203 s) run inside the work loop,
+so the cycle that hits them stops all work until they finish.
+
+Tests: `tests/test_misfiled_video.py::test_the_folder_is_listed_once_per_pass_not_once_per_video`.
+
 ---
