@@ -116,14 +116,15 @@ def check_nas_root(nas_root, origin: str):
 
     Args:
         nas_root: the resolved Paths.NAS_ROOT (may be None)
-        origin: Paths.NAS_ROOT_ORIGIN -- 'config', 'fallback' or 'unset'
+        origin: Paths.NAS_ROOT_ORIGIN -- 'config' or 'unset'
 
     Returns:
         A problem string, or None if the root looks like a pipeline.
     """
     if not nas_root:
-        return ("nas_root not configured and no nas_drive to fall back on -- "
-                "set nas_root in ~/.mousereach/config.json")
+        return ("nas_root is not configured -- the shared pipeline folder (the one "
+                "holding Unanalyzed, Processing, Analyzed and pipeline_versions.json). "
+                "Run mousereach-setup, or set nas_root in ~/.mousereach/config.json")
     nas_root = Path(nas_root)
     if not nas_root.exists():
         return f"NAS root does not exist: {nas_root}"
@@ -135,22 +136,11 @@ def check_nas_root(nas_root, origin: str):
         f"      Everything NAS-side derives from this path -- staging, Analyzed, "
         f"Review, Failed, intake -- so output would land here too."
     )
-    if origin == 'fallback':
-        detail += (
-            "\n      This path was NOT configured: 'nas_root' is unset, so it fell "
-            "back to <nas_drive>\\! DLC Output (the pre-2026 layout).\n"
-            "      Set 'nas_root' in ~/.mousereach/config.json to the pipeline root, "
-            "e.g.\n"
-            '        "nas_root": "<NAS>\\\\MouseReach_Pipeline"\n'
-            "      or re-run mousereach-setup, which fills it in from this machine's "
-            "lab profile."
-        )
-    else:
-        detail += (
-            "\n      'nas_root' points here explicitly. Either repoint it at the "
-            "pipeline root, or initialize one here with "
-            "mousereach-version-check --init."
-        )
+    detail += (
+        "\n      'nas_root' points here. Either repoint it at the pipeline root "
+        "(mousereach-setup), or initialize one here with "
+        "mousereach-version-check --init."
+    )
     return detail
 
 

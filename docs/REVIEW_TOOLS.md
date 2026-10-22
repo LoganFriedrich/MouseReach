@@ -463,7 +463,7 @@ Set in `config.py:164-166`, derived from `NAS_ROOT`:
 
 The deep-review folder was once `Processing/Review/flagged_for_review`. That name is retired for the folder only -- `flagged_for_review` is still a field in the segments, reaches and outcomes files and a database column. A migrated drive holds a plain file at the old folder path, so old code that tries to use it fails loudly instead of rebuilding it.
 
-An unset `nas_root` does **not** make these `None`. `NAS_ROOT` falls back to `<NAS drive>/! DLC Output` whenever a NAS drive is configured (`config.py:100-101`), so the three queue paths resolve to real folders in the old layout and the node looks like it is working. `Paths.NAS_ROOT_ORIGIN` (`:106`) is what distinguishes `config` from `fallback` from `unset`. Only when both `nas_root` and the NAS drive are unset are the queues `None`, and only then does the launcher tab report "queue not configured" (`queue_launcher_widget.py:112-113`). The code carries the same warning in a comment at `config.py:102-105`.
+An unset `nas_root` makes all three `None` (since 2026-10-22), and the launcher tab reports "queue not configured" (`queue_launcher_widget.py:112-113`). Run `mousereach-setup`, or use the Setup panel's "Shared pipeline folder" field, to set it. **Why no fallback:** until 2026-10-22 an unset `nas_root` was guessed as `<NAS drive>/! DLC Output`, a layout retired in 2026, so the queue paths resolved to real-looking folders in the old place and the review tools would have worked there as if nothing were wrong. Saving from setup also used to delete `nas_root`, which made the guess a live risk on every machine. `Paths.NAS_ROOT_ORIGIN` is now `config` or `unset`.
 
 ### How a video enters
 
@@ -616,7 +616,7 @@ Stated here so nobody rediscovers it the hard way:
 
 | Setting | Where | Effect |
 |---|---|---|
-| `nas_root` | `~/.mousereach/config.json` | Root of both queues. Unset falls back to the legacy `<NAS drive>/! DLC Output` layout rather than to `None` (`config.py:100-106`); queues are `None` only when the NAS drive is unset too. |
+| `nas_root` | `~/.mousereach/config.json` | Root of both queues. Unset means the queues are `None` and the tools say "not configured" (no guessed folder since 2026-10-22). |
 | `MOUSEREACH_ROUTINE_ROOT` | environment | Overrides the corpus root the clearing tool's worklist scans (`triage_queue.py:490`). |
 | `MOUSEREACH_TRIAGE_ALGO_DIR` | environment | Overrides the flat algorithm directory fallback (`triage_queue.py:465`). |
 | `CONNECTOME_ROOT` | environment | Base for the two lookups above; no default -- unset means both lookups are skipped (since 2026-08-28). |

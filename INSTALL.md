@@ -377,12 +377,19 @@ mousereach-setup
 
 The wizard prompts for:
 1. **Data Repository** - Root of your long-term storage (NAS mount)
-2. **Processing Root** (REQUIRED) - Parent folder for DLC_Queue, Processing, Failed
-3. **Watcher** (optional) - Automated pipeline for the NAS/DLC PC
+2. **Shared Pipeline Folder** (`nas_root`) - The folder on that storage holding
+   `Unanalyzed`, `Processing`, `Analyzed` and `pipeline_versions.json`. Every
+   machine in the lab points at the same one. Without it, nothing that works on
+   shared folders (watcher, intake, review queues) will run: each says
+   "nas_root is not configured" and names this command.
+3. **Processing Root** (REQUIRED) - Parent folder for DLC_Queue, Processing, Failed, on a fast local disk
+4. **Watcher** (optional) - Automated pipeline for the NAS/DLC PC
 
 If you set a machine role, defaults are pre-filled — just hit Enter through.
 
-Configuration is saved to `~/.mousereach/config.json`.
+Configuration is saved to `~/.mousereach/config.json`. Saving changes only the
+settings the wizard asks about; everything else in that file (backup folders,
+watcher settings it does not ask about) is kept.
 
 ### Step 3: Build Pipeline Index (Important for Fast Startup!)
 
@@ -804,8 +811,9 @@ to accept the defaults.
 
 It will ask about:
 1. **Data Repository** (where your NAS is) — press **Enter**
-2. **Processing Root** (where pipeline folders are) — press **Enter**
-3. **Watcher settings** (DLC path, GPU, polling) — press **Enter** for each
+2. **Shared Pipeline Folder** (the pipeline folder on the NAS) — press **Enter**
+3. **Processing Root** (where this PC's working folders are) — press **Enter**
+4. **Watcher settings** (DLC path, GPU, polling) — press **Enter** for each
 
 When it says "Configuration saved!", you're done with setup.
 

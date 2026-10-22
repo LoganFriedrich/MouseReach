@@ -105,17 +105,21 @@ class Paths:
     NAS_DRIVE = NAS_DRIVE
     PROCESSING_ROOT = PROCESSING_ROOT
 
-    # --- NAS/Archive Paths (derived from MouseReach_NAS_DRIVE) ---
-    # These will be None if NAS_DRIVE is not configured
-    # nas_root config override allows pointing at a different folder structure
-    # (e.g. <NAS>\MouseReach_Pipeline instead of the DLC output share)
+    # --- Shared pipeline paths (derived from nas_root) ---
+    # nas_root is the shared pipeline folder: the one holding Unanalyzed/,
+    # Processing/, Analyzed/ and pipeline_versions.json. Every path below hangs
+    # off it, and every one is None when it is not configured.
+    # WHY no fallback: until 2026-10-22 an unset nas_root was GUESSED as
+    # <nas_drive>/! DLC Output, a layout retired in 2026. Every derived path
+    # then pointed at the old place and a node looked like it was working
+    # right up until someone went looking for its output; the watcher refused
+    # to start there, but the review tools and intake commands make no such
+    # check. Saving from mousereach-setup also used to delete nas_root, which
+    # made the guess a live risk on every machine. Unset now means unset: each
+    # tool says it is not configured and names mousereach-setup.
     _nas_root = _config.get("nas_root")
-    NAS_ROOT = Path(_nas_root) if _nas_root else (NAS_DRIVE / "! DLC Output" if NAS_DRIVE else None)
-    # Whether NAS_ROOT was declared or inherited from the legacy fallback above.
-    # An unset nas_root silently repoints EVERY derived path below -- staging,
-    # Analyzed, Review, Failed, intake -- at the old layout, which looks like a
-    # working node right up until you go looking for its output.
-    NAS_ROOT_ORIGIN = 'config' if _nas_root else ('fallback' if NAS_DRIVE else 'unset')
+    NAS_ROOT = Path(_nas_root) if _nas_root else None
+    NAS_ROOT_ORIGIN = 'config' if _nas_root else 'unset'
 
     # Raw 8-camera collage videos (ARCHIVE - NEVER DELETE)
     MULTI_ANIMAL_SOURCE = NAS_ROOT / "Unanalyzed" / "Multi-Animal" if NAS_ROOT else None

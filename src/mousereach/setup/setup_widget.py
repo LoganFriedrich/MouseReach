@@ -3,9 +3,15 @@
 "The GUI is god": configuring where the pipeline folders live must be possible
 from the app, not only via the ``mousereach-setup`` terminal command. This
 widget collects the two paths mousereach needs -- the local Processing root
-(required) and the NAS data root (optional) -- with a Detect button that
-auto-fills from this machine's lab profile, and saves via the same
-``save_config`` the CLI wizard uses (so the two stay in sync).
+(required) and the shared pipeline folder, ``nas_root`` (optional) -- with a
+Detect button that auto-fills from this machine's lab profile, and saves via
+the same ``save_config`` the CLI wizard uses (so the two stay in sync). Saving
+changes only these settings; everything else in the config file is kept.
+
+WHY the second field is ``nas_root``: until 2026-10-22 it was labelled "NAS data
+root" with a pipeline folder as its example, but it saved ``nas_drive``, from
+which the code then guessed a retired folder layout -- so a pipeline folder
+typed here ended up one level too deep, in a folder that does not exist.
 
 Config is read at import time, so a save takes effect on the NEXT launch; the UI
 says so.
@@ -28,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class SetupWidget(QWidget):
-    """Collect + save the pipeline paths (Processing root + NAS root)."""
+    """Collect + save the pipeline paths (Processing root + shared pipeline folder)."""
 
     def __init__(self, napari_viewer=None, on_saved: Optional[Callable] = None):
         super().__init__()
@@ -68,8 +74,9 @@ class SetupWidget(QWidget):
         pl.addWidget(pbrowse)
         root.addWidget(pgrp)
 
-        # NAS root (optional)
-        ngrp = QGroupBox("NAS data root  (optional -- shared network drive)")
+        # Shared pipeline folder (optional)
+        ngrp = QGroupBox("Shared pipeline folder  (optional -- the folder holding "
+                         "Unanalyzed, Processing, Analyzed and pipeline_versions.json)")
         nl = QHBoxLayout(ngrp)
         self._nas = QLineEdit()
         self._nas.setPlaceholderText(r"e.g. Z:\MouseReach_Pipeline  (leave blank if none)")
@@ -94,7 +101,7 @@ class SetupWidget(QWidget):
             from mousereach.setup.wizard import load_config
             cfg = load_config()
             self._proc.setText(str(cfg.get("processing_root", "") or ""))
-            self._nas.setText(str(cfg.get("nas_drive", "") or ""))
+            self._nas.setText(str(cfg.get("nas_root", "") or ""))
         except Exception as e:
             logger.debug(f"load_config failed: {e}")
 
@@ -113,8 +120,8 @@ class SetupWidget(QWidget):
         d = profile.get("defaults", {}) or {}
         if d.get("processing_root"):
             self._proc.setText(str(d["processing_root"]))
-        if d.get("nas_drive"):
-            self._nas.setText(str(d["nas_drive"]))
+        if d.get("nas_root"):
+            self._nas.setText(str(d["nas_root"]))
         self._detected_watcher = d.get("watcher")
         self._detected_label.setText(
             f"Detected: {profile.get('name', '?')} (via {method}). "
@@ -131,10 +138,11 @@ class SetupWidget(QWidget):
         if not proc:
             show_error("Processing root is required.")
             return
-        nas = self._nas.text().strip() or None
+        nas_root = self._nas.text().strip() or None
         try:
             from mousereach.setup.wizard import save_config
-            save_config(nas_drive=nas, processing_root=Path(proc), watcher=self._detected_watcher)
+            save_config(processing_root=Path(proc), nas_root=nas_root,
+                        watcher=self._detected_watcher)
         except Exception as e:
             show_error(f"Could not save configuration: {e}")
             return

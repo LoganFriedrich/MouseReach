@@ -342,23 +342,45 @@ def run_setup_wizard():
         allow_empty=True
     )
 
-    # --- Step 2: Processing root ---
+    # --- Step 2: Shared pipeline folder (nas_root) ---
+    # WHY asked for explicitly: every shared path (intake, posed videos, review
+    # queues, Analyzed) hangs off it, and it used to be neither asked for nor
+    # saved -- a save from this wizard deleted it, after which the code guessed
+    # a retired layout (config.py says more).
+    root_default = (
+        existing.get("nas_root")
+        or profile_defaults.get("nas_root")
+        or ""
+    )
+    print("\n2. Shared Pipeline Folder (nas_root)")
+    print("   The folder on your data repository that holds the pipeline itself:")
+    print("   Unanalyzed/, Processing/, Analyzed/ and pipeline_versions.json.")
+    print("   Every machine in the lab points at the same folder. Leave it blank")
+    print("   only on a machine that never uses shared storage.")
+    nas_root = prompt_path(
+        "   Pipeline folder",
+        default=root_default,
+        must_exist=False,
+        allow_empty=True
+    )
+    if nas_root and not (nas_root / "pipeline_versions.json").exists():
+        print("   [!] There is no pipeline_versions.json in that folder yet. If this")
+        print("       is a new pipeline, create it with: mousereach-version-check --init")
+
+    # --- Step 3: Processing root ---
     proc_default = (
         existing.get("processing_root")
         or profile_defaults.get("processing_root")
         or os.getenv("MouseReach_PROCESSING_ROOT")
         or ""
     )
-    print("\n2. Pipeline Processing Root [REQUIRED]")
+    print("\n3. Pipeline Processing Root [REQUIRED]")
     print("   Parent folder for all working pipeline directories.")
     print("   The watcher creates these subfolders automatically:")
     print("     <root>/DLC_Queue/     - videos waiting for DLC")
     print("     <root>/Processing/    - post-DLC analysis")
     print("     <root>/Failed/        - errors requiring investigation")
-    if nas_drive and not proc_default:
-        suggested = Path(nas_drive) / "! DLC Output"
-        print(f"\n   Based on your data repository, this is typically: {suggested}")
-        proc_default = str(suggested)
+    print("   Use a fast local disk on this machine, not the shared folder.")
     proc_root = prompt_path(
         "   Enter path",
         default=proc_default,
@@ -366,9 +388,9 @@ def run_setup_wizard():
         allow_empty=False
     )
 
-    # --- Step 3: Watcher configuration ---
+    # --- Step 4: Watcher configuration ---
     watcher_config = None
-    print("\n3. Automated Watcher")
+    print("\n4. Automated Watcher")
     print("   The watcher monitors your data repository for new collage")
     print("   videos and automatically runs the full pipeline: crop, DLC,")
     print("   segment, detect reaches, detect outcomes, archive.")
@@ -440,16 +462,17 @@ def run_setup_wizard():
             if key not in _WIZARD_PROMPTED_KEYS:
                 watcher_config.setdefault(key, value)
 
-    # --- Step 4: Create pipeline directories ---
+    # --- Step 5: Create pipeline directories ---
     if proc_root:
         # Local compute working dirs (on the processing root, NOT the NAS pipe).
         dirs_to_create = [
             proc_root / "DLC_Queue",
             proc_root / "Processing",
         ]
-        if nas_drive:
-            nas_root = Path(nas_drive) / "! DLC Output" if str(nas_drive) != str(proc_root) else proc_root
-            # The canonical NAS pipe tree -- single source of truth in
+        if nas_root:
+            # The canonical NAS pipe tree, built in the shared folder given in
+            # step 2 -- never guessed from the drive (it used to be built under
+            # <drive>/! DLC Output, a layout retired in 2026) -- single source of truth in
             # pipeline.pipe_structure (Unanalyzed[Multi-Animal, Single_Animal]
             # / Processing[Posed, Repose_Queue, Review/{triage,deep_review},
             # Quarantine, Failed] / Analyzed[Archive]).
@@ -458,7 +481,7 @@ def run_setup_wizard():
 
         missing = [d for d in dirs_to_create if not d.exists()]
         if missing:
-            print(f"\n4. Pipeline Directories")
+            print(f"\n5. Pipeline Directories")
             print(f"   {len(missing)} directories need to be created:")
             for d in missing:
                 print(f"     {d}")
@@ -477,13 +500,15 @@ def run_setup_wizard():
     save_config(
         nas_drive=nas_drive,
         processing_root=proc_root,
-        watcher=watcher_config
+        watcher=watcher_config,
+        nas_root=nas_root,
     )
 
     print("\n  Configuration saved!")
     print("\nYour settings:")
     print(f"  Config file:       {CONFIG_FILE}")
     print(f"  Data Repository:   {nas_drive or '(not set)'}")
+    print(f"  Pipeline Folder:   {nas_root or '(not set)'}")
     print(f"  Processing Root:   {proc_root}")
     if watcher_config:
         print(f"  Watcher:           Enabled")
@@ -552,46 +577,54 @@ def prompt_path(prompt_text: str, default: str, must_exist: bool = False, allow_
             return path
 
 
-def save_config(nas_drive, processing_root: Path, watcher: dict = None):
-    """Save configuration to JSON file.
+# save_config's "leave this setting as it is" (None or "" removes it instead).
+KEEP = object()
 
-    Saves to ~/.mousereach/config.json for reliable cross-session persistence.
+
+def save_config(nas_drive=KEEP, processing_root: Path = None, watcher: dict = None,
+                nas_root=KEEP):
+    """Write the settings setup manages into ~/.mousereach/config.json, keeping
+    EVERY other setting already in the file.
+
+    WHY: this used to rewrite the file with processing_root, nas_drive and
+    watcher only, so saving from mousereach-setup or the Setup panel silently
+    deleted the shared pipeline folder (nas_root), the nightly backup's
+    folders and anything else the file held (found 2026-10-22).
 
     Args:
-        nas_drive: Path to NAS drive (can be None)
-        processing_root: Path to pipeline processing root (required)
-        watcher: Optional watcher configuration dict
+        nas_drive, nas_root: KEEP leaves the setting as it is; None or "" removes
+            it; a path sets it.
+        processing_root: the local working folder; set when given.
+        watcher: merged into the existing watcher section -- the keys given win,
+            every other watcher setting is kept.
     """
-    nas_str = str(nas_drive) if nas_drive else ""
-    proc_str = str(processing_root)
-
-    # Ensure config directory exists
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Load existing config to preserve other settings
     existing = load_config()
-
-    # Save to JSON file (only include nas_drive if it's set)
-    config = {
-        "processing_root": proc_str
-    }
-    if nas_str:
-        config["nas_drive"] = nas_str
-
-    # Preserve or update watcher config
+    config = dict(existing)
+    if processing_root is not None:
+        config["processing_root"] = str(processing_root)
+    for key, value in (("nas_drive", nas_drive), ("nas_root", nas_root)):
+        if value is KEEP:
+            continue
+        if value:
+            config[key] = str(value)
+        else:
+            config.pop(key, None)
     if watcher is not None:
-        config["watcher"] = watcher
-    elif "watcher" in existing:
-        config["watcher"] = existing["watcher"]
+        merged = dict(existing.get("watcher") or {})
+        merged.update(watcher)
+        config["watcher"] = merged
 
     try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        os.replace(tmp, CONFIG_FILE)
 
         # Also set for current session
-        if nas_str:
-            os.environ["MouseReach_NAS_DRIVE"] = nas_str
-        os.environ["MouseReach_PROCESSING_ROOT"] = proc_str
+        if config.get("nas_drive"):
+            os.environ["MouseReach_NAS_DRIVE"] = config["nas_drive"]
+        if config.get("processing_root"):
+            os.environ["MouseReach_PROCESSING_ROOT"] = config["processing_root"]
     except Exception as e:
         print(f"\nError saving configuration: {e}")
 
@@ -616,6 +649,7 @@ def show_config():
     config = load_config()
 
     nas_drive = config.get("nas_drive") or os.getenv("MouseReach_NAS_DRIVE")
+    nas_root = config.get("nas_root")
     proc_root = config.get("processing_root") or os.getenv("MouseReach_PROCESSING_ROOT")
     watcher = config.get("watcher", {})
 
@@ -642,6 +676,7 @@ def show_config():
     print(f"\nConfig file:       {CONFIG_FILE}")
     print(f"  Exists:          {CONFIG_FILE.exists()}")
     print(f"\nData Repository:   {nas_drive or '(not configured - optional)'}")
+    print(f"Pipeline Folder:   {nas_root or '(not configured - shared folders unavailable)'}")
     print(f"Processing Root:   {proc_root or '(NOT CONFIGURED - REQUIRED)'}")
 
     if watcher:
