@@ -145,15 +145,31 @@ def check_nas_root(nas_root, origin: str):
 
 
 def _maybe_print_help(usage: str):
-    """Print usage and exit 0 when -h/--help is asked for.
+    """Print usage and exit 0 when -h/--help is asked for; refuse, exit 2,
+    when an option is given that the usage text does not list.
 
     These entry points parse sys.argv by hand (deliberately -- no argparse
     rewrite of running production commands), which left them with no --help
-    at all. This gate is the smallest possible fix: behavior is unchanged for
-    every other invocation."""
-    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+    at all, and an option they did not know was silently ignored: a typo such
+    as ``mousereach-watch --dryrun`` started the REAL watcher instead of the
+    preview. The usage text is the list of options each command accepts, so
+    anything starting with "-" that it does not name stops the command before
+    it does anything (2026-10-22)."""
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
         print(usage.strip())
         sys.exit(0)
+    allowed = set(re.findall(r"(?<![\w-])(--?[A-Za-z][\w-]*)", usage))
+    # An option is a dash and a LETTER: "-5" is a value (e.g. --grace -5), and
+    # the command's own check gives it a better message than "unknown option".
+    unknown = [a for a in args
+               if re.match(r"--?[A-Za-z]", a) and a.split("=", 1)[0] not in allowed]
+    if unknown:
+        print(usage.strip(), file=sys.stderr)
+        print(file=sys.stderr)
+        print("ERROR: unknown option(s): %s" % " ".join(unknown), file=sys.stderr)
+        print("Nothing was changed.", file=sys.stderr)
+        sys.exit(2)
 
 
 def main_watch():

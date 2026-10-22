@@ -2094,3 +2094,14 @@ every re-run and moved about 100 MB back over the share, 60-100 s per video. Fil
 the archived copy (`_same_file`: same size and modified time within 2 s, else the same SHA-256) are
 now left in place and the local copy dropped. Only files that actually changed are a new
 generation. Tests: `tests/test_archive_identical_files.py`.
+
+## Update 2026-10-22: watcher commands refuse an option they do not know
+
+The watcher's commands (`mousereach-watch`, `-watch-status`, `-watch-reprocess`, `-watch-quarantine`,
+`-watch-process-animal`, `-version-check`, `-crystallize`, `-uncrystallize`, `-watch-unresolvable`)
+read their arguments by hand. An option they did not know was silently ignored, so a typo such as
+`mousereach-watch --dryrun` started the real watcher instead of the read-only preview. The usage text
+each prints for `--help` is now also the list of options it accepts: anything else stops the command
+before it does anything, with the usage, "ERROR: unknown option(s): ..." and "Nothing was changed."
+(exit 2). `mousereach-watch-toggle` and `mousereach-watch-recorders` already refused unknown
+arguments. Tests: `tests/test_watcher_cli_unknown_options.py`.
