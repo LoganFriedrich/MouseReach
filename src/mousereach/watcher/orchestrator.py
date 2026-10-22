@@ -4242,6 +4242,50 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     handles_reprocessing = True
 
+    def _reclaim_orphaned_work(self) -> dict:
+        reclaimed = super()._reclaim_orphaned_work()
+        self._export_missed_to_central()
+        return reclaimed
+
+    def _export_missed_to_central(self) -> int:
+        """At startup, send the shared record every archived video it lacks.
+
+        WHY: a video's record goes to watcher_central.db right after it is
+        archived, and a failed export (a locked or unreachable share) was only
+        a warning, never retried -- five archived videos from the August and
+        September outages were missing from the shared record for good, found
+        2026-10-22. Only the processing server does this: here 'archived' means
+        filed into Analyzed; on a pose-only node it means "handed off".
+        Never raises; says how many it sent.
+        """
+        import sqlite3
+        try:
+            nas = getattr(Paths, "NAS_ROOT", None)
+            if not nas:
+                return 0
+            central = Path(nas) / "watcher_central.db"
+            if not central.exists():
+                return 0
+            con = sqlite3.connect("file:%s?mode=ro" % central.as_posix(), uri=True, timeout=30)
+            try:
+                have = {r[0] for r in con.execute("SELECT video_id FROM videos")}
+            finally:
+                con.close()
+            missing = [v["video_id"] for v in self.db.get_videos_in_state("archived")
+                       if v["video_id"] not in have]
+            for video_id in missing:
+                self.db.export_to_central_db(video_id, central)
+            if missing:
+                logger.info("Startup: sent %d archived video(s) to the shared record, "
+                            "which lacked them (an earlier export had failed): %s%s",
+                            len(missing), ", ".join(missing[:5]),
+                            "" if len(missing) <= 5 else " and %d more" % (len(missing) - 5))
+            return len(missing)
+        except Exception as e:
+            logger.warning("Startup: could not check the shared record for missed "
+                           "exports (%s); will check again at the next start", e)
+            return 0
+
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)
 

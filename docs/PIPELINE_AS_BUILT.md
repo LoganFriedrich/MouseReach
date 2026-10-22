@@ -2110,3 +2110,13 @@ arguments. Tests: `tests/test_watcher_cli_unknown_options.py`.
 ran `mousereach-watch stop` meaning to stop the watcher, which instead started one (or, with one
 already running, reported it and did nothing). It now exits 2 and says how stopping works
 (`watcher_stop.flag` or the Stop button; `mousereach-watch-toggle --pause` to pause).
+
+## Update 2026-10-22: the server sends the shared record the exports it missed
+
+After archiving, a video's record and log go to `watcher_central.db` (the audit table `videos`).
+A failed export was a warning and never retried: five archived videos from the August/September
+share outages were missing there (sent by hand 2026-10-22). At every start the processing server
+now compares its archived rows with the shared table and sends what is missing
+(`ProcessingOrchestrator._export_missed_to_central`; only the server, where "archived" means filed
+in Analyzed). Tests: `tests/test_missed_central_exports.py`.
+
