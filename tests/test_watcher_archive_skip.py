@@ -75,12 +75,19 @@ class FakeDB:
     def __init__(self):
         self.failed = []
         self.forced = []
+        self.fields = []
 
     def mark_failed(self, video_id, msg):
         self.failed.append((video_id, msg))
 
     def force_state(self, video_id, state, **kw):
         self.forced.append((video_id, state, kw))
+
+    def set_fields(self, video_id, **fields):
+        self.fields.append((video_id, fields))
+
+    def log_step(self, *a, **k):
+        pass
 
 
 @pytest.fixture
@@ -91,6 +98,9 @@ def server(tmp_path, analyzed, monkeypatch):
     monkeypatch.setattr(repose, "declared_scorer", lambda: NEW)
     monkeypatch.setattr(archive_core, "get_archive_destination",
                         lambda vid: results)
+    # No review queues: the no-pose step looks there, never at the real share.
+    monkeypatch.setattr(Paths, "TRIAGE_REVIEW", None, raising=False)
+    monkeypatch.setattr(Paths, "DEEP_REVIEW", None, raising=False)
     o = object.__new__(ProcessingOrchestrator)
     o.db = FakeDB()
     o.staging_dir = None
@@ -125,8 +135,11 @@ def test_reprocess_refuses_a_video_whose_only_pose_is_archived(server, analyzed)
     server._reprocess_video({"id": VID, "data": {}})
 
     assert server.ran == []
-    assert server.db.failed and "DLC h5 not found" in server.db.failed[0][1]
     assert not (server.processing_dir / f"{VID}{NEW}.h5").exists()
+    # Not failed (since 2026-10-22): its video is in Analyzed, so it is marked
+    # as needing a new pose, which the GPU nodes are asked for.
+    assert server.db.failed == []
+    assert server.db.fields == [(VID, {"reprocess_scope": "full"})]
 
 
 # ------------------------------------------------------ review return resolver

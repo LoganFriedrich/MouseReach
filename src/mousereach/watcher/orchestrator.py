@@ -4855,6 +4855,55 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self._archive_was_reachable = ok
         return ok
 
+    def _no_pose_for_reprocess(self, video_id: str) -> str:
+        """An outdated video has no pose anywhere this node looks. Decide what
+        that means instead of failing the video; returns what was done.
+
+          * its review bundle, pose inside, sits in a review queue: the video
+            is held for a person, so take that queue's state;
+          * its video is in Analyzed: it needs a NEW pose -- mark it so
+            (reprocess_scope 'full'); the version scan then asks the GPU nodes
+            for one over the shared Repose_Queue (watcher/repose.py), and the
+            pose that comes back is adopted from staging;
+          * neither: nothing here can produce a pose, so the video is marked
+            failed, saying plainly that its video is missing too.
+
+        WHY: this used to mark the video failed outright. On 2026-09-01 the
+        bench-disagreement router had moved three videos' bundles -- pose
+        included -- into triage while their rows still said 'archived'; the
+        version scan saw empty results, marked them outdated, and this step
+        failed them. A missing pose is a pose to make or a file to follow, not
+        a scientific outcome.
+        """
+        for qdir, qstate in ((Paths.TRIAGE_REVIEW, 'triage'),
+                             (Paths.DEEP_REVIEW, 'deep_review')):
+            try:
+                held = bool(qdir) and any((Path(qdir) / video_id).glob(f"{video_id}DLC*.h5"))
+            except OSError:
+                held = False
+            if held:
+                self.db.force_state(
+                    video_id, qstate,
+                    reason=f"re-run found no pose outside its review bundle, which "
+                           f"is in the {qstate} queue with its pose: held for a person")
+                logger.warning(f"{video_id}: re-run found its pose only in its "
+                               f"{qstate} bundle; state set to '{qstate}'")
+                return qstate
+        from mousereach.watcher import repose
+        if repose.archived_video(video_id) is not None:
+            self.db.set_fields(video_id, reprocess_scope='full')
+            self.db.log_step(video_id, 'reprocess', 'skipped',
+                             message="no pose found; a new pose will be requested "
+                                     "from the GPU nodes")
+            logger.warning(f"{video_id}: no pose found anywhere for its re-run; marked "
+                           f"as needing a new pose -- the next version scan asks a "
+                           f"GPU node for one")
+            return 'needs_pose'
+        self.db.mark_failed(
+            video_id, "re-run impossible: no pose and no video found (Analyzed, "
+                      "staging and the review queues were searched)")
+        return 'failed'
+
     def _reprocess_video(self, work: dict):
         """Re-run seg/reach/outcomes on an outdated archived video.
 
@@ -4892,7 +4941,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not h5_files:
             h5_files = archived_pose_candidates(video_id, declared, archive_dir)
         if not h5_files:
-            self.db.mark_failed(video_id, f"DLC h5 not found in archive for reprocessing")
+            self._no_pose_for_reprocess(video_id)
             return
 
         source_h5 = select_pose_file(h5_files, expected_scorer=declared or None)
