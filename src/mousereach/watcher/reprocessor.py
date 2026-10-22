@@ -115,6 +115,11 @@ class ReprocessingScanner:
         # archived kinematics applied, and re-hashing every review every scan
         # cost ~3 minutes a pass on 2026-10-21. Only a changed file is re-read.
         self._review_sha_cache: dict = {}
+        # The in-file reviewed_at of reviews applied before the applied_review
+        # stamp existed, keyed the same way. WHY: for those videos the check
+        # opened the review on every pass to read one field -- 1,614 files and
+        # ~107 s of a ~220 s warm pass, measured 2026-10-22.
+        self._reviewed_at_cache: dict = {}
 
     def scan(self, mark_outdated: bool = True, adopt_orphans: bool = True,
              full_only: bool = False) -> dict:
@@ -548,16 +553,25 @@ class ReprocessingScanner:
             if ft is None:
                 return review  # reviewed but no kinematics yet -> needs a run
             reviewed_at = None
-            try:
-                doc = json.loads(Path(review).read_text(encoding='utf-8'))
-                reviewed_at = doc.get('reviewed_at')
-            except Exception:
-                pass
+            cache = getattr(self, '_reviewed_at_cache', None)
+            if cache is None:
+                cache = self._reviewed_at_cache = {}
+            if key is not None and key in cache:
+                reviewed_at = cache[key]
+            else:
+                try:
+                    doc = json.loads(Path(review).read_text(encoding='utf-8'))
+                    reviewed_at = doc.get('reviewed_at')
+                    if key is not None:
+                        cache[key] = reviewed_at      # a failed read is never cached
+                except Exception:
+                    pass
             created_at = (manifest or {}).get('created_at')
             if reviewed_at and created_at:
                 # ISO strings from the same format sort lexicographically.
                 return review if str(reviewed_at) > str(created_at) else None
-            return review if review.stat().st_mtime > ft else None
+            review_mtime = key[2] if key is not None else review.stat().st_mtime
+            return review if review_mtime > ft else None
         except Exception:
             return None
 

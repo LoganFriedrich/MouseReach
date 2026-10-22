@@ -1779,3 +1779,11 @@ work loop waited. One walk now collects every live manifest and features file wi
 time from the listing (`analyzed_tree.iter_file_entries`, same files and rules as `iter_files`);
 manifests are re-read only when they changed (kept for the life of the process); reviews come
 from `causal_review_io.review_path_index`. Same answers. Tests: `tests/test_retirement_from_listings.py`.
+
+**Update 2026-10-22: the version scan remembers older reviews' dates.** For a video whose
+manifest predates the `applied_review` fingerprint, the scan compares the review's in-file
+`reviewed_at` with the manifest's `created_at`, and it opened the review on every pass to read
+that one field: 1,614 files, ~107 s of a ~220 s warm pass (measured 2026-10-22 on a copy of the
+server's database). The value is now kept until the review file changes (same key as the
+fingerprints: path, size, modified time); a failed read is never kept. Warm pass measured
+121 s afterwards, with no review files read; what remains is the folder listings.

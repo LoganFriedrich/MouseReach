@@ -103,3 +103,26 @@ def test_an_unchanged_review_is_fingerprinted_once(tmp_path, monkeypatch):
     assert len(calls) == 1
     # a video with no review in the index has nothing pending, and is not looked up
     assert sc._pending_review_path("Y", manifest, {}, index) is None
+
+
+def test_a_legacy_reviews_date_is_read_once_until_it_changes(tmp_path, monkeypatch):
+    """Reviews applied before the fingerprint stamp are compared by their in-file
+    reviewed_at; that one field was re-read from every such review every pass
+    (1,614 files, ~107 s of a ~220 s warm pass on 2026-10-22)."""
+    review = tmp_path / f"X{SUFFIX}"
+    review.write_text(json.dumps({"reviewed_at": "2026-09-01T10:00:00"}), encoding="utf-8")
+    _age(review, 10)
+    sc = object.__new__(ReprocessingScanner)
+    sc._review_sha_cache = {}
+    sc._reviewed_at_cache = {}
+    st = review.stat()
+    index = {"X": (review, st.st_mtime, st.st_size)}
+    manifest = {"created_at": "2026-08-01T00:00:00"}        # no applied_review stamp
+    reads = []
+    from pathlib import Path as _P
+    orig = _P.read_text
+    monkeypatch.setattr(_P, "read_text",
+                        lambda self, *a, **k: reads.append(self.name) or orig(self, *a, **k))
+    assert sc._pending_review_path("X", manifest, {"X": st.st_mtime - 100}, index) == review
+    assert sc._pending_review_path("X", manifest, {"X": st.st_mtime - 100}, index) == review
+    assert reads.count(review.name) == 1
