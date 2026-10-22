@@ -1787,3 +1787,16 @@ that one field: 1,614 files, ~107 s of a ~220 s warm pass (measured 2026-10-22 o
 server's database). The value is now kept until the review file changes (same key as the
 fingerprints: path, size, modified time); a failed read is never kept. Warm pass measured
 121 s afterwards, with no review files read; what remains is the folder listings.
+
+## Update 2026-10-22: where is each session of a list (coverage report)
+
+`mousereach-session-coverage --sessions-file <list>` (until the command is installed on a
+machine: `python -m mousereach.watcher.coverage --sessions-file <list>`) places every listed
+session in exactly one stage, from shared storage only: analysed, in review, review parked, the
+shared record's state (waiting to be posed / being posed / posed, waiting for analysis / being
+analysed / needs attention), the files in the shared singles and posed folders, or the
+recording's own state (waiting to be cut / being cut / cut). A session with no recording in the
+intake is "not imported". It writes `<list>.coverage.json` beside the list (counts by stage and
+each session's stage) and prints the counts. Read-only. WHY: once a list's recordings are
+imported its sessions spread across the pipeline, and nothing said how far the list had got
+without asking every machine. Tests: `tests/test_session_coverage.py`.

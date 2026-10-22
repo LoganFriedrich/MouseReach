@@ -225,6 +225,7 @@ mousereach-aspa-import = "mousereach.aspa.importer:main"
 mousereach-aspa-feed = "mousereach.aspa.feed:main"
 mousereach-aspa-sync = "mousereach.aspa.sync:main"
 mousereach-aspa-compare = "mousereach.aspa.compare:main"
+mousereach-session-coverage = "mousereach.watcher.coverage:main"
 
 [project.entry-points."napari.manifest"]
 mousereach = "mousereach:napari.yaml"
