@@ -278,7 +278,13 @@ environment and work on any PC:
 On login, the startup script will:
 1. Wait for the NAS drive (Y:\) to be available
 2. Launch the watcher daemon in its own terminal window
-3. Launch a status monitor that refreshes every 60 seconds
+3. Open a live view of the watcher's log
+
+Both windows close by themselves when the watcher stops cleanly, so a restart never
+leaves old windows behind (each used to stay open and keep the log file in use). If the
+watcher stops with an error, its window stays open on "Press any key" so the error can be
+read. After updating MouseReach, copy the script into the Startup folder again: the copy
+there is what runs at login.
 
 The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
 (e.g., during filming sessions).

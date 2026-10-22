@@ -2,8 +2,8 @@
 REM ============================================================
 REM MouseReach Watcher - Auto-launch on login
 REM ============================================================
-REM Starts the watcher daemon and a status monitor in separate windows.
-REM Close the watcher window (or Ctrl+C) to stop processing.
+REM Starts the watcher daemon and a live log in separate windows; both close
+REM when the watcher stops. Close the watcher window (or Ctrl+C) to stop processing.
 REM
 REM Install: copy this file to your Startup folder:
 REM   Win+R -> shell:startup -> paste this file
@@ -49,8 +49,12 @@ if defined MOUSEREACH_NAS_ROOT (
     echo NAS folder found.
 )
 
-REM Launch the watcher daemon in its own window
-start "MouseReach Watcher" cmd /k "%WATCH_EXE%"
+REM Launch the watcher daemon in its own window. The window closes when the
+REM watcher stops cleanly (watcher_stop.flag, or the Stop button); if the watcher
+REM fails, it stays open on "Press any key" so the error can be read.
+REM WHY not "cmd /k": that kept every old window open after its watcher ended,
+REM so each restart left one more behind (2026-10-22).
+start "MouseReach Watcher" cmd /c ""%WATCH_EXE%" || pause"
 
 REM Give the watcher a moment to initialize and create the log file
 timeout /t 10 /nobreak >nul
@@ -67,8 +71,12 @@ for %%D in (
 )
 
 if defined LOG_FILE (
-    REM Launch a live log tail window
-    start "MouseReach Log" powershell -ExecutionPolicy Bypass -NoExit -Command "Get-Content '%LOG_FILE%' -Tail 50 -Wait"
+    REM A live log tail window that ENDS WITH THE WATCHER. WHY: the old tail
+    REM (Get-Content -Wait in a -NoExit window) never ended, so every restart left
+    REM one more window holding watcher.log open; accumulated ones blocked folder
+    REM renames on the lab PC (2026-08-30). The tail runs as a background job and
+    REM the window closes once no mousereach-watch process is left.
+    start "MouseReach Log" powershell -ExecutionPolicy Bypass -Command "$j = Start-Job { Get-Content -LiteralPath '%LOG_FILE%' -Tail 50 -Wait }; while (Get-Process -Name 'mousereach-watch' -ErrorAction SilentlyContinue) { Receive-Job $j; Start-Sleep -Seconds 1 }; Receive-Job $j; Stop-Job $j; Remove-Job $j"
 ) else (
     echo WARNING: Could not find watcher.log - skipping log window
 )
