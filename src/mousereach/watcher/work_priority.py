@@ -78,6 +78,13 @@ Known fields, and how each is resolved:
   animal_id       animal_id / animal_ids column, else the filename
   state           DB column only
   reprocess_scope DB column only
+  session         the item's session(s), {date}_{animal}_{tray}{position}:
+                  a cut video or a review bundle is one session; a
+                  recording stands for one per animal in it
+  session_list    a file of sessions (one per line, lab or pipeline ids,
+                  '#' comments), relative to the shared pipeline folder;
+                  matches when ANY of the item's sessions is listed -- a
+                  recording must be cut to reach any one of its animals
   =============== =========================================================
 
 WHY A DEFAULT AND NOT A HARD STOP
@@ -97,11 +104,12 @@ import json
 import logging
 import os
 import random
+import re
 import socket
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from mousereach.config import AnimalID, FilePatterns, parse_tray_type
 
@@ -119,7 +127,7 @@ DEFAULT_ORDER = [{"tray_type": list(FilePatterns.SUPPORTED_TRAY_TYPES)}]
 DEFAULT_IDLE_ONLY = [{"tray_type": list(FilePatterns.UNSUPPORTED_TRAY_TYPES)}]
 
 KNOWN_FIELDS = ("tray_type", "project", "cohort", "animal_id", "state",
-                "reprocess_scope")
+                "reprocess_scope", "session", "session_list")
 
 KNOWN_SETTINGS = ("order", "idle_only")
 
@@ -238,6 +246,60 @@ def cohort_labels(item: dict) -> set:
     return labels
 
 
+_SESSION_NAME = re.compile(r"^(\d{8})_(.+)_([A-Za-z])(\d+)$")
+
+
+def session_keys(item: dict, is_collage: bool = False) -> set:
+    """The sessions an item stands for, upper case: a cut video or a review
+    bundle is its own session; a recording holds one per animal in it."""
+    stem = Path(_name_of(item)).stem
+    m = _SESSION_NAME.match(stem)
+    if not m:
+        return set()
+    date, animals, tray, pos = m.groups()
+    return {("%s_%s_%s%s" % (date, a.strip(), tray, pos)).upper()
+            for a in animals.split(",") if a.strip()}
+
+
+# A session list file, read at most once a minute: work selection asks for
+# the tier of every waiting item, and a file read per item over the shared
+# drive would cost seconds per pick.
+_SESSION_LISTS: Dict[str, tuple] = {}     # resolved path -> (read_at, members)
+_SESSION_LIST_TTL_S = 60.0
+
+
+def session_list_path(value, nas_root=None) -> Optional[Path]:
+    """A session list named in the order, resolved against the shared
+    pipeline folder unless it is an absolute path."""
+    p = Path(str(value))
+    if p.is_absolute():
+        return p
+    if nas_root is None:
+        from mousereach.config import Paths
+        nas_root = Paths.NAS_ROOT
+    return (Path(nas_root) / p) if nas_root else None
+
+
+def session_list_members(value) -> frozenset:
+    """The sessions in one list file, in pipeline form, upper case. An absent
+    or unreadable file has no members (the policy's complaints say so)."""
+    path = session_list_path(value)
+    if path is None:
+        return frozenset()
+    key = str(path)
+    hit = _SESSION_LISTS.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _SESSION_LIST_TTL_S:
+        return hit[1]
+    try:
+        from mousereach.aspa.import_collages import read_sessions_file
+        sessions, _not_sessions = read_sessions_file(path)
+        members = frozenset(s.upper() for s in sessions)
+    except Exception:
+        members = frozenset()
+    _SESSION_LISTS[key] = (time.monotonic(), members)
+    return members
+
+
 def field_labels(item: dict, field: str, is_collage: bool = False) -> set:
     """The set of labels an item presents for one selector field."""
     if field == "tray_type":
@@ -249,6 +311,8 @@ def field_labels(item: dict, field: str, is_collage: bool = False) -> set:
         return cohort_labels(item)
     if field == "animal_id":
         return {_text(a) for a in animal_ids(item)}
+    if field in ("session", "session_list"):
+        return session_keys(item, is_collage=is_collage)
     value = _text(item.get(field))
     return {value} if value else set()
 
@@ -259,7 +323,10 @@ def selector_matches(selector: dict, item: dict, is_collage: bool = False) -> bo
         labels = field_labels(item, field, is_collage=is_collage)
         if not labels:
             return False
-        if not labels & {_text(w) for w in wanted}:
+        if field == "session_list":
+            if not any(labels & session_list_members(w) for w in wanted):
+                return False
+        elif not labels & {_text(w) for w in wanted}:
             return False
     return True
 
@@ -442,7 +509,12 @@ def load_and_announce(raw) -> WorkPriority:
 # ordered lists and this module compiles them into selectors. Raw `order` /
 # `idle_only` are still accepted for anything the lists cannot express.
 
-LAB_PRIORITY_SCHEMA = "1.0"
+LAB_PRIORITY_SCHEMA = "1.1"      # 1.1 adds session_lists
+# Every key the lab file may hold. Anything else is named in a complaint,
+# never silently ignored (plan gap G8).
+LAB_PRIORITY_KEYS = ("schema_version", "updated_at", "updated_by", "projects",
+                     "cohorts", "session_lists", "tray_types",
+                     "idle_only_tray_types", "notes", "order", "idle_only")
 LAB_PRIORITY_FILENAME = "priority_order.json"
 LAB_PRIORITY_HINT = ("set the order in the MouseReach window (Watcher Control "
                      "-> Work priority), or edit priority_order.json at the "
@@ -467,13 +539,15 @@ def lab_priority_path(nas_root=None) -> Optional[Path]:
     return (Path(nas_root) / LAB_PRIORITY_FILENAME) if nas_root else None
 
 
-def compile_order(projects=None, cohorts=None, tray_types=None) -> List[dict]:
-    """Turn "projects first, cohorts within them" into ordering selectors.
+def compile_order(projects=None, cohorts=None, tray_types=None,
+                  session_lists=None) -> List[dict]:
+    """Turn "projects first, groups within them" into ordering selectors.
 
-    Most specific first: each project's named cohorts, then the rest of that
-    project, then the next project. A preferred tray letter is folded into
-    every tier so Pillar work leads within each one, and a bare tray tier is
-    appended so Pillar still outranks an unnamed project.
+    Most specific first: each project's session lists (files of sessions a
+    study needs), then its named cohorts, then the rest of that project, then
+    the next project. A preferred tray letter is folded into every tier so
+    Pillar work leads within each one, and a bare tray tier is appended so
+    Pillar still outranks an unnamed project.
 
     Cohorts are emitted both bare ("01") and qualified ("CNT01") because a
     video's cohort resolves to both (see cohort_labels), and a lab may write
@@ -493,6 +567,14 @@ def compile_order(projects=None, cohorts=None, tray_types=None) -> List[dict]:
         project = str(project).strip()
         if not project:
             continue
+        for listed in ((session_lists or {}).get(project) or []):
+            listed = str(listed).strip()
+            if not listed:
+                continue
+            selector = {"project": [project], "session_list": [listed]}
+            if tray:
+                selector["tray_type"] = list(tray)
+            add(selector)
         for cohort in ((cohorts or {}).get(project) or []):
             cohort = str(cohort).strip()
             if not cohort:
@@ -529,15 +611,20 @@ def read_lab_priority(nas_root=None) -> Optional[dict]:
 
 def save_lab_priority(projects=None, cohorts=None, tray_types=None,
                       idle_only_tray_types=None, nas_root=None,
-                      updated_by=None, notes=None) -> Path:
+                      updated_by=None, notes=None, session_lists=None) -> Path:
     """Write the shared order file. Atomic, so a node reading it mid-write
     never sees half a file (the version declaration learned that the hard
-    way). Returns the path written."""
+    way). Returns the path written.
+
+    Keys this call does not set are KEPT from the file (notes, raw selectors,
+    anything written by hand). WHY (plan gap G4): a Save from the priority
+    panel used to rewrite the file from the form alone and wiped them."""
     path = lab_priority_path(nas_root)
     if not path:
         raise ValueError("no shared drive configured, so there is nowhere to "
                          "put the lab-wide order")
-    body = {
+    body = dict(read_lab_priority(nas_root) or {})
+    body.update({
         "schema_version": LAB_PRIORITY_SCHEMA,
         "updated_at": datetime.now().isoformat(),
         "updated_by": updated_by or socket.gethostname(),
@@ -547,7 +634,9 @@ def save_lab_priority(projects=None, cohorts=None, tray_types=None,
         "tray_types": [str(t).strip() for t in (tray_types or []) if str(t).strip()],
         "idle_only_tray_types": [str(t).strip() for t in (idle_only_tray_types or [])
                                  if str(t).strip()],
-    }
+        "session_lists": {str(k): [str(s).strip() for s in (v or []) if str(s).strip()]
+                          for k, v in (session_lists or {}).items()},
+    })
     if notes:
         body["notes"] = str(notes)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -570,12 +659,26 @@ def _policy_from_lab_file(raw_file: dict) -> WorkPriority:
     order = compile_order(raw_file.get("projects"),
                           raw_file.get("cohorts"),
                           raw_file.get("tray_types") or
-                          list(FilePatterns.SUPPORTED_TRAY_TYPES))
+                          list(FilePatterns.SUPPORTED_TRAY_TYPES),
+                          session_lists=raw_file.get("session_lists"))
     idle = [{"tray_type": list(raw_file["idle_only_tray_types"])}] \
         if raw_file.get("idle_only_tray_types") else None
     policy = load_policy({"order": order} if idle is None
                          else {"order": order, "idle_only": idle})
     policy.source = "lab file (%s)" % LAB_PRIORITY_FILENAME
+    for key in sorted(raw_file):
+        if key not in LAB_PRIORITY_KEYS:
+            policy.complaints.append(
+                "%s: '%s' is not a key this version understands -- ignoring it. "
+                "Known keys: %s" % (LAB_PRIORITY_FILENAME, key, ", ".join(LAB_PRIORITY_KEYS)))
+    for project, lists in (raw_file.get("session_lists") or {}).items():
+        for listed in lists or []:
+            path = session_list_path(listed)
+            if path is None or not path.is_file():
+                policy.complaints.append(
+                    "%s: session list '%s' (for %s) was not found at %s -- that tier "
+                    "matches nothing until it exists"
+                    % (LAB_PRIORITY_FILENAME, listed, project, path or "(no shared folder)"))
     return policy
 
 

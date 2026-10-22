@@ -446,9 +446,16 @@ class WatcherControlWidget(QWidget):
         self._pri_projects.setPlaceholderText("most important first, e.g.  CNT, ASPA")
         self._pri_cohorts = QLineEdit()
         self._pri_cohorts.setPlaceholderText("per project, e.g.  CNT: 01, 02, 03, 04")
+        # Lists of sessions a study needs, led within their project (before its
+        # cohorts). Each is a text file of sessions, one per line, in the shared
+        # pipeline folder.
+        self._pri_lists = QLineEdit()
+        self._pri_lists.setPlaceholderText(
+            "per project, e.g.  PROJECT_B: priority_lists/study_a.txt")
         self._pri_trays = QLineEdit()
         self._pri_trays.setPlaceholderText("tray letters worked first, e.g.  P")
         pform.addRow("projects, best first", self._pri_projects)
+        pform.addRow("session lists within a project", self._pri_lists)
         pform.addRow("cohorts within a project", self._pri_cohorts)
         pform.addRow("tray types first", self._pri_trays)
         self._pri_status = QLabel("")
@@ -947,6 +954,24 @@ class WatcherControlWidget(QWidget):
         return out
 
     @staticmethod
+    def _parse_lists_text(text: str) -> dict:
+        """"ASPA: priority_lists/a.txt, priority_lists/b.txt" -> {"ASPA": [...]}.
+
+        Projects separated by ';', files by ',' only -- a file name may hold
+        spaces, and a path its own ':' (only the first ':' ends the project).
+        """
+        out = {}
+        for chunk in (text or "").split(";"):
+            chunk = chunk.strip()
+            if not chunk or ":" not in chunk:
+                continue
+            project, rest = chunk.split(":", 1)
+            values = [v.strip() for v in rest.split(",") if v.strip()]
+            if project.strip() and values:
+                out[project.strip()] = values
+        return out
+
+    @staticmethod
     def _format_cohort_text(cohorts: dict) -> str:
         return "; ".join("%s: %s" % (p, ", ".join(v))
                          for p, v in (cohorts or {}).items() if v)
@@ -964,10 +989,14 @@ class WatcherControlWidget(QWidget):
             raw = read_lab_priority() or {}
             self._pri_projects.setText(", ".join(raw.get("projects") or []))
             self._pri_cohorts.setText(self._format_cohort_text(raw.get("cohorts")))
+            self._pri_lists.setText(self._format_cohort_text(raw.get("session_lists")))
             self._pri_trays.setText(", ".join(raw.get("tray_types") or ["P"]))
             policy = load_lab_policy(max_age_s=0)
             where = lab_priority_path()
-            lines = policy.describe()
+            lines = policy.describe() + ["[!] %s" % c for c in policy.complaints]
+            if raw.get("order") is not None or raw.get("idle_only") is not None:
+                lines.append("this file also holds hand-written selectors (order / "
+                             "idle_only); they take precedence over the fields above")
             if not raw:
                 lines.append("no lab file yet at %s -- saving here creates it"
                              % (where or "(no shared drive configured)"))
@@ -987,6 +1016,7 @@ class WatcherControlWidget(QWidget):
             path = save_lab_priority(
                 projects=self._split_list(self._pri_projects.text()),
                 cohorts=self._parse_cohort_text(self._pri_cohorts.text()),
+                session_lists=self._parse_lists_text(self._pri_lists.text()),
                 tray_types=trays or None,
                 # Not on the form: keep whatever the file already said, and
                 # fall back to the shipped "unsupported trays wait" rule.

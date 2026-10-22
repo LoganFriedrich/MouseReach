@@ -1970,3 +1970,15 @@ productive one, and a node deep in a 14-minute pose looked like one whose report
 as the item starts), `last_done` (the last item finished) and `done_last_hour`. The Nodes
 section of `mousereach-watch-status` shows them on each node's line. A node shows them once it
 runs this code. Tests: `tests/test_node_status_says_what_it_is_doing.py`.
+
+## Update 2026-10-22: a list of sessions can lead within its project (plan Step 1)
+
+The lab's order could say "this project, these cohorts" but not "these sessions a study needs".
+The order file now takes `session_lists` beside `cohorts`: per project, files of sessions in
+the shared pipeline folder (one per line, lab or pipeline ids). Within that project the listed
+sessions come first, then its cohorts, then the rest. A recording counts as listed when any of
+its animals' sessions is (it must be cut to reach that animal). New selector fields `session`
+and `session_list`; list files are re-read at most once a minute. The priority panel has a box
+for it. A panel Save now keeps keys it does not manage (notes, hand-written selectors; plan gap
+G4), and keys or list files the order cannot use are named in its status line (G8). Tests:
+`tests/test_session_list_tier.py`.

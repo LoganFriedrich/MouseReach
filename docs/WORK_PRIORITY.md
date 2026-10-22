@@ -37,11 +37,12 @@ NAS, running the local pipeline, and archiving locally do not.
 ## One order for the whole lab
 
 Set it once, in the MouseReach window: **Watcher Control -> Work priority
-(whole lab)**. Two boxes:
+(whole lab)**. Four boxes:
 
 | Box | Means | Example |
 |-----|-------|---------|
 | projects, best first | which projects matter most | `CNT, ASPA` |
+| session lists within a project | files of sessions a study needs, which lead within their project | `PROJECT_B: priority_lists/study_a.txt` |
 | cohorts within a project | which groups inside a project come first | `CNT: 01, 02, 03, 04` |
 | tray types first | which tray letters lead | `P` |
 
@@ -49,8 +50,25 @@ That example says, in order: pillar videos from CNT cohorts 01 to 04 first, then
 the rest of CNT, then ASPA, then everything else. Easy and Flat trays are left
 until a machine has nothing else to do.
 
+**Session lists (since 2026-10-22).** A study usually needs particular sessions --
+one animal's tray run on one day -- spread over many cohorts and recordings. Put
+them in a text file in the shared pipeline folder, one session per line
+(`20220811_J11_P3` or the pipeline's `20220811_ASPA1011_P3`; lines starting with
+`#` are notes), and name the file in the second box under its project. Within that
+project, those sessions come first, before its cohorts. A recording counts as
+listed when any one of its animals' sessions is listed, because it has to be cut
+to reach that animal. Separate several files with commas and several projects
+with `;`. A file that cannot be found is named in the status line under the
+boxes, and its tier matches nothing until it exists. Edits to a list file take
+effect within a minute, like edits to the order.
+
 Pressing Save writes **`priority_order.json` at the root of the shared pipeline
-folder**, beside `pipeline_versions.json`. Every machine reads that one file, so
+folder**, beside `pipeline_versions.json`. Save changes only what the boxes show:
+anything else in the file -- notes, or hand-written selectors -- is kept (until
+2026-10-22 a Save rewrote the file from the boxes alone and wiped them). If the
+file holds hand-written `order` / `idle_only` selectors, they take precedence over
+the boxes, and the status line says so. A key the file holds that this version does
+not understand is named there too, never silently ignored. Every machine reads that one file, so
 there is nothing to copy around and no way for two machines to disagree. Running
 watchers pick up a change within a minute; the review tools apply it to the next
 video they hand out. Nothing needs restarting.
@@ -157,6 +175,8 @@ A bare string is accepted where a list is expected.
 | `cohort` | the bare cohort number, the code plus number, or the archive's cohort folder |
 | `animal_id` | a single animal |
 | `state`, `reprocess_scope` | database values, for unusual cases |
+| `session` | a session, `{date}_{animal}_{tray}{position}`: a cut video or a review bundle is one; a recording is one per animal |
+| `session_list` | a session list file (path relative to the shared pipeline folder); matches when any of the item's sessions is listed |
 
 Comparison ignores case. `{}` matches everything and is the honest way to write
 an explicit "everything else" tier.
