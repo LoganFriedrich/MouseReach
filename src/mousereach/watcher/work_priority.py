@@ -75,12 +75,14 @@ Known fields, and how each is resolved:
   cohort          cohort column and/or the animal id(s); matches the bare
                   cohort number, the code+number, and the archive's cohort
                   folder
-  animal_id       animal_id / animal_ids column, else the filename
+  animal_id       animal_id / animal_ids column, else the filename; an ASPA
+                  animal matches its lab id too (D01 as well as ASPA0401)
   state           DB column only
   reprocess_scope DB column only
   session         the item's session(s), {date}_{animal}_{tray}{position}:
                   a cut video or a review bundle is one session; a
-                  recording stands for one per animal in it
+                  recording stands for one per animal in it; lab or
+                  pipeline ids, as in a session list
   session_list    a file of sessions (one per line, lab or pipeline ids,
                   '#' comments), relative to the shared pipeline folder;
                   matches when ANY of the item's sessions is listed -- a
@@ -300,6 +302,29 @@ def session_list_members(value) -> frozenset:
     return members
 
 
+def _aspa_lab_forms(labels: set, decode: str) -> set:
+    """The lab's own spelling of every encoded ASPA id among ``labels``
+    (ASPA0401 -> D01; 20220217_ASPA0401_P1 -> 20220217_D01_P1), upper case.
+
+    WHY (plan gap G5): ASPA videos carry encoded ids in the pipeline, while the
+    lab names its animals and sessions by the lab id. Session lists already
+    accept either; an animal_id or session selector written with the lab id
+    matched nothing. Non-ASPA labels add nothing."""
+    try:
+        from mousereach.aspa.identity import decode_video_stem, lab_animal_id
+    except Exception:
+        return set()
+    out = set()
+    for label in labels:
+        try:
+            lab = lab_animal_id(label) if decode == "animal" else decode_video_stem(label)
+        except Exception:
+            continue
+        if lab and _text(lab) != label:
+            out.add(_text(lab))
+    return out
+
+
 def field_labels(item: dict, field: str, is_collage: bool = False) -> set:
     """The set of labels an item presents for one selector field."""
     if field == "tray_type":
@@ -310,8 +335,13 @@ def field_labels(item: dict, field: str, is_collage: bool = False) -> set:
     if field == "cohort":
         return cohort_labels(item)
     if field == "animal_id":
-        return {_text(a) for a in animal_ids(item)}
-    if field in ("session", "session_list"):
+        ids = {_text(a) for a in animal_ids(item)}
+        return ids | _aspa_lab_forms(ids, decode="animal")
+    if field == "session":
+        keys = session_keys(item, is_collage=is_collage)
+        return keys | _aspa_lab_forms(keys, decode="session")
+    if field == "session_list":
+        # Members are already in pipeline form (read_sessions_file encodes).
         return session_keys(item, is_collage=is_collage)
     value = _text(item.get(field))
     return {value} if value else set()

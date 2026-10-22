@@ -1820,6 +1820,14 @@ each session's stage) and prints the counts. Read-only. WHY: once a list's recor
 imported its sessions spread across the pipeline, and nothing said how far the list had got
 without asking every machine. Tests: `tests/test_session_coverage.py`.
 
+## Update 2026-10-22: work-order selectors take ASPA lab ids
+
+An ASPA video carries an encoded id (ASPA0401); the lab names the animal D01. Session lists
+already accepted either spelling, but an `animal_id` or `session` selector in the work order
+written with the lab id matched nothing (plan gap G5). `work_priority.field_labels` now adds
+the lab spelling of every encoded ASPA id (`mousereach.aspa.identity`); other ids are
+unchanged. Tests: `tests/test_work_priority.py` (TestAspaLabIds).
+
 ## Update 2026-10-22: a collage with a slot ffmpeg could not cut is not "cropped"
 
 A GPU node cutting a collage skipped any slot ffmpeg failed on and then recorded the collage

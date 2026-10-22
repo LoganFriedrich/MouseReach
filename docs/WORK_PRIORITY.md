@@ -187,9 +187,9 @@ A bare string is accepted where a list is expected.
 | `tray_type` | `P`, `E`, `F` |
 | `project` | the experiment code *or* the archive folder it maps to -- either spelling selects the same videos, and a short lettered cohort id is selected by its project without listing the letters |
 | `cohort` | the bare cohort number, the code plus number, or the archive's cohort folder |
-| `animal_id` | a single animal |
+| `animal_id` | a single animal; an ASPA animal by either id, the lab's (D01) or the pipeline's (ASPA0401) |
 | `state`, `reprocess_scope` | database values, for unusual cases |
-| `session` | a session, `{date}_{animal}_{tray}{position}`: a cut video or a review bundle is one; a recording is one per animal |
+| `session` | a session, `{date}_{animal}_{tray}{position}`: a cut video or a review bundle is one; a recording is one per animal; lab or pipeline ids, as in a session list |
 | `session_list` | a session list file (path relative to the shared pipeline folder); matches when any of the item's sessions is listed |
 
 Comparison ignores case. `{}` matches everything and is the honest way to write

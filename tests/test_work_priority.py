@@ -687,3 +687,30 @@ class TestRunningWatcherFollowsEdits:
         lines = [r.getMessage() for r in caplog.records if "Work priority" in r.getMessage()]
         assert first_lines and len(lines) == 2 * len(first_lines)
         assert all("(changed)" in m for m in lines[len(first_lines):])
+
+
+class TestAspaLabIds:
+    """G5 (2026-10-22): an ASPA video carries an encoded id (ASPA0401); the lab
+    names the animal D01. Session lists accepted both; animal_id and session
+    selectors matched the encoded id only."""
+
+    VIDEO = {"video_id": "20220217_ASPA0401_P1"}
+    COLLAGE = {"filename": "20220217_ASPA0401,ASPA0402,ASPA0403,ASPA0404,"
+                           "ASPA0405,ASPA0406,ASPA0407,ASPA0408_P1.mkv"}
+
+    def test_animal_id_matches_by_lab_id_and_pipeline_id(self):
+        assert wp.selector_matches({"animal_id": ["D01"]}, self.VIDEO)
+        assert wp.selector_matches({"animal_id": ["ASPA0401"]}, self.VIDEO)
+        assert not wp.selector_matches({"animal_id": ["D02"]}, self.VIDEO)
+
+    def test_a_recording_matches_any_of_its_animals_by_lab_id(self):
+        assert wp.selector_matches({"animal_id": ["D05"]}, self.COLLAGE, is_collage=True)
+
+    def test_session_matches_by_lab_id_and_pipeline_id(self):
+        assert wp.selector_matches({"session": ["20220217_D01_P1"]}, self.VIDEO)
+        assert wp.selector_matches({"session": ["20220217_ASPA0401_P1"]}, self.VIDEO)
+        assert not wp.selector_matches({"session": ["20220217_D01_P2"]}, self.VIDEO)
+
+    def test_a_non_aspa_id_gains_no_other_spelling(self):
+        item = {"video_id": "20250101_CNT0101_P1"}
+        assert wp.field_labels(item, "animal_id") == {"CNT0101"}
