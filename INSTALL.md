@@ -827,8 +827,12 @@ Before starting for real, do a test run that doesn't actually process anything:
 mousereach-watch --dry-run
 ```
 
-This shows what the watcher *would* do without actually doing it.
-Check that the paths look right and there are no errors.
+This shows what the watcher *would* do without doing any of it: the paths it
+uses, how many videos its database holds in each state, what is waiting in the
+folders it serves, the lab's work order, and the one piece of work it would take
+next. It only reads -- nothing is created, moved or written -- so it is safe to
+run at any time, even while the watcher is running. Check that the paths look
+right and there are no errors.
 
 ---
 

@@ -242,7 +242,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     print()
 
     if dry_run:
-        print("DRY RUN MODE - No files will be modified")
+        print("DRY RUN MODE - read-only: nothing is created, moved or written")
         print()
     if once:
         print("ONCE MODE - Will process pending items then exit")
@@ -331,6 +331,16 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 
     logger.info("Prerequisites OK")
 
+    # DRY RUN: a read-only preview, before the single-instance lock, the
+    # database and the watcher are built -- building the watcher runs start-up
+    # recovery, and the old dry run then called the real scans, so "dry run"
+    # changed the local database and touched the shared one (watcher/preview.py).
+    if dry_run:
+        from mousereach.watcher.preview import preview
+        for line in preview(config, _resolve_db_path()):
+            print(line)
+        return
+
     # SINGLE-INSTANCE GUARD. Two watchers on one state database is never a
     # valid configuration (interleaved work selection, double-claimed items),
     # and on 2026-09-01 a day of deploy kill/restart cycles showed how easily
@@ -396,10 +406,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 
     # Run watcher
     try:
-        if dry_run:
-            logger.info("Running in dry-run mode - scanning only")
-            orchestrator.dry_run()
-        elif once:
+        if once:
             logger.info("Running once - processing all pending items")
             orchestrator.run_once()
             logger.info("Once mode complete")

@@ -1947,3 +1947,16 @@ offers no re-run work while the Analyzed archive cannot be seen (`_archive_reach
 videos keep their state, the log says once that the archive is out of reach and once that it is
 back, and the re-run step itself declines rather than failing a video if it ever gets there.
 Tests: `tests/test_outage_idles_reprocessing.py`.
+
+## Update 2026-10-22: the watcher's dry run only reads
+
+`mousereach-watch --dry-run`, the step the install guide has every new machine run first,
+built the whole watcher (whose start-up runs recovery) and then called the real scans, which
+register files and move videos between states -- so it changed the local database and touched
+the shared one (104 recordings advanced on one machine, 2026-08-30). It is now a read-only
+preview (`watcher/preview.py`), run before the single-instance lock, the database and the watcher
+are built: the database is opened read-only, the folders the machine serves are listed, the lab's
+work order is shown, and the next pick is worked out by the watcher's own selection code on a
+stand-in database that has no write methods. It can run beside a live watcher. The two old
+`dry_run` methods print the same preview. Tests: `tests/test_dry_run_is_read_only.py` (the
+database bytes and the folder tree are unchanged after a preview).

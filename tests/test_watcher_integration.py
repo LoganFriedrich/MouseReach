@@ -748,9 +748,9 @@ class TestOrchestratorIntegration:
         collage = temp_db.get_collage("test.mkv")
         assert collage['state'] == 'stable'
 
-        # Verify output shows pending work
+        # Verify output shows the pending work it would take
         captured = capsys.readouterr()
-        assert "Pending work items" in captured.out
+        assert "It would take next: collage test.mkv" in captured.out
 
     def test_run_once_processes_available_items(self, mock_orchestrator, temp_db, tmp_path):
         """run_once processes all available work items."""

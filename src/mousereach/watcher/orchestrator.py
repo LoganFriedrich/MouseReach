@@ -2774,60 +2774,12 @@ class DLCOrchestrator(BaseOrchestrator):
     # =========================================================================
 
     def dry_run(self):
-        """Scan without processing. Shows what would be done."""
-        logger.info("DLCOrchestrator dry run")
-
-        # Scan for new files
-        scan_result = self.file_watcher.scan()
-        print(f"\nScan results:")
-        print(f"  New collages found:   {scan_result.new_collages}")
-        print(f"  New singles found:    {scan_result.new_singles}")
-        print(f"  Collages now stable:  {scan_result.stable_ready}")
-        print(f"  Scan time:            {scan_result.scan_time_ms:.1f}ms")
-
-        # Check for DLC completions
-        dlc_completions = self._scan_for_dlc_completions()
-        print(f"  DLC completions:      {dlc_completions}")
-
-        # Show priority animal if set
-        priority_animal = self._get_priority_animal()
-        if priority_animal:
-            print(f"\n  PRIORITY ANIMAL:      {priority_animal}")
-
-        # Show the ordering policy, so nobody has to read the config file to
-        # find out why one video is being taken before another.
-        print("\nWork priority:")
-        for line in self.work_priority.describe():
-            print(f"  {line}")
-        for complaint in self.work_priority.complaints:
-            print(f"  [!] {complaint}")
-
-        # Show what work would be done
-        print(f"\nPending work items:")
-        count = 0
-        for state_label, state in [
-            ("Collages to crop", "stable"),
-            ("Videos for DLC", "dlc_queued"),
-            ("Videos to stage to NAS", "dlc_complete"),
-        ]:
-            if state in ("stable",):
-                items = self.db.get_collages_in_state(state)
-            else:
-                items = self.db.get_videos_in_state(state)
-            if items:
-                print(f"  {state_label}: {len(items)}")
-                for item in items[:5]:
-                    name = item.get('filename') or item.get('video_id')
-                    print(f"    - {name}")
-                if len(items) > 5:
-                    print(f"    ... and {len(items) - 5} more")
-                count += len(items)
-
-        if count == 0:
-            print("  (no pending work)")
-
-        print(f"\nStaging directory: {self.staging_dir or '(not configured)'}")
-        print()
+        """Print the read-only preview (watcher/preview.py). WHY not a scan:
+        this used to call the real scans, which register files and move
+        videos between states -- a dry run that changed things."""
+        from mousereach.watcher.preview import preview
+        for line in preview(self.config, getattr(self.db, "db_path", None)):
+            print(line)
 
     # =========================================================================
     # DLC COMPLETION SCANNING
@@ -4775,60 +4727,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # =========================================================================
 
     def dry_run(self):
-        """Scan without processing. Shows what would be done."""
-        logger.info("ProcessingOrchestrator dry run")
-
-        # Scan staging for new files
-        if self.staging_dir and self.staging_dir.exists():
-            newly_found = self.state.discover_dlc_staged(self.staging_dir)
-            print(f"\nStaging scan:")
-            print(f"  Staging directory:  {self.staging_dir}")
-            print(f"  New DLC outputs:    {len(newly_found)}")
-        else:
-            print(f"\nStaging scan:")
-            print(f"  Staging directory:  {self.staging_dir or '(not configured)'}")
-            print(f"  Status:             NOT ACCESSIBLE")
-            newly_found = []
-
-        # Show priority animal if set
-        priority_animal = self._get_priority_animal()
-        if priority_animal:
-            print(f"\n  PRIORITY ANIMAL:    {priority_animal}")
-
-        # Show the ordering policy, so nobody has to read the config file to
-        # find out why one video is being taken before another.
-        print("\nWork priority:")
-        for line in self.work_priority.describe():
-            print(f"  {line}")
-        for complaint in self.work_priority.complaints:
-            print(f"  [!] {complaint}")
-
-        # Show pending work
-        print(f"\nPending work items:")
-        count = 0
-        for state_label, state in [
-            ("Videos to intake from NAS", "dlc_complete"),
-            ("Videos to process (seg/reach/outcomes)", "processing"),
-            ("Videos to archive to NAS", "processed"),
-        ]:
-            items = self.db.get_videos_in_state(state)
-            if items:
-                print(f"  {state_label}: {len(items)}")
-                for item in items[:5]:
-                    print(f"    - {item.get('video_id')}")
-                if len(items) > 5:
-                    print(f"    ... and {len(items) - 5} more")
-                count += len(items)
-
-        if count == 0:
-            print("  (no pending work)")
-
-        # Show local disk usage
-        if self.processing_dir and self.processing_dir.exists():
-            local_videos = len(list(self.processing_dir.glob("*DLC*.h5")))
-            print(f"\nLocal Processing/: {local_videos} videos")
-            print(f"  Max local pending: {self.config.max_local_pending}")
-        print()
+        """Print the read-only preview (watcher/preview.py). WHY not a scan:
+        this used to call the real scans, which register files and move
+        videos between states -- a dry run that changed things."""
+        from mousereach.watcher.preview import preview
+        for line in preview(self.config, getattr(self.db, "db_path", None)):
+            print(line)
 
     # =========================================================================
     # MULTI-NODE CLAIMING
