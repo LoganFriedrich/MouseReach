@@ -26,14 +26,14 @@ What counts as "the pipeline already has it" -- any one is enough:
     so a recording renamed since it was copied is not brought in twice.
 
 What is brought in, and where (``--bring-in``):
-  recording, Pillar tray   -> Unanalyzed/Multi-Animal (the intake: cut, then posed)
-  recording, Easy/Flat     -> Unanalyzed/Unsupported_Tray_Type/collages
-  cut video, Pillar        -> Unanalyzed/Single_Animal (posed by any GPU machine)
-  cut video, Easy/Flat     -> Unanalyzed/Unsupported_Tray_Type
-Easy and Flat go where the pipeline already keeps those trays waiting. A Pillar
-recording whose cut videos ALL come in from the old storage too is already cut:
-it goes to Analyzed/Multi-Animal, where cut recordings are kept, not to the
-intake, where it would be cut a second time.
+  recording   -> Unanalyzed/Multi-Animal (the intake: cut, then posed)
+  cut video   -> Unanalyzed/Single_Animal (posed by any GPU machine)
+Every tray goes to the same stage folders. Easy and Flat trays are taken last
+there, as they are everywhere: each machine defers them while other work
+waits (the deferral in the watcher's work selection). A recording whose cut
+videos ALL come in from the old storage too is already cut: it goes to
+Analyzed/Multi-Animal, where cut recordings are kept, not to the intake,
+where it would be cut a second time.
 
 Nothing else is copied. Left for a person, and named in the report: a name that
 is not a pipeline name (extra text such as "(LONG)" or " uncropped", ranges of
@@ -189,21 +189,22 @@ def destination(info: dict, name: str, already_cut: bool = False) -> Optional[Pa
     """Where a missing pipeline video goes on the pipeline root, or None.
 
     ``already_cut``: every session of this recording comes in as a cut video
-    from the old storage too. A Pillar recording then goes where cut
-    recordings are kept (Analyzed/Multi-Animal), never to the intake -- WHY:
-    in the intake it would be cut a second time beside its own cut videos.
-    Easy/Flat recordings wait in one folder either way."""
-    from mousereach.config import FilePatterns, Paths
-    unsupported = info["tray"] in FilePatterns.UNSUPPORTED_TRAY_TYPES
+    from the old storage too. The recording then goes where cut recordings are
+    kept (Analyzed/Multi-Animal), never to the intake -- WHY: in the intake it
+    would be cut a second time beside its own cut videos.
+
+    Easy and Flat trays go to the same stage folders as Pillar. WHY not the
+    Unsupported_Tray_Type folder: the watcher processes those trays now (last,
+    by deferral), and a video parked there is processed by nobody until a
+    person moves it."""
+    from mousereach.config import Paths
     if info["kind"] == "recording":
-        if unsupported:
-            base = Path(Paths.UNSUPPORTED_TRAY_RETURN) / "collages"
-        elif already_cut:
+        if already_cut:
             base = Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal" if Paths.ANALYZED_OUTPUT else None
         else:
             base = Paths.MULTI_ANIMAL_SOURCE
     elif info["kind"] == "cut":
-        base = Paths.UNSUPPORTED_TRAY_RETURN if unsupported else Paths.SINGLE_ANIMAL_OUTPUT
+        base = Paths.SINGLE_ANIMAL_OUTPUT
     else:
         return None
     return Path(base) / name if base else None

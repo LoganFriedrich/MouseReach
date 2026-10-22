@@ -1887,9 +1887,9 @@ under a retired pipeline folder and says, for each, whether the pipeline root al
 the same file; the session's cut video, results or shared-record row; or, for a recording,
 every animal session held one of those ways or by a recording under another name (blank
 slots ignored). With `--bring-in` it copies each video that exists only on the old storage
-into the stage folder that picks it up -- a Pillar recording into the intake, a Pillar cut
-video into the shared singles folder, Easy and Flat ones into the unsupported-tray folders
-where those trays wait. A Pillar recording whose cut videos all come in too goes to
+into the stage folder that picks it up -- a recording into the intake, a cut video into the
+shared singles folder, whatever the tray (Easy and Flat are taken last there, by the
+machines' deferral, as everywhere). A recording whose cut videos all come in too goes to
 `Analyzed/Multi-Animal` (it is already cut) instead of the intake. Each copy goes to
 `<name>.part`, is checked against the original by size and SHA-256, then renamed; nothing
 is ever replaced, and each copy is logged in `<root>/legacy_inventory/<label>_brought_in.jsonl`.

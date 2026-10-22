@@ -105,7 +105,7 @@ def test_missing_videos_go_to_the_stage_that_picks_them_up(tmp_path, monkeypatch
     old, nas, d = _setup(tmp_path, monkeypatch)
     # Pillar recording, nothing cut: the intake
     _put(old / "a" / "20250102_CNT0101,CNT0102,CNT0000_P1.mkv")
-    # Flat recording and both its cut videos: they wait with the other Flat trays
+    # Flat recording and both its cut videos: same stage folders as Pillar
     _put(old / "b" / (REC + "_F1.mkv"))
     _put(old / "c" / "20260716_CNT0501_F1.mp4")
     _put(old / "c" / "20260716_CNT0502_F1.mp4")
@@ -122,8 +122,8 @@ def test_missing_videos_go_to_the_stage_that_picks_them_up(tmp_path, monkeypatch
 
     assert dest["20250102_CNT0101,CNT0102,CNT0000_P1.mkv"] == str(
         d["MULTI_ANIMAL_SOURCE"] / "20250102_CNT0101,CNT0102,CNT0000_P1.mkv")
-    assert dest[REC + "_F1.mkv"] == str(d["UNSUPPORTED_TRAY_RETURN"] / "collages" / (REC + "_F1.mkv"))
-    assert dest["20260716_CNT0501_F1.mp4"] == str(d["UNSUPPORTED_TRAY_RETURN"] / "20260716_CNT0501_F1.mp4")
+    assert dest[REC + "_F1.mkv"] == str(d["ANALYZED_OUTPUT"] / "Multi-Animal" / (REC + "_F1.mkv"))
+    assert dest["20260716_CNT0501_F1.mp4"] == str(d["SINGLE_ANIMAL_OUTPUT"] / "20260716_CNT0501_F1.mp4")
     assert dest["20250103_CNT0101,CNT0102,CNT0000_P1.mkv"] == str(
         d["ANALYZED_OUTPUT"] / "Multi-Animal" / "20250103_CNT0101,CNT0102,CNT0000_P1.mkv")
     assert dest["20250103_CNT0101_P1.mp4"] == str(d["SINGLE_ANIMAL_OUTPUT"] / "20250103_CNT0101_P1.mp4")
