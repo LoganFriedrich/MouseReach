@@ -4557,7 +4557,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     ', '.join(v['video_id'] for v in needs_pose[:5]),
                     '' if len(needs_pose) <= 5 else ' and %d more' % (len(needs_pose) - 5))
 
-            if actionable:
+            if actionable and self._archive_reachable():
                 # post_dlc: re-run seg/reach/outcomes from existing DLC output
                 # ADMIT: reprocessing pulls a finished video back onto this
                 # node and re-opens work that was already done. It waits.
@@ -4613,6 +4613,33 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # REPROCESS: Re-run pipeline on outdated archived videos
     # =========================================================================
 
+    def _archive_reachable(self) -> bool:
+        """Whether the Analyzed archive can be seen right now. Logged once when
+        it goes and once when it is back, not every cycle.
+
+        WHY: re-running an outdated video starts from its archived results. When
+        the shared drive dropped (2026-09-09) the re-run step marked each
+        outdated video FAILED, about one a second -- hundreds of infrastructure
+        failures recorded as if they were the videos' fault, the class of error
+        a failed state must never mean. With the archive out of reach, nothing
+        is offered for re-running; the videos keep their state and the work
+        resumes when the archive is back.
+        """
+        root = Paths.ANALYZED_OUTPUT
+        try:
+            ok = bool(root) and Path(root).is_dir()
+        except OSError:
+            ok = False
+        was = getattr(self, "_archive_was_reachable", True)
+        if ok != was:
+            if ok:
+                logger.info("Archive reachable again (%s); re-running outdated videos resumes", root)
+            else:
+                logger.warning("Archive not reachable (%s); outdated videos wait, nothing is "
+                               "marked failed", root or "not configured")
+            self._archive_was_reachable = ok
+        return ok
+
     def _reprocess_video(self, work: dict):
         """Re-run seg/reach/outcomes on an outdated archived video.
 
@@ -4626,8 +4653,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         # Find archived files on NAS
         archive_dir = Paths.ANALYZED_OUTPUT if Paths.ANALYZED_OUTPUT else None
-        if not archive_dir or not archive_dir.exists():
-            self.db.mark_failed(video_id, "Archive directory not found for reprocessing")
+        if not self._archive_reachable():
+            # Declined, not failed: an unreachable archive is the drive's
+            # problem, not the video's (see _archive_reachable).
             return
 
         # Which pose to re-run against. A pose the row already points at --

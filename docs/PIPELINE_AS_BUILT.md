@@ -1937,3 +1937,13 @@ gave none, so the server log read "reason: not given" 150 times on 2026-10-22: p
 discovery, orphan recovery, cross-node recovery, database-confirmed archiving, re-runs of
 archived videos, crystallize and uncrystallize. Each now states its reason, and
 `tests/test_state_bypasses_give_reasons.py` reads the source so a new call without one fails.
+
+## Update 2026-10-22: a shared-drive outage idles re-running instead of failing videos
+
+When the shared drive dropped on 2026-09-09, the re-run step marked each outdated video FAILED
+("Archive directory not found for reprocessing"), about one a second -- infrastructure failures
+recorded as the videos' fault, which a failed state must never mean. Now the processing server
+offers no re-run work while the Analyzed archive cannot be seen (`_archive_reachable`): the
+videos keep their state, the log says once that the archive is out of reach and once that it is
+back, and the re-run step itself declines rather than failing a video if it ever gets there.
+Tests: `tests/test_outage_idles_reprocessing.py`.

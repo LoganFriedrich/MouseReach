@@ -245,11 +245,14 @@ def video(video_id, **extra):
 
 
 def make_server(videos_by_state, work_priority=None, max_local_pending=200,
-                priority_animal=None):
+                priority_animal=None, archive_reachable=True):
     """A ProcessingOrchestrator with no filesystem and no constructor.
 
     The real __init__ restores a database from the NAS and runs cross-node
-    recovery; none of that is under test here.
+    recovery; none of that is under test here. The archive counts as reachable
+    unless ``archive_reachable`` is None (then the real check runs against
+    Paths.ANALYZED_OUTPUT) -- so these tests do not depend on this machine's
+    configured share existing.
     """
     from types import SimpleNamespace
     from mousereach.watcher.orchestrator import ProcessingOrchestrator
@@ -260,6 +263,8 @@ def make_server(videos_by_state, work_priority=None, max_local_pending=200,
                                   work_priority=work_priority)
     orch.db = FakeDB(videos_by_state)
     orch._get_priority_animal = lambda: priority_animal
+    if archive_reachable is not None:
+        orch._archive_reachable = lambda: archive_reachable
     return orch
 
 
