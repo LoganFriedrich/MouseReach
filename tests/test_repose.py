@@ -273,14 +273,14 @@ def _outdated_full_row(vid):
 def test_consume_loses_the_race_cleanly(env, monkeypatch):
     _row(env.db, VID, "archived")
     _publish(env, [_outdated_full_row(VID)])
-    real = os.replace
+    real = repose._claim
 
     def taken(src, dst):
         if Path(src).name == f"{VID}.json" and repose.INFLIGHT in str(dst):
             raise FileNotFoundError(src)     # another node renamed it first
         return real(src, dst)
 
-    monkeypatch.setattr(repose.os, "replace", taken)
+    monkeypatch.setattr(repose, "_claim", taken)
     out = _consume(env)
     assert out["claimed_elsewhere"] == 1 and out["queued"] == 0
     assert env.db.get_video(VID)["state"] == "archived"
@@ -967,3 +967,22 @@ def test_consume_takes_requests_in_the_lab_order(env, monkeypatch):
     assert repose._in_lab_order(["20240101_ABC0103_E1", "20240101_ABC0101_P1",
                                  "20240101_ABC0103_P1"]) == [
         "20240101_ABC0103_P1", "20240101_ABC0101_P1", "20240101_ABC0103_E1"]
+
+
+def test_consume_never_overwrites_a_claim_already_in_flight(env):
+    """Plan Section 0 item 8: a request published again while another node's
+    claim was in flight was claimed a second time (os.replace overwrites), and
+    two GPUs posed one video."""
+    _row(env.db, VID, "archived")
+    _publish(env, [_outdated_full_row(VID)])
+    infl = env.queue / repose.INFLIGHT / f"{VID}.json"
+    infl.parent.mkdir(exist_ok=True)
+    infl.write_text(json.dumps({"video_id": VID, "consumed_by": "other-gpu"}))
+
+    out = _consume(env)
+
+    assert out["claimed_elsewhere"] == 1 and out["queued"] == 0
+    assert json.loads(infl.read_text())["consumed_by"] == "other-gpu"
+    assert (env.queue / f"{VID}.json").exists(), "the leftover request is left alone"
+    assert env.db.get_video(VID)["state"] == "archived"
+

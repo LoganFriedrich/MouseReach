@@ -2129,3 +2129,13 @@ network filesystem: its `-shm` index is shared memory, which machines reading th
 do not share. It now uses the default rollback journal (`PRAGMA journal_mode=DELETE`), which also
 converts a file left in WAL by older code. Writes stay best-effort and the index stays rebuildable from
 the manifests. Plan Section 0 item 7. Tests: `tests/test_version_index_journal.py`.
+
+## Update 2026-10-22: a re-pose request is never claimed twice
+
+A graphics-card machine claims a re-pose request by moving it into `Repose_Queue/.inflight/`. The move
+was `os.replace`, which overwrites: a request published again while another machine's claim for the
+same video was still in flight was claimed a second time, and two GPUs posed one video. `_claim` in
+`watcher/repose.py` now refuses an existing claim (os.rename on Windows; a hard link elsewhere), the
+second machine logs "another node already holds this re-pose" once and leaves both files alone, and
+the leftover request is closed by the existing "already satisfied" check when the pose lands. Plan
+Section 0 item 8. Tests: `tests/test_repose.py`.

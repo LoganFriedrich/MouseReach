@@ -90,6 +90,24 @@ def queue_path(video_id: str, repose_dir) -> Path:
     return Path(repose_dir) / f"{video_id}.json"
 
 
+def _claim(req: Path, infl: Path) -> None:
+    """Move a request into .inflight/, NEVER replacing an existing claim.
+
+    WHY: the claim was os.replace, which overwrites. A request published again
+    while another node's claim for the same video was still in flight was then
+    claimed a second time, and two GPUs posed one video (plan Section 0 item 8,
+    2026-10-22). Raises FileNotFoundError when another node took the request
+    first, FileExistsError when a claim for the video already exists. Both are
+    atomic: os.rename refuses an existing target on Windows; elsewhere a hard
+    link does, then the request is unlinked.
+    """
+    if os.name == "nt":
+        os.rename(req, infl)
+    else:
+        os.link(req, infl)
+        os.unlink(req)
+
+
 def inflight_path(video_id: str, repose_dir) -> Path:
     return Path(repose_dir) / INFLIGHT / f"{video_id}.json"
 
@@ -845,8 +863,18 @@ def consume_requests(db, *, dlc_queue: Optional[Path], hostname: str,
         infl = inflight_path(video_id, repose_dir)
         try:
             infl.parent.mkdir(exist_ok=True)
-            os.replace(req, infl)
+            _claim(req, infl)
         except FileNotFoundError:
+            summary["claimed_elsewhere"] += 1
+            continue
+        except FileExistsError:
+            # Another node is already re-posing this video: the request was
+            # published again while its claim was in flight. Leave both alone;
+            # once the new pose lands, the "already satisfied" check closes
+            # the leftover request.
+            if _once(latched, f"inflight:{video_id}"):
+                logger.info(f"{video_id}: another node already holds this re-pose; "
+                            f"not taking it twice")
             summary["claimed_elsewhere"] += 1
             continue
         except OSError as e:
