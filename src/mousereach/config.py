@@ -716,7 +716,13 @@ class WatcherConfig:
         )
         self.max_retries: int = cfg.get('max_retries', 3)
         self.mode: str = cfg.get('mode', 'dlc_pc')  # 'dlc_pc' or 'processing_server'
-        self.max_local_pending: int = cfg.get('max_local_pending', 200)
+        # How many posed videos the processing node keeps on its own disk
+        # waiting for the pipeline. Small on purpose: intake is visited before
+        # the pipeline, so with a large number the node takes videos in for
+        # hours before analysing any (200 meant ~8 hours on 2026-10-21), and
+        # every video it holds is one no other node can take. A node takes in
+        # only what it is about to start.
+        self.max_local_pending: int = cfg.get('max_local_pending', 2)
         self.also_process: bool = cfg.get('also_process', False)  # DLC PCs also run seg/reach/outcomes
         # How many re-pose requests a GPU node keeps in flight at once. Each
         # one is a ~1 GB copy into the local queue plus ~14 min of GPU, and a

@@ -117,7 +117,8 @@ That is deliberate, and it is the fix for two real failures:
 * **The stampede.** Intake is visited before the pipeline that drains it. If
   both waited for an idle node, then on an idle node intake would win every
   cycle and copy a whole `max_local_pending` worth of deferred videos onto local
-  disk before analysing one of them. With intake deferred and the pipeline not,
+  disk before analysing one of them. (Since 2026-10-21 `max_local_pending`
+  defaults to 2, so a node holds only what it is about to start in any case.) With intake deferred and the pipeline not,
   one deferred video is taken in and the next cycle finishes it.
 
 * **Stranding.** A node with a backlog is never idle, so "later" means "never".

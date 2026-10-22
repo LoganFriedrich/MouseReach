@@ -614,3 +614,30 @@ class TestNothingToDo:
 
     def test_an_empty_node_returns_none_from_both_passes(self):
         assert make_server({})._get_next_work_item() is None
+
+
+class TestTakeInOnlyWhatIsNext:
+    """The processing node holds only what it is about to start.
+
+    WHY: intake is visited before the pipeline. With the old default of 200
+    the server took posed videos in for hours before analysing any (about 8
+    hours on 2026-10-21), and every video it held was one no other node
+    could take.
+    """
+
+    def test_the_default_is_a_small_buffer(self):
+        from mousereach.config import WatcherConfig
+        assert WatcherConfig({}).max_local_pending == 2
+
+    def test_with_the_buffer_full_the_pipeline_runs_before_more_intake(self):
+        orch = make_server({"dlc_complete": [video("20250704_PRJA0109_P1")],
+                            "processing": [video("20250704_PRJA0101_P1"),
+                                           video("20250704_PRJA0102_P1")]},
+                           max_local_pending=2)
+        assert orch._get_next_work_item()["type"] == "pipeline"
+
+    def test_with_room_in_the_buffer_the_next_video_is_taken_in(self):
+        orch = make_server({"dlc_complete": [video("20250704_PRJA0109_P1")],
+                            "processing": [video("20250704_PRJA0101_P1")]},
+                           max_local_pending=2)
+        assert orch._get_next_work_item()["type"] == "intake"

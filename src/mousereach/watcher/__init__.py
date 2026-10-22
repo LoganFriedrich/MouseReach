@@ -80,7 +80,9 @@ Configuration (in ~/.mousereach/config.json):
     watcher.dlc_gpu_device:        GPU index (DLC PC only, default 0)
     watcher.poll_interval_seconds: how often to scan for new files
     watcher.stability_wait_seconds: how long a file must be unchanged before processing
-    watcher.max_local_pending:     max videos in local Processing/ before pausing intake
+    watcher.max_local_pending:     posed videos kept in local Processing/ waiting for the
+                                   pipeline before intake waits (default 2: take in only
+                                   what is about to be analysed)
 
 Run mousereach-setup to configure interactively.
 """

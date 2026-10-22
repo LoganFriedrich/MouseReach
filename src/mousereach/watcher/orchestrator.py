@@ -4386,13 +4386,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # Check disk space cap
             processing_count = len(self.db.get_videos_in_state('processing'))
             if processing_count >= self.config.max_local_pending:
-                # First pass only. Both passes see the same cap and the same
-                # bucket, and one warning per cycle is one warning per cycle.
+                # The normal state, not a fault: the node holds only what it is
+                # about to start (config.max_local_pending), so the pipeline runs
+                # next. Logged at DEBUG -- it used to be a WARNING telling a
+                # person to act, which with a small buffer would fire every cycle.
                 if not admit_deferred:
-                    logger.warning(
-                        f"Local pending limit reached ({processing_count}/{self.config.max_local_pending}). "
-                        "Pausing intake -- review or archive pending videos."
-                    )
+                    logger.debug(
+                        f"{processing_count} video(s) already waiting here for the "
+                        f"pipeline (limit {self.config.max_local_pending}); taking "
+                        f"in no more until one is done")
             else:
                 pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
                                             allow_deferred=admit_deferred,

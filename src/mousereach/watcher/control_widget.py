@@ -842,7 +842,7 @@ class WatcherControlWidget(QWidget):
         self._f_poll.setValue(int(d.get("poll_interval_seconds", 30)))
         self._f_stability.setValue(int(d.get("stability_wait_seconds", 60)))
         self._f_retries.setValue(int(d.get("max_retries", 3)))
-        self._f_maxpending.setValue(int(d.get("max_local_pending", 200)))
+        self._f_maxpending.setValue(int(d.get("max_local_pending", 2)))
         self._f_gpu.setValue(int(d.get("dlc_gpu_device", 0)))
         self._f_autoarchive.setChecked(bool(d.get("auto_archive_approved", False)))
         self._f_alsoprocess.setChecked(bool(d.get("also_process", False)))
