@@ -1741,6 +1741,7 @@ Pause or resume the watcher by hand, or show why it is paused.
 
 ```
 usage: mousereach-watch-recorders [--list] [--add NAME] [--remove NAME] [--grace SECONDS]
+                                  [--hours HH:MM-HH:MM|any] [--days DAYS|any]
 
 Show or change the recording programs that pause THIS machine's watcher.
 While any listed program is open the watcher starts no new work, and a pose
@@ -1758,6 +1759,15 @@ by itself within about a minute.
   --grace SECONDS   How long every listed program must have been closed before
                     work starts again (default 120). WHY: people often close
                     the recording program and open it again a moment later.
+  --hours HH:MM-HH:MM
+                    When recording can happen at all, on this PC's clock, for
+                    example 08:00-18:00. Outside these hours an open recording
+                    program does NOT pause the watcher. WHY: the program is
+                    often left open after recording, and the PC then sat idle
+                    until someone closed it. "any" removes the limit.
+  --days DAYS       The days recording can happen, for example Mon-Fri or
+                    Mon,Wed,Fri. On other days an open program does not pause
+                    the watcher. "any" removes the limit.
 
 --add and --remove may each be given more than once. The settings are saved in
 the 'watcher' section of ~/.mousereach/config.json; nothing else in that file
@@ -1769,6 +1779,7 @@ Examples:
   mousereach-watch-recorders --add recorder.exe
   mousereach-watch-recorders --remove recorder.exe
   mousereach-watch-recorders --grace 300
+  mousereach-watch-recorders --days Mon-Fri --hours 08:00-18:00
 ```
 
 ## Version tracking and reprocessing
