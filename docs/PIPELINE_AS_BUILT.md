@@ -2067,3 +2067,14 @@ requested segment a person (or ground truth) has answered, matched by frames
 (`answered_segments_of` in `watcher/route_cli.py`, the release check's own rule). It reports them
 as "answered", and does not route the video at all when nothing is left (exit 0, tag "done").
 Tests: `tests/test_route_cli_db.py`.
+
+## Update 2026-10-22: a re-run finds the archived pose where it lives
+
+Every re-run of an archived video (`_reprocess_video`) found its pose file by walking the whole
+Analyzed tree: 36 s on a quiet server and about 4 minutes on a busy one, for a re-run whose own
+work takes about 3 s. With a few re-runs queued, the server's throughput fell from about 35
+videos an hour to 8. The pose is always in the video's results folder (`Analyzed/<project>/<cohort>`)
+or the same cohort folder of a per-model tree (`Analyzed/<project>/DLC Model <N>/<cohort>`), both
+computable from the video id. `archived_pose_candidates` looks there first and walks the archive
+only when no pose from the declared model is found there, which is the old behaviour. Tests:
+`tests/test_reprocess_pose_lookup.py`.

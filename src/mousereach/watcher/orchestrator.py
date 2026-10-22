@@ -101,6 +101,35 @@ class _CropAborted(Exception):
 # BASE ORCHESTRATOR
 # =============================================================================
 
+def archived_pose_candidates(video_id: str, declared, archive_dir) -> list:
+    """Pose files for an archived video, looked for where they live first.
+
+    A video's pose sits in its results folder (Analyzed/<project>/<cohort>)
+    or in the same cohort folder of a per-model tree
+    (Analyzed/<project>/DLC Model <N>/<cohort>) -- both computable from the
+    video id. Only when no pose from the declared model is there is the whole
+    archive walked, exactly as before. WHY: the walk took 36 s on a quiet
+    server and about 4 minutes on a busy one, for every re-run -- a re-run whose
+    own work takes 3 s (2026-10-22). Never enters Analyzed/Archive/: superseded
+    poses keep their names there (see iter_files).
+    """
+    from mousereach.archive.core import get_archive_destination
+    from mousereach.pipeline.analyzed_tree import iter_files
+    from mousereach.watcher import repose
+    pattern = f"{video_id}DLC*.h5"
+    near = []
+    try:
+        results = Path(get_archive_destination(video_id))
+        near = sorted(results.glob(pattern))
+        for model_dir in sorted(results.parent.glob("DLC Model *")):
+            near += sorted((model_dir / results.name).glob(pattern))
+    except Exception:
+        near = []
+    if near and (not declared or any(repose.scorer_of(f) == declared for f in near)):
+        return near
+    return list(iter_files(archive_dir, pattern))
+
+
 def _reprocess_copy_set(source_dirs, pose_dir, video_id):
     """The files a reprocess stages locally, with the pose tree contributing
     ONLY pose artifacts.
@@ -4721,13 +4750,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             if staged is not None:
                 h5_files = [staged]
         if not h5_files:
-            # Never enter Analyzed/Archive/: superseded poses keep their
-            # original names there, so an rglob found them beside the live
-            # ones and select_pose_file could re-run the video on an old
-            # generation's pose (newest mtime wins among same-scorer files).
-            # DLC Model <N>/ folders stay visible -- they are live pose storage.
-            from mousereach.pipeline.analyzed_tree import iter_files
-            h5_files = list(iter_files(archive_dir, f"{video_id}DLC*.h5"))
+            h5_files = archived_pose_candidates(video_id, declared, archive_dir)
         if not h5_files:
             self.db.mark_failed(video_id, f"DLC h5 not found in archive for reprocessing")
             return
