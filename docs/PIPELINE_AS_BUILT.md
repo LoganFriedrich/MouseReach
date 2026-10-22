@@ -2120,3 +2120,12 @@ now compares its archived rows with the shared table and sends what is missing
 (`ProcessingOrchestrator._export_missed_to_central`; only the server, where "archived" means filed
 in Analyzed). Tests: `tests/test_missed_central_exports.py`.
 
+
+## Update 2026-10-22: the shared version index is no longer in WAL mode
+
+`pipeline_records/version_index.db` (on the shared drive; written when a manifest is written, read by
+the dashboard on any machine) opened itself in SQLite's WAL mode. SQLite documents WAL as unsafe on a
+network filesystem: its `-shm` index is shared memory, which machines reading the file over the share
+do not share. It now uses the default rollback journal (`PRAGMA journal_mode=DELETE`), which also
+converts a file left in WAL by older code. Writes stay best-effort and the index stays rebuildable from
+the manifests. Plan Section 0 item 7. Tests: `tests/test_version_index_journal.py`.

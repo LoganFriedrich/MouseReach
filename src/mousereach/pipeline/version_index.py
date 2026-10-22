@@ -35,8 +35,13 @@ Never a single point of failure
   and readers fall back to the old manifest scan for anything missing, so a stale
   or absent index degrades to the previous behaviour instead of lying.
 
-Store: SQLite (WAL) at ``pipeline_records/version_index.db``. WAL because several
-compute nodes write concurrently while the dashboard reads.
+Store: SQLite at ``pipeline_records/version_index.db`` on the shared drive, in the
+default rollback-journal mode. It was WAL until 2026-10-22, chosen so writers and
+the dashboard would not block each other -- but SQLite documents WAL as unsafe on a
+network filesystem (its -shm index is shared memory, which machines reading the
+file over the share do not share), and this file is read and written from several
+machines. Writes are best-effort and the index is rebuildable, so a brief lock
+wait costs nothing that matters; a silently inconsistent index would.
 
 ASCII-only console output (Windows cp1252).
 """
@@ -65,7 +70,9 @@ def default_index_path() -> Optional[Path]:
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(db_path), timeout=30.0, isolation_level=None)
-    con.execute("PRAGMA journal_mode=WAL")
+    # Rollback journal, not WAL: see the module docstring. Converts a file left
+    # in WAL mode by older code once no other connection holds it open.
+    con.execute("PRAGMA journal_mode=DELETE")
     con.execute("PRAGMA busy_timeout=30000")
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute(
