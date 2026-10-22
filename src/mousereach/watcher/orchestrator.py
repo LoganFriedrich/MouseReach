@@ -873,14 +873,23 @@ class BaseOrchestrator:
             return priority_animal in animal_value.split(',')
         return animal_value == priority_animal
 
+    # How often a running watcher re-resolves the lab's order.
+    PRIORITY_REREAD_S = 60
+
     @property
     def work_priority(self):
-        """The lab's ordering policy, resolved once per process.
+        """The lab's ordering policy, re-resolved at most once a minute.
 
         The shared priority_order.json on the pipeline drive first, then this
         machine's own watcher.work_priority, then the shipped default -- one
         order for the whole lab, so the processing side and the human review
         tools cannot disagree about what matters.
+
+        Re-resolved while running (G1, 2026-10-22): it used to be resolved
+        once per process, so an edit -- including a Save in the priority panel,
+        which says machines pick it up within a minute -- reached a watcher
+        only when it was restarted. The order is logged at the first resolve
+        and again whenever it changes, not every minute.
 
         Read lazily rather than in __init__ so that an unreadable or malformed
         setting cannot stop a node from starting: the policy falls back to the
@@ -889,13 +898,19 @@ class BaseOrchestrator:
         hard stop.
         """
         policy = getattr(self, "_work_priority", None)
-        if policy is None:
-            policy = load_lab_policy(getattr(self.config, "work_priority", None))
-            for complaint in policy.complaints:
-                logger.warning("%s. To fix: %s", complaint, LAB_PRIORITY_HINT)
-            for line in policy.describe():
-                logger.info("Work priority -- %s", line)
-            self._work_priority = policy
+        now = time.monotonic()
+        if (policy is None
+                or now - getattr(self, "_work_priority_at", 0.0) >= self.PRIORITY_REREAD_S):
+            fresh = load_lab_policy(getattr(self.config, "work_priority", None))
+            self._work_priority_at = now
+            if (policy is None or fresh.describe() != policy.describe()
+                    or fresh.complaints != policy.complaints):
+                for complaint in fresh.complaints:
+                    logger.warning("%s. To fix: %s", complaint, LAB_PRIORITY_HINT)
+                for line in fresh.describe():
+                    logger.info("Work priority%s -- %s",
+                                "" if policy is None else " (changed)", line)
+            self._work_priority = policy = fresh
         return policy
 
     def _pick_from_pool(self, items: list, priority_animal: Optional[str],

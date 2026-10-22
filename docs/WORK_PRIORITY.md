@@ -134,10 +134,13 @@ low-priority work already on your disk" never was.
 Deferred work already on the disk is still picked **last within its bucket** by
 `order`, so a Pillar video on the same disk is always analysed first.
 
-### Restart the watcher after editing
+### No restart needed after editing
 
-The file is read once when the watcher starts. `mousereach-watch --dry-run`
-prints the policy it resolved, in plain words, so you can check it took.
+A running watcher re-reads the order at most once a minute, and writes it to its
+log the first time and again whenever it changes (`Work priority (changed) -- ...`),
+so the log shows when an edit took effect. `mousereach-watch --dry-run` prints the
+policy it would resolve, in plain words. (Until 2026-10-22 the order was read once
+when the watcher started, and an edit waited for a restart.)
 
 ---
 

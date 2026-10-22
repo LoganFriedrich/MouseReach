@@ -641,3 +641,44 @@ class TestTakeInOnlyWhatIsNext:
                             "processing": [video("20250704_PRJA0101_P1")]},
                            max_local_pending=2)
         assert orch._get_next_work_item()["type"] == "intake"
+
+
+class TestRunningWatcherFollowsEdits:
+    """G1 (2026-10-22): a running watcher kept the order it started with until
+    it was restarted, while the priority panel said a Save reaches every
+    machine within a minute. It now re-resolves at most once a minute."""
+
+    def _setup(self, monkeypatch):
+        import mousereach.watcher.orchestrator as o
+        policies = [wp.load_policy({"order": [{"tray_type": ["P"]}]}),
+                    wp.load_policy({"order": [{"project": ["ASPA"]}]})]
+        calls = []
+        monkeypatch.setattr(o, "load_lab_policy",
+                            lambda local=None: calls.append(1) or policies[min(len(calls), 2) - 1])
+        clock = [1000.0]
+        monkeypatch.setattr(o.time, "monotonic", lambda: clock[0])
+        return make_server({}), calls, clock
+
+    def test_an_edit_reaches_a_running_watcher_within_a_minute(self, monkeypatch):
+        orch, calls, clock = self._setup(monkeypatch)
+        first = orch.work_priority
+        clock[0] += 30
+        assert orch.work_priority is first and len(calls) == 1     # not re-read within the minute
+        clock[0] += 31
+        second = orch.work_priority
+        assert len(calls) == 2
+        assert second.describe() != first.describe()
+
+    def test_the_order_is_logged_only_when_it_changes(self, monkeypatch, caplog):
+        import logging
+        orch, calls, clock = self._setup(monkeypatch)
+        with caplog.at_level(logging.INFO):
+            orch.work_priority
+            first_lines = [r for r in caplog.records if "Work priority" in r.getMessage()]
+            clock[0] += 61
+            orch.work_priority                                     # changed: logged again
+            clock[0] += 61
+            orch.work_priority                                     # same: not logged
+        lines = [r.getMessage() for r in caplog.records if "Work priority" in r.getMessage()]
+        assert first_lines and len(lines) == 2 * len(first_lines)
+        assert all("(changed)" in m for m in lines[len(first_lines):])

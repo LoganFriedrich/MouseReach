@@ -1918,3 +1918,13 @@ excluded; a failed run logs robocopy's own error lines (the file and the reason,
 and `--once` exits 1 when any folder did not sync completely, so the task result shows it.
 Checked live: the same run now exits 0 with nothing failed. Tests:
 `tests/test_backup_reports_failures.py`.
+
+## Update 2026-10-22: running watchers follow edits to the lab's work order
+
+The lab's work order (`priority_order.json` at the pipeline root, or a machine's own
+`watcher.work_priority`) was resolved once per watcher process, so an edit -- including a Save
+in the priority panel, which says machines pick it up within a minute -- reached a running
+watcher only when it was restarted. `BaseOrchestrator.work_priority` now re-resolves at most once
+a minute (`PRIORITY_REREAD_S`; the file read itself was already cached for a minute) and logs the
+order at the first resolve and again, marked "(changed)", whenever it changes. Applies to every
+watcher once it runs this code. Tests: `tests/test_work_priority.py` (TestRunningWatcherFollowsEdits).
