@@ -38,8 +38,10 @@ intake, where it would be cut a second time.
 Nothing else is copied. Left for a person, and named in the report: a name that
 is not a pipeline name (extra text such as "(LONG)" or " uncropped", ranges of
 animals), a malformed animal id (a typo such as CNT407), a video the pipeline
-holds under the same name at a DIFFERENT size, and a recording only some of
-whose cut videos are on the old storage.
+holds under the same name at a DIFFERENT size, a recording only some of
+whose cut videos are on the old storage, and copies of one name in several old
+folders that differ in size. (Copies of one name at one size are one video:
+it is brought in once.)
 
 How a copy is made: to ``<name>.part`` in the destination (no pipeline step
 reads a .part file), then its size and SHA-256 are compared with the original,
@@ -87,6 +89,8 @@ HAS_ALL_SESSIONS = "on pipeline (every session known)"
 NOT_PIPELINE_NAME = "not a pipeline name -- for a person"
 BAD_ID = "malformed animal id -- for a person"
 PARTLY_CUT = "recording partly cut on the old storage -- for a person"
+COPIES_DIFFER = "copies on the old storage differ in size -- for a person"
+SAME_AS_ANOTHER = "only here, as another copy on the old storage that is brought in"
 ONLY_HERE = "only here"
 
 
@@ -239,6 +243,29 @@ def inventory(old_root: Path, index: PipelineIndex) -> List[dict]:
             "_info": info,
         })
 
+    # The same video can sit in more than one old folder. Copies of one name
+    # at one size are one video: the first (by path) is brought in, the others
+    # are noted as that copy. Copies that differ in size need a person to say
+    # which is right. WHY: otherwise the second copy is refused at bring-in
+    # ("a file of that name is already there") and "only here" never reaches
+    # zero (12 recordings were in two old folders, 2026-10-22).
+    from collections import defaultdict
+    by_name = defaultdict(list)
+    for r in rows:
+        if r["status"] == ONLY_HERE:
+            by_name[r["name"].lower()].append(r)
+    for group in by_name.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: r["old_path"])
+        if len({r["size"] for r in group}) > 1:
+            for r in group:
+                r["status"] = COPIES_DIFFER
+        else:
+            for r in group[1:]:
+                r["status"] = SAME_AS_ANOTHER
+                r["same_as"] = group[0]["old_path"]
+
     # Where each missing video goes. A recording is placed by what else comes in
     # with it: cut videos of the same sessions (see destination()).
     cut_here = {s.upper() for r in rows if r["status"] == ONLY_HERE
@@ -305,7 +332,7 @@ def _label(old_root: Path) -> str:
 def write_report(rows: List[dict], out_dir: Path, label: str, old_root: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     fields = ["old_path", "folder", "size", "kind", "tray", "status", "destination",
-              "bad_ids", "brought_in"]
+              "same_as", "bad_ids", "brought_in"]
     with open(out_dir / f"{label}.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -316,7 +343,7 @@ def write_report(rows: List[dict], out_dir: Path, label: str, old_root: Path) ->
         "written_at": datetime.now().isoformat(timespec="seconds"),
         "videos": len(rows),
         "by_status": dict(Counter(r["status"] for r in rows).most_common()),
-        "only_here": len(only),
+        "only_here": len(only),  # one per video: duplicate copies are not counted
         "only_here_bytes": sum(max(r["size"], 0) for r in only),
         "only_here_by_folder": dict(Counter(r["folder"] for r in only).most_common()),
         "for_a_person_by_folder": dict(Counter(
@@ -385,8 +412,9 @@ def main(argv=None) -> int:
         print(f"Brought in: {done['copied']} copied, {done['not copied']} not copied "
               f"(ledger: {ledger})")
         # The report says what is still only on the old storage after the copies.
+        copied = {r["old_path"] for r in rows if r.get("brought_in") == "copied"}
         for r in rows:
-            if r.get("brought_in") == "copied":
+            if r["old_path"] in copied or r.get("same_as") in copied:
                 r["status"] = SAME_FILE
                 r["destination"] = ""
 

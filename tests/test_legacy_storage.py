@@ -189,3 +189,31 @@ def test_overlapping_roots_are_refused(tmp_path, monkeypatch):
     old, nas, _ = _setup(tmp_path, monkeypatch)
     assert ls.main(["--from", str(nas / "Unanalyzed")]) == 1
     assert ls.main(["--from", str(nas)]) == 1
+
+
+def test_copies_in_several_old_folders_are_brought_in_once(tmp_path, monkeypatch):
+    """12 recordings sat in two old folders at once (2026-10-22). Same size:
+    one video, brought in once, and "only here" reaches zero. Different
+    sizes: a person decides which is right."""
+    old, nas, d = _setup(tmp_path, monkeypatch)
+    name = "20250105_CNT0101,CNT0102,CNT0000_P1.mkv"
+    _put(old / "a" / name, b"same")
+    _put(old / "b" / name, b"same")
+    other = "20250106_CNT0101,CNT0102,CNT0000_P1.mkv"
+    _put(old / "a" / other, b"one")
+    _put(old / "b" / other, b"other")
+
+    rows = ls.inventory(old, ls.PipelineIndex(nas))
+    by = {(r["folder"], r["name"]): r for r in rows}
+    assert by[("a", name)]["status"] == ls.ONLY_HERE
+    assert by[("b", name)]["status"] == ls.SAME_AS_ANOTHER
+    assert by[("b", name)]["same_as"] == by[("a", name)]["old_path"]
+    assert {by[(f, other)]["status"] for f in "ab"} == {ls.COPIES_DIFFER}
+
+    assert ls.main(["--from", str(old), "--label", "old", "--bring-in"]) == 0
+    assert (d["MULTI_ANIMAL_SOURCE"] / name).read_bytes() == b"same"
+    assert not (d["MULTI_ANIMAL_SOURCE"] / other).exists()
+    summary = json.loads((nas / "legacy_inventory" / "old.summary.json").read_text(encoding="utf-8"))
+    assert summary["only_here"] == 0
+    assert summary["by_status"][ls.SAME_FILE] == 2
+    assert summary["by_status"][ls.COPIES_DIFFER] == 2

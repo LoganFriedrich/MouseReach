@@ -1894,8 +1894,9 @@ where those trays wait. A Pillar recording whose cut videos all come in too goes
 `<name>.part`, is checked against the original by size and SHA-256, then renamed; nothing
 is ever replaced, and each copy is logged in `<root>/legacy_inventory/<label>_brought_in.jsonl`.
 Left for a person and named in the report: names that are not pipeline names (extra text,
-animal ranges), malformed animal ids, the same name at a different size, and a recording
-only some of whose cut videos are on the old storage. The old storage is only read. Report:
+animal ranges), malformed animal ids, the same name at a different size, a recording
+only some of whose cut videos are on the old storage, and copies of one name in several old
+folders that differ in size (copies at one size are one video, brought in once). The old storage is only read. Report:
 `<root>/legacy_inventory/<label>.csv` and `<label>.summary.json`; "only here" reaching zero
 means the old storage holds no pipeline video the pipeline lacks. WHY: videos only in the
 retired folder were invisible to every machine that could process them, and the old storage
