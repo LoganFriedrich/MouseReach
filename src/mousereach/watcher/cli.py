@@ -447,6 +447,19 @@ def main_status():
         mousereach-watch-status --json       JSON output
         mousereach-watch-status --log N      Show last N log entries
     """
+    # WHY a --help gate: without one, "--help" ran the status itself, so the
+    # generated CLI reference recorded this machine's live state (its videos,
+    # counts and the other machines' names) instead of the usage.
+    _maybe_print_help("""
+usage: mousereach-watch-status [--by-animal] [--json] [--log N]
+
+Show this node's pipeline state: counts by state, recent activity, and the
+status every node last reported.
+
+  --by-animal   Per-animal breakdown with QC.
+  --json        JSON output.
+  --log N       Show the last N log entries (default 10).
+""")
     # Parse args
     args = sys.argv[1:]
     json_output = '--json' in args
@@ -1931,6 +1944,17 @@ def main_version_check():
         mousereach-version-check --mark       Also mark outdated videos for reprocessing
         mousereach-version-check --init       Initialize pipeline_versions.json
     """
+    # WHY a --help gate: without one, "--help" ran a full version scan of the
+    # archive (minutes), so asking how to use the command started it.
+    _maybe_print_help("""
+usage: mousereach-version-check [--mark] [--init]
+
+Compare each archived video's processing manifest with the declared current
+versions (pipeline_versions.json) and report which videos are out of date.
+
+  --mark   Also mark outdated videos for reprocessing.
+  --init   Create pipeline_versions.json from the installed code's versions.
+""")
     args = sys.argv[1:]
     mark = '--mark' in args
     init = '--init' in args
