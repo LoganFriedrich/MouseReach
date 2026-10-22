@@ -189,6 +189,11 @@ def describe(nas_root) -> str:
                          % (host, r.get("state", "?"), when))
         elif r.get("state") == PAUSED:
             lines.append("  %-20s paused        %s" % (host, r.get("reason") or "no reason given"))
+        elif "doing" not in r:
+            # A node on code from before 2026-10-22 does not report its work. Saying
+            # "idle" for it would be wrong -- it may be mid-pose -- so say so instead.
+            lines.append("  %-20s %-13s (this node's version does not report what it is doing)"
+                         % (host, r.get("state", "?")))
         else:
             doing = r.get("doing") or {}
             now = ("%s %s since %s" % (doing.get("type"), doing.get("id"), doing.get("since"))

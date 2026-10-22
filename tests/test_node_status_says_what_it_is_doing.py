@@ -74,3 +74,12 @@ def test_the_per_node_line_says_what_it_is_doing(tmp_path):
     assert "single_dlc 20250101_CNT0101_P1 since 2026-10-22T05:00:00" in busy
     assert "4 done in the last hour" in busy
     assert "idle" in idle and "0 done in the last hour" in idle
+
+
+def test_a_node_on_older_code_is_not_called_idle(tmp_path):
+    """A node whose code predates the work report may be mid-pose; "idle" would be false."""
+    node_status.write(tmp_path, node_status.WORKING, hostname="NODE-OLD")
+    line = next(l for l in node_status.describe(tmp_path).splitlines() if "NODE-OLD" in l)
+    assert "idle" not in line
+    assert "does not report what it is doing" in line
+
