@@ -422,6 +422,19 @@ class WatcherControlWidget(QWidget):
         self._f_pause_grace.setToolTip(
             "After the last recording program closes, wait this many seconds "
             "before starting work again -- in case recording starts again.")
+        # When recording can happen at all (watcher.recording_days / _hours).
+        # Outside it an open recording program does not pause this PC. Empty =
+        # any day / any hour, as before. See recording_guard for why.
+        self._f_rec_days = QLineEdit()
+        self._f_rec_days.setPlaceholderText("e.g. Mon-Fri  (empty = every day)")
+        self._f_rec_hours = QLineEdit()
+        self._f_rec_hours.setPlaceholderText("e.g. 08:00-18:00  (empty = any hour)")
+        for w in (self._f_rec_days, self._f_rec_hours):
+            w.setToolTip(
+                "When recording can happen at all, on this PC's clock. Outside it, an "
+                "open recording program does not pause this PC -- the program is often "
+                "left open after recording. Inside it, an open program pauses the PC "
+                "as before. Leave both empty to pause whenever the program is open.")
         form.addRow("enabled", self._f_enabled)
         form.addRow("mode", self._f_mode)
         form.addRow("poll_interval_seconds", self._f_poll)
@@ -438,6 +451,8 @@ class WatcherControlWidget(QWidget):
         form.addRow("staging_path", self._f_staging)
         form.addRow("Pause while these programs are running", self._f_pause_programs)
         form.addRow("Resume after (seconds)", self._f_pause_grace)
+        form.addRow("Recording happens only on (days)", self._f_rec_days)
+        form.addRow("...between (hours)", self._f_rec_hours)
         pause_help = QLabel(PAUSE_PROGRAMS_HELP)
         pause_help.setWordWrap(True)
         pause_help.setStyleSheet("color:#888;")
@@ -903,6 +918,8 @@ class WatcherControlWidget(QWidget):
         grace = d.get("pause_resume_grace_seconds")
         self._f_pause_grace.setValue(
             DEFAULT_RESUME_GRACE_SECONDS if grace is None else int(grace))
+        self._f_rec_days.setText(str(d.get("recording_days") or ""))
+        self._f_rec_hours.setText(str(d.get("recording_hours") or ""))
 
     # Every watcher setting this form owns. Anything else in the config file
     # is preserved on save. WHY: the form rebuilds the watcher section from
@@ -918,6 +935,7 @@ class WatcherControlWidget(QWidget):
         "auto_archive_approved", "also_process", "dlc_config_path",
         "quarantine_dir", "log_dir", "db_path", "staging_path",
         "pause_while_running", "pause_resume_grace_seconds",
+        "recording_days", "recording_hours",
     })
 
     def _form_to_dict(self) -> dict:
@@ -950,6 +968,12 @@ class WatcherControlWidget(QWidget):
         programs = parse_program_list(self._f_pause_programs.text())
         if programs:
             d["pause_while_running"] = programs
+        # Same rule: absent unless filled in, so clearing a box removes the limit.
+        for key, widget in (("recording_days", self._f_rec_days),
+                            ("recording_hours", self._f_rec_hours)):
+            val = widget.text().strip()
+            if val:
+                d[key] = val
         return d
 
     def _save_config(self):

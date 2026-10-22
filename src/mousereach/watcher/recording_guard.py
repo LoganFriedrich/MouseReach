@@ -32,6 +32,21 @@ an operator often closes the recording program and reopens it a moment later
 pose in that gap would either make the new recording compete with it or throw
 the pose away seconds later.
 
+RECORDING HOURS AND DAYS (optional)
+-----------------------------------
+``watcher.recording_hours``, for example ``"08:00-18:00"``, and
+``watcher.recording_days``, for example ``"Mon-Fri"``: when, on this machine's
+clock, recording can happen at all. Outside them an open recording program
+does NOT pause the watcher -- recording is known not to be happening, and the
+program is routinely left open after the day's recording, which kept the node
+idle until someone closed it (G12; two days once, over a weekend among other
+times). Inside them the rule above applies unchanged. BOTH EMPTY BY DEFAULT =
+recording can happen at any hour of any day, exactly as before. Hours may cross
+midnight ("22:00-04:00"); the day is the calendar day at the time of the check.
+A value that cannot be read is treated as empty -- the safe side, since it
+pauses more, never less. When and on which days a lab records is the lab's
+fact, so it lives in the configuration, never in the code.
+
 HOW NAMES ARE MATCHED
 ---------------------
 Case-insensitively (Windows does not care about case, and neither does a
@@ -229,6 +244,80 @@ def _join(names: List[str]) -> str:
     return ", ".join(names)
 
 
+def parse_hours(text) -> Optional[tuple]:
+    """``"08:00-18:00"`` -> (360, 900): minutes after midnight, start and end.
+    None for an empty or unreadable value, or a window that starts where it
+    ends (which says nothing). "24:00" is accepted as the end of the day."""
+    if not isinstance(text, str) or "-" not in text:
+        return None
+    try:
+        parts = [s.strip() for s in text.split("-", 1)]
+        minutes = []
+        for part in parts:
+            h, m = part.split(":", 1)
+            h, m = int(h), int(m)
+            if not (0 <= h <= 24 and 0 <= m < 60) or (h == 24 and m):
+                return None
+            minutes.append(h * 60 + m)
+    except (ValueError, TypeError):
+        return None
+    start, end = minutes
+    if start == end:
+        return None
+    return start, end
+
+
+def within_hours(window: tuple, when) -> bool:
+    """True when ``when`` (a datetime) falls inside ``window`` (parse_hours),
+    start included, end excluded; a window may cross midnight."""
+    start, end = window
+    minute = when.hour * 60 + when.minute
+    if start < end:
+        return start <= minute < end
+    return minute >= start or minute < end
+
+
+_DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def parse_days(value) -> Optional[frozenset]:
+    """``"Mon-Fri"``, ``"Mon,Wed,Fri"`` or a list of day names -> the weekday
+    numbers (Monday 0) on which recording can happen. None for an empty or
+    unreadable value (= every day). Names match on their first three letters,
+    in any case; a range may wrap ("Sat-Mon")."""
+    if not value:
+        return None
+    items = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    days = set()
+    try:
+        for item in items:
+            item = str(item).strip().lower()
+            if not item:
+                continue
+            if "-" in item:
+                a, b = (s.strip()[:3] for s in item.split("-", 1))
+                i, j = _DAY_NAMES.index(a), _DAY_NAMES.index(b)
+                while True:
+                    days.add(i)
+                    if i == j:
+                        break
+                    i = (i + 1) % 7
+            else:
+                days.add(_DAY_NAMES.index(item[:3]))
+    except ValueError:
+        return None
+    return frozenset(days) if days else None
+
+
+def format_days(days: frozenset) -> str:
+    return ", ".join(_DAY_NAMES[d].capitalize() for d in sorted(days))
+
+
+def format_hours(window: tuple) -> str:
+    return "%02d:%02d-%02d:%02d" % (window[0] // 60, window[0] % 60,
+                                    window[1] // 60, window[1] % 60)
+
+
 class RecordingGuard:
     """Answers "is a recording program running, or did one close too
     recently?" for the life of one watcher.
@@ -248,8 +337,19 @@ class RecordingGuard:
     def __init__(self, names, grace_seconds: int = 120,
                  clock: Callable[[], float] = time.monotonic,
                  scan: Callable[[Iterable[str]], List[str]] = running_programs,
-                 cache_seconds: float = 5):
+                 cache_seconds: float = 5,
+                 recording_hours: Optional[str] = None,
+                 recording_days=None,
+                 local_now=None):
         self.names = clean_names(names)
+        # Optional hours and days in which recording can happen at all (module
+        # docstring). None = any hour / any day, exactly as before.
+        self.hours = parse_hours(recording_hours)
+        self.days = parse_days(recording_days)
+        if local_now is None:
+            from datetime import datetime
+            local_now = datetime.now
+        self._local_now = local_now
         try:
             self.grace_seconds = max(0, int(grace_seconds))
         except (TypeError, ValueError):
@@ -318,9 +418,20 @@ class RecordingGuard:
         elif self._last_seen is not None and self._clear_since is None:
             self._clear_since = now
 
+    def outside_recording_time(self) -> bool:
+        """True when recording hours or days are set and now is outside them."""
+        now = self._local_now()
+        if self.days is not None and now.weekday() not in self.days:
+            return True
+        return self.hours is not None and not within_hours(self.hours, now)
+
     def reason(self) -> Optional[str]:
         """None when nothing blocks work; else why work must wait (ASCII)."""
         if not self.names:
+            return None
+        if self.outside_recording_time():
+            # Recording is known not to happen now: an open program does not
+            # hold the node (module docstring, RECORDING HOURS AND DAYS).
             return None
         now = self._clock()
         self._refresh(now)
@@ -381,5 +492,7 @@ def pause_reason(processing_root: Optional[Path] = None,
             return None
         guard = RecordingGuard(
             getattr(config, "pause_while_running", None) or [],
-            grace_seconds=getattr(config, "pause_resume_grace_seconds", 120))
+            grace_seconds=getattr(config, "pause_resume_grace_seconds", 120),
+            recording_hours=getattr(config, "recording_hours", None),
+            recording_days=getattr(config, "recording_days", None))
     return guard.reason()

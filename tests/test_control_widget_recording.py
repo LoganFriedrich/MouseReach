@@ -178,7 +178,7 @@ class _Field:
     def currentText(self): return self.value_
 
 
-def _form_self(programs="", grace=120):
+def _form_self(programs="", grace=120, days="", hours=""):
     s = SimpleNamespace(
         _f_enabled=_Field(True), _f_mode=_Field("dlc_pc"), _f_poll=_Field(30),
         _f_stability=_Field(60), _f_retries=_Field(3), _f_maxpending=_Field(200),
@@ -186,6 +186,7 @@ def _form_self(programs="", grace=120):
         _f_dlccfg=_Field(""), _f_quarantine=_Field(""), _f_logdir=_Field(""),
         _f_dbpath=_Field(""), _f_staging=_Field(""), _mode_select=_Field(),
         _f_pause_programs=_Field(programs), _f_pause_grace=_Field(grace),
+        _f_rec_days=_Field(days), _f_rec_hours=_Field(hours),
         _FORM_MANAGED_KEYS=W._FORM_MANAGED_KEYS,
     )
     s._form_to_dict = lambda: W._form_to_dict(s)
@@ -205,7 +206,16 @@ def test_form_writes_program_list_only_when_non_empty():
 def test_both_new_keys_are_form_managed():
     # Managed = the form may CLEAR it. Without this, blanking the list would
     # keep the old list in the file and the PC would go on pausing.
-    assert {"pause_while_running", "pause_resume_grace_seconds"} <= W._FORM_MANAGED_KEYS
+    assert {"pause_while_running", "pause_resume_grace_seconds",
+            "recording_days", "recording_hours"} <= W._FORM_MANAGED_KEYS
+
+
+def test_recording_days_and_hours_are_written_only_when_filled_in():
+    d = W._form_to_dict(_form_self(programs="recorder.exe", days=" Mon-Fri ",
+                                   hours="08:00-18:00"))
+    assert d["recording_days"] == "Mon-Fri" and d["recording_hours"] == "08:00-18:00"
+    d = W._form_to_dict(_form_self(programs="recorder.exe"))
+    assert "recording_days" not in d and "recording_hours" not in d
 
 
 @pytest.fixture
@@ -285,6 +295,13 @@ def test_load_fills_the_new_fields(monkeypatch):
     W._load_config_into_form(s)
     assert s._f_pause_programs.value_ == ""
     assert s._f_pause_grace.value_ == cw.DEFAULT_RESUME_GRACE_SECONDS
+    assert s._f_rec_days.value_ == "" and s._f_rec_hours.value_ == ""
+
+    monkeypatch.setattr(mr_config.WatcherConfig, "load", classmethod(
+        lambda cls: _Cfg({"pause_while_running": ["recorder.exe"],
+                          "recording_days": "Mon-Fri", "recording_hours": "08:00-18:00"})))
+    W._load_config_into_form(s)
+    assert s._f_rec_days.value_ == "Mon-Fri" and s._f_rec_hours.value_ == "08:00-18:00"
 
 
 # --- pause reason and the guard's lifetime ------------------------------------

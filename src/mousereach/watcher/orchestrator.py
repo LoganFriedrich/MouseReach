@@ -255,6 +255,12 @@ class BaseOrchestrator:
                 "Pauses while any of these programs run: %s (work resumes %d s "
                 "after the last one closes).",
                 _ascii(", ".join(guard.names)), guard.grace_seconds)
+            if guard.hours is not None or guard.days is not None:
+                from mousereach.watcher.recording_guard import format_days, format_hours
+                logger.info("...only when recording can happen (%s, %s); outside "
+                            "that an open program does not pause this watcher.",
+                            format_days(guard.days) if guard.days else "every day",
+                            format_hours(guard.hours) if guard.hours else "any hour")
 
     # =========================================================================
     # MAIN LOOP
@@ -273,7 +279,9 @@ class BaseOrchestrator:
             config = getattr(self, 'config', None)
             guard = self._recording_guard = RecordingGuard(
                 getattr(config, 'pause_while_running', None) or [],
-                grace_seconds=getattr(config, 'pause_resume_grace_seconds', 120))
+                grace_seconds=getattr(config, 'pause_resume_grace_seconds', 120),
+                recording_hours=getattr(config, 'recording_hours', None),
+                recording_days=getattr(config, 'recording_days', None))
         return guard
 
     def _is_paused(self) -> bool:
@@ -403,20 +411,31 @@ class BaseOrchestrator:
 
         names = list(fresh.pause_while_running)
         grace = fresh.pause_resume_grace_seconds
+        hours = fresh.recording_hours
+        days = fresh.recording_days
         old_names = list(getattr(config, 'pause_while_running', None) or [])
         old_grace = getattr(config, 'pause_resume_grace_seconds', 120)
-        if names == old_names and grace == old_grace:
+        old_hours = getattr(config, 'recording_hours', None)
+        old_days = getattr(config, 'recording_days', None)
+        if (names == old_names and grace == old_grace
+                and hours == old_hours and days == old_days):
             return
         config.pause_while_running = names
         config.pause_resume_grace_seconds = grace
+        config.recording_hours = hours
+        config.recording_days = days
 
         old_guard = getattr(self, '_recording_guard', None)
         same_programs = (old_guard is not None and
                          [_match_key(n) for n in old_guard.names] ==
                          [_match_key(n) for n in clean_names(names)])
         if same_programs:
-            # Only the grace changed: keep the guard, and with it the timer.
+            # Only the grace, hours or days changed: keep the guard, and with
+            # it the timer.
+            from mousereach.watcher.recording_guard import parse_days, parse_hours
             old_guard.grace_seconds = max(0, int(grace))
+            old_guard.hours = parse_hours(hours)
+            old_guard.days = parse_days(days)
         else:
             self._recording_guard = None
             self._get_recording_guard().inherit_history(old_guard)
@@ -424,7 +443,9 @@ class BaseOrchestrator:
             logger.info(_ascii(
                 f"Recording-program settings changed: now pauses while any of "
                 f"these run: {', '.join(names)} (work resumes {grace} s after the "
-                f"last one closes)."))
+                f"last one closes)"
+                + (f", only when recording can happen ({days or 'every day'}, "
+                   f"{hours or 'any hour'})." if (hours or days) else ".")))
         else:
             logger.info("Recording-program settings changed: no programs listed; "
                         "this watcher no longer pauses for one.")

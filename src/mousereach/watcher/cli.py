@@ -1676,6 +1676,7 @@ def main_toggle():
 
 _RECORDERS_USAGE = """
 usage: mousereach-watch-recorders [--list] [--add NAME] [--remove NAME] [--grace SECONDS]
+                                  [--hours HH:MM-HH:MM|any] [--days DAYS|any]
 
 Show or change the recording programs that pause THIS machine's watcher.
 While any listed program is open the watcher starts no new work, and a pose
@@ -1693,6 +1694,15 @@ by itself within about a minute.
   --grace SECONDS   How long every listed program must have been closed before
                     work starts again (default 120). WHY: people often close
                     the recording program and open it again a moment later.
+  --hours HH:MM-HH:MM
+                    When recording can happen at all, on this PC's clock, for
+                    example 08:00-18:00. Outside these hours an open recording
+                    program does NOT pause the watcher. WHY: the program is
+                    often left open after recording, and the PC then sat idle
+                    until someone closed it. "any" removes the limit.
+  --days DAYS       The days recording can happen, for example Mon-Fri or
+                    Mon,Wed,Fri. On other days an open program does not pause
+                    the watcher. "any" removes the limit.
 
 --add and --remove may each be given more than once. The settings are saved in
 the 'watcher' section of ~/.mousereach/config.json; nothing else in that file
@@ -1704,6 +1714,7 @@ Examples:
   mousereach-watch-recorders --add recorder.exe
   mousereach-watch-recorders --remove recorder.exe
   mousereach-watch-recorders --grace 300
+  mousereach-watch-recorders --days Mon-Fri --hours 08:00-18:00
 """
 
 
@@ -1820,18 +1831,32 @@ def main_recorders():
     # Every argument is checked before anything is written, so a typo in the
     # last one cannot leave a half-applied change behind.
     adds, removes, grace = [], [], None
+    hours = days = None          # None = not given; "" = clear (any)
     i = 0
     while i < len(args):
         arg = args[i]
         if arg == '--list':
             i += 1
             continue
-        if arg not in ('--add', '--remove', '--grace'):
+        if arg not in ('--add', '--remove', '--grace', '--hours', '--days'):
             usage_error(f"unknown argument: {arg}")
         if i + 1 >= len(args) or args[i + 1].startswith('--'):
             usage_error(f"{arg} needs a value")
         value = args[i + 1].strip()
         i += 2
+        if arg in ('--hours', '--days'):
+            clear = value.lower() in ('any', 'none', 'off')
+            if arg == '--hours':
+                if not clear and rg.parse_hours(value) is None:
+                    usage_error(f"--hours needs a start and an end such as 08:00-18:00, "
+                                f"or 'any' (got '{value}')")
+                hours = "" if clear else value
+            else:
+                if not clear and rg.parse_days(value) is None:
+                    usage_error(f"--days needs day names such as Mon-Fri or Mon,Wed,Fri, "
+                                f"or 'any' (got '{value}')")
+                days = "" if clear else value
+            continue
         if arg == '--grace':
             try:
                 grace = int(value)
@@ -1886,8 +1911,19 @@ def main_recorders():
         messages.append(f"Resume grace set to {grace} s." if grace_changed
                         else f"Resume grace is already {grace} s.")
 
+    hours_changed = hours is not None and (watcher.get('recording_hours') or "") != hours
+    days_changed = days is not None and (watcher.get('recording_days') or "") != days
+    if hours is not None:
+        messages.append(("Recording hours set to %s." % hours if hours
+                         else "Recording hours removed: any hour.") if hours_changed
+                        else "Recording hours are already %s." % (hours or "any hour"))
+    if days is not None:
+        messages.append(("Recording days set to %s." % days if days
+                         else "Recording days removed: every day.") if days_changed
+                        else "Recording days are already %s." % (days or "every day"))
+
     saved = False
-    if names_changed or grace_changed:
+    if names_changed or grace_changed or hours_changed or days_changed:
         # Change only these two keys; every other watcher setting, and every
         # other section of the file, is written back exactly as it was read.
         new_watcher = dict(watcher)
@@ -1899,6 +1935,13 @@ def main_recorders():
                 new_watcher.pop('pause_while_running', None)
         if grace_changed:
             new_watcher['pause_resume_grace_seconds'] = grace
+        for key, value, changed in (('recording_hours', hours, hours_changed),
+                                    ('recording_days', days, days_changed)):
+            if changed:
+                if value:
+                    new_watcher[key] = value
+                else:
+                    new_watcher.pop(key, None)   # absent = the default (any time)
         data['watcher'] = new_watcher
         try:
             _write_config_atomically(cfg_file, data)
@@ -1948,6 +1991,18 @@ def main_recorders():
             print(f"  {_ascii(n):<{width}}   {status}")
         print(f"Resume grace: {grace_now} s -- after the last listed program closes, "
               f"the watcher waits this long before it starts work again.")
+        when_guard = rg.RecordingGuard(names, recording_hours=view.recording_hours,
+                                       recording_days=view.recording_days)
+        if when_guard.hours is None and when_guard.days is None:
+            print("Recording time: any day, any hour -- an open listed program always "
+                  "pauses the watcher.")
+        else:
+            print("Recording time: %s, %s -- outside it an open listed program does not "
+                  "pause the watcher." % (
+                      rg.format_days(when_guard.days) if when_guard.days else "every day",
+                      rg.format_hours(when_guard.hours) if when_guard.hours else "any hour"))
+            print("  Right now it is %s recording time." % (
+                "OUTSIDE" if when_guard.outside_recording_time() else "inside"))
         print()
         if error:
             print(f"Right now: cannot check for recording programs ({_ascii(error)}).")

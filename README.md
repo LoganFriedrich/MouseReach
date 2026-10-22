@@ -264,6 +264,11 @@ a set time (default 120 s) after the program closes. Resume cannot override an
 open recording program. The list is empty by default, which means the watcher
 never checks for any program.
 
+Set when recording can happen at all (`--days Mon-Fri --hours 08:00-18:00`, or
+the panel's "Recording happens only on" boxes) and an open recording program
+is ignored outside that time -- for a program left open after recording.
+Empty by default (any day, any hour). See INSTALL.md (A2).
+
 The watcher runs on the NAS / DLC PC (the machine with direct NAS access and GPU).
 Set up with `mousereach-setup --set-role "NAS / DLC PC"` then `mousereach-setup`.
 

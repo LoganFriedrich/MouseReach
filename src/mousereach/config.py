@@ -770,6 +770,21 @@ class WatcherConfig:
                 0, int(cfg.get('pause_resume_grace_seconds', 120)))
         except (TypeError, ValueError):
             self.pause_resume_grace_seconds = 120
+        # Hours in which recording can happen at all, e.g. "08:00-18:00" (this
+        # machine's clock). Outside them an open recording program does not
+        # pause the watcher. WHY: the program is routinely left open after the
+        # day's recording and the node then idled until someone closed it (G12).
+        # Empty = any hour, as before. See mousereach.watcher.recording_guard.
+        hours = cfg.get('recording_hours')
+        self.recording_hours: Optional[str] = (
+            hours.strip() if isinstance(hours, str) and hours.strip() else None)
+        # Days on which recording can happen at all, e.g. "Mon-Fri" (or a list
+        # of day names). Empty = every day, as before. Same WHY as the hours.
+        days = cfg.get('recording_days')
+        if isinstance(days, (list, tuple)):
+            days = ", ".join(str(d).strip() for d in days if str(d).strip())
+        self.recording_days: Optional[str] = (
+            days.strip() if isinstance(days, str) and days.strip() else None)
         # Say on this machine's screen when its work has actually stopped for a
         # recording program ("safe to record"), and when it starts stopping.
         # WHY: the pause is not instant -- the pose or crop running at that
@@ -820,6 +835,10 @@ class WatcherConfig:
         # config file that says nothing about recording programs.
         if self.pause_while_running:
             d['pause_while_running'] = list(self.pause_while_running)
+        if self.recording_hours:
+            d['recording_hours'] = self.recording_hours
+        if self.recording_days:
+            d['recording_days'] = self.recording_days
         # Only when turned OFF: on is the default, and a file full of defaults
         # hides the settings someone actually chose.
         if not self.notify_safe_to_record:

@@ -91,6 +91,7 @@ All of these live in ~/.mousereach/config.json on each machine, and defaults for
   - watcher.dlc_gpu_device - which graphics card number DeepLabCut uses, default 0.
   - watcher.pause_while_running - programs that pause this watcher while they run (process names such as recorder.exe). Empty by default, which means the watcher never checks for any program. A running watcher follows edits to it without a restart.
   - watcher.pause_resume_grace_seconds - how long every listed program must have been closed before work starts again, default 120.
+  - watcher.recording_days / watcher.recording_hours - optional, e.g. "Mon-Fri" and "08:00-18:00" on the machine's clock: when recording can happen at all. Outside them an open listed program does not pause the watcher. Empty = any day / any hour (since 2026-10-22).
   - backup.enabled - whether the separate Y:-to-X: backup daemon will start.
 
 ---
@@ -2139,3 +2140,19 @@ same video was still in flight was claimed a second time, and two GPUs posed one
 second machine logs "another node already holds this re-pose" once and leaves both files alone, and
 the leftover request is closed by the existing "already satisfied" check when the pose lands. Plan
 Section 0 item 8. Tests: `tests/test_repose.py`.
+
+## Update 2026-10-22: recording days and hours (G12)
+
+A behaviour PC paused whenever its recording program was open, and the program is routinely left
+open after the day's recording, so the PC idled until someone closed it (two days once; over an hour
+on 10-22 with the program open and nothing recorded). The lab knows when recording can happen at all,
+so that is now configuration: `watcher.recording_days` (e.g. "Mon-Fri", or a list) and
+`watcher.recording_hours` (e.g. "08:00-18:00", may cross midnight). Outside them the guard does not
+even read the process list and an open program does not pause the watcher; inside them nothing
+changed. Both empty by default (any day, any hour = the old behaviour); an unreadable value is treated
+as empty, which pauses more, never less. Set from Watcher Control ("Recording happens only on" /
+"...between") or `mousereach-watch-recorders --days ... --hours ...`; a running watcher follows edits.
+This replaces the "pause only while a recording is being written" mode built earlier the same day
+(cc14be4, withdrawn in 410bfb8): the schedule is a surer signal than the files. Tests:
+`tests/test_recording_hours.py`, `tests/test_watch_recorders_cli.py`,
+`tests/test_control_widget_recording.py`.

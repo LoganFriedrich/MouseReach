@@ -422,3 +422,34 @@ def test_status_says_paused_by_hand(status_node, monkeypatch, capsys):
     assert code == 0
     assert "Pause:  PAUSED -- paused by hand (watcher_paused.flag)" in out
     assert "mousereach-watch-toggle --resume" in out
+
+
+# ------------------------------------------------ recording hours and days
+
+def test_recording_hours_and_days_are_saved_shown_and_cleared(node, monkeypatch, capsys):
+    _write_config(node, {"watcher": {"pause_while_running": ["recorder.exe"], "keep": 1}})
+
+    code, out, _ = recorders(monkeypatch, capsys, "--days", "Mon-Fri", "--hours", "08:00-18:00")
+    assert code == 0 and "Recording days set to Mon-Fri" in out and "Recording hours set to 08:00-18:00" in out
+    w = _read_config(node)["watcher"]
+    assert w["recording_days"] == "Mon-Fri" and w["recording_hours"] == "08:00-18:00" and w["keep"] == 1
+
+    code, out, _ = recorders(monkeypatch, capsys)
+    assert "Recording time: Mon, Tue, Wed, Thu, Fri, 08:00-18:00" in out
+    assert "Right now it is" in out
+
+    code, out, _ = recorders(monkeypatch, capsys, "--hours", "any", "--days", "any")
+    assert code == 0
+    w = _read_config(node)["watcher"]
+    assert "recording_hours" not in w and "recording_days" not in w
+    code, out, _ = recorders(monkeypatch, capsys)
+    assert "Recording time: any day, any hour" in out
+
+
+@pytest.mark.parametrize("args", [("--hours", "6-3"), ("--days", "Funday")])
+def test_unreadable_hours_or_days_change_nothing(node, monkeypatch, capsys, args):
+    _write_config(node, {"watcher": {"pause_while_running": ["recorder.exe"]}})
+    before = node.config_file.read_text(encoding="utf-8")
+    code, _, err = recorders(monkeypatch, capsys, *args)
+    assert code == 2 and "Nothing was changed" in err
+    assert node.config_file.read_text(encoding="utf-8") == before

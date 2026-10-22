@@ -900,7 +900,8 @@ by itself within about a minute.
 From then on:
 
 - **Close the recording program whenever you are not recording.** While it is
-  open, this PC does no new pipeline work, all day if it is left open.
+  open, this PC does no new pipeline work, all day if it is left open -- unless
+  you set the recording time (A2 below), outside which an open program is ignored.
 - While it is open, nothing new starts. A pose (DeepLabCut) that was part-way
   is stopped and put back in the queue; it runs again later, nothing is lost,
   and the video is not marked failed. A collage crop that had already started
@@ -921,6 +922,24 @@ From then on:
 
 To stop pausing for a program: remove the name in Watcher Control and press
 **Save config**, or run `mousereach-watch-recorders --remove recorder.exe`.
+
+**A2. Tell the PC when recording can happen at all (recommended)**
+
+If the recording program is sometimes left open after the day's recording, the
+PC would sit idle until someone closes it. If your lab only records on certain
+days and between certain hours, say so, and outside that time an open recording
+program no longer pauses the PC. Inside that time nothing changes: an open
+program pauses it as before.
+
+- In Watcher Control, fill in **Recording happens only on (days)** (for example
+  `Mon-Fri`) and **...between (hours)** (for example `08:00-18:00`, on this PC's
+  clock), then press **Save config**. Or run
+  `mousereach-watch-recorders --days Mon-Fri --hours 08:00-18:00`.
+- Leave a box empty for "any day" or "any hour" (`--days any`, `--hours any`).
+- `mousereach-watch-recorders` shows the recording time and whether it is
+  inside it right now.
+- Set it to cover every time anyone might record. Outside it, a recording made
+  with a pose running could drop frames.
 
 **B. Pause by hand**
 
