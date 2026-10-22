@@ -255,10 +255,11 @@ class WatcherStateManager:
         dot-names are never taken in (_is_single_intake_name). Only the top of
         the folder is read, so a video claimed into ``.inflight`` is not seen.
 
-        A row this node parked 'unresolvable' because the video had left the
-        folder before it could be taken (single_claim.LEFT_FOLDER_REASON) is
-        validated again when the video is back and stable: another node
-        released it after a failed copy, or its claim went stale.
+        A row this node parked 'unresolvable' because the video waits in the
+        shared folder (single_claim.REDRIVE_REASONS: it left the folder before
+        this node could take it, or this node put it there for any node --
+        cut but not kept, or given back on pausing) is validated again when
+        the video is at the top of the folder and stable.
 
         Args:
             scan_dir: Directory to scan for videos
@@ -271,7 +272,7 @@ class WatcherStateManager:
             return []
 
         from mousereach.config import get_video_id
-        from mousereach.watcher.single_claim import LEFT_FOLDER_REASON
+        from mousereach.watcher.single_claim import REDRIVE_REASONS
 
         newly_registered = []
         seen = set()
@@ -296,7 +297,7 @@ class WatcherStateManager:
             row = self.db.get_video(video_id)
             if row is not None:
                 came_back = (row.get('state') == 'unresolvable'
-                             and (row.get('error_message') or '').startswith(LEFT_FOLDER_REASON))
+                             and (row.get('error_message') or '').startswith(REDRIVE_REASONS))
                 if came_back and self._single_is_stable(file_path):
                     # Not while a node still holds a claim of that name: then
                     # the file is a second copy dropped in while the first is

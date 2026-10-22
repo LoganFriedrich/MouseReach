@@ -1837,8 +1837,10 @@ class DLCOrchestrator(BaseOrchestrator):
         if force or last is None or now - last >= interval:
             self._last_single_heartbeat = now
             try:
-                single_claim.heartbeat_claims(self.hostname,
-                                              only=self._claims_to_keep_alive())
+                keep = self._claims_to_keep_alive()
+                single_claim.heartbeat_claims(self.hostname, only=keep)
+                if keep is not None:
+                    self._give_back_abandoned(keep)
             except Exception as e:
                 logger.warning(f"Heartbeat of claimed singles failed (non-fatal): {e}")
         if not sweep:
@@ -1868,18 +1870,14 @@ class DLCOrchestrator(BaseOrchestrator):
         A claim whose row is failed, unresolvable, quarantined or missing is
         NOT refreshed: this node has given up on that video (or never knew
         it), and refreshing the claim would hold the only shared copy from
-        every other node for as long as this node runs. Left alone, it goes
-        stale after single_claim.STALE_S and a running GPU node returns it.
-        Each one is named once at WARNING. WHY None on a database error: a
-        database hiccup must never hand back videos this node is posing.
+        every other node for as long as this node runs. It is given back at
+        once (_give_back_abandoned). WHY None on a database error: a database
+        hiccup must never hand back videos this node is posing.
         """
         claims = single_claim.host_claims(self.hostname)
         if not claims:
             return set()
         keep = set()
-        warned = getattr(self, '_claim_abandon_warned', None)
-        if warned is None:
-            warned = self._claim_abandon_warned = set()
         for vid, path in claims.items():
             try:
                 row = self.db.get_video(vid)
@@ -1888,15 +1886,31 @@ class DLCOrchestrator(BaseOrchestrator):
             state = row.get('state') if row else None
             if state in self._CLAIM_KEEPALIVE_STATES:
                 keep.add(vid)
-                continue
-            if (vid, state) not in warned:
-                warned.add((vid, state))
-                logger.warning(
-                    f"{vid}: this node's claimed copy {path} is no longer refreshed "
-                    f"(this node's row is {state or 'missing'}); it goes back to the "
-                    f"shared singles folder for another node after "
-                    f"{single_claim.STALE_S // 3600} h without a refresh")
         return keep
+
+    def _give_back_abandoned(self, keep) -> int:
+        """Give back at once every claim of this node's that is not in ``keep``
+        (its row is failed, unresolvable, quarantined or missing). Returns how
+        many went back. WHY at once: such a claim used to be left to go stale,
+        which held the video from every other node for a day; a node that
+        has stopped working a video has nothing to wait for."""
+        given = 0
+        for vid, path in single_claim.host_claims(self.hostname).items():
+            if vid in keep:
+                continue
+            try:
+                state = (self.db.get_video(vid) or {}).get('state')
+            except Exception:
+                return given
+            if state in self._CLAIM_KEEPALIVE_STATES:
+                continue              # changed since keep was computed
+            if single_claim.release_single(path):
+                given += 1
+                logger.warning(
+                    f"{vid}: this node no longer works it (its row is "
+                    f"{state or 'missing'}); its claimed copy went back to the "
+                    f"shared singles folder for another node to take")
+        return given
 
     def _release_claim_given_up(self, video_id: str, why: str) -> bool:
         """Give a claimed single back to the folder at once when this node
@@ -1972,6 +1986,113 @@ class DLCOrchestrator(BaseOrchestrator):
             logger.warning(f"{video_id}: could not publish to the share ({e}); it stays "
                            f"local to this node")
         return None
+
+    def _hand_out_instead_of_keeping(self, output_path, video_id: str,
+                                     collage_filename: str) -> bool:
+        """Put a freshly cut video into the shared singles folder, unclaimed,
+        instead of keeping it in this node's queue. True when it went there.
+
+        WHY: a node used to keep every video of every recording it cut -- eight
+        at a time -- and pose them one by one while the other GPU nodes had
+        nothing to do; a recording pause held them all. Now a node keeps
+        single_claim.KEEP_AHEAD (the next one and one ready behind it) and puts
+        the rest where any node, itself included, takes them the ordinary way
+        (claim by rename, then pose). Its own row is parked with
+        single_claim.SHARED_REASON, which the intake re-drives once the file is
+        in the folder and stable -- so if no other node takes it, this one
+        does.
+
+        False (keep it, as before) when the queue is not yet full, or when it
+        could not be put in the shared folder: keeping it is the old behaviour
+        and no worse than it. Never raises.
+        """
+        try:
+            queued = len(self.db.get_videos_in_state('dlc_queued'))
+        except Exception:
+            return False
+        if queued < single_claim.KEEP_AHEAD:
+            return False
+        try:
+            published = single_claim.publish_to_front_door(output_path)
+        except Exception as e:
+            logger.warning(f"{video_id}: could not put it in the shared singles folder "
+                           f"({e}); keeping it here")
+            return False
+        if published is None:
+            return False
+        self.db.mark_unresolvable(
+            video_id, f"{single_claim.SHARED_REASON}: cut here, not kept "
+                      f"({published})")
+        self._sync_to_connectome(video_id, 'validated', collage_id=collage_filename,
+                                 source_path=str(published))
+        return True
+
+    def _give_back_unstarted(self) -> int:
+        """Give back every claimed single this node has queued but not started.
+        Returns how many went back. Never raises.
+
+        Called whenever the node is paused. WHY: a node pauses for the whole of
+        a recording day, and the videos it had claimed used to wait for it
+        while the other GPU nodes had nothing to do. A video that is posing
+        when the pause starts finishes and is not given back; only ones still
+        waiting in 'dlc_queued' go.
+
+        For each: the claimed copy goes back to the shared folder
+        (single_claim.release_single, never overwriting); this node's local
+        queue copy is removed once the shared copy is confirmed the same size
+        -- WHY removed: a node re-adopts whatever it finds in its local queue
+        when it starts (_recover_local_dlc_queue), and would pose the video
+        while another node does too; the shared copy is the one that matters --
+        and the row is parked with single_claim.SHARED_REASON so the intake
+        re-drives it here if no other node has taken it by then.
+        """
+        try:
+            claims = single_claim.host_claims(self.hostname)
+        except Exception:
+            return 0
+        given = 0
+        for vid, claimed in claims.items():
+            try:
+                row = self.db.get_video(vid)
+            except Exception:
+                return given          # a database hiccup never hands back work
+            if not row or row.get('state') != 'dlc_queued':
+                continue
+            local = Path(row.get('current_path') or '')
+            if not single_claim.release_single(claimed):
+                continue
+            back = claimed.parent.parent.parent / claimed.name
+            self._remove_local_queue_copy(vid, local, back)
+            try:
+                self.db.mark_unresolvable(
+                    vid, f"{single_claim.SHARED_REASON}: given back when this node "
+                         f"paused ({back})")
+            except Exception as e:
+                logger.warning(f"{vid}: given back, but its row could not be updated ({e})")
+            self._sync_to_connectome(vid, 'validated', source_path=str(back))
+            given += 1
+        if given:
+            logger.info(f"Paused: gave back {given} video(s) not yet started to the shared "
+                        f"singles folder for any node to take")
+        return given
+
+    def _remove_local_queue_copy(self, video_id: str, local: Path, shared: Path) -> None:
+        """Remove this node's local queue copy of a video it gave back, once the
+        shared copy is confirmed the same size. Only a file inside this node's
+        DLC queue is ever removed. Never raises."""
+        try:
+            queue = Paths.DLC_QUEUE
+            if not queue or not local.name or Path(local).parent.resolve() != Path(queue).resolve():
+                return
+            if not local.is_file():
+                return
+            if not shared.is_file() or shared.stat().st_size != local.stat().st_size:
+                logger.warning(f"{video_id}: kept the local queue copy {local}; the shared "
+                               f"copy could not be confirmed the same size")
+                return
+            local.unlink()
+        except Exception as e:
+            logger.warning(f"{video_id}: could not remove the local queue copy {local} ({e})")
 
     def _retire_claimed_single(self, video_id: str, handed_on,
                                verified: bool = False) -> bool:
@@ -2298,9 +2419,11 @@ class DLCOrchestrator(BaseOrchestrator):
             logger.warning(f"Re-pose heartbeat failed (non-fatal): {e}")
 
     def _while_paused(self) -> None:
-        """Keep claimed re-pose requests and claimed singles alive while
-        paused (see _repose_heartbeat and _single_claim_upkeep)."""
+        """Keep claimed re-pose requests and the singles this node has started
+        alive while paused (see _repose_heartbeat and _single_claim_upkeep),
+        and give back every single it has not started (_give_back_unstarted)."""
         self._repose_heartbeat()
+        self._give_back_unstarted()
         self._single_claim_upkeep(sweep=False)
 
     # =========================================================================
@@ -2856,6 +2979,14 @@ class DLCOrchestrator(BaseOrchestrator):
                     continue
 
                 self.db.update_state(video_id, 'validated', current_path=str(output_path))
+
+                # Keep only what this node is about to start; the rest of the
+                # recording goes into the shared singles folder for any node
+                # (see _hand_out_instead_of_keeping).
+                if self._hand_out_instead_of_keeping(output_path, video_id,
+                                                     collage_filename):
+                    videos_created += 1
+                    continue
 
                 # Put the ARTEFACT where another node could take it over, not just
                 # the fact that it exists (see _publish_cropped_single).

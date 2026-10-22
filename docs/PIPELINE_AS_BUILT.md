@@ -1329,17 +1329,21 @@ node's queue is on its own disk.
   * Every scan and every paused poll refreshes (touches) this node's claims
     whose rows are still being worked or were handed on
     (`_CLAIM_KEEPALIVE_STATES`). A claim whose row is failed, unresolvable or
-    missing is not refreshed, and is named once at WARNING. WHY: refreshing a
-    claim this node has given up on would hold the only shared copy from every
-    other node for as long as this node runs.
+    missing is not refreshed, and (since 2026-10-21) is given back to the
+    folder at once (`_give_back_abandoned`, WARNING). WHY: refreshing a claim
+    this node has given up on would hold the only shared copy from every other
+    node for as long as this node runs.
   * A failed pose, or a queued or posed video with no local copy left, gives
     the claim back to the folder at once (`_release_claim_given_up`, WARNING).
   * After 3 pose failures in a row the node takes no new singles for 30 min
     (`_POSE_FAILURE_BRAKE`, WARNING). WHY: a node whose DeepLabCut is broken
     would otherwise claim and fail every single dropped on the share.
   * Every running GPU node sweeps for claims untouched for 24 h
-    (`single_claim.STALE_S`, the re-pose request rule) at most every 300 s,
-    never while paused, and moves each back to the folder (WARNING). It never
+    (`single_claim.STALE_S`, the re-pose request rule) -- or, since 2026-10-21,
+    untouched for 3 h by a holder whose status report has also been quiet for
+    3 h (see "Update 2026-10-21: a node keeps only what it starts") -- at most
+    every 300 s, never while paused, and moves each back to the folder
+    (WARNING). It never
     deletes and never overwrites. If a same-named file is already back in the
     folder, nothing moves, and a WARNING asks a person to keep one copy. That
     warning repeats at most once a day. Trade-off: a node that comes back after
@@ -1566,3 +1570,60 @@ so the cycle that hits them stops all work until they finish.
 Tests: `tests/test_misfiled_video.py::test_the_folder_is_listed_once_per_pass_not_once_per_video`.
 
 ---
+
+## Update 2026-10-21: a node keeps only what it starts; a stopped node's videos come back in hours
+
+**What was wrong.** A GPU node that cut a recording kept every one of its videos
+(up to eight) claimed in its own `Unanalyzed/Single_Animal/.inflight/<machine>/`
+folder and in its local DLC queue, and posed them one at a time (about 14
+minutes each). It kept them claimed through a pause -- a node pauses for a whole
+recording day -- and another node could take them over only after the claims had
+gone untouched for a day. So videos waited on one machine while the other GPU
+nodes had nothing to do (found 2026-10-21: a video stuck on the node that had
+done part of its work).
+
+**What changed** (`watcher/single_claim.py`, `DLCOrchestrator` in
+`watcher/orchestrator.py`):
+
+1. **A node keeps only what it is about to start.** After cutting, a node keeps
+   `single_claim.KEEP_AHEAD` (2) videos queued for its own GPU -- the next one
+   and one ready behind it. Every further video of the recording is copied into
+   the top of `Unanalyzed/Single_Animal` under a temporary name and renamed into
+   place (`publish_to_front_door`), unclaimed, so any node -- this one included
+   -- takes it the ordinary way. The cutting node's row for it is parked
+   `unresolvable` with the reason "in the shared singles folder for any node to
+   take" (`SHARED_REASON`), which the intake re-drives once the file is in the
+   folder and stable: if no other node takes it, the cutting node does. A video
+   that cannot be put in the shared folder is kept, as before.
+2. **Pausing gives back what has not started.** Whenever a node is paused, every
+   claimed video still waiting in `dlc_queued` goes back to the shared folder
+   (`_give_back_unstarted`). Its local queue copy is removed once the shared
+   copy is confirmed the same size (a node re-adopts whatever it finds in its
+   local queue when it starts, and would pose the video while another node does
+   too). A video being posed when the pause starts finishes and is not given
+   back.
+3. **A video a node has given up on goes back at once** (row failed,
+   unresolvable, quarantined or missing), instead of waiting a day to go stale
+   (`_give_back_abandoned`).
+4. **A stopped node's videos come back in hours, not a day.** A claim goes back
+   to the folder when its holder's status report
+   (`Processing/.node_status/<machine>.json`) has been quiet for 3 hours AND the
+   claimed file itself has not been touched for 3 hours -- all times read from
+   the file server, never from the machines' own clocks, which disagree by about
+   21 minutes (`watcher/claim_marker.py`, `GONE_AFTER_S`). Both are required so a
+   live node whose status writes alone fail keeps the videos it is working. The
+   one-day rule for an untouched claim stays, for nodes still running older code.
+
+**What a person sees.** Videos cut by one machine appear in
+`Unanalyzed/Single_Animal` and are posed by whichever GPU node is free. A
+paused machine's queue empties into that folder. The log says each time:
+"put in the shared singles folder for any node to take", "Paused: gave back N
+video(s) not yet started", "... has stopped running (no status report for over
+3 h); returned to the shared singles folder".
+
+**Mixed versions.** A node on older code keeps its old behaviour (it keeps
+everything it cuts), which is safe; it takes shared videos the ordinary way.
+Every node should run this code for the sharing to be complete.
+
+Tests: `tests/test_singles_intake_claim.py` (the tests after "a stopped node's
+videos come back").

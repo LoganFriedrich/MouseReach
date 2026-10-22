@@ -51,13 +51,37 @@ be the only copy on the share.
 While its node is still working the video (or has handed it on but could not
 confirm the next copy), the node touches it every poll, paused or not
 (``heartbeat_claims``). A claim the node has given up on -- a failed pose, no
-local copy left -- is released back to the folder at once where the failure is
-seen, and otherwise simply stops being touched. A claim nobody has touched for
-``STALE_S`` (a day, the re-pose request rule) means its node is gone or has
-given up, and ``reclaim_stale`` moves the video back into the singles folder
-for any node to take. Nothing here
-ever deletes a video. The trade-off is the re-pose queue's: a node that comes
-back after more than a day may pose a video another node has since taken.
+local copy left, a row it no longer works -- is released back to the folder at
+once by the node itself.
+
+``reclaim_stale`` moves a claimed video back into the singles folder for any
+node to take when EITHER
+  * its holder has stopped running: the holder's status report
+    (``Processing/.node_status/<host>.json``) has not been rewritten for
+    ``claim_marker.GONE_AFTER_S`` (3 hours) AND the claimed file has not been
+    touched for as long, all times read from the file server
+    (watcher/claim_marker.py says why the machines' own clocks are never
+    compared; the claim's own touch is required too so a live node whose
+    status writes alone fail keeps its videos); or
+  * nobody has touched the claimed file for ``STALE_S`` (a day, the re-pose
+    request rule), by the same file-server clock.
+The first is what returns a stopped node's work in hours rather than a day
+(2026-10-21: videos waited on a node that had stopped working them while every
+other GPU node was idle). The second is kept for a node still running older
+code, which stops touching a claim it has given up on instead of releasing it.
+Nothing here ever deletes a video. The trade-off is the re-pose queue's: a node
+that comes back after its claims were returned may find another node has taken
+them.
+
+WHAT A NODE HOLDS
+-----------------
+A node holds only what it is about to start. A node that cuts a recording keeps
+``KEEP_AHEAD`` of the cut videos for itself and puts the rest straight into
+the singles folder, unclaimed, for any node -- itself included -- to take the
+ordinary way (``publish_to_front_door``). A node that pauses for a recording
+gives back every claimed video it has not started. WHY: a node used to keep
+all eight videos of every recording it cut, and kept them through a whole
+recording day, while the other GPU nodes had nothing to do.
 
 The claim also sets the file's modified time to now. WHY: a rename keeps the
 modified time, and for a video copied onto the share last week that is
@@ -93,6 +117,22 @@ INFLIGHT_DIR = ".inflight"
 # 'unresolvable' is also recorded for other reasons, and a row parked for one
 # of those must not be re-driven just because a same-named file exists.
 LEFT_FOLDER_REASON = "gone from the shared singles folder before this node took it"
+
+# The start of the reason a GPU node records ('unresolvable') for a video it
+# put into the singles folder for any node to take: one it cut but did not
+# keep (KEEP_AHEAD), or one it gave back on pausing. Re-driven exactly like
+# LEFT_FOLDER_REASON: once the file is at the top of the folder and stable, the
+# row is ready to be taken again -- by this node or any other.
+SHARED_REASON = "in the shared singles folder for any node to take"
+
+# Row reasons that mean "this video waits in the singles folder; take it from
+# there when it is back and stable" (state.WatcherStateManager.discover_new_singles).
+REDRIVE_REASONS = (LEFT_FOLDER_REASON, SHARED_REASON)
+
+# How many claimed videos a node keeps queued for its own GPU after cutting a
+# recording: the one it poses next and one more ready behind it. The rest of
+# the recording's videos go into the shared folder. See "WHAT A NODE HOLDS".
+KEEP_AHEAD = 2
 
 # The start of the reason a GPU node records ('unresolvable') when a file in
 # the singles folder has the name of a video ANOTHER node already holds in
@@ -257,6 +297,64 @@ def claim_single(src, hostname: str) -> Optional[Path]:
     return dest
 
 
+def publish_to_front_door(local_path) -> Optional[Path]:
+    """Put a video into the shared singles folder, unclaimed, for any node to take.
+
+    Copied under a temporary name and renamed into place, so no node takes in
+    a half-written file (the intake skips temporary names). Never overwrites
+    and never publishes a video some node already holds in ``.inflight``: both
+    mean a copy of this video is already out there. Returns the published path,
+    or None (logged) when it was not published. Never raises.
+    """
+    from mousereach.watcher.transfer import safe_copy
+    door = front_door()
+    local_path = Path(local_path)
+    if door is None:
+        return None
+    target = door / local_path.name
+    temp = door / (local_path.name + ".part")
+    try:
+        if target.exists():
+            logger.warning(f"{local_path.stem}: not put in the shared singles folder -- "
+                           f"{target} already exists")
+            return None
+        holder = inflight_ids().get(local_path.stem)
+        if holder:
+            logger.warning(f"{local_path.stem}: not put in the shared singles folder -- "
+                           f"{holder} already holds a claim on it")
+            return None
+        door.mkdir(parents=True, exist_ok=True)
+        if not safe_copy(local_path, temp, verify=True):
+            logger.warning(f"{local_path.stem}: could not copy to the shared singles folder")
+            return None
+        os.rename(temp, target)              # refuses an existing target on Windows
+    except FileExistsError:
+        logger.warning(f"{local_path.stem}: a file appeared at {target} meanwhile; "
+                       f"not published")
+        _remove_quietly(temp)
+        return None
+    except OSError as e:
+        logger.warning(f"{local_path.stem}: could not put it in the shared singles "
+                       f"folder ({e})")
+        _remove_quietly(temp)
+        return None
+    # Fresh modified time, for the same reason claim_single sets one: the copy
+    # keeps the source's time, and an old time would read as a stale arrival.
+    try:
+        os.utime(target, None)
+    except OSError:
+        pass
+    logger.info(f"{local_path.stem}: put in the shared singles folder for any node to take")
+    return target
+
+
+def _remove_quietly(path) -> None:
+    try:
+        Path(path).unlink()
+    except OSError:
+        pass
+
+
 def release_single(claimed) -> bool:
     """Move a claimed copy back to ``<Single_Animal>/<stem>.mp4``.
 
@@ -381,14 +479,21 @@ _unreleasable_warned: Dict[str, float] = {}
 
 def reclaim_stale(now: Optional[float] = None) -> List[Path]:
     """Return to the singles folder every claimed video (any host's) whose
-    modified time is more than ``STALE_S`` old. Returns the paths the videos
-    are back at. Never deletes, never overwrites (``release_single``), never
-    raises. Each return is logged.
+    holder has stopped running, or that nobody has touched for ``STALE_S``
+    (see "HOW LONG A CLAIM LIVES"). Returns the paths the videos are back at.
+    Never deletes, never overwrites (``release_single``), never raises. Each
+    return is logged.
+
+    "Now" is the newest status report on the share (the file server's clock),
+    or this machine's clock when no report can be read; ``now`` overrides it.
     """
+    from mousereach.watcher import claim_marker, node_status
     root = inflight_root()
     if root is None:
         return []
-    now = time.time() if now is None else now
+    times = claim_marker.status_times(node_status.status_dir(Paths.NAS_ROOT))
+    if now is None:
+        now = max(times.values()) if times else time.time()
     try:
         hosts = sorted(h for h in root.iterdir() if h.is_dir())
     except FileNotFoundError:
@@ -409,7 +514,13 @@ def reclaim_stale(now: Optional[float] = None) -> List[Path]:
                 age = now - p.stat().st_mtime
             except OSError:
                 continue
-            if age <= STALE_S:
+            # Gone means BOTH: the holder's status report has gone quiet, and
+            # the claim itself has not been touched for as long. WHY both: a
+            # live holder touches every claim it is working each poll, so a
+            # holder whose status writes alone are failing keeps its videos.
+            holder_gone = (age > claim_marker.GONE_AFTER_S
+                           and claim_marker.holder_gone(h.name, p, times))
+            if age <= STALE_S and not holder_gone:
                 continue
             target = h.parent.parent / p.name
             try:
@@ -433,8 +544,10 @@ def reclaim_stale(now: Optional[float] = None) -> List[Path]:
             if release_single(p):
                 back = h.parent.parent / p.name
                 returned.append(back)
-                logger.warning(f"{p.stem}: claimed by {h.name} but not touched for "
-                               f"{age / 3600:.0f} h; returned to the shared singles "
+                why = (f"{h.name} has stopped running (no status report for over "
+                       f"{claim_marker.GONE_AFTER_S // 3600} h)" if holder_gone else
+                       f"claimed by {h.name} but not touched for {age / 3600:.0f} h")
+                logger.warning(f"{p.stem}: {why}; returned to the shared singles "
                                f"folder ({back}) for any node to take")
     return returned
 

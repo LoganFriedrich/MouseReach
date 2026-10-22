@@ -428,11 +428,13 @@ def _fresh(path):
 
 def test_claims_are_kept_alive_while_paused(env, monkeypatch):
     """A long recording day skips the scan; a day without a heartbeat would
-    hand a video this node already copied to another node."""
+    hand a video this node has already started to another node. (A video it
+    has only queued is given back on pausing instead -- see
+    test_pausing_gives_back_what_has_not_started.)"""
     monkeypatch.setattr(repose, "heartbeat", lambda *a, **k: 0)
     a = _node(env, HOST)
     mine = _age(single_claim.claim_single(_drop(env), HOST), single_claim.STALE_S + 60)
-    _row(a, VID, "dlc_queued", mine)                 # still being worked here
+    _row(a, VID, "dlc_complete", mine)               # posed here, not yet handed on
     theirs = _age(single_claim.claim_single(_drop(env, vid=VID2), OTHER),
                   single_claim.STALE_S + 60)
 
@@ -526,27 +528,25 @@ def test_every_scan_refreshes_its_claims_and_sweeps_before_scanning(env):
     assert not theirs.exists() and (env.door / f"{VID2}.mp4").is_file()
 
 
-def test_a_claim_this_node_gave_up_on_is_not_kept_alive(env, caplog):
+def test_a_claim_this_node_gave_up_on_goes_back_at_once(env, caplog):
     """A failed or unresolvable row must not hold the only shared copy from
-    every other node for as long as this node runs."""
+    every other node. It used to be left to go stale, which held it a day;
+    a node that has stopped working a video has nothing to wait for."""
     a = _node(env, HOST)
     working = _age(single_claim.claim_single(_drop(env), HOST), single_claim.STALE_S + 60)
     _row(a, VID, "dlc_running", working)
-    given_up = _age(single_claim.claim_single(_drop(env, vid=VID2), HOST),
-                    single_claim.STALE_S + 60)
+    given_up = single_claim.claim_single(_drop(env, vid=VID2), HOST)
     _row(a, VID2, "failed", given_up)
-    no_row = _age(single_claim.claim_single(_drop(env, vid=VID3), HOST),
-                  single_claim.STALE_S + 60)
+    no_row = single_claim.claim_single(_drop(env, vid=VID3), HOST)
 
     with caplog.at_level(logging.WARNING, logger=orch.logger.name):
         a._single_claim_upkeep(force=True, sweep=False)
         a._single_claim_upkeep(force=True, sweep=False)
     assert _fresh(working)
-    assert not _fresh(given_up) and not _fresh(no_row)
-    said = [r for r in caplog.records if "no longer refreshed" in r.getMessage()]
-    assert len(said) == 2, "each abandoned claim is named once"
-    assert sorted(p.name for p in single_claim.reclaim_stale()) == \
-        [f"{VID2}.mp4", f"{VID3}.mp4"]
+    assert not given_up.exists() and not no_row.exists()
+    assert (env.door / f"{VID2}.mp4").is_file() and (env.door / f"{VID3}.mp4").is_file()
+    said = [r for r in caplog.records if "no longer works it" in r.getMessage()]
+    assert len(said) == 2, "each given-back claim is named once"
 
 
 def test_a_database_error_never_hands_back_claims(env):
@@ -743,3 +743,152 @@ def test_both_review_holds_in_the_local_pipeline_retire_the_claimed_copy():
     import inspect
     source = inspect.getsource(DLCOrchestrator._run_local_pipeline)
     assert source.count("self._retire_claim_after_hold(video_id)") == 2
+
+
+# ------------------------------------------- a stopped node's videos come back
+
+def _report(env, host, age_s=0):
+    """Write ``host``'s status report on the share, ``age_s`` seconds old."""
+    from mousereach.watcher import node_status
+    d = node_status.status_dir(env.nas_root)
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{host}.json"
+    f.write_text("{}", encoding="ascii")
+    return _age(f, age_s) if age_s else f
+
+
+def test_a_stopped_nodes_claims_come_back_in_hours_not_a_day(env):
+    """WHY: videos waited on a node that had stopped working them while every
+    other GPU node was idle (2026-10-21). A holder whose status report and
+    claims have both gone quiet for 3 hours is gone."""
+    from mousereach.watcher import claim_marker
+    claimed = _age(single_claim.claim_single(_drop(env), OTHER), claim_marker.GONE_AFTER_S + 60)
+    _report(env, OTHER, age_s=claim_marker.GONE_AFTER_S + 60)
+    _report(env, HOST)                                   # the share's "now"
+    assert single_claim.reclaim_stale() == [env.door / f"{VID}.mp4"]
+    assert not claimed.exists()
+
+
+def test_a_live_nodes_quiet_claim_still_waits_the_day(env):
+    """Reporting means running: an untouched claim of a live node goes back
+    only by the old one-day rule (a node on older code stops touching a claim
+    it has given up on instead of releasing it)."""
+    from mousereach.watcher import claim_marker
+    claimed = _age(single_claim.claim_single(_drop(env), OTHER), claim_marker.GONE_AFTER_S + 60)
+    _report(env, OTHER)
+    _report(env, HOST)
+    assert single_claim.reclaim_stale() == []
+    assert claimed.is_file()
+
+
+def test_a_node_whose_status_writes_fail_keeps_the_claims_it_touches(env):
+    from mousereach.watcher import claim_marker
+    claimed = single_claim.claim_single(_drop(env), OTHER)
+    _report(env, OTHER, age_s=claim_marker.GONE_AFTER_S * 4)
+    _report(env, HOST)
+    assert single_claim.reclaim_stale() == []
+    assert claimed.is_file()
+
+
+# ----------------------------------------------- a node keeps only what it starts
+
+def test_a_cut_video_beyond_the_ones_kept_goes_to_the_shared_folder(env):
+    """A node used to keep all eight videos of every recording it cut."""
+    a = _as(env, _node(env, HOST))
+    work = env.tmp / "crop_work"
+    work.mkdir()
+    cut = work / f"{VID}.mp4"
+    cut.write_bytes(b"cut")
+    _row(a, VID, "validated", cut)
+
+    assert a._hand_out_instead_of_keeping(cut, VID, "collage.mkv") is False, \
+        "with nothing queued, the node keeps it"
+
+    for i, vid in enumerate((VID2, VID3)):
+        q = a.queue / f"{vid}.mp4"
+        q.write_bytes(b"queued")
+        _row(a, vid, "dlc_queued", q)
+    assert a._hand_out_instead_of_keeping(cut, VID, "collage.mkv") is True
+    assert (env.door / f"{VID}.mp4").read_bytes() == b"cut"
+    assert not list(env.door.glob("*.part"))
+    row = a.db.get_video(VID)
+    assert row["state"] == "unresolvable"
+    assert row["error_message"].startswith(single_claim.SHARED_REASON)
+
+
+def test_a_shared_cut_video_is_taken_in_again_by_its_own_node(env):
+    """If no other node takes it, the node that cut it does: its parked row is
+    re-driven like one whose file had left the folder."""
+    sm = _state(env, wait=0)
+    f = _drop(env)
+    sm.db.register_video(video_id=VID, source_path=str(f), current_path=str(f))
+    sm.db.force_state(VID, "unresolvable", reason="test setup",
+                      error_message=f"{single_claim.SHARED_REASON}: cut here, not kept")
+    assert sm.discover_new_singles(env.door) == []          # waits like any drop
+    assert sm.discover_new_singles(env.door) == [VID]
+    assert sm.db.get_video(VID)["state"] == "validated"
+
+
+def test_publishing_never_overwrites_and_never_duplicates_a_claim(env):
+    work = env.tmp / "crop_work"
+    work.mkdir()
+    cut = work / f"{VID}.mp4"
+    cut.write_bytes(b"cut")
+    _drop(env, body=b"already here")
+    assert single_claim.publish_to_front_door(cut) is None
+    assert (env.door / f"{VID}.mp4").read_bytes() == b"already here"
+
+    (env.door / f"{VID}.mp4").unlink()
+    single_claim.claim_single(_drop(env, body=b"claimed"), OTHER)
+    assert single_claim.publish_to_front_door(cut) is None
+    assert not (env.door / f"{VID}.mp4").exists()
+
+
+def test_pausing_gives_back_what_has_not_started(env):
+    """A node pauses for a whole recording day; the videos it had queued used
+    to wait for it while the other GPU nodes had nothing to do."""
+    a = _as(env, _node(env, HOST))
+    waiting = single_claim.claim_single(_drop(env), HOST)
+    local = a.queue / f"{VID}.mp4"
+    local.write_bytes(waiting.read_bytes())
+    _row(a, VID, "dlc_queued", local)
+    posing = single_claim.claim_single(_drop(env, vid=VID2), HOST)
+    local2 = a.queue / f"{VID2}.mp4"
+    local2.write_bytes(posing.read_bytes())
+    _row(a, VID2, "dlc_running", local2)
+
+    a._while_paused = DLCOrchestrator._while_paused.__get__(a)
+    a._repose_heartbeat = lambda: None
+    a._while_paused()
+
+    assert (env.door / f"{VID}.mp4").is_file() and not waiting.exists()
+    assert not local.exists(), "its local queue copy goes, or a restart would re-adopt it"
+    row = a.db.get_video(VID)
+    assert row["state"] == "unresolvable"
+    assert row["error_message"].startswith(single_claim.SHARED_REASON)
+    assert posing.is_file() and local2.is_file(), "a video being posed is not given back"
+    assert a.db.get_video(VID2)["state"] == "dlc_running"
+
+
+def test_pausing_keeps_the_local_copy_when_the_shared_one_does_not_match(env):
+    a = _as(env, _node(env, HOST))
+    waiting = single_claim.claim_single(_drop(env), HOST)
+    local = a.queue / f"{VID}.mp4"
+    local.write_bytes(b"a different length")
+    _row(a, VID, "dlc_queued", local)
+    a._repose_heartbeat = lambda: None
+    a._give_back_unstarted()
+    assert (env.door / f"{VID}.mp4").is_file()
+    assert local.is_file()
+
+
+def test_a_database_error_never_gives_back_on_pausing(env):
+    a = _as(env, _node(env, HOST))
+    mine = single_claim.claim_single(_drop(env), HOST)
+
+    def broken(vid):
+        raise RuntimeError("database locked")
+
+    a.db.get_video = broken
+    assert a._give_back_unstarted() == 0
+    assert mine.is_file()
