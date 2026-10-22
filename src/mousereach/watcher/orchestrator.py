@@ -130,6 +130,48 @@ def archived_pose_candidates(video_id: str, declared, archive_dir) -> list:
     return list(iter_files(archive_dir, pattern))
 
 
+def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
+    """Is the queue folder named after this video where THIS run's results
+    went, or a leftover from an earlier round?
+
+    Every route moves a video's results out of Processing together, its
+    processing manifest among them (review_routing.move_video_bundle). So:
+
+      * this run's manifest is no longer in ``processing_dir`` -- the results
+        went to the queue (what the bench-disagreement router does while this
+        watcher runs): True;
+      * it is still here -- the folder holds this run only if its routing
+        record, written after this run, lists the manifest as a file it failed
+        to move (a route that went partly wrong): True; otherwise False.
+
+    WHY: the archive step used to adopt the queue's state for ANY folder of
+    that name. Twenty times between 2026-09-10 and 09-29 a return could not
+    delete a video the review tool still held open, leaving a lone .mp4 in
+    the triage folder; the clean re-run that followed (the reviewer's answers
+    applied) was then not archived but forced to 'triage', and the return scan
+    read the husk as a failed segmentation and sent the video -- the bare .mp4
+    -- to deep review, where a person had to clear it a second time.
+    Anything that cannot be read answers True: the earlier, cautious behaviour.
+    """
+    import json
+    from datetime import datetime
+    manifest_name = f"{video_id}_processing_manifest.json"
+    try:
+        run_time = (Path(processing_dir) / manifest_name).stat().st_mtime
+    except (OSError, TypeError):       # gone (the results moved) or unreadable
+        return True
+    record = Path(queue_folder) / f"{video_id}_routing.json"
+    if not record.exists():
+        return False
+    try:
+        r = json.loads(record.read_text(encoding="utf-8"))
+        routed = datetime.fromisoformat(r["routed_at"]).timestamp()
+        failed = [Path(str(f)).name for f in r.get("failed_files") or []]
+    except Exception:
+        return True
+    return routed >= run_time and manifest_name in failed
+
+
 def _reprocess_copy_set(source_dirs, pose_dir, video_id):
     """The files a reprocess stages locally, with the pose tree contributing
     ONLY pose artifacts.
@@ -5456,18 +5498,29 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # 'processed' while the outputs are already in the queue. Archiving the
         # leftovers then entombs a lone mp4 in Analyzed and stamps the video
         # 'archived' (2026-08-31: 19 videos reconciled by hand). If the bundle
-        # is in a queue on disk, adopt that as the state and skip the archive.
+        # is in a queue on disk, adopt that as the state and skip the archive --
+        # but only if the folder really holds this run (see
+        # queue_folder_holds_this_run): a husk from an earlier round is left
+        # for the return scan, which files it away once this video is archived.
         for qdir, qstate in ((Paths.TRIAGE_REVIEW, 'triage'),
                              (Paths.DEEP_REVIEW, 'deep_review')):
             if qdir and (qdir / video_id).is_dir():
-                logger.info(
-                    f"Not archiving {video_id}: its bundle is in the {qstate} "
-                    f"queue on disk -- reconciling state instead.")
-                self.db.force_state(
-                    video_id, qstate,
-                    reason=f"bundle found in {qstate} queue on disk at archive time")
-                self._clear_archive_backoff(video_id)
-                return
+                if queue_folder_holds_this_run(qdir / video_id,
+                                               self.processing_dir, video_id):
+                    logger.info(
+                        f"Not archiving {video_id}: its bundle is in the {qstate} "
+                        f"queue on disk -- reconciling state instead.")
+                    self.db.force_state(
+                        video_id, qstate,
+                        reason=f"bundle found in {qstate} queue on disk at archive time")
+                    self._clear_archive_backoff(video_id)
+                    return
+                logger.warning(
+                    f"{video_id}: a folder of this name is in the {qstate} "
+                    f"queue, but this run's results are still here and no route "
+                    f"of this run went there -- a leftover from an earlier round, "
+                    f"not this run's bundle. Archiving this run; the return scan "
+                    f"files the leftover away once the video is archived.")
             # A route still running (or interrupted) builds the bundle in
             # <queue>/.incoming/<stem>/ and publishes it with one rename
             # (review_routing.move_video_bundle), so the check above cannot see

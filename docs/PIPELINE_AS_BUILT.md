@@ -831,6 +831,24 @@ then, archiving would file the leftovers while the rest of the bundle is on its
 way into the queue. The next cycle sees the published bundle, or the route
 failed and the files are where they were.
 
+THE ARCHIVE STEP ADOPTS A QUEUE FOLDER ONLY IF IT HOLDS THIS RUN
+
+A folder named after the video in a review queue is not always that video's
+bundle. When a return cannot delete a file the review tool still has open (the
+.mp4, typically), a husk holding just that file stays behind in the queue.
+`_archive_to_nas` used to adopt the queue's state for any such folder; the clean
+re-run that followed the person's answers was then forced back to 'triage', the
+return scan read the husk as a failed segmentation, and the video went to deep
+review as a bare .mp4 for a person to clear a second time (20 videos,
+2026-09-10..29). Now (`queue_folder_holds_this_run`) the folder counts as this
+run's bundle only when this run's results are no longer in Processing (every
+route moves them out together, the processing manifest among them -- this is
+what the bench-disagreement router does), or when the folder's routing record,
+written after this run, lists the processing manifest as a file it failed to
+move. Otherwise the run is archived, a warning names the leftover, and the
+return scan files the leftover away. A routing record that cannot be read keeps
+the old, cautious behaviour.
+
 THE REVIEW MANIFEST NAMES THE CHOSEN POSE
 
 `review_gate._write_review_manifest` records `select_pose_file` over the bundle's
