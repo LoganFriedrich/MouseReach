@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..config import Paths
+from . import claim_marker, node_status
 from ..review.triage_status import triage_status
 from .review_routing import _safe_move
 
@@ -220,13 +221,14 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
 # With several watchers scanning the SAME shared queues, two nodes that spot
 # the same cleared bundle in one pass would both start moving its files and
 # tear the bundle in half across machines -- the split-bundle failure class,
-# cross-node edition. Same write-then-verify marker pattern the DLC intake
-# claims use; claimed only at MUTATION time (returns, diverts, retires),
-# never for mere scanning. Fail-open when the claims dir cannot exist
-# (single-node mode). A return takes seconds, so a marker older than the
-# stale window is a crashed node's and is broken.
-
-_RETURN_CLAIM_STALE_S = 2 * 3600
+# cross-node edition. Claimed only at MUTATION time (returns, diverts,
+# retires), never for mere scanning, with the same exclusive-create marker the
+# posed-video intake uses (watcher/claim_marker.py): exactly one node's create
+# succeeds. A claim is broken only when its holder has stopped reporting
+# (claim_marker.GONE_AFTER_S, by the file server's clock), never for its age.
+# The rule this replaced was a check, write, sleep and read-back (not
+# atomic), went ahead unclaimed when the claim folder could not be made, and
+# broke another node's marker after two hours by age alone.
 
 
 def _return_claims_dir():
@@ -237,44 +239,23 @@ def _return_claims_dir():
 def _claim_return(stem: str) -> bool:
     d = _return_claims_dir()
     if d is None:
-        return True
-    try:
-        d.mkdir(exist_ok=True)
-    except OSError:
-        return True
+        return True                            # no shared queues configured
     host = socket.gethostname()
-    f = d / f"{stem}.claim"
-    try:
-        if f.exists():
-            try:
-                claimer = f.read_text(encoding="utf-8").strip().split("\n")[0]
-            except OSError:
-                return False
-            if claimer == host:
-                return True                    # our own (crash retry)
-            try:
-                if time.time() - f.stat().st_mtime > _RETURN_CLAIM_STALE_S:
-                    f.unlink()                 # crashed node's leftover
-                else:
-                    return False
-            except OSError:
-                return False
-        from datetime import datetime
-        f.write_text(f"{host}\n{datetime.now().isoformat()}\n", encoding="utf-8")
-        time.sleep(0.5)                        # SMB race window, as intake does
-        return f.read_text(encoding="utf-8").strip().split("\n")[0] == host
-    except OSError:
-        return False
+    if claim_marker.take(d, stem, host, suffix=".claim"):
+        return True
+    # Held by another node. If that node has stopped running, its claim is a
+    # crashed move's leftover: break it and try once more.
+    if stem in claim_marker.sweep_gone(d, host, node_status.status_dir(Paths.NAS_ROOT),
+                                       suffix=".claim"):
+        return claim_marker.take(d, stem, host, suffix=".claim")
+    return False
 
 
 def _release_return_claim(stem: str) -> None:
     d = _return_claims_dir()
     if d is None:
         return
-    try:
-        (d / f"{stem}.claim").unlink(missing_ok=True)
-    except OSError:
-        pass
+    claim_marker.release(d, stem, socket.gethostname(), suffix=".claim")
 
 
 def _with_return_claim(fn):

@@ -4,10 +4,10 @@ WHY: the review queues live ONCE on the NAS, shared by every watcher node.
 With several nodes scanning the same queues, two that spot the same cleared
 bundle in one pass would both start moving its files and tear the bundle in
 half across machines -- the split-bundle failure class, cross-node edition.
-The claim is the same write-then-verify marker pattern the DLC intake uses
-(orchestrator._claim_video): claimed only at MUTATION time, never for mere
-scanning; fail-open single-node; a stale marker is a crashed node's and is
-broken.
+The claim is the exclusive-create marker the posed-video intake also uses
+(watcher/claim_marker.py): claimed only at MUTATION time, never for mere
+scanning; no claim at all when no review queues are configured; a marker is
+broken only when its holder has stopped reporting, never for its age.
 """
 import json
 import os
@@ -32,6 +32,9 @@ def _wire(monkeypatch, tmp_path, no_sleep=True):
     monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", review)
+    # Status reports live under the NAS root; point it at the test folder so a
+    # test never reads the real share's reports.
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", tmp_path)
     if no_sleep:
         monkeypatch.setattr(rr.time, "sleep", lambda s: None)
     return triage, deep, review
@@ -65,12 +68,47 @@ def test_foreign_fresh_claim_refused(tmp_path, monkeypatch):
     assert rr._claim_return("stemB") is False
 
 
-def test_foreign_stale_claim_broken(tmp_path, monkeypatch):
-    """A claim outliving the stale window is a crashed node's leftover."""
+def _report(tmp_path, host, age_s=0):
+    """Write ``host``'s status report, ``age_s`` seconds old."""
+    from mousereach.watcher import node_status
+    d = node_status.status_dir(tmp_path)
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{host}.json"
+    f.write_text("{}", encoding="ascii")
+    if age_s:
+        old = _time.time() - age_s
+        os.utime(f, (old, old))
+    return f
+
+
+def test_claim_of_a_node_that_stopped_reporting_is_broken(tmp_path, monkeypatch):
+    """A holder whose status report has gone quiet is gone; its claim is a
+    crashed move's leftover."""
+    from mousereach.watcher import claim_marker
     _, _, review = _wire(monkeypatch, tmp_path)
-    f = _foreign_claim(review, "stemC", age_s=rr._RETURN_CLAIM_STALE_S + 60)
+    _report(tmp_path, OTHER_NODE, age_s=claim_marker.GONE_AFTER_S + 600)
+    _report(tmp_path, "ANOTHER-LIVE-NODE")          # the share's "now"
+    f = _foreign_claim(review, "stemC")
     assert rr._claim_return("stemC") is True
     assert f.read_text(encoding="utf-8").split("\n")[0] != OTHER_NODE
+
+
+def test_old_claim_of_a_node_still_reporting_is_kept(tmp_path, monkeypatch):
+    """The point of judging by the holder, not the claim: a claim may be old
+    because its work is long, and a live holder's claim is never broken."""
+    from mousereach.watcher import claim_marker
+    _, _, review = _wire(monkeypatch, tmp_path)
+    _report(tmp_path, OTHER_NODE)                    # reporting right now
+    _foreign_claim(review, "stemC2", age_s=claim_marker.GONE_AFTER_S * 10)
+    assert rr._claim_return("stemC2") is False
+
+
+def test_no_claim_when_the_claim_folder_cannot_be_made(tmp_path, monkeypatch):
+    """With shared queues, moving a bundle unclaimed is the split-bundle risk
+    itself; a node that cannot claim does not move it."""
+    _, _, review = _wire(monkeypatch, tmp_path)
+    (review / ".return_claims").write_text("a file where the folder goes", encoding="ascii")
+    assert rr._claim_return("stemF") is False
 
 
 def test_own_claim_is_reentrant(tmp_path, monkeypatch):
@@ -80,8 +118,8 @@ def test_own_claim_is_reentrant(tmp_path, monkeypatch):
     assert rr._claim_return("stemD") is True
 
 
-def test_fail_open_without_review_root(tmp_path, monkeypatch):
-    """Single-node mode (no NAS root configured): claims are a no-op."""
+def test_no_claim_needed_without_review_root(tmp_path, monkeypatch):
+    """No review queues configured: nothing is shared, claims are a no-op."""
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", None)
     assert rr._claim_return("stemE") is True
     rr._release_return_claim("stemE")   # must not raise
