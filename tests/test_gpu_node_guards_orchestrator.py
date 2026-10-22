@@ -733,3 +733,74 @@ def test_the_processing_server_still_takes_in_from_posed(env, posed):
     assert (env.processing / f"{KID1}.mp4").exists()
     assert (env.processing / f"{KID1}{POSE}.h5").exists()
     assert env.db.get_video(KID1)["state"] == "processing"
+
+
+# ------------------------------------------- a slot ffmpeg could not cut
+
+def _crop_failing(monkeypatch, failing):
+    """ffmpeg stand-in that cuts every non-blank slot except those in
+    ``failing`` (animal ids), which fail the way ffmpeg does."""
+    import mousereach.video_prep.core.cropper as cropper
+
+    def crop(input_path, output_dir, verbose=True):
+        info = cropper.parse_collage_filename(Path(input_path).name)
+        results = []
+        for pos, aid in enumerate(info["animal_ids"], start=1):
+            if cropper.is_blank_animal(aid):
+                results.append({"position": pos, "animal_id": aid, "status": "skipped"})
+            elif aid in failing:
+                results.append({"position": pos, "animal_id": aid, "status": "failed",
+                                "error": "ffmpeg returned 1: Invalid data found"})
+            else:
+                out = Path(output_dir) / f"{info['date']}_{aid}_{info['last_part']}.mp4"
+                out.write_bytes(b"cropped " + aid.encode("ascii"))
+                results.append({"position": pos, "animal_id": aid,
+                                "output_path": str(out), "status": "success"})
+        return results
+
+    monkeypatch.setattr(cropper, "crop_collage", crop)
+
+
+def test_a_slot_ffmpeg_could_not_cut_fails_the_collage(env, monkeypatch):
+    # WHY (2026-10-22): such a collage was recorded 'cropped' and never
+    # retried; 9 sessions of two collages were never cut.
+    _crop_failing(monkeypatch, {"CNT0102"})
+
+    with pytest.raises(RuntimeError, match="could not be cut"):
+        env.o._process_collage(_stable_collage(env))
+
+    row = env.db.get_collage(COLLAGE)
+    assert row["state"] == "failed"
+    assert "position 2 CNT0102: ffmpeg returned 1: Invalid data found" in row["validation_error"]
+    assert env.db.get_video(KID1)["state"] == "dlc_queued"
+    assert env.db.get_video(KID2) is None
+    assert env.o.coordinator.released == []        # a child of it is queued here
+    assert list(env.o.working_dir.iterdir()) == []  # no collage copy, no crops left
+
+
+def test_every_slot_failing_fails_the_collage_and_releases_the_claim(env, monkeypatch):
+    _crop_failing(monkeypatch, {"CNT0101", "CNT0102"})
+
+    with pytest.raises(RuntimeError, match="2 slot"):
+        env.o._process_collage(_stable_collage(env))
+
+    assert env.db.get_collage(COLLAGE)["state"] == "failed"
+    assert env.o.coordinator.released == [(COLLAGE, HOST)]
+    assert list(env.o.working_dir.iterdir()) == []
+
+
+def test_the_retry_cuts_what_is_missing_and_leaves_the_rest(env, monkeypatch):
+    _crop_failing(monkeypatch, {"CNT0102"})
+    with pytest.raises(RuntimeError):
+        env.o._process_collage(_stable_collage(env))
+
+    # What state.py does with a failed collage whose file is still there.
+    env.db.update_collage_state(COLLAGE, "validated", retry_count=1)
+    env.db.update_collage_state(COLLAGE, "stable")
+    _fake_crop(monkeypatch)
+    assert env.o._process_collage(
+        {"type": "collage", "id": COLLAGE, "data": env.db.get_collage(COLLAGE)}) is True
+
+    assert env.db.get_collage(COLLAGE)["state"] == "cropped"
+    assert env.db.get_video(KID1)["state"] == "dlc_queued"   # untouched by the retry
+    assert env.db.get_video(KID2)["state"] == "dlc_queued"   # cut this time

@@ -1820,6 +1820,22 @@ each session's stage) and prints the counts. Read-only. WHY: once a list's recor
 imported its sessions spread across the pipeline, and nothing said how far the list had got
 without asking every machine. Tests: `tests/test_session_coverage.py`.
 
+## Update 2026-10-22: a collage with a slot ffmpeg could not cut is not "cropped"
+
+A GPU node cutting a collage skipped any slot ffmpeg failed on and then recorded the collage
+`cropped` anyway -- "0 singles" when every slot failed -- so nothing ever retried it. Two
+collages lost 9 sessions that way (one had all 8 slots fail in the same instant on 2026-09-20),
+found when a census of every collage was checked against every single-animal row. Now
+(`DLCOrchestrator._process_collage`) a failed slot fails the collage through the ordinary
+failure path: its row says `failed` with each failed slot and ffmpeg's message, the working
+copies are cleaned up, the singles that were cut stay queued, and the shared claim is kept
+while this node carries any of them. A failed collage whose file is still in the intake is
+retried (`state.py`, up to `max_retries`), and a retry skips children that already exist. The
+cropper now runs ffmpeg through `subprocess` and keeps the tail of its error output in the
+slot's error (it used `os.system`, so the message went to a console nobody reads), and
+removes any partial file a failed run left. Tests: `tests/test_gpu_node_guards_orchestrator.py`,
+`tests/test_cropper_ffmpeg_errors.py`.
+
 ## Update 2026-10-22: a re-run that finds no pose no longer fails the video
 
 When the server re-runs an outdated video and finds no pose -- not on the row, not in

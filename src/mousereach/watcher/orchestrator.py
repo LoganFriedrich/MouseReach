@@ -3288,6 +3288,30 @@ class DLCOrchestrator(BaseOrchestrator):
                 else:
                     logger.error("DLC_QUEUE path not configured")
 
+            # A slot ffmpeg could not cut is a collage NOT cropped. WHY: it was
+            # recorded 'cropped' anyway ("0 singles" when every slot failed), so
+            # nothing ever retried it -- 9 sessions of two collages were never
+            # cut (found 2026-10-22). Clean the working copies here (the failure
+            # path below does not), then fail the collage the usual way: it is
+            # retried while its file is still in the intake (state.py, up to
+            # max_retries), the singles already cut are skipped on the retry, and
+            # the shared claim is kept while this node carries any of them.
+            failed_slots = [r for r in crop_results if r.get('status') == 'failed']
+            if failed_slots:
+                local_collage.unlink(missing_ok=True)
+                for result in crop_results:
+                    if result['status'] == 'success':
+                        Path(result['output_path']).unlink(missing_ok=True)
+                raise RuntimeError(
+                    "%d slot(s) could not be cut (%s); the %d cut this time are queued "
+                    "and the collage will be retried" % (
+                        len(failed_slots),
+                        "; ".join("position %s %s: %s" % (r.get('position'),
+                                                          r.get('animal_id', '?'),
+                                                          r.get('error'))
+                                  for r in failed_slots),
+                        videos_created))
+
             # Update collage state
             duration = time.time() - start_time
             self.db.update_collage_state(

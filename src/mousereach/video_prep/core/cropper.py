@@ -18,6 +18,7 @@ Cohort "00" means skip that position (blank/unused).
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
@@ -162,8 +163,14 @@ def crop_collage(
         if verbose:
             print(f"  [{pos}/8] {animal_id} -> {output_name}")
         
-        ret = os.system(cmd)
-        
+        # subprocess, not os.system: ffmpeg's own error text is the only clue to
+        # why a slot failed, and os.system sent it to a console nobody reads --
+        # eight slots of one collage failed in the same instant on 2026-09-20
+        # and the log said only "ffmpeg returned 1" (cause never known).
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                              errors='replace')
+        ret = proc.returncode
+
         if ret == 0 and output_path.exists():
             results.append({
                 'position': pos,
@@ -172,11 +179,21 @@ def crop_collage(
                 'status': 'success'
             })
         else:
+            said = ' | '.join(line.strip() for line in (proc.stderr or '').splitlines()
+                              if line.strip())[-500:]
+            if ret == 0:
+                said = said or 'exit 0 but no output file was written'
+            # A failed run can leave a partial file under the single's name;
+            # nothing may take it for a cut video.
+            try:
+                output_path.unlink()
+            except OSError:
+                pass
             results.append({
                 'position': pos,
                 'animal_id': animal_id,
                 'status': 'failed',
-                'error': f'ffmpeg returned {ret}'
+                'error': f'ffmpeg returned {ret}' + (f': {said}' if said else '')
             })
 
     # Provenance: record what this crop did to the collage's offspring, next to
