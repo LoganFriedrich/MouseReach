@@ -19,6 +19,17 @@ What it does, in order:
   3. moves the video's bundle into the queue with a routing manifest
      (review_gate.route_to_queue), updating the watcher database.
 
+A SEGMENT A PERSON HAS ANSWERED IS NEVER FLAGGED
+------------------------------------------------
+Before flagging, the video's saved review is read and every requested segment
+a person (or ground truth) has already answered -- matched by the FRAMES the
+answer is about, the rule the release check uses -- is dropped from the list
+and reported as "answered". If nothing is left, the video is not routed.
+WHY: the release check counts such a segment answered, so a routed video went
+straight back out with nobody looking, and the next night's scan sent it again
+(2026-10). A caller cannot always know what a person answered; this command
+reads the review itself, so the rule holds whoever asks.
+
 THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
 -----------------------------------------------------------------------------
 The database is resolved exactly as the daemon resolves it
@@ -58,7 +69,8 @@ Usage:
 
 Exit codes:
     0  every requested video was routed, was already not in Analyzed, or was
-       deferred because the watcher is working on it
+       deferred because the watcher is working on it, or had
+       every requested segment already answered by a person ("done")
     1  some video could not be routed, OR routing was refused because the
        watcher database could not be resolved, does not exist, or cannot be
        opened (then no video was touched)
@@ -120,14 +132,36 @@ def flag_segments(outcomes_path: Path, segment_nums: Iterable[int], reason: str)
     return sorted(flagged)
 
 
+def answered_segments_of(video_id: str, folder: Path) -> set:
+    """Segments a person or ground truth has answered, matched by frames
+    (triage_status.resolved_segments + gt_resolved_segments -- the release
+    check's own rule). Raises when the review exists but cannot be read: a
+    guess here could route a person's answered segment back to them."""
+    from mousereach.review.causal_review_io import resolve_review_path
+    from mousereach.review.triage_status import gt_resolved_segments, resolved_segments
+    review = None
+    rp = resolve_review_path(video_id, primary_dir=folder)
+    if rp is not None:
+        review = json.loads(Path(rp).read_text(encoding="utf-8"))
+    seg_doc = None
+    sp = Path(folder) / f"{video_id}_segments.json"
+    if sp.is_file():
+        seg_doc = json.loads(sp.read_text(encoding="utf-8"))
+    answered = set(resolved_segments(review, seg_doc)) if review else set()
+    gt_full, gt_segs = gt_resolved_segments(video_id)
+    if gt_full:
+        return {"all"}
+    return answered | set(gt_segs)
+
+
 def route_video(video_id: str, queue: str, reason: str,
                 segment_nums: Optional[Iterable[int]] = None, db=None) -> dict:
     """Flag (optional) and route one video. Returns a result dict; never raises."""
     from mousereach.config import Paths
     from mousereach.watcher.review_gate import route_to_queue
 
-    res = {"video_id": video_id, "queue": queue, "flagged": [], "routed": False,
-           "deferred": False, "error": None}
+    res = {"video_id": video_id, "queue": queue, "flagged": [], "answered": [],
+           "routed": False, "deferred": False, "error": None}
     try:
         analyzed = Paths.ANALYZED_OUTPUT
         if not analyzed or not Path(analyzed).exists():
@@ -148,6 +182,14 @@ def route_video(video_id: str, queue: str, reason: str,
                                 "routed -- offer it again on a later run" % state)
                 return res
         if segment_nums:
+            # Never ask a person again what they (or ground truth) already
+            # answered -- see "A SEGMENT A PERSON HAS ANSWERED" above.
+            wanted = sorted({int(s) for s in segment_nums})
+            done = answered_segments_of(video_id, outcomes.parent)
+            res["answered"] = wanted if "all" in done else [s for s in wanted if s in done]
+            segment_nums = [s for s in wanted if s not in res["answered"]]
+            if not segment_nums:
+                return res          # nothing left to ask; not routed, not a failure
             res["flagged"] = flag_segments(outcomes, segment_nums, reason)
         dest_root = Paths.TRIAGE_REVIEW if queue == "triage" else Paths.DEEP_REVIEW
         route_to_queue(video_id, outcomes.parent, dest_root, reason=reason,
@@ -230,10 +272,14 @@ def main(argv=None) -> int:
     else:
         for r in results:
             tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
+                   else "done" if (r["answered"] and not r["error"])
                    else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
-            print("%s %s -> %s  flagged=%s  %s" % (tag, r["video_id"], r["queue"],
-                                                  r["flagged"] or "-", r["error"] or ""))
+            print("%s %s -> %s  flagged=%s  %s%s" % (
+                tag, r["video_id"], r["queue"], r["flagged"] or "-",
+                ("already answered by a person: %s  " % r["answered"]) if r["answered"] else "",
+                r["error"] or ""))
     bad = [r for r in results if not r["routed"] and not r["deferred"]
+           and not (r["answered"] and not r["error"])
            and not (r["error"] and "not found" in r["error"])]
     return 1 if bad else 0
 

@@ -2055,3 +2055,15 @@ What changed:
 Already archived videos keep their stored results until they are next run. Tests:
 `tests/test_review_restore_by_frames.py`.
 
+
+## Update 2026-10-22: the route command never flags a segment a person has answered
+
+`mousereach-route-to-queue` used to flag whatever segments its caller listed. A caller -- the
+database's nightly bench-sheet scan -- cannot always know what a person answered: a segment with
+no detected reach has no reach row in the database, so nothing there says who decided it. A
+flagged segment the release check counts as answered goes straight back out with nobody looking,
+and the next night's scan sends it again. Now the command reads the video's review and drops every
+requested segment a person (or ground truth) has answered, matched by frames
+(`answered_segments_of` in `watcher/route_cli.py`, the release check's own rule). It reports them
+as "answered", and does not route the video at all when nothing is left (exit 0, tag "done").
+Tests: `tests/test_route_cli_db.py`.

@@ -68,6 +68,11 @@ def site(tmp_path, monkeypatch):
     # Never let a pose lookup wander to the real staging area or version file.
     monkeypatch.setattr(Paths, "DLC_STAGING", None, raising=False)
     monkeypatch.setattr(manifest, "declared_dlc_scorer", lambda max_age_s=None: None)
+    # Nor a review or ground-truth lookup (the answered-segment check).
+    import mousereach.review.causal_review_io as cri
+    import mousereach.review.triage_status as ts
+    monkeypatch.setattr(cri, "durable_review_dir", lambda: None)
+    monkeypatch.setattr(ts, "gt_resolved_segments", lambda video_id: (False, set()))
     return {"tmp": tmp_path, "proc": proc, "results": results,
             "outcomes": outcomes, "triage": triage}
 
@@ -249,3 +254,52 @@ def _argv(site, mode):
     worklist.write_text(json.dumps([{"video_id": VID, "segment_nums": [3, 7]}]),
                         encoding="utf-8")
     return ["--worklist", str(worklist)] + base
+
+
+# ------------------------------------------- a person's answers are never re-asked
+
+def _answer_segment_3(results):
+    """Segments document (segment 3 = frames 200-299) and a review that answers
+    segment 3 about exactly those frames."""
+    (results / f"{VID}_segments.json").write_text(json.dumps(
+        {"boundaries": [0, 100, 200, 300, 400, 500, 600, 700, 800]}), encoding="utf-8")
+    (results / f"{VID}_causal_review.json").write_text(json.dumps({"segments": [{
+        "segment_num": 3, "segment_span": {"start": 200, "end": 299},
+        "human": {"outcome": "untouched", "causal_reach": None},
+        "answers": {"triage_kind": "outcome_only"}}]}), encoding="utf-8")
+
+
+def test_a_segment_a_person_answered_is_not_flagged_again(site, monkeypatch, capsys):
+    """WHY: the release check counts it answered, so the video went straight back
+    out with nobody looking and the next night's scan sent it again (2026-10)."""
+    live = _live_db(site["proc"] / "watcher.db", site["results"])
+    _set_config(monkeypatch, site["proc"])
+    _answer_segment_3(site["results"])
+
+    rc = route_cli.main(_argv(site, "single") + ["--json"])
+
+    assert rc == 0
+    r = json.loads(capsys.readouterr().out)[0]
+    assert r["routed"] is True and r["flagged"] == [7] and r["answered"] == [3]
+    bundle = site["triage"] / VID
+    flagged = json.loads((bundle / f"{VID}_pellet_outcomes.json").read_text(encoding="utf-8"))
+    assert [s["segment_num"] for s in flagged["segments"] if s["flagged_for_review"]] == [7]
+    assert live.get_video(VID)["state"] == "triage"
+
+
+def test_nothing_is_routed_when_every_segment_is_already_answered(site, monkeypatch, capsys):
+    live = _live_db(site["proc"] / "watcher.db", site["results"])
+    _set_config(monkeypatch, site["proc"])
+    _answer_segment_3(site["results"])
+    before = site["outcomes"].read_bytes()
+
+    rc = route_cli.main(["--queue", "triage", "--reason", "bench", VID, "--flag-segments", "3"])
+
+    assert rc == 0, "nothing left to ask is not a failure"
+    out = capsys.readouterr().out
+    assert "done " in out and "already answered by a person: [3]" in out
+    out.encode("ascii")
+    assert site["outcomes"].read_bytes() == before
+    assert not (site["triage"] / VID).exists()
+    assert live.get_video(VID)["state"] == "archived"
+
