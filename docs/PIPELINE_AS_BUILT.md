@@ -1850,3 +1850,17 @@ field is the shared pipeline folder and saves `nas_root`. `config.py` no longer 
 says it is not configured and names `mousereach-setup`. A machine that sets `nas_root` sees
 no change. Tests: `tests/test_setup_keeps_settings.py`.
 
+
+## Update 2026-10-22: Easy and Flat videos are no longer held for the outcomes file they never get
+
+Easy (E) and Flat (F) trays skip outcome detection, reach assignment and kinematics by design,
+then reach "processed" and are filed in Analyzed with their segments and reaches (no features
+file, so nothing reaches the database). That last part had stopped happening: the quality
+check's structural layer still required the outcomes file and called its absence critical, so
+the gate sent every Easy/Flat video to deep review. On 2026-10-22 the processing server, idle
+apart from them, routed 100 Flat-tray videos there in three hours, and 469 Easy/Flat bundles in
+deep review were held for that reason alone. The structural layer now asks for the outcomes file
+only when the per-tray step table (`watcher/router.SKIP_STEPS`) runs outcome detection for that
+tray; a Pillar video without one is still critical, and a name with no recognisable tray is
+held to the full set. Checked on copies of eight held Flat bundles: each now passes the check
+and the gate. Tests: `tests/test_qc_easy_flat_no_outcomes.py`.

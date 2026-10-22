@@ -357,8 +357,19 @@ def check_structural(
     reach_path = processing_dir / f"{video_id}_reaches.json"
     outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
 
-    # Missing files
-    for name, path in [('segments', seg_path), ('reaches', reach_path), ('outcomes', outcome_path)]:
+    # Missing files. The outcomes file is required only where outcome
+    # detection runs: Easy and Flat trays skip it by design (the per-tray step
+    # table, watcher/router.SKIP_STEPS). WHY: requiring it anyway made every
+    # Easy/Flat video fail this check as CRITICAL, and the gate sent each one
+    # to deep review on that false alarm -- 100 Flat-tray videos in three hours
+    # on 2026-10-22, a person's queue filled with videos nothing was wrong with.
+    from mousereach.config import parse_tray_type
+    from mousereach.watcher.router import TrayRouter
+    tray = parse_tray_type(f"{video_id}.mp4").get("tray_type")
+    required = [('segments', seg_path), ('reaches', reach_path)]
+    if tray is None or TrayRouter().should_run_step(tray, 'outcome_detection'):
+        required.append(('outcomes', outcome_path))
+    for name, path in required:
         if not path.exists():
             flags.append(TriageFlag(
                 category='structural',

@@ -471,7 +471,7 @@ An unset `nas_root` makes all three `None` (since 2026-10-22), and the launcher 
 
 1. Ground truth marks the video exhaustively complete -> **clean**, proceed, even if segmentation failed (`:85-86`).
 2. Segmentation failed — no segments file, confidence at or below 0, or a "reference quality" anomaly -> **DEEP_REVIEW** (`:87-88`).
-3. Quality control returned `needs_review` -> **DEEP_REVIEW** (`:107-108`).
+3. Quality control returned `needs_review` -> **DEEP_REVIEW** (`:107-108`). Quality control calls a missing segments, reaches or outcomes file critical, but asks for the outcomes file only where outcome detection runs: Easy and Flat trays skip it by design (`watcher/router.SKIP_STEPS`), and until 2026-10-22 every Easy/Flat video was held here for that missing file (`pipeline/triage.py`, `check_structural`).
 4. Any triaged segment not resolved by ground truth or a saved review -> **TRIAGE** (`:114-118`).
 5. Otherwise -> **clean**, kinematics runs (`:119`).
 
