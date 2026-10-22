@@ -1832,7 +1832,11 @@ failed state of each video and retries it at the start of every scan; a newer su
 for the same video drops it, and a retry never replaces a row updated since the original attempt
 (`PipelineCoordinator.sync_video_state_unless_newer`, stamped with the attempt time). At startup
 the node puts on record every video it has that the record lacks entirely, never touching an
-existing row (`insert_video_state_if_absent`). Tests: `tests/test_shared_record_writes_retried.py`.
+existing row. The fill writes in batches (`insert_video_states_if_absent`, one transaction per
+200 rows: one row per connection opened the shared file ~470 times in 12 s and hit "unable to
+open database file"), and a fill the record interrupts is finished by a later scan, at most every
+10 minutes (`_finish_shared_record_fill`), instead of waiting for the next restart. Tests:
+`tests/test_shared_record_writes_retried.py`.
 
 ## Update 2026-10-22: work-order selectors take ASPA lab ids
 

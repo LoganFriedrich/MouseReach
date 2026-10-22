@@ -130,3 +130,36 @@ def test_startup_puts_only_missing_videos_on_record(tmp_path):
     assert node._put_missing_on_shared_record() == 1
     assert _row(node.coordinator.real, V1)[:2] == ("archived", "SERVER")   # untouched
     assert _row(node.coordinator.real, V2)[:2] == ("dlc_queued", "NODE-A")
+
+
+def test_a_batch_fill_never_touches_existing_rows(tmp_path):
+    c = _central(tmp_path)
+    c.sync_video_state(V1, "SERVER", "archived")
+    rows = [{"video_id": v, "hostname": "NODE-A", "state": "dlc_queued",
+             "updated_at": "2026-01-01T00:00:00"} for v in (V1, V2)]
+    assert c.insert_video_states_if_absent(rows, chunk=1) == 2
+    assert _row(c, V1)[:2] == ("archived", "SERVER")
+    assert _row(c, V2)[:2] == ("dlc_queued", "NODE-A")
+
+
+def test_an_interrupted_fill_is_finished_by_a_later_scan(tmp_path):
+    # 2026-10-22: one PC's startup fill stopped after 471 rows on "unable to
+    # open database file" and left 668 for the next restart.
+    node = _node(tmp_path)
+    node.db.register_video(video_id=V2, source_path="x")
+    node.db.force_state(V2, "archived", reason="test fixture")
+    real = node.coordinator.real.insert_video_states_if_absent
+
+    def unavailable(*a, **k):
+        raise OSError("unable to open database file")
+    node.coordinator.real.insert_video_states_if_absent = unavailable
+    assert node._put_missing_on_shared_record() == 0
+    assert node._shared_fill_pending is True
+
+    node.coordinator.real.insert_video_states_if_absent = real
+    assert node._finish_shared_record_fill() == 0          # too soon: waits
+    node._shared_fill_attempted -= node._SHARED_FILL_RETRY_S + 1
+    assert node._finish_shared_record_fill() == 1
+    assert node._shared_fill_pending is False
+    assert _row(node.coordinator.real, V2)[:2] == ("archived", "NODE-A")
+    assert node._finish_shared_record_fill() == 0          # nothing left to do

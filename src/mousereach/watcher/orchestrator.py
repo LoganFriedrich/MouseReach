@@ -1493,47 +1493,71 @@ class DLCOrchestrator(BaseOrchestrator):
     _SHARED_RECORD_STATES = ('validated', 'dlc_queued', 'dlc_running', 'dlc_complete',
                              'processed', 'archived')
 
+    # A fill the shared record interrupted is resumed by a later scan, at most
+    # this often (see _finish_shared_record_fill).
+    _SHARED_FILL_RETRY_S = 600
+
     def _put_missing_on_shared_record(self) -> int:
-        """At startup, put on the shared record every video this node has that
-        the record lacks entirely (see _sync_to_connectome for why). Existing
-        rows are never touched. Never raises; returns how many were added."""
+        """Put on the shared record every video this node has that the record
+        lacks entirely (see _sync_to_connectome for why). Existing rows are never
+        touched. Runs at startup; if the record is unavailable part-way, the
+        fill is marked unfinished and a later scan resumes it
+        (_finish_shared_record_fill) -- it used to wait for the next restart,
+        and one PC left 668 videos off that way (2026-10-22). Written in batches
+        (insert_video_states_if_absent): one row per connection opened the
+        shared file hundreds of times in seconds. Never raises; returns how
+        many were added."""
         if not getattr(self, 'coordinator', None):
             return 0
+        self._shared_fill_attempted = time.monotonic()
         try:
             on_record = set(self.coordinator.get_all_video_states())
         except Exception as e:
-            logger.warning(f"Startup: could not read the shared record to fill in "
-                           f"missing videos ({e}); will try at the next start")
+            self._shared_fill_pending = True
+            logger.warning(f"Could not read the shared record to fill in missing "
+                           f"videos ({e}); a later scan tries again")
             return 0
-        added = 0
+        missing = []
         for state in self._SHARED_RECORD_STATES:
             try:
                 rows = self.db.get_videos_in_state(state)
             except Exception:
                 continue
             for row in rows:
-                video_id = row['video_id']
-                if video_id in on_record:
+                if row['video_id'] in on_record:
                     continue
-                extra = {k: row.get(k) for k in ('collage_id',) if row.get(k)}
-                path = row.get('current_path') or row.get('source_path')
-                if path:
-                    extra['source_path'] = path
-                try:
-                    if self.coordinator.insert_video_state_if_absent(
-                            video_id, self.hostname, state,
-                            row.get('updated_at') or datetime.now().isoformat(), **extra):
-                        added += 1
-                        on_record.add(video_id)
-                except Exception as e:
-                    logger.warning(f"Startup: the shared record became unavailable "
-                                   f"after {added} addition(s) ({e}); the rest at the "
-                                   f"next start")
-                    return added
-        if added:
-            logger.info(f"Startup: put {added} video(s) on the shared record that it "
-                        f"lacked (earlier writes had failed)")
+                missing.append({
+                    'video_id': row['video_id'], 'hostname': self.hostname,
+                    'state': state,
+                    'updated_at': row.get('updated_at') or datetime.now().isoformat(),
+                    'collage_id': row.get('collage_id'),
+                    'source_path': row.get('current_path') or row.get('source_path'),
+                })
+        if not missing:
+            self._shared_fill_pending = False
+            return 0
+        try:
+            added = self.coordinator.insert_video_states_if_absent(missing)
+        except Exception as e:
+            self._shared_fill_pending = True
+            logger.warning(f"The shared record became unavailable while filling in "
+                           f"{len(missing)} missing video(s) ({e}); what was written "
+                           f"stays, and a later scan finishes the rest")
+            return 0
+        self._shared_fill_pending = False
+        logger.info(f"Put {added} video(s) on the shared record that it lacked "
+                    f"(earlier writes had failed)")
         return added
+
+    def _finish_shared_record_fill(self) -> int:
+        """Resume a fill the shared record interrupted, at most once every
+        _SHARED_FILL_RETRY_S. Returns how many were added this time."""
+        if not getattr(self, '_shared_fill_pending', False):
+            return 0
+        last = getattr(self, '_shared_fill_attempted', 0.0)
+        if time.monotonic() - last < self._SHARED_FILL_RETRY_S:
+            return 0
+        return self._put_missing_on_shared_record()
 
     def _backup_local_db(self):
         """Best-effort backup of local watcher.db to NAS."""
@@ -2737,8 +2761,10 @@ class DLCOrchestrator(BaseOrchestrator):
         # scan below can take many minutes on a shared drive.
         self._single_claim_upkeep(force=True)
         # Shared-record writes that failed since the last scan (see
-        # _sync_to_connectome). Before the scan, so other nodes see them sooner.
+        # _sync_to_connectome), and a startup fill the record interrupted.
+        # Before the scan, so other nodes see them sooner.
         self._retry_failed_shared_writes()
+        self._finish_shared_record_fill()
 
         # Phase A: Scan for new files and check stability
         scan_result = self.file_watcher.scan()

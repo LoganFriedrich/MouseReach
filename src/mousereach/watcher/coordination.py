@@ -438,6 +438,34 @@ class PipelineCoordinator:
             conn.commit()
             return (result.rowcount or 0) > 0
 
+    def insert_video_states_if_absent(self, rows, chunk: int = 200) -> int:
+        """Put many videos on record at once, each only if the table has no row
+        for it (existing rows are never touched). ``rows`` are dicts with
+        video_id, hostname, state, updated_at and optionally collage_id and
+        source_path. One connection, one transaction per ``chunk`` rows.
+        Returns how many rows were submitted in committed chunks; raises on a
+        database error, and what was committed before it stays.
+
+        WHY batches: a node filling hundreds of gaps one row per connection
+        opened the shared database ~470 times in 12 s and hit "unable to open
+        database file" on the share (2026-10-22).
+        """
+        self.ensure_tables()
+        cols = ('video_id', 'hostname', 'state', 'updated_at', 'collage_id', 'source_path')
+        batch = [{c: r.get(c) for c in cols} for r in rows]
+        if not batch:
+            return 0
+        sql = text("INSERT OR IGNORE INTO pipeline_videos (%s) VALUES (%s)"
+                   % (', '.join(cols), ', '.join(':' + c for c in cols)))
+        done = 0
+        with self.engine.connect() as conn:
+            for i in range(0, len(batch), chunk):
+                part = batch[i:i + chunk]
+                conn.execute(sql, part)
+                conn.commit()
+                done += len(part)
+        return done
+
     def get_all_video_states(self) -> Dict[str, dict]:
         """Read all pipeline_videos. Returns {video_id: row_dict}."""
         self.ensure_tables()
