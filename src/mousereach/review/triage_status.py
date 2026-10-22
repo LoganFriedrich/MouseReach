@@ -115,14 +115,27 @@ def triaged_segments(
     return out
 
 
-def resolved_segments(review_doc: Optional[Dict[str, Any]]) -> Set[int]:
+def resolved_segments(review_doc: Optional[Dict[str, Any]],
+                      seg_doc: Optional[Dict[str, Any]] = None) -> Set[int]:
     """Segment numbers a human review has actively resolved.
 
     A record counts as resolved when ``answers.reviewed is not False`` -- the
     exact rule ``_bundle_reviewed`` uses (an explicit ``reviewed: False`` is a
-    deferred/unanswered segment)."""
+    deferred/unanswered segment).
+
+    Pass the video's segments document (``seg_doc``) and each answer counts for
+    the CURRENT segment its frames match, exactly as the results step applies
+    it (causal_review_io.answered_segments says why). Without it, answers count
+    by the segment number they were written against."""
     if not review_doc:
         return set()
+    if seg_doc is not None:
+        from .causal_review_io import (answered_segments, segmentation_is_human,
+                                       segments_from_segmentation)
+        current = segments_from_segmentation(seg_doc)
+        if current:
+            return answered_segments(review_doc, current,
+                                     human_segmentation=segmentation_is_human(seg_doc))
     out: Set[int] = set()
     for rec in review_doc.get("segments", []):
         sn = rec.get("segment_num")
@@ -276,7 +289,7 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
                 "segments exist); ignoring them", video_id, sorted(ghost), n_segs)
             tri -= ghost
 
-    res = resolved_segments(review)
+    res = resolved_segments(review, seg)
 
     # Ground truth counts as an answer here, exactly as it does in evaluate_gate.
     # Without this the release side is narrower than the admission side: a bundle

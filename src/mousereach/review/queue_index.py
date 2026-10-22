@@ -33,6 +33,17 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 
+def _seg_doc(bundle, stem: str):
+    """The bundle's segments document, or None. Answers are counted by the
+    frames they match in it (triage_status.resolved_segments)."""
+    import json
+    p = Path(bundle) / f"{stem}_segments.json"
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
+    except Exception:
+        return None
+
+
 def default_index_path() -> Optional[Path]:
     """``review_records/triage_queue.db`` next to the causal-review index."""
     try:
@@ -175,7 +186,8 @@ def seed_from_folder(pending_dir, db_path: Optional[Path] = None, *,
                 except Exception:
                     doc, by = None, {}
                 if by:
-                    resolved |= resolved_segments(doc or {"segments": list(by.values())})
+                    resolved |= resolved_segments(doc or {"segments": list(by.values())},
+                                                  _seg_doc(b, stem))
             if tri.issubset(resolved):
                 skipped += 1
                 continue

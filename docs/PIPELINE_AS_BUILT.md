@@ -1673,3 +1673,35 @@ again (this also applies without a list).
 
 Lists live in the pipeline's `priority_lists/` folder (data only; each list is written by a
 lab script, never edited by hand). Tests: `tests/test_aspa_import_by_sessions.py`.
+
+## Update 2026-10-21: a segment counts as answered only when the answer is about its frames
+
+**What was wrong.** Four places decided whether a person had answered a segment -- the
+review gate (may a freshly run video be archived?), the review-return scan (may a bundle
+leave the queue?), the review tool's queue view, and the queue index -- and all four
+counted an answer by the segment NUMBER it was written against. The results step matches
+an answer by the FRAMES the reviewer saw (schema 1.1 `segment_span`). After a person
+re-cut a video, an old answer for "segment 7" -- about other footage -- counted as
+answering today's segment 7: the video left review, the results step correctly ignored
+the answer, and today's segment 7 reached the data unwatched. The nightly bench check
+then found the disagreement and sent the same videos back every night, and the return
+scan released them again within minutes, with nobody looking (seven videos, 2026-10).
+Separately, a segment shorter than 5 frames was always treated as a segmenter artifact,
+even when a person had cut it.
+
+**What changed.** One definition, `causal_review_io.answered_segments`: a CURRENT segment is
+answered when a review record's frames match it (`index_review_by_segment`, the matching
+the results step already used) and the record is not a `reviewed: False` placeholder.
+`triage_status.resolved_segments(review, segments_doc)` uses it; the gate, the return scan,
+the review tool and the queue index all pass the video's segments document. Without a
+segments document, answers still count by number (the only handle there is). When the
+segments document says `boundary_source: "human"`, short segments are real: answers about
+them are matched and applied, never dropped as artifacts (Logan, 2026-10-21: "if a human
+segmented the video then that's what the algo needs to log even if the range was short").
+
+**What a person sees.** A video whose earlier answers no longer line up with its current
+segments stays in (or returns to) the triage queue until the segments nobody has watched
+are answered; the review tool lists it as not done. An answer is never applied to footage
+nobody looked at.
+
+Tests: `tests/test_answered_means_matched_by_frames.py`.

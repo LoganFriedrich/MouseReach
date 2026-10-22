@@ -421,7 +421,52 @@ MIN_MARGIN = 0.15
 MIN_REAL_SEGMENT_FRAMES = 5
 
 
-def index_review_by_segment(review_doc, current_segments=None):
+def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
+    """The current segments ``[{segment_num, start_frame, end_frame}]`` from a
+    ``*_segments.json`` document's boundaries -- the same rule the review tool
+    uses to show them (segment N runs from boundary N-1 to the frame before
+    boundary N). Empty when the document has no usable boundaries."""
+    bounds = []
+    for b in (seg_doc or {}).get("boundaries") or []:
+        try:
+            bounds.append(int(b.get("frame", b.get("index", 0))) if isinstance(b, dict) else int(b))
+        except (TypeError, ValueError):
+            return []
+    if len(bounds) < 2:
+        return []
+    return [{"segment_num": i + 1, "start_frame": bounds[i], "end_frame": bounds[i + 1] - 1}
+            for i in range(len(bounds) - 1)]
+
+
+def segmentation_is_human(seg_doc) -> bool:
+    """True when a person made (or corrected) this segmentation."""
+    return (seg_doc or {}).get("boundary_source") == "human"
+
+
+def answered_segments(review_doc, current_segments=None,
+                      human_segmentation: bool = False) -> set:
+    """CURRENT segment numbers a person has answered: their review's frames
+    match the segment (index_review_by_segment), and the record is not an
+    explicit ``reviewed: False`` placeholder.
+
+    WHY this is the one definition: the release check, the review gate and the
+    queue views counted an answer by the segment NUMBER it was written against,
+    while the results step matches it by FRAMES. After a person re-cut a video,
+    an old answer for "segment 7" -- about other footage -- counted as answering
+    today's segment 7: the video left review, the results step correctly ignored
+    the answer, and today's segment 7 reached the data with nobody having
+    watched it. A nightly check then sent the same videos back, every night
+    (2026-10-21). Without ``current_segments`` this falls back to numbers, the
+    only handle a video without a segmentation file has.
+    """
+    mapping, _ = index_review_by_segment(review_doc, current_segments,
+                                         human_segmentation=human_segmentation)
+    return {int(sn) for sn, rec in mapping.items()
+            if ((rec or {}).get("answers") or {}).get("reviewed") is not False}
+
+
+def index_review_by_segment(review_doc, current_segments=None,
+                            human_segmentation: bool = False):
     """Map each CURRENT segment number to the review record describing it.
 
     Reviews used to be found by segment number alone. That number is an index
@@ -440,11 +485,19 @@ def index_review_by_segment(review_doc, current_segments=None):
     segmentation could not be recovered -- fall back to matching by number,
     which is all that has ever been available for them.
 
+    A segment shorter than MIN_REAL_SEGMENT_FRAMES is treated as a segmenter
+    artifact -- unless ``human_segmentation`` is set: a person who cut the video
+    decided where its segments are, and their cuts are logged as made, however
+    short (Logan, 2026-10-21: "if a human segmented the video then that's what
+    the algo needs to log even if the range was short").
+
     Args:
         review_doc: a loaded causal review document
         current_segments: the segments of the CURRENT segmentation, each with
             start_frame / end_frame. When absent, behaviour is the old
             number-matching, so callers that have no segmentation still work.
+        human_segmentation: the current segmentation was made by a person
+            (``boundary_source == "human"`` in its segments file).
 
     Returns:
         (mapping, notes) -- mapping is {current segment_num: review record};
@@ -468,7 +521,7 @@ def index_review_by_segment(review_doc, current_segments=None):
         sn, sp = seg.get("segment_num"), _seg_span(seg)
         if sn is None or sp is None:
             continue
-        if sp[1] - sp[0] + 1 < MIN_REAL_SEGMENT_FRAMES:
+        if sp[1] - sp[0] + 1 < MIN_REAL_SEGMENT_FRAMES and not human_segmentation:
             notes.append(
                 "current segment %s (frames %d-%d) is shorter than any real "
                 "footage; excluded as a review-matching target"
@@ -483,7 +536,8 @@ def index_review_by_segment(review_doc, current_segments=None):
     for rec in records:
         rspan = _span_of(rec)
         old_num = rec.get("segment_num")
-        if rspan is not None and rspan[1] - rspan[0] + 1 < MIN_REAL_SEGMENT_FRAMES:
+        if (rspan is not None and rspan[1] - rspan[0] + 1 < MIN_REAL_SEGMENT_FRAMES
+                and not human_segmentation):
             notes.append(
                 "segment %s review covers frames %d-%d, shorter than any real "
                 "footage (a zero-length-segment artifact); dropped"
@@ -598,6 +652,7 @@ def load_and_apply_review(
     review_path: Path,
     video_stem: Optional[str] = None,
     current_segments: Optional[List[Dict[str, Any]]] = None,
+    human_segmentation: bool = False,
 ) -> Dict[str, Any]:
     """Load a causal-review file and apply its corrections onto ``outcomes_data``.
 
@@ -620,7 +675,8 @@ def load_and_apply_review(
             doc = _read_json(cand)
     if not doc:
         return outcomes_data
-    by_seg, notes = index_review_by_segment(doc, current_segments)
+    by_seg, notes = index_review_by_segment(doc, current_segments,
+                                            human_segmentation=human_segmentation)
     for n in notes:
         logger.warning("%s: %s", video_stem or "", n)
     return apply_review_overrides(outcomes_data, by_seg, reviewer=doc.get("reviewer"))

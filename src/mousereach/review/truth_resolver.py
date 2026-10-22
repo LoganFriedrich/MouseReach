@@ -118,7 +118,8 @@ def _durable_review_doc(stem: str) -> Optional[dict]:
 # per-segment OUTCOME layers
 # ---------------------------------------------------------------------------
 def _seg_overrides_from_review(doc: Optional[dict], source: str,
-                               current_segments=None) -> Dict[int, dict]:
+                               current_segments=None,
+                               human_segmentation: bool = False) -> Dict[int, dict]:
     """{segment_num: override} from a causal-review doc. An override carries the
     human outcome, the causal reach id (only for touched outcomes), any abnormal
     ignore-ranges, and the provenance source label.
@@ -131,7 +132,8 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
     from mousereach.review.causal_review_io import index_review_by_segment
 
     out: Dict[int, dict] = {}
-    matched, notes = index_review_by_segment(doc, current_segments)
+    matched, notes = index_review_by_segment(doc, current_segments,
+                                             human_segmentation=human_segmentation)
     for n in notes:
         logger.warning("review re-anchoring: %s", n)
     for sn, rec in matched.items():
@@ -351,6 +353,7 @@ def resolve_truth_layers(
     video_stem: Optional[str] = None,
     primary_dir=None,
     extra_gt_dirs=(),
+    human_segmentation: bool = False,
 ) -> Tuple[dict, dict]:
     """Return (reaches_data, outcomes_data) with every element resolved by
     GT > causal review > triage review > algo (see module docstring).
@@ -377,10 +380,10 @@ def resolve_truth_layers(
     primary_doc = _review_doc(stem, primary_dir) if primary_dir else None
 
     layers: List[Dict[int, dict]] = [
-        _seg_overrides_from_review(durable_doc, "human_review", _cur_segs),  # copy of record (fallback)
-        _seg_overrides_from_review(triage_doc, "human_review", _cur_segs),   # triage tier
-        _seg_overrides_from_review(causal_doc, "human_review", _cur_segs),   # causal tier
-        _seg_overrides_from_review(primary_doc, "human_review", _cur_segs),  # causal tier (processing dir)
+        _seg_overrides_from_review(durable_doc, "human_review", _cur_segs, human_segmentation),  # copy of record (fallback)
+        _seg_overrides_from_review(triage_doc, "human_review", _cur_segs, human_segmentation),   # triage tier
+        _seg_overrides_from_review(causal_doc, "human_review", _cur_segs, human_segmentation),   # causal tier
+        _seg_overrides_from_review(primary_doc, "human_review", _cur_segs, human_segmentation),  # causal tier (processing dir)
     ]
 
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None

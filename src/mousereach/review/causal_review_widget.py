@@ -2831,7 +2831,9 @@ The notes box travels with the video.
             except Exception:
                 doc, by_seg = None, {}
             if by_seg:
-                resolved |= resolved_segments(doc or {"segments": list(by_seg.values())})
+                from mousereach.review.queue_index import _seg_doc
+                resolved |= resolved_segments(doc or {"segments": list(by_seg.values())},
+                                              _seg_doc(bundle_dir, stem))
 
         if self._triage_only:
             def _rj(p):

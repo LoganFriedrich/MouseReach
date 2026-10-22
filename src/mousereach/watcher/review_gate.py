@@ -210,7 +210,11 @@ def _review_resolved_segments(video_id: str, processing_dir: Path):
         rp = resolve_review_path(video_id, processing_dir)
         if rp is None or not rp.exists():
             return set()
-        return resolved_segments(json.loads(rp.read_text(encoding="utf-8")))
+        # Matched by frames against the segmentation these outputs came from,
+        # as the results step applies it (causal_review_io.answered_segments).
+        seg_path = Path(processing_dir) / f"{video_id}_segments.json"
+        seg_doc = json.loads(seg_path.read_text(encoding="utf-8")) if seg_path.is_file() else None
+        return resolved_segments(json.loads(rp.read_text(encoding="utf-8")), seg_doc)
     except Exception:
         return set()
 

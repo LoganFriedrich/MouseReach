@@ -251,12 +251,24 @@ class FeatureExtractor:
         # shipped kinematics. Non-destructive; provenance in outcome_source /
         # reach_source. Falls back to review-only if the resolver errors; a
         # pure-algo video resolves unchanged.
+        # Whether a person made this segmentation: their cuts are logged as
+        # made, however short (causal_review_io.index_review_by_segment).
+        _human_seg = False
+        try:
+            from mousereach.review.causal_review_io import segmentation_is_human
+            _seg_file = Path(reach_path).with_name(
+                Path(reach_path).name.replace("_reaches.json", "_segments.json"))
+            if _seg_file.is_file():
+                _human_seg = segmentation_is_human(json.loads(_seg_file.read_text(encoding="utf-8")))
+        except Exception:
+            _human_seg = False
         try:
             from mousereach.review.truth_resolver import resolve_truth_layers
             reaches_data, outcomes_data = resolve_truth_layers(
                 reaches_data, outcomes_data,
                 video_stem=reaches_data.get('video_name'),
-                primary_dir=review_path)
+                primary_dir=review_path,
+                human_segmentation=_human_seg)
         except Exception as _e:
             print(f"[feature_extractor] truth layering skipped: {_e}")
             if review_path is not None:
@@ -268,7 +280,8 @@ class FeatureExtractor:
                         # The segmentation being applied to, so a review is
                         # matched to the frames the reviewer saw rather than to a
                         # segment number the segmenter may have reassigned.
-                        current_segments=reaches_data.get('segments'))
+                        current_segments=reaches_data.get('segments'),
+                        human_segmentation=_human_seg)
                 except Exception as _e2:
                     print(f"[feature_extractor] review override skipped: {_e2}")
 
