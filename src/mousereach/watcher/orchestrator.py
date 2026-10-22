@@ -993,13 +993,26 @@ class BaseOrchestrator:
         """Get all files associated with a video (mp4, h5, csv, etc.).
 
         A file still being written under a temporary name (staging writes
-        <name>.part and renames when complete) is not one of them."""
+        <name>.part and renames when complete) is not one of them.
+
+        The name is tested BEFORE asking whether the entry is a file, and the
+        listing's own entry answers that (no extra round trip on Windows).
+        WHY: intake runs this on the posed-video folder, which holds every
+        posed video waiting for analysis with its pose files -- about 5,000
+        entries -- and it used to ask the share "is this a file?" for every
+        one of them before looking at the name: about 120 s per video, of an
+        intake whose copying takes 4 s (2026-10-21)."""
         files = []
-        if directory.exists():
-            for file_path in directory.iterdir():
-                if (file_path.is_file() and file_path.name.startswith(video_id)
-                        and not file_path.name.endswith(('.part', '.tmp'))):
-                    files.append(file_path)
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    name = entry.name
+                    if (name.startswith(video_id)
+                            and not name.endswith(('.part', '.tmp'))
+                            and entry.is_file()):
+                        files.append(Path(entry.path))
+        except FileNotFoundError:
+            return []
         return files
 
     def _set_aside_stale_manifest(self, directory: Path, video_id: str, error) -> None:
@@ -4088,7 +4101,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # now stated explicitly.)
         self._retire_min_s = 3 * 3600
         self._last_review_return_mono = 0.0
-        self._last_retire_mono = 0.0
+        # The first retirement pass runs one interval after start, not at it.
+        # WHY: it reads every processing manifest in Analyzed (14 minutes on
+        # 2026-10-21 with a busy share), the work loop waits for it, and a
+        # restart is exactly when a backlog is waiting. Retiring a finished
+        # recording is housekeeping; nothing waits on it.
+        self._last_retire_mono = time.monotonic()
 
         if Paths.NAS_ROOT:
             try:

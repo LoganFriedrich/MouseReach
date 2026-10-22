@@ -1715,3 +1715,19 @@ to ~170 s, for as long as the import ran. The import now copies with the system 
 3 s for a 1 GB recording instead of 41 s, with no data through the processing server
 (`aspa/import_collages.copy_file`). A stopped run's half-written `.partial` file is replaced
 by the next run.
+
+## Update 2026-10-21 (night): intake finds a video's files by name first; retirement waits an interval after start
+
+**Intake.** Taking a posed video in took about 120 s, of which copying took 4 s: finding the
+video's files (`ProcessingOrchestrator._get_associated_files`) listed the posed-video folder
+and asked the share "is this a file?" for every entry -- about 5,000 -- before looking at the
+name. It now tests the name first and lets the listing's own entry answer the rest. Same
+files found; intake takes seconds. (It had been this slow all along -- 134 s on 10-19 -- but
+only showed once the server took hundreds of videos in a row.)
+
+**Collage retirement** (finished recordings to `Analyzed/Multi-Animal`) first runs one
+interval (3 h) after the watcher starts instead of at start. It reads every processing
+manifest in Analyzed -- 14 minutes on 2026-10-21 with a busy share -- the work loop waits for
+it, and a restart is exactly when a backlog is waiting. Nothing waits on retirement.
+
+Tests: `tests/test_intake_lists_names_first.py`.
