@@ -2156,3 +2156,14 @@ This replaces the "pause only while a recording is being written" mode built ear
 (cc14be4, withdrawn in 410bfb8): the schedule is a surer signal than the files. Tests:
 `tests/test_recording_hours.py`, `tests/test_watch_recorders_cli.py`,
 `tests/test_control_widget_recording.py`.
+
+## Update 2026-10-22: a finished video carries no error message
+
+A row's `error_message` is its current error, but reaching 'archived' did not clear the previous one:
+1,249 archived rows on the processing server still showed failures from runs that later succeeded
+(1,164 of them "Archive directory not found for reprocessing", from the 2026-09-09 share outage), and
+every status view read them as current. `update_state` and `force_state` now clear it on the way to
+'archived', and each watcher start clears it on rows already archived (`clear_errors_on_archived`;
+logged once with the count). Other states keep theirs ('unresolvable' uses it for its reason). The
+history stays in `processing_log`. Tests: `tests/test_archived_clears_error.py`.
+

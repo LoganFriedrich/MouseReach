@@ -646,6 +646,14 @@ class BaseOrchestrator:
             self._reclaim_orphaned_work()
         except Exception as e:
             logger.error(f"Startup reclaim failed (continuing): {e}")
+        try:
+            cleared = self.db.clear_errors_on_archived()
+            if cleared:
+                logger.info(f"Startup: cleared the leftover error message of {cleared} "
+                            f"finished (archived) video(s); their history stays in the "
+                            f"processing log")
+        except Exception as e:
+            logger.debug(f"Startup: could not clear old errors on archived rows ({e})")
 
         while not shutdown_event.is_set():
             try:

@@ -535,6 +535,25 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
+    def clear_errors_on_archived(self) -> int:
+        """Clear the error_message of every 'archived' row; return how many.
+
+        Run at watcher start. WHY: until 2026-10-22 reaching 'archived' did not
+        clear the previous error, so finished videos kept showing failures from
+        runs that later succeeded (1,249 rows on the processing server, most of
+        them from the 2026-09-09 share outage). The history is in processing_log.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.execute(
+                    "UPDATE videos SET error_message = NULL WHERE state = 'archived' "
+                    "AND error_message IS NOT NULL")
+                conn.commit()
+                return cur.rowcount or 0
+            finally:
+                conn.close()
+
     def update_state(self, video_id: str, new_state: str, **kwargs):
         """
         Update video state with validation.
@@ -547,6 +566,13 @@ class WatcherDB:
         Raises:
             ValueError: If transition is invalid or video not found
         """
+        # Reaching 'archived' ends whatever went wrong before: the row's
+        # error_message is the CURRENT error, and a finished video has none.
+        # WHY: 1,249 archived rows still showed failures from runs that later
+        # succeeded (2026-10-22), and every status view read them as current.
+        # The history stays in processing_log.
+        if new_state == 'archived':
+            kwargs.setdefault('error_message', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -625,6 +651,13 @@ class WatcherDB:
             reason: Why validation is being bypassed (recorded in the log)
             **kwargs: Additional fields to update
         """
+        # Reaching 'archived' ends whatever went wrong before: the row's
+        # error_message is the CURRENT error, and a finished video has none.
+        # WHY: 1,249 archived rows still showed failures from runs that later
+        # succeeded (2026-10-22), and every status view read them as current.
+        # The history stays in processing_log.
+        if new_state == 'archived':
+            kwargs.setdefault('error_message', None)
         with self._lock:
             conn = self._get_connection()
             try:

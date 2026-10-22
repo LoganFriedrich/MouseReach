@@ -124,6 +124,9 @@ State
   state                   see section 4. NOT NULL, default 'discovered'.
   claimed_by              hostname holding a multi-machine claim, else NULL
   error_message           why it failed, or for 'unresolvable' the owning host
+                          (the CURRENT error: reaching 'archived' clears it, and since
+                          2026-10-22 each watcher start clears it on archived rows;
+                          the history is in processing_log)
   error_count             retries so far; not incremented for 'unresolvable'
   last_error_at
 
