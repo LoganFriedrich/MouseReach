@@ -692,12 +692,14 @@ class BaseOrchestrator:
             nas_root = Paths.NAS_ROOT
             if not nas_root:
                 return
-            from mousereach.watcher.reprocessor import ReprocessingScanner
+            from mousereach.watcher.reprocessor import (
+                ReprocessingScanner, local_cache_path)
             # One PERSISTENT scanner instance (shared with any subclass that
             # made its own): its manifest mtime-cache is what turns the
             # steady-state scan from ~37 minutes of NAS reads into stats.
             if getattr(self, '_reprocess_scanner', None) is None:
-                self._reprocess_scanner = ReprocessingScanner(self.db, nas_root)
+                self._reprocess_scanner = ReprocessingScanner(
+                    self.db, nas_root, cache_path=local_cache_path())
             summary = self._reprocess_scanner.scan(mark_outdated=True,
                                                    adopt_orphans=self.adopts_orphans,
                                                    full_only=not self.reprocesses_partial)
@@ -4186,8 +4188,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         if Paths.NAS_ROOT:
             try:
-                from mousereach.watcher.reprocessor import ReprocessingScanner
-                self._reprocess_scanner = ReprocessingScanner(db, Paths.NAS_ROOT)
+                from mousereach.watcher.reprocessor import (
+                    ReprocessingScanner, local_cache_path)
+                self._reprocess_scanner = ReprocessingScanner(
+                    db, Paths.NAS_ROOT, cache_path=local_cache_path())
                 logger.info("Reprocessing scanner enabled")
             except Exception as e:
                 logger.warning(f"Reprocessing scanner not available: {e}")

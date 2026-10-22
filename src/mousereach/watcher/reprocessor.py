@@ -91,14 +91,25 @@ def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
     return index
 
 
+def local_cache_path() -> Optional[Path]:
+    """Where a watcher keeps its version-scan cache: this machine's own
+    processing root (local disk, never the share -- each machine's scanner
+    is its own). None when no processing root is configured."""
+    from mousereach.config import Paths
+    root = getattr(Paths, "PROCESSING_ROOT", None)
+    return Path(root) / "version_scan_cache.json" if root else None
+
+
 class ReprocessingScanner:
     """Scan archived videos for outdated tool versions."""
 
-    def __init__(self, db, nas_root: Path):
+    def __init__(self, db, nas_root: Path, cache_path: Optional[Path] = None):
         r"""
         Args:
             db: WatcherDB instance
             nas_root: NAS root path (e.g. <NAS>\MouseReach_Pipeline)
+            cache_path: Optional local file that keeps the caches below across
+                restarts (see _load_caches). None keeps them in memory only.
         """
         self.db = db
         self.nas_root = Path(nas_root)
@@ -120,6 +131,67 @@ class ReprocessingScanner:
         # opened the review on every pass to read one field -- 1,614 files and
         # ~107 s of a ~220 s warm pass, measured 2026-10-22.
         self._reviewed_at_cache: dict = {}
+        self._cache_path = Path(cache_path) if cache_path else None
+        self._load_caches()
+
+    # The three caches above, kept on local disk between watcher runs. WHY: the
+    # first scan after a start re-read every manifest and review over the share
+    # -- 623 s on 2026-10-22, during which the work loop waits -- although
+    # nearly all of them were unchanged since the last run. Every entry is
+    # still checked against the file's current listing (modified time, and
+    # path + size for reviews) before use, so a stale entry is never trusted;
+    # a missing or unreadable cache file only means a cold first scan.
+    _CACHE_FORMAT = 1
+
+    def _load_caches(self) -> None:
+        p = getattr(self, "_cache_path", None)
+        if p is None or not p.is_file():
+            return
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+            if doc.get("format") != self._CACHE_FORMAT:
+                return
+            self._manifest_cache = {v: (m, man) for v, m, man in doc["manifests"]}
+            self._review_sha_cache = {(path, size, m): d
+                                      for path, size, m, d in doc["review_sha"]}
+            self._reviewed_at_cache = {(path, size, m): r
+                                       for path, size, m, r in doc["reviewed_at"]}
+            logger.info("Version scan: %d manifests and %d review entries kept "
+                        "from the last run (%s)", len(self._manifest_cache),
+                        len(self._review_sha_cache) + len(self._reviewed_at_cache), p)
+        except Exception as e:
+            self._manifest_cache, self._review_sha_cache, self._reviewed_at_cache = {}, {}, {}
+            logger.info("Version scan: cache %s not used (%s); first scan reads "
+                        "everything", p, e)
+
+    def _save_caches(self, manifest_index: dict, review_index) -> None:
+        """Write the caches, keeping only entries for files this scan saw (so
+        the file does not grow with videos that left the archive). Atomic
+        replace; never raises."""
+        p = getattr(self, "_cache_path", None)
+        if p is None:
+            return
+        try:
+            live_reviews = None
+            if review_index is not None:
+                live_reviews = {(str(path), size, m)
+                                for path, m, size in review_index.values()}
+
+            def keep(key):
+                return live_reviews is None or key in live_reviews
+
+            doc = {
+                "format": self._CACHE_FORMAT,
+                "manifests": [[v, m, man] for v, (m, man) in self._manifest_cache.items()
+                              if not manifest_index or v in manifest_index],
+                "review_sha": [[*k, d] for k, d in self._review_sha_cache.items() if keep(k)],
+                "reviewed_at": [[*k, r] for k, r in self._reviewed_at_cache.items() if keep(k)],
+            }
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_text(json.dumps(doc), encoding="utf-8")
+            os.replace(tmp, p)
+        except Exception as e:
+            logger.warning("Version scan: could not save cache %s: %s", p, e)
 
     def scan(self, mark_outdated: bool = True, adopt_orphans: bool = True,
              full_only: bool = False) -> dict:
@@ -493,6 +565,7 @@ class ReprocessingScanner:
             f"{summary['crystallized_skipped']} crystallized, "
             f"{summary.get('adopted', 0)} adopted from disk"
         )
+        self._save_caches(manifest_index, review_index)
 
         return summary
 
