@@ -2096,13 +2096,19 @@ its own cut of each seat -- and the two were typed separately. Where they
 disagree, the pipeline (which trusts the recording's name) files one animal's
 video under another animal's id.
 
-HOW: every cut of a recording is as long as the recording, to the frame. Each
-cut is traced to its recording that day and tray: by length (within 5 frames),
-or -- when no recording is as long as it, because the surviving one was trimmed
-after it was cut -- through the recording that names it or another cut exactly
-as long as it. A cut whose recording does not list its animal makes that
-recording CONTESTED. Only file headers are read, but every cut and recording
-is opened, so a whole archive takes a while (a fraction of a second per file).
+HOW: every cut of a recording is as long as the recording, to the frame. A cut
+as long as a recording that names its animal is taken as coming from it. For
+any other cut, the recordings it could have come out of that day and tray -- one
+as long as it (within 5 frames), or, when the surviving recording was trimmed
+after it was cut, one naming another cut exactly as long -- are checked by the
+PICTURE: a few frames of the cut against each of the recording's eight seats
+(unshifted, and shifted by the recording's extra length). Length alone is never
+taken as evidence -- two recordings of one day were found 3 frames apart by
+chance. A cut the picture puts in a seat the recording names for a different
+animal (or as empty) makes the recording CONTESTED; the record says which seat
+and both names. Headers are read for every cut and recording, pictures only for
+the cuts in doubt, so a whole archive takes a while (a fraction of a second per
+file).
 
 WHAT IT WRITES: `<nas_root>/pipeline_records/archive_name_conflicts.json` --
 each contested recording, the pipeline name(s) the import gives it, and the

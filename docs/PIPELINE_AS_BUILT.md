@@ -2386,7 +2386,9 @@ feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now
   original name. Before this, such a recording was left out and its animals' cuts looked lost.
 * `mousereach-aspa-name-audit` (aspa/name_audit.py) checks every archive recording's name against
   ASPA's own cuts (each cut traced to its recording by length, or through the recording naming it or a
-  cut exactly as long when the recording was trimmed after it was cut) and writes
+  cut exactly as long when the recording was trimmed after it was cut; every disagreement confirmed by
+  the picture -- the cut is one seat of the recording, mean difference ~1 against 20+ for other seats --
+  because two recordings of one day were found 3 frames apart by chance) and writes
   `<nas_root>/pipeline_records/archive_name_conflicts.json`: recordings whose seats the cuts name for
   animals they do not list. The import runs the same check on the days it imports and does not copy a
   contested recording in. A recording held in quarantine counts as in the pipeline for the import and
