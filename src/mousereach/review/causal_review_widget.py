@@ -44,6 +44,8 @@ from .causal_review_io import (
     load_causal_review,
     restore_review_for_segments,
     segmentation_is_human,
+    answer_problem,
+    plain_review_note,
     update_corpus_index,
     flag_session,
     is_session_flagged,
@@ -615,7 +617,10 @@ The notes box travels with the video.
         to be usable end-to-end with no one to interpret the queue.
         """
         banner = getattr(self, "_routing_banner", None)
-        if banner is None or not self._deep_review:
+        if banner is None:
+            return
+        if not self._deep_review:
+            self._update_triage_banner(banner)
             return
         bundle = getattr(self, "_bundle_dir", None)
         stem = self._video_stem
@@ -656,6 +661,56 @@ The notes box travels with the video.
                 "recorded (an older bundle -- that is a bookkeeping gap, not "
                 "your problem).<br>Look it over, answer anything flagged, and "
                 "press Clear when you are satisfied.")
+        banner.setVisible(True)
+
+    _TRIAGE_KIND_WORDS = {
+        "reach_uncertain": "which reach touched the pellet",
+        "outcome_uncertain": "what happened to the pellet",
+        "both_uncertain": "what happened to the pellet, and which reach did it",
+    }
+
+    def _update_triage_banner(self, banner) -> None:
+        """Say WHY this video is in triage: every open question, and every
+        earlier answer that was not used and why.
+
+        WHY (Logan, 2026-10-23): all a reviewer sees is this window, so every
+        reason a video is here must be on it. Without this a reviewer met
+        questions they had already answered -- the earlier answer had been
+        dropped, and only the console said so -- with no way to tell why.
+        """
+        if not self._video_stem or not self._segment_list:
+            banner.setVisible(False)
+            return
+        rows = []
+        for i in getattr(self, "_triaged_indices", []) or []:
+            seg = self._segment_list[i]
+            try:
+                kind, _ = self._segment_triage(seg)
+            except Exception:
+                kind = None
+            done = " (answered)" if seg["segment_num"] in self._review_records else ""
+            rows.append("segment %s (pellet %s, frames %s-%s): %s%s" % (
+                seg["segment_num"], seg.get("pellet_num"), seg.get("start_frame"),
+                seg.get("end_frame"), self._TRIAGE_KIND_WORDS.get(kind, "needs a person"),
+                done))
+        notes = [w for w in (plain_review_note(n)
+                             for n in getattr(self, "_restore_notes", []) or []) if w]
+        if not rows and not notes:
+            banner.setVisible(False)
+            return
+        html = "<b>Why this video is here:</b> the pipeline could not settle "
+        html += ("%d question(s) on its own:<br>" % len(rows)) if rows else "nothing open.<br>"
+        html += "".join("&nbsp;&nbsp;- %s<br>" % r for r in rows)
+        if notes:
+            html += "<b>Earlier answers that were NOT used:</b><br>"
+            html += "".join("&nbsp;&nbsp;- %s<br>" % n for n in notes)
+        html += ("<b>Check each is the right pellet before answering.</b> If what you "
+                 "see happens to a different pellet or segment than the one shown, do "
+                 "not answer it: write what you saw in the notes and press "
+                 "\"Escalate: bad segmentation -> deep review\".")
+        banner.setStyleSheet("padding:6px; border-radius:3px; font-size:12px; "
+                             "background:#3a2a5a; color:white;")
+        banner.setText(html)
         banner.setVisible(True)
 
     # frames of context padded around a reach when windowing a segment
@@ -1096,6 +1151,7 @@ The notes box travels with the video.
         if self.video_path.parent not in candidates:
             candidates.append(self.video_path.parent)
         self._unmatched_answers = []
+        self._restore_notes = []
         doc = None
         for d in candidates:
             try:
@@ -1120,6 +1176,10 @@ The notes box travels with the video.
                 doc, current, human_segmentation=human)
             for n in notes:
                 print(f"[review restore] {self._video_stem}: {n}")
+            # Shown to the reviewer in the triage banner: an earlier answer that
+            # was not used must say so on screen, or the reviewer meets the same
+            # question again with no idea why (2026-10-23).
+            self._restore_notes = list(notes)
             self._review_records = restored
             self._unmatched_answers = unmatched
 
@@ -2475,8 +2535,49 @@ The notes box travels with the video.
     def _collect_answers(self) -> Optional[Dict[str, Any]]:
         """Collect current segment's answers from the question widgets.
 
-        Returns None if the segment has no questions (boundary segment).
+        Returns None if the segment has no questions (boundary segment), or if
+        the answer cannot count for this segment -- then ``self._answer_problem``
+        says why (answer_problem: a reach outside the segment's frames, or a
+        segment too short to be a pellet presentation). Such an answer is never
+        recorded: the pipeline would drop it later without a word, and when the
+        event belongs to another pellet the right action is Escalate, not an
+        answer (Logan, 2026-10-23).
         """
+        self._answer_problem = None
+        rec = self._collect_answers_unchecked()
+        if rec is None:
+            return None
+        problem = answer_problem(rec, human_segmentation=self._segmentation_is_human())
+        if problem:
+            self._answer_problem = problem
+            return None
+        return rec
+
+    def _segmentation_is_human(self) -> bool:
+        """The current cuts were made by a person (the matching takes a person's
+        cuts as made, however short)."""
+        return (bool(getattr(self, "_manual_boundaries", None))
+                or segmentation_is_human(getattr(self, "_segments_data", None)))
+
+    def _refusal_text(self) -> str:
+        """The full message for an answer that was not recorded."""
+        return (f"{self._answer_problem}\n\nNothing was recorded for this segment.\n\n"
+                "If what you see really happens to a different pellet or segment than "
+                "the one shown, the algorithm is on the wrong pellet here: do not answer "
+                "-- write what you saw in the notes and press \"Escalate: bad "
+                "segmentation -> deep review\". Otherwise choose a reach inside this "
+                "segment.")
+
+    def _tell_not_recorded(self, blocking: bool = False) -> None:
+        msg = self._refusal_text()
+        self._status_label.setText("[NOT RECORDED] " + (self._answer_problem or ""))
+        if blocking:
+            QMessageBox.warning(self, "Answer not recorded", msg)
+        else:
+            show_warning(msg)
+
+    def _collect_answers_unchecked(self) -> Optional[Dict[str, Any]]:
+        """Build the current segment's record from the question widgets."""
         if not self._segment_list:
             return None
 
@@ -2681,6 +2782,10 @@ The notes box travels with the video.
     def _save_segment_and_advance(self):
         """Save current segment's answers and advance."""
         record = self._collect_answers()
+        if record is None and getattr(self, "_answer_problem", None):
+            # Stay on this segment: the reviewer fixes the answer or escalates.
+            self._tell_not_recorded(blocking=True)
+            return
         if record is not None:
             seg_num = record["segment_num"]
             self._review_records[seg_num] = record
@@ -3144,6 +3249,8 @@ The notes box travels with the video.
         record = self._collect_answers()
         if record is not None:
             self._review_records[record["segment_num"]] = record
+        elif getattr(self, "_answer_problem", None):
+            self._tell_not_recorded()
 
         if not self._review_records:
             show_warning("No segments reviewed yet")
@@ -3254,6 +3361,8 @@ The notes box travels with the video.
         record = self._collect_answers()
         if record is not None:
             self._review_records[record["segment_num"]] = record
+        elif getattr(self, "_answer_problem", None):
+            self._tell_not_recorded()
         prev = self._prev_visible_idx(self._current_seg_idx)
         if prev is not None:
             self._current_seg_idx = prev
@@ -3263,6 +3372,8 @@ The notes box travels with the video.
         record = self._collect_answers()
         if record is not None:
             self._review_records[record["segment_num"]] = record
+        elif getattr(self, "_answer_problem", None):
+            self._tell_not_recorded()
         nxt = self._next_visible_idx(self._current_seg_idx)
         if nxt is not None:
             self._current_seg_idx = nxt

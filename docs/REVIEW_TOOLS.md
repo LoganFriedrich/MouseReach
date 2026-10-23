@@ -92,6 +92,49 @@ Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Cl
 
 Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and speed keys 1-6 (`_setup_keybindings`, `:2963`). There is no key for next/previous segment; those are buttons.
 
+### Why this video is here: the banner (since 2026-10-23)
+
+Everything that holds a video in triage is on screen, because the window is all
+a reviewer sees (Logan, 2026-10-23). A purple banner above the video lists:
+
+- every open question: segment, pellet, frames, and what is open -- *which reach
+  touched the pellet*, *what happened to the pellet*, or both -- with
+  "(answered)" once answered in this session;
+- every **earlier answer that was NOT used**, and why, in plain words (an answer
+  whose reach is outside its segment; an answer about frames that no longer
+  match any segment after a re-cut; two answers for the same frames that
+  disagree; a segment too short to be a pellet). Before this the reason went to
+  the console only, and the reviewer met the same question again with no idea
+  why -- one segment was answered three times;
+- the reminder that triage includes checking the event happened to the pellet
+  shown, and what to do if it did not (below).
+
+### An answer that cannot count is not recorded (since 2026-10-23)
+
+Two answers can never be used for the segment they are given for, and the tool
+refuses them at the moment of answering, with a message saying why and what to
+do -- nothing is recorded for that segment, and *Save & next* stays on it:
+
+- **a reach outside the segment's frames.** As the video is cut, that reach
+  cannot have touched this segment's pellet;
+- **any answer on a segment too short to be a pellet presentation** (fewer than
+  5 frames: two cuts almost on top of each other), unless a person made the cuts.
+
+The same two tests decide what the pipeline drops when it applies answers
+(`causal_review_io.answer_problem`, shared with `index_review_by_segment`), so
+the tool never accepts an answer the pipeline will throw away. Part of triage is
+checking that what happened, happened to the pellet shown: when the algorithm
+is on the wrong pellet or segment, **do not answer -- write what you saw in the
+notes and press *Escalate: bad segmentation -> deep review***. The cuts are
+fixed there, by a person, in the re-segmentation tool.
+
+A triaged segment that is too short to be a pellet is never left in triage at
+all: the gate sends the video to deep review with the reason "segmentation:
+segment(s) N ... too short to be a pellet presentation", and the return scan
+moves any such bundle already sitting in triage. If a person has cleared the
+video in deep review and kept those cuts, there is no pellet in such a segment
+to ask about, and it stops holding the video.
+
 ### Escalating out of triage (since 2026-08-25)
 
 Two ways a triage reviewer sends a video to deep review instead of finishing

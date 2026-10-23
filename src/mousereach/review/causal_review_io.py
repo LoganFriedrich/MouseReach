@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -511,6 +512,88 @@ MIN_MARGIN = 0.15
 MIN_REAL_SEGMENT_FRAMES = 5
 
 
+def _too_short(span, human_segmentation: bool = False) -> bool:
+    """A span no pellet presentation fits in (see MIN_REAL_SEGMENT_FRAMES); a
+    person's own cuts are taken as made, however short."""
+    return (span is not None and not human_segmentation
+            and span[1] - span[0] + 1 < MIN_REAL_SEGMENT_FRAMES)
+
+
+def _reach_outside(reach, span) -> bool:
+    """The reach lies wholly outside the span."""
+    return reach is not None and span is not None and (reach[1] < span[0] or reach[0] > span[1])
+
+
+def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
+    """Why an answer cannot count for the segment it was given for, in words
+    for the reviewer -- or None when it can.
+
+    These are the SAME tests the matching applies (index_review_by_segment):
+    an answer failing them is dropped there. WHY the review tool asks this at
+    the moment of answering: until 2026-10-23 it recorded such an answer, the
+    pipeline dropped it without a word, and the video came back asking the same
+    question -- one reviewer had answered one segment three times. Part of
+    triage is checking the event happened to the pellet shown; when it did
+    not, the answer is not saved and the video goes to deep review (the
+    Escalate button), where the cuts are fixed."""
+    if not _is_answered(rec) or ((rec or {}).get("answers") or {}).get("is_boundary"):
+        return None
+    span = _span_of(rec)
+    if span is None:
+        return None
+    n = rec.get("segment_num")
+    if _too_short(span, human_segmentation):
+        return ("Segment %s is only %d frame(s) long (frames %d-%d): two cuts almost "
+                "on top of each other, not a pellet presentation. No pellet can be "
+                "answered here -- the cuts need fixing."
+                % (n, span[1] - span[0] + 1, span[0], span[1]))
+    cr = _decided_reach(rec)
+    if _reach_outside(cr, span):
+        return ("The reach you chose (frames %d-%d) is outside segment %s, which runs "
+                "from frame %d to %d. As this video is cut, that reach cannot have "
+                "touched this segment's pellet." % (cr[0], cr[1], n, span[0], span[1]))
+    return None
+
+
+_PLAIN_NOTES = [
+    (re.compile(r"^segment (\S+) review names causal reach (\d+)-(\d+), outside the frames "
+                r"it records \((\d+)-(\d+)\)"),
+     "Segment {0}: the reach given earlier (frames {1}-{2}) is outside the segment "
+     "(frames {3}-{4}), so it was not used. If that reach really touched this pellet, "
+     "the cuts are wrong: Escalate."),
+    (re.compile(r"^current segment (\S+) \(frames (\d+)-(\d+)\) is shorter than any real"),
+     "Segment {0} (frames {1}-{2}) is too short to be a pellet presentation: the cuts "
+     "need fixing (Escalate); it cannot be answered."),
+    (re.compile(r"^segment (\S+) review covers frames .* shorter than any real footage"), None),
+    (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) matches no current segment"),
+     "An earlier answer for frames {1}-{2} matches none of today's segments (the video "
+     "was re-cut since), so it was not used."),
+    (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) splits across current "
+                r"segments (\d+) and (\d+)"),
+     "An earlier answer for frames {1}-{2} falls across segments {3} and {4} as the video "
+     "is now cut, so it was not used."),
+    (re.compile(r"^segment (\d+): two answers for frames (\d+)-(\d+) disagree"),
+     "Segment {0}: two earlier answers disagree, so neither was used -- answer it again."),
+    (re.compile(r"^review of segment (\S+) now applies to segment (\d+)"),
+     "Your earlier answer for segment {0} now belongs to segment {1} (the video was "
+     "re-cut since); it is used there."),
+    (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) overlaps current segment "
+                r"(\d+) less than another review"),
+     "An earlier answer for frames {1}-{2} lost out to a better-matching answer for "
+     "segment {3}, so it was not used."),
+]
+
+
+def plain_review_note(note: str) -> Optional[str]:
+    """A matching note (index_review_by_segment) in words for the reviewer, or
+    None when it says nothing they need to act on."""
+    for rx, words in _PLAIN_NOTES:
+        m = rx.match(note or "")
+        if m:
+            return words.format(*m.groups()) if words else None
+    return note
+
+
 def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
     """The current segments ``[{segment_num, start_frame, end_frame}]`` from a
     ``*_segments.json`` document's boundaries -- the same rule the review tool
@@ -611,7 +694,7 @@ def index_review_by_segment(review_doc, current_segments=None,
         sn, sp = seg.get("segment_num"), _seg_span(seg)
         if sn is None or sp is None:
             continue
-        if sp[1] - sp[0] + 1 < MIN_REAL_SEGMENT_FRAMES and not human_segmentation:
+        if _too_short(sp, human_segmentation):
             notes.append(
                 "current segment %s (frames %d-%d) is shorter than any real "
                 "footage; excluded as a review-matching target"
@@ -627,8 +710,7 @@ def index_review_by_segment(review_doc, current_segments=None,
     for rec in records:
         rspan = _span_of(rec)
         old_num = rec.get("segment_num")
-        if (rspan is not None and rspan[1] - rspan[0] + 1 < MIN_REAL_SEGMENT_FRAMES
-                and not human_segmentation):
+        if _too_short(rspan, human_segmentation):
             notes.append(
                 "segment %s review covers frames %d-%d, shorter than any real "
                 "footage (a zero-length-segment artifact); dropped"
@@ -648,7 +730,7 @@ def index_review_by_segment(review_doc, current_segments=None,
         # segment's causal reach. Not guessed at: dropped, and the segment goes
         # back to a person.
         cr = _decided_reach(rec)
-        if cr is not None and (cr[1] < rspan[0] or cr[0] > rspan[1]):
+        if _reach_outside(cr, rspan):
             notes.append(
                 "segment %s review names causal reach %d-%d, outside the frames it "
                 "records (%d-%d); not applied -- it is about other footage"

@@ -2395,3 +2395,20 @@ feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now
   the feed. Nothing is renamed: which name is right is for a person.
 Tests: `tests/test_rebuild_recording.py`, `tests/test_aspa_feed_to_shared_folder.py`,
 `tests/test_aspa_name_audit.py`.
+
+## Update 2026-10-23: triage shows why, and never takes an answer the pipeline would drop
+
+Reported by the triage reviewer: videos answered the day before came back. Three were answered, and
+each answer was dropped by the review matching without a word on screen: two named a reach outside the
+segment's frames, one answered a segment four frames long. The video then asked again (one segment had
+been answered three times). Now:
+* the review tool refuses those two kinds of answer at the moment of answering and says why and what
+  to do -- if the event belongs to another pellet, save nothing and Escalate
+  (`causal_review_io.answer_problem`, the same tests `index_review_by_segment` applies);
+* a banner in triage lists every open question and every earlier answer that was not used, with the
+  reason in plain words (`plain_review_note`);
+* a triaged segment too short to be a pellet presentation sends the video to deep review with a
+  segmentation reason (gate) and moves a bundle already in triage there (return scan), because no
+  answer in triage can count for it; a person's deep-review clear that kept the cuts means there is no
+  pellet there to ask about.
+Tests: `tests/test_triage_answers_that_cannot_count.py`.

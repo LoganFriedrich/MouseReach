@@ -30,7 +30,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Touched outcomes: a real reach moved/removed the pellet, so a causal reach
 # MUST be committed. A touched segment with no committed causal reach is an
@@ -221,6 +221,11 @@ class TriageStatus:
     # segmentation_wrong record describes a problem that no longer exists once
     # this is True, so it must stop blocking the video.
     seg_human_fixed: bool = False
+    # Segments too short to be a pellet presentation ({segment_num: (first,
+    # last frame)}), on cuts no person made. A triaged one cannot be answered in
+    # triage (causal_review_io.answer_problem); it is a question about the cuts,
+    # which deep review fixes.
+    too_short: Dict[int, Tuple[int, int]] = field(default_factory=dict)
 
     @property
     def has_triage(self) -> bool:
@@ -249,6 +254,29 @@ class TriageStatus:
         """A reviewer declared a segment mislabel and nobody has hand-fixed the
         boundaries yet -- the video must go through manual re-segmentation."""
         return bool(self.seg_corrected) and not self.seg_human_fixed
+
+
+def _too_short_segments(seg_doc) -> Dict[int, Tuple[int, int]]:
+    """Segments too short to be a pellet presentation, on cuts no person made
+    (the same rule the review matching uses)."""
+    from .causal_review_io import _too_short, segmentation_is_human, segments_from_segmentation
+    human = segmentation_is_human(seg_doc)
+    return {int(s["segment_num"]): (int(s["start_frame"]), int(s["end_frame"]))
+            for s in segments_from_segmentation(seg_doc)
+            if _too_short((int(s["start_frame"]), int(s["end_frame"])), human)}
+
+
+def short_segment_reason(st: "TriageStatus", segs) -> str:
+    """The routing reason for triaged segments too short to be answered. Names
+    segmentation, so the deep-review window points the reviewer at fixing the
+    cuts."""
+    parts = []
+    for s in segs:
+        a, b = st.too_short[s]
+        parts.append("%d (frames %d-%d, %d frame(s))" % (s, a, b, b - a + 1))
+    return ("segmentation: segment(s) %s too short to be a pellet presentation -- two "
+            "cuts almost on top of each other. No pellet can be answered there until "
+            "the cuts are fixed." % "; ".join(parts))
 
 
 def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:
@@ -308,4 +336,5 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
         unresolved=tri - res,
         seg_corrected=segmentation_corrected(review),
         seg_human_fixed=(seg or {}).get("boundary_source") == "human",
+        too_short=_too_short_segments(seg),
     )

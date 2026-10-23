@@ -1133,7 +1133,33 @@ def scan_review_queues(db, processing_dir: Path,
                 finally:
                     _release_return_claim(stem)
                 continue
-        if not (st.has_triage and st.fully_resolved
+        # A triaged segment too short to be a pellet presentation can never be
+        # answered here (the review tool refuses it): the cuts are the
+        # question, so the bundle goes to deep review -- unless a person has
+        # cleared it there and kept those cuts, when there is no pellet in such
+        # a segment to ask about (the gate applies the same rule).
+        short = sorted(s for s in st.unresolved if s in st.too_short)
+        if short and not cleared:
+            if not _claim_return(stem):
+                continue
+            try:
+                from .review_gate import route_to_queue
+                from mousereach.review.triage_status import short_segment_reason
+                route_to_queue(stem, bundle, Paths.DEEP_REVIEW,
+                               reason=short_segment_reason(st, short),
+                               db=db, db_state="deep_review")
+                summary["diverted_to_deep"] += 1
+                logger.info("Return scan: %s diverted triage -> deep review (segment(s) "
+                            "%s too short to be a pellet; the cuts need fixing)",
+                            stem, short)
+            except Exception as e:
+                logger.error("Return scan: could not divert %s to deep review: %s",
+                             stem, e)
+            finally:
+                _release_return_claim(stem)
+            continue
+        still_open = set(st.unresolved) - set(short)
+        if not (st.has_triage and not still_open
                 and (not st.seg_failed or cleared)):
             continue
         if st.seg_pending_reseg:

@@ -192,6 +192,22 @@ def evaluate_gate(
     # re-triaging (and losing the reviewer's resolution).
     review_resolved = _review_resolved_segments(video_id, processing_dir)
     unresolved = set(st.unresolved) - gt_segs - review_resolved
+    # A triaged segment too short to be a pellet presentation cannot be answered
+    # in triage (answer_problem refuses it there): it is a question about the
+    # cuts, and only something a person can fix in the GUI may hold a video
+    # (Logan, 2026-10-23) -- so deep review, where the cuts are fixed. If a person
+    # has already cleared the video there and kept these cuts, there is no pellet
+    # in such a segment to ask about.
+    short = sorted(s for s in unresolved if s in st.too_short)
+    if short:
+        if _deep_review_cleared(video_id, processing_dir):
+            logger.info("Gate: %s segment(s) %s too short to be a pellet, cuts kept by "
+                        "a person's deep-review clear -- nothing to ask there",
+                        video_id, short)
+            unresolved -= set(short)
+        else:
+            from mousereach.review.triage_status import short_segment_reason
+            return DECISION_DEEP, short_segment_reason(st, short), st
     if unresolved:
         segs = ", ".join(str(s) for s in sorted(unresolved))
         return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
