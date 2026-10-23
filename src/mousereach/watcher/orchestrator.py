@@ -4685,9 +4685,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         cycle = getattr(self, "_cycle", None) or CycleTimer()
 
-        # Clean up stale claims from crashed nodes
-        with cycle.step("scan/stale claims"):
-            self._cleanup_stale_claims()
+        # Make the posed claims match what this node holds (see the method)
+        with cycle.step("scan/posed claims"):
+            self._sweep_posed_claims()
 
         # A video this node already knows about, parked 'outdated' because it
         # needed a NEW pose, is invisible to discover_dlc_staged (which only
@@ -5208,9 +5208,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # posed folder: through analysis, review and failure alike, since the
     # posed copy stays there until the video is archived (intake copies and
     # leaves it). It lets go after archiving has removed that copy, or, at
-    # its periodic sweep, once the files have gone some other way. Another
-    # node's claim is broken only when that node has stopped writing its
-    # status report (claim_marker.GONE_AFTER_S, by the file server's clock).
+    # its periodic sweep, once the files have gone some other way or the
+    # video is waiting again; the same sweep claims any video it holds that
+    # has no claim (_sweep_posed_claims). Another node's claim is broken only
+    # when that node has stopped writing its status report
+    # (claim_marker.GONE_AFTER_S, by the file server's clock).
 
     # How long a video held by another node stays out of this node's intake
     # choices before it is asked about again. WHY: the claim is only checked
@@ -5218,9 +5220,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # the work order is picked, refused and picked again on every loop, and
     # nothing below it is ever taken in.
     _HELD_ELSEWHERE_RECHECK_S = 600
-    # How often the posed claims are swept (another node's, when it has
-    # stopped; this node's own, when the video has left the posed folder).
-    # Each sweep lists the claim folder and the posed folder once.
+    # How often the posed claims are swept (_sweep_posed_claims). Each sweep
+    # lists the claim folder and the posed folder once.
     _POSED_CLAIM_SWEEP_S = 600
 
     def _posed_claim_dir(self) -> Optional[Path]:
@@ -5264,31 +5265,55 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self._held_elsewhere = {}
         self._held_elsewhere[video_id] = time.monotonic() + self._HELD_ELSEWHERE_RECHECK_S
 
-    def _cleanup_stale_claims(self):
-        """Sweep the posed claims, at most every _POSED_CLAIM_SWEEP_S.
+    # The states in which this node has a posed video in hand: it took the
+    # video in and has not given it back. While a video is in one of these its
+    # posed copy is not waiting work -- it is this node's live copy (a lifted
+    # review hold is released from it, review_return._release_to_posed) or the
+    # leftover of a filed video. 'dlc_complete' is waiting work, claimed only
+    # by the intake that takes it; any other state is not this node's to hold.
+    _POSED_HELD_STATES = frozenset({
+        'processing', 'processed', 'archiving', 'archived', 'triage',
+        'deep_review', 'failed', 'outdated', 'crystallized'})
 
-        Breaks another node's claims once that node has stopped writing its
-        status report, never for their age. Lets go of this node's own claims
-        whose video has no files left in the posed folder: nothing remains
-        there for another node to take, and a marker kept for a video that is
-        gone would sit in the folder for as long as this node runs.
+    def _sweep_posed_claims(self):
+        """Make the posed claims match what this node holds, at most every
+        _POSED_CLAIM_SWEEP_S. Returns ``(claimed, released)``.
+
+        * Another node's claim is broken once that node has stopped writing
+          its status report -- never for its age.
+        * A video in the posed folder that this node has in hand (its row is
+          in _POSED_HELD_STATES) is claimed if it is not claimed already.
+          WHY: until 2026-10-22 every marker was deleted after 24 hours, so
+          most posed copies of videos in review had none, and to any node
+          taking in posed videos they looked like waiting work.
+        * This node lets go of its claim on a video that has left the posed
+          folder (nothing remains for anyone to take) and on one that is
+          waiting again (a lifted hold is put back as 'dlc_complete' for a
+          fresh run, which any node may take).
+
+        Only claims that may need letting go are read; a marker that already
+        exists for a held video is not re-read, so a sweep reads few files.
         """
         claim_dir = self._posed_claim_dir()
-        if claim_dir is None or not claim_dir.is_dir():
-            return 0
+        if claim_dir is None:
+            return (0, 0)
         now = time.monotonic()
         last = getattr(self, "_posed_claim_swept", None)
         if last is not None and now - last < self._POSED_CLAIM_SWEEP_S:
-            return 0
+            return (0, 0)
         self._posed_claim_swept = now
 
         status_dir = node_status.status_dir(Paths.NAS_ROOT)
-        claim_marker.sweep_gone(claim_dir, self.hostname, status_dir)
+        if claim_dir.is_dir():
+            claim_marker.sweep_gone(claim_dir, self.hostname, status_dir)
 
         suffix = ".claimed"
         try:
-            with os.scandir(claim_dir) as entries:
-                keys = [e.name[:-len(suffix)] for e in entries if e.name.endswith(suffix)]
+            keys = set()
+            if claim_dir.is_dir():
+                with os.scandir(claim_dir) as entries:
+                    keys = {e.name[:-len(suffix)] for e in entries
+                            if e.name.endswith(suffix)}
             # Names only: the posed folder holds thousands of entries, and
             # asking the share about each one is what made intake slow before
             # (_get_associated_files). Its subfolders start with a dot and can
@@ -5297,21 +5322,37 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 names = sorted(e.name for e in entries)
         except OSError as e:
             logger.debug(f"posed claim sweep skipped: {e}")
-            return 0
+            return (0, 0)
+
+        here = [n[:-4] for n in names if n.endswith(".mp4")]
+        states = {vid: row[0] for vid, row in self.db.states_of(here).items()}
+
+        claimed = 0
+        for vid in here:
+            if vid not in keys and states.get(vid) in self._POSED_HELD_STATES:
+                if claim_marker.take(claim_dir, vid, self.hostname):
+                    claimed += 1
+
         released = 0
         for key in keys:
             # Any file whose name starts with the video id is one of its
             # files (the video, its poses, their side files).
             i = bisect.bisect_left(names, key)
-            if i < len(names) and names[i].startswith(key):
+            gone = not (i < len(names) and names[i].startswith(key))
+            waiting = not gone and key in states and \
+                states[key] not in self._POSED_HELD_STATES
+            if not (gone or waiting):
                 continue
             if claim_marker.holds(claim_dir, key, self.hostname) and \
                     claim_marker.release(claim_dir, key, self.hostname):
                 released += 1
+        if claimed:
+            logger.info(f"Claimed {claimed} posed video(s) this node has in hand "
+                        f"(in review, failed or filed) that had no claim")
         if released:
-            logger.info(f"Let go of {released} posed claim(s) whose videos have "
-                        f"left the posed folder")
-        return released
+            logger.info(f"Let go of {released} posed claim(s): the video has left "
+                        f"the posed folder or is waiting again")
+        return (claimed, released)
 
     # =========================================================================
     # INTAKE: Copy from NAS staging to local Processing/
