@@ -2411,4 +2411,9 @@ been answered three times). Now:
   segmentation reason (gate) and moves a bundle already in triage there (return scan), because no
   answer in triage can count for it; a person's deep-review clear that kept the cuts means there is no
   pellet there to ask about.
+* the banner also gives the routing reason, and beside each pellet the reason it was sent back when
+  another system marked it: `mousereach-route-to-queue` takes per-pellet words in a worklist
+  (`segment_details`) and stores each as that pellet's `flag_reason` -- mousedb's nightly bench check
+  now says, per pellet, what the hand score and the algorithm each say. Finished videos sent back for
+  a new pellet had looked like the reviewer's earlier answers being lost.
 Tests: `tests/test_triage_answers_that_cannot_count.py`.

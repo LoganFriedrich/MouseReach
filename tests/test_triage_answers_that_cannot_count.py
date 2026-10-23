@@ -115,3 +115,19 @@ def test_a_triage_bundle_stuck_on_a_too_short_segment_moves_to_deep_review(
     assert summary.get("diverted_to_deep") == 1
     (args, kw), = routed
     assert args[2] == deep and kw["reason"].startswith("segmentation:")
+
+
+def test_a_pellet_sent_back_by_another_system_carries_its_own_reason(tmp_path):
+    # mousedb's bench scan sends finished videos back with pellets whose hand
+    # score disagrees; each pellet's flag reason says what the two say, and
+    # the review tool shows it beside that pellet.
+    from mousereach.watcher.route_cli import flag_segments
+    p = tmp_path / "v_pellet_outcomes.json"
+    p.write_text(json.dumps({"segments": [{"segment_num": 3, "outcome": "retrieved"},
+                                          {"segment_num": 7, "outcome": "untouched"}]}),
+                 encoding="utf-8")
+    assert flag_segments(p, [3, 7], "bench disagreement",
+                         details={"3": "hand score missed, algorithm retrieved"}) == [3, 7]
+    segs = {s["segment_num"]: s for s in json.loads(p.read_text(encoding="utf-8"))["segments"]}
+    assert segs[3]["flag_reason"] == "bench disagreement: hand score missed, algorithm retrieved"
+    assert segs[7]["flag_reason"] == "bench disagreement"

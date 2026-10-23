@@ -689,17 +689,27 @@ The notes box travels with the video.
             except Exception:
                 kind = None
             done = " (answered)" if seg["segment_num"] in self._review_records else ""
-            rows.append("segment %s (pellet %s, frames %s-%s): %s%s" % (
+            why = ("; sent back because: %s" % seg["flag_reason"]) if seg.get("flag_reason") else ""
+            rows.append("segment %s (pellet %s, frames %s-%s): %s%s%s" % (
                 seg["segment_num"], seg.get("pellet_num"), seg.get("start_frame"),
                 seg.get("end_frame"), self._TRIAGE_KIND_WORDS.get(kind, "needs a person"),
-                done))
+                why, done))
         notes = [w for w in (plain_review_note(n)
                              for n in getattr(self, "_restore_notes", []) or []) if w]
         if not rows and not notes:
             banner.setVisible(False)
             return
-        html = "<b>Why this video is here:</b> the pipeline could not settle "
-        html += ("%d question(s) on its own:<br>" % len(rows)) if rows else "nothing open.<br>"
+        routed = ""
+        try:
+            from mousereach.review.release_cli import _routing_reason
+            bd = getattr(self, "_bundle_dir", None)
+            routed = _routing_reason(Path(bd), self._video_stem) if bd else ""
+        except Exception:
+            routed = ""
+        html = "<b>Why this video is here:</b> "
+        if routed:
+            html += "it was sent to triage because: %s.<br>" % routed
+        html += ("%d question(s) are open:<br>" % len(rows)) if rows else "nothing is open.<br>"
         html += "".join("&nbsp;&nbsp;- %s<br>" % r for r in rows)
         if notes:
             html += "<b>Earlier answers that were NOT used:</b><br>"
@@ -1309,12 +1319,16 @@ The notes box travels with the video.
                 outcome = None
                 interaction_frame = None
                 flagged = False
+                flag_reason = None
                 causal_reach = None
             else:
                 outcome_info = outcomes_by_seg.get(seg_num, {})
                 outcome = outcome_info.get("outcome")
                 interaction_frame = outcome_info.get("interaction_frame")
                 flagged = bool(outcome_info.get("flagged_for_review", False))
+                # Why something outside the pipeline sent this pellet back
+                # (mousereach-route-to-queue); shown in the triage banner.
+                flag_reason = outcome_info.get("flag_reason") if flagged else None
 
                 # Find the causal reach from assignments
                 causal_reach = None
@@ -1357,6 +1371,7 @@ The notes box travels with the video.
                 "outcome": outcome,
                 "interaction_frame": interaction_frame,
                 "flagged": flagged,
+                "flag_reason": flag_reason,
                 "outcome_uncertain": outcome_uncertain,
                 "reach_uncertain": reach_uncertain,
                 "manual": bool(manual),

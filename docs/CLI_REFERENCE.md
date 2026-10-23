@@ -731,7 +731,12 @@ What it does, in order:
   1. finds the video's results in the configured Analyzed tree,
   2. optionally flags specific segments (flagged_for_review=True with the
      given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
-     that is what the triage review tool walks,
+     that is what the triage review tool walks. A worklist item may carry
+     "segment_details" ({segment number: words}); each flagged segment's
+     reason is then "<reason>: <its words>", and the review tool shows it on
+     screen beside that pellet (WHY: all a reviewer sees is the tool, so a
+     pellet sent back must say why -- a reviewer met finished videos coming
+     back with no reason given, 2026-10-23),
   3. moves the video's bundle into the queue with a routing manifest
      (review_gate.route_to_queue), updating the watcher database.
 

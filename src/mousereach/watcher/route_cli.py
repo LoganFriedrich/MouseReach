@@ -15,7 +15,12 @@ What it does, in order:
   1. finds the video's results in the configured Analyzed tree,
   2. optionally flags specific segments (flagged_for_review=True with the
      given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
-     that is what the triage review tool walks,
+     that is what the triage review tool walks. A worklist item may carry
+     "segment_details" ({segment number: words}); each flagged segment's
+     reason is then "<reason>: <its words>", and the review tool shows it on
+     screen beside that pellet (WHY: all a reviewer sees is the tool, so a
+     pellet sent back must say why -- a reviewer met finished videos coming
+     back with no reason given, 2026-10-23),
   3. moves the video's bundle into the queue with a routing manifest
      (review_gate.route_to_queue), updating the watcher database.
 
@@ -116,15 +121,20 @@ def _find_outcomes(analyzed: Path, video_id: str) -> Optional[Path]:
     return first_file(analyzed, name)
 
 
-def flag_segments(outcomes_path: Path, segment_nums: Iterable[int], reason: str) -> List[int]:
-    """Set flagged_for_review on the given segments; returns those found."""
+def flag_segments(outcomes_path: Path, segment_nums: Iterable[int], reason: str,
+                  details: Optional[dict] = None) -> List[int]:
+    """Set flagged_for_review on the given segments; returns those found.
+    ``details`` ({segment number: words}) adds each segment's own words to
+    its reason."""
     wanted = {int(s) for s in segment_nums}
+    details = {int(k): str(v) for k, v in (details or {}).items()}
     data = json.loads(outcomes_path.read_text(encoding="utf-8"))
     flagged = []
     for s in data.get("segments", []):
         if s.get("segment_num") in wanted:
             s["flagged_for_review"] = True
-            s["flag_reason"] = reason
+            own = details.get(int(s["segment_num"]))
+            s["flag_reason"] = f"{reason}: {own}" if own else reason
             s["triage_cleared"] = None
             flagged.append(int(s["segment_num"]))
     if flagged:
@@ -155,7 +165,8 @@ def answered_segments_of(video_id: str, folder: Path) -> set:
 
 
 def route_video(video_id: str, queue: str, reason: str,
-                segment_nums: Optional[Iterable[int]] = None, db=None) -> dict:
+                segment_nums: Optional[Iterable[int]] = None, db=None,
+                segment_details: Optional[dict] = None) -> dict:
     """Flag (optional) and route one video. Returns a result dict; never raises."""
     from mousereach.config import Paths
     from mousereach.watcher.review_gate import route_to_queue
@@ -190,7 +201,8 @@ def route_video(video_id: str, queue: str, reason: str,
             segment_nums = [s for s in wanted if s not in res["answered"]]
             if not segment_nums:
                 return res          # nothing left to ask; not routed, not a failure
-            res["flagged"] = flag_segments(outcomes, segment_nums, reason)
+            res["flagged"] = flag_segments(outcomes, segment_nums, reason,
+                                           details=segment_details)
         dest_root = Paths.TRIAGE_REVIEW if queue == "triage" else Paths.DEEP_REVIEW
         route_to_queue(video_id, outcomes.parent, dest_root, reason=reason,
                        db=db, db_state=queue)
@@ -243,7 +255,8 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video_id", nargs="?", help="e.g. 20250624_CNT0115_P2")
     ap.add_argument("--worklist", type=Path,
-                    help='JSON list of {"video_id", "segment_nums"} to route in one go')
+                    help='JSON list of {"video_id", "segment_nums", optional '
+                         '"segment_details": {segment: words}} to route in one go')
     ap.add_argument("--queue", choices=QUEUES, required=True)
     ap.add_argument("--reason", required=True, help="Recorded in the routing manifest")
     ap.add_argument("--flag-segments", default="",
@@ -261,12 +274,14 @@ def main(argv=None) -> int:
     items = []
     if args.worklist:
         for it in json.loads(Path(args.worklist).read_text(encoding="utf-8")):
-            items.append((it["video_id"], it.get("segment_nums") or []))
+            items.append((it["video_id"], it.get("segment_nums") or [],
+                          it.get("segment_details") or {}))
     else:
         segs = [int(x) for x in args.flag_segments.split(",") if x.strip()]
-        items.append((args.video_id, segs))
+        items.append((args.video_id, segs, {}))
 
-    results = [route_video(v, args.queue, args.reason, segs, db=db) for v, segs in items]
+    results = [route_video(v, args.queue, args.reason, segs, db=db, segment_details=det)
+               for v, segs, det in items]
     if args.json:
         print(json.dumps(results, indent=1))
     else:

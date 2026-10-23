@@ -97,9 +97,16 @@ Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and spe
 Everything that holds a video in triage is on screen, because the window is all
 a reviewer sees (Logan, 2026-10-23). A purple banner above the video lists:
 
+- why it was sent to triage -- the routing reason recorded when it entered the
+  queue (for example "2 triaged segment(s) unresolved: 17, 18", or "bench
+  disagreement" when the database's nightly check sent a finished video back);
 - every open question: segment, pellet, frames, and what is open -- *which reach
-  touched the pellet*, *what happened to the pellet*, or both -- with
-  "(answered)" once answered in this session;
+  touched the pellet*, *what happened to the pellet*, or both -- with the reason
+  a pellet was sent back when something outside the pipeline marked it ("sent
+  back because: bench disagreement: the hand score says retrieved; the algorithm
+  says untouched"), and "(answered)" once answered in this session. A video can
+  come back long after it was finished: such a question is about a different
+  pellet from the ones already answered;
 - every **earlier answer that was NOT used**, and why, in plain words (an answer
   whose reach is outside its segment; an answer about frames that no longer
   match any segment after a re-cut; two answers for the same frames that
