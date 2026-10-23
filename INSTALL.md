@@ -740,60 +740,67 @@ When you see your cursor back with `(mousereach)` at the start, it's done.
 
 ### Step 6: Set Up the Lab Profiles File
 
-This file tells MouseReach about the PCs in your lab.
+This file describes the PCs in your lab -- what each one does and its
+folders -- so that setup can fill in a PC's settings for you. Your lab
+writes it once; every PC then reads the same copy.
 
-**6a.** Type this to copy the template:
+**6a.** If your lab already has this file (ask whoever set up the last PC),
+skip to 6d.
 
-```
-copy src\mousereach\setup\lab_profiles.json.example src\mousereach\setup\lab_profiles.json
-```
-
-**6b.** Now open the new file in Notepad to edit it:
-
-```
-notepad src\mousereach\setup\lab_profiles.json
-```
-
-**6c.** Notepad will open with the file. Find this line:
+**6b.** Otherwise copy the template, from the MouseReach folder:
 
 ```
-"dlc_config_path": "CHANGE_ME: path to your DLC config.yaml",
+copy src\mousereach\setup\lab_profiles.json.example "%USERPROFILE%\.mousereach\lab_profiles.json"
+notepad "%USERPROFILE%\.mousereach\lab_profiles.json"
 ```
 
-**6d.** Replace `CHANGE_ME: path to your DLC config.yaml` with the actual
-path to your DLC model's config.yaml file.
+**6c.** In Notepad, for each kind of PC in your lab, replace every value in
+`<angle brackets>`: the PC's hostname (type `hostname` in a terminal to see
+it), the shared and local folders, the DLC model's `config.yaml`, and -- on a
+PC that also records videos -- the recording program's name as Task Manager
+shows it (for example `obs64.exe`) and the days and hours recording can
+happen. Delete any profile your lab does not use. Use double backslashes
+`\\` between folder names. Save with **Ctrl+S** and close Notepad.
 
-*Lab example:*
+**6d.** Make the file reachable from every PC. Either copy it to
+`%USERPROFILE%\.mousereach\lab_profiles.json` on each PC, or keep ONE copy on
+the shared drive and point each PC at it once:
 
 ```
-"dlc_config_path": "A:\\AIs\\MPSA-LF-2025-10-27\\config.yaml",
+setx MOUSEREACH_LAB_PROFILES "<shared drive>:\<path>\lab_profiles.json"
 ```
 
-*Other labs:* Use your own DLC model path.
+(Open a new terminal afterwards; `setx` does not change the one you typed it in.)
 
-**Important:** Use double backslashes `\\` between folder names, not single ones.
-
-**6e.** Save the file: press **Ctrl+S**, then close Notepad.
+Setup looks in that order: the `MOUSEREACH_LAB_PROFILES` file, then
+`%USERPROFILE%\.mousereach\lab_profiles.json`, then
+`src\mousereach\setup\lab_profiles.json`. The `.example` template itself is
+never used to set up a PC. `mousereach-setup --list-roles` shows which file
+it found.
 
 ---
 
-### Step 7: Tell This PC It's the Watcher
+### Step 7: Tell This PC Its Role
 
-Type this exactly, then press **Enter**:
+Type this, using the profile's `"name"` from the file (the template's are
+"Recording + GPU PC", "GPU PC" and "Processing Server"), then press **Enter**:
 
 ```
-mousereach-setup --set-role "Watcher PC"
+mousereach-setup --set-role "GPU PC"
 ```
 
 You should see:
 
 ```
-Machine role set to: Watcher PC
+Machine role set to: GPU PC
   Saved to: C:\Users\YourName\.mousereach\machine_role.json
-  Description: PC with direct-attached storage and GPU for DLC inference. Runs the watcher.
+  Description: Cuts and poses videos on its GPU; no recording here, so no pause settings.
 
 Run 'mousereach-setup' to configure paths for this role.
 ```
+
+A PC whose hostname is in the file is also found without this step; setting
+the role makes it certain.
 
 ---
 
@@ -814,6 +821,11 @@ It will ask about:
 2. **Shared Pipeline Folder** (the pipeline folder on the NAS) — press **Enter**
 3. **Processing Root** (where this PC's working folders are) — press **Enter**
 4. **Watcher settings** (DLC path, GPU, polling) — press **Enter** for each
+
+The profile's other settings are saved too, without questions: the PC's role
+(`mode`, `also_process`) and, on a recording PC, the recording program to
+pause for and the days and hours recording can happen. A setting this PC
+already has is never replaced by the profile's.
 
 When it says "Configuration saved!", you're done with setup.
 

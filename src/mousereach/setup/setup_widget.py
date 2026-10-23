@@ -40,7 +40,7 @@ class SetupWidget(QWidget):
         super().__init__()
         self.viewer = napari_viewer
         self._on_saved = on_saved
-        self._detected_watcher = None
+        self._detected_defaults = None
         self._build_ui()
         self._load_existing()
 
@@ -117,15 +117,21 @@ class SetupWidget(QWidget):
                 "No lab profile matched this machine -- enter the paths by hand."
             )
             return
+        # Fill only what this machine does not have yet: its own settings
+        # always win over a profile's, as in the command-line wizard. WHY:
+        # Detect used to overwrite both folders, and Save let the profile's
+        # watcher settings replace the machine's -- one click away from
+        # pointing a working machine at a profile's folders (2026-10-22).
         d = profile.get("defaults", {}) or {}
-        if d.get("processing_root"):
+        if d.get("processing_root") and not self._proc.text().strip():
             self._proc.setText(str(d["processing_root"]))
-        if d.get("nas_root"):
+        if d.get("nas_root") and not self._nas.text().strip():
             self._nas.setText(str(d["nas_root"]))
-        self._detected_watcher = d.get("watcher")
+        self._detected_defaults = d
         self._detected_label.setText(
             f"Detected: {profile.get('name', '?')} (via {method}). "
-            f"{profile.get('description', '')}"
+            f"{profile.get('description', '')} Settings this machine already "
+            f"has are kept; the profile fills in only what is missing."
         )
 
     def _browse(self, field: QLineEdit):
@@ -140,9 +146,16 @@ class SetupWidget(QWidget):
             return
         nas_root = self._nas.text().strip() or None
         try:
-            from mousereach.setup.wizard import save_config
+            from mousereach.setup.wizard import (
+                _PROFILE_HANDLED_SECTIONS, load_config, save_config)
+            d = self._detected_defaults or {}
+            have = load_config().get("watcher") or {}
+            missing = {k: v for k, v in (d.get("watcher") or {}).items()
+                       if k not in have}
             save_config(processing_root=Path(proc), nas_root=nas_root,
-                        watcher=self._detected_watcher)
+                        watcher=missing or None,
+                        sections={k: v for k, v in d.items()
+                                  if k not in _PROFILE_HANDLED_SECTIONS})
         except Exception as e:
             show_error(f"Could not save configuration: {e}")
             return

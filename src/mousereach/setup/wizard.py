@@ -6,8 +6,19 @@ in the user's home directory for reliable persistence.
 
 Machine identification priority:
   1. Local identity file (~/.mousereach/machine_role.json) - explicit declaration
-  2. lab_profiles.json drive-pattern matching - auto-detection fallback
+  2. The lab's profiles file, matched by hostname and drive pattern
   3. Fully manual - user enters paths interactively
+
+The lab's profiles file is looked for at the path in the
+MOUSEREACH_LAB_PROFILES environment variable, then at
+~/.mousereach/lab_profiles.json, then as lab_profiles.json beside this
+module. The shipped lab_profiles.json.example is a template to copy from; it
+is never matched against a machine.
+
+A matched profile pre-fills every setting this machine does not already have
+(the machine's own settings always win), including watcher settings the
+wizard does not ask about (mode, also_process, pause_while_running,
+recording_days, recording_hours, ...) and other sections such as "backup".
 
 The local identity file is the simplest approach: drop a small JSON file on
 each PC that says what role it plays. The wizard reads it and pre-fills
@@ -19,8 +30,8 @@ To set up a machine's identity:
 Or create ~/.mousereach/machine_role.json manually:
     {"role": "NAS / DLC PC"}
 
-Edit lab_profiles.json to customize profiles for your lab, or delete it
-to use the wizard with no pre-filled defaults.
+Copy lab_profiles.json.example, edit it for your lab and put it in one of
+those places; with none, the wizard has no pre-filled defaults.
 """
 
 import os
@@ -41,9 +52,27 @@ _WIZARD_PROMPTED_KEYS = frozenset({
     'stability_wait_seconds', 'enabled', 'max_retries',
 })
 
-# Lab profiles file (lab-specific, gitignored) with shipped template fallback
+# The lab's machine profiles (lab-specific; never shipped). Looked for, in
+# order: the file named by the MOUSEREACH_LAB_PROFILES environment variable
+# (one shared copy that every machine can point at), then
+# ~/.mousereach/lab_profiles.json (beside this machine's other lab settings),
+# then lab_profiles.json beside this module (the original location). WHY the
+# first two: the third is git-ignored, so no pull ever brings it and every
+# re-clone loses it -- on 2026-10-22 none of the lab's GPU PCs had one.
+#
+# The shipped lab_profiles.json.example is a TEMPLATE to copy and edit. It is
+# never matched against a machine. WHY: it used to be the fallback, and its
+# drive patterns matched real machines and offered them a retired folder
+# layout as their defaults (found 2026-10-22).
+LAB_PROFILES_ENV = "MOUSEREACH_LAB_PROFILES"
+USER_LAB_PROFILES_FILE = CONFIG_DIR / "lab_profiles.json"
 LAB_PROFILES_FILE = Path(__file__).parent / "lab_profiles.json"
 LAB_PROFILES_EXAMPLE = Path(__file__).parent / "lab_profiles.json.example"
+
+# Profile sections the wizard handles itself; any other top-level section a
+# profile gives (e.g. "backup") is added when this machine has none.
+_PROFILE_HANDLED_SECTIONS = frozenset({
+    'nas_drive', 'nas_root', 'processing_root', 'watcher'})
 
 
 # =============================================================================
@@ -87,18 +116,37 @@ def list_available_roles() -> list:
 # LAB PROFILE MATCHING
 # =============================================================================
 
+def lab_profiles_candidates() -> list:
+    """Where this machine looks for the lab's profiles, in order (see
+    LAB_PROFILES_ENV above)."""
+    env = os.environ.get(LAB_PROFILES_ENV, "").strip()
+    return ([Path(env)] if env else []) + [USER_LAB_PROFILES_FILE, LAB_PROFILES_FILE]
+
+
+def lab_profiles_path():
+    """The lab profiles file this machine uses, or None when it has none."""
+    for p in lab_profiles_candidates():
+        if p.is_file():
+            return p
+    return None
+
+
 def _load_lab_profiles() -> list:
-    """Load lab profiles from lab_profiles.json, falling back to .example template."""
-    profiles_path = LAB_PROFILES_FILE
-    if not profiles_path.exists():
-        profiles_path = LAB_PROFILES_EXAMPLE
-    if not profiles_path.exists():
+    """The lab's machine profiles; [] when this machine has no profiles file.
+    Never the shipped template (see LAB_PROFILES_ENV above)."""
+    env = os.environ.get(LAB_PROFILES_ENV, "").strip()
+    if env and not Path(env).is_file():
+        print(f"[!] {LAB_PROFILES_ENV} names {env}, which is not a file; "
+              f"looking in the other places instead")
+    profiles_path = lab_profiles_path()
+    if profiles_path is None:
         return []
     try:
-        with open(profiles_path, "r") as f:
+        with open(profiles_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data.get("profiles", [])
-    except Exception:
+    except Exception as e:
+        print(f"[!] Could not read the lab profiles file {profiles_path}: {e}")
         return []
 
 
@@ -123,15 +171,32 @@ def _get_current_drives() -> dict:
     return drives
 
 
-def _match_profile(profile: dict, drives: dict) -> bool:
-    """Check if a profile's match rules fit the current machine's drives.
+def _match_profile(profile: dict, drives: dict, hostname: str = None) -> bool:
+    """Check if a profile's match rules fit this machine. Every rule given
+    must hold.
 
     Args:
         profile: A profile dict from lab_profiles.json
         drives: Dict of {letter: is_local} from _get_current_drives()
+        hostname: this machine's name (default: socket.gethostname())
+
+    WHY the hostname rule is checked: profiles documented "hostname: match
+    by machine hostname (most reliable)", but only the drive rules were
+    read, so two PCs with the same drive layout both took the first
+    profile listed (found 2026-10-22).
     """
     match = profile.get("match", {})
     available = set(drives.keys())
+
+    # hostname: this machine's name, or one of a list of names
+    wanted = match.get("hostname")
+    if wanted:
+        if hostname is None:
+            import socket
+            hostname = socket.gethostname()
+        names = [wanted] if isinstance(wanted, str) else list(wanted)
+        if hostname.lower() not in {str(n).lower() for n in names}:
+            return False
 
     # drives_present: all must exist
     for letter in match.get("drives_present", []):
@@ -225,8 +290,11 @@ def cli_main():
         elif sys.argv[1] == "--list-roles":
             profiles = _load_lab_profiles()
             if not profiles:
-                print("No lab profiles found.")
-                print(f"  Expected file: {LAB_PROFILES_FILE}")
+                print("No lab profiles found. Looked at, in order:")
+                for p in lab_profiles_candidates():
+                    print(f"  {p}")
+                print(f"  (set {LAB_PROFILES_ENV} to point at a shared copy;")
+                print(f"   template to copy: {LAB_PROFILES_EXAMPLE})")
                 return
             print("\nAvailable machine roles:")
             current_role = _load_machine_role()
@@ -285,13 +353,37 @@ the shared folders stops and says so.
 
 Configuration is saved to: {CONFIG_FILE}
 Identity file: {MACHINE_ROLE_FILE}
-Lab profiles file: {LAB_PROFILES_FILE}
+Lab profiles file: {lab_profiles_path() or '(none -- looked at ' + ', '.join(str(p) for p in lab_profiles_candidates()) + ')'}
+Template to copy: {LAB_PROFILES_EXAMPLE}
 """)
 
 
 # =============================================================================
 # SETUP WIZARD
 # =============================================================================
+
+def _carry_unprompted(watcher_config: dict, existing_watcher: dict,
+                      profile_watcher: dict) -> dict:
+    """Fill ``watcher_config`` with every watcher setting the wizard does not
+    ask about: this machine's own first, then the lab profile's. Existing
+    values always win. Returns ``watcher_config``.
+
+    WHY this machine's: save_config() used to REPLACE the whole watcher
+    section, and on a processing server the wizard's own output drops mode,
+    db_path, max_local_pending, also_process, staging_path and work_priority.
+
+    WHY the profile's: only the five prompted settings were ever taken from
+    a profile, so a machine set up from scratch lost the rest of its role --
+    mode, also_process, and the pause for the recording program with its
+    recording days and hours. A behaviour PC rebuilt that way would pose on
+    top of a recording (found 2026-10-22).
+    """
+    for source in (existing_watcher or {}, profile_watcher or {}):
+        for key, value in source.items():
+            if key not in _WIZARD_PROMPTED_KEYS:
+                watcher_config.setdefault(key, value)
+    return watcher_config
+
 
 def run_setup_wizard():
     """Run the interactive setup wizard."""
@@ -463,15 +555,7 @@ def run_setup_wizard():
         watcher_config['max_retries'] = existing_watcher.get('max_retries',
                                          profile_watcher.get('max_retries', 3))
 
-        # Carry over every watcher setting this wizard does not ask about.
-        # save_config() REPLACES the whole watcher section, so anything not
-        # copied here is destroyed by re-running setup. That is not
-        # hypothetical: on a processing server the wizard's own output drops
-        # mode, db_path, max_local_pending, also_process and staging_path,
-        # and it would drop work_priority too.
-        for key, value in existing_watcher.items():
-            if key not in _WIZARD_PROMPTED_KEYS:
-                watcher_config.setdefault(key, value)
+        _carry_unprompted(watcher_config, existing_watcher, profile_watcher)
 
     # --- Step 5: Create pipeline directories ---
     if proc_root:
@@ -513,6 +597,8 @@ def run_setup_wizard():
         processing_root=proc_root,
         watcher=watcher_config,
         nas_root=nas_root,
+        sections={k: v for k, v in profile_defaults.items()
+                  if k not in _PROFILE_HANDLED_SECTIONS},
     )
 
     print("\n  Configuration saved!")
@@ -593,7 +679,7 @@ KEEP = object()
 
 
 def save_config(nas_drive=KEEP, processing_root: Path = None, watcher: dict = None,
-                nas_root=KEEP):
+                nas_root=KEEP, sections: dict = None):
     """Write the settings setup manages into ~/.mousereach/config.json, keeping
     EVERY other setting already in the file.
 
@@ -608,9 +694,14 @@ def save_config(nas_drive=KEEP, processing_root: Path = None, watcher: dict = No
         processing_root: the local working folder; set when given.
         watcher: merged into the existing watcher section -- the keys given win,
             every other watcher setting is kept.
+        sections: other top-level sections from a lab profile (e.g. "backup");
+            each is added only when the file has no section of that name, so
+            a machine's own settings are never replaced by a profile's.
     """
     existing = load_config()
     config = dict(existing)
+    for key, value in (sections or {}).items():
+        config.setdefault(key, value)
     if processing_root is not None:
         config["processing_root"] = str(processing_root)
     for key, value in (("nas_drive", nas_drive), ("nas_root", nas_root)):
@@ -707,8 +798,10 @@ def show_config():
     elif not nas_drive:
         print("\nNote: Data repository not configured (optional for basic pipeline)")
 
-    print(f"\nLab profiles file: {LAB_PROFILES_FILE}")
-    print(f"  Exists: {LAB_PROFILES_FILE.exists()}")
+    used = lab_profiles_path()
+    print(f"\nLab profiles file: {used or '(none)'}")
+    if used is None:
+        print("  Looked at: " + ", ".join(str(p) for p in lab_profiles_candidates()))
     print()
 
 

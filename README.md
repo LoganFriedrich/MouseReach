@@ -397,10 +397,14 @@ mousereach-setup --show            # Show current configuration
 ```
 
 The role is saved to `~/.mousereach/machine_role.json`. If no role is set,
-the wizard auto-detects based on drive patterns, or prompts manually.
+the wizard matches the lab's profiles by hostname and drive pattern, or
+prompts manually.
 
-Other labs can edit `lab_profiles.json` (ships with the package) to define
-their own machine roles and defaults.
+A lab describes its machines in its own profiles file: copy
+`src/mousereach/setup/lab_profiles.json.example` (a template, never used
+as-is), edit it, and either put it at `~/.mousereach/lab_profiles.json` on
+each machine or keep one shared copy and set `MOUSEREACH_LAB_PROFILES` to it.
+See INSTALL.md, Step 6.
 
 ### Configuration File
 

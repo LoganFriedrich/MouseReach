@@ -154,11 +154,19 @@ Usage:
 Machine identification priority:
   1. Local identity file (~/.mousereach/machine_role.json)
      Set with: mousereach-setup --set-role "NAS / DLC PC"
-  2. Drive-pattern auto-detection (lab_profiles.json)
+  2. The lab's profiles file, matched by hostname and drive pattern
   3. Fully manual (user enters all paths)
 
-When a role is identified, the wizard pre-fills defaults from the
-matching lab profile. You can override any default during setup.
+The lab's profiles file is looked for at the path in MOUSEREACH_LAB_PROFILES,
+then at ~/.mousereach/lab_profiles.json, then as lab_profiles.json beside the
+wizard. The shipped lab_profiles.json.example is a template to copy; it is
+never matched against a machine.
+
+When a role is identified, the wizard pre-fills defaults from the matching
+lab profile, including settings it does not ask about (mode, also_process,
+pause_while_running, recording_days, recording_hours, other sections such as
+backup). A setting the machine already has is never replaced. You can
+override any default during setup.
 
 The wizard asks, in order: the data repository (nas_drive); the shared
 pipeline folder (nas_root -- the folder holding Unanalyzed, Processing,
@@ -173,7 +181,8 @@ the shared folders stops and says so.
 
 Configuration is saved to: ~\.mousereach\config.json
 Identity file: ~\.mousereach\machine_role.json
-Lab profiles file: <repo>\src\mousereach\setup\lab_profiles.json
+Lab profiles file: <the file found, or the places looked>
+Template to copy: <repo>\src\mousereach\setup\lab_profiles.json.example
 ```
 
 ### `mousereach-fix-powershell`

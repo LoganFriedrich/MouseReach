@@ -82,7 +82,7 @@ The processing-server role has no graphics-card requirement, which is consistent
 
 4. THE SETTINGS THAT DECIDE ALL OF THIS
 
-All of these live in ~/.mousereach/config.json on each machine, and defaults for the four known lab machines are in src/mousereach/setup/lab_profiles.json, matched by hostname and by which drive letters are present.
+All of these live in ~/.mousereach/config.json on each machine, and setup defaults for a lab's machines come from the lab's own profiles file (found via MOUSEREACH_LAB_PROFILES, then ~/.mousereach/lab_profiles.json, then src/mousereach/setup/lab_profiles.json; the shipped .example is only a template), matched by hostname and by which drive letters are present (the hostname rule is checked since 2026-10-22).
 
   - nas_root - the shared pipeline root. Everything above (the front door, the staging folder, the review queues, the final Analyzed folder) hangs off it. If it is unset, every one of those paths is unset too and each tool says "nas_root is not configured" and names mousereach-setup (since 2026-10-22; before that the code guessed an old layout, NAS_DRIVE\"! DLC Output" -- see the update of that date at the end).
   - processing_root - the local fast drive where work actually happens (A: on the graphics-card machines, C: on the server).
@@ -2284,3 +2284,23 @@ and pick the same video again at once) and leaves the video out of its choices f
 the next one in the work order is taken in. A claim folder that cannot be made means no intake, not
 intake without a claim. Plan Section 0 item 1 (the review-queue half was d4876f4). Tests:
 `tests/test_posed_intake_claims.py`.
+
+## Update 2026-10-22: setup finds the lab's own profiles, and a profile fills in the whole role
+
+`mousereach-setup` and the Setup panel pre-fill a machine's settings from the lab's machine
+profiles. Four defects, all in `setup/wizard.py` and `setup/setup_widget.py`:
+1. The lab's file sat beside the code, git-ignored, so no machine that pulls the code had one, and
+   setup fell back to the shipped `.example` -- whose drive patterns matched real machines and
+   offered them a retired folder layout. Now the file is looked for at `MOUSEREACH_LAB_PROFILES`
+   (one shared copy), then `~/.mousereach/lab_profiles.json`, then beside the code; the template
+   is never matched (it now holds placeholders only).
+2. A profile's `hostname` rule was documented but never checked, so two PCs with the same drive
+   layout took the same (first) profile. It is checked now; every rule given must hold.
+3. Only five watcher settings were taken from a profile; `mode`, `also_process`,
+   `pause_while_running` and the recording days and hours were dropped, so a recording PC set up
+   from scratch would not pause for the recording program. Every profile setting is now filled
+   in where the machine has none, and other sections (e.g. `backup`) are added when missing.
+4. The Setup panel's Detect overwrote both folders with the profile's, and Save let the profile's
+   watcher settings replace the machine's. It now fills only what is missing, like the wizard.
+A machine's own settings are never replaced by a profile. Install Step 6/7 rewritten. Tests:
+`tests/test_setup_lab_profiles.py`.
