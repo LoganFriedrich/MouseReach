@@ -15,6 +15,7 @@ Both share a BaseOrchestrator that provides the polling loop, priority animal
 system, DB tracking, and graceful shutdown.
 """
 
+import bisect
 import json
 import os
 import shutil
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime
 
-from mousereach.watcher import node_status
+from mousereach.watcher import claim_marker, node_status
 from mousereach.watcher.cycle_timer import CycleTimer
 from mousereach.watcher.db import WatcherDB
 from mousereach.watcher.state import WatcherStateManager
@@ -4841,7 +4842,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Priority 2: Intake - videos discovered in staging, not yet copied locally
         # ADMIT: this is the door that puts a new video on this node's disk and
         # spends a slot of max_local_pending. It is the one that must wait.
-        videos = self.db.get_videos_in_state('dlc_complete')
+        # A video another node holds (see _claim_video) is left out until it is
+        # asked about again, so the next one in the work order is taken in.
+        videos = [v for v in self.db.get_videos_in_state('dlc_complete')
+                  if not self._held_elsewhere_active(v['video_id'])]
         if videos:
             # Check disk space cap
             processing_count = len(self.db.get_videos_in_state('processing'))
@@ -5191,78 +5195,123 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # MULTI-NODE CLAIMING
     # =========================================================================
 
+    # A posed video is claimed with a marker in Processing/Posed/.claims/,
+    # created exclusively (watcher/claim_marker.py): when several nodes race
+    # for one video, exactly one create succeeds. WHY (2026-10-22): the marker
+    # used to be written, re-read after half a second and trusted -- a window
+    # in which two nodes can both believe they won -- and was deleted after
+    # 24 hours whatever its holder was doing, so a video one node had held for
+    # a day, waiting in review, could be taken in by another. Same primitive
+    # as the review queues' claims (review_return._claim_return).
+    #
+    # The holder keeps its claim for as long as the video's files are in the
+    # posed folder: through analysis, review and failure alike, since the
+    # posed copy stays there until the video is archived (intake copies and
+    # leaves it). It lets go after archiving has removed that copy, or, at
+    # its periodic sweep, once the files have gone some other way. Another
+    # node's claim is broken only when that node has stopped writing its
+    # status report (claim_marker.GONE_AFTER_S, by the file server's clock).
+
+    # How long a video held by another node stays out of this node's intake
+    # choices before it is asked about again. WHY: the claim is only checked
+    # when the video is picked, so without this a held video at the top of
+    # the work order is picked, refused and picked again on every loop, and
+    # nothing below it is ever taken in.
+    _HELD_ELSEWHERE_RECHECK_S = 600
+    # How often the posed claims are swept (another node's, when it has
+    # stopped; this node's own, when the video has left the posed folder).
+    # Each sweep lists the claim folder and the posed folder once.
+    _POSED_CLAIM_SWEEP_S = 600
+
+    def _posed_claim_dir(self) -> Optional[Path]:
+        return (self.staging_dir / ".claims") if self.staging_dir else None
+
     def _claim_video(self, video_id: str) -> bool:
-        """Try to claim a video for processing. Returns True if claimed.
+        """Claim a posed video for this node. True when this node holds it.
 
-        Uses marker files in Processing/Posed/.claims/ to prevent multiple nodes
-        from processing the same video simultaneously.
+        True also when this node already held it (a node that stopped between
+        claiming and finishing must not lock itself out). False when another
+        node holds it and is still running, or when no claim could be made
+        (the claim folder cannot be created or written): acting without a
+        claim is the double work the claim exists to stop, so the video waits.
         """
-        if not self.staging_dir:
-            return True  # No staging = no contention
-
-        claim_dir = self.staging_dir / ".claims"
-        try:
-            claim_dir.mkdir(exist_ok=True)
-        except Exception:
-            return True  # Can't create claims dir = single-node mode
-
-        claim_file = claim_dir / f"{video_id}.claimed"
-
-        # Check if already claimed by another host
-        if claim_file.exists():
-            try:
-                content = claim_file.read_text().strip()
-                claimer = content.split('\n')[0]
-                if claimer != self.hostname:
-                    logger.debug(f"{video_id} already claimed by {claimer}")
-                    return False
-                # We already claimed it (retry after crash?)
-                return True
-            except Exception:
-                return False
-
-        # Try to claim
-        try:
-            claim_file.write_text(f"{self.hostname}\n{datetime.now().isoformat()}\n")
-            # Verify our claim stuck (race window check on network drives)
-            time.sleep(0.5)
-            content = claim_file.read_text().strip()
-            if content.split('\n')[0] == self.hostname:
-                logger.info(f"Claimed {video_id} for {self.hostname}")
-                return True
-            return False
-        except Exception:
-            return False
+        claim_dir = self._posed_claim_dir()
+        if claim_dir is None:
+            return True   # no shared posed folder configured: nobody to share with
+        if claim_marker.take(claim_dir, video_id, self.hostname):
+            logger.debug(f"Claimed {video_id} for {self.hostname}")
+            return True
+        # Held by another node. If that node has stopped running, its claim is
+        # broken and this node may take the video.
+        status_dir = node_status.status_dir(Paths.NAS_ROOT)
+        if video_id in claim_marker.sweep_gone(claim_dir, self.hostname, status_dir):
+            return claim_marker.take(claim_dir, video_id, self.hostname)
+        return False
 
     def _release_claim(self, video_id: str):
-        """Release a claim after successful archive."""
-        if not self.staging_dir:
-            return
-        claim_file = self.staging_dir / ".claims" / f"{video_id}.claimed"
-        try:
-            claim_file.unlink(missing_ok=True)
-        except Exception:
-            pass
+        """Let go of this node's claim on a posed video. Another node's claim
+        is never removed here."""
+        claim_dir = self._posed_claim_dir()
+        if claim_dir is not None:
+            claim_marker.release(claim_dir, video_id, self.hostname)
+
+    def _held_elsewhere_active(self, video_id: str) -> bool:
+        until = getattr(self, "_held_elsewhere", {}).get(video_id)
+        return until is not None and time.monotonic() < until
+
+    def _note_held_elsewhere(self, video_id: str) -> None:
+        if not hasattr(self, "_held_elsewhere"):
+            self._held_elsewhere = {}
+        self._held_elsewhere[video_id] = time.monotonic() + self._HELD_ELSEWHERE_RECHECK_S
 
     def _cleanup_stale_claims(self):
-        """Remove claim files older than 24 hours (crashed nodes)."""
-        if not self.staging_dir:
-            return
-        claim_dir = self.staging_dir / ".claims"
-        if not claim_dir.exists():
-            return
+        """Sweep the posed claims, at most every _POSED_CLAIM_SWEEP_S.
 
-        stale_threshold = 24 * 3600  # 24 hours
-        now = time.time()
+        Breaks another node's claims once that node has stopped writing its
+        status report, never for their age. Lets go of this node's own claims
+        whose video has no files left in the posed folder: nothing remains
+        there for another node to take, and a marker kept for a video that is
+        gone would sit in the folder for as long as this node runs.
+        """
+        claim_dir = self._posed_claim_dir()
+        if claim_dir is None or not claim_dir.is_dir():
+            return 0
+        now = time.monotonic()
+        last = getattr(self, "_posed_claim_swept", None)
+        if last is not None and now - last < self._POSED_CLAIM_SWEEP_S:
+            return 0
+        self._posed_claim_swept = now
 
-        for claim_file in claim_dir.glob("*.claimed"):
-            try:
-                age = now - claim_file.stat().st_mtime
-                if age > stale_threshold:
-                    claim_file.unlink(missing_ok=True)
-                    logger.info(f"Removed stale claim: {claim_file.stem} (age: {age/3600:.1f}h)")
-            except Exception:
-                pass
+        status_dir = node_status.status_dir(Paths.NAS_ROOT)
+        claim_marker.sweep_gone(claim_dir, self.hostname, status_dir)
+
+        suffix = ".claimed"
+        try:
+            with os.scandir(claim_dir) as entries:
+                keys = [e.name[:-len(suffix)] for e in entries if e.name.endswith(suffix)]
+            # Names only: the posed folder holds thousands of entries, and
+            # asking the share about each one is what made intake slow before
+            # (_get_associated_files). Its subfolders start with a dot and can
+            # never match a video id.
+            with os.scandir(self.staging_dir) as entries:
+                names = sorted(e.name for e in entries)
+        except OSError as e:
+            logger.debug(f"posed claim sweep skipped: {e}")
+            return 0
+        released = 0
+        for key in keys:
+            # Any file whose name starts with the video id is one of its
+            # files (the video, its poses, their side files).
+            i = bisect.bisect_left(names, key)
+            if i < len(names) and names[i].startswith(key):
+                continue
+            if claim_marker.holds(claim_dir, key, self.hostname) and \
+                    claim_marker.release(claim_dir, key, self.hostname):
+                released += 1
+        if released:
+            logger.info(f"Let go of {released} posed claim(s) whose videos have "
+                        f"left the posed folder")
+        return released
 
     # =========================================================================
     # INTAKE: Copy from NAS staging to local Processing/
@@ -5278,10 +5327,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, "PROCESSING path not configured")
             return
 
-        # Multi-node claiming: ensure no other node is processing this video
+        # Multi-node claiming: ensure no other node is processing this video.
+        # Declined, not done: returning False tells the loop no work happened
+        # (it used to return None, which counts as progress, so a held video
+        # was re-picked at once, over and over), and the video stays out of
+        # this node's picks for a while so the next one down gets taken in.
         if not self._claim_video(video_id):
             logger.debug(f"Skipping {video_id} - claimed by another node")
-            return
+            self._note_held_elsewhere(video_id)
+            return False
 
         logger.info(f"Intake {video_id} from staging to Processing/")
 
@@ -5795,11 +5849,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 # Export to central DB on NAS for cross-node provenance
                 self.db.export_to_central_db(video_id)
 
-                # Release multi-node claim
-                self._release_claim(video_id)
                 self._clear_archive_backoff(video_id)
 
                 # Remove from staging on NAS (the DLC PC's copy)
+                left_behind = 0
                 if self.staging_dir:
                     staging_files = self._get_associated_files(self.staging_dir, video_id)
                     for f in staging_files:
@@ -5807,7 +5860,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             f.unlink()
                             logger.debug(f"Cleaned staging: {f.name}")
                         except Exception:
-                            pass
+                            left_behind += 1
+
+                # Release the claim only once the posed copy is gone. WHY
+                # after, not before: released first, the copy sits unclaimed
+                # in the posed folder, and any node taking in posed videos
+                # could claim and analyse a video that is already filed. A
+                # file that could not be removed keeps the claim; the periodic
+                # sweep lets go once nothing of the video is left there.
+                if not left_behind:
+                    self._release_claim(video_id)
                 return True
             else:
                 error = result.get('error', 'archive failed')

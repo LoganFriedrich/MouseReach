@@ -214,7 +214,7 @@ WHAT THE SECOND WATCHER REQUIRES BEFORE IT WILL TOUCH A VIDEO
 
 The second watcher runs on the server. It has exactly one source of new work: the network handoff folder Processing/Posed. Each cycle it globs that folder for DeepLabCut output files, and for each one it requires a matching video file with the same name to also be present in that same folder before it will register the video at all. If the video's filename does not parse, the video is quarantined instead (src/mousereach/watcher/orchestrator.py:1363-1372; src/mousereach/watcher/state.py:212-300). It does not scan the network Unanalyzed/Single_Animal folder, and it does not walk the final Analyzed folder looking for work.
 
-Before copying a registered video in, it takes a claim: it writes a marker file named after the video, containing its own hostname, into a hidden .claims subfolder of the handoff folder, and skips the video if a marker already exists naming a different machine. Markers more than 24 hours old are deleted as leftovers from a crashed machine (src/mousereach/watcher/orchestrator.py:1658-1734, 1746). This claim exists only to stop two PROCESSING machines watching the same handoff folder from grabbing the same video. It is not a check against the first watcher: the first watcher never reads or writes those markers, and the second watcher never reads the first watcher's own collage-level claims, which live in the pipeline_collages table of watcher_central.db on the shared root and are only created by the first watcher (src/mousereach/watcher/orchestrator.py:721-727 versus the second watcher's constructor at :1326-1361, which never builds a coordinator).
+Before copying a registered video in, it takes a claim: it creates a marker file named after the video, containing its own hostname, in a hidden .claims subfolder of the handoff folder. The create is exclusive (watcher/claim_marker.py), so when several machines race exactly one succeeds; a machine that loses leaves the video out of its choices for 10 minutes and takes the next one in the work order. The holder keeps the claim while the video's files are in the handoff folder -- through analysis, review and failure -- and lets go after archiving has removed them (or, at a sweep every 10 minutes, once they have gone some other way). Another machine's claim is broken only when that machine has stopped writing its status report for 3 hours by the file server's clock, never for its age (`ProcessingOrchestrator._claim_video`, `_cleanup_stale_claims`; changed 2026-10-22 from write, wait half a second, read back, and delete after 24 hours). This claim exists only to stop two PROCESSING machines watching the same handoff folder from grabbing the same video. It is not a check against the first watcher: the first watcher never reads or writes those markers, and the second watcher never reads the first watcher's own collage-level claims, which live in the pipeline_collages table of watcher_central.db on the shared root and are only created by the first watcher (src/mousereach/watcher/orchestrator.py:721-727 versus the second watcher's constructor at :1326-1361, which never builds a coordinator).
 
 There is therefore no explicit "is the other watcher still working on this?" check anywhere. What keeps the two apart is the shape of the handoff: the first watcher holds the files on its own local disk until DeepLabCut has finished, and only then moves them into the shared folder. Two caveats. First, the move is implemented as copy-to-the-final-name then delete the source (src/mousereach/watcher/transfer.py:108-130), and discovery only tests that the names exist - there is no wait for the files to stop growing. A partially copied video is visible under its finished name. The subsequent intake copy compares source and destination sizes and rejects a mismatch (src/mousereach/watcher/transfer.py:85-95), which usually turns such a race into a failed intake rather than a truncated file being analysed, but that is an after-the-fact guard, not a wait. Second, on a machine with also_process = true nothing is ever staged, so no contention arises there at all.
 
@@ -1298,8 +1298,8 @@ check and before any copy, the node renames
 WHY a rename and not a marker file: a rename within one share folder is one
 operation on the file server. Exactly one node's rename finds the file; every
 other node's fails with "file not found". Check-then-write markers (the
-processing server's `Processing/Posed/.claims`) can let two nodes both believe
-they won. WHY a dot-folder under the same folder: a same-folder rename never
+processing server's `Processing/Posed/.claims` until 2026-10-22, now an
+exclusive create) can let two nodes both believe they won. WHY a dot-folder under the same folder: a same-folder rename never
 crosses a volume, and readers that list only the top of the folder never see a
 claimed video as waiting a second time. The claim also sets the file's modified
 time to now, because a rename keeps the old time and a video copied in last
@@ -2261,3 +2261,22 @@ every status view read them as current. `update_state` and `force_state` now cle
 logged once with the count). Other states keep theirs ('unresolvable' uses it for its reason). The
 history stays in `processing_log`. Tests: `tests/test_archived_clears_error.py`.
 
+
+## Update 2026-10-22: a posed video is claimed with an exclusive create
+
+Before taking a video in from `Processing/Posed`, a processing machine claims it with a marker in
+`Processing/Posed/.claims/`. The marker was written, read back after half a second and trusted --
+two machines could both believe they had won -- and every marker was deleted after 24 hours whatever
+its holder was doing, so a video one machine had held for a day (in review, say) could be taken in
+by another. The claim is now the exclusive create the review queues already use
+(`watcher/claim_marker.py`): exactly one racing machine's create succeeds. The holder keeps it while
+the video's files are in the posed folder (through analysis, review and failure -- intake copies the
+files and leaves them, and only archiving removes them), and lets go after archiving has removed
+them; if a file cannot be removed the claim stays. A sweep every 10 minutes breaks another machine's
+claims once that machine has stopped writing its status report for 3 hours (file-server clock), and
+lets go of this machine's own claims whose video has left the folder some other way. A machine that
+finds a video held elsewhere records that it did no work (it used to count the refusal as progress
+and pick the same video again at once) and leaves the video out of its choices for 10 minutes, so
+the next one in the work order is taken in. A claim folder that cannot be made means no intake, not
+intake without a claim. Plan Section 0 item 1 (the review-queue half was d4876f4). Tests:
+`tests/test_posed_intake_claims.py`.

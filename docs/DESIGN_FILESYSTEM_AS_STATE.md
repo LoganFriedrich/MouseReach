@@ -165,8 +165,11 @@ One stage, in order:
   4. Atomically move the bundle to the next folder.
   5. Delete the local scratch copy.
 
-This replaces the `.claims` marker files, which are not atomic (write, sleep,
-read back).
+This replaces the `.claims` marker files, which were not atomic (write, sleep,
+read back). Since 2026-10-22 those markers are an exclusive create instead
+(`watcher/claim_marker.py`), broken only when the holder stops reporting --
+atomic, but still a marker beside the files rather than the folder itself
+being the queue.
 
 A crash leaves the bundle in `.inflight/<hostname>/`. Recovery must run on
 EVERY poll, not only at startup: the startup reclaim is safe only for the

@@ -18,11 +18,11 @@ to  <Single_Animal>/.inflight/<hostname>/<stem>.mp4
 
 A rename within one share is one operation on the file server: exactly one
 node's rename finds the file, and every other node's fails with "file not
-found" and leaves the video to the winner. A marker file is NOT atomic. The
-processing server's ``Processing/Posed/.claims`` markers
-(``ProcessingOrchestrator._claim_video``) are check-then-write, and need a
-half-second sleep and a read-back to narrow -- never close -- the window in
-which two nodes both write a marker and both believe they won. The re-pose
+found" and leaves the video to the winner. A check-then-write marker file is NOT
+atomic: the processing server's ``Processing/Posed/.claims`` markers were
+that until 2026-10-22, with a half-second sleep and a read-back that narrowed
+-- never closed -- the window in which two nodes both write a marker and both
+believe they won. They are now an exclusive create (watcher/claim_marker.py). The re-pose
 queue (watcher/repose.py) claims its requests by rename into its own
 ``.inflight`` for the same reason.
 
