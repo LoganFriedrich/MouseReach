@@ -120,8 +120,10 @@ def already_in_pipeline(name: str) -> Optional[str]:
 
 
 _CUT = re.compile(r"^(\d{8})_([A-Za-z]+\d+)_([A-Za-z]+\d+)\.mp4$")
+# A recording's name, with anything after the tray (" uncropped", " (2)", ...)
+# allowed: for PLACING animals any surviving copy shows the group and order.
 _RECORDING = re.compile(r"^(\d{8})_([A-Za-z0-9]+(?:,[A-Za-z0-9]+){7})_([A-Za-z]+\d+)"
-                        r"(?:\s*\(\d+\))?\.mkv$")
+                        r"(.*)\.(?:mkv|mp4)$", re.IGNORECASE)
 
 
 def cohort_recordings(source_root: Path, cohort: str) -> List[Tuple[str, List[str], str, str]]:
@@ -138,18 +140,36 @@ def cohort_recordings(source_root: Path, cohort: str) -> List[Tuple[str, List[st
     return out
 
 
-def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
+def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
+                    selected: Optional[set] = None):
     """Group the selected cuts into the recordings to rebuild.
 
     Returns ``(units, skipped)``. Each unit is ``(cohort, date, tray, [8 raw
     ids or None for an empty position], {raw id: cut path})``; ``skipped`` is
     ``[(cut name, why)]`` -- above all, a cut whose own recording survives in
-    the archive (that recording comes in through the recording import)."""
+    the archive (that recording comes in through the recording import).
+
+    ``cuts`` must be EVERY cut of the cohorts concerned: whether a group is
+    complete on a day is judged on all of them. ``selected`` (cut paths), when
+    given, keeps only the recordings that hold at least one selected cut."""
     from datetime import date as _date
     recs: Dict[str, list] = {}
-    units: Dict[tuple, dict] = {}
-    loose: Dict[tuple, set] = {}
     skipped = []
+    # What the recording import will bring in, read the way IT reads names
+    # (import_collages.scan/choose), so a recording it imports is never also
+    # rebuilt here: {(date, tray, encoded animal id)}.
+    from mousereach.aspa.import_collages import choose, scan
+    from mousereach.aspa.identity import encode_animal
+    by_session, _ = scan(Path(source_root), sorted({c for c, _ in cuts}))
+    importable = {}
+    for enc_stem, cands in by_session.items():
+        pick = choose(cands)
+        if pick is None:
+            continue
+        m = re.match(r"^(\d{8})_(.+)_([A-Za-z]+\d+)$", enc_stem)
+        if m:
+            for e in m.group(2).split(","):
+                importable[(m.group(1), m.group(3), e)] = pick["source_stem"]
 
     def day(s):
         # None for a name whose date is not a real day (a typo such as 20220631):
@@ -159,6 +179,7 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
         except ValueError:
             return None
 
+    lost: Dict[tuple, Dict[str, Path]] = {}
     for cohort, mp4 in cuts:
         m = _CUT.match(mp4.name)
         if not m:
@@ -168,41 +189,73 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
         if day(d) is None:
             skipped.append((mp4.name, f"{d} is not a real date"))
             continue
-        if cohort not in recs:
-            recs[cohort] = cohort_recordings(source_root, cohort)
-        own = [r for r in recs[cohort] if r[0] == d and r[2] == tray and aid in r[1]]
+        try:
+            own = importable.get((d, tray, encode_animal(aid)))
+        except ValueError:
+            own = None
         if own:
-            skipped.append((mp4.name, f"its recording survives ({own[0][3]}): it comes in "
+            skipped.append((mp4.name, f"its recording survives ({own}): it comes in "
                                       f"through the recording import, not as cuts"))
             continue
-        letters = re.match(r"[A-Za-z]+", tray).group(0)
-        same_kind = [r for r in recs[cohort] if aid in r[1] and day(r[0]) is not None
-                     and re.match(r"[A-Za-z]+", r[2]).group(0) == letters]
-        if same_kind:
-            near = min(same_kind, key=lambda r: abs((day(r[0]) - day(d)).days))
-            key = (cohort, d, tray, tuple(near[1]))
-            units.setdefault(key, {})
-        else:
-            loose.setdefault((cohort, d, tray), set()).add(aid)
+        lost.setdefault((cohort, d, tray), {})[aid] = mp4
+
+    def kind(tray):
+        return re.match(r"[A-Za-z]+", tray).group(0)
+
+    # Per session day, ONE reference day: the recorded day whose groups cover
+    # most of that day's lost animals, the nearest on a tie. Its groups give
+    # who shared a recording and in which positions. WHY one day, not each
+    # animal's nearest: groups change between tray kinds and over weeks, and
+    # mixing days put one animal in two rebuilt recordings. Each animal goes
+    # into exactly one; only LOST cuts are used -- any other position is empty,
+    # so the import and a rebuild never both bring the same session in.
     out = []
-    sa = lambda c: Path(source_root) / c / "Single_Animal"
-    for (cohort, d, tray, group) in sorted(units):
-        ids, cuts_by_id = [], {}
-        for aid in group:
-            f = sa(cohort) / f"{d}_{aid}_{tray}.mp4"
-            if f.is_file():
-                ids.append(aid)
-                cuts_by_id[aid] = f
-            else:
-                ids.append(None)        # missing that day: an empty position
-        out.append((cohort, d, tray, ids, cuts_by_id))
-    for (cohort, d, tray), aids in sorted(loose.items()):
-        ordered = sorted(aids)
-        for k in range(0, len(ordered), 8):
-            chunk = ordered[k:k + 8]
-            ids = chunk + [None] * (8 - len(chunk))
-            out.append((cohort, d, tray, ids,
-                        {a: sa(cohort) / f"{d}_{a}_{tray}.mp4" for a in chunk}))
+    for (cohort, d, tray), have in sorted(lost.items()):
+        if cohort not in recs:
+            recs[cohort] = cohort_recordings(source_root, cohort)
+        by_day: Dict[str, List[List[str]]] = {}
+        for r in recs[cohort]:
+            if day(r[0]) is not None and kind(r[2]) == kind(tray):
+                by_day.setdefault(r[0], []).append(r[1])
+        best = None
+        for d2, groups in by_day.items():
+            cover = len(set(have) & {a for g in groups for a in g})
+            if cover:
+                key = (-cover, abs((day(d2) - day(d)).days), d2)
+                if best is None or key < best[0]:
+                    best = (key, groups)
+        used = set()
+        if best:
+            seen_groups = []
+            for g in best[1]:
+                if tuple(g) in seen_groups:
+                    continue
+                seen_groups.append(tuple(g))
+                members = [a for a in g if not a.isdigit()]   # digits = an empty box
+                present = [a for a in members if a in have and a not in used]
+                if not present:
+                    continue
+                if len(present) < len(members):
+                    # Only part of the group has a lost cut that day: the others'
+                    # recording survives, or they were not recorded. Which
+                    # recording these cuts came from is then a question for a
+                    # person -- a cut under the wrong name would otherwise enter
+                    # as a second copy of another animal.
+                    missing = [a for a in members if a not in present]
+                    for a in present:
+                        used.add(a)
+                        skipped.append((have[a].name, "its group is incomplete that day "
+                                        f"(no lost cut for {','.join(missing)}): which "
+                                        "recording it came from is for a person to say"))
+                    continue
+                ids = [a if a in present else None for a in g]
+                for a in present:
+                    used.add(a)
+                if selected is None or any(have[a] in selected for a in present):
+                    out.append((cohort, d, tray, ids, {a: have[a] for a in present}))
+        for a in sorted(set(have) - used):
+            skipped.append((have[a].name, "no recording of this animal's group is in the "
+                            "archive: which recording it came from is for a person to say"))
     return out, skipped
 
 
@@ -417,7 +470,13 @@ def main(argv=None):
                 continue
             found_sessions.add(Path(name).stem)
         chosen.append((cohort, mp4_path))
-    units, skips = plan_recordings(chosen, source_root)
+    # Every cut of the cohorts concerned decides whether a group is complete;
+    # the selection only decides which recordings to build.
+    every = [pair for c in sorted({c for c, _ in chosen})
+             for pair in iter_cohort_singles(source_root, c)]
+    units, skips = plan_recordings(every, source_root, selected={p for _, p in chosen})
+    chosen_names = {p.name for _, p in chosen}
+    skips = [(cut, why) for cut, why in skips if cut in chosen_names]
     for cut, why in skips:
         print(f"  [SKIP] {cut}: {why}")
         skipped += 1
