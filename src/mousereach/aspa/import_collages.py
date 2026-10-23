@@ -160,9 +160,12 @@ def read_recording_stem(stem: str) -> Optional[Tuple[List[Tuple[str, str]], str]
         if not m:
             continue
         trays, trailing = m.group(1).split(","), m.group(2)
+        # A name that reads with commas is read as it always was, whatever its
+        # number of ids (a name with seven is a question of its own, not one
+        # for this reader). Only a REPAIRED reading must give exactly eight.
         ids = block.split(",")
         note = ""
-        if len(ids) != 8 or not all(_ANIMAL_TOKEN.match(a) for a in ids):
+        if not all(_ANIMAL_TOKEN.match(a) for a in ids):
             ids = re.split(r"[,._]", block)
             if len(ids) != 8 or not all(_ANIMAL_TOKEN.match(a) for a in ids):
                 continue

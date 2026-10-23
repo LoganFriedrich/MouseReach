@@ -138,6 +138,11 @@ def test_one_recording_with_two_cohorts_on_different_runs_is_read_once_per_run()
                                         "20220812_001,002,I11,I13,I14,I15,I16,I17_P1"]
 
 
+def test_a_name_with_commas_reads_as_it_always_did_whatever_its_count_of_ids():
+    stem = "20220318_E09,E10,E11,E12,E13,E14,E15_P1"
+    assert ic.read_recording_stem(stem) == ([(stem, "")], "")
+
+
 def test_names_that_do_not_read_one_way_are_not_read():
     assert ic.read_recording_stem("20210924_ABS2_13-15_f") is None           # a range
     assert ic.read_recording_stem("20220503_G25.G26,G27_P1") is None         # not eight ids
