@@ -2368,7 +2368,12 @@ feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now
   are not 480x540, never replacing anything. The file says it is rebuilt, and a record goes to
   `<nas_root>/pipeline_records/rebuilt_recordings/`. It is written into the recording intake.
 * `mousereach-aspa-feed` rebuilds ASPA recordings that are lost instead of copying cuts: a cut whose
-  recording survives in the archive is left to the recording import; otherwise the recording is rebuilt
-  in the group and order the animal had on the nearest recorded day, a missing member being an empty
-  position.
+  recording survives in the archive is left to the recording import; otherwise the cuts of one day and
+  tray that are the same length to the frame are rebuilt as one recording (every cut of a recording is
+  exactly as long as it). Positions come from a recorded group holding all of them (nearest day), else
+  id order; the record says which. A position no cut fills is empty. More than eight cuts of one length,
+  or an unreadable cut, is named for a person. (The first version copied the nearest recorded day's
+  groups; groups change from day to day, and on OptG 2022-06-20/21 that paired cuts of different
+  recordings and put G40 alone where it had shared a recording with G39. Caught in the dry run; nothing
+  was built that way.)
 Tests: `tests/test_rebuild_recording.py`, `tests/test_aspa_feed_to_shared_folder.py`.

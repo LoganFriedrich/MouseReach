@@ -6,8 +6,11 @@ fed into the singles intake has no link to its recording, and the recording
 never enters the pipeline. A session whose recording survives comes in through
 the recording import; one whose recording is lost is rebuilt (each cut back in
 its grid cell). The video work itself is tested in test_rebuild_recording.py;
-here the encoding is stood in for, so these tests are about the decisions.
+here the encoding and the measuring of a cut's length are stood in for, so
+these tests are about the decisions. Which cuts share a recording is read from
+their lengths: every cut of one recording is exactly as long as it.
 """
+from pathlib import Path
 from types import SimpleNamespace
 
 import mousereach.aspa.feed as feed
@@ -40,6 +43,15 @@ def _env(tmp_path, monkeypatch, cuts_on_0602=GROUP):
         monkeypatch.setattr(Paths, name, value, raising=False)
     built = []
     monkeypatch.setattr(rb, "plan", lambda stem, singles: {"frames": 10})
+    # every cut 100 frames unless a test says otherwise; None = unreadable
+    lengths = {}
+
+    def fake_probe(path):
+        n = lengths.get(Path(path).name, 100)
+        if n is None:
+            raise rb.RebuildRefused("cannot open it")
+        return {"frames": n, "fps": 30.0, "width": 480, "height": 540}
+    monkeypatch.setattr(rb, "probe", fake_probe)
 
     def fake_rebuild(stem, singles, dest, records, reason):
         built.append((stem, dict(singles), dest))
@@ -48,7 +60,7 @@ def _env(tmp_path, monkeypatch, cuts_on_0602=GROUP):
         return dest / f"{stem}.mkv"
     monkeypatch.setattr(rb, "rebuild", fake_rebuild)
     return SimpleNamespace(archive=archive, sa=sa, intake=intake, door=door,
-                           posed=posed, built=built)
+                           posed=posed, built=built, lengths=lengths)
 
 
 def test_the_pipeline_name_is_the_encoded_session():
@@ -72,14 +84,61 @@ def test_a_lost_recording_is_rebuilt_in_its_groups_order_into_the_recording_inta
     assert (env.sa / "20220602_H09_P1.mp4").exists(), "the archive is only read"
 
 
-def test_an_incomplete_group_is_named_for_a_person_not_rebuilt(tmp_path, monkeypatch, capsys):
-    # H11 has no cut that day: whether the others came from one lost recording
-    # (and H11 was simply absent) or a cut carries the wrong name, the files
-    # cannot tell -- a guess could enter one animal's video under two ids.
+def test_an_animal_without_a_cut_that_day_leaves_its_position_empty(tmp_path, monkeypatch):
+    # H11 has no cut that day; the other seven are one length, so one
+    # recording. H11's position is empty: no video is made of an animal that
+    # has no cut.
     env = _env(tmp_path, monkeypatch, cuts_on_0602=[a for a in GROUP if a != "H11"])
     feed.main(["--cohort", "H"])
+    stem, singles, _ = env.built[0]
+    assert stem.split("_")[1].split(",")[2] == "ASPA0003"
+    assert "ASPA0811" not in singles and len(singles) == 7
+
+
+def test_cuts_of_different_lengths_are_different_recordings(tmp_path, monkeypatch, capsys):
+    # The day's groups are not the recorded day's: lengths split the eight
+    # cuts into 6 + 2 (as on a real OptG day, where copying another day's
+    # groups had left one animal alone that had shared its recording).
+    env = _env(tmp_path, monkeypatch)
+    for a in ("H15", "H16"):
+        env.lengths[f"20220602_{a}_P1.mp4"] = 90
+    feed.main(["--cohort", "H"])
+    out = capsys.readouterr().out
+    got = sorted(sorted(singles) for _, singles, _ in env.built)
+    assert got == [["ASPA0809", "ASPA0810", "ASPA0811", "ASPA0812", "ASPA0813", "ASPA0814"],
+                   ["ASPA0815", "ASPA0816"]]
+    # both are part of the 06-01 group: its positions are kept
+    pair = [stem for stem, singles, _ in env.built if "ASPA0815" in singles][0]
+    assert pair.split("_")[1].split(",")[6:] == ["ASPA0815", "ASPA0816"]
+    assert "positions as recorded on 20220601" in out
+
+
+def test_a_group_no_recording_shows_goes_in_id_order(tmp_path, monkeypatch, capsys):
+    env = _env(tmp_path, monkeypatch)
+    for p in (env.archive / "H" / "Multi-Animal").glob("20220601_*"):
+        p.unlink()
+    feed.main(["--cohort", "H"])
+    stem, _, _ = env.built[0]
+    assert stem.split("_")[1].split(",")[:2] == ["ASPA0809", "ASPA0810"]
+    assert "positions in id order" in capsys.readouterr().out
+
+
+def test_more_than_eight_cuts_of_one_length_are_for_a_person(tmp_path, monkeypatch, capsys):
+    env = _env(tmp_path, monkeypatch)
+    (env.sa / "20220602_H17_P1.mp4").write_bytes(b"cut")
+    feed.main(["--cohort", "H"])
     assert env.built == []
-    assert "its group is incomplete that day (no lost cut for H11)" in capsys.readouterr().out
+    assert "9 cuts that day are 100 frames long" in capsys.readouterr().out
+
+
+def test_a_cut_whose_length_cannot_be_read_is_named_and_left(tmp_path, monkeypatch, capsys):
+    env = _env(tmp_path, monkeypatch)
+    env.lengths["20220602_H12_P1.mp4"] = None
+    feed.main(["--cohort", "H"])
+    out = capsys.readouterr().out
+    assert "20220602_H12_P1.mp4: its length cannot be read" in out
+    stem, singles, _ = env.built[0]
+    assert "ASPA0812" not in singles and stem.split("_")[1].split(",")[3] == "ASPA0004"
 
 
 def test_an_empty_box_in_the_reference_group_is_an_empty_position(tmp_path, monkeypatch):

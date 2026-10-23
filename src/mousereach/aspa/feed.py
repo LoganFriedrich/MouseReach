@@ -12,14 +12,22 @@ lost but whose cuts survive, this tool REBUILDS the recording from the cuts
 in time) and writes it into the recording intake, renamed into pipeline form
 (``H09`` -> ``ASPA0809``, see :mod:`mousereach.aspa.identity`).
 
-WHICH animals share the rebuilt recording, and in which positions: the group
-the animal was recorded in on the nearest day the cohort's archive has a
-recording of it (the groups are stable from day to day). A group member whose
-cut is missing that day becomes an empty position, so the cut never produces a
-video of an animal that is not there. With no recording of the animal at all,
-that day's cuts are grouped eight at a time in id order (positions then carry
-no meaning beyond the name). Every rebuild is recorded under
-``<NAS root>/pipeline_records/rebuilt_recordings/``.
+WHICH cuts share a rebuilt recording is read from the cuts themselves: every
+cut of one recording is exactly as long as the recording, to the frame, so the
+lost cuts of one day and tray that have the same frame count (and frame rate)
+are the cuts of one recording. WHY not the groups of other days (it used them
+until 2026-10-23): groups change from day to day -- on one OptG day the cuts
+fall into id-order groups that no surviving recording shows -- and a group
+copied from another day stitched together cuts that were never simultaneous,
+or left an animal alone that had shared its recording. More than eight cuts of
+one length, or a cut whose length cannot be read, is for a person.
+
+WHERE each animal sat: the order of a recorded group (same tray kind, the
+nearest day) that holds every animal of the rebuilt recording; with none, id
+order -- the order the lab filled recordings in. Which of the two applies is
+written into the rebuild's record. A position nobody's cut fills is empty, so
+the pipeline's cut never produces a video of an animal that is not there.
+Every rebuild is recorded under ``<NAS root>/pipeline_records/rebuilt_recordings/``.
 
 WHY NOT FEED THE CUTS (it did until 2026-10-23): a single dropped into the
 intake has no link to its recording, and the recording itself never entered
@@ -140,19 +148,31 @@ def cohort_recordings(source_root: Path, cohort: str) -> List[Tuple[str, List[st
     return out
 
 
+def cut_timing(path: Path) -> Tuple[int, float]:
+    """(frame count, frame rate) of one cut, exact (rebuild.probe)."""
+    from mousereach.video_prep.core import rebuild as rb
+    pr = rb.probe(Path(path))
+    return pr["frames"], pr["fps"]
+
+
 def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
-                    selected: Optional[set] = None):
+                    selected: Optional[set] = None, timing=None):
     """Group the selected cuts into the recordings to rebuild.
 
     Returns ``(units, skipped)``. Each unit is ``(cohort, date, tray, [8 raw
-    ids or None for an empty position], {raw id: cut path})``; ``skipped`` is
-    ``[(cut name, why)]`` -- above all, a cut whose own recording survives in
-    the archive (that recording comes in through the recording import).
+    ids or None for an empty position], {raw id: cut path}, where the
+    positions came from)``; ``skipped`` is ``[(cut name, why)]`` -- above all,
+    a cut whose own recording survives in the archive (that recording comes in
+    through the recording import).
 
-    ``cuts`` must be EVERY cut of the cohorts concerned: whether a group is
-    complete on a day is judged on all of them. ``selected`` (cut paths), when
-    given, keeps only the recordings that hold at least one selected cut."""
+    ``cuts`` must be EVERY cut of the cohorts concerned: which cuts share a
+    recording is judged on all the lost cuts of a day and tray. ``selected``
+    (cut paths), when given, keeps only the recordings that hold at least one
+    selected cut, and only those days are measured. ``timing(path) -> (frames,
+    fps)`` measures a cut (default: cut_timing, which reads the file)."""
     from datetime import date as _date
+    from mousereach.video_prep.core.rebuild import RebuildRefused
+    timing = timing or cut_timing
     recs: Dict[str, list] = {}
     skipped = []
     # What the recording import will bring in, read the way IT reads names
@@ -202,60 +222,50 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
     def kind(tray):
         return re.match(r"[A-Za-z]+", tray).group(0)
 
-    # Per session day, ONE reference day: the recorded day whose groups cover
-    # most of that day's lost animals, the nearest on a tie. Its groups give
-    # who shared a recording and in which positions. WHY one day, not each
-    # animal's nearest: groups change between tray kinds and over weeks, and
-    # mixing days put one animal in two rebuilt recordings. Each animal goes
-    # into exactly one; only LOST cuts are used -- any other position is empty,
-    # so the import and a rebuild never both bring the same session in.
+    # The lost cuts of one day and tray that are the same length to the frame
+    # are the cuts of one recording (see the module docstring for why lengths
+    # and not other days' groups).
     out = []
     for (cohort, d, tray), have in sorted(lost.items()):
+        if selected is not None and not any(p in selected for p in have.values()):
+            continue
         if cohort not in recs:
             recs[cohort] = cohort_recordings(source_root, cohort)
-        by_day: Dict[str, List[List[str]]] = {}
-        for r in recs[cohort]:
-            if day(r[0]) is not None and kind(r[2]) == kind(tray):
-                by_day.setdefault(r[0], []).append(r[1])
-        best = None
-        for d2, groups in by_day.items():
-            cover = len(set(have) & {a for g in groups for a in g})
-            if cover:
-                key = (-cover, abs((day(d2) - day(d)).days), d2)
-                if best is None or key < best[0]:
-                    best = (key, groups)
-        used = set()
-        if best:
-            seen_groups = []
-            for g in best[1]:
-                if tuple(g) in seen_groups:
-                    continue
-                seen_groups.append(tuple(g))
-                members = [a for a in g if not a.isdigit()]   # digits = an empty box
-                present = [a for a in members if a in have and a not in used]
-                if not present:
-                    continue
-                if len(present) < len(members):
-                    # Only part of the group has a lost cut that day: the others'
-                    # recording survives, or they were not recorded. Which
-                    # recording these cuts came from is then a question for a
-                    # person -- a cut under the wrong name would otherwise enter
-                    # as a second copy of another animal.
-                    missing = [a for a in members if a not in present]
-                    for a in present:
-                        used.add(a)
-                        skipped.append((have[a].name, "its group is incomplete that day "
-                                        f"(no lost cut for {','.join(missing)}): which "
-                                        "recording it came from is for a person to say"))
-                    continue
-                ids = [a if a in present else None for a in g]
-                for a in present:
-                    used.add(a)
-                if selected is None or any(have[a] in selected for a in present):
-                    out.append((cohort, d, tray, ids, {a: have[a] for a in present}))
-        for a in sorted(set(have) - used):
-            skipped.append((have[a].name, "no recording of this animal's group is in the "
-                            "archive: which recording it came from is for a person to say"))
+        by_length: Dict[tuple, List[str]] = {}
+        for aid in sorted(have):
+            try:
+                by_length.setdefault(tuple(timing(have[aid])), []).append(aid)
+            except (RebuildRefused, OSError) as e:
+                skipped.append((have[aid].name, f"its length cannot be read ({e}): "
+                                "which recording it came from is for a person to say"))
+        groups = [(r[0], r[1]) for r in recs[cohort]
+                  if day(r[0]) is not None and kind(r[2]) == kind(tray)]
+        for length, members in sorted(by_length.items(), key=lambda kv: kv[1]):
+            if len(members) > 8:
+                for a in members:
+                    skipped.append((have[a].name, f"{len(members)} cuts that day are "
+                                    f"{length[0]} frames long, more than one recording "
+                                    "holds: which recording it came from is for a person "
+                                    "to say"))
+                continue
+            # Positions: a recorded group holding every one of these animals,
+            # fewest other animals first, then the nearest day.
+            best = None
+            for d2, g in groups:
+                named = {a for a in g if not a.isdigit()}      # digits = an empty box
+                if set(members) <= named:
+                    key = (len(named) - len(members), abs((day(d2) - day(d)).days), d2)
+                    if best is None or key < best[0]:
+                        best = (key, g, d2)
+            if best:
+                ids = [a if a in members else None for a in best[1]]
+                basis = f"positions as recorded on {best[2]}"
+            else:
+                ids = members + [None] * (8 - len(members))
+                basis = ("positions in id order: no recording of this group is in "
+                         "the archive")
+            if selected is None or any(have[a] in selected for a in members):
+                out.append((cohort, d, tray, ids, {a: have[a] for a in members}, basis))
     return out, skipped
 
 
@@ -483,7 +493,7 @@ def main(argv=None):
     records = (Path(Paths.NAS_ROOT) / "pipeline_records" / "rebuilt_recordings"
                if Paths.NAS_ROOT else None)
     analysed_dir = (Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal") if Paths.ANALYZED_OUTPUT else None
-    for cohort, d, tray, ids, cuts_by_raw in units:
+    for cohort, d, tray, ids, cuts_by_raw, basis in units:
         stem, back = encoded_recording(d, tray, ids)
         if any((x / f"{stem}.mkv").exists() for x in (dest_dir, analysed_dir) if x):
             print(f"  [SKIP] {stem}: already in the pipeline")
@@ -502,12 +512,13 @@ def main(argv=None):
             p = plan(stem, singles)
             if args.dry_run:
                 print(f"  [OK] {cohort}: would rebuild {stem} ({len(singles)} cuts, "
-                      f"{8 - len(singles)} empty, {p['frames']} frames)")
+                      f"{8 - len(singles)} empty, {p['frames']} frames; {basis})")
             else:
                 path = rebuild(stem, singles, dest_dir, records,
                                f"ASPA {cohort} {d} {tray}: the recording is not in the "
-                               f"archive; rebuilt from ASPA's own cuts")
-                print(f"  [OK] {cohort}: rebuilt {path.name}")
+                               f"archive; rebuilt from ASPA's own cuts, the ones that day "
+                               f"of exactly this length; {basis}")
+                print(f"  [OK] {cohort}: rebuilt {path.name} ({basis})")
             built += 1
         except RebuildRefused as exc:
             print(f"  [FAIL] {stem}: {exc}")

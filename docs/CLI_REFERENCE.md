@@ -1990,10 +1990,24 @@ into pipeline form. Only reads the archive.
 Since 2026-10-23 it never feeds cuts into the singles intake: the input to
 MouseReach is the recording, and a fed cut has no link to its recording. A cut
 whose recording survives in the archive is skipped with that reason (it comes in
-through the recording import). For the rest, the recording is rebuilt in the
-group and grid order the animal had on the nearest day the archive recorded it;
-a group member with no cut that day becomes an empty position. See
+through the recording import). For the rest, the recording is rebuilt from the
+cuts that came out of it, and those are found by length: every cut of one
+recording is exactly as long as the recording, to the frame, so the lost cuts of
+one day and tray with the same frame count (and frame rate) are one recording.
+The animals sit in the order of a recorded group (same tray kind, nearest day)
+that holds all of them, or in id order when the archive has no such group; the
+output line and the rebuild's record say which. A position no cut fills is
+empty, so no video is ever made of an animal that has no cut.
+
+Named and left for a person, never guessed: more than eight cuts of one length
+on one day (more than one recording that long), a cut whose length cannot be
+read, a name that is not a session or whose date is not a real day. See
 `mousereach-rebuild-recording` for what a rebuild checks and records.
+
+Until 2026-10-23 the groups were copied from the nearest recorded day. Groups
+change from day to day, so that stitched cuts that were never simultaneous
+(refused, as they did not line up) and once left an animal alone in a recording
+it had shared.
 
 options:
   -h, --help            show this help message and exit
