@@ -2121,6 +2121,10 @@ cuts that disagree with it. Rerun the command to refresh it; never edit it by
 hand. A program that exports the pipeline's results can read it to leave every
 video of a contested recording out of its exports until the name is resolved.
 
+WHAT IT DOES NOT SEE: a cut as long as a recording that names its animal is
+taken on its name, with no picture compared -- so two names swapped WITHIN such
+a recording are not seen. A swap shows only when the cut is in doubt by length.
+
 WHAT IT DOES NOT DO: rename anything. Which name is right is for a person to
 confirm (the lab's own score sheet is good evidence: which animals were scored
 that day). `mousereach-aspa-import-collages` will not copy a contested recording

@@ -56,6 +56,12 @@ Nothing is renamed: which name is right is a fact only a person can confirm
   the conflict is resolved -- the record is recomputed by rerunning the audit,
   never edited by hand.
 
+WHAT IT DOES NOT SEE: a cut as long as a recording that names its animal is
+taken on its name (the quick path), so two animals' names swapped WITHIN such a
+recording are not seen -- no picture is compared for it. A swap shows only when
+the cut is in doubt by length (found once that way: a recording kept untrimmed,
+whose cuts were traced through each other, had two seats' names swapped).
+
 Lengths are read from the container headers, and pictures only for the few
 cuts in doubt (a recording is a gigabyte or more; reading one through is never
 needed). Read-only throughout.
