@@ -762,7 +762,12 @@ def _qc_hold_lifted(bundle: Path, stem: str, signature: tuple) -> Optional[bool]
             _qc_recheck_cache[str(bundle)] = (signature, verdict)
             return verdict
         stored = json.loads((bundle / f"{stem}_triage.json").read_text(encoding="utf-8"))
+        # A stored tracking hold still stands -- except a ruler-variation
+        # hold, which the current check no longer makes (triage.
+        # RULER_UNSTABLE_DESC, 2026-10-23): those videos go back for a run.
+        from mousereach.pipeline.triage import RULER_UNSTABLE_DESC
         if any(f.get("category") == "dlc_coherence" and f.get("severity") == "critical"
+               and not str(f.get("description", "")).startswith(RULER_UNSTABLE_DESC)
                for f in stored.get("flags", [])):
             verdict = False
         else:

@@ -103,7 +103,7 @@ def test_holds_that_still_stand_or_belong_to_a_person_stay(tmp_path, monkeypatch
         _bundle(deep, "20261012_CNT0601_F1", person=True),                 # a person's
         _bundle(deep, "20261012_CNT0602_F1", flags=(                       # tracking hold
             {"category": "dlc_coherence", "severity": "critical",
-             "description": "Ruler (SABL-SABR) highly unstable"},)),
+             "description": "Missing SABL or SABR — cannot compute ruler"},)),
         _bundle(deep, "20261012_CNT0603_P1"),                              # Pillar: still missing
         _bundle(deep, "20261012_CNT0604_F1", reason="segmentation_failed"),  # other reason
     ]
@@ -217,3 +217,46 @@ def test_same_size_but_different_bytes_is_left_for_a_person(tmp_path, monkeypatc
 
     assert rr.scan_review_queues(FakeDB(), tmp_path / "proc")["qc_released"] == 0
     assert b.exists() and (posed / f"{stem}.mp4").read_bytes() == b"VIDEO"
+
+
+def test_a_ruler_variation_hold_is_released(tmp_path, monkeypatch):
+    # 2026-10-23 (Logan): a ruler that varies within a video is recorded, never
+    # held for -- the scale is an estimate, every kinematic exists in pixels,
+    # and nothing is concluded from one reach. Older holds of that kind go back.
+    deep, posed, _ = _wire(monkeypatch, tmp_path)
+    stem = "20261012_CNT0601_P1"
+    b = _bundle(deep, stem, outcomes=True, flags=(
+        {"category": "dlc_coherence", "severity": "critical",
+         "description": "Ruler (SABL-SABR) highly unstable: CV=0.210, std=9.1px, median=43.0px"},))
+    db = FakeDB()
+
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+
+    assert summary["qc_released"] == 1
+    assert not b.exists()
+    assert (posed / f"{stem}.mp4").is_file()
+
+
+def test_the_check_records_ruler_variation_without_holding():
+    import numpy as np
+    import pandas as pd
+    from mousereach.pipeline import triage
+    n = 600
+    rng = np.random.default_rng(0)
+    cols, data = [], []
+    for bp, x0 in (("SABL", 100.0), ("SABR", 140.0), ("BOXL", 50.0), ("BOXR", 200.0)):
+        x = np.full(n, x0)
+        if bp == "SABR":
+            x = x0 + rng.normal(0, 8.0, n)       # ruler length varies ~20%
+        for coord, v in (("x", x), ("y", np.full(n, 300.0)), ("likelihood", np.full(n, 0.99))):
+            cols.append(("scorer", bp, coord))
+            data.append(v)
+    df = pd.DataFrame(np.array(data).T, columns=pd.MultiIndex.from_tuples(cols))
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        h5 = os.path.join(d, "x.h5")
+        df.to_hdf(h5, key="df")
+        flags = triage.check_dlc_coherence(h5, [0, n])
+    ruler = [f for f in flags if f.description.startswith(triage.RULER_UNSTABLE_DESC)]
+    assert ruler and all(f.severity == "warning" for f in ruler)

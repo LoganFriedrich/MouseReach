@@ -87,6 +87,16 @@ TRAY_FIXED_POINTS = ['BOXL', 'BOXR', 'SABL', 'SABR']
 # Points that form the ruler (distance should be constant)
 RULER_POINTS = ('SABL', 'SABR')
 
+# A ruler whose length varies within a video is RECORDED (a warning in
+# _triage.json), never a reason to hold the video. WHY (Logan, 2026-10-23):
+# the millimetre scale is an estimate (one median per pellet segment), every
+# kinematic also exists in pixels, and no conclusion is drawn from one reach --
+# everything passes through data preparation and statistics that average such
+# variation away. Until then a variation over 15% was 'critical' and sent the
+# whole video to deep review. The same text marks older stored holds of this
+# kind, which the review-return scan now releases (review_return._qc_hold_lifted).
+RULER_UNSTABLE_DESC = 'Ruler (SABL-SABR) highly unstable'
+
 
 def check_dlc_coherence(
     h5_path: Path,
@@ -253,9 +263,9 @@ def check_dlc_coherence(
             if ruler_cv > 0.15:
                 flags.append(TriageFlag(
                     category='dlc_coherence',
-                    severity='critical',
+                    severity='warning',      # never holds a video; see RULER_UNSTABLE_DESC
                     description=(
-                        f'Ruler (SABL-SABR) highly unstable: '
+                        f'{RULER_UNSTABLE_DESC}: '
                         f'CV={ruler_cv:.3f}, std={ruler_std:.1f}px, median={ruler_median:.1f}px'
                     )
                 ))

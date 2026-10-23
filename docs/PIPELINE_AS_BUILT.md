@@ -1958,8 +1958,8 @@ and the gate. Tests: `tests/test_qc_easy_flat_no_outcomes.py`.
 When the quality check is corrected, the holds it made by mistake used to stay in deep review
 until a person cleared each one. The return scan now re-checks every deep-review bundle routed
 `qc_needs_review` that holds no file a person wrote: the pose-tracking layer's stored flags are
-carried over (that layer reads the whole pose file; a hold it made stays), the file-based layers
-are recomputed. A bundle with nothing critical left goes back to the posed folder for a fresh run
+carried over (that layer reads the whole pose file; a hold it made stays, except a ruler-variation
+hold -- see the 2026-10-23 update), the file-based layers are recomputed. A bundle with nothing critical left goes back to the posed folder for a fresh run
 (mp4 and pose files; its other files are set aside under `_Problematic/_released_qc_holds_<date>/`)
 and its row becomes `dlc_complete`, so intake takes it in its priority turn -- not `processing`,
 which would block intake of new work. The first use: the 469 Easy/Flat bundles held only for the
@@ -2318,3 +2318,15 @@ Where Is My Data kept the previous day's counts. `collect_collages` now walks wi
 filters on the name, the walk's own listing saying which entries are files -- the rule
 `walk_analyzed` already followed -- with `walk_onerror` keeping rglob's rule for a folder that
 cannot be listed. Same night, same load: 1,128 s. Tests: `tests/test_census_collage_listing.py`.
+
+## Update 2026-10-23: a ruler that varies within a video never holds it
+
+The quality check measures the ruler (the SABL-SABR distance) across the video. A variation over 15%
+was a 'critical' flag, which sent the whole video to deep review for a person. It is now a warning:
+recorded in `_triage.json`, never a reason to hold. Why (lab decision): the millimetre scale is an
+estimate (one median per pellet segment, over the segment's steady middle), every kinematic also
+exists in pixels, and no conclusion is drawn from a single reach -- data preparation and statistics
+average such variation away. Videos already held for it are released by the review-return scan
+(their stored flag is recognised by its text, `triage.RULER_UNSTABLE_DESC`). A pose file with no
+ruler points at all is still critical: that is a wrong model, not variation. Tests:
+`tests/test_release_lifted_qc_holds.py`.
