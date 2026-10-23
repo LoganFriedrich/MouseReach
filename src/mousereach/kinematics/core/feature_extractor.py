@@ -256,8 +256,8 @@ class FeatureExtractor:
         _human_seg = False
         try:
             from mousereach.review.causal_review_io import segmentation_is_human
-            _seg_file = Path(reach_path).with_name(
-                Path(reach_path).name.replace("_reaches.json", "_segments.json"))
+            _seg_file = Path(reaches_path).with_name(
+                Path(reaches_path).name.replace("_reaches.json", "_segments.json"))
             if _seg_file.is_file():
                 _human_seg = segmentation_is_human(json.loads(_seg_file.read_text(encoding="utf-8")))
         except Exception:
