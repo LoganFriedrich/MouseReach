@@ -2307,3 +2307,14 @@ A machine's own settings are never replaced by a profile. Install Step 6/7 rewri
 marks the role this machine gets ("<- THIS MACHINE (hostname match)"), and an identity file
 (`~/.mousereach/machine_role.json`) naming a role that is not in the profiles is reported instead of
 silently skipped -- two GPU PCs still named retired roles there.
+
+## Update 2026-10-23: the census lists collages by name
+
+The pipeline census (`mousereach.census`, run nightly by mousedb's snapshot job with a one-hour limit)
+found collages with `rglob("*")` and an `is_file()` check on every entry: one round trip to the share
+per file. One archive root holds about 164,000 files, of which about 5,000 are collage-shaped; on
+2026-10-23 the census ran past its hour twice at night (it had taken 656 s the previous afternoon), so
+Where Is My Data kept the previous day's counts. `collect_collages` now walks with `os.walk` and
+filters on the name, the walk's own listing saying which entries are files -- the rule
+`walk_analyzed` already followed -- with `walk_onerror` keeping rglob's rule for a folder that
+cannot be listed. Same night, same load: 1,128 s. Tests: `tests/test_census_collage_listing.py`.

@@ -84,15 +84,31 @@ def collect_collages(roots, exts=(".mkv", ".mp4")):
 
     WHY recursive: at least one collage directory on a real system contained a
     SUBFOLDER of further collages, invisible to a non-recursive listing.
+
+    WHY os.walk on names, not ``rglob("*")`` with ``is_file()``: the walk's own
+    listing already says which entries are files, so no file is asked about
+    one by one. ``is_file()`` on every entry was a round trip to the share per
+    file; one archive root holds about 164,000 files, of which about 5,000 are
+    collage-shaped, and the nightly census ran past its hour (2026-10-23: the
+    same scan took 656 s in the afternoon). The same rule as
+    ``runner.walk_analyzed``. ``walk_onerror`` keeps rglob's rule for a folder
+    that cannot be listed: a PermissionError is skipped, anything else raises,
+    so a share hiccup never yields a partial count that looks complete.
     """
+    import os
+    from mousereach.pipeline.analyzed_tree import walk_onerror
+
+    exts = tuple(e.lower() for e in exts)
     out = []
     for root in roots:
         root = Path(root)
         if not root.exists():
             continue
-        for p in root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in exts and "," in p.stem:
-                out.append(p)
+        for dirpath, _dirnames, filenames in os.walk(root, onerror=walk_onerror):
+            for name in filenames:
+                stem, ext = os.path.splitext(name)
+                if ext.lower() in exts and "," in stem:
+                    out.append(Path(dirpath) / name)
     return out
 
 
