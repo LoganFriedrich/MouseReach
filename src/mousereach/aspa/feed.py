@@ -583,9 +583,13 @@ def main(argv=None):
     records = (Path(Paths.NAS_ROOT) / "pipeline_records" / "rebuilt_recordings"
                if Paths.NAS_ROOT else None)
     analysed_dir = (Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal") if Paths.ANALYZED_OUTPUT else None
+    # A recording already in the intake, cut and filed, or held in quarantine
+    # for a person is never built again.
+    from mousereach.aspa.import_collages import default_quarantine_dir
+    homes = [x for x in (dest_dir, analysed_dir, default_quarantine_dir()) if x]
     for cohort, d, tray, ids, cuts_by_raw, basis in units:
         stem, back = encoded_recording(d, tray, ids)
-        if any((x / f"{stem}.mkv").exists() for x in (dest_dir, analysed_dir) if x):
+        if any((x / f"{stem}.mkv").exists() for x in homes):
             print(f"  [SKIP] {stem}: already in the pipeline")
             skipped += 1
             continue
@@ -604,7 +608,7 @@ def main(argv=None):
                       f"seat is left empty in the rebuilt recording")
                 skipped += 1
             stem, back = encoded_recording(d, tray, ids)
-            if any((x / f"{stem}.mkv").exists() for x in (dest_dir, analysed_dir) if x):
+            if any((x / f"{stem}.mkv").exists() for x in homes):
                 print(f"  [SKIP] {stem}: already in the pipeline")
                 continue
         if built >= args.batch_size:

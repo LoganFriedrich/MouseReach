@@ -50,7 +50,7 @@ walkthroughs of the review tools themselves.
 - [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-reconcile`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
 - [Archive migration - One-time Sort/ -> project/cohort restructure](#archive-migration-one-time-sort-project-cohort-restructure) -- `mousereach-migrate-archive`
-- [ASPA reprocessing tools](#aspa-reprocessing-tools) -- `mousereach-aspa-import`, `mousereach-aspa-feed`, `mousereach-aspa-sync`, `mousereach-aspa-compare`, `mousereach-session-coverage`, `mousereach-legacy-inventory`
+- [ASPA reprocessing tools](#aspa-reprocessing-tools) -- `mousereach-aspa-import`, `mousereach-aspa-feed`, `mousereach-aspa-name-audit`, `mousereach-aspa-sync`, `mousereach-aspa-compare`, `mousereach-session-coverage`, `mousereach-legacy-inventory`
 
 ## Main launcher
 
@@ -1846,6 +1846,15 @@ original name next to the reading:
 Any other name that does not read is listed under "Files whose names could not
 be parsed" and left for a person.
 
+Before copying, each recording's name is checked against ASPA's own cuts of
+that day (see `mousereach-aspa-name-audit`). A recording whose seats the cuts
+name for animals it does not list is NOT copied in -- it would file one
+animal's video under another's id -- and is listed under "NOT imported" for a
+person. Only the days being imported are measured, from file headers, so a
+small import stays quick; a whole-archive import takes about as long as the
+audit. A recording held in quarantine counts as already in the pipeline and is
+never copied in again.
+
 ### `mousereach-backfill-kinematic-versions`
 
 ```
@@ -2066,6 +2075,45 @@ options:
                         Where rebuilt recordings go (default: the recording
                         intake, Unanalyzed/Multi-Animal).
 ```
+
+### `mousereach-aspa-name-audit`
+
+```
+usage: mousereach-aspa-name-audit [-h] [--cohorts COHORTS] [--source SOURCE]
+                                  [--no-record]
+
+Check the ASPA archive's recording names against its own cuts, and write the
+record of recordings whose seats the cuts name differently. Reads only.
+
+options:
+  --cohorts COHORTS  Comma-separated cohort folders (default: the in-scope ones)
+  --source SOURCE    Archive root (default: the NAS root's Archive/historical/ASPA)
+  --no-record        Print only; do not write the record
+```
+
+WHY: ASPA's archive names every animal twice -- in the recording's name and in
+its own cut of each seat -- and the two were typed separately. Where they
+disagree, the pipeline (which trusts the recording's name) files one animal's
+video under another animal's id.
+
+HOW: every cut of a recording is as long as the recording, to the frame. Each
+cut is traced to its recording that day and tray: by length (within 5 frames),
+or -- when no recording is as long as it, because the surviving one was trimmed
+after it was cut -- through the recording that names it or another cut exactly
+as long as it. A cut whose recording does not list its animal makes that
+recording CONTESTED. Only file headers are read, but every cut and recording
+is opened, so a whole archive takes a while (a fraction of a second per file).
+
+WHAT IT WRITES: `<nas_root>/pipeline_records/archive_name_conflicts.json` --
+each contested recording, the pipeline name(s) the import gives it, and the
+cuts that disagree with it. Rerun the command to refresh it; never edit it by
+hand. A program that exports the pipeline's results can read it to leave every
+video of a contested recording out of its exports until the name is resolved.
+
+WHAT IT DOES NOT DO: rename anything. Which name is right is for a person to
+confirm (the lab's own score sheet is good evidence: which animals were scored
+that day). `mousereach-aspa-import-collages` will not copy a contested recording
+in; one already in the pipeline is for a person to hold or release.
 
 ### `mousereach-rebuild-recording`
 

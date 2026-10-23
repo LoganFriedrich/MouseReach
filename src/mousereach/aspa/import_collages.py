@@ -67,8 +67,17 @@ a whole cohort -- for one study, 346 recordings instead of 959. The dry run name
 every listed session that has no recording, so nothing a list asks for goes
 missing without being said.
 
-A recording the pipeline already has -- still in the intake folder, or cut and
-moved to ``Analyzed/Multi-Animal`` -- is never brought in again.
+A recording the pipeline already has -- still in the intake folder, cut and
+moved to ``Analyzed/Multi-Animal``, or held in quarantine -- is never brought in
+again.
+
+Names checked against the archive's own cuts
+--------------------------------------------
+Before copying, each recording's name is checked against ASPA's own cuts of
+that day (:mod:`mousereach.aspa.name_audit`): a recording whose seats the cuts
+name for animals it does not list is NOT brought in -- it would file one
+animal's video under another's id -- and is named for a person. Only the days
+being imported are measured (headers only), so a small import stays quick.
 
 Usage
 -----
@@ -339,15 +348,28 @@ def select_for_sessions(plan: List[dict], sessions: List[str]) -> Tuple[List[dic
     return chosen, missing
 
 
-def already_in_pipeline(item: dict, retired_dir: Optional[Path]) -> Optional[str]:
+def already_in_pipeline(item: dict, retired_dir: Optional[Path],
+                        held_dir: Optional[Path] = None) -> Optional[str]:
     """Where the pipeline already has this recording, or None. WHY: a recording
     copied in again after it was cut would sit in the intake as a stray, or be
-    cut twice."""
+    cut twice; one held in quarantine is waiting for a person, and a second
+    copy in the intake would be cut behind that person's back."""
     if item["dst"].exists():
         return "in the intake folder"
     if retired_dir is not None and (retired_dir / item["dst"].name).exists():
         return "cut, and moved to " + str(retired_dir)
+    if held_dir is not None and (held_dir / item["dst"].name).exists():
+        return "held in quarantine for a person (" + str(held_dir) + ")"
     return None
+
+
+def default_quarantine_dir() -> Optional[Path]:
+    """The watcher's quarantine folder, or None when it cannot be resolved."""
+    try:
+        from ..config import WatcherConfig
+        return Path(WatcherConfig.load().get_quarantine_dir())
+    except Exception:
+        return None
 
 
 def default_retired_dir() -> Optional[Path]:
@@ -467,11 +489,29 @@ def main(argv=None) -> int:
                 print(f"  {b[:80]}")
         plan, missing_sessions = select_for_sessions(plan, sessions)
     retired = default_retired_dir()
-    have = [(p, already_in_pipeline(p, retired)) for p in plan]
+    held_dir = default_quarantine_dir()
+    have = [(p, already_in_pipeline(p, retired, held_dir)) for p in plan]
     already = [(p, why) for p, why in have if why]
     plan = [p for p, why in have if not why]
     if args.limit:
         plan = plan[:args.limit]
+
+    # Each recording's name against the archive's own cuts of that day (see
+    # "Names checked against the archive's own cuts" in the module docstring).
+    contested = []
+    if plan:
+        from .name_audit import audit
+        days = {(p["encoded_stem"][:8], p["encoded_stem"].rsplit("_", 1)[-1].upper())
+                for p in plan}
+        print(f"Checking {len(plan)} recording name(s) against the archive's own cuts "
+              f"({len(days)} day(s) and tray(s), headers only)...")
+        res = audit(source_root, cohorts, only={(c, d, t) for c in cohorts for d, t in days})
+        if res["unreadable"]:
+            print(f"[!] {len(res['unreadable'])} cut(s) of those days could not be measured; "
+                  f"the names were checked without them: {', '.join(res['unreadable'][:5])}")
+        by_stem = {s: c for c in res["conflicts"] for s in c["pipeline_recordings"]}
+        contested = [(p, by_stem[p["encoded_stem"]]) for p in plan if p["encoded_stem"] in by_stem]
+        plan = [p for p in plan if p["encoded_stem"] not in by_stem]
 
     total = sum(p["size"] for p in plan)
     print("")
@@ -516,6 +556,15 @@ def main(argv=None) -> int:
         if len(result["unparseable"]) > 10:
             print(f"  ... and {len(result['unparseable']) - 10} more")
 
+    if contested:
+        print("")
+        print(f"[!] NOT imported -- the archive's own cuts name a seat for an animal the "
+              f"recording's name does not list (which name is right is for a person): "
+              f"{len(contested)}")
+        for p, c in contested:
+            named = ",".join(sorted({x["animal"] for x in c["cuts_named_differently"]}))
+            print(f"  {p['source_stem'][:70]}  (cut(s) named {named})")
+
     if already:
         print("")
         print(f"Already in the pipeline (not imported again): {len(already)}")
@@ -541,7 +590,7 @@ def main(argv=None) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     copied = skipped = failed = 0
     for n, item in enumerate(plan, 1):
-        if already_in_pipeline(item, retired):
+        if already_in_pipeline(item, retired, held_dir):
             skipped += 1
             continue
         try:
