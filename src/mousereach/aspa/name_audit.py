@@ -174,7 +174,9 @@ def audit(source_root: Path, cohorts: Iterable[str],
     res = {"conflicts": [], "consistent": 0, "no_source": 0, "unreadable": [],
            "pictures_compared": 0}
     for cohort in cohorts:
-        multi, sa = source_root / cohort / "Multi-Animal", source_root / cohort / "Single_Animal"
+        from mousereach.aspa.feed import cuts_folder
+        multi = source_root / cohort / "Multi-Animal"
+        sa = cuts_folder(source_root / cohort) or (source_root / cohort / "Single_Animal")
         recs = _readings(multi)
         cuts: Dict[Tuple[str, str], list] = defaultdict(list)
         names = sorted(x.name for x in sa.iterdir() if _CUT.match(x.name)) if sa.is_dir() else []

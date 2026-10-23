@@ -189,6 +189,16 @@ def test_a_session_already_in_the_pipeline_is_not_made_twice(tmp_path, monkeypat
     assert "20220602_H10_P1: already in the pipeline" in capsys.readouterr().out
 
 
+def test_the_cut_folder_is_found_however_it_is_spelled(tmp_path):
+    for k, spelled in enumerate(("Single Animal", "Single_animal", "Single_Animal")):
+        cohort = tmp_path / f"C{k}"
+        (cohort / spelled).mkdir(parents=True)
+        (cohort / spelled / "20220811_J01_P1.mp4").write_bytes(b"cut")
+        assert feed.cuts_folder(cohort) == cohort / spelled
+        assert [p.name for _, p in feed.iter_cohort_singles(tmp_path, cohort.name)] ==             ["20220811_J01_P1.mp4"]
+    assert feed.cuts_folder(tmp_path / "nothing") is None
+
+
 def test_a_name_with_a_date_that_is_not_a_day_is_named_and_left(tmp_path, monkeypatch, capsys):
     env = _env(tmp_path, monkeypatch)
     (env.sa / "20220631_H09_P1.mp4").write_bytes(b"cut")                 # June has 30 days

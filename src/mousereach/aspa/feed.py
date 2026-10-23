@@ -103,11 +103,27 @@ def iter_cohort_singles(source_root: Path, cohort: Optional[str] = None
     dirs = [source_root / cohort] if cohort else sorted(
         d for d in source_root.iterdir() if d.is_dir() and not is_superseded_dir(d.name))
     for cohort_dir in dirs:
-        sa_dir = cohort_dir / "Single_Animal"
-        if not sa_dir.exists():
+        sa_dir = cuts_folder(cohort_dir)
+        if sa_dir is None:
             continue
         for mp4 in sorted(iter_files(sa_dir, "*.mp4")):
             yield cohort_dir.name, mp4
+
+
+def cuts_folder(cohort_dir: Path) -> Optional[Path]:
+    """The cohort's single-animal cut folder however it is spelled --
+    ``Single_Animal``, ``Single Animal``, ``Single_animal``: the archive's cohort
+    folders were made by hand, and a cohort whose folder is spelled otherwise
+    was silently never looked at (found 2026-10-23). None when there is none."""
+    cohort_dir = Path(cohort_dir)
+    exact = cohort_dir / "Single_Animal"
+    if exact.is_dir():
+        return exact
+    if cohort_dir.is_dir():
+        for d in sorted(cohort_dir.iterdir()):
+            if d.is_dir() and re.sub(r"[\s_]+", "_", d.name.strip().lower()) == "single_animal":
+                return d
+    return None
 
 
 def pipeline_name(mp4_name) -> Optional[str]:
