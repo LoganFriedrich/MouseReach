@@ -2373,7 +2373,6 @@ feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now
   exactly as long as it). Positions come from a recorded group holding all of them (nearest day), else
   id order; the record says which. A position no cut fills is empty. More than eight cuts of one length,
   or an unreadable cut, is named for a person. (The first version copied the nearest recorded day's
-  groups; groups change from day to day, and on OptG 2022-06-20/21 that paired cuts of different
-  recordings and put G40 alone where it had shared a recording with G39. Caught in the dry run; nothing
-  was built that way.)
+  groups; groups change from day to day, so it paired cuts of different recordings and once put an
+  animal alone where it had shared a recording. Caught in the dry run; nothing was built that way.)
 Tests: `tests/test_rebuild_recording.py`, `tests/test_aspa_feed_to_shared_folder.py`.

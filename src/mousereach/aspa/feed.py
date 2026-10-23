@@ -16,7 +16,7 @@ WHICH cuts share a rebuilt recording is read from the cuts themselves: every
 cut of one recording is exactly as long as the recording, to the frame, so the
 lost cuts of one day and tray that have the same frame count (and frame rate)
 are the cuts of one recording. WHY not the groups of other days (it used them
-until 2026-10-23): groups change from day to day -- on one OptG day the cuts
+until 2026-10-23): groups change from day to day -- on some days the cuts
 fall into id-order groups that no surviving recording shows -- and a group
 copied from another day stitched together cuts that were never simultaneous,
 or left an animal alone that had shared its recording. More than eight cuts of
