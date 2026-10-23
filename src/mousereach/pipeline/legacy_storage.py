@@ -23,7 +23,13 @@ What counts as "the pipeline already has it" -- any one is enough:
     record (watcher_central.db) -- so one being posed on a GPU machine counts;
   * a recording each of whose animal sessions is held that way, or by a
     recording under the pipeline root (blank slots, subject 00, are ignored) --
-    so a recording renamed since it was copied is not brought in twice.
+    so a recording renamed since it was copied is not brought in twice;
+  * a recording of the same day and tray, to the byte the same size, under
+    another name on the pipeline root: a person renamed it after it was copied
+    (corrected an animal id), and the old copy still carries the old name.
+    WHY: those sessions are held only under the CORRECTED ids, so the session
+    test above cannot see it -- the old copy of a corrected typo (CNT1012 for
+    CNT0112) would have come back in and recreated the fake animal.
 
 What is brought in, and where (``--bring-in``): RECORDINGS ONLY, into
 Unanalyzed/Multi-Animal (the intake), where the pipeline cuts and poses them.
@@ -97,6 +103,8 @@ NO_RECORDING = ("a cut video with no recording on either storage -- rebuild the 
                 "recording from its cuts (mousereach-rebuild-recording); for a person")
 COPIES_DIFFER = "copies on the old storage differ in size -- for a person"
 SAME_AS_ANOTHER = "only here, as another copy on the old storage that is brought in"
+RENAMED_ON_PIPELINE = ("on pipeline under another name (same day, tray and size: renamed "
+                       "since it was copied)")
 ONLY_HERE = "only here"
 
 
@@ -144,6 +152,12 @@ def classify(stem: str) -> dict:
     return {"kind": "other", "tray": None, "sessions": [], "bad_ids": []}
 
 
+def _day_tray(stem: str) -> tuple:
+    """(date, tray+position) of a recording stem: what a renamed copy keeps."""
+    parts = stem.split("_")
+    return (parts[0], parts[-1].upper()) if len(parts) >= 3 else (stem, "")
+
+
 class PipelineIndex:
     """What the pipeline root holds, from one walk of it (plus the shared record)."""
 
@@ -153,6 +167,8 @@ class PipelineIndex:
         self.results: set = set()
         self.sessions_held: set = set()
         self.known: set = set()
+        # {(date, tray+position): {size: name}} of every recording on the root
+        self.recording_sizes: Dict[tuple, Dict[int, str]] = {}
         for e in walk(nas_root):
             n = e.name
             low = n.lower()
@@ -167,6 +183,7 @@ class PipelineIndex:
                 info = classify(stem)
                 if info["kind"] == "recording":
                     self.sessions_held.update(s.upper() for s in info["sessions"])
+                    self.recording_sizes.setdefault(_day_tray(stem), {})[size] = n
             elif low.endswith("_processing_manifest.json"):
                 self.results.add(n[: -len("_processing_manifest.json")].upper())
         db = Path(nas_root) / "watcher_central.db"
@@ -184,6 +201,14 @@ class PipelineIndex:
                     con.close()
             except sqlite3.Error:
                 pass
+
+    def renamed(self, stem: str, size: int) -> Optional[str]:
+        """The pipeline name of a recording of the same day and tray, the same
+        size to the byte, under another name -- or None."""
+        if size < 0:
+            return None
+        n = self.recording_sizes.get(_day_tray(stem), {}).get(size)
+        return n if n and os.path.splitext(n)[0].lower() != stem.lower() else None
 
     def has_session(self, session: str) -> bool:
         s = session.upper()
@@ -228,11 +253,14 @@ def inventory(old_root: Path, index: PipelineIndex) -> List[dict]:
             status = BAD_ID
         elif info["sessions"] and all(index.has_session(s) for s in info["sessions"]):
             status = HAS_SESSION if info["kind"] == "cut" else HAS_ALL_SESSIONS
+        elif info["kind"] == "recording" and index.renamed(stem, size):
+            status = RENAMED_ON_PIPELINE
         else:
             status = ONLY_HERE
         rel = os.path.relpath(e.path, old_root)
+        renamed_as = index.renamed(stem, size) if status == RENAMED_ON_PIPELINE else ""
         rows.append({
-            "old_path": e.path, "name": e.name,
+            "old_path": e.path, "name": e.name, "same_as": renamed_as or "",
             "folder": rel.split(os.sep)[0] if os.sep in rel else "",
             "size": size, "kind": info["kind"], "tray": info["tray"] or "",
             "status": status, "destination": "", "bad_ids": " ".join(info["bad_ids"]),

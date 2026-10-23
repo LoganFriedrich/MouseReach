@@ -1997,7 +1997,10 @@ could not be retired while they were there. Tests: `tests/test_legacy_storage.py
 (the input to MouseReach is the recording; the pipeline's own cut records which recording each single
 came from): a cut whose recording comes in is reported and left, and one with no recording anywhere is
 named for the rebuild route (`mousereach-rebuild-recording`). The "already cut -> Analyzed/Multi-Animal"
-placement and the "partly cut" status are gone with it.
+placement and the "partly cut" status are gone with it. Also since 2026-10-23: a recording of the same day and tray, the
+same size to the byte, under another name on the pipeline root is "renamed since it was copied" and not
+brought in -- a person corrected an animal id on the pipeline's copy (CNT1012 -> CNT0112), and the old
+copy under the old name would have recreated the animal the correction removed.
 
 ## Update 2026-10-22: the backup says what failed, skips test residue, and fails loudly
 

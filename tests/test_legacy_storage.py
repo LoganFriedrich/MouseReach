@@ -213,3 +213,21 @@ def test_copies_in_several_old_folders_are_brought_in_once(tmp_path, monkeypatch
     assert summary["only_here"] == 0
     assert summary["by_status"][ls.SAME_FILE] == 2
     assert summary["by_status"][ls.COPIES_DIFFER] == 2
+
+
+def test_a_recording_renamed_since_it_was_copied_is_not_brought_in(tmp_path, monkeypatch):
+    """A person corrected an animal id on the pipeline's copy (CNT1012 -> CNT0112,
+    2026-10-16); the old storage still has the file under the old name. Same
+    day, tray and size: it is the same recording, and bringing it in would
+    recreate the animal the correction removed."""
+    old, nas, d = _setup(tmp_path, monkeypatch)
+    fixed = "20250804_CNT0102,CNT0103,CNT0110,CNT0112_E1.mkv"
+    _put(d["MULTI_ANIMAL_SOURCE"] / fixed, b"same bytes")
+    _put(old / "a" / "20250804_CNT0102,CNT0103,CNT0110,CNT1012_E1.mkv", b"same bytes")
+    # same day and tray but another size: a different recording, brought in
+    _put(old / "a" / "20250804_CNT0102,CNT0103,CNT0110,CNT1012_E2.mkv", b"other")
+    rows = _rows(old, nas)
+    r = rows["20250804_CNT0102,CNT0103,CNT0110,CNT1012_E1.mkv"]
+    assert r["status"] == ls.RENAMED_ON_PIPELINE and r["destination"] == ""
+    assert r["same_as"] == fixed
+    assert rows["20250804_CNT0102,CNT0103,CNT0110,CNT1012_E2.mkv"]["status"] == ls.ONLY_HERE
