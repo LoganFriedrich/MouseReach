@@ -222,6 +222,7 @@ mousereach-migrate-archive = "mousereach.archive.migrate:main"
 # ASPA reprocessing tools
 mousereach-aspa-import = "mousereach.aspa.importer:main"
 mousereach-aspa-feed = "mousereach.aspa.feed:main"
+mousereach-rebuild-recording = "mousereach.video_prep.rebuild_cli:main"
 mousereach-aspa-sync = "mousereach.aspa.sync:main"
 mousereach-aspa-compare = "mousereach.aspa.compare:main"
 mousereach-session-coverage = "mousereach.watcher.coverage:main"

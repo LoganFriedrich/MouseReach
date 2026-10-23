@@ -2356,3 +2356,19 @@ test decides it everywhere: `config.is_outcome_free_tray` (tray letter E or F).
   features file -- every one filed before this day -- is marked outdated from segmentation once, pose
   kept. The work order's idle-only rule (`idle_only_tray_types` E, F) runs it only when nothing else waits.
 Tests: `tests/test_easy_flat_session_only.py`, `tests/test_release_lifted_qc_holds.py`.
+
+## Update 2026-10-23: a lost recording is rebuilt from its singles; singles are never fed
+
+The input to MouseReach is the multi-animal recording: the pipeline's own cut is what records which
+recording and grid position each single came from. Feeding singles into the singles intake (as the ASPA
+feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now:
+* `mousereach-rebuild-recording` (video_prep/core/rebuild.py) rebuilds a recording that exists nowhere
+  from its singles: each one back in its 480x540 cell of the 1920x1080 grid (the cut's own layout,
+  `cropper.CROP_COORDS`), black for an empty position, refusing singles that do not line up in time or
+  are not 480x540, never replacing anything. The file says it is rebuilt, and a record goes to
+  `<nas_root>/pipeline_records/rebuilt_recordings/`. It is written into the recording intake.
+* `mousereach-aspa-feed` rebuilds ASPA recordings that are lost instead of copying cuts: a cut whose
+  recording survives in the archive is left to the recording import; otherwise the recording is rebuilt
+  in the group and order the animal had on the nearest recorded day, a missing member being an empty
+  position.
+Tests: `tests/test_rebuild_recording.py`, `tests/test_aspa_feed_to_shared_folder.py`.

@@ -1,35 +1,37 @@
 """
-mousereach.aspa.feed - Feed ASPA's own single-animal cuts into the pipeline for posing.
+mousereach.aspa.feed - Bring in ASPA sessions whose recording is lost, by rebuilding it.
 
-ASPA's cuts live in the historical archive, one folder per cohort:
-    <NAS root>/Archive/historical/ASPA/{cohort}/Single_Animal/
+The input to MouseReach is the multi-animal recording; the pipeline cuts it
+itself, and that cut records which recording each single came from. ASPA's
+archive (``<NAS root>/Archive/historical/ASPA/{cohort}/``) holds its recordings
+(``Multi-Animal/``) and its own single-animal cuts (``Single_Animal/``). A
+session whose recording survives comes in through the recording import
+(``mousereach-aspa-import``), never here. For a session whose recording is
+lost but whose cuts survive, this tool REBUILDS the recording from the cuts
+(video_prep/core/rebuild.py: each cut back in its grid cell, checked to line up
+in time) and writes it into the recording intake, renamed into pipeline form
+(``H09`` -> ``ASPA0809``, see :mod:`mousereach.aspa.identity`).
 
-Copies (does NOT move) mp4s into the shared singles folder
-(``Unanalyzed/Single_Animal``), where any GPU node takes them, RENAMED into
-pipeline form (``20220602_H09_P1`` -> ``20220602_ASPA0809_P1``, see
-:mod:`mousereach.aspa.identity`). Only the videos are copied; ASPA's old pose
-files are from a model the pipeline does not use. The originals and any
-retained analyses beside them are never touched: a lab may be required to keep
-an old generation of results intact, so everything here works on copies.
-Default batch size is 50 to avoid overwhelming the queue.
+WHICH animals share the rebuilt recording, and in which positions: the group
+the animal was recorded in on the nearest day the cohort's archive has a
+recording of it (the groups are stable from day to day). A group member whose
+cut is missing that day becomes an empty position, so the cut never produces a
+video of an animal that is not there. With no recording of the animal at all,
+that day's cuts are grouped eight at a time in id order (positions then carry
+no meaning beyond the name). Every rebuild is recorded under
+``<NAS root>/pipeline_records/rebuilt_recordings/``.
 
-WHY these defaults (changed 2026-10-21): the tool used to read
-``<NAS drive>/! DLC Output/Analyzed/{cohort}/Single_Animal`` -- a pipeline root
-retired in February -- copy into ONE node's private DLC queue, where no other
-node could see or take the videos, and keep ASPA's own names, which the intake
-does not accept. ``--source`` and ``--dest`` still point it anywhere.
+WHY NOT FEED THE CUTS (it did until 2026-10-23): a single dropped into the
+intake has no link to its recording, and the recording itself never entered
+the pipeline. The originals and any retained analyses are never touched: a lab
+may be required to keep an old generation of results intact, so everything
+here only reads the archive.
 
-``--sessions-file <list>`` feeds only the listed sessions (one
-``{date}_{animal}_{tray}{position}`` per line, either naming) and names every
-listed session it could not find. A video the pipeline already has -- in the
-shared folder, claimed by a node, waiting posed, or in its Analyzed folder --
-is never fed again.
-
-A cohort is how the archive is FILED, not necessarily what anyone wants to
-process. ``--subjects`` / ``--subjects-file`` restrict a run to named animals,
-so getting at a handful of animals spread across several cohorts does not drag
-in every other animal -- which would cost the same processing hours and land in
-the same review queues for a person to work through.
+``--sessions-file <list>`` brings in only the recordings holding the listed
+sessions (one ``{date}_{animal}_{tray}{position}`` per line, either naming)
+and names every listed session it could not find. ``--subjects`` /
+``--subjects-file`` restrict a run to named animals. A recording whose sessions
+the pipeline already has (in any stage, or analysed) is not rebuilt.
 
 CLI:
     mousereach-aspa-feed --cohort COHORT [--dry-run] [--batch-size 50]
@@ -38,11 +40,10 @@ CLI:
 """
 
 import argparse
-import os
-import shutil
+import re
 import sys
 from pathlib import Path
-from typing import Iterator, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -118,24 +119,98 @@ def already_in_pipeline(name: str) -> Optional[str]:
     return None
 
 
-def feed_one(mp4_path: Path, dest_dir: Path, dry_run: bool = False) -> Tuple[bool, str]:
-    """Copy one ASPA cut into ``dest_dir`` under its pipeline name, through a
-    temporary name, never overwriting. Returns (copied, what happened)."""
-    name = pipeline_name(mp4_path.name)
-    if name is None:
-        return False, "name is not {date}_{animal}_{tray}{position}"
-    why = already_in_pipeline(name)
-    if why:
-        return False, why
-    dest = Path(dest_dir) / name
-    if dry_run:
-        return True, f"would copy as {name}"
-    Path(dest_dir).mkdir(parents=True, exist_ok=True)
-    temp = Path(dest_dir) / (name + ".part")
-    shutil.copy2(str(mp4_path), str(temp))
-    os.utime(temp, None)          # a fresh arrival, not a week-old file
-    os.rename(temp, dest)         # refuses an existing destination on Windows
-    return True, f"copied as {name}"
+_CUT = re.compile(r"^(\d{8})_([A-Za-z]+\d+)_([A-Za-z]+\d+)\.mp4$")
+_RECORDING = re.compile(r"^(\d{8})_([A-Za-z0-9]+(?:,[A-Za-z0-9]+){7})_([A-Za-z]+\d+)"
+                        r"(?:\s*\(\d+\))?\.mkv$")
+
+
+def cohort_recordings(source_root: Path, cohort: str) -> List[Tuple[str, List[str], str, str]]:
+    """``(date, [8 ids], tray, file name)`` for every recording the archive has
+    for ``cohort`` (``{cohort}/Multi-Animal``). Names that do not carry exactly
+    eight ids are not recordings this tool can place animals by."""
+    d = Path(source_root) / cohort / "Multi-Animal"
+    out = []
+    if d.is_dir():
+        for n in sorted(x.name for x in d.iterdir()):
+            m = _RECORDING.match(n)
+            if m:
+                out.append((m.group(1), m.group(2).split(","), m.group(3), n))
+    return out
+
+
+def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
+    """Group the selected cuts into the recordings to rebuild.
+
+    Returns ``(units, skipped)``. Each unit is ``(cohort, date, tray, [8 raw
+    ids or None for an empty position], {raw id: cut path})``; ``skipped`` is
+    ``[(cut name, why)]`` -- above all, a cut whose own recording survives in
+    the archive (that recording comes in through the recording import)."""
+    from datetime import date as _date
+    recs: Dict[str, list] = {}
+    units: Dict[tuple, dict] = {}
+    loose: Dict[tuple, set] = {}
+    skipped = []
+
+    def day(s):
+        return _date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+
+    for cohort, mp4 in cuts:
+        m = _CUT.match(mp4.name)
+        if not m:
+            skipped.append((mp4.name, "name is not {date}_{animal}_{tray}{position}"))
+            continue
+        d, aid, tray = m.groups()
+        if cohort not in recs:
+            recs[cohort] = cohort_recordings(source_root, cohort)
+        own = [r for r in recs[cohort] if r[0] == d and r[2] == tray and aid in r[1]]
+        if own:
+            skipped.append((mp4.name, f"its recording survives ({own[0][3]}): it comes in "
+                                      f"through the recording import, not as cuts"))
+            continue
+        letters = re.match(r"[A-Za-z]+", tray).group(0)
+        same_kind = [r for r in recs[cohort] if aid in r[1]
+                     and re.match(r"[A-Za-z]+", r[2]).group(0) == letters]
+        if same_kind:
+            near = min(same_kind, key=lambda r: abs((day(r[0]) - day(d)).days))
+            key = (cohort, d, tray, tuple(near[1]))
+            units.setdefault(key, {})
+        else:
+            loose.setdefault((cohort, d, tray), set()).add(aid)
+    out = []
+    sa = lambda c: Path(source_root) / c / "Single_Animal"
+    for (cohort, d, tray, group) in sorted(units):
+        ids, cuts_by_id = [], {}
+        for aid in group:
+            f = sa(cohort) / f"{d}_{aid}_{tray}.mp4"
+            if f.is_file():
+                ids.append(aid)
+                cuts_by_id[aid] = f
+            else:
+                ids.append(None)        # missing that day: an empty position
+        out.append((cohort, d, tray, ids, cuts_by_id))
+    for (cohort, d, tray), aids in sorted(loose.items()):
+        ordered = sorted(aids)
+        for k in range(0, len(ordered), 8):
+            chunk = ordered[k:k + 8]
+            ids = chunk + [None] * (8 - len(chunk))
+            out.append((cohort, d, tray, ids,
+                        {a: sa(cohort) / f"{d}_{a}_{tray}.mp4" for a in chunk}))
+    return out, skipped
+
+
+def encoded_recording(d: str, tray: str, ids: List[Optional[str]]) -> Tuple[str, Dict[str, str]]:
+    """The pipeline name of a rebuilt recording and ``{encoded id: raw id}``.
+    An empty position gets a blank id (``ASPA00{position}``)."""
+    from mousereach.aspa.identity import encode_animal
+    enc, back = [], {}
+    for pos, aid in enumerate(ids, start=1):
+        if aid is None:
+            enc.append(encode_animal(f"{pos:03d}"))
+        else:
+            e = encode_animal(aid)
+            enc.append(e)
+            back[e] = aid
+    return f"{d}_{','.join(enc)}_{tray}", back
 
 
 # ---------------------------------------------------------------------------
@@ -247,9 +322,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="mousereach-aspa-feed",
         description=(
-            "Copy ASPA's own single-animal cuts from the historical archive into the "
-            "shared singles folder, renamed into pipeline form, for any GPU node to pose. "
-            "Copies files (does NOT move originals)."
+            "Bring in ASPA sessions whose recording is lost: rebuild the recording "
+            "from ASPA's own single-animal cuts and write it into the recording intake, "
+            "renamed into pipeline form. Only reads the archive."
         )
     )
 
@@ -270,9 +345,9 @@ def main(argv=None):
                              "worth keeping -- and keep it with your own records, "
                              "not in this repository.")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be copied without actually copying")
+                        help="Check and show what would be rebuilt; write nothing")
     parser.add_argument("--batch-size", type=int, default=50, metavar="N",
-                        help="Maximum number of files to copy per run (default: 50)")
+                        help="Maximum number of recordings to rebuild per run (default: 50)")
     parser.add_argument("--sessions-file", metavar="PATH",
                         help="Feed only these sessions, one {date}_{animal}_{tray}{position} "
                              "per line (lab or pipeline naming); every listed session not "
@@ -281,8 +356,8 @@ def main(argv=None):
                         help="Folder holding {cohort}/Single_Animal (default: the NAS root's "
                              "Archive/historical/ASPA).")
     parser.add_argument("--dest", "--queue-dir", dest="dest", metavar="PATH",
-                        help="Where the copies go (default: the shared singles folder, "
-                             "Unanalyzed/Single_Animal, where any GPU node takes them).")
+                        help="Where rebuilt recordings go (default: the recording intake, "
+                             "Unanalyzed/Multi-Animal).")
 
     args = parser.parse_args(argv)
     if not (args.cohort or args.all or args.sessions_file):
@@ -293,7 +368,7 @@ def main(argv=None):
 
     source_root = Path(args.source) if args.source else default_source_root()
     dest_dir = Path(args.dest) if args.dest else (
-        Path(Paths.SINGLE_ANIMAL_OUTPUT) if Paths.SINGLE_ANIMAL_OUTPUT else None)
+        Path(Paths.MULTI_ANIMAL_SOURCE) if Paths.MULTI_ANIMAL_SOURCE else None)
     if source_root is None or dest_dir is None:
         print("[FAIL] Source or destination not configured: run mousereach-setup, "
               "or pass --source and --dest.")
@@ -318,35 +393,60 @@ def main(argv=None):
     if subjects:
         print(f"Animals     : {len(subjects)} named")
     if args.dry_run:
-        print("Mode        : DRY-RUN (nothing is copied)")
+        print("Mode        : DRY-RUN (nothing is written)")
     print()
 
-    copied = skipped = errors = 0
+    from mousereach.video_prep.core.rebuild import RebuildRefused, plan, rebuild
+
+    built = skipped = errors = 0
     seen, unparsed, found_sessions = set(), set(), set()
-    pairs = select_subjects(iter_cohort_singles(source_root, args.cohort), subjects,
-                            seen, unparsed)
-    for cohort, mp4_path in pairs:
+    chosen = []
+    for cohort, mp4_path in select_subjects(iter_cohort_singles(source_root, args.cohort),
+                                            subjects, seen, unparsed):
+        name = pipeline_name(mp4_path.name)
         if wanted:
-            name = pipeline_name(mp4_path.name)
             if name is None or Path(name).stem not in wanted:
                 continue
             found_sessions.add(Path(name).stem)
-        if copied >= args.batch_size:
+        chosen.append((cohort, mp4_path))
+    units, skips = plan_recordings(chosen, source_root)
+    for cut, why in skips:
+        print(f"  [SKIP] {cut}: {why}")
+        skipped += 1
+    records = (Path(Paths.NAS_ROOT) / "pipeline_records" / "rebuilt_recordings"
+               if Paths.NAS_ROOT else None)
+    analysed_dir = (Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal") if Paths.ANALYZED_OUTPUT else None
+    for cohort, d, tray, ids, cuts_by_raw in units:
+        stem, back = encoded_recording(d, tray, ids)
+        if any((x / f"{stem}.mkv").exists() for x in (dest_dir, analysed_dir) if x):
+            print(f"  [SKIP] {stem}: already in the pipeline")
+            skipped += 1
+            continue
+        have = [already_in_pipeline(f"{d}_{e}_{tray}.mp4") for e in back]
+        if have and all(have):
+            print(f"  [SKIP] {stem}: every session is already in the pipeline")
+            skipped += 1
+            continue
+        if built >= args.batch_size:
             print(f"\n[!] Batch size limit ({args.batch_size}) reached. Run again for the next batch.")
             break
+        singles = {e: cuts_by_raw[raw] for e, raw in back.items()}
         try:
-            ok, what = feed_one(mp4_path, dest_dir, dry_run=args.dry_run)
-        except Exception as exc:
-            print(f"  [FAIL] {mp4_path.name}: {exc}")
+            p = plan(stem, singles)
+            if args.dry_run:
+                print(f"  [OK] {cohort}: would rebuild {stem} ({len(singles)} cuts, "
+                      f"{8 - len(singles)} empty, {p['frames']} frames)")
+            else:
+                path = rebuild(stem, singles, dest_dir, records,
+                               f"ASPA {cohort} {d} {tray}: the recording is not in the "
+                               f"archive; rebuilt from ASPA's own cuts")
+                print(f"  [OK] {cohort}: rebuilt {path.name}")
+            built += 1
+        except RebuildRefused as exc:
+            print(f"  [FAIL] {stem}: {exc}")
             errors += 1
-            continue
-        print(f"  [{'OK' if ok else 'SKIP'}] {cohort} / {mp4_path.name}: {what}")
-        if ok:
-            copied += 1
-        else:
-            skipped += 1
 
-    print(f"\nDone. {'Would copy' if args.dry_run else 'Copied'}: {copied}  "
+    print(f"\nDone. {'Would rebuild' if args.dry_run else 'Rebuilt'}: {built} recording(s)  "
           f"Skipped: {skipped}  Errors: {errors}")
     if sessions:
         missing = [s for s in sessions if s not in found_sessions]

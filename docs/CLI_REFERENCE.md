@@ -1983,9 +1983,17 @@ usage: mousereach-aspa-feed [-h] [--cohort COHORT | --all] [--subjects LIST]
                             [--batch-size N] [--sessions-file PATH]
                             [--source PATH] [--dest PATH]
 
-Copy ASPA's own single-animal cuts from the historical archive into the shared
-singles folder, renamed into pipeline form, for any GPU node to pose. Copies
-files (does NOT move originals).
+Bring in ASPA sessions whose recording is lost: rebuild the recording from
+ASPA's own single-animal cuts and write it into the recording intake, renamed
+into pipeline form. Only reads the archive.
+
+Since 2026-10-23 it never feeds cuts into the singles intake: the input to
+MouseReach is the recording, and a fed cut has no link to its recording. A cut
+whose recording survives in the archive is skipped with that reason (it comes in
+through the recording import). For the rest, the recording is rebuilt in the
+group and grid order the animal had on the nearest day the archive recorded it;
+a group member with no cut that day becomes an empty position. See
+`mousereach-rebuild-recording` for what a rebuild checks and records.
 
 options:
   -h, --help            show this help message and exit
@@ -1999,8 +2007,8 @@ options:
                         line, '#' starts a comment. Use this for a list worth
                         keeping -- and keep it with your own records, not in
                         this repository.
-  --dry-run             Show what would be copied without actually copying
-  --batch-size N        Maximum number of files to copy per run (default: 50)
+  --dry-run             Check and show what would be rebuilt; write nothing
+  --batch-size N        Maximum number of recordings to rebuild per run (default: 50)
   --sessions-file PATH  Feed only these sessions, one
                         {date}_{animal}_{tray}{position} per line (lab or
                         pipeline naming); every listed session not found is
@@ -2008,10 +2016,37 @@ options:
   --source PATH         Folder holding {cohort}/Single_Animal (default: the
                         NAS root's Archive/historical/ASPA).
   --dest PATH, --queue-dir PATH
-                        Where the copies go (default: the shared singles
-                        folder, Unanalyzed/Single_Animal, where any GPU node
-                        takes them).
+                        Where rebuilt recordings go (default: the recording
+                        intake, Unanalyzed/Multi-Animal).
 ```
+
+### `mousereach-rebuild-recording`
+
+```
+usage: mousereach-rebuild-recording --name NAME --singles-dir DIR
+                                    [--singles-dir DIR ...] [--as NAME]
+                                    [--reason TEXT] [--dest DIR] [--apply]
+```
+
+Rebuild a multi-animal recording that exists nowhere from its single-animal
+cuts, and write it into the recording intake, where it is processed like any
+other recording. Use it only when the recording itself is lost; never feed
+singles into the singles intake instead.
+
+* `--name` is the recording as its singles are named; each non-empty position's
+  single is `<date>_<id>_<tray><n>.mp4` in one of the `--singles-dir` folders.
+  `--as` is the name to write when the pipeline's naming differs (same positions).
+* It refuses singles that do not line up in time (different frame counts or
+  rates: not one cut of one recording), singles that are not 480x540 (not cut
+  from this grid), a missing single, and an output that already exists (in the
+  intake or among filed recordings).
+* Each single goes back in its grid cell (1920x1080, 4x2 cells of 480x540, the
+  cut's own layout), black for an empty position, encoded at CRF 10. The file
+  says it is rebuilt (container comment), and a record naming every single, the
+  frame count and the reason goes to
+  `<nas_root>/pipeline_records/rebuilt_recordings/<name>.json`. A rebuilt
+  recording is never an original.
+* Without `--apply` it only checks and reports.
 
 ### `mousereach-aspa-sync`
 
