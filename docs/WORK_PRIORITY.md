@@ -154,7 +154,9 @@ That is deliberate, and it is the fix for two real failures:
 "Do not take on new low-priority work" is the policy. "Refuse to finish
 low-priority work already on your disk" never was.
 
-**A person clearing an Easy or Flat video is the intended exception.** When a
+**A person clearing an Easy or Flat video is the intended exception.** (Since
+2026-10-23 Easy and Flat videos are never held for a person, so this applies
+only to ones already in a queue before then.) When a
 reviewer clears an E/F video in a review queue, the return scan puts it back
 into `Processing/` on the processing server, and from there it is work already
 on the disk: it is finished at once, ahead of the idle-only wait. That is

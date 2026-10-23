@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
-from ..config import Paths
+from ..config import Paths, is_outcome_free_tray
 from ..review.triage_status import TriageStatus, triage_status
 from .review_routing import move_video_bundle
 
@@ -88,7 +88,17 @@ def evaluate_gate(
     gt_full, gt_segs = _gt_certification(video_id)
     if gt_full:
         return DECISION_CLEAN, "ground_truth_exhaustive", st
-    if st.seg_failed:
+    # Easy and Flat trays are never held for a person (Logan, 2026-10-23:
+    # "Easy and flat should never get triaged"; "Pellet outcomes don't matter
+    # for easy and flats"; "They also don't get segmented"; pellets ARE
+    # presented, "we just don't care about it"; "Easy and flat don't need
+    # kinematics"). What they need is the session's reaches: no outcome is
+    # computed, so there is nothing a reviewer could answer. A machine problem
+    # is still recorded in _triage.json; held in a queue the video would only
+    # wait for nobody. The stale-output checks below still run: they send a
+    # video round again, not to a person.
+    outcome_free = is_outcome_free_tray(video_id)
+    if st.seg_failed and not outcome_free:
         # Same honour-the-human rule as qc_needs_review below: a completed
         # deep review outranks the machine's self-check. A soft segmentation
         # failure is re-raised identically by every re-run, so without this a
@@ -158,6 +168,8 @@ def evaluate_gate(
     # The segmenter still RECORDS needs_human in its output; nothing acts on it.
     # If it is ever routed on again, validate it against videos a human has
     # judged first, not against how many videos it routes.
+    if outcome_free:
+        return DECISION_CLEAN, "outcome-free tray (Easy/Flat): never held", st
     if qc_verdict == "needs_review":
         # A human's completed deep review outranks the machine's self-check
         # (Logan's rule, 2026-08-31: "if a human completed all that needed to

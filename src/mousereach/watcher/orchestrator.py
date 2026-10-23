@@ -230,6 +230,38 @@ class BaseOrchestrator:
     # short enough that fixing whatever blocked it takes effect the same session.
     _ARCHIVE_BACKOFF_SECONDS = (60, 300, 900, 3600)
 
+    def _write_session_only_features(self, video_id: str, processing_dir: Path,
+                                     dlc_path: Path) -> bool:
+        """Write an Easy or Flat video's features file: its reaches and the
+        session's attention, no kinematics or outcomes (FeatureExtractor.
+        extract_session_only). True when written; a failure is logged as a
+        failed step and the video still finishes -- the database then simply
+        has no rows for it, as before this existed."""
+        reach_path = Path(processing_dir) / f"{video_id}_reaches.json"
+        if not reach_path.exists():
+            return False
+        self.db.log_step(video_id, 'feature_extraction', 'started')
+        t0 = time.time()
+        try:
+            from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+            from mousereach.pipeline.manifest import record_kinematic_version
+            extractor = FeatureExtractor()
+            features = extractor.extract_session_only(dlc_path, reach_path)
+            with open(Path(processing_dir) / f"{video_id}_features.json", 'w') as f:
+                json.dump(features.to_dict(), f, indent=2)
+            record_kinematic_version(video_id, processing_dir, extractor.VERSION,
+                                     review_path=None)
+            self.db.log_step(video_id, 'feature_extraction', 'completed',
+                             message="session only (Easy/Flat): reaches and attention",
+                             duration=time.time() - t0)
+            logger.info(f"Session file written: {video_id} (Easy/Flat: reaches and attention)")
+            return True
+        except Exception as e:
+            self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e),
+                             duration=time.time() - t0)
+            logger.warning(f"Session file failed for {video_id}: {e}")
+            return False
+
     def _note_archive_failure(self, video_id: str) -> int:
         """Record a failed archive attempt and return the delay before the next."""
         if not hasattr(self, "_archive_backoff"):
@@ -4081,6 +4113,10 @@ class DLCOrchestrator(BaseOrchestrator):
                         self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e))
                         logger.warning(f"Feature extraction failed for {video_id}: {e}")
 
+            # Easy and Flat: the session file (as on the processing server).
+            if skip_outcomes:
+                self._write_session_only_features(video_id, processing_dir, dlc_path)
+
             self.db.update_state(video_id, 'processed')
             self.db.log_step(video_id, 'local_pipeline', 'completed',
                             message=f"All steps complete ({pipeline_duration:.1f}s total)",
@@ -5780,6 +5816,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     feat_duration = time.time() - step_start
                     self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e), duration=feat_duration)
                     logger.warning(f"Feature extraction failed for {video_id}: {e}")
+
+        # Easy and Flat: the session file -- each reach and the session's
+        # attention, no kinematics or outcomes (FeatureExtractor.
+        # extract_session_only says why).
+        if skip_outcomes:
+            self._write_session_only_features(video_id, self.processing_dir, dlc_path)
 
         self.db.update_state(video_id, 'processed')
         self.db.log_step(

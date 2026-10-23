@@ -20,6 +20,7 @@ import shutil
 
 from .segmenter_robust import save_segmentation
 from .segmenter_multi import segment_video_multi, SEGMENTER_VERSION
+from mousereach.config import is_outcome_free_tray
 
 
 def find_dlc_files(input_dir: Path) -> List[Path]:
@@ -65,6 +66,48 @@ def move_to_folder(files: List[Path], dest_folder: Path, verbose: bool = True):
             shutil.move(str(f), str(dest))
 
 
+# What a whole-video span records as its method, in place of the segmenter's.
+WHOLE_VIDEO_ALGORITHM = "whole_video_outcome_free_tray"
+
+
+def write_whole_video_span(dlc_path: Path, video_id: str, output_path: Path) -> Dict:
+    """Write the segmentation of an Easy or Flat tray video: one span, the
+    whole video (a single boundary at frame 0). See process_single for why.
+
+    Carries the current segmenter version, so the version check does not
+    count the video as needing segmentation again; ``segmenter_algorithm``
+    and ``boundary_source`` say how the span was made.
+    """
+    import pandas as pd
+    try:
+        total_frames = int(len(pd.read_hdf(dlc_path)))
+    except Exception as e:
+        return {'video_name': video_id, 'status': 'failed',
+                'error': f"could not read the pose file: {e}",
+                'dlc_path': dlc_path, 'success': False}
+    data = {
+        'segmenter_version': SEGMENTER_VERSION,
+        'segmenter_algorithm': WHOLE_VIDEO_ALGORITHM,
+        'boundary_source': 'outcome_free_tray',
+        'segmented_at': datetime.now().isoformat(),
+        'video_name': video_id,
+        'total_frames': total_frames,
+        'fps': 60.0,
+        'boundaries': [0],
+        'needs_human': [],
+        'candidates': [],
+        'note': ("Easy/Flat tray: not segmented. Pellets are presented, but which "
+                 "pellet a reach went to does not matter for these trays, so the "
+                 "whole video is one span."),
+    }
+    tmp = output_path.with_name(output_path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(output_path)
+    return {'video_name': video_id, 'status': 'good', 'n_boundaries': 1,
+            'interval_cv': 0.0, 'anomalies': [], 'output_file': str(output_path),
+            'dlc_path': dlc_path, 'success': True, 'whole_video_span': True}
+
+
 def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
     """
     Process a single DLC file.
@@ -77,6 +120,18 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
     # Extract video ID
     video_id = dlc_path.stem.split("DLC")[0]
     output_path = output_dir / f"{video_id}_segments.json"
+
+    # Easy and Flat trays are not segmented (Logan, 2026-10-23: "They also
+    # don't get segmented"; pellets are presented on them, but which pellet a
+    # reach went to does not matter). The whole video is ONE span: a single
+    # boundary at frame 0, which every reach detector reads as one segment
+    # running to the end of the video -- so reaches are found across the whole
+    # session, and the ruler is one estimate over the whole video. Running the
+    # segmenter on them cut 21 pellet windows nobody uses and, when it failed,
+    # held the session for a person. Checked before the human-boundary rule
+    # below: a hand-set cut on one of these is no more used than a machine one.
+    if is_outcome_free_tray(video_id):
+        return write_whole_video_span(dlc_path, video_id, output_path)
 
     # A human-corrected segmentation is a fact about the video, not a stale
     # algo output. The fix-segmentation tool (deep review) writes

@@ -438,6 +438,68 @@ class FeatureExtractor:
             extracted_at=extracted_at
         )
 
+    def extract_session_only(self, dlc_path: Path, reaches_path: Path) -> VideoFeatures:
+        """The features file of an Easy or Flat tray video: each reach's
+        identity and frames, and each span's attention -- no kinematics, no
+        outcomes.
+
+        WHY (Logan, 2026-10-23): these trays "don't need kinematics" and their
+        pellet outcomes "don't matter", but "we do want attention" from them.
+        The database takes reaches only from a features file, and the
+        session's reach count and mean attention are worked out from those
+        rows, so the file is still written -- with every per-reach measurement
+        and every outcome field left empty, never invented. The video is one
+        whole-video span (not segmented), so its one segment's attention is
+        the session's.
+        """
+        from datetime import datetime
+        df = self._load_dlc(dlc_path)
+        with open(reaches_path) as f:
+            reaches_data = json.load(f)
+        segments = []
+        total_reaches = 0
+        for seg in reaches_data.get('segments', []):
+            seg_reaches = seg.get('reaches', []) or []
+            n = len(seg_reaches)
+            total_reaches += n
+            sf = SegmentFeatures(
+                segment_num=seg['segment_num'],
+                start_frame=seg['start_frame'],
+                end_frame=seg['end_frame'],
+                ruler_pixels=seg.get('ruler_pixels'),
+                outcome=None,
+                outcome_confidence=None,
+                outcome_flagged=False,
+                n_reaches=n,
+                attention_score=self._compute_attention_score(
+                    df, seg['start_frame'], seg['end_frame']),
+            )
+            for i, r in enumerate(seg_reaches):
+                sf.reaches.append(ReachFeatures(
+                    reach_id=r.get('reach_id'),
+                    reach_num=r.get('reach_num', i + 1),
+                    segment_num=seg['segment_num'],
+                    is_first_reach=(i == 0),
+                    is_last_reach=(i == n - 1),
+                    n_reaches_in_segment=n,
+                    start_frame=r.get('start_frame', 0),
+                    apex_frame=r.get('apex_frame'),
+                    end_frame=r.get('end_frame', 0),
+                    duration_frames=r.get('duration_frames', 0),
+                ))
+            segments.append(sf)
+        return VideoFeatures(
+            video_name=reaches_data['video_name'],
+            extractor_version=self.VERSION,
+            total_frames=reaches_data.get('total_frames', len(df)),
+            n_segments=len(segments),
+            segments=segments,
+            summary={'session_only': True, 'total_reaches': total_reaches,
+                     'note': 'Easy/Flat tray: reaches and attention only -- '
+                             'no kinematics or outcomes are computed for these trays'},
+            extracted_at=datetime.now().isoformat(),
+        )
+
     def _extract_reach_features(
         self,
         reach: Dict,

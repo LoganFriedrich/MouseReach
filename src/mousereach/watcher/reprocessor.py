@@ -234,7 +234,8 @@ class ReprocessingScanner:
             'pose_already_current': 0,  # manifest says an old model, but the
                                         # declared model's pose is already on
                                         # disk -- downstream re-run, no GPU
-            'unsupported_tray': 0,      # E/F tray videos: not this pipeline's work
+            'unsupported_tray': 0,      # Easy/Flat videos: not re-run for versions
+                                        # (re-run once if they have no session file)
             'crystallized_skipped': 0,
             'no_manifest': 0,
             'review_triggered': 0,  # version-current but a newer human review to apply
@@ -348,19 +349,36 @@ class ReprocessingScanner:
             video_id = video['video_id']
             summary['scanned'] += 1
 
-            # E (Easy) and F (Flat) tray sessions do not belong in this pipeline
-            # -- the algorithms are calibrated for the pillar tray, and the pellet
-            # and tray landmarks are not reliably tracked on the others
-            # (config.FilePatterns.UNSUPPORTED_TRAY_TYPES; router.SKIP_STEPS
-            # already drops outcome detection for them). Scheduling reprocessing
-            # work for them spends real machine time on sessions nobody is going
-            # to analyse: all 31 videos in the Y: archive that would genuinely
-            # need a new pose are E-tray. They are counted and named, not
-            # silently dropped, because they should not be in the archive at all
-            # and that is a separate decision.
+            # E (Easy) and F (Flat) trays are not re-run for version changes.
+            # They are processed (last, never skipped -- Logan, 2026-10-21), but
+            # what they need is only the session's reaches and attention: they
+            # are not segmented, and neither pellet outcomes nor kinematics are
+            # made for them (Logan, 2026-10-23; config.is_outcome_free_tray). A
+            # newer segmenter, outcome detector or extractor gives them nothing
+            # they use, and re-posing them would spend GPU time on it (all 31
+            # videos in the archive that would genuinely need a new pose are
+            # Easy-tray). They are counted and named, not silently dropped.
+            #
+            # ONE exception: a filed one with no features file has never had
+            # its session file (FeatureExtractor.extract_session_only) -- every
+            # Easy/Flat video filed before 2026-10-23. It is re-run once from
+            # segmentation, its pose kept: whole-video span, reaches, session
+            # file. The work order runs Easy/Flat only when nothing else waits.
             if not is_supported_tray_type(f"{video_id}.mp4"):
                 summary['unsupported_tray'] += 1
                 summary['unsupported_tray_videos'].append(video_id)
+                if manifest_index and video_id not in feats_mtime:
+                    summary['outdated'] += 1
+                    summary['outdated_partial'] += 1
+                    summary['outdated_videos'].append({
+                        'video_id': video_id, 'scope': 'segmentation',
+                        'stale_components': ['outcome_free_session_file']})
+                    if mark_outdated and not full_only:
+                        self.db.force_state(video_id, 'outdated',
+                                            reprocess_scope='segmentation',
+                                            mark_reason=None)
+                        logger.info(f"Marked {video_id} as outdated (scope=segmentation, "
+                                    f"Easy/Flat with no session file)")
                 continue
 
             try:
@@ -492,7 +510,7 @@ class ReprocessingScanner:
         for video in self.db.get_videos_in_state('outdated'):
             video_id = video['video_id']
             if not is_supported_tray_type(f"{video_id}.mp4"):
-                continue  # E/F rows stay parked; their pipeline scope is a separate decision
+                continue  # Easy/Flat are not re-run for versions (see the mark side)
             if (video.get('mark_reason') or '').strip():
                 # A HAND-MARK. A person said "re-run this", with a recorded
                 # why -- version currency is irrelevant (the usual reason is
@@ -864,7 +882,7 @@ class ReprocessingScanner:
                          f"(manifest named an old model; no GPU needed)")
         lines.append(f"  Crystallized:       {summary['crystallized_skipped']}")
         lines.append(f"  Unsupported tray:   {summary['unsupported_tray']} "
-                     f"(E/F sessions -- not this pipeline's work)")
+                     f"(Easy/Flat -- not re-run for versions: they need only the session's reaches)")
         lines.append(f"  No manifest:        {summary['no_manifest']}")
         lines.append(f"  Errors:             {summary['errors']}")
         lines.append("")

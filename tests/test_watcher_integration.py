@@ -1220,15 +1220,21 @@ class TestDLCStaleScope:
 
     def test_easy_tray_sessions_are_not_scheduled_at_all(
             self, temp_db, scratch_paths, monkeypatch):
-        """E tray does not belong in this pipeline, so it is never GPU work.
+        """Easy/Flat are not re-run for version changes, so never GPU work.
 
-        Every video in the Y: archive that would genuinely need a new pose is
-        E tray -- 31 of them. Scheduling those was the whole remaining cost.
+        They need only the session's reaches -- not segmented, no outcomes, no
+        kinematics (2026-10-23) -- so a newer version gives them nothing they
+        use. Every video in the archive that would genuinely need a new pose is
+        Easy-tray -- 31 of them.
         """
         self._archived_video(
             temp_db, scratch_paths, "20251211_CNT0406_E2",
             manifest_scorer="DLC_resnet50_MPSAOct27shuffle1_100000",
             pose_scorer="DLC_resnet50_MPSAOct27shuffle1_100000")
+        # It already has its session file; one without it is re-run once from
+        # segmentation (tests/test_easy_flat_session_only.py), never re-posed.
+        (scratch_paths["ANALYZED_OUTPUT"] / "Connectome" / "CNT01"
+         / "20251211_CNT0406_E2_features.json").write_text("{}")
         summary = self._scan(temp_db, scratch_paths, monkeypatch)
         assert summary["unsupported_tray"] == 1
         assert "20251211_CNT0406_E2" in summary["unsupported_tray_videos"]

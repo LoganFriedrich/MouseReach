@@ -600,6 +600,18 @@ def parse_tray_type(filename: str) -> dict:
     }
 
 
+def is_outcome_free_tray(video_id: str) -> bool:
+    """True for an Easy or Flat tray video (``..._E2``, ``..._F1``).
+
+    These are session-only: pellets are presented on them, but which pellet a
+    reach went to and what became of it do not matter for these trays, so they
+    are not segmented, no pellet outcome or kinematics are computed, and they
+    are never held for a person -- what they need is the session's reaches. One test, used
+    everywhere that treats them differently, so the rule cannot drift.
+    """
+    return parse_tray_type(f"{video_id}.mp4").get('tray_type') in FilePatterns.UNSUPPORTED_TRAY_TYPES
+
+
 def is_supported_tray_type(filename: str) -> bool:
     """Check if filename represents a supported tray type (P=Pillar).
 

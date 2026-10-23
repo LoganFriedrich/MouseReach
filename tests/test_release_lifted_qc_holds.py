@@ -99,13 +99,14 @@ def test_a_lifted_hold_goes_back_to_the_posed_folder(tmp_path, monkeypatch):
 
 def test_holds_that_still_stand_or_belong_to_a_person_stay(tmp_path, monkeypatch):
     deep, posed, _ = _wire(monkeypatch, tmp_path)
+    # Pillar videos: Easy/Flat are never held at all (see the tests below).
     kept = [
-        _bundle(deep, "20261012_CNT0601_F1", person=True),                 # a person's
-        _bundle(deep, "20261012_CNT0602_F1", flags=(                       # tracking hold
+        _bundle(deep, "20261012_CNT0601_P2", person=True, outcomes=True),  # a person's
+        _bundle(deep, "20261012_CNT0602_P2", outcomes=True, flags=(        # tracking hold
             {"category": "dlc_coherence", "severity": "critical",
              "description": "Missing SABL or SABR — cannot compute ruler"},)),
         _bundle(deep, "20261012_CNT0603_P1"),                              # Pillar: still missing
-        _bundle(deep, "20261012_CNT0604_F1", reason="segmentation_failed"),  # other reason
+        _bundle(deep, "20261012_CNT0604_P3", reason="segmentation_failed"),  # other reason
     ]
     db = FakeDB()
 
@@ -260,3 +261,28 @@ def test_the_check_records_ruler_variation_without_holding():
         flags = triage.check_dlc_coherence(h5, [0, n])
     ruler = [f for f in flags if f.description.startswith(triage.RULER_UNSTABLE_DESC)]
     assert ruler and all(f.severity == "warning" for f in ruler)
+
+
+def test_an_easy_or_flat_machine_hold_is_released_even_with_a_persons_file(tmp_path, monkeypatch):
+    # 2026-10-23 (Logan): Easy and Flat are never held for a person; what a
+    # person can answer is a pellet outcome, and those do not matter for them.
+    # The person's file is set aside with the other outputs, not lost.
+    deep, posed, review = _wire(monkeypatch, tmp_path)
+    released = [
+        _bundle(deep, "20261012_CNT0611_F1", person=True),
+        _bundle(deep, "20261012_CNT0612_E2", reason="segmentation_failed"),
+        _bundle(deep, "20261012_CNT0613_F3", flags=(
+            {"category": "dlc_coherence", "severity": "critical",
+             "description": "Missing SABL or SABR — cannot compute ruler"},)),
+    ]
+    flagged_by_hand = _bundle(deep, "20261012_CNT0614_F4",
+                              reason="reviewer flagged session 20261012_CNT0614")
+    db = FakeDB()
+
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+
+    assert summary["qc_released"] == 3
+    assert not any(b.exists() for b in released)
+    assert flagged_by_hand.exists()                     # a person's own flag stays
+    kept = review / "_Problematic" / f"_released_qc_holds_{datetime.now():%Y-%m-%d}"
+    assert (kept / "20261012_CNT0611_F1" / "20261012_CNT0611_F1_causal_review.json").is_file()

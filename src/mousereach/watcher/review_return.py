@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..config import Paths
+from ..config import Paths, is_outcome_free_tray
 from . import claim_marker, node_status
 from ..review.triage_status import triage_status
 from .review_routing import _safe_move
@@ -1213,9 +1213,22 @@ def scan_review_queues(db, processing_dir: Path,
             signature = _bundle_signature(bundle)
         except OSError:
             continue
-        if _person_touched(signature):
+        # An Easy or Flat video is never held (review_gate, 2026-10-23), so a
+        # machine-made hold on one -- a quality flag or a failed segmentation
+        # -- is released even when a person's file sits in the bundle: what a
+        # person can answer there is a pellet outcome, and outcomes do not
+        # matter for these trays. The person's file is not lost; it is set
+        # aside with the other outputs (_release_to_posed). A session a person
+        # flagged by hand ("reviewer flagged session ...") is their call and
+        # stays.
+        outcome_free = is_outcome_free_tray(stem)
+        if _person_touched(signature) and not outcome_free:
             continue
-        if _qc_hold_lifted(bundle, stem, signature) and _release_to_posed(bundle, stem, db):
+        if outcome_free:
+            lifted = _routed_reason(bundle, stem) in ("qc_needs_review", "segmentation_failed")
+        else:
+            lifted = _qc_hold_lifted(bundle, stem, signature)
+        if lifted and _release_to_posed(bundle, stem, db):
             summary["qc_released"] += 1
 
     if (summary["triage_returned"] or summary["deep_returned"]

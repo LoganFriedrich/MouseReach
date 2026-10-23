@@ -387,8 +387,11 @@ def check_structural(
                 description=f'Missing {name} file: {path.name}'
             ))
 
-    # Segment count
-    if seg_path.exists():
+    # Segment count. Not checked for Easy/Flat: they are not segmented, their
+    # segments file is one whole-video span by design (segmentation batch
+    # write_whole_video_span), so any count here would be a false alarm.
+    from mousereach.config import is_outcome_free_tray
+    if seg_path.exists() and not is_outcome_free_tray(video_id):
         try:
             with open(seg_path) as f:
                 data = json.load(f)

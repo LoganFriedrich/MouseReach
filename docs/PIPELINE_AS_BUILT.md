@@ -2330,3 +2330,29 @@ average such variation away. Videos already held for it are released by the revi
 (their stored flag is recognised by its text, `triage.RULER_UNSTABLE_DESC`). A pose file with no
 ruler points at all is still critical: that is a wrong model, not variation. Tests:
 `tests/test_release_lifted_qc_holds.py`.
+
+## Update 2026-10-23: Easy and Flat are session-only -- not segmented, never held, reaches and attention
+
+Lab decisions of the day: Easy and Flat trays are never held for a person; their pellet outcomes do not
+matter (pellets are presented, but which pellet a reach went to is not used); they are not segmented;
+they need no kinematics; their attention is wanted; they come last, behind every other priority. One
+test decides it everywhere: `config.is_outcome_free_tray` (tray letter E or F).
+* **Not segmented.** The segmentation step writes one whole-video span (a single boundary at frame 0,
+  `segmenter_algorithm` "whole_video_outcome_free_tray") instead of running the segmenter, so reach
+  detection runs over the whole session and the ruler is one estimate for the video. Checked before
+  the keep-human-boundaries rule. Verified on a filed Easy video: 79 reaches either way (21 segments
+  before, 1 now), ruler 31.9 px against a 32.4 px per-segment median.
+* **Never held.** The gate passes them (`review_gate.evaluate_gate`); the quality check no longer counts
+  their segments. Videos already held by the machine (a quality flag or failed segmentation) are
+  released by the review-return scan even when a person's file is in the bundle -- what a person can
+  answer there is an outcome -- and that file is kept with the set-aside outputs. A session a person
+  flagged by hand stays.
+* **Reaches and attention, no kinematics or outcomes.** After the gate, `FeatureExtractor.
+  extract_session_only` writes the features file: each reach's id and frames and the span's
+  `attention_score`, every kinematic and outcome field empty. The database takes reaches only from a
+  features file, and the session's reach count and mean attention are worked out from those rows.
+* **Filed ones.** The version scanner still never re-runs Easy/Flat for version changes (they would get
+  nothing they use, and a re-pose would spend GPU time), with one exception: a filed one with no
+  features file -- every one filed before this day -- is marked outdated from segmentation once, pose
+  kept. The work order's idle-only rule (`idle_only_tray_types` E, F) runs it only when nothing else waits.
+Tests: `tests/test_easy_flat_session_only.py`, `tests/test_release_lifted_qc_holds.py`.

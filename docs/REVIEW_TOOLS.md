@@ -478,6 +478,7 @@ An unset `nas_root` makes all three `None` (since 2026-10-22), and the launcher 
 `run_gate` (`review_gate.py:209`) runs after reach assignment and before kinematics. `evaluate_gate` (`:68`) decides, in order:
 
 1. Ground truth marks the video exhaustively complete -> **clean**, proceed, even if segmentation failed (`:85-86`).
+1b. An Easy or Flat tray video -> **clean**, always (since 2026-10-23): these trays are never held for a person. They are not segmented and get no outcomes, so there is nothing a reviewer could answer; a machine problem is only recorded in `_triage.json`. The stale-output checks still apply (they send a video round again, not to a person).
 2. Segmentation failed — no segments file, confidence at or below 0, or a "reference quality" anomaly -> **DEEP_REVIEW** (`:87-88`).
 3. Quality control returned `needs_review` -> **DEEP_REVIEW** (`:107-108`). Quality control calls a missing segments, reaches or outcomes file critical, but asks for the outcomes file only where outcome detection runs: Easy and Flat trays skip it by design (`watcher/router.SKIP_STEPS`), and until 2026-10-22 every Easy/Flat video was held here for that missing file (`pipeline/triage.py`, `check_structural`).
 4. Any triaged segment not resolved by ground truth or a saved review -> **TRIAGE** (`:114-118`).
