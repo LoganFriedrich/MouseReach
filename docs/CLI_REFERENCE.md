@@ -148,7 +148,7 @@ Usage:
     mousereach-setup                   Run interactive configuration wizard
     mousereach-setup --show            Show current configuration
     mousereach-setup --set-role NAME   Declare this PC's role (saves locally)
-    mousereach-setup --list-roles      Show available machine roles
+    mousereach-setup --list-roles      Show the profiles file read, its roles, and which one is this machine's
     mousereach-setup --help            Show this help message
 
 Machine identification priority:

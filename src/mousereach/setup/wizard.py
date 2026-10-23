@@ -236,7 +236,13 @@ def detect_lab_profile() -> tuple:
 
     Returns:
         (profile_dict, drives_dict, detection_method) where detection_method
-        is "identity_file", "drive_match", or None.
+        is "identity_file", "hostname_match" (the matched profile has a
+        hostname rule), "drive_match" (drive rules only), or None.
+
+    An identity file naming a role that is not in the profiles is said out
+    loud, then matching goes on. WHY: it used to fall through silently, so a
+    PC whose identity file still named a retired role looked declared while
+    it was really being matched (found 2026-10-22).
     """
     drives = _get_current_drives()
 
@@ -246,12 +252,16 @@ def detect_lab_profile() -> tuple:
         profile = _find_profile_by_name(role)
         if profile:
             return profile, drives, "identity_file"
+        print(f"[!] {MACHINE_ROLE_FILE} names the role \"{role}\", which is not in "
+              f"the lab profiles; matching this machine instead. Fix it with: "
+              f"mousereach-setup --set-role \"<role name>\"")
 
-    # Priority 2: Drive-pattern matching
+    # Priority 2: Hostname and drive-pattern matching
     profiles = _load_lab_profiles()
     for profile in profiles:
         if _match_profile(profile, drives):
-            return profile, drives, "drive_match"
+            by_name = bool(profile.get("match", {}).get("hostname"))
+            return profile, drives, "hostname_match" if by_name else "drive_match"
 
     return None, drives, None
 
@@ -296,12 +306,21 @@ def cli_main():
                 print(f"  (set {LAB_PROFILES_ENV} to point at a shared copy;")
                 print(f"   template to copy: {LAB_PROFILES_EXAMPLE})")
                 return
-            print("\nAvailable machine roles:")
+            # Say which file was read and which role this machine would get,
+            # so running this on a PC is enough to check it (asked for by a
+            # GPU node's session, 2026-10-22).
+            print(f"\nLab profiles file: {lab_profiles_path()}")
             current_role = _load_machine_role()
+            mine, _, how = detect_lab_profile()
+            print("\nAvailable machine roles:")
             for p in profiles:
                 name = p.get("name", "Unknown")
                 desc = p.get("description", "")
-                marker = " (current)" if current_role and current_role.lower() == name.lower() else ""
+                marker = ""
+                if mine is not None and mine.get("name") == name:
+                    marker = f"  <- THIS MACHINE ({how.replace('_', ' ')})"
+                elif current_role and current_role.lower() == name.lower():
+                    marker = " (current)"
                 print(f"  {name}{marker}")
                 if desc:
                     print(f"    {desc}")
@@ -406,6 +425,8 @@ def run_setup_wizard():
         desc = profile.get("description", "")
         if method == "identity_file":
             print(f"\nMachine role: {name}  (from {MACHINE_ROLE_FILE})")
+        elif method == "hostname_match":
+            print(f"\nAuto-detected profile: {name}  (matched this machine's hostname)")
         else:
             print(f"\nAuto-detected profile: {name}  (matched drive pattern)")
         if desc:
@@ -770,7 +791,7 @@ def show_config():
         print(f"\nDrives:            {', '.join(drive_strs)}")
 
     if profile:
-        source = "identity file" if method == "identity_file" else "drive match"
+        source = method.replace("_", " ") if method else "?"
         print(f"Machine Role:      {profile.get('name', 'Unknown')}  ({source})")
     else:
         print(f"Machine Role:      (not set - run mousereach-setup --set-role)")

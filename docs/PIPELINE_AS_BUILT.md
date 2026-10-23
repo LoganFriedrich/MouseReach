@@ -2303,4 +2303,7 @@ profiles. Four defects, all in `setup/wizard.py` and `setup/setup_widget.py`:
 4. The Setup panel's Detect overwrote both folders with the profile's, and Save let the profile's
    watcher settings replace the machine's. It now fills only what is missing, like the wizard.
 A machine's own settings are never replaced by a profile. Install Step 6/7 rewritten. Tests:
-`tests/test_setup_lab_profiles.py`.
+`tests/test_setup_lab_profiles.py`. Also: `mousereach-setup --list-roles` names the file it read and
+marks the role this machine gets ("<- THIS MACHINE (hostname match)"), and an identity file
+(`~/.mousereach/machine_role.json`) naming a role that is not in the profiles is reported instead of
+silently skipped -- two GPU PCs still named retired roles there.

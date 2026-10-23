@@ -102,3 +102,27 @@ def test_the_template_holds_placeholders_not_a_real_layout():
     for p in data["profiles"]:
         assert p["match"]["hostname"].startswith("<")
         assert p["defaults"]["nas_root"].startswith("<")
+
+
+def test_an_identity_file_naming_a_retired_role_is_reported(places, monkeypatch, capsys):
+    _, user, _ = places
+    _write(user, "Role A")
+    monkeypatch.setattr(wizard, "_load_machine_role", lambda: "Old Role")
+    monkeypatch.setattr(wizard, "_get_current_drives", lambda: {})
+    monkeypatch.setattr("socket.gethostname", lambda: "PC-A")
+    profile, _, how = wizard.detect_lab_profile()
+    assert profile["name"] == "Role A" and how == "hostname_match"
+    assert "Old Role" in capsys.readouterr().out
+
+
+def test_list_roles_names_the_file_and_this_machines_role(places, monkeypatch, capsys):
+    _, user, _ = places
+    _write(user, "Role A")
+    monkeypatch.setattr(wizard, "_load_machine_role", lambda: None)
+    monkeypatch.setattr(wizard, "_get_current_drives", lambda: {})
+    monkeypatch.setattr("socket.gethostname", lambda: "PC-A")
+    monkeypatch.setattr("sys.argv", ["mousereach-setup", "--list-roles"])
+    wizard.cli_main()
+    out = capsys.readouterr().out
+    assert str(user) in out
+    assert "Role A  <- THIS MACHINE (hostname match)" in out
