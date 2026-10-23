@@ -247,3 +247,17 @@ def test_a_recording_surviving_under_a_typo_name_is_not_rebuilt(tmp_path, monkey
     feed.main(["--cohort", "H"])
     assert env.built == []
     assert f"its recording survives (20220602_{ids}_P1)" in capsys.readouterr().out
+
+
+def test_cuts_as_long_as_a_cut_of_a_surviving_recording_are_for_a_person(
+        tmp_path, monkeypatch, capsys):
+    # The surviving 06-02 recording was trimmed after it was cut, so it is no
+    # longer as long as its cuts (50000 frames here) -- but H01's cut, which
+    # came out of it, is as long as the "lost" cuts: they came out of it too.
+    env = _env(tmp_path, monkeypatch)
+    env.rec_lengths["20220602_H01_P1.mp4"] = (40001, 30.0)
+    feed.main(["--cohort", "H"])
+    assert env.built == []
+    out = capsys.readouterr().out
+    assert ("as long as 20220602_H01_P1.mp4, which came out of "
+            "20220602_H01,H02,H03,H04,H05,H06,H07,H08_P1") in out

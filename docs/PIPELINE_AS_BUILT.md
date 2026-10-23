@@ -2376,7 +2376,9 @@ feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now
   groups; groups change from day to day, so it paired cuts of different recordings and once put an
   animal alone where it had shared a recording. Caught in the dry run; nothing was built that way.)
   Also for a person, never rebuilt: cuts as long as a recording that survives that day (they came out
-  of it under a name it does not list -- an identity question), and cuts under a minute long.
+  of it under a name it does not list -- an identity question), cuts as long as another cut of that
+  day whose recording survives (same reason; this catches a recording trimmed after it was cut), and
+  cuts under a minute long.
 * `mousereach-aspa-import-collages` reads two kinds of name that are not in standard form: a
   separator typo between ids (read as a comma when that gives exactly eight ids and one reading), and
   one recording holding two cohorts on different runs (`_JP3,IP1`), copied in once per run with the

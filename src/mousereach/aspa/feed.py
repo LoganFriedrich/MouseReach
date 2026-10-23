@@ -28,6 +28,11 @@ For a person, never rebuilt:
   does not list them -- a seat named as empty, or under another animal's id.
   Which animal sat where is an identity question; a rebuild would enter the
   animal a second time from a recording that never existed;
+- cuts as long as another cut of that day and tray whose recording survives:
+  they came out of the same recording. This catches what the first test cannot
+  -- a surviving recording that was trimmed in time after it was cut (or kept
+  untrimmed when the cuts were made from a trimmed copy) is no longer as long
+  as its cuts, but its cuts are still as long as each other;
 - cuts shorter than ``MIN_SESSION_SECONDS``: no session fits in them (a run
   presents twenty pellets one at a time);
 - more than eight cuts of one length, or a cut whose length cannot be read.
@@ -243,6 +248,8 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
             return None
 
     lost: Dict[tuple, Dict[str, Path]] = {}
+    # Cuts whose own recording survives, by day and tray, with that recording.
+    kept: Dict[tuple, List[Tuple[Path, str]]] = {}
     for cohort, mp4 in cuts:
         m = _CUT.match(mp4.name)
         if not m:
@@ -259,6 +266,7 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
         if own:
             skipped.append((mp4.name, f"its recording survives ({own}): it comes in "
                                       f"through the recording import, not as cuts"))
+            kept.setdefault((cohort, d, tray), []).append((mp4, own))
             continue
         lost.setdefault((cohort, d, tray), {})[aid] = mp4
 
@@ -283,7 +291,7 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
                                 "which recording it came from is for a person to say"))
         groups = [(r[0], r[1]) for r in recs[cohort]
                   if day(r[0]) is not None and kind(r[2]) == kind(tray)]
-        survivors = None
+        survivors = siblings = None
         for length, members in sorted(by_length.items(), key=lambda kv: kv[1]):
             def person(why):
                 for a in members:
@@ -304,6 +312,21 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
                 continue
             if unread:
                 person(f"cannot be compared with {unread[0]} (its length cannot be "
+                       "read): for a person")
+                continue
+            if siblings is None:
+                siblings = [(c, rec, recording_length(c))
+                            for c, rec in kept.get((cohort, d, tray), [])]
+            twin = [(c.name, rec) for c, rec, n in siblings
+                    if n is not None and abs(n[0] - length[0]) <= SURVIVOR_TOLERANCE]
+            if twin:
+                person(f"as long as {twin[0][0]}, which came out of {twin[0][1]}: it "
+                       "came out of that recording too, whose name does not list this "
+                       "animal -- which seat it had is for a person to say")
+                continue
+            blind = [c.name for c, _, n in siblings if n is None]
+            if blind:
+                person(f"cannot be compared with {blind[0]} (its length cannot be "
                        "read): for a person")
                 continue
             if len(members) > 8:

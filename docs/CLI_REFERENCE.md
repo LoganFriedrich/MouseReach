@@ -2019,6 +2019,10 @@ Named and left for a person, never guessed:
   frames): they came out of that recording, whose name does not list them -- a
   seat named as empty, or under another animal's id. Which animal sat where is
   an identity question; a rebuild would enter the animal a second time;
+* cuts as long as another cut of that day whose recording survives: they came
+  out of that same recording. (A recording trimmed in time after it was cut --
+  or kept untrimmed when the cuts were made from a trimmed copy -- is no longer
+  as long as its cuts, but its cuts are still as long as each other.);
 * cuts shorter than a minute (no session fits in that);
 * more than eight cuts of one length on one day (more than one recording that
   long), a cut whose length cannot be read, a surviving recording that day whose
