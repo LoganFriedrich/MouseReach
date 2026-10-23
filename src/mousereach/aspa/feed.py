@@ -152,7 +152,12 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
     skipped = []
 
     def day(s):
-        return _date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+        # None for a name whose date is not a real day (a typo such as 20220631):
+        # that file is named and left alone, never allowed to stop the run.
+        try:
+            return _date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+        except ValueError:
+            return None
 
     for cohort, mp4 in cuts:
         m = _CUT.match(mp4.name)
@@ -160,6 +165,9 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
             skipped.append((mp4.name, "name is not {date}_{animal}_{tray}{position}"))
             continue
         d, aid, tray = m.groups()
+        if day(d) is None:
+            skipped.append((mp4.name, f"{d} is not a real date"))
+            continue
         if cohort not in recs:
             recs[cohort] = cohort_recordings(source_root, cohort)
         own = [r for r in recs[cohort] if r[0] == d and r[2] == tray and aid in r[1]]
@@ -168,7 +176,7 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path):
                                       f"through the recording import, not as cuts"))
             continue
         letters = re.match(r"[A-Za-z]+", tray).group(0)
-        same_kind = [r for r in recs[cohort] if aid in r[1]
+        same_kind = [r for r in recs[cohort] if aid in r[1] and day(r[0]) is not None
                      and re.match(r"[A-Za-z]+", r[2]).group(0) == letters]
         if same_kind:
             near = min(same_kind, key=lambda r: abs((day(r[0]) - day(d)).days))

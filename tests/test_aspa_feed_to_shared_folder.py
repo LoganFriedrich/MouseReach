@@ -98,3 +98,12 @@ def test_a_recording_already_in_the_pipeline_is_not_rebuilt(tmp_path, monkeypatc
                    "ASPA0815,ASPA0816_P1.mkv")).write_bytes(b"there")
     feed.main(["--cohort", "H"])
     assert env.built == [] and "already in the pipeline" in capsys.readouterr().out
+
+
+def test_a_name_with_a_date_that_is_not_a_day_is_named_and_left(tmp_path, monkeypatch, capsys):
+    env = _env(tmp_path, monkeypatch)
+    (env.sa / "20220631_H09_P1.mp4").write_bytes(b"cut")                 # June has 30 days
+    (env.archive / "H" / "Multi-Animal" / f"20220632_{','.join(GROUP)}_P1.mkv").write_bytes(b"x")
+    assert feed.main(["--cohort", "H"]) == 0
+    assert "20220631 is not a real date" in capsys.readouterr().out
+    assert len(env.built) == 1                                           # the 06-02 one still built
