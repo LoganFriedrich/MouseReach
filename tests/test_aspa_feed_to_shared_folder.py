@@ -177,6 +177,18 @@ def test_a_recording_already_in_the_pipeline_is_not_rebuilt(tmp_path, monkeypatc
     assert env.built == [] and "already in the pipeline" in capsys.readouterr().out
 
 
+def test_a_session_already_in_the_pipeline_is_not_made_twice(tmp_path, monkeypatch, capsys):
+    # H10's 06-02 video came in earlier by another route: its seat is left
+    # empty, and the other seven come in.
+    env = _env(tmp_path, monkeypatch)
+    env.posed.joinpath("20220602_ASPA0810_P1.mp4").write_bytes(b"posed")
+    feed.main(["--cohort", "H"])
+    stem, singles, _ = env.built[0]
+    assert stem.split("_")[1].split(",")[1] == "ASPA0002"
+    assert "ASPA0810" not in singles and len(singles) == 7
+    assert "20220602_H10_P1: already in the pipeline" in capsys.readouterr().out
+
+
 def test_a_name_with_a_date_that_is_not_a_day_is_named_and_left(tmp_path, monkeypatch, capsys):
     env = _env(tmp_path, monkeypatch)
     (env.sa / "20220631_H09_P1.mp4").write_bytes(b"cut")                 # June has 30 days

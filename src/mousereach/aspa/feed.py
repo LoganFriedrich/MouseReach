@@ -54,7 +54,9 @@ here only reads the archive.
 sessions (one ``{date}_{animal}_{tray}{position}`` per line, either naming)
 and names every listed session it could not find. ``--subjects`` /
 ``--subjects-file`` restrict a run to named animals. A recording whose sessions
-the pipeline already has (in any stage, or analysed) is not rebuilt.
+the pipeline already has (in any stage, or analysed) is not rebuilt; when it
+has only some of them, their seats are left empty in the rebuild, so no
+session is ever made twice.
 
 CLI:
     mousereach-aspa-feed --cohort COHORT [--dry-run] [--batch-size 50]
@@ -587,11 +589,24 @@ def main(argv=None):
             print(f"  [SKIP] {stem}: already in the pipeline")
             skipped += 1
             continue
-        have = [already_in_pipeline(f"{d}_{e}_{tray}.mp4") for e in back]
-        if have and all(have):
+        have = {e: already_in_pipeline(f"{d}_{e}_{tray}.mp4") for e in back}
+        if have and all(have.values()):
             print(f"  [SKIP] {stem}: every session is already in the pipeline")
             skipped += 1
             continue
+        there = {back[e]: why for e, why in have.items() if why}
+        if there:
+            # A session the pipeline already has is never made a second time:
+            # its seat is left empty, and the rest of the recording comes in.
+            ids = [None if a in there else a for a in ids]
+            for raw, why in sorted(there.items()):
+                print(f"  [SKIP] {d}_{raw}_{tray}: already in the pipeline ({why}); its "
+                      f"seat is left empty in the rebuilt recording")
+                skipped += 1
+            stem, back = encoded_recording(d, tray, ids)
+            if any((x / f"{stem}.mkv").exists() for x in (dest_dir, analysed_dir) if x):
+                print(f"  [SKIP] {stem}: already in the pipeline")
+                continue
         if built >= args.batch_size:
             print(f"\n[!] Batch size limit ({args.batch_size}) reached. Run again for the next batch.")
             break

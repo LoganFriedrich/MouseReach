@@ -2029,6 +2029,10 @@ Named and left for a person, never guessed:
   length cannot be read;
 * a name that is not a session, or whose date is not a real day.
 
+A session the pipeline already has (in any stage, or analysed) is never made a
+second time: its seat is left empty in the rebuilt recording, and a recording
+whose sessions it has all is not rebuilt.
+
 A cut whose recording survives under a slightly wrong name (see
 `mousereach-aspa-import-collages`) is not lost: the import copies the original
 in. See `mousereach-rebuild-recording` for what a rebuild checks and records.
