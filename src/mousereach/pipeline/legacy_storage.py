@@ -25,22 +25,25 @@ What counts as "the pipeline already has it" -- any one is enough:
     recording under the pipeline root (blank slots, subject 00, are ignored) --
     so a recording renamed since it was copied is not brought in twice.
 
-What is brought in, and where (``--bring-in``):
-  recording   -> Unanalyzed/Multi-Animal (the intake: cut, then posed)
-  cut video   -> Unanalyzed/Single_Animal (posed by any GPU machine)
-Every tray goes to the same stage folders. Easy and Flat trays are taken last
-there, as they are everywhere: each machine defers them while other work
-waits (the deferral in the watcher's work selection). A recording whose cut
-videos ALL come in from the old storage too is already cut: it goes to
-Analyzed/Multi-Animal, where cut recordings are kept, not to the intake,
-where it would be cut a second time.
+What is brought in, and where (``--bring-in``): RECORDINGS ONLY, into
+Unanalyzed/Multi-Animal (the intake), where the pipeline cuts and poses them.
+Every tray goes there; Easy and Flat trays are taken last, as they are
+everywhere (the deferral in the watcher's work selection).
+
+Cut (single-animal) videos are never brought in. WHY (2026-10-23): the input to
+MouseReach is the recording; the pipeline's own cut is what records which
+recording and seat each single came from, and a single fed in by hand has none
+of that. A cut video whose recording comes in (or is already on the pipeline
+root) is reported as such and left -- the pipeline cuts it again from the
+recording. A cut video with no recording on either storage is named for a
+person: rebuild its recording from its cuts (``mousereach-rebuild-recording``)
+and the rebuilt recording comes in like any other.
 
 Nothing else is copied. Left for a person, and named in the report: a name that
 is not a pipeline name (extra text such as "(LONG)" or " uncropped", ranges of
 animals), a malformed animal id (a typo such as CNT407), a video the pipeline
-holds under the same name at a DIFFERENT size, a recording only some of
-whose cut videos are on the old storage, and copies of one name in several old
-folders that differ in size. (Copies of one name at one size are one video:
+holds under the same name at a DIFFERENT size, a cut video with no recording
+anywhere, and copies of one name in several old folders that differ in size. (Copies of one name at one size are one video:
 it is brought in once.)
 
 How a copy is made: to ``<name>.part`` in the destination (no pipeline step
@@ -88,7 +91,10 @@ HAS_SESSION = "on pipeline (session known)"
 HAS_ALL_SESSIONS = "on pipeline (every session known)"
 NOT_PIPELINE_NAME = "not a pipeline name -- for a person"
 BAD_ID = "malformed animal id -- for a person"
-PARTLY_CUT = "recording partly cut on the old storage -- for a person"
+RECORDING_COMES_IN = ("only here as a cut video; its recording comes in, and the "
+                      "pipeline cuts it from that")
+NO_RECORDING = ("a cut video with no recording on either storage -- rebuild the "
+                "recording from its cuts (mousereach-rebuild-recording); for a person")
 COPIES_DIFFER = "copies on the old storage differ in size -- for a person"
 SAME_AS_ANOTHER = "only here, as another copy on the old storage that is brought in"
 ONLY_HERE = "only here"
@@ -185,29 +191,18 @@ class PipelineIndex:
                 or s in self.sessions_held)
 
 
-def destination(info: dict, name: str, already_cut: bool = False) -> Optional[Path]:
+def destination(info: dict, name: str) -> Optional[Path]:
     """Where a missing pipeline video goes on the pipeline root, or None.
 
-    ``already_cut``: every session of this recording comes in as a cut video
-    from the old storage too. The recording then goes where cut recordings are
-    kept (Analyzed/Multi-Animal), never to the intake -- WHY: in the intake it
-    would be cut a second time beside its own cut videos.
-
-    Easy and Flat trays go to the same stage folders as Pillar. WHY not the
+    Recordings only, to the intake (see the module docstring for why cut
+    videos are never brought in). Easy and Flat trays go there too. WHY not the
     Unsupported_Tray_Type folder: the watcher processes those trays now (last,
     by deferral), and a video parked there is processed by nobody until a
     person moves it."""
     from mousereach.config import Paths
-    if info["kind"] == "recording":
-        if already_cut:
-            base = Path(Paths.ANALYZED_OUTPUT) / "Multi-Animal" if Paths.ANALYZED_OUTPUT else None
-        else:
-            base = Paths.MULTI_ANIMAL_SOURCE
-    elif info["kind"] == "cut":
-        base = Paths.SINGLE_ANIMAL_OUTPUT
-    else:
+    if info["kind"] != "recording" or not Paths.MULTI_ANIMAL_SOURCE:
         return None
-    return Path(base) / name if base else None
+    return Path(Paths.MULTI_ANIMAL_SOURCE) / name
 
 
 def inventory(old_root: Path, index: PipelineIndex) -> List[dict]:
@@ -267,22 +262,21 @@ def inventory(old_root: Path, index: PipelineIndex) -> List[dict]:
                 r["status"] = SAME_AS_ANOTHER
                 r["same_as"] = group[0]["old_path"]
 
-    # Where each missing video goes. A recording is placed by what else comes in
-    # with it: cut videos of the same sessions (see destination()).
-    cut_here = {s.upper() for r in rows if r["status"] == ONLY_HERE
-                and r["kind"] == "cut" for s in r["_info"]["sessions"]}
+    # Where each missing video goes: a recording to the intake. A cut video is
+    # never brought in -- its recording comes in (the pipeline cuts it from
+    # that), or there is none anywhere and it is named for the rebuild route.
+    rec_here = {s.upper() for r in rows if r["status"] == ONLY_HERE
+                and r["kind"] == "recording" for s in r["_info"]["sessions"]}
     for r in rows:
         info = r.pop("_info")
         if r["status"] != ONLY_HERE:
             continue
-        already_cut = False
-        if r["kind"] == "recording":
-            cut = [s for s in info["sessions"] if s.upper() in cut_here]
-            if cut and len(cut) < len(info["sessions"]):
-                r["status"] = PARTLY_CUT
-                continue
-            already_cut = bool(cut)
-        dest = destination(info, r["name"], already_cut=already_cut)
+        if r["kind"] == "cut":
+            r["status"] = (RECORDING_COMES_IN
+                           if all(s.upper() in rec_here for s in info["sessions"])
+                           else NO_RECORDING)
+            continue
+        dest = destination(info, r["name"])
         r["destination"] = str(dest) if dest else ""
     rows.sort(key=lambda r: r["old_path"])
     return rows

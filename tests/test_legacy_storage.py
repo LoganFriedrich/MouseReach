@@ -101,20 +101,18 @@ def test_names_a_person_must_look_at_are_left_alone(tmp_path, monkeypatch):
     assert not any(r["destination"] for r in rows.values())
 
 
-def test_missing_videos_go_to_the_stage_that_picks_them_up(tmp_path, monkeypatch):
+def test_recordings_come_in_and_cut_videos_never_do(tmp_path, monkeypatch):
+    # WHY: the input to MouseReach is the recording; the pipeline's own cut
+    # records which recording each single came from (2026-10-23).
     old, nas, d = _setup(tmp_path, monkeypatch)
     # Pillar recording, nothing cut: the intake
     _put(old / "a" / "20250102_CNT0101,CNT0102,CNT0000_P1.mkv")
-    # Flat recording and both its cut videos: same stage folders as Pillar
+    # Flat recording and both its cut videos: the recording to the intake (Flat
+    # trays go where Pillar goes); the cut videos stay -- it is cut again
     _put(old / "b" / (REC + "_F1.mkv"))
     _put(old / "c" / "20260716_CNT0501_F1.mp4")
     _put(old / "c" / "20260716_CNT0502_F1.mp4")
-    # Pillar recording and both its cut videos: cut videos posed, recording is cut
-    _put(old / "b" / "20250103_CNT0101,CNT0102,CNT0000_P1.mkv")
-    _put(old / "c" / "20250103_CNT0101_P1.mp4")
-    _put(old / "c" / "20250103_CNT0102_P1.mp4")
-    # Pillar recording with one of its two cut videos: a person
-    _put(old / "b" / "20250104_CNT0101,CNT0102,CNT0000_P1.mkv")
+    # A cut video whose recording is nowhere: named for the rebuild route
     _put(old / "c" / "20250104_CNT0101_P1.mp4")
 
     rows = _rows(old, nas)
@@ -122,13 +120,11 @@ def test_missing_videos_go_to_the_stage_that_picks_them_up(tmp_path, monkeypatch
 
     assert dest["20250102_CNT0101,CNT0102,CNT0000_P1.mkv"] == str(
         d["MULTI_ANIMAL_SOURCE"] / "20250102_CNT0101,CNT0102,CNT0000_P1.mkv")
-    assert dest[REC + "_F1.mkv"] == str(d["ANALYZED_OUTPUT"] / "Multi-Animal" / (REC + "_F1.mkv"))
-    assert dest["20260716_CNT0501_F1.mp4"] == str(d["SINGLE_ANIMAL_OUTPUT"] / "20260716_CNT0501_F1.mp4")
-    assert dest["20250103_CNT0101,CNT0102,CNT0000_P1.mkv"] == str(
-        d["ANALYZED_OUTPUT"] / "Multi-Animal" / "20250103_CNT0101,CNT0102,CNT0000_P1.mkv")
-    assert dest["20250103_CNT0101_P1.mp4"] == str(d["SINGLE_ANIMAL_OUTPUT"] / "20250103_CNT0101_P1.mp4")
-    assert rows["20250104_CNT0101,CNT0102,CNT0000_P1.mkv"]["status"] == ls.PARTLY_CUT
-    assert dest["20250104_CNT0101,CNT0102,CNT0000_P1.mkv"] == ""
+    assert dest[REC + "_F1.mkv"] == str(d["MULTI_ANIMAL_SOURCE"] / (REC + "_F1.mkv"))
+    assert rows["20260716_CNT0501_F1.mp4"]["status"] == ls.RECORDING_COMES_IN
+    assert dest["20260716_CNT0501_F1.mp4"] == ""
+    assert rows["20250104_CNT0101_P1.mp4"]["status"] == ls.NO_RECORDING
+    assert dest["20250104_CNT0101_P1.mp4"] == ""
 
 
 def test_a_copy_is_verified_and_never_replaces_a_file(tmp_path, monkeypatch):
@@ -163,7 +159,7 @@ def test_a_copy_that_does_not_match_is_removed(tmp_path, monkeypatch):
 
 def test_the_command_reports_brings_in_and_then_reads_zero(tmp_path, monkeypatch):
     old, nas, d = _setup(tmp_path, monkeypatch)
-    src = _put(old / "Unanalyzed" / "20250102_CNT0101_P1.mp4", b"v1")
+    src = _put(old / "Unanalyzed" / "20250102_CNT0101,CNT0102,CNT0000_P1.mkv", b"v1")
     _put(old / "Unanalyzed" / "notes.mp4", b"x")
     t = time.time() - 3600
     os.utime(src, (t, t))
@@ -171,10 +167,10 @@ def test_the_command_reports_brings_in_and_then_reads_zero(tmp_path, monkeypatch
     assert ls.main(["--from", str(old), "--label", "old"]) == 0
     summary = json.loads((nas / "legacy_inventory" / "old.summary.json").read_text(encoding="utf-8"))
     assert summary["only_here"] == 1
-    assert not (d["SINGLE_ANIMAL_OUTPUT"] / src.name).exists()     # report only
+    assert not (d["MULTI_ANIMAL_SOURCE"] / src.name).exists()      # report only
 
     assert ls.main(["--from", str(old), "--label", "old", "--bring-in"]) == 0
-    assert (d["SINGLE_ANIMAL_OUTPUT"] / src.name).read_bytes() == b"v1"
+    assert (d["MULTI_ANIMAL_SOURCE"] / src.name).read_bytes() == b"v1"
     assert abs(src.stat().st_mtime - t) < 2                        # old file not touched
     summary = json.loads((nas / "legacy_inventory" / "old.summary.json").read_text(encoding="utf-8"))
     assert summary["only_here"] == 0

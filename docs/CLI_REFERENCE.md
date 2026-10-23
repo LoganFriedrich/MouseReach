@@ -2230,3 +2230,12 @@ options:
                    name).
 ```
 
+Since 2026-10-23 it brings in RECORDINGS only, into the intake
+(Unanalyzed/Multi-Animal), whatever the tray. Cut (single-animal) videos are
+never brought in: the pipeline's own cut is what records which recording and
+seat each single came from. A cut video whose recording comes in (or is already
+on the pipeline root) is reported "its recording comes in" and left; one with no
+recording on either storage is reported for a person -- rebuild its recording
+from its cuts with `mousereach-rebuild-recording`, and the rebuilt recording
+comes in like any other.
+

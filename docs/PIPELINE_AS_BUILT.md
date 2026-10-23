@@ -1993,6 +1993,11 @@ folders that differ in size (copies at one size are one video, brought in once).
 means the old storage holds no pipeline video the pipeline lacks. WHY: videos only in the
 retired folder were invisible to every machine that could process them, and the old storage
 could not be retired while they were there. Tests: `tests/test_legacy_storage.py`.
+**Changed 2026-10-23:** recordings only, always into the intake. Cut videos are never brought in
+(the input to MouseReach is the recording; the pipeline's own cut records which recording each single
+came from): a cut whose recording comes in is reported and left, and one with no recording anywhere is
+named for the rebuild route (`mousereach-rebuild-recording`). The "already cut -> Analyzed/Multi-Animal"
+placement and the "partly cut" status are gone with it.
 
 ## Update 2026-10-22: the backup says what failed, skips test residue, and fails loudly
 
