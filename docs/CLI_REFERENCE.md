@@ -2014,10 +2014,20 @@ that holds all of them, or in id order when the archive has no such group; the
 output line and the rebuild's record say which. A position no cut fills is
 empty, so no video is ever made of an animal that has no cut.
 
-Named and left for a person, never guessed: more than eight cuts of one length
-on one day (more than one recording that long), a cut whose length cannot be
-read, a name that is not a session or whose date is not a real day. See
-`mousereach-rebuild-recording` for what a rebuild checks and records.
+Named and left for a person, never guessed:
+* cuts as long as a recording that survives that day and tray (within 5
+  frames): they came out of that recording, whose name does not list them -- a
+  seat named as empty, or under another animal's id. Which animal sat where is
+  an identity question; a rebuild would enter the animal a second time;
+* cuts shorter than a minute (no session fits in that);
+* more than eight cuts of one length on one day (more than one recording that
+  long), a cut whose length cannot be read, a surviving recording that day whose
+  length cannot be read;
+* a name that is not a session, or whose date is not a real day.
+
+A cut whose recording survives under a slightly wrong name (see
+`mousereach-aspa-import-collages`) is not lost: the import copies the original
+in. See `mousereach-rebuild-recording` for what a rebuild checks and records.
 
 Until 2026-10-23 the groups were copied from the nearest recorded day. Groups
 change from day to day, so that stitched cuts that were never simultaneous

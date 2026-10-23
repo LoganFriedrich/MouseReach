@@ -19,8 +19,18 @@ are the cuts of one recording. WHY not the groups of other days (it used them
 until 2026-10-23): groups change from day to day -- on some days the cuts
 fall into id-order groups that no surviving recording shows -- and a group
 copied from another day stitched together cuts that were never simultaneous,
-or left an animal alone that had shared its recording. More than eight cuts of
-one length, or a cut whose length cannot be read, is for a person.
+or left an animal alone that had shared its recording.
+
+For a person, never rebuilt:
+
+- cuts as long as a recording that SURVIVES that day and tray (within
+  ``SURVIVOR_TOLERANCE`` frames): they came out of that recording, whose name
+  does not list them -- a seat named as empty, or under another animal's id.
+  Which animal sat where is an identity question; a rebuild would enter the
+  animal a second time from a recording that never existed;
+- cuts shorter than ``MIN_SESSION_SECONDS``: no session fits in them (a run
+  presents twenty pellets one at a time);
+- more than eight cuts of one length, or a cut whose length cannot be read.
 
 WHERE each animal sat: the order of a recorded group (same tray kind, the
 nearest day) that holds every animal of the rebuilt recording; with none, id
@@ -148,6 +158,39 @@ def cohort_recordings(source_root: Path, cohort: str) -> List[Tuple[str, List[st
     return out
 
 
+# A cut and the recording it came from can differ by a frame or two (each was
+# encoded separately), and a recording's length is read from its header, which
+# can be a frame or two off as well.
+SURVIVOR_TOLERANCE = 5
+# No session fits in less: a run presents twenty pellets one at a time.
+MIN_SESSION_SECONDS = 60
+
+
+def recording_length(path: Path) -> Optional[Tuple[int, float]]:
+    """(frames, fps) of a recording from its header, without reading it through
+    (a recording is a gigabyte or more); None when it cannot be opened."""
+    import cv2
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            return None
+        n, fps = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), float(cap.get(cv2.CAP_PROP_FPS))
+        return (n, fps) if n > 0 and fps > 0 else None
+    finally:
+        cap.release()
+
+
+def surviving_recordings(source_root: Path, cohort: str, d: str, tray: str) -> List[Path]:
+    """Every video in the cohort's recordings folder for that day and tray,
+    however its name is spelled (``_P1``, ``,IP1``, `` uncropped``...)."""
+    folder = Path(source_root) / cohort / "Multi-Animal"
+    if not folder.is_dir():
+        return []
+    pat = re.compile(rf"^{d}_.*[_,][A-Za-z]*{re.escape(tray)}(?!\d)", re.IGNORECASE)
+    return sorted(x for x in folder.iterdir()
+                  if x.suffix.lower() in (".mkv", ".mp4") and pat.match(x.name))
+
+
 def cut_timing(path: Path) -> Tuple[int, float]:
     """(frame count, frame rate) of one cut, exact (rebuild.probe)."""
     from mousereach.video_prep.core import rebuild as rb
@@ -240,7 +283,29 @@ def plan_recordings(cuts: List[Tuple[str, Path]], source_root: Path,
                                 "which recording it came from is for a person to say"))
         groups = [(r[0], r[1]) for r in recs[cohort]
                   if day(r[0]) is not None and kind(r[2]) == kind(tray)]
+        survivors = None
         for length, members in sorted(by_length.items(), key=lambda kv: kv[1]):
+            def person(why):
+                for a in members:
+                    skipped.append((have[a].name, why))
+            if length[0] < MIN_SESSION_SECONDS * length[1]:
+                person(f"{length[0]} frames ({length[0] / length[1]:.1f} s): too short to "
+                       "be a session; for a person")
+                continue
+            if survivors is None:
+                survivors = [(r, recording_length(r))
+                             for r in surviving_recordings(source_root, cohort, d, tray)]
+            unread = [r.name for r, n in survivors if n is None]
+            same = [r.name for r, n in survivors
+                    if n is not None and abs(n[0] - length[0]) <= SURVIVOR_TOLERANCE]
+            if same:
+                person(f"as long as {same[0]}, which survives and does not list this "
+                       "animal: which seat it had is for a person to say")
+                continue
+            if unread:
+                person(f"cannot be compared with {unread[0]} (its length cannot be "
+                       "read): for a person")
+                continue
             if len(members) > 8:
                 for a in members:
                     skipped.append((have[a].name, f"{len(members)} cuts that day are "

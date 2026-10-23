@@ -43,15 +43,18 @@ def _env(tmp_path, monkeypatch, cuts_on_0602=GROUP):
         monkeypatch.setattr(Paths, name, value, raising=False)
     built = []
     monkeypatch.setattr(rb, "plan", lambda stem, singles: {"frames": 10})
-    # every cut 100 frames unless a test says otherwise; None = unreadable
-    lengths = {}
+    # every cut 40000 frames (a session's length) unless a test says
+    # otherwise; None = unreadable. Surviving recordings: 50000 frames.
+    lengths, rec_lengths = {}, {}
 
     def fake_probe(path):
-        n = lengths.get(Path(path).name, 100)
+        n = lengths.get(Path(path).name, 40000)
         if n is None:
             raise rb.RebuildRefused("cannot open it")
         return {"frames": n, "fps": 30.0, "width": 480, "height": 540}
     monkeypatch.setattr(rb, "probe", fake_probe)
+    monkeypatch.setattr(feed, "recording_length",
+                        lambda path: rec_lengths.get(Path(path).name, (50000, 30.0)))
 
     def fake_rebuild(stem, singles, dest, records, reason):
         built.append((stem, dict(singles), dest))
@@ -60,7 +63,8 @@ def _env(tmp_path, monkeypatch, cuts_on_0602=GROUP):
         return dest / f"{stem}.mkv"
     monkeypatch.setattr(rb, "rebuild", fake_rebuild)
     return SimpleNamespace(archive=archive, sa=sa, intake=intake, door=door,
-                           posed=posed, built=built, lengths=lengths)
+                           posed=posed, built=built, lengths=lengths,
+                           rec_lengths=rec_lengths)
 
 
 def test_the_pipeline_name_is_the_encoded_session():
@@ -101,7 +105,7 @@ def test_cuts_of_different_lengths_are_different_recordings(tmp_path, monkeypatc
     # had left one animal alone that had shared its recording).
     env = _env(tmp_path, monkeypatch)
     for a in ("H15", "H16"):
-        env.lengths[f"20220602_{a}_P1.mp4"] = 90
+        env.lengths[f"20220602_{a}_P1.mp4"] = 39000
     feed.main(["--cohort", "H"])
     out = capsys.readouterr().out
     got = sorted(sorted(singles) for _, singles, _ in env.built)
@@ -128,7 +132,7 @@ def test_more_than_eight_cuts_of_one_length_are_for_a_person(tmp_path, monkeypat
     (env.sa / "20220602_H17_P1.mp4").write_bytes(b"cut")
     feed.main(["--cohort", "H"])
     assert env.built == []
-    assert "9 cuts that day are 100 frames long" in capsys.readouterr().out
+    assert "9 cuts that day are 40000 frames long" in capsys.readouterr().out
 
 
 def test_a_cut_whose_length_cannot_be_read_is_named_and_left(tmp_path, monkeypatch, capsys):
@@ -192,3 +196,54 @@ def test_each_cut_goes_into_exactly_one_rebuilt_recording(tmp_path, monkeypatch)
     feed.main(["--cohort", "H"])
     placed = [e for _, singles, _ in env.built for e in singles]
     assert len(placed) == len(set(placed)) == 8
+
+
+def test_cuts_as_long_as_a_surviving_recording_are_for_a_person(tmp_path, monkeypatch, capsys):
+    # The 06-02 recording of H01-H08 survives; the lost cuts are as long as it
+    # (two frames off, as a cut and its recording can be): they came out of it
+    # under names it does not list -- an identity question, never a rebuild.
+    env = _env(tmp_path, monkeypatch)
+    env.rec_lengths["20220602_H01,H02,H03,H04,H05,H06,H07,H08_P1.mkv"] = (40002, 30.0)
+    feed.main(["--cohort", "H"])
+    assert env.built == []
+    out = capsys.readouterr().out
+    assert "as long as 20220602_H01,H02,H03,H04,H05,H06,H07,H08_P1.mkv, which survives" in out
+
+
+def test_a_surviving_recording_that_cannot_be_measured_stops_the_rebuild(
+        tmp_path, monkeypatch, capsys):
+    env = _env(tmp_path, monkeypatch)
+    env.rec_lengths["20220602_H01,H02,H03,H04,H05,H06,H07,H08_P1.mkv"] = None
+    feed.main(["--cohort", "H"])
+    assert env.built == [] and "cannot be compared with" in capsys.readouterr().out
+
+
+def test_cuts_too_short_to_be_a_session_are_for_a_person(tmp_path, monkeypatch, capsys):
+    env = _env(tmp_path, monkeypatch)
+    for a in GROUP:
+        env.lengths[f"20220602_{a}_P1.mp4"] = 40
+    feed.main(["--cohort", "H"])
+    assert env.built == []
+    assert "40 frames (1.3 s): too short to be a session" in capsys.readouterr().out
+
+
+def test_recordings_of_the_day_are_found_however_their_name_is_spelled(tmp_path):
+    multi = tmp_path / "H" / "Multi-Animal"
+    multi.mkdir(parents=True)
+    for n in ("20220602_A,B_P1.mkv", "20220602_A_JP3,IP1.mkv", "20220602_A_P1 uncropped.mkv",
+              "20220602_A_P10.mkv", "20220603_A_P1.mkv", "20220602_A_P1.llc"):
+        (multi / n).write_bytes(b"x")
+    got = [p.name for p in feed.surviving_recordings(tmp_path, "H", "20220602", "P1")]
+    assert got == ["20220602_A,B_P1.mkv", "20220602_A_JP3,IP1.mkv", "20220602_A_P1 uncropped.mkv"]
+
+
+def test_a_recording_surviving_under_a_typo_name_is_not_rebuilt(tmp_path, monkeypatch, capsys):
+    # Its name has a period for a comma; the recording import reads it (and
+    # copies the original in), so its cuts are not lost.
+    env = _env(tmp_path, monkeypatch)
+    ids = ",".join(GROUP).replace("H09,H10", "H09.H10")
+    (env.archive / "H" / "Multi-Animal" / f"20220602_{ids}_P1.mkv").write_bytes(b"rec")
+    env.rec_lengths[f"20220602_{ids}_P1.mkv"] = (40000, 30.0)
+    feed.main(["--cohort", "H"])
+    assert env.built == []
+    assert f"its recording survives (20220602_{ids}_P1)" in capsys.readouterr().out
