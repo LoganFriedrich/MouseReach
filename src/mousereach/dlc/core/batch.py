@@ -67,13 +67,16 @@ def fix_config_yaml(config_path: Path) -> Path:
 def find_videos_for_dlc(
     input_dir: Path = None,
     extensions: List[str] = None,
-    reject_unsupported_tray: bool = True
+    reject_unsupported_tray: bool = False
 ) -> List[Path]:
     """
     Find videos that need DLC processing.
 
     Returns videos that don't have a corresponding DLC output file.
-    Optionally filters out unsupported tray types (E, F).
+    Easy and Flat (E, F) are included: they are processed (last, by the
+    work order), never turned away -- a video left out here was posed by
+    nobody (2026-10-23). ``reject_unsupported_tray=True`` still filters them
+    for a caller that really wants Pillar only.
     """
     from mousereach.config import is_supported_tray_type
 

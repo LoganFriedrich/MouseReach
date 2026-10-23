@@ -586,7 +586,7 @@ def triage_results(
     dest_auto: Path = None,
     dest_needs: Path = None,
     dest_failed: Path = None,
-    reject_unsupported: bool = True,
+    reject_unsupported: bool = False,   # Easy/Flat are processed, never parked (2026-10-23)
     verbose: bool = True
 ) -> Dict:
     """
@@ -798,48 +798,22 @@ def scan_and_reject_unsupported_trays(
 
 
 def cli_reject_unsupported():
-    """CLI entry point for rejecting unsupported tray types."""
+    """``mousereach-reject-tray`` -- retired: moves nothing.
+
+    It used to move Easy and Flat videos out of the pipeline into
+    Unanalyzed/Unsupported_Tray_Type, where nothing processed them again --
+    772 videos were found parked there on 2026-10-23 and copied back. Easy and
+    Flat are processed now (last, by the work order; never segmented or held),
+    so this command only says so. The options are still accepted so an old
+    script calling it does not break.
+    """
     import argparse
+    import sys
+    argparse.ArgumentParser(
+        description="Retired: Easy and Flat videos are processed by the watcher "
+                    "now (last); nothing is moved.").parse_known_args()
+    print("mousereach-reject-tray is retired: Easy and Flat videos are processed by "
+          "the watcher (after everything else), so nothing is moved. See "
+          "docs/PIPELINE_AS_BUILT.md, 'Easy and Flat are session-only'.")
+    sys.exit(0)
 
-    parser = argparse.ArgumentParser(
-        description="Scan for and reject unsupported tray types (E/F)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    mousereach-reject-tray --dry-run  # Preview what would be rejected
-    mousereach-reject-tray            # Execute rejection
-
-Supported tray types: P (Pillar)
-Unsupported tray types: E (Easy), F (Flat)
-
-Unsupported videos are moved to:
-    {NAS_DRIVE}/Unanalyzed/Unsupported_Tray_Type/
-"""
-    )
-
-    parser.add_argument(
-        "--dry-run", "-n",
-        action="store_true",
-        help="Show what would be done without moving files"
-    )
-
-    parser.add_argument(
-        "--folder", "-f",
-        type=Path,
-        default=None,
-        help="Folder to scan (default: Processing)"
-    )
-
-    parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
-        help="Suppress progress output"
-    )
-
-    args = parser.parse_args()
-
-    scan_and_reject_unsupported_trays(
-        source_dir=args.folder,
-        dry_run=args.dry_run,
-        verbose=not args.quiet
-    )

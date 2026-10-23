@@ -180,3 +180,22 @@ def test_a_filed_easy_or_flat_without_its_session_file_is_rerun_once(tmp_path, m
     # Only the Easy/Flat video without a session file; never a re-pose for
     # version staleness.
     assert db.forced == [(EF, "outdated", "segmentation")]
+
+
+def test_the_retired_reject_command_moves_nothing(tmp_path, monkeypatch, capsys):
+    # It used to park Easy/Flat in a folder nothing processed (772 found there).
+    from mousereach.segmentation.core.triage import cli_reject_unsupported
+    video = tmp_path / f"{EF}.mp4"
+    video.write_bytes(b"v")
+    monkeypatch.setattr("sys.argv", ["mousereach-reject-tray", "--folder", str(tmp_path)])
+    with pytest.raises(SystemExit) as e:
+        cli_reject_unsupported()
+    assert e.value.code == 0 and video.is_file()
+    assert "retired" in capsys.readouterr().out
+
+
+def test_manual_pose_batches_include_easy_and_flat(tmp_path):
+    from mousereach.dlc.core.batch import find_videos_for_dlc
+    for vid in (EF, PILLAR):
+        (tmp_path / f"{vid}.mp4").write_bytes(b"v")
+    assert {p.stem for p in find_videos_for_dlc(tmp_path)} == {EF, PILLAR}

@@ -466,30 +466,13 @@ Alias of `mousereach-segment-review` (same entry point: `mousereach.segmentation
 
 ### `mousereach-reject-tray`
 
-```
-usage: mousereach-reject-tray [-h] [--dry-run] [--folder FOLDER] [--quiet]
-
-Scan for and reject unsupported tray types (E/F)
-
-options:
-  -h, --help            show this help message and exit
-  --dry-run, -n         Show what would be done without moving files
-  --folder FOLDER, -f FOLDER
-                        Folder to scan (default: Processing)
-  --quiet, -q           Suppress progress output
-
-Examples:
-    mousereach-reject-tray --dry-run  # Preview what would be rejected
-    mousereach-reject-tray            # Execute rejection
-
-Supported tray types: P (Pillar)
-Unsupported tray types: E (Easy), F (Flat)
-
-Unsupported videos are moved to:
-    {NAS_DRIVE}/Unanalyzed/Unsupported_Tray_Type/
-```
-
-## Step 3 - Reach Detection
+**Retired (2026-10-23): moves nothing.** It used to move Easy (E) and Flat (F)
+tray videos out of the pipeline into `Unanalyzed/Unsupported_Tray_Type/`, where
+nothing processed them again (772 were found parked there and copied back on
+2026-10-23). Easy and Flat are processed by the watcher now -- after everything
+else, never segmented or held -- so the command only prints that and exits.
+Its old options (`--dry-run`, `--folder`, `--quiet`) are still accepted so an
+old script calling it does not break.
 
 ### `mousereach-detect-reaches`
 
