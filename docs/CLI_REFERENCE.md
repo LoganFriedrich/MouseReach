@@ -1831,6 +1831,21 @@ Examples:
   mousereach-aspa-import-collages --sessions-file sessions.txt --apply
 ```
 
+Names written slightly wrong are read (since 2026-10-23), because what they say
+is not in doubt; the dry run lists each one with how it was read, and the
+mapping file (`ASPA_import_mapping.json` beside the imported videos) keeps the
+original name next to the reading:
+
+* a separator typo between ids (`G25.G26,...`, `H40_001,...`) is read as a
+  comma -- only when that gives exactly eight ids and the name reads only one way;
+* one recording holding two cohorts on different runs of the day
+  (`..._JP3,IP1`: the J animals' run 3, the I animals' run 1) is copied in once
+  per run, each copy naming only that run's animals, the others' seats empty.
+  Every animal is then cut once, under its own run.
+
+Any other name that does not read is listed under "Files whose names could not
+be parsed" and left for a person.
+
 ### `mousereach-backfill-kinematic-versions`
 
 ```

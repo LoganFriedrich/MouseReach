@@ -37,6 +37,24 @@ Preference: the clean ``_P{n}.mkv`` wins. If a session has no trimmed version, t
 original is the only candidate and is used. LosslessCut ``-seg`` exports, ``(2)``
 duplicates and ``.llc`` project files are always skipped.
 
+Names written slightly wrong
+----------------------------
+Two kinds of name are read although they are not in the standard form
+(read_recording_stem), because what they say is not in doubt:
+
+- a separator typo between ids -- ``G25.G26,...`` or ``H40_001,...``: read with
+  commas, but only when that gives exactly eight ids and only one way of reading
+  the name works;
+- one recording holding animals of two cohorts on different runs of the day,
+  ``..._JP3,IP1``: the J animals' run 3 and the I animals' run 1. A pipeline name
+  carries one run, so the recording is copied in once per run, each copy naming
+  only that run's animals (the others' positions empty) -- every animal is cut
+  once, under its own run.
+
+Anything else that does not read is reported, never guessed at. Every name read
+this way is printed by the dry run and written into the mapping file with the
+original name.
+
 Bringing in only the recordings some sessions need
 ---------------------------------------------------
 ``--sessions-file <list>`` imports only the recordings that hold at least one
@@ -83,9 +101,6 @@ IN_SCOPE_COHORTS = ["OptD", "OptE", "OptF", "OptG", "H", "I", "J", "K", "L", "M"
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4"}
 
-# {date}_{animals}_{tray}{position} followed by any trailing junk.
-_SESSION = re.compile(r"^(\d{8}_[^_]+_[A-Za-z]\d+)(.*)$")
-
 # Trailing-junk classification -> (kind, rank). Lower rank wins.
 _CLEAN, _UNCROPPED, _REJECT = 0, 1, 99
 
@@ -120,6 +135,67 @@ def classify(trailing: str) -> Tuple[str, int]:
     return "other", _REJECT
 
 
+_TRAY = re.compile(r"^[A-Za-z]\d+$")
+_COHORT_TRAY = re.compile(r"^([A-Za-z]+)([A-Za-z]\d+)$")
+_ANIMAL_TOKEN = re.compile(r"^(?:[A-Za-z]+\d+|\d{1,3})$")
+_TRAYS = re.compile(r"^([A-Za-z]+\d+(?:,[A-Za-z]+\d+)*)(.*)$")
+
+
+def read_recording_stem(stem: str) -> Optional[Tuple[List[Tuple[str, str]], str]]:
+    """Read an archive recording name: ``([(session stem, how it was read), ...],
+    trailing text)``, or None when it does not read (see "Names written slightly
+    wrong" in the module docstring).
+
+    Each session stem is in the standard lab form ``{date}_{8 ids}_{tray}`` and
+    "how it was read" is "" for a standard name. Readings are tried at every
+    ``_`` after the date; a name that reads more than one way is not read."""
+    stem = (stem or "").strip()
+    if not re.match(r"^\d{8}_", stem):
+        return None
+    date, rest = stem[:8], stem[9:]
+    readings = []
+    for k in [i for i, ch in enumerate(rest) if ch == "_"]:
+        block, after = rest[:k], rest[k + 1:]
+        m = _TRAYS.match(after)
+        if not m:
+            continue
+        trays, trailing = m.group(1).split(","), m.group(2)
+        ids = block.split(",")
+        note = ""
+        if len(ids) != 8 or not all(_ANIMAL_TOKEN.match(a) for a in ids):
+            ids = re.split(r"[,._]", block)
+            if len(ids) != 8 or not all(_ANIMAL_TOKEN.match(a) for a in ids):
+                continue
+            note = "separator typo between ids read as a comma"
+        if len(trays) == 1 and _TRAY.match(trays[0]):
+            readings.append(([(f"{date}_{','.join(ids)}_{trays[0]}", note)], trailing))
+            continue
+        # One run per cohort: every animal's cohort letters must name a run.
+        runs = {}
+        for tok in trays:
+            mm = _COHORT_TRAY.match(tok)
+            if not mm or mm.group(1).upper() in runs:
+                runs = None
+                break
+            runs[mm.group(1).upper()] = mm.group(2)
+        if not runs:
+            continue
+        cohort_of = [None if a.isdigit() else re.match(r"[A-Za-z]+", a).group(0).upper()
+                     for a in ids]
+        if any(c is not None and c not in runs for c in cohort_of):
+            continue
+        sessions = []
+        for c, tray in runs.items():
+            kept = [a if who == c else f"{pos:03d}"
+                    for pos, (a, who) in enumerate(zip(ids, cohort_of), start=1)]
+            why = (f"one recording, one run per cohort: the {c} animals' {tray}, "
+                   f"the others' positions empty")
+            sessions.append((f"{date}_{','.join(kept)}_{tray}",
+                             f"{note}; {why}" if note else why))
+        readings.append((sessions, trailing))
+    return readings[0] if len(readings) == 1 else None
+
+
 def scan(source_root: Path, cohorts: List[str]) -> Tuple[Dict[str, List[dict]], List[dict]]:
     """Group candidate source files by the session they belong to.
 
@@ -137,20 +213,22 @@ def scan(source_root: Path, cohorts: List[str]) -> Tuple[Dict[str, List[dict]], 
         for p in sorted(multi.iterdir()):
             if not p.is_file() or p.suffix.lower() not in VIDEO_EXTENSIONS:
                 continue  # .llc project files and anything non-video
-            m = _SESSION.match(p.stem)
-            if not m:
+            read = read_recording_stem(p.stem)
+            if read is None:
                 unparseable.append({"cohort": cohort, "path": p, "reason": "name shape"})
                 continue
-            session_stem, trailing = m.group(1), m.group(2)
-            encoded = encode_collage_stem(session_stem)
-            if not encoded:
+            sessions, trailing = read
+            encoded_all = [(encode_collage_stem(s), s, how) for s, how in sessions]
+            if not all(e for e, _, _ in encoded_all):
                 unparseable.append({"cohort": cohort, "path": p, "reason": "animal ids"})
                 continue
             kind, rank = classify(trailing)
-            by_session[encoded].append({
-                "cohort": cohort, "path": p, "kind": kind, "rank": rank,
-                "size": p.stat().st_size, "source_stem": p.stem,
-            })
+            for encoded, session_stem, how in encoded_all:
+                by_session[encoded].append({
+                    "cohort": cohort, "path": p, "kind": kind, "rank": rank,
+                    "size": p.stat().st_size, "source_stem": p.stem,
+                    "read_as": session_stem if how else "", "repair": how,
+                })
     return by_session, unparseable
 
 
@@ -187,6 +265,8 @@ def build_plan(source_root: Path, dest: Path, cohorts: List[str]) -> dict:
             "kind": pick["kind"],
             "size": pick["size"],
             "source_stem": pick["source_stem"],
+            "read_as": pick.get("read_as", ""),
+            "repair": pick.get("repair", ""),
         })
     return {"plan": plan, "contested": contested, "dropped": dropped,
             "unparseable": unparseable}
@@ -315,6 +395,9 @@ def write_mapping(plan: List[dict], dest_root: Path) -> Path:
             "selected_because": item["kind"],
             "bytes": item["size"],
         }
+        if item.get("repair"):
+            entries[item["encoded_stem"]]["name_read_as"] = item["read_as"]
+            entries[item["encoded_stem"]]["name_repair"] = item["repair"]
     out.write_text(json.dumps({
         "schema_version": "1.0",
         "description": "ASPA historical collages imported into the MouseReach pipeline. "
@@ -413,6 +496,14 @@ def main(argv=None) -> int:
         print(f"[!] Sessions with NO usable candidate: {len(result['dropped'])}")
         for d in result["dropped"][:5]:
             print(f"  {d['stem']}  ({', '.join(c['kind'] for c in d['candidates'])})")
+
+    repaired = [p for p in result["plan"] if p.get("repair")]
+    if repaired:
+        print("")
+        print(f"Names read although not in the standard form: {len(repaired)}")
+        for p in repaired:
+            print(f"  {p['source_stem'][:70]}")
+            print(f"    -> {p['read_as']}  ({p['repair']})")
 
     if result["unparseable"]:
         print("")

@@ -2375,4 +2375,9 @@ feed did, and as was done by hand for parked Easy/Flat videos) skipped that. Now
   or an unreadable cut, is named for a person. (The first version copied the nearest recorded day's
   groups; groups change from day to day, so it paired cuts of different recordings and once put an
   animal alone where it had shared a recording. Caught in the dry run; nothing was built that way.)
+* `mousereach-aspa-import-collages` reads two kinds of name that are not in standard form: a
+  separator typo between ids (read as a comma when that gives exactly eight ids and one reading), and
+  one recording holding two cohorts on different runs (`_JP3,IP1`), copied in once per run with the
+  other cohort's seats empty. Each is listed by the dry run and kept in the mapping file with its
+  original name. Before this, such a recording was left out and its animals' cuts looked lost.
 Tests: `tests/test_rebuild_recording.py`, `tests/test_aspa_feed_to_shared_folder.py`.
