@@ -706,13 +706,10 @@ class PillarGeometryAnnotatorWidget(QWidget):
         show_info(f"Saved {len(self.pillar_annotations)} annotations to {Path(file_path).name}")
 
 
-# Napari plugin registration
-@napari.hookimpl
-def napari_experimental_provide_dock_widget():
-    return PillarGeometryAnnotatorWidget
-
-
-# Standalone execution
+# Standalone execution: python -m mousereach.outcomes.pillar_geometry_widget
+# (The old napari plugin hook that stood here, @napari.hookimpl, belongs to a
+# plugin system napari no longer has: it made the module fail to import at all,
+# and nothing registered it. Removed 2026-10-24.)
 if __name__ == '__main__':
     import napari
     viewer = napari.Viewer()
