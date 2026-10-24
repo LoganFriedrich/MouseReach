@@ -166,7 +166,8 @@ def review_applied(manifest: Optional[dict], review_path, review_mtime=None,
       3. only when either is missing: the files' modified times.
 
     An error answers False: a recording stays in the intake rather than
-    retires on a guess."""
+    retires on a guess. Change it only together with the re-run scan's copy:
+    tests/test_rerun_and_retirement_agree.py fails if they disagree."""
     try:
         stamp = (manifest or {}).get("applied_review") or {}
         if stamp.get("sha256"):
@@ -224,7 +225,9 @@ def _drop_human_seg_staleness(stem: str, folder: Path, comparison: dict) -> dict
     segmentation (``boundary_source == 'human'``) is not staled by a segmenter
     release -- the re-run keeps it rather than re-cutting, so the manifest keeps
     the segmenter version that first cut the video. Removes 'segmenter' from
-    the stale set in that case. Never raises."""
+    the stale set in that case. Never raises. Change it only together with
+    the re-run scan's copy: tests/test_rerun_and_retirement_agree.py fails if
+    they disagree."""
     if "segmenter" not in (comparison.get("stale_components") or ()):
         return comparison
     try:

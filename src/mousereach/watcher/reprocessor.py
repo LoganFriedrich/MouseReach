@@ -609,7 +609,11 @@ class ReprocessingScanner:
         ``feats_mtime`` is the scan's one-walk {video_id: mtime} index; pass it
         to avoid a per-video rglob of the whole archive. ``review_index`` is
         the scan's ``causal_review_io.review_path_index``; without it the
-        review is looked up per video."""
+        review is looked up per video.
+
+        SAME RULE in video_prep/core/collage_provenance.py ``review_applied``
+        (recording retirement): change both together --
+        tests/test_rerun_and_retirement_agree.py fails if they disagree."""
         try:
             key = None
             if review_index is not None:
@@ -676,7 +680,12 @@ class ReprocessingScanner:
         version that originally cut the video, the comparison keeps calling it
         stale, and the scanner re-marked such videos after every single re-run
         (20251009_CNT0308_P3 was swept into the versioned Archive 53 times
-        before this was added)."""
+        before this was added).
+
+        SAME RULE in video_prep/core/collage_provenance.py
+        ``_drop_human_seg_staleness`` (recording retirement): change both
+        together -- tests/test_rerun_and_retirement_agree.py fails if they
+        disagree."""
         if 'segmenter' not in (comparison.get('stale_components') or ()):
             return comparison
         try:
