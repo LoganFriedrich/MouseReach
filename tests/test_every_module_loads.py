@@ -24,6 +24,12 @@ def _modules():
         # imported here.
         if m.name.rsplit(".", 1)[-1] == "__main__":
             continue
+        # Test files that live inside the package (e.g. segmentation/core/
+        # test_tray_motion.py) import pytest, which a runtime machine does not
+        # have: on a GPU node they "failed" for a reason that is not a fault
+        # (found by Beh PC 1, 2026-10-24).
+        if m.name.rsplit(".", 1)[-1].startswith("test_"):
+            continue
         yield m.name
 
 
