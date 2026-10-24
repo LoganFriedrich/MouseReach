@@ -770,12 +770,14 @@ The notes box travels with the video.
     def _load_video(self, video_path: Path):
         """One-time setup: a lazy full-video layer + overlays + algo data.
 
-        The video is added ONCE as a decode-on-demand (dask) image layer, so its
+        The video is added ONCE as a decode-on-demand image layer, so its
         extent is stable and we NEVER swap image layers on navigation. Repeated
         layer add/remove or in-place data swaps churn the vispy/OpenGL renderer
         and crash it here (OpenGL fault / evented-model stack overflow). With a
         static full-video layer, navigation just moves the playhead to the
-        segment's reach -- nothing to churn.
+        segment's reach -- nothing to churn. A new video swaps the layers' data
+        once (the stack overflow was the pillar circle's redraw loop, removed
+        2026-10-23).
         """
         import cv2
 
@@ -811,15 +813,17 @@ The notes box travels with the video.
             self.frame_window_end = self.n_frames - 1
             self._progress.setValue(20)
 
-            # Lazy, decode-on-demand video layer -- added ONCE, never swapped.
+            # Lazy, decode-on-demand video layer. Navigation never touches it.
+            # On the next video the SAME layer gets the new video: deleting it
+            # and adding a new one made napari rebuild its display objects,
+            # about half of a next-video load (2026-10-23).
             lazy = self._make_lazy_video(self._actual_video, self.n_frames, h, w)
             if self.video_layer is not None and self.video_layer in self.viewer.layers:
-                try:
-                    self.viewer.layers.remove(self.video_layer)
-                except Exception:
-                    pass
-            self.video_layer = self.viewer.add_image(
-                lazy, name=video_path.stem, rgb=True)
+                self.video_layer.data = lazy
+                self.video_layer.name = video_path.stem
+            else:
+                self.video_layer = self.viewer.add_image(
+                    lazy, name=video_path.stem, rgb=True)
             self._progress.setValue(40)
 
             # Load pose + algo/segments FIRST (both cheap) so the DLC overlay can
@@ -1054,24 +1058,26 @@ The notes box travels with the video.
             pts_chunks.append(np.column_stack([fv, yv, xv]))
             col_chunks.append(np.column_stack([np.tile(base, (m, 1)), alpha]))
 
-        if not pts_chunks:
-            self.points_layer = None
-            return
-        points_data = np.vstack(pts_chunks)
-        point_colors = np.vstack(col_chunks)
+        points_data = (np.vstack(pts_chunks) if pts_chunks
+                       else np.empty((0, 3)))
+        point_colors = (np.vstack(col_chunks) if col_chunks
+                        else np.empty((0, 4)))
 
-        if self.points_layer is not None and self.points_layer in self.viewer.layers:
-            try:
-                self.viewer.layers.remove(self.points_layer)
-            except Exception:
-                pass
         # Dots only, no name labels: building a label for every point cost load
         # time and every frame, and the labels piled on top of the mouse
         # (Logan, 2026-10-23: drop the labels and the pillar circle for speed).
-        self.points_layer = self.viewer.add_points(
-            points_data, name='DLC Points', size=3,
-            face_color=point_colors,
-        )
+        # On the next video the SAME layer gets the new points (see the video
+        # layer in _load_video) -- and a video with no points empties it, where
+        # it used to leave the previous video's dots on screen.
+        if self.points_layer is not None and self.points_layer in self.viewer.layers:
+            self.points_layer.data = points_data
+            if len(points_data):
+                self.points_layer.face_color = point_colors
+        elif len(points_data):
+            self.points_layer = self.viewer.add_points(
+                points_data, name='DLC Points', size=3,
+                face_color=point_colors,
+            )
 
     # ===================================================================
     # Algo data loading
