@@ -1036,7 +1036,7 @@ The notes box travels with the video.
         scale = self.scale_factor
         frames_all = np.arange(n)
 
-        pts_chunks, col_chunks = [], []
+        pts_chunks, col_chunks, bp_list = [], [], []
         for i, bp in enumerate(bodyparts):
             xcol, ycol, lcol = f'{bp}_x', f'{bp}_y', f'{bp}_likelihood'
             if xcol not in df.columns or ycol not in df.columns:
@@ -1057,15 +1057,18 @@ The notes box travels with the video.
             m = len(fv)
             pts_chunks.append(np.column_stack([fv, yv, xv]))
             col_chunks.append(np.column_stack([np.tile(base, (m, 1)), alpha]))
+            bp_list.extend([bp] * m)
 
         points_data = (np.vstack(pts_chunks) if pts_chunks
                        else np.empty((0, 3)))
         point_colors = (np.vstack(col_chunks) if col_chunks
                         else np.empty((0, 4)))
 
-        # Dots only, no name labels: building a label for every point cost load
-        # time and every frame, and the labels piled on top of the mouse
-        # (Logan, 2026-10-23: drop the labels and the pillar circle for speed).
+        # Name labels in deep review only. Building a label for every point
+        # costs load time and every frame, and triage does not need them; in
+        # deep review the labels jumping is what tells a reviewer it is time to
+        # call a new segment (Logan, 2026-10-23).
+        labels = bool(self._deep_review)
         # On the next video the SAME layer gets the new points (see the video
         # layer in _load_video) -- and a video with no points empties it, where
         # it used to leave the previous video's dots on screen.
@@ -1073,10 +1076,15 @@ The notes box travels with the video.
             self.points_layer.data = points_data
             if len(points_data):
                 self.points_layer.face_color = point_colors
+                if labels:
+                    self.points_layer.features = {'bp': bp_list}
         elif len(points_data):
+            extra = ({'features': {'bp': bp_list},
+                      'text': {'string': '{bp}', 'size': 7, 'color': 'white',
+                               'translation': [0, -7, 0]}} if labels else {})
             self.points_layer = self.viewer.add_points(
                 points_data, name='DLC Points', size=3,
-                face_color=point_colors,
+                face_color=point_colors, **extra,
             )
 
     # ===================================================================
