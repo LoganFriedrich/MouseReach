@@ -110,6 +110,25 @@ _FLAG_REASON_LABELS = {
 }
 
 
+def segment_answered(seg, records) -> bool:
+    """A person's saved answer covers this segment (matched by its frames,
+    restore_review_for_segments). It stands whatever the algorithm has said
+    since: a person's answer is what happened in those frames. Until
+    2026-10-24 a changed algorithm call re-opened it, and reviewers were asked
+    again about pellets they had answered -- e.g. answered "displaced_sa", then
+    a newer detector could not decide and the pellet came back (Logan: "the
+    thing that was unsure has already been answered by a human reviewer.
+    That's wrong.")."""
+    return bool((records or {}).get(seg["segment_num"]))
+
+
+def open_triaged_indices(indices, segments, records) -> list:
+    """The triaged segments a person has NOT already answered -- the only ones
+    triage walks (Logan, 2026-10-24: answered pellets kept being shown when a
+    video came back for new ones)."""
+    return [i for i in indices if not segment_answered(segments[i], records)]
+
+
 def is_bench_mismatch(reason) -> bool:
     """True when a pellet was sent back because the hand-scored sheet
     disagrees with the algorithm (mousedb's bench check; route_cli puts
@@ -1186,11 +1205,24 @@ The notes box travels with the video.
             self._unmatched_answers = unmatched
 
         def _done(seg):
-            rec = self._review_records.get(seg["segment_num"])
-            if not rec:
-                return False
-            saved_algo = (rec.get("algo") or {}).get("outcome")
-            return saved_algo == seg.get("outcome")  # algo unchanged -> still done
+            return segment_answered(seg, self._review_records)
+
+        # Triage walks only the pellets still OPEN when the video loads. A video
+        # comes back (the nightly hand-score check) for new pellets, but its
+        # pellet file still flags the ones a person answered before, and "Next"
+        # used to walk those too, showing the earlier answers -- "the thing that
+        # was unsure has already been answered" (Logan, 2026-10-24). A pellet
+        # answered in this session stays in the walk (it was open at load), so
+        # Prev reaches it; one whose algorithm call changed since its answer is
+        # open again (_done says so).
+        if self._triage_only and self._triaged_indices:
+            still_open = open_triaged_indices(self._triaged_indices,
+                                              self._segment_list, self._review_records)
+            if len(still_open) < len(self._triaged_indices):
+                print(f"[review restore] {self._video_stem}: "
+                      f"{len(self._triaged_indices) - len(still_open)} flagged pellet(s) "
+                      f"already answered are not walked")
+            self._triaged_indices = still_open
 
         idx = self._first_visible_idx()
         for i in self._visible_indices():
@@ -1201,15 +1233,10 @@ The notes box travels with the video.
 
         if self._review_records:
             n_done = sum(1 for seg in self._segment_list if _done(seg))
-            n_changed = sum(
-                1 for seg in self._segment_list
-                if seg["segment_num"] in self._review_records and not _done(seg))
             first = (self._segment_list[idx]["segment_num"]
                      if self._segment_list else "?")
-            msg = f"Resumed: {n_done}/{len(self._segment_list)} already scored"
-            if n_changed:
-                msg += f"; {n_changed} to re-check (algo changed)"
-            msg += f"  --  opening segment {first}"
+            msg = (f"Resumed: {n_done}/{len(self._segment_list)} already scored"
+                   f"  --  opening segment {first}")
             self._status_label.setText(msg)
 
     def _build_segment_list(self):
