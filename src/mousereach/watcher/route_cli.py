@@ -85,6 +85,7 @@ ASCII-only output. With --json, stdout carries only the JSON results; the
 from __future__ import annotations
 
 import argparse
+import time
 import json
 import logging
 import sys
@@ -280,19 +281,27 @@ def main(argv=None) -> int:
         segs = [int(x) for x in args.flag_segments.split(",") if x.strip()]
         items.append((args.video_id, segs, {}))
 
-    results = [route_video(v, args.queue, args.reason, segs, db=db, segment_details=det)
-               for v, segs, det in items]
-    if args.json:
-        print(json.dumps(results, indent=1))
-    else:
-        for r in results:
+    # Each result is printed (and flushed) the moment its video is done, with
+    # how long it took. WHY: the nightly bench check runs this under a time
+    # limit, and printing only at the end meant a run stopped part-way left no
+    # record of what it had routed -- nor of where the time went (2026-10-24:
+    # stopped after 3 hours with 34 videos routed and not one line written).
+    results = []
+    for v, segs, det in items:
+        started = time.time()
+        r = route_video(v, args.queue, args.reason, segs, db=db, segment_details=det)
+        r["seconds"] = round(time.time() - started, 1)
+        results.append(r)
+        if not args.json:
             tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
                    else "done" if (r["answered"] and not r["error"])
                    else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
-            print("%s %s -> %s  flagged=%s  %s%s" % (
+            print("%s %s -> %s  flagged=%s  %s%s  (%.0f s)" % (
                 tag, r["video_id"], r["queue"], r["flagged"] or "-",
                 ("already answered by a person: %s  " % r["answered"]) if r["answered"] else "",
-                r["error"] or ""))
+                r["error"] or "", r["seconds"]), flush=True)
+    if args.json:
+        print(json.dumps(results, indent=1))
     bad = [r for r in results if not r["routed"] and not r["deferred"]
            and not (r["answered"] and not r["error"])
            and not (r["error"] and "not found" in r["error"])]
