@@ -103,19 +103,41 @@ def walk_analyzed(root) -> tuple:
     root = Path(root)
     if not root.exists():
         return index, mtimes, collages
-    # WHY os.walk and not root.rglob("*"): rglob descends into Analyzed/Archive/
-    # and reads superseded outputs as live ones, silently. The walk prunes
-    # superseded folders before descending. Directory names are still tested
-    # alongside file names, exactly as rglob("*") yielded both, and the visit
-    # order (pre-order, root first) is the same, so outputs are unchanged
-    # apart from the archive. onerror=walk_onerror keeps rglob's error rule: a
-    # folder that cannot be listed (a NAS hiccup) raises instead of being
-    # skipped, so the census never reports a partial count as complete.
-    for dirpath, dirnames, filenames in os.walk(root, onerror=walk_onerror):
-        dirnames[:] = [d for d in dirnames if not is_superseded_dir(d)]
-        base = Path(dirpath)
-        for name in dirnames + filenames:
-            p = base / name
+    # WHY a scandir walk and not root.rglob("*"): rglob descends into
+    # Analyzed/Archive/ and reads superseded outputs as live ones, silently.
+    # The walk prunes superseded folders before descending. Directory names are
+    # still tested alongside file names, exactly as rglob("*") yielded both,
+    # and the visit order (pre-order, root first, each folder's subfolders in
+    # listing order -- os.walk's order) is the same, so outputs are unchanged
+    # apart from the archive. walk_onerror keeps rglob's error rule: a folder
+    # that cannot be listed (a NAS hiccup) raises instead of being skipped, so
+    # the census never reports a partial count as complete.
+    #
+    # WHY scandir and not os.walk (2026-10-23): each result file's modified
+    # time comes from the folder listing itself (DirEntry.stat() needs no
+    # extra call on Windows). os.walk hands back names only, and a separate
+    # stat per file -- tens of thousands of NAS round trips -- was most of the
+    # census: 13 of its 22 minutes by day, and past its hour under the night's
+    # other jobs, so the 00:00 refresh could not retake it (2026-10-23).
+    stack = [root]
+    while stack:
+        base = stack.pop()
+        try:
+            with os.scandir(base) as it:
+                entries = list(it)
+        except OSError as e:
+            walk_onerror(e)          # raises unless it is a PermissionError
+            continue
+        dirs, files = [], []
+        for e in entries:
+            try:
+                is_dir = e.is_dir()
+            except OSError:
+                is_dir = False
+            (dirs if is_dir else files).append(e)
+        dirs = [e for e in dirs if not is_superseded_dir(e.name)]
+        for e in dirs + files:
+            name = e.name
             low = name.lower()
             if low.endswith(".json"):
                 for suf in SUFFIXES:
@@ -123,12 +145,21 @@ def walk_analyzed(root) -> tuple:
                         stem = name[: -len(suf)]
                         index.setdefault(stem, set()).add(suf)
                         try:
-                            mtimes.setdefault(stem, {})[suf] = p.stat().st_mtime
+                            mtimes.setdefault(stem, {})[suf] = e.stat().st_mtime
                         except OSError:
                             pass
                         break
-            elif low.endswith((".mkv", ".mp4")) and "," in p.stem:
-                collages.append(p)
+            elif low.endswith((".mkv", ".mp4")) and "," in Path(name).stem:
+                collages.append(base / name)
+        # Children in reverse so the first-listed subfolder is walked next
+        # (pre-order, like os.walk); symlinked folders are listed, not entered.
+        for e in reversed(dirs):
+            try:
+                if e.is_symlink():
+                    continue
+            except OSError:
+                pass
+            stack.append(base / e.name)
     return index, mtimes, collages
 
 
@@ -145,12 +176,16 @@ def ids_in_dir(d, exts=(".mp4", ".mkv")) -> Set[str]:
     # census (and reconcile) down with it.
     if not d or not d.is_dir():
         return set()
+    # scandir, not iterdir + is_file(): the listing already says which entries
+    # are files, where is_file() asked the NAS again for each one -- about a
+    # minute on a queue of ~2,000 videos (2026-10-23).
     out = set()
-    for p in d.iterdir():
-        if p.is_file() and p.suffix.lower() in exts:
-            s = normalize_video_stem(p)
-            if s:
-                out.add(s)
+    with os.scandir(d) as it:
+        for e in it:
+            if e.is_file() and Path(e.name).suffix.lower() in exts:
+                s = normalize_video_stem(Path(e.path))
+                if s:
+                    out.add(s)
     return out
 
 
@@ -233,8 +268,10 @@ def bundles_in(d) -> Set[str]:
     # iterdir on it would raise instead of answering "empty".
     if not d or not d.is_dir():
         return set()
-    return {x.name for x in d.iterdir()
-            if x.is_dir() and _BUNDLE_NAME.match(x.name)}
+    # scandir: the listing says which entries are folders (see ids_in_dir).
+    with os.scandir(d) as it:
+        return {e.name for e in it
+                if e.is_dir() and _BUNDLE_NAME.match(e.name)}
 
 
 def project_of(stem: str) -> str:
@@ -294,12 +331,18 @@ def review_pace(window_days: int) -> Optional[float]:
         return None
     if not d or not Path(d).exists():
         return None
+    # scandir: each file's modified time comes with the listing, where
+    # glob + stat() asked the NAS once per review file (see ids_in_dir).
+    # fnmatch keeps glob's matching (case-insensitive on Windows).
+    import fnmatch
     stamps = []
-    for p in Path(d).glob("*_causal_review.json"):
-        try:
-            stamps.append(p.stat().st_mtime)
-        except OSError:
-            pass
+    with os.scandir(d) as it:
+        for e in it:
+            if fnmatch.fnmatch(e.name, "*_causal_review.json"):
+                try:
+                    stamps.append(e.stat().st_mtime)
+                except OSError:
+                    pass
     return pace_per_day(stamps, window_days)
 
 
