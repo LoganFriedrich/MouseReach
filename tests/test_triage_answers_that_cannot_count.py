@@ -48,8 +48,8 @@ def test_placeholders_and_untouched_answers_are_not_judged():
 def test_matching_notes_are_put_in_the_reviewers_words():
     note = ("segment 17 review names causal reach 34446-34462, outside the frames it "
             "records (34355-34422); not applied -- it is about other footage")
-    assert plain_review_note(note).startswith("Segment 17: the reach given earlier "
-                                              "(frames 34446-34462) is outside")
+    assert plain_review_note(note) == ("seg 17 earlier answer (reach 34446-34462 is "
+                                       "outside the segment)")
     assert plain_review_note("segment 3 review covers frames 3861-3864, shorter than any "
                              "real footage (a zero-length-segment artifact); dropped") is None
     assert plain_review_note("something new") == "something new"
@@ -135,9 +135,12 @@ def test_a_pellet_sent_back_by_another_system_carries_its_own_reason(tmp_path):
 
 def test_flag_reasons_are_said_in_words_and_early_reaches_are_not_offered():
     from mousereach.review.causal_review_widget import plain_flag_reason, reaches_in_frames
-    assert plain_flag_reason("fell_through_all_committing_stages").startswith("the algorithm could not decide")
-    assert plain_flag_reason("bench disagreement (never reviewed): the hand score says retrieved") == \
-        "the hand-scored sheet disagrees with the algorithm (the hand score says retrieved)"
+    assert plain_flag_reason("fell_through_all_committing_stages") == ""   # the open question says it
+    assert plain_flag_reason("cv_artifact_landing_no_pellet_arrival (change=0.03)") == \
+        "possible tracking artifact"
+    assert plain_flag_reason("bench disagreement (never reviewed): the hand score says "
+                             "retrieved; the algorithm says untouched") == \
+        "hand score mismatch (hand: retrieved, algo: untouched)"
     assert plain_flag_reason("reviewer escalated from triage: bad segmentation") == \
         "reviewer escalated from triage: bad segmentation"          # a person's words stay
     got = reaches_in_frames([{"start_frame": 206, "end_frame": 210},

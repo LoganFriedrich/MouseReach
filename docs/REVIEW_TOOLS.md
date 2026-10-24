@@ -95,35 +95,42 @@ Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and spe
 ### Why this video is here: the banner (since 2026-10-23)
 
 Everything that holds a video in triage is on screen, because the window is all
-a reviewer sees (Logan, 2026-10-23). A purple banner above the video lists:
+a reviewer sees (Logan, 2026-10-23). A purple banner above the video says it in
+as few words as possible ("far too many words" was the first version):
 
-- why it was sent to triage -- the routing reason recorded when it entered the
-  queue (for example "2 triaged segment(s) unresolved: 17, 18", or "bench
-  disagreement" when the database's nightly check sent a finished video back);
-- every open question: segment, pellet, frames, and what is open -- *which reach
-  touched the pellet*, *what happened to the pellet*, or both -- with the reason
-  a pellet was sent back when something outside the pipeline marked it ("sent
-  back because: bench disagreement: the hand score says retrieved; the algorithm
-  says untouched"), and "(answered)" once answered in this session. A video can
-  come back long after it was finished: such a question is about a different
-  pellet from the ones already answered;
-- every **earlier answer that was NOT used**, and why, in plain words (an answer
-  whose reach is outside its segment; an answer about frames that no longer
-  match any segment after a re-cut; two answers for the same frames that
-  disagree; a segment too short to be a pellet). Before this the reason went to
-  the console only, and the reviewer met the same question again with no idea
-  why -- one segment was answered three times;
-- the reminder that triage includes checking the event happened to the pellet
-  shown, and what to do if it did not (below).
+```
+Open: seg 1: causal reach; seg 2: outcome + causal reach (possible tracking artifact)
+Not used: seg 17 earlier answer (reach 34446-34462 is outside the segment)
+```
+
+- **Open** -- one entry per open pellet: the segment and what is open, in the
+  same words the segment line uses (*causal reach*, *outcome*, or *outcome +
+  causal reach*), "-- answered" once answered in this session. In brackets, the
+  reason only when there is one beyond the open question itself: *possible
+  tracking artifact*, *reach at segment edge*, *pellet out of view*, or *hand
+  score mismatch (hand: X, algo: Y)* when the database's nightly check against
+  the hand-scored sheet sent a finished video back. A note a person wrote when
+  sending it is shown as written. A video can come back long after it was
+  finished: such a question is about a different pellet from the ones already
+  answered.
+- **Not used** -- every earlier answer that was not used, and why: its reach is
+  outside its segment; it is about frames that match no segment since a re-cut;
+  two answers for the same frames disagree; or the segment is too short to be a
+  pellet (Escalate). Before this the reason went to the console only, and the
+  reviewer met the same question again with no idea why -- one segment was
+  answered three times.
+
+Part of every triage answer is checking that the event happened to the pellet
+shown. If it did not, answer nothing and press **Escalate: bad segmentation ->
+deep review** (see "Escalating out of triage").
 
 ### Fitting a small screen, and plain words (since 2026-10-23 evening)
 
 - The reach list offers only reaches inside the pellet's own frames. The reach
   file groups reaches made before the first pellet arrived into segment 1, and
   the list used to offer them as answers for pellet 1.
-- Why a pellet was flagged is said in words ("the algorithm could not decide
-  what happened to this pellet", "the hand-scored sheet disagrees with the
-  algorithm (...)"), never as the outcome step's internal code.
+- Why a pellet was flagged is a short label (see the banner above), never the
+  outcome step's internal code.
 - The panel fits a 1366-pixel screen: speed buttons and the action buttons are on
   their own rows and long questions wrap.
 - `mousereach-review-tool` opens with napari's layer panels hidden and the

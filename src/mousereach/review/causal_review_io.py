@@ -558,29 +558,22 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
 _PLAIN_NOTES = [
     (re.compile(r"^segment (\S+) review names causal reach (\d+)-(\d+), outside the frames "
                 r"it records \((\d+)-(\d+)\)"),
-     "Segment {0}: the reach given earlier (frames {1}-{2}) is outside the segment "
-     "(frames {3}-{4}), so it was not used. If that reach really touched this pellet, "
-     "the cuts are wrong: Escalate."),
+     "seg {0} earlier answer (reach {1}-{2} is outside the segment)"),
     (re.compile(r"^current segment (\S+) \(frames (\d+)-(\d+)\) is shorter than any real"),
-     "Segment {0} (frames {1}-{2}) is too short to be a pellet presentation: the cuts "
-     "need fixing (Escalate); it cannot be answered."),
+     "seg {0} is too short to be a pellet -- Escalate"),
     (re.compile(r"^segment (\S+) review covers frames .* shorter than any real footage"), None),
     (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) matches no current segment"),
-     "An earlier answer for frames {1}-{2} matches none of today's segments (the video "
-     "was re-cut since), so it was not used."),
+     "answer for frames {1}-{2} (video re-cut since)"),
     (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) splits across current "
                 r"segments (\d+) and (\d+)"),
-     "An earlier answer for frames {1}-{2} falls across segments {3} and {4} as the video "
-     "is now cut, so it was not used."),
+     "answer for frames {1}-{2} (video re-cut since)"),
     (re.compile(r"^segment (\d+): two answers for frames (\d+)-(\d+) disagree"),
-     "Segment {0}: two earlier answers disagree, so neither was used -- answer it again."),
+     "seg {0}: two earlier answers disagree -- answer again"),
     (re.compile(r"^review of segment (\S+) now applies to segment (\d+)"),
-     "Your earlier answer for segment {0} now belongs to segment {1} (the video was "
-     "re-cut since); it is used there."),
+     None),
     (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) overlaps current segment "
                 r"(\d+) less than another review"),
-     "An earlier answer for frames {1}-{2} lost out to a better-matching answer for "
-     "segment {3}, so it was not used."),
+     None),
 ]
 
 

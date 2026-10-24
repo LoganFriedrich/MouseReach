@@ -96,39 +96,32 @@ def reaches_in_frames(reaches, start_frame, end_frame):
     return out
 
 
-# Why the pipeline flagged a pellet, in words a reviewer reads. The codes are
-# the outcome step's own (pellet_outcomes.json flag_reason); a code shown raw
-# meant nothing on screen (2026-10-23).
-_FLAG_REASON_WORDS = {
-    "fell_through_all_committing_stages":
-        "the algorithm could not decide what happened to this pellet",
-    "cv_artifact_landing_no_pellet_arrival":
-        "the algorithm said the pellet was knocked into the slot, but a "
-        "pellet-coloured speck was already where it supposedly landed -- it "
-        "may be a tracking mistake",
-    "causal_reach_too_near_segment_start":
-        "the reach that did it is right at the start of this pellet's time; "
-        "it may belong to the previous pellet",
-    "causal_reach_too_near_segment_end":
-        "the reach that did it is right at the end of this pellet's time; it "
-        "may belong to the next pellet",
-    "lost_in_shadow_dark_sa_region":
-        "the pellet was lost from view in the dark part of the slot",
+# Why the pipeline flagged a pellet, as a label of two or three words. The
+# codes are the outcome step's own (pellet_outcomes.json flag_reason); the
+# segment line already says WHAT is open (outcome / causal reach), so this only
+# adds the reason when there is one (Logan, 2026-10-23: "far too many words").
+_FLAG_REASON_LABELS = {
+    "fell_through_all_committing_stages": "",
+    "cv_artifact_landing_no_pellet_arrival": "possible tracking artifact",
+    "causal_reach_too_near_segment_start": "reach at segment edge",
+    "causal_reach_too_near_segment_end": "reach at segment edge",
+    "lost_in_shadow_dark_sa_region": "pellet out of view",
 }
 
 
 def plain_flag_reason(reason) -> str:
-    """A pellet's flag reason in plain words (see _FLAG_REASON_WORDS)."""
+    """A pellet's flag reason as a short label ('' when the open question
+    already says it). See _FLAG_REASON_LABELS."""
     r = str(reason or "").strip()
     if r.lower().startswith("bench disagreement"):
-        rest = r[len("bench disagreement"):].replace("(never reviewed)", "").strip(" :")
-        return ("the hand-scored sheet disagrees with the algorithm"
-                + (" (%s)" % rest if rest else ""))
+        m = re.search(r"hand score says (\w+); the algorithm says (\w+)", r)
+        return ("hand score mismatch (hand: %s, algo: %s)" % m.groups() if m
+                else "hand score mismatch")
     code = re.split(r"[ (:]", r, maxsplit=1)[0]
-    if code in _FLAG_REASON_WORDS:
-        return _FLAG_REASON_WORDS[code]
+    if code in _FLAG_REASON_LABELS:
+        return _FLAG_REASON_LABELS[code]
     if code and re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", code):
-        return "the algorithm flagged it for a person"
+        return ""
     return r
 
 
@@ -726,9 +719,9 @@ The notes box travels with the video.
         banner.setVisible(True)
 
     _TRIAGE_KIND_WORDS = {
-        "reach_uncertain": "which reach touched the pellet",
-        "outcome_uncertain": "what happened to the pellet",
-        "both_uncertain": "what happened to the pellet, and which reach did it",
+        "reach_uncertain": "causal reach",
+        "outcome_uncertain": "outcome",
+        "both_uncertain": "outcome + causal reach",
     }
 
     def _update_triage_banner(self, banner) -> None:
@@ -743,6 +736,9 @@ The notes box travels with the video.
         if not self._video_stem or not self._segment_list:
             banner.setVisible(False)
             return
+        # One short line per open pellet, in the same words the segment line
+        # uses; the reason only when there is one. Plus any earlier answer
+        # that was not used (Logan, 2026-10-23: "far too many words").
         rows = []
         for i in getattr(self, "_triaged_indices", []) or []:
             seg = self._segment_list[i]
@@ -750,40 +746,19 @@ The notes box travels with the video.
                 kind, _ = self._segment_triage(seg)
             except Exception:
                 kind = None
-            done = " (answered)" if seg["segment_num"] in self._review_records else ""
-            why = (" -- flagged because %s" % plain_flag_reason(seg["flag_reason"])
-                   if seg.get("flag_reason") else "")
-            rows.append("segment %s (pellet %s, frames %s-%s): %s%s%s" % (
-                seg["segment_num"], seg.get("pellet_num"), seg.get("start_frame"),
-                seg.get("end_frame"), self._TRIAGE_KIND_WORDS.get(kind, "needs a person"),
-                why, done))
+            why = plain_flag_reason(seg.get("flag_reason")) if seg.get("flag_reason") else ""
+            done = " -- answered" if seg["segment_num"] in self._review_records else ""
+            rows.append("seg %s: %s%s%s" % (seg["segment_num"],
+                                          self._TRIAGE_KIND_WORDS.get(kind, "open"),
+                                          " (%s)" % why if why else "", done))
         notes = [w for w in (plain_review_note(n)
                              for n in getattr(self, "_restore_notes", []) or []) if w]
         if not rows and not notes:
             banner.setVisible(False)
             return
-        routed = ""
-        try:
-            from mousereach.review.release_cli import _routing_reason
-            bd = getattr(self, "_bundle_dir", None)
-            routed = _routing_reason(Path(bd), self._video_stem) if bd else ""
-        except Exception:
-            routed = ""
-        html = "<b>Why this video is here:</b> "
-        # The generic reason ("N triaged segment(s) unresolved: ...") only
-        # repeats the list below; anything else (a bench check, a person's
-        # note) is said.
-        if routed and not re.match(r"^\d+ triaged segment", routed):
-            html += "it was sent to triage because: %s.<br>" % plain_flag_reason(routed)
-        html += ("%d question(s) are open:<br>" % len(rows)) if rows else "nothing is open.<br>"
-        html += "".join("&nbsp;&nbsp;- %s<br>" % r for r in rows)
+        html = "<b>Open:</b> " + ("; ".join(rows) if rows else "nothing")
         if notes:
-            html += "<b>Earlier answers that were NOT used:</b><br>"
-            html += "".join("&nbsp;&nbsp;- %s<br>" % n for n in notes)
-        html += ("<b>Check each is the right pellet before answering.</b> If what you "
-                 "see happens to a different pellet or segment than the one shown, do "
-                 "not answer it: write what you saw in the notes and press "
-                 "\"Escalate: bad segmentation -> deep review\".")
+            html += "<br><b>Not used:</b> " + "; ".join(notes)
         banner.setStyleSheet("padding:6px; border-radius:3px; font-size:12px; "
                              "background:#3a2a5a; color:white;")
         banner.setText(html)
