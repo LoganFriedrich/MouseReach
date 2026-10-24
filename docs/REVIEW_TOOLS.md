@@ -184,6 +184,18 @@ deep-review queue (`review_return.py`, `TriageStatus.seg_pending_reseg`), and
 once the cuts are hand-fixed (`boundary_source: "human"`) the old correction
 stops blocking it.
 
+### A hand-score mismatch opens on the algorithm's answer (since 2026-10-24)
+
+When the bench check sends a finished pellet back because the hand-scored sheet
+disagrees with the algorithm (banner: *hand score mismatch (hand: X, algo: Y)*),
+the outcome list opens with the **algorithm's outcome selected**, not
+`-- select outcome --`. The algorithm is usually the one that is right (Logan,
+2026-10-24), so if it is, "Save Segment + Next" is all it takes, and that records
+"the algorithm was right". Every other outcome stays in the list for when it is
+not. A pellet the algorithm itself could not decide still opens on
+`-- select outcome --`: there is no outcome to offer (`_make_outcome_picker`,
+`is_bench_mismatch`).
+
 ### Two ways an unanswered question becomes an answer
 
 Both matter before trusting `outcome_source: "human_review"` in the data.

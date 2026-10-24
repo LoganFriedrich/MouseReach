@@ -110,6 +110,13 @@ _FLAG_REASON_LABELS = {
 }
 
 
+def is_bench_mismatch(reason) -> bool:
+    """True when a pellet was sent back because the hand-scored sheet
+    disagrees with the algorithm (mousedb's bench check; route_cli puts
+    "bench disagreement ..." first in the pellet's flag_reason)."""
+    return str(reason or "").strip().lower().startswith("bench disagreement")
+
+
 def plain_flag_reason(reason) -> str:
     """A pellet's flag reason as a short label ('' when the open question
     already says it). See _FLAG_REASON_LABELS."""
@@ -2137,7 +2144,8 @@ The notes box travels with the video.
         require_pick: prepend the "-- select outcome --" sentinel and leave it
         selected, so an outcome-uncertain / both-uncertain segment is only
         resolved once the reviewer actively chooses (we never default to a
-        concrete outcome they didn't pick)."""
+        concrete outcome they didn't pick) -- EXCEPT a hand-score mismatch,
+        see below."""
         w = QWidget()
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2146,13 +2154,22 @@ The notes box travels with the video.
         layout.addWidget(QLabel("What did it do to the pellet?"
                                 if require_pick else "Correct outcome:"))
         combo = QComboBox()
-        if require_pick:
+        current = seg.get("outcome", "")
+        # A hand-score mismatch (the bench check sent a finished pellet back
+        # because the hand-scored sheet disagrees): the algorithm did commit an
+        # outcome, and it is usually the one that is right (Logan, 2026-10-24).
+        # So its outcome is pre-selected instead of the sentinel -- "Save
+        # Segment + Next" then means "the algorithm was right" -- and every
+        # other outcome stays in the list. A pellet the algorithm itself could
+        # not decide keeps the sentinel: there is no outcome to offer.
+        algo_default = (current in OUTCOME_CHOICES
+                        and is_bench_mismatch(seg.get("flag_reason")))
+        if require_pick and not algo_default:
             combo.addItem(OUTCOME_PICK_SENTINEL)
         combo.addItems(OUTCOME_CHOICES)
         # Pre-select the current algo outcome only when it's a real one and we're
-        # not forcing an explicit pick.
-        current = seg.get("outcome", "")
-        if not require_pick and current in OUTCOME_CHOICES:
+        # not forcing an explicit pick (or it is a hand-score mismatch).
+        if (not require_pick or algo_default) and current in OUTCOME_CHOICES:
             combo.setCurrentText(current)
         layout.addWidget(combo)
         layout.addStretch()
