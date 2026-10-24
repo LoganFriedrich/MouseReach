@@ -75,7 +75,7 @@ In triage mode the walk visits **only** triaged segments (`_visible_indices`, `:
 
 ### What the person is shown and asked
 
-The whole video is loaded once as a decode-on-demand layer; navigation only moves the playhead (`_load_video`, `:487`). The view opens on the relevant reach — the reviewer's own earlier answer if there is one, otherwise the algorithm's causal reach, otherwise the reach nearest the interaction frame (`_relevant_reach`, `:590`) — landing 25 frames early (`OPEN_LEAD`, `:485`), with 45 frames of padding around the reach (`WINDOW_PAD`, `:482`; `_compute_segment_window`, `:635`). Tracking points and the pillar circle are drawn as overlays.
+The whole video is loaded once as a decode-on-demand layer; navigation only moves the playhead (`_load_video`, `:487`). The view opens on the relevant reach — the reviewer's own earlier answer if there is one, otherwise the algorithm's causal reach, otherwise the reach nearest the interaction frame (`_relevant_reach`, `:590`) — landing 25 frames early (`OPEN_LEAD`, `:485`), with 45 frames of padding around the reach (`WINDOW_PAD`, `:482`; `_compute_segment_window`, `:635`). Tracking points are drawn as coloured dots, without name labels; there is no pillar circle (both dropped for speed, 2026-10-23).
 
 The question panel takes one of three shapes, decided by `_segment_triage` (`:1770`):
 
@@ -136,8 +136,8 @@ deep review** (see "Escalating out of triage").
 - The panel fits a 1366-pixel screen: speed buttons and the action buttons are on
   their own rows and long questions wrap.
 - `mousereach-review-tool` opens with napari's layer panels hidden and the
-  tracking-point names off, so the video gets the room (Window menu brings the
-  panels back; "display text" turns the names on).
+  no tracking-point names, so the video gets the room (Window menu brings the
+  panels back).
 
 ### An answer that cannot count is not recorded (since 2026-10-23)
 

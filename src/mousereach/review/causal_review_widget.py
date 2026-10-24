@@ -306,7 +306,6 @@ class CausalReviewWidget(QWidget):
         # DLC overlay state
         self.dlc_df = None
         self.points_layer = None
-        self.pillar_shapes_layer = None
 
         # Algo data
         self._segments_data: Dict[str, Any] = {}
@@ -837,7 +836,6 @@ The notes box travels with the video.
             # DLC overlay (windowed to the segment span) + pillar overlay
             # (per-frame callback). Built once; navigation just moves the playhead.
             self._add_dlc_points_layer(frame_span=self._segment_overlay_span())
-            self._add_pillar_shapes_layer()
             self._progress.setValue(85)
 
             self._enable_controls(True)
@@ -1034,7 +1032,7 @@ The notes box travels with the video.
         scale = self.scale_factor
         frames_all = np.arange(n)
 
-        pts_chunks, col_chunks, bp_list = [], [], []
+        pts_chunks, col_chunks = [], []
         for i, bp in enumerate(bodyparts):
             xcol, ycol, lcol = f'{bp}_x', f'{bp}_y', f'{bp}_likelihood'
             if xcol not in df.columns or ycol not in df.columns:
@@ -1055,7 +1053,6 @@ The notes box travels with the video.
             m = len(fv)
             pts_chunks.append(np.column_stack([fv, yv, xv]))
             col_chunks.append(np.column_stack([np.tile(base, (m, 1)), alpha]))
-            bp_list.extend([bp] * m)
 
         if not pts_chunks:
             self.points_layer = None
@@ -1068,90 +1065,13 @@ The notes box travels with the video.
                 self.viewer.layers.remove(self.points_layer)
             except Exception:
                 pass
+        # Dots only, no name labels: building a label for every point cost load
+        # time and every frame, and the labels piled on top of the mouse
+        # (Logan, 2026-10-23: drop the labels and the pillar circle for speed).
         self.points_layer = self.viewer.add_points(
             points_data, name='DLC Points', size=3,
             face_color=point_colors,
-            features={'bp': bp_list},
-            text={'string': '{bp}', 'size': 7, 'color': 'white',
-                  'translation': [0, -7, 0]},
         )
-        # Names off by default: they piled on top of the mouse (2026-10-23).
-        # "display text" in the layer controls turns them back on.
-        try:
-            self.points_layer.text.visible = False
-        except Exception:
-            pass
-
-    def _add_pillar_shapes_layer(self):
-        """Add pillar circle overlay."""
-        if self.dlc_df is None:
-            return
-        if self.pillar_shapes_layer is not None:
-            try:
-                self.viewer.layers.remove(self.pillar_shapes_layer)
-            except Exception:
-                pass
-        self.pillar_shapes_layer = self.viewer.add_shapes(
-            name='Pillar', edge_color='red',
-            face_color=[0, 0, 0, 0], edge_width=3,
-        )
-        if not hasattr(self, '_pillar_callback_connected'):
-            self.viewer.dims.events.current_step.connect(self._update_pillar_circle)
-            self._pillar_callback_connected = True
-        self._update_pillar_circle()
-
-    def _update_pillar_circle(self, event=None):
-        """Update pillar circle for current frame."""
-        if getattr(self, '_suspend_pillar', False):
-            return
-        if self.pillar_shapes_layer is None or self.dlc_df is None:
-            return
-        frame_idx = int(self.viewer.dims.current_step[0])
-        if frame_idx < 0 or frame_idx >= len(self.dlc_df):
-            return
-        row = self.dlc_df.iloc[frame_idx]
-        scale = self.scale_factor
-
-        sabl_lk = row.get('SABL_likelihood', 0)
-        sabr_lk = row.get('SABR_likelihood', 0)
-        if sabl_lk < 0.5 or sabr_lk < 0.5:
-            self.pillar_shapes_layer.data = []
-            return
-        sabl_x = row.get('SABL_x', np.nan) * scale
-        sabl_y = row.get('SABL_y', np.nan) * scale
-        sabr_x = row.get('SABR_x', np.nan) * scale
-        sabr_y = row.get('SABR_y', np.nan) * scale
-
-        if np.isnan([sabl_x, sabl_y, sabr_x, sabr_y]).any():
-            self.pillar_shapes_layer.data = []
-            return
-
-        ruler = np.sqrt((sabr_x - sabl_x)**2 + (sabr_y - sabl_y)**2)
-        if ruler < 1:
-            self.pillar_shapes_layer.data = []
-            return
-
-        mid_x = (sabl_x + sabr_x) / 2
-        mid_y = (sabl_y + sabr_y) / 2
-        pillar_x = mid_x
-        pillar_y = mid_y - (0.944 * ruler)
-        pillar_r = 0.138 * ruler
-
-        # Draw circle as ellipse -- in 2D (y, x), shown on every frame and moved
-        # here as the frame changes. WHY not (frame, y, x): a shape pinned to
-        # one frame changes the layer's frame extent on every update, which
-        # makes the viewer recompute its frame range and move the frame slider,
-        # which calls this again. While a new video's layers were being swapped
-        # that loop nested until Python's stack overflowed and the tool died
-        # (Windows "stack overflow" in libopenblas; 43 times since 2026-08,
-        # reproduced 2026-10-23 on loading the next video).
-        n_pts = 40
-        theta = np.linspace(0, 2 * np.pi, n_pts)
-        circle = np.column_stack([
-            pillar_y + pillar_r * np.sin(theta),
-            pillar_x + pillar_r * np.cos(theta),
-        ])
-        self.pillar_shapes_layer.data = [circle]
 
     # ===================================================================
     # Algo data loading
