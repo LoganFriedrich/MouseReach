@@ -116,6 +116,20 @@ a reviewer sees (Logan, 2026-10-23). A purple banner above the video lists:
 - the reminder that triage includes checking the event happened to the pellet
   shown, and what to do if it did not (below).
 
+### Fitting a small screen, and plain words (since 2026-10-23 evening)
+
+- The reach list offers only reaches inside the pellet's own frames. The reach
+  file groups reaches made before the first pellet arrived into segment 1, and
+  the list used to offer them as answers for pellet 1.
+- Why a pellet was flagged is said in words ("the algorithm could not decide
+  what happened to this pellet", "the hand-scored sheet disagrees with the
+  algorithm (...)"), never as the outcome step's internal code.
+- The panel fits a 1366-pixel screen: speed buttons and the action buttons are on
+  their own rows and long questions wrap.
+- `mousereach-review-tool` opens with napari's layer panels hidden and the
+  tracking-point names off, so the video gets the room (Window menu brings the
+  panels back; "display text" turns the names on).
+
 ### An answer that cannot count is not recorded (since 2026-10-23)
 
 Two answers can never be used for the segment they are given for, and the tool

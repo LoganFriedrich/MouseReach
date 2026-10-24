@@ -19,6 +19,7 @@ Entry points:
 """
 from __future__ import annotations
 
+import re
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -80,6 +81,55 @@ OUTCOME_PICK_SENTINEL = "-- select outcome --"
 # picker is cleared and locked, rather than left holding a stale selection that
 # would be saved as fact.
 OUTCOMES_WITHOUT_A_REACH = ("untouched",)
+
+
+def reaches_in_frames(reaches, start_frame, end_frame):
+    """The reaches that overlap frames ``start_frame``..``end_frame``."""
+    out = []
+    for r in reaches or []:
+        try:
+            a, b = int(r.get("start_frame", 0)), int(r.get("end_frame", 0))
+        except (TypeError, ValueError):
+            continue
+        if b >= start_frame and a <= end_frame:
+            out.append(r)
+    return out
+
+
+# Why the pipeline flagged a pellet, in words a reviewer reads. The codes are
+# the outcome step's own (pellet_outcomes.json flag_reason); a code shown raw
+# meant nothing on screen (2026-10-23).
+_FLAG_REASON_WORDS = {
+    "fell_through_all_committing_stages":
+        "the algorithm could not decide what happened to this pellet",
+    "cv_artifact_landing_no_pellet_arrival":
+        "the algorithm said the pellet was knocked into the slot, but a "
+        "pellet-coloured speck was already where it supposedly landed -- it "
+        "may be a tracking mistake",
+    "causal_reach_too_near_segment_start":
+        "the reach that did it is right at the start of this pellet's time; "
+        "it may belong to the previous pellet",
+    "causal_reach_too_near_segment_end":
+        "the reach that did it is right at the end of this pellet's time; it "
+        "may belong to the next pellet",
+    "lost_in_shadow_dark_sa_region":
+        "the pellet was lost from view in the dark part of the slot",
+}
+
+
+def plain_flag_reason(reason) -> str:
+    """A pellet's flag reason in plain words (see _FLAG_REASON_WORDS)."""
+    r = str(reason or "").strip()
+    if r.lower().startswith("bench disagreement"):
+        rest = r[len("bench disagreement"):].replace("(never reviewed)", "").strip(" :")
+        return ("the hand-scored sheet disagrees with the algorithm"
+                + (" (%s)" % rest if rest else ""))
+    code = re.split(r"[ (:]", r, maxsplit=1)[0]
+    if code in _FLAG_REASON_WORDS:
+        return _FLAG_REASON_WORDS[code]
+    if code and re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", code):
+        return "the algorithm flagged it for a person"
+    return r
 
 
 def _pick_by_priority(bundles):
@@ -414,7 +464,9 @@ The notes box travels with the video.
         self._stop_btn.setMaximumWidth(40)
         play_row.addWidget(self._stop_btn)
         play_row.addStretch()
-        # Speed buttons
+        nav_layout.addLayout(play_row)
+        # Speed buttons, on their own row so the panel fits a small screen
+        play_row = QHBoxLayout()
         play_row.addWidget(QLabel("Speed:"))
         self._speed_buttons = {}
         for speed in [0.25, 0.5, 1, 2, 4, 8]:
@@ -426,6 +478,7 @@ The notes box travels with the video.
             self._speed_buttons[speed] = btn
             play_row.addWidget(btn)
         self._speed_buttons[1].setChecked(True)
+        play_row.addStretch()
         nav_layout.addLayout(play_row)
 
         # Frame step buttons
@@ -480,9 +533,16 @@ The notes box travels with the video.
         main_layout.addWidget(scroll, stretch=1)
 
         # --- Footer: save + status ---
+        # Two rows of buttons and the status line under them, so the panel
+        # fits a small screen (one row ran off a 1366-pixel screen, 2026-10-23).
         footer = QFrame()
+        footer_outer = QVBoxLayout()
+        footer_outer.setContentsMargins(0, 0, 0, 0)
+        footer.setLayout(footer_outer)
         footer_layout = QHBoxLayout()
-        footer.setLayout(footer_layout)
+        footer_row2 = QHBoxLayout()
+        footer_outer.addLayout(footer_layout)
+        footer_outer.addLayout(footer_row2)
 
         self._save_btn = QPushButton("Save Review")
         self._save_btn.setStyleSheet("font-weight: bold; background: #2d5016; color: white;")
@@ -517,7 +577,7 @@ The notes box travels with the video.
         )
         self._flag_session_btn.clicked.connect(self._flag_session)
         self._flag_session_btn.setEnabled(False)
-        footer_layout.addWidget(self._flag_session_btn)
+        footer_row2.addWidget(self._flag_session_btn)
 
         # Triage only: the reviewer noticed the SEGMENTATION is wrong (not just
         # one element) -- the whole video needs manual re-segmentation, so it
@@ -534,7 +594,7 @@ The notes box travels with the video.
         self._escalate_btn.clicked.connect(self._escalate_to_deep_review)
         self._escalate_btn.setVisible(not self._deep_review)
         self._escalate_btn.setEnabled(False)
-        footer_layout.addWidget(self._escalate_btn)
+        footer_row2.addWidget(self._escalate_btn)
 
         # Deep-review only: mark this video cleared so the watcher re-injects it.
         self._clear_deep_btn = QPushButton("Clear -> re-enter pipeline")
@@ -546,13 +606,15 @@ The notes box travels with the video.
         self._clear_deep_btn.clicked.connect(self._clear_deep_review)
         self._clear_deep_btn.setVisible(self._deep_review)
         self._clear_deep_btn.setEnabled(False)
-        footer_layout.addWidget(self._clear_deep_btn)
+        footer_row2.addWidget(self._clear_deep_btn)
 
         footer_layout.addStretch()
+        footer_row2.addStretch()
 
         self._status_label = QLabel("Load a video to begin")
         self._status_label.setStyleSheet("color: #888;")
-        footer_layout.addWidget(self._status_label)
+        self._status_label.setWordWrap(True)
+        footer_outer.addWidget(self._status_label)
 
         main_layout.addWidget(footer)
 
@@ -689,7 +751,8 @@ The notes box travels with the video.
             except Exception:
                 kind = None
             done = " (answered)" if seg["segment_num"] in self._review_records else ""
-            why = ("; sent back because: %s" % seg["flag_reason"]) if seg.get("flag_reason") else ""
+            why = (" -- flagged because %s" % plain_flag_reason(seg["flag_reason"])
+                   if seg.get("flag_reason") else "")
             rows.append("segment %s (pellet %s, frames %s-%s): %s%s%s" % (
                 seg["segment_num"], seg.get("pellet_num"), seg.get("start_frame"),
                 seg.get("end_frame"), self._TRIAGE_KIND_WORDS.get(kind, "needs a person"),
@@ -707,8 +770,11 @@ The notes box travels with the video.
         except Exception:
             routed = ""
         html = "<b>Why this video is here:</b> "
-        if routed:
-            html += "it was sent to triage because: %s.<br>" % routed
+        # The generic reason ("N triaged segment(s) unresolved: ...") only
+        # repeats the list below; anything else (a bench check, a person's
+        # note) is said.
+        if routed and not re.match(r"^\d+ triaged segment", routed):
+            html += "it was sent to triage because: %s.<br>" % plain_flag_reason(routed)
         html += ("%d question(s) are open:<br>" % len(rows)) if rows else "nothing is open.<br>"
         html += "".join("&nbsp;&nbsp;- %s<br>" % r for r in rows)
         if notes:
@@ -1036,6 +1102,12 @@ The notes box travels with the video.
             text={'string': '{bp}', 'size': 7, 'color': 'white',
                   'translation': [0, -7, 0]},
         )
+        # Names off by default: they piled on top of the mouse (2026-10-23).
+        # "display text" in the layer controls turns them back on.
+        try:
+            self.points_layer.text.visible = False
+        except Exception:
+            pass
 
     def _add_pillar_shapes_layer(self):
         """Add pillar circle overlay."""
@@ -1343,9 +1415,14 @@ The notes box travels with the video.
                         }
                         break
 
-            # All reaches in this segment (for the reach picker)
+            # All reaches in this segment (for the reach picker) -- only those
+            # inside the segment's own frames. WHY: the reach file's grouping
+            # puts reaches made before the first pellet arrived into segment 1,
+            # and the picker offered them as answers for pellet 1 -- answers the
+            # tool then refuses (answer_problem), 2026-10-23.
             all_reaches = []
-            for r in raw_reaches_by_seg.get(seg_num, []):
+            for r in reaches_in_frames(raw_reaches_by_seg.get(seg_num, []),
+                                       start_frame, end_frame):
                 all_reaches.append({
                     "start": int(r.get("start_frame", 0)),
                     "end": int(r.get("end_frame", 0)),
@@ -2109,9 +2186,10 @@ The notes box travels with the video.
 
         n = seg.get("segment_num")
         algo_n = int(n) if n is not None else 0
-        row.addWidget(QLabel(
-            f"Segmentation says this is segment {algo_n}. "
-            "If that's wrong, which segment is this actually?"))
+        q = QLabel(f"Segmentation says this is segment {algo_n}. "
+                   "If that's wrong, which segment is this actually?")
+        q.setWordWrap(True)
+        row.addWidget(q, 1)
 
         spin = QSpinBox()
         spin.setRange(0, 60)
@@ -3599,6 +3677,15 @@ def main():
     print(f"Launching {tool_name} ({mode}) over {pending_dir} ...")
     print("Building queue (scanning bundles for triaged elements) ...", flush=True)
     viewer = napari.Viewer(title=f"MouseReach {tool_name} ({mode})")
+    # napari's layer panels take a third of a small screen and a reviewer
+    # does not need them; Window menu -> layer controls / layer list brings
+    # them back (2026-10-23).
+    try:
+        qv = getattr(viewer.window, "_qt_viewer", None) or viewer.window.qt_viewer
+        qv.dockLayerControls.setVisible(False)
+        qv.dockLayerList.setVisible(False)
+    except Exception:
+        pass
     widget = CausalReviewWidget(viewer, triage_only=triage_only)
     widget._use_cv = bool(args.cv)
     if args.worklist:

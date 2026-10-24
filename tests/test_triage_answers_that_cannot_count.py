@@ -131,3 +131,16 @@ def test_a_pellet_sent_back_by_another_system_carries_its_own_reason(tmp_path):
     segs = {s["segment_num"]: s for s in json.loads(p.read_text(encoding="utf-8"))["segments"]}
     assert segs[3]["flag_reason"] == "bench disagreement: hand score missed, algorithm retrieved"
     assert segs[7]["flag_reason"] == "bench disagreement"
+
+
+def test_flag_reasons_are_said_in_words_and_early_reaches_are_not_offered():
+    from mousereach.review.causal_review_widget import plain_flag_reason, reaches_in_frames
+    assert plain_flag_reason("fell_through_all_committing_stages").startswith("the algorithm could not decide")
+    assert plain_flag_reason("bench disagreement (never reviewed): the hand score says retrieved") == \
+        "the hand-scored sheet disagrees with the algorithm (the hand score says retrieved)"
+    assert plain_flag_reason("reviewer escalated from triage: bad segmentation") == \
+        "reviewer escalated from triage: bad segmentation"          # a person's words stay
+    got = reaches_in_frames([{"start_frame": 206, "end_frame": 210},
+                             {"start_frame": 390, "end_frame": 401},
+                             {"start_frame": 2386, "end_frame": 2393}], 392, 2229)
+    assert [r["start_frame"] for r in got] == [390]
