@@ -755,15 +755,12 @@ The notes box travels with the video.
     }
 
     def _update_triage_banner(self, banner) -> None:
-        """Say why the segment on screen is open, and any earlier answer for
-        it that was not used and why. Only that segment: the others show when
-        you get to them (Logan, 2026-10-23: "i only need the note for the one
-        I'm looking at to show").
-
-        WHY a banner at all (Logan, 2026-10-23): all a reviewer sees is this
-        window. Without it a reviewer met questions they had already answered
-        -- the earlier answer had been dropped, and only the console said so --
-        with no way to tell why.
+        """Say what is open on the segment on screen, and why it was flagged
+        when there is a reason beyond that -- nothing else. Only that segment
+        (Logan, 2026-10-23: "i only need the note for the one I'm looking at to
+        show"). Nothing about earlier answers or re-cut segments: a reviewer
+        answers what is open, and those words only made it unclear what to do
+        (Logan, 2026-10-24).
         """
         if not self._video_stem or not self._segment_list:
             banner.setVisible(False)
@@ -776,14 +773,8 @@ The notes box travels with the video.
             except Exception:
                 kind = None
             why = plain_flag_reason(seg.get("flag_reason")) if seg.get("flag_reason") else ""
-            done = " -- answered" if seg["segment_num"] in self._review_records else ""
-            lines.append("<b>Open:</b> %s%s%s" % (self._TRIAGE_KIND_WORDS.get(kind, "open"),
-                                                  " (%s)" % why if why else "", done))
-        span = (seg.get("start_frame", 0), seg.get("end_frame", 0))
-        notes = [w for w in (plain_review_note(n, span)
-                             for n in getattr(self, "_restore_notes", []) or []) if w]
-        if notes:
-            lines.append("<b>Not used:</b> " + "; ".join(notes))
+            lines.append("<b>Open:</b> %s%s" % (self._TRIAGE_KIND_WORDS.get(kind, "open"),
+                                                " (%s)" % why if why else ""))
         if not lines:
             banner.setVisible(False)
             return
@@ -1201,7 +1192,7 @@ The notes box travels with the video.
             restored, unmatched, notes = restore_review_for_segments(
                 doc, current, human_segmentation=human)
             for n in notes:
-                print(f"[review restore] {self._video_stem}: {n}")
+                logger.debug("review restore %s: %s", self._video_stem, n)
             # Shown to the reviewer in the triage banner: an earlier answer that
             # was not used must say so on screen, or the reviewer meets the same
             # question again with no idea why (2026-10-23).
@@ -1224,9 +1215,9 @@ The notes box travels with the video.
             still_open = open_triaged_indices(self._triaged_indices,
                                               self._segment_list, self._review_records)
             if len(still_open) < len(self._triaged_indices):
-                print(f"[review restore] {self._video_stem}: "
-                      f"{len(self._triaged_indices) - len(still_open)} flagged pellet(s) "
-                      f"already answered are not walked")
+                logger.debug("review restore %s: %d answered pellet(s) not walked",
+                             self._video_stem,
+                             len(self._triaged_indices) - len(still_open))
             self._triaged_indices = still_open
 
         idx = self._first_visible_idx()
@@ -1236,13 +1227,9 @@ The notes box travels with the video.
                 break
         self._current_seg_idx = idx
 
-        if self._review_records:
-            n_done = sum(1 for seg in self._segment_list if _done(seg))
-            first = (self._segment_list[idx]["segment_num"]
-                     if self._segment_list else "?")
-            msg = (f"Resumed: {n_done}/{len(self._segment_list)} already scored"
-                   f"  --  opening segment {first}")
-            self._status_label.setText(msg)
+        if self._segment_list:
+            self._status_label.setText(
+                f"Opening segment {self._segment_list[idx]['segment_num']}")
 
     def _build_segment_list(self):
         """Build the unified segment list from segments + outcomes + assignments."""
@@ -1559,22 +1546,13 @@ The notes box travels with the video.
             seg_info += "  --  <span style='color: #ffa500;'>OUTCOME CALL</span>"
         if seg.get("reach_uncertain"):
             seg_info += "  --  <span style='color: #ffcc00;'>TRIAGED (reach)</span>"
-        if seg.get("manual"):
-            seg_info += "  --  <span style='color: #4af;'>MANUAL SEG</span>"
 
         banner_layout.addWidget(QLabel(seg_info))
 
-        # If this segment was already reviewed, say so (answers restored below).
-        prev = self._review_records.get(seg["segment_num"])
-        if prev:
-            agreed = (prev.get("human") or {}).get("agreed")
-            tag = "agreed with algo" if agreed else "corrected"
-            note = QLabel(
-                f"[OK] Previously scored ({tag}) -- your answers are loaded; "
-                f"edit and re-save to update.")
-            note.setStyleSheet("color: #6c6; font-size: 11px;")
-            note.setWordWrap(True)
-            banner_layout.addWidget(note)
+        # Nothing on screen says a segment was answered before or re-cut: a
+        # reviewer answers what is open, and those words only confused it
+        # (Logan, 2026-10-24: "Don't tell me it was resegmented or previously
+        # answered by a human"). Earlier answers are still filled in below.
 
         if seg.get("causal_reach"):
             cr = seg["causal_reach"]

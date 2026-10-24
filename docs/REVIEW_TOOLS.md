@@ -95,32 +95,28 @@ Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and spe
 
 Everything that holds a segment in triage is on screen, because the window is
 all a reviewer sees (Logan, 2026-10-23). A purple banner above the video says it
-for the segment on screen only, in as few words as possible -- the other open
-segments show theirs when you get to them ("far too many words", then "i only
-need the note for the one I'm looking at to show"):
+for the segment on screen only, in as few words as possible:
 
 ```
 Open: outcome + causal reach (possible tracking artifact)
-Not used: earlier answer's reach 34446-34462 is outside this segment
 ```
 
 - **Open** -- what is open on this segment, in the same words as its question:
-  *causal reach*, *outcome*, or *outcome + causal reach*; "-- answered" once
-  answered in this session. In brackets, the reason only when there is one
-  beyond the open question itself: *possible tracking artifact*, *reach at
-  segment edge*, *pellet out of view*, or *hand score mismatch (hand: X, algo:
-  Y)* when the database's nightly check against the hand-scored sheet sent a
-  finished video back. A note a person wrote when sending it is shown as
-  written. A video can come back long after it was finished: such a question
-  is about a different pellet from the ones already answered.
-- **Not used** -- an earlier answer about this segment's frames that was not
-  used, and why: its reach is outside the segment; the video was re-cut since;
-  two answers for the same frames disagree; or the segment is too short to be a
-  pellet (Escalate). Before this the reason went to the console only, and the
-  reviewer met the same question again with no idea why -- one segment was
-  answered three times.
-
-The banner is hidden on a segment with nothing open and no unused answer.
+  *causal reach*, *outcome*, or *outcome + causal reach*. In brackets, the reason
+  only when there is one beyond the open question itself: *possible tracking
+  artifact*, *reach at segment edge*, *pellet out of view*, or *hand score
+  mismatch (hand: X, algo: Y)* when the database's nightly check against the
+  hand-scored sheet sent a finished video back. A note a person wrote when
+  sending it is shown as written.
+- **Nothing else** (since 2026-10-24). The tool never says that a segment was
+  re-cut, that a person answered something before, or how: a reviewer answers
+  what is open, and those words only made it unclear what to do (Logan: "If
+  something is in triage it is because we have no idea what the correct answer
+  is for that segment. Don't tell me it was resegmented or previously answered
+  by a human."). Pellets already answered are not walked at all (see "Triage
+  walks only the pellets still open"); an answer given earlier in the same
+  session is filled in again if you go back to it, without comment. How
+  earlier answers were matched is logged at debug level only.
 
 Part of every triage answer is checking that the event happened to the pellet
 shown. If it did not, answer nothing and press **Escalate: bad segmentation ->
