@@ -83,3 +83,15 @@ def test_a_node_on_older_code_is_not_called_idle(tmp_path):
     assert "idle" not in line
     assert "does not report what it is doing" in line
 
+
+def test_one_odd_report_does_not_blank_the_overview(tmp_path):
+    """A report whose "doing" is not one item (the CPU pose pool's first
+    version wrote a list) costs only its own line, never every node's."""
+    node_status.write(tmp_path, "working", hostname="GPU-A",
+                      extra={"doing": {"type": "single_dlc", "id": "v1", "since": "t"},
+                             "done_last_hour": 3})
+    node_status.write(tmp_path, "working", hostname="SRV-cpu",
+                      extra={"doing": ["v2", "v3"], "done_last_hour": 0})
+    text = node_status.describe(tmp_path)
+    assert "GPU-A" in text and "single_dlc v1 since t" in text
+    assert "SRV-cpu" in text and "v2, v3" in text

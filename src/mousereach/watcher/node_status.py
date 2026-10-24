@@ -196,8 +196,15 @@ def describe(nas_root) -> str:
                          % (host, r.get("state", "?")))
         else:
             doing = r.get("doing") or {}
-            now = ("%s %s since %s" % (doing.get("type"), doing.get("id"), doing.get("since"))
-                   if doing else "idle")
+            # One node's odd report must cost only its own line: a list here
+            # (the CPU pose pool's first version) used to raise and blank the
+            # whole overview (2026-10-24).
+            if isinstance(doing, dict):
+                now = ("%s %s since %s" % (doing.get("type"), doing.get("id"),
+                                           doing.get("since")) if doing else "idle")
+            else:
+                now = "working on %s" % (", ".join(map(str, doing))
+                                         if isinstance(doing, (list, tuple)) else doing)
             lines.append("  %-20s %-13s %s; %s done in the last hour"
                          % (host, r.get("state", "?"), now, r.get("done_last_hour", "?")))
     return "\n".join(lines)
