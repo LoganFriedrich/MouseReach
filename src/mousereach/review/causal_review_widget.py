@@ -940,14 +940,30 @@ The notes box travels with the video.
                                                 abs(r["end"] - ifr)))
         return max(cands, key=lambda r: r.get("start", 0))
 
+    def _opens_at_end(self, seg: Dict[str, Any]) -> bool:
+        """An 'untouched' call is judged by where the pellet is at the END of
+        its segment, so it opens there -- whether or not the mouse reached.
+        WHY: an untouched call with no reaches already opened at the end, but
+        one with reaches (every hand-score mismatch the algorithm called
+        untouched) opened on its last reach, often hundreds of frames earlier,
+        and the reviewer had to skip forward to see the pellet (Logan,
+        2026-10-24: "Why aren't they the same?"). A reach the reviewer has
+        chosen for it still comes first (_relevant_reach)."""
+        if seg.get("outcome") not in OUTCOMES_WITHOUT_A_REACH:
+            return False
+        rec = (getattr(self, "_review_records", None) or {}).get(seg["segment_num"])
+        hc = ((rec or {}).get("human") or {}).get("causal_reach")
+        return not (hc and hc.get("start") is not None)
+
     def _compute_segment_window(self, seg: Dict[str, Any]) -> Tuple[int, int]:
         """Absolute frame range to frame for a segment: the RELEVANT REACH plus a
-        few frames each side, clamped to the segment. Reach-centric always --
-        touched -> causal reach; miss/triaged -> last reach.
+        few frames each side, clamped to the segment: touched -> causal reach;
+        miss/triaged -> the most likely reach; untouched -> the segment's end
+        (_opens_at_end).
         """
         pad = self.WINDOW_PAD
         sf, ef = int(seg["start_frame"]), int(seg["end_frame"])
-        reach = self._relevant_reach(seg)
+        reach = None if self._opens_at_end(seg) else self._relevant_reach(seg)
         if reach is None:
             # No reaches at all -> don't force watching the whole segment. Frame
             # the segment-CHANGING move (the tray cycle at the segment end): open
@@ -1492,8 +1508,9 @@ The notes box travels with the video.
     def _navigate_to_segment(self, seg: Dict[str, Any]):
         """Open the playhead ON the relevant reach -- the causal reach for a
         touched segment, the last reach for a miss/triaged segment -- NOT on a
-        segment-relative frame."""
-        reach = self._relevant_reach(seg)
+        segment-relative frame. An untouched call opens at the segment's end
+        instead (_opens_at_end)."""
+        reach = None if self._opens_at_end(seg) else self._relevant_reach(seg)
         if reach is not None:
             # Land a bit BEFORE the reach so the reviewer sees the pellet's
             # pre-reach state and can watch the reach happen.
