@@ -143,10 +143,62 @@ def build_downstream_index() -> Dict[str, str]:
     return idx
 
 
-def _review_pending(stem: str, manifest_dir: Path) -> bool:
-    """True if a saved human review for this offspring is NEWER than its archived
-    features (its triage resolution has not been applied to the shipped product),
-    or a review exists with no features yet. Never raises."""
+_REVIEW_SHA_CACHE: Dict[tuple, str] = {}
+
+
+def review_applied(manifest: Optional[dict], review_path, review_mtime=None,
+                   review_size=None, features_mtime=None) -> bool:
+    """Did the run that wrote ``manifest`` apply the human review at
+    ``review_path``?
+
+    The re-run scan's rule, in its order (watcher/reprocessor.py,
+    ``_pending_review_path``) -- the two must agree. Until 2026-10-24 this
+    module compared the review file's modified time with the features file's,
+    while the re-run scan had moved to content: a review saved seconds after
+    the run that applied it looked unapplied here forever, so its video never
+    counted as complete and its recording was never retired (196 recordings
+    sat in the intake, every one of their reviews applied).
+
+      1. the manifest's ``applied_review`` stamp -- the sha256 of the review
+         the run applied -- against the review file's content: no clock;
+      2. a manifest from before the stamp: the review's own ``reviewed_at``
+         against the manifest's ``created_at``;
+      3. only when either is missing: the files' modified times.
+
+    An error answers False: a recording stays in the intake rather than
+    retires on a guess."""
+    try:
+        stamp = (manifest or {}).get("applied_review") or {}
+        if stamp.get("sha256"):
+            from mousereach.pipeline.fsutil import sha256_file
+            key = (str(review_path), review_size, review_mtime)
+            digest = _REVIEW_SHA_CACHE.get(key) if review_mtime is not None else None
+            if digest is None:
+                digest = sha256_file(review_path)
+                if review_mtime is not None:
+                    _REVIEW_SHA_CACHE[key] = digest
+            return digest == stamp["sha256"]
+        reviewed_at = None
+        try:
+            reviewed_at = json.loads(Path(review_path).read_text(encoding="utf-8")).get("reviewed_at")
+        except Exception:
+            pass
+        created_at = (manifest or {}).get("created_at")
+        if reviewed_at and created_at:
+            # ISO strings in one format sort as times.
+            return not (str(reviewed_at) > str(created_at))
+        if features_mtime is None:
+            return False
+        mtime = review_mtime if review_mtime is not None else Path(review_path).stat().st_mtime
+        return not (mtime > features_mtime)
+    except Exception:
+        return False
+
+
+def _review_pending(stem: str, manifest_dir: Path, manifest: Optional[dict] = None) -> bool:
+    """True if a saved human review for this offspring has not been applied to
+    its archived results (review_applied), or a review exists with no features
+    yet. Never raises."""
     try:
         from mousereach.review.causal_review_io import resolve_review_path
         review = resolve_review_path(stem)
@@ -155,7 +207,7 @@ def _review_pending(stem: str, manifest_dir: Path) -> bool:
         feats = Path(manifest_dir) / f"{stem}_features.json"
         if not feats.exists():
             return True
-        return review.stat().st_mtime > feats.stat().st_mtime
+        return not review_applied(manifest, review, features_mtime=feats.stat().st_mtime)
     except Exception:
         return False
 
@@ -228,14 +280,17 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
         if not cmp.get("is_current"):
             continue  # outdated version -> not done
         if reviews is None:
-            pending = _review_pending(stem, mp.parent)
+            pending = _review_pending(stem, mp.parent, manifest)
         else:
             review = reviews.get(stem)
             if review is None:
                 pending = False
             else:
                 ft = feats.get((str(mp.parent), stem))
-                pending = True if ft is None else review[1] > ft
+                pending = True if ft is None else not review_applied(
+                    manifest, review[0], review_mtime=review[1],
+                    review_size=review[2] if len(review) > 2 else None,
+                    features_mtime=ft)
         if pending:
             continue  # a human review still to apply -> not done
         complete.add(stem)
