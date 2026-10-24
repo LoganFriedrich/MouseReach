@@ -1136,11 +1136,17 @@ The notes box travels with the video.
         pillar_y = mid_y - (0.944 * ruler)
         pillar_r = 0.138 * ruler
 
-        # Draw circle as ellipse
+        # Draw circle as ellipse -- in 2D (y, x), shown on every frame and moved
+        # here as the frame changes. WHY not (frame, y, x): a shape pinned to
+        # one frame changes the layer's frame extent on every update, which
+        # makes the viewer recompute its frame range and move the frame slider,
+        # which calls this again. While a new video's layers were being swapped
+        # that loop nested until Python's stack overflowed and the tool died
+        # (Windows "stack overflow" in libopenblas; 43 times since 2026-08,
+        # reproduced 2026-10-23 on loading the next video).
         n_pts = 40
         theta = np.linspace(0, 2 * np.pi, n_pts)
         circle = np.column_stack([
-            np.full(n_pts, frame_idx),
             pillar_y + pillar_r * np.sin(theta),
             pillar_x + pillar_r * np.cos(theta),
         ])
