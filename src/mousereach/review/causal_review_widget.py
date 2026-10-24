@@ -19,6 +19,7 @@ Entry points:
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import json
@@ -58,6 +59,10 @@ from .causal_review_io import (
     _get_username,
     _get_timestamp,
 )
+
+# The flag-session and escalate handlers log their failures here; it was
+# never defined, so a failure there raised NameError instead (2026-10-24).
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
