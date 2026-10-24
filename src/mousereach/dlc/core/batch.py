@@ -374,7 +374,16 @@ def run_dlc_workflow(
     3. Move completed to Processing/
     """
     input_dir = Path(input_dir or DEFAULT_DLC_QUEUE)
-    config_path = Path(config_path or DEFAULT_DLC_CONFIG)
+    # No config given: the model this machine is set up with. (This read an
+    # undefined DEFAULT_DLC_CONFIG and raised NameError -- found 2026-10-24.)
+    if config_path is None:
+        from mousereach.config import WatcherConfig
+        config_path = WatcherConfig.load().dlc_config_path
+        if config_path is None:
+            raise ValueError("no DeepLabCut model given and none configured on this "
+                             "machine: pass config_path, or set dlc_config_path with "
+                             "mousereach-setup")
+    config_path = Path(config_path)
     
     if verbose:
         print("=" * 60)

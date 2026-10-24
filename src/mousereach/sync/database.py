@@ -249,7 +249,7 @@ class SyncResult:
 
 
 def parse_subject_id(video_name: str) -> Optional[str]:
-    """
+    r"""
     Extract subject ID from a video name and convert it to database format.
 
     Video format: YYYYMMDD_{PROJECT}{CCSS}_[Type][Run]

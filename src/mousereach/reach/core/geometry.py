@@ -10,7 +10,10 @@ Key geometry: 55° isoceles triangle with apex at pillar, base at SABL-SABR.
 import numpy as np
 import math
 from dataclasses import dataclass
-from typing import Tuple
+from typing import TYPE_CHECKING, Tuple
+
+if TYPE_CHECKING:          # names the return type below; pandas loads only when used
+    import pandas as pd
 
 
 # Physical constants (mm) - universal
