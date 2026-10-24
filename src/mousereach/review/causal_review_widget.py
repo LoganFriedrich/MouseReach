@@ -19,6 +19,7 @@ Entry points:
 """
 from __future__ import annotations
 
+import os
 import re
 import json
 from pathlib import Path
@@ -2878,48 +2879,61 @@ The notes box travels with the video.
         self._has_triage_cache[key] = result
         return result
 
-    def _needs_review_pool(self, pending_dir: Path, root: Path,
-                           exclude: Optional[Path] = None) -> List[Path]:
-        """All Pending bundles that still need review (not flagged, not GT'd, not
-        done, not a failed-segmentation video), optionally excluding one bundle.
-        In triaged-only mode, also skip videos with nothing to triage."""
-        ex = str(Path(exclude)) if exclude else None
-        pool = []
-        for b in Path(pending_dir).iterdir():
-            if not (b.is_dir() and bundle_manifest_path(b).exists()):
-                continue
-            if ex and str(b) == ex:
-                continue
-            if self._segmentation_failed(b):
-                continue   # failed-seg -> manual re-seg queue, not normal review
-            if self._triage_only and not self._bundle_has_triage(b):
-                continue   # triaged-only: skip videos with no triaged element
-            if self._bundle_needs_review(b, root):
-                pool.append(b)
-        return pool
+    def _bundle_eligible(self, b: Path, root: Path) -> bool:
+        """Whether bundle ``b`` should be handed to the reviewer now: it has a
+        manifest, its segmentation did not fail (those go to deep review), it
+        has something to triage (triaged-only mode), and it is not already
+        ground-truthed or fully answered. A worklist names its videos on
+        purpose, so for a worklist only the manifest is checked."""
+        if not bundle_manifest_path(b).exists():
+            return False
+        if self._worklist:
+            return True
+        if self._segmentation_failed(b):
+            return False   # failed-seg -> manual re-seg queue, not normal review
+        if self._triage_only and not self._bundle_has_triage(b):
+            return False   # triaged-only: skip videos with no triaged element
+        return self._bundle_needs_review(b, root)
 
     def _review_pool_paths_unfiltered(self, pending_dir, root):
-        """Needs-review bundle paths. Reads the SCAN-FREE queue index
-        (mousereach.review.queue_index) when it is populated; otherwise falls back
-        to the full bundle scan (_needs_review_pool). The index is maintained by
-        PUSH (staging) + POP (full-review), so this stays current without ever
-        re-reading every bundle. Fallback keeps the tool working if the index is
-        missing/empty."""
+        """Every bundle folder in the queue folder, by name only.
+
+        WHY a plain listing (2026-10-23): this used to read the queue index and,
+        when that was empty, open every bundle's files to decide which still
+        need review -- about 6 minutes over the NAS for ~800 bundles, at every
+        launch. The index was stale (one entry, for a bundle long gone; only a
+        one-off catch-up job ever pushed to it), and a partly filled index would
+        have hidden the rest of the queue. A video is in the queue because its
+        bundle is in this folder; whether the one about to be shown still needs
+        a person is checked when it is picked (_pick_eligible) -- a handful of
+        file reads instead of thousands.
+        """
+        out = []
         try:
-            from mousereach.review.queue_index import QueueIndex
-            paths = [p for p in QueueIndex().all_paths() if p.is_dir()]
-            # The index is ONE global list -- it tracks whichever folder the
-            # pipeline pushes into (the triage queue). Trusting it blindly makes
-            # --pending-dir a no-op and silently hands back bundles from a
-            # different queue, so only use it when it describes the queue we
-            # were actually pointed at.
-            want = Path(pending_dir).resolve()
-            paths = [q for q in paths if q.parent.resolve() == want]
-            if paths:
-                return paths
-        except Exception:
+            with os.scandir(pending_dir) as it:
+                for e in it:
+                    if e.is_dir() and not e.name.startswith((".", "_")):
+                        out.append(Path(e.path))
+        except OSError:
             pass
-        return self._needs_review_pool(pending_dir, root)
+        return out
+
+    def _pick_eligible(self, candidates, root):
+        """The bundle to show next: the lab's priority order picks a group and
+        a random video inside it (_pick_by_priority), and that one video is
+        checked (_bundle_eligible). One that does not need review is dropped
+        from the cached pool so it is never checked twice, and the pick is
+        made again. Returns (bundle, tier) or (None, None)."""
+        pool = list(candidates)
+        while pool:
+            b, tier_n = _pick_by_priority(pool)
+            if self._bundle_eligible(b, root):
+                return b, tier_n
+            pool.remove(b)
+            cache = getattr(self, "_pool_cache", None)
+            if cache and b in cache:
+                cache.remove(b)
+        return None, None
 
     def _review_pool_paths(self, pending_dir, root):
         """Needs-review bundles, narrowed to the worklist when one is loaded.
@@ -2936,9 +2950,8 @@ The notes box travels with the video.
             # a worklist means "I want another look at these segments", and most
             # of them have been reviewed once already.
             pending = Path(pending_dir)
-            pool = [pending / stem for stem in sorted(self._worklist)]
-            return [b for b in pool
-                    if b.is_dir() and bundle_manifest_path(b).exists()]
+            return [pending / stem for stem in sorted(self._worklist)
+                    if (pending / stem).is_dir()]
         return self._review_pool_paths_unfiltered(pending_dir, root)
 
     def load_worklist(self, path: Path) -> int:
@@ -2993,16 +3006,16 @@ The notes box travels with the video.
         pending_dir = Path(pending_dir)
         root = pending_dir.parent
         self._reviewed_this_session = set()
-        self._pool_cache = self._review_pool_paths(pending_dir, root)  # index (scan-free) or scan fallback
-        if not self._pool_cache:
+        self._pool_cache = self._review_pool_paths(pending_dir, root)  # folder listing, by name
+        b, tier_n = self._pick_eligible(self._pool_cache, root)
+        if b is None:
             show_info("Review queue: nothing left to review (all flagged or complete).")
             return
-        b, tier_n = _pick_by_priority(self._pool_cache)
         manifest = json.loads(bundle_manifest_path(b).read_text(encoding="utf-8"))
         self.load_from_manifest(manifest, b)
         self._status_label.setText(
             self._status_label.text()
-            + f"   [{_pick_note(tier_n)} -- {len(self._pool_cache)} in queue]")
+            + f"   [{_pick_note(tier_n)} -- {len(self._pool_cache)} in the queue folder]")
 
     def _load_next_video(self):
         """Load the next video that still NEEDS review -- highest-priority group
@@ -3022,20 +3035,21 @@ The notes box travels with the video.
         cur = getattr(self, "_bundle_dir", None)
         if cur is not None:
             seen.add(str(cur))  # the video just reviewed -- don't hand it back
+        root = self._review_root()
         cache = getattr(self, "_pool_cache", None)
         candidates = [b for b in cache if str(b) not in seen] if cache else []
-        if not candidates:
-            # Cache exhausted -> refresh from the index (or scan fallback); this also
-            # catches bundles staged since launch and drops popped/reviewed ones.
-            root = self._review_root()
+        nxt, tier_n = self._pick_eligible(candidates, root)
+        if nxt is None:
+            # Cache exhausted -> list the folder again; this also catches
+            # bundles staged since launch.
             self._pool_cache = self._review_pool_paths(pending, root)
             candidates = [b for b in self._pool_cache if str(b) not in seen]
-        if not candidates:
+            nxt, tier_n = self._pick_eligible(candidates, root)
+        if nxt is None:
             msg = "Queue complete -- nothing left to review."
             show_info(msg)
             self._status_label.setText(msg)
             return
-        nxt, tier_n = _pick_by_priority(candidates)
         try:
             manifest = json.loads(bundle_manifest_path(nxt).read_text(encoding="utf-8"))
             self.load_from_manifest(manifest, nxt)

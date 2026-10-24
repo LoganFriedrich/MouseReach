@@ -48,18 +48,17 @@ Three more files in `review/` are worth naming, and none of them is a review too
 
 ### How a video is chosen
 
-`load_pending_queue` picks the next video from the pool of bundles that still need review **in the lab's work order** (the order file and panel described in WORK_PRIORITY.md): it takes the highest-priority group that has a video waiting -- for example the first project, or a study's session list within a project -- and picks **at random inside that group** (`_pick_by_priority`, which sorts by `WorkPriority.rank`). Work the order marks "not taken on until nothing else is waiting" (Easy and Flat trays by default) comes after everything else, whatever its group. The pool is cached at launch; each "next video" draws from the cache minus what was already reviewed, and the cache is rebuilt when it runs out (`_load_next_video`). The random draw inside a group is deliberate: it keeps the reviewed set spread across cohorts and dates within that group. The status line says how the video was chosen ("top-priority pick", "priority pick (group N)", or "random pick" when no order is set). Until 2026-10 the pick was random over the whole pool.
+`load_pending_queue` picks the next video from the pool of bundles that still need review **in the lab's work order** (the order file and panel described in WORK_PRIORITY.md): it takes the highest-priority group that has a video waiting -- for example the first project, or a study's session list within a project -- and picks **at random inside that group** (`_pick_by_priority`, which sorts by `WorkPriority.rank`). Work the order marks "not taken on until nothing else is waiting" (Easy and Flat trays by default) comes after everything else, whatever its group. At launch the pool is just the list of bundle folders in the queue folder, by name -- under a second, where reading every bundle took about 6 minutes (changed 2026-10-23). Each pick then checks only the video it picked against the rules below (`_pick_eligible`); one that fails is dropped from the pool and the pick is made again. Each "next video" draws from the pool minus what was already reviewed, and the folder is listed again when it runs out (`_load_next_video`). The random draw inside a group is deliberate: it keeps the reviewed set spread across cohorts and dates within that group. The status line says how the video was chosen ("top-priority pick", "priority pick (group N)", or "random pick" when no order is set). Until 2026-10 the pick was random over the whole pool.
 
-A bundle is in the pool when all of these hold (`_needs_review_pool`, `:2658`; `_bundle_needs_review`, `:2598`):
+A picked video is shown when all of these hold (`_bundle_eligible`; `_bundle_needs_review`):
 
 - it is a directory containing a manifest file,
 - segmentation did not fail — confidence at or below 0, or an anomaly mentioning "reference quality" (`_segmentation_failed`, `:2610`),
 - it has at least one triaged element (`_bundle_has_triage`, `:2626`),
-- its mouse+day session is **not** flagged (`:2602-2603`; see [the session flag](#the-session-flag-button-does-the-opposite-of-what-it-says)),
 - no ground-truth file exists for the video anywhere — ground truth counts as the answer (`causal_review_widget.py:2604-2605`; `has_gt`, `causal_review_io.py:596`),
 - its triaged elements are not already all resolved (`_bundle_reviewed`, `:2539`).
 
-The failed-segmentation skip at `:2665-2666` runs in **both** modes, including deep review. That is a problem for the Deep Review tool: see [Deep Review](#deep-review).
+The failed-segmentation skip (`_bundle_eligible`) runs in **both** modes, including deep review. That is a problem for the Deep Review tool: see [Deep Review](#deep-review).
 
 ### What counts as a triaged element
 
@@ -604,13 +603,11 @@ Returning moves the bundle's data files, including the review file, into the loc
 
 **A triage bundle with zero triaged elements never leaves.** The return condition requires `st.has_triage` (`:247`), so a bundle whose triage flags were cleared by some other route sits in the folder indefinitely.
 
-### The scan-free queue index
+### The scan-free queue index (no longer read by the tool)
 
-`queue_index.py` keeps a SQLite list at `{NAS}/review_records/triage_queue.db` of videos needing review, so the tool does not have to read every bundle. It is push/pop. `pop` happens in the tool when a video's triaged elements are all resolved (`causal_review_widget.py:2827-2842`, best-effort, failures swallowed).
+`queue_index.py` keeps a SQLite list at `{NAS}/review_records/triage_queue.db` of videos needing review. It is push/pop: `push` is called only from the bring-current path (`reprocess_to_current._push_review_index`), never by the live watcher, and `pop` happens in the tool when a video's triaged elements are all resolved (best-effort).
 
-**`push` is called from exactly one place** — `reprocess_to_current._push_review_index` (`reprocess_to_current.py:108`), the bring-current path, and it skips deep-review bundles entirely (`:114-115`). The live watcher gate does not push. That matters because of how the tool reads the index (`_review_pool_paths_unfiltered`, `causal_review_widget.py:2678`): it takes the index rows whose parent is the requested queue folder and, **if there are any, returns only those** (`:2693-2696`) — the folder is not scanned at all. So on a machine where bring-current has pushed even one row, bundles routed into the same folder by the watcher are invisible to the triage queue until that row is popped. Deep review is unaffected, because nothing is ever pushed with that parent.
-
-`seed_from_folder` (`queue_index.py:120`) exists to rebuild the index from the folder and **is not called anywhere in the codebase**.
+Until 2026-10-23 the tool READ this list at launch and, if it held any row for the queue folder, offered only those rows -- so one row pushed by bring-current hid every video the watcher had routed there. On 2026-10-23 it held a single row, for a bundle long gone, so every launch fell back to reading every bundle (about 6 minutes). The tool now lists the queue folder instead (see "How a video is chosen"); the list is still popped, but nothing reads it.
 
 ### The session flag button (FIXED 2026-08-28 -- it used to do the opposite of what it says)
 
