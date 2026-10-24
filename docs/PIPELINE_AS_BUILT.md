@@ -2425,3 +2425,46 @@ been answered three times). Now:
   now says, per pellet, what the hand score and the algorithm each say. Finished videos sent back for
   a new pellet had looked like the reviewer's earlier answers being lost.
 Tests: `tests/test_triage_answers_that_cannot_count.py`.
+
+## Update 2026-10-24: posing on a machine's CPUs (`mousereach-cpu-pose`)
+
+Posing is the slow step, and only GPU nodes did it. A machine with many idle cores
+can add to that by running `mousereach-cpu-pose` beside its watcher.
+
+**What was measured** (a 104-thread server, 2026-10-24). One DeepLabCut process on the
+CPU poses about 2 frames a second and uses about three cores, whatever thread count it
+is given -- so speed comes from many small processes side by side: 12 processes of 3
+threads made ~22 frames/s (~2 videos an hour) at 28% of the machine; 24 made ~28 frames/s
+at 80%, each slowing the others. A CPU pose is the same as a GPU pose: on 602 frames of a
+GPU-posed video, the largest difference in any body part's position was 0.14 px, no
+confident point differed by more than 1 px, and no point crossed the 0.5 likelihood line.
+
+**What it does, step by step** (`watcher/cpu_pose_pool.py`), with the GPU nodes' own code
+wherever it exists:
+
+1. **Picks** the next unclaimed video at the top of `Unanalyzed/Single_Animal` in the lab's
+   work order (`work_priority.best_tier_choice`: best group first, random inside it, idle-only
+   trays last).
+2. **Never re-poses**: a video finished or held for a person is skipped, by the GPU node's own
+   rule (`DLCOrchestrator._already_done_or_held`), before and after claiming.
+3. **Claims** it by renaming it into `.inflight/<hostname>-cpu/` (`single_claim.claim_single`),
+   so no two machines pose one video. Other machines see the pool alive through its status
+   report `Processing/.node_status/<hostname>-cpu.json`, and take its claims back only after
+   it has been quiet for hours, as for any node.
+4. **Poses** a copy on the local disk (`<processing root>/CPU_Pose`) in a child process at
+   below-normal priority, up to `--workers` at once, `--threads` each.
+5. **Hands on** to `Processing/Posed` the GPU nodes' way: every file copied under a temporary
+   name, then renamed into place with the pose (.h5) last -- the processing watcher keys on
+   the .h5. The claimed copy is removed only once the handed-on video is confirmed. The pose
+   must come from the declared model, or it is not handed on.
+6. **Records** `dlc_running` and then the hand-off on the shared record (watcher_central.db),
+   as a GPU node does.
+
+**When something goes wrong.** A failed pose puts the video straight back in the shared folder
+for any machine and keeps the pool off it for an hour; its log stays in `CPU_Pose`. At start the
+pool hands on any pose a previous run finished and gives back any claim it left. Stopping:
+`cpu_pose_stop.flag` in the processing root (no new videos; running poses finish and are handed
+on; then it exits), or Ctrl+C / ending its task (running poses are stopped; their videos are
+given back at the next start).
+
+Tests: `tests/test_cpu_pose_pool.py`.

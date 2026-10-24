@@ -1608,6 +1608,29 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
   --quiet     Warnings and errors only.
 ```
 
+### `mousereach-cpu-pose`
+
+```
+usage: mousereach-cpu-pose [--workers N] [--threads N] [--dlc-config PATH]
+
+Pose cut videos on this machine's CPUs, many at once, beside its watcher. Takes
+videos from the shared singles folder in the lab's work order and hands them to
+Processing/Posed exactly as a GPU node does.
+
+  --workers N        poses at once (default 12, or cpu_pose.workers in the config file)
+  --threads N        CPU threads per pose (default 3, or cpu_pose.threads)
+  --dlc-config PATH  the DeepLabCut project's config.yaml (default:
+                     cpu_pose.dlc_config_path in ~/.mousereach/config.json)
+```
+
+Set the model once in `~/.mousereach/config.json`:
+`"cpu_pose": {"dlc_config_path": "<path to config.yaml>", "workers": 12, "threads": 3}`.
+It must be the same model the GPU nodes use: a pose from any other model is not
+handed on. Stop it with Ctrl+C (running poses are stopped and their videos given
+back) or by creating `cpu_pose_stop.flag` in the processing root (running poses
+finish and are handed on first). It reports as `<hostname>-cpu` in
+`mousereach-watch-status`. See PIPELINE_AS_BUILT "posing on a machine's CPUs".
+
 ### `mousereach-watch-status`
 
 ```
