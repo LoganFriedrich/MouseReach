@@ -48,8 +48,10 @@ def test_placeholders_and_untouched_answers_are_not_judged():
 def test_matching_notes_are_put_in_the_reviewers_words():
     note = ("segment 17 review names causal reach 34446-34462, outside the frames it "
             "records (34355-34422); not applied -- it is about other footage")
-    assert plain_review_note(note) == ("seg 17 earlier answer (reach 34446-34462 is "
-                                       "outside the segment)")
+    assert plain_review_note(note) == "earlier answer's reach 34446-34462 is outside this segment"
+    # Shown only on the segment the note is about (the frames the answer records).
+    assert plain_review_note(note, (34355, 34422)) is not None
+    assert plain_review_note(note, (34423, 36000)) is None
     assert plain_review_note("segment 3 review covers frames 3861-3864, shorter than any "
                              "real footage (a zero-length-segment artifact); dropped") is None
     assert plain_review_note("something new") == "something new"

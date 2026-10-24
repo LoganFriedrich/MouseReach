@@ -724,43 +724,41 @@ The notes box travels with the video.
     }
 
     def _update_triage_banner(self, banner) -> None:
-        """Say WHY this video is in triage: every open question, and every
-        earlier answer that was not used and why.
+        """Say why the segment on screen is open, and any earlier answer for
+        it that was not used and why. Only that segment: the others show when
+        you get to them (Logan, 2026-10-23: "i only need the note for the one
+        I'm looking at to show").
 
-        WHY (Logan, 2026-10-23): all a reviewer sees is this window, so every
-        reason a video is here must be on it. Without this a reviewer met
-        questions they had already answered -- the earlier answer had been
-        dropped, and only the console said so -- with no way to tell why.
+        WHY a banner at all (Logan, 2026-10-23): all a reviewer sees is this
+        window. Without it a reviewer met questions they had already answered
+        -- the earlier answer had been dropped, and only the console said so --
+        with no way to tell why.
         """
         if not self._video_stem or not self._segment_list:
             banner.setVisible(False)
             return
-        # One short line per open pellet, in the same words the segment line
-        # uses; the reason only when there is one. Plus any earlier answer
-        # that was not used (Logan, 2026-10-23: "far too many words").
-        rows = []
-        for i in getattr(self, "_triaged_indices", []) or []:
-            seg = self._segment_list[i]
+        seg = self._segment_list[self._current_seg_idx]
+        lines = []
+        if self._current_seg_idx in (getattr(self, "_triaged_indices", []) or []):
             try:
                 kind, _ = self._segment_triage(seg)
             except Exception:
                 kind = None
             why = plain_flag_reason(seg.get("flag_reason")) if seg.get("flag_reason") else ""
             done = " -- answered" if seg["segment_num"] in self._review_records else ""
-            rows.append("seg %s: %s%s%s" % (seg["segment_num"],
-                                          self._TRIAGE_KIND_WORDS.get(kind, "open"),
-                                          " (%s)" % why if why else "", done))
-        notes = [w for w in (plain_review_note(n)
+            lines.append("<b>Open:</b> %s%s%s" % (self._TRIAGE_KIND_WORDS.get(kind, "open"),
+                                                  " (%s)" % why if why else "", done))
+        span = (seg.get("start_frame", 0), seg.get("end_frame", 0))
+        notes = [w for w in (plain_review_note(n, span)
                              for n in getattr(self, "_restore_notes", []) or []) if w]
-        if not rows and not notes:
+        if notes:
+            lines.append("<b>Not used:</b> " + "; ".join(notes))
+        if not lines:
             banner.setVisible(False)
             return
-        html = "<b>Open:</b> " + ("; ".join(rows) if rows else "nothing")
-        if notes:
-            html += "<br><b>Not used:</b> " + "; ".join(notes)
         banner.setStyleSheet("padding:6px; border-radius:3px; font-size:12px; "
                              "background:#3a2a5a; color:white;")
-        banner.setText(html)
+        banner.setText("<br>".join(lines))
         banner.setVisible(True)
 
     # frames of context padded around a reach when windowing a segment
@@ -1516,6 +1514,9 @@ The notes box travels with the video.
 
         # Build question panel
         self._build_question_panel(seg)
+        # The triage banner is about the segment on screen, so it follows it.
+        if not self._deep_review and getattr(self, "_routing_banner", None) is not None:
+            self._update_triage_banner(self._routing_banner)
 
         # Pre-populate from saved record if re-visiting
         if seg["segment_num"] in self._review_records:

@@ -555,35 +555,50 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
     return None
 
 
+# Each matching note (index_review_by_segment), in a reviewer's words, and
+# which of its numbers are the frames the note is about -- so the triage banner
+# can show a note only on the segment it concerns (Logan, 2026-10-23: "i only
+# need the note for the one I'm looking at"). Words None: nothing to act on.
 _PLAIN_NOTES = [
     (re.compile(r"^segment (\S+) review names causal reach (\d+)-(\d+), outside the frames "
                 r"it records \((\d+)-(\d+)\)"),
-     "seg {0} earlier answer (reach {1}-{2} is outside the segment)"),
+     "earlier answer's reach {1}-{2} is outside this segment", (3, 4)),
     (re.compile(r"^current segment (\S+) \(frames (\d+)-(\d+)\) is shorter than any real"),
-     "seg {0} is too short to be a pellet -- Escalate"),
-    (re.compile(r"^segment (\S+) review covers frames .* shorter than any real footage"), None),
+     "too short to be a pellet -- Escalate", (1, 2)),
+    (re.compile(r"^segment (\S+) review covers frames .* shorter than any real footage"),
+     None, None),
     (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) matches no current segment"),
-     "answer for frames {1}-{2} (video re-cut since)"),
+     "earlier answer for frames {1}-{2} (video re-cut since)", (1, 2)),
     (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) splits across current "
                 r"segments (\d+) and (\d+)"),
-     "answer for frames {1}-{2} (video re-cut since)"),
+     "earlier answer for frames {1}-{2} (video re-cut since)", (1, 2)),
     (re.compile(r"^segment (\d+): two answers for frames (\d+)-(\d+) disagree"),
-     "seg {0}: two earlier answers disagree -- answer again"),
+     "two earlier answers disagree -- answer again", (1, 2)),
     (re.compile(r"^review of segment (\S+) now applies to segment (\d+)"),
-     None),
+     None, None),
     (re.compile(r"^segment (\S+) review \(frames (\d+)-(\d+)\) overlaps current segment "
                 r"(\d+) less than another review"),
-     None),
+     None, None),
 ]
 
 
-def plain_review_note(note: str) -> Optional[str]:
+def plain_review_note(note: str, span=None) -> Optional[str]:
     """A matching note (index_review_by_segment) in words for the reviewer, or
-    None when it says nothing they need to act on."""
-    for rx, words in _PLAIN_NOTES:
+    None when it says nothing they need to act on. With ``span`` (start, end),
+    also None unless the note is about frames inside that span. A note in no
+    known form is returned as written."""
+    for rx, words, about in _PLAIN_NOTES:
         m = rx.match(note or "")
-        if m:
-            return words.format(*m.groups()) if words else None
+        if not m:
+            continue
+        if not words:
+            return None
+        if span is not None and about is not None:
+            g = m.groups()
+            a, b = int(g[about[0]]), int(g[about[1]])
+            if b < span[0] or a > span[1]:
+                return None
+        return words.format(*m.groups())
     return note
 
 

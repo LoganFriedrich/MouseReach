@@ -94,31 +94,34 @@ Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and spe
 
 ### Why this video is here: the banner (since 2026-10-23)
 
-Everything that holds a video in triage is on screen, because the window is all
-a reviewer sees (Logan, 2026-10-23). A purple banner above the video says it in
-as few words as possible ("far too many words" was the first version):
+Everything that holds a segment in triage is on screen, because the window is
+all a reviewer sees (Logan, 2026-10-23). A purple banner above the video says it
+for the segment on screen only, in as few words as possible -- the other open
+segments show theirs when you get to them ("far too many words", then "i only
+need the note for the one I'm looking at to show"):
 
 ```
-Open: seg 1: causal reach; seg 2: outcome + causal reach (possible tracking artifact)
-Not used: seg 17 earlier answer (reach 34446-34462 is outside the segment)
+Open: outcome + causal reach (possible tracking artifact)
+Not used: earlier answer's reach 34446-34462 is outside this segment
 ```
 
-- **Open** -- one entry per open pellet: the segment and what is open, in the
-  same words the segment line uses (*causal reach*, *outcome*, or *outcome +
-  causal reach*), "-- answered" once answered in this session. In brackets, the
-  reason only when there is one beyond the open question itself: *possible
-  tracking artifact*, *reach at segment edge*, *pellet out of view*, or *hand
-  score mismatch (hand: X, algo: Y)* when the database's nightly check against
-  the hand-scored sheet sent a finished video back. A note a person wrote when
-  sending it is shown as written. A video can come back long after it was
-  finished: such a question is about a different pellet from the ones already
-  answered.
-- **Not used** -- every earlier answer that was not used, and why: its reach is
-  outside its segment; it is about frames that match no segment since a re-cut;
+- **Open** -- what is open on this segment, in the same words as its question:
+  *causal reach*, *outcome*, or *outcome + causal reach*; "-- answered" once
+  answered in this session. In brackets, the reason only when there is one
+  beyond the open question itself: *possible tracking artifact*, *reach at
+  segment edge*, *pellet out of view*, or *hand score mismatch (hand: X, algo:
+  Y)* when the database's nightly check against the hand-scored sheet sent a
+  finished video back. A note a person wrote when sending it is shown as
+  written. A video can come back long after it was finished: such a question
+  is about a different pellet from the ones already answered.
+- **Not used** -- an earlier answer about this segment's frames that was not
+  used, and why: its reach is outside the segment; the video was re-cut since;
   two answers for the same frames disagree; or the segment is too short to be a
   pellet (Escalate). Before this the reason went to the console only, and the
   reviewer met the same question again with no idea why -- one segment was
   answered three times.
+
+The banner is hidden on a segment with nothing open and no unused answer.
 
 Part of every triage answer is checking that the event happened to the pellet
 shown. If it did not, answer nothing and press **Escalate: bad segmentation ->
