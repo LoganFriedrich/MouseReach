@@ -28,6 +28,7 @@ ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
 from __future__ import annotations
 
+import os
 import json
 import logging
 import shutil
@@ -70,15 +71,22 @@ def _bundle_files(source_dir: Path, video_id: str) -> List[Path]:
     if not source_dir.exists():
         return out
     n = len(video_id)
-    for f in source_dir.iterdir():
-        if not f.is_file():
-            continue
-        name = f.name
-        if not name.startswith(video_id):
-            continue
-        # exact stem match (name == stem, unlikely) or a valid boundary char
-        if len(name) == n or name[n] in _BOUNDARY_CHARS:
-            out.append(f)
+    # The name is tested BEFORE asking whether the entry is a file, and the
+    # listing's own entry answers that (no extra round trip on Windows). WHY:
+    # routing a finished video takes its files from the cohort's Analyzed
+    # folder -- tens of thousands of entries -- and asking the share "is this a
+    # file?" for every one cost 4-5 minutes per video; the nightly bench check
+    # ran out of its 3 hours after 34 of 162 videos (2026-10-24).
+    with os.scandir(source_dir) as entries:
+        for e in entries:
+            name = e.name
+            if not name.startswith(video_id):
+                continue
+            # exact stem match (name == stem, unlikely) or a valid boundary char
+            if not (len(name) == n or name[n] in _BOUNDARY_CHARS):
+                continue
+            if e.is_file():
+                out.append(Path(e.path))
     return out
 
 
