@@ -171,12 +171,21 @@ class CpuPosePool:
         from mousereach.watcher import node_status
         now = time.time()
         self.done_times = [t for t in self.done_times if now - t < 3600]
+        # "doing" in the shape every node reports -- one {type, id, since}, or
+        # None -- because readers take it as one item (node_status.describe
+        # failed on a list and lost every node's line, 2026-10-24). The full
+        # list of videos in hand is "poses".
+        doing = None
+        if self.active:
+            since = min(j["started"] for j in self.active.values())
+            doing = {"type": "cpu_pose", "id": f"{len(self.active)} videos",
+                     "since": datetime.fromtimestamp(since).isoformat(timespec="seconds")}
         node_status.write(
             Paths.NAS_ROOT, "stopping" if self.stopping else
             ("working" if self.active else "idle"),
             hostname=self.holder,
-            extra={"role": "cpu_pose", "workers": self.workers,
-                   "doing": sorted(self.active), "done_last_hour": len(self.done_times)})
+            extra={"role": "cpu_pose", "workers": self.workers, "doing": doing,
+                   "poses": sorted(self.active), "done_last_hour": len(self.done_times)})
 
     def _stop_requested(self) -> bool:
         try:

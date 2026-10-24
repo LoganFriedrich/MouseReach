@@ -158,3 +158,20 @@ def test_a_finished_or_held_video_is_never_taken(env, monkeypatch):
     assert (env.door / f"{VID}.mp4").exists()                    # left where it was
     assert (env.door / ".inflight" / HOLDER / f"{VID2}.mp4").exists()
     assert (env.work / f"{VID2}.mp4").read_bytes() == b"video-bytes"
+
+
+def test_status_reports_doing_in_the_shape_every_node_uses(env):
+    import json
+    env.pool.active = {VID: {"proc": _Done(None), "local": None, "started": 1_700_000_000},
+                       VID2: {"proc": _Done(None), "local": None, "started": 1_700_000_100}}
+    env.pool._status()
+    rec = json.loads((env.tmp / "share" / "Processing" / ".node_status"
+                      / f"{HOLDER}.json").read_text())
+    assert isinstance(rec["doing"], dict) and rec["doing"]["type"] == "cpu_pose"
+    assert rec["doing"]["id"] == "2 videos"
+    assert rec["poses"] == sorted([VID, VID2])
+    env.pool.active = {}
+    env.pool._status()
+    rec = json.loads((env.tmp / "share" / "Processing" / ".node_status"
+                      / f"{HOLDER}.json").read_text())
+    assert rec["doing"] is None and rec["state"] == "idle"
