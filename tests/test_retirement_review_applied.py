@@ -50,3 +50,38 @@ def test_file_times_only_when_nothing_better_is_known(tmp_path):
     assert review_applied({}, p, features_mtime=2_000)
     assert not review_applied({}, p, features_mtime=500)
     assert not review_applied({}, p)                     # nothing to compare: stays
+
+
+def test_a_hand_cut_video_is_not_staled_by_the_segmenter(tmp_path):
+    import json as _json
+    from mousereach.video_prep.core.collage_provenance import _drop_human_seg_staleness
+    (tmp_path / "v_segments.json").write_text(_json.dumps({"boundary_source": "human"}))
+    cmp = {"is_current": False, "stale_components": ["segmenter"], "needs_full_reprocess": False}
+    assert _drop_human_seg_staleness("v", tmp_path, cmp)["is_current"]
+    (tmp_path / "w_segments.json").write_text(_json.dumps({"boundary_source": "algorithm"}))
+    assert not _drop_human_seg_staleness("w", tmp_path, cmp)["is_current"]
+
+
+def test_an_easy_tray_video_is_complete_once_its_session_file_exists(tmp_path):
+    """Easy/Flat trays get no outcomes, so their manifests never record an
+    outcome or assignment version; the re-run scan never re-runs them for
+    that, and retirement must not wait for it either."""
+    import json as _json
+    from mousereach.video_prep.core.collage_provenance import build_complete_stems
+    nas = tmp_path / "nas"
+    nas.mkdir()
+    (nas / "pipeline_versions.json").write_text(_json.dumps({"versions": {
+        "segmenter": "2.2.4", "reach_detector": "8.1.0", "outcome_detector": "6.1.0",
+        "assignment": "2.1.0", "kinematic_extractor": "2.1.0"}}))
+    d = tmp_path / "Analyzed" / "PROJ" / "C1"
+    d.mkdir(parents=True)
+    man = {"pipeline_versions": {"segmenter": "2.2.4", "reach_detector": "8.1.0",
+                                 "kinematic_extractor": "2.1.0"}}
+    for stem in ("20250101_ABCD0101_E1", "20250101_ABCD0102_E1", "20250101_ABCD0103_P1"):
+        (d / f"{stem}_processing_manifest.json").write_text(_json.dumps(man))
+    (d / "20250101_ABCD0101_E1_features.json").write_text("{}")
+    (d / "20250101_ABCD0103_P1_features.json").write_text("{}")
+    done = build_complete_stems(analyzed_root=tmp_path / "Analyzed", nas_root=nas)
+    assert "20250101_ABCD0101_E1" in done          # Easy, session file present
+    assert "20250101_ABCD0102_E1" not in done      # Easy, no session file yet
+    assert "20250101_ABCD0103_P1" not in done      # Pillar still needs every version

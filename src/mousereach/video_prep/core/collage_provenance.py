@@ -219,6 +219,28 @@ def _review_pending(stem: str, manifest_dir: Path, manifest: Optional[dict] = No
 _MANIFEST_CACHE: Dict[str, tuple] = {}
 
 
+def _drop_human_seg_staleness(stem: str, folder: Path, comparison: dict) -> dict:
+    """The re-run scan's rule (watcher/reprocessor.py, same name): a person's
+    segmentation (``boundary_source == 'human'``) is not staled by a segmenter
+    release -- the re-run keeps it rather than re-cutting, so the manifest keeps
+    the segmenter version that first cut the video. Removes 'segmenter' from
+    the stale set in that case. Never raises."""
+    if "segmenter" not in (comparison.get("stale_components") or ()):
+        return comparison
+    try:
+        doc = json.loads((Path(folder) / f"{stem}_segments.json").read_text(encoding="utf-8"))
+        if doc.get("boundary_source") != "human":
+            return comparison
+    except Exception:
+        return comparison
+    comparison = dict(comparison)
+    comparison["stale_components"] = [c for c in comparison["stale_components"]
+                                      if c != "segmenter"]
+    if not comparison["stale_components"] and not comparison.get("needs_full_reprocess"):
+        comparison["is_current"] = True
+    return comparison
+
+
 def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     """Set of single-animal stems that are TRULY complete -- i.e. safe to treat a
     collage as retirement-eligible on.
@@ -226,10 +248,12 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     An offspring counts ONLY when it is (a) in the final Analyzed output, (b)
     processed with the CURRENTLY shipped versions (its processing manifest matches
     pipeline_versions.json -- not an outdated DLC model or algo version), and (c)
-    has no human review still pending application. An offspring sitting in Analyzed
+    has no human review still pending application. (b) and (c) follow the re-run
+    scan's rules: an Easy/Flat video counts once its session file exists, and a
+    person's segmentation is exempt from the segmenter version. An offspring sitting in Analyzed
     from an old version, or with an unresolved review, is deliberately EXCLUDED --
     it is not done, it is stale. Never raises; missing manifest -> not complete."""
-    from mousereach.config import Paths
+    from mousereach.config import Paths, is_supported_tray_type
     from mousereach.pipeline.versions import (
         get_current_versions, compare_manifest_to_current)
 
@@ -276,7 +300,21 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
             except Exception:
                 continue
             _MANIFEST_CACHE[str(mp)] = (mtime, manifest)
+        # The re-run scan's version rules (watcher/reprocessor.py), so that a
+        # video it will never re-run counts as complete here -- the two used to
+        # disagree, and 135 recordings whose videos were all analysed never
+        # retired (2026-10-24):
+        #   * Easy/Flat trays are never re-run for a version change; they need
+        #     only their session file (reaches + attention), so they are done
+        #     once it exists;
+        #   * a person's segmentation is exempt from the segmenter version.
+        if not is_supported_tray_type(f"{stem}.mp4"):
+            if (str(mp.parent), stem) in feats:
+                complete.add(stem)
+            continue
         cmp = compare_manifest_to_current(manifest, current)
+        if not cmp.get("is_current"):
+            cmp = _drop_human_seg_staleness(stem, mp.parent, cmp)
         if not cmp.get("is_current"):
             continue  # outdated version -> not done
         if reviews is None:
