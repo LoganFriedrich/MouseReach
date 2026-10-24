@@ -57,7 +57,7 @@ Seven call sites, in three groups.
 
 **Bypassing `process_single` entirely:**
 
-7. The review-bundle stager calls `segment_video_multi` and `save_segmentation` directly (`review/staging.py:299-300`). Because it skips `process_single`, it also skips the grading of section 9 and never calls `add_validation_status`. The same function instead writes a **hand-built** segments JSON when a reviewer supplies their own boundaries (`staging.py:284-296`): that file has `segmenter_version: "manual_resegmentation"`, and no `detection` block, no `intervals`, no `sa_coverage`, no `candidates` and no `needs_human`.
+7. The review-bundle stager calls `segment_video_multi` and `save_segmentation` directly (`review/staging.py:299-300`). Because it skips `process_single`, it also skips the grading of section 9 and never calls `add_validation_status`. The same function instead writes a **hand-built** segments JSON when a reviewer supplies their own boundaries (`staging.py:284-296`): that file has `segmenter_version: "manual_resegmentation"`, and no `detection` block, no `intervals`, no `sa_coverage`, no `candidates` and no `needs_human`. Since 2026-10-23 nothing calls it with boundaries: the review tool's re-cut editor, its only caller, was removed (a wrong cut found in triage is escalated to deep review).
 
 One more script re-runs the segmenter without using its boundaries: `the lab's backfill script (removed from this repo 2026-08-28; it lived at scripts/backfill_segmentation_candidates.py)` calls `segment_video_multi` purely to regenerate the candidate list for an old file, and deliberately leaves the stored boundaries alone.
 

@@ -364,9 +364,8 @@ and settle it).
 * "Save Segment + Next" records the answer and moves on. Answers save into
   the video's review file; when every flagged segment is answered, the
   watcher re-injects the video automatically -- no further action.
-* If the SEGMENTATION is wrong: either set the true segment number on that
-  question (the video will divert to re-segmentation on return), or press
-  "Escalate: bad segmentation" to send the whole video there now.
+* Wrong pellet, or wrong cuts: do not answer. Press "Escalate: bad
+  segmentation -> deep review"; the cuts are fixed there.
 * "Flag Session" marks the whole mouse+day session for mandatory review.
 
 Navigation: play/speed buttons and frame steps (keyboard: Space play/pause,
@@ -1626,7 +1625,8 @@ The notes box travels with the video.
         # Triaged-only reviewer: present ONLY the open question(s) for this
         # triaged element, driven by WHY it was triaged. The pellet is shown in
         # the banner above (not a question); a wrong pellet is a segmentation
-        # issue handled by the per-video "send to detailed review" button.
+        # issue: the reviewer answers nothing and presses "Escalate: bad
+        # segmentation -> deep review" (Logan, 2026-10-23).
         #   reach_uncertain   -> outcome is algo-known; pick the causal reach.
         #   outcome_uncertain -> the causal reach is pinned (1 candidate); pick
         #                        what it did to the pellet.
@@ -1640,13 +1640,6 @@ The notes box travels with the video.
             lbl.setWordWrap(True)
             lbl.setStyleSheet("font-weight: bold; margin-bottom: 4px;")
             self._questions_layout.addWidget(lbl)
-
-        # The segmentation can be wrong about WHICH pellet presentation this
-        # stretch is -- boundaries offset by one, so what it calls segment 1 is
-        # really segment 2. That is a fact about the segmentation, not about the
-        # reach or the outcome, and saying it should take one action rather than
-        # a written note nothing downstream can read.
-        self._questions_layout.addWidget(self._make_segment_number_fix(seg))
 
         if kind == "reach_uncertain":
             _hdr(f"The outcome is '<span style='color:#8f8'>{seg.get('outcome')}</span>' "
@@ -1783,69 +1776,9 @@ The notes box travels with the video.
 
         return group
 
-    def _make_pellet_correction(self, seg: Dict) -> QWidget:
-        """Inline correction for wrong pellet number."""
-        w = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        w.setLayout(layout)
-
-        layout.addWidget(QLabel("Correction options:"))
-
-        # Phantom marker
-        phantom_check = QCheckBox("Mark as phantom (no real pellet)")
-        layout.addWidget(phantom_check)
-        self._q_widgets.setdefault("_pellet_correction", {})["phantom"] = phantom_check
-
-        # Renumber
-        renum_row = QHBoxLayout()
-        renum_row.addWidget(QLabel("Correct pellet #:"))
-        renum_spin = QSpinBox()
-        renum_spin.setRange(0, 30)
-        renum_spin.setValue(seg.get("pellet_num") or 0)
-        renum_spin.setMaximumWidth(60)
-        renum_row.addWidget(renum_spin)
-        renum_row.addStretch()
-        layout.addLayout(renum_row)
-        self._q_widgets.setdefault("_pellet_correction", {})["renumber"] = renum_spin
-
-        # Deep correction: RE-SEGMENT the whole video. When the pellet/segment is
-        # wrong because the SEGMENTATION is wrong (e.g. the segmenter fell back to
-        # uniform slicing on bad tracking), phantom/renumber can't help -- the
-        # reviewer has to re-cut the video. This opens a full segmentation editor.
-        reseg_btn = QPushButton("Re-segment this video (open segmentation editor)")
-        reseg_btn.setStyleSheet("font-weight: bold;")
-        reseg_btn.clicked.connect(self._open_resegmentation_editor)
-        layout.addWidget(reseg_btn)
-        hint = QLabel(
-            "<i>Use this when the segmentation itself is wrong. You'll mark the "
-            "real segment cuts on the video, then reload and score them.</i>")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888; font-size: 10px;")
-        layout.addWidget(hint)
-
-        return w
-
-    # ===================================================================
-    # Manual re-segmentation (deep correction, opened from Q1 = No)
-    # ===================================================================
-
-    def _current_boundaries(self):
-        """Active segment-cut frames from the algo segmentation data."""
-        sd = getattr(self, "_segments_data", {}) or {}
-        if "boundaries" in sd:
-            out = []
-            for b in sd["boundaries"]:
-                out.append(int(b.get("frame", b.get("index", 0)))
-                           if isinstance(b, dict) else int(b))
-            return sorted(set(out))
-        bs = []
-        for s in sd.get("segments", []):
-            if s.get("start_frame") is not None:
-                bs.append(int(s["start_frame"]))
-            if s.get("end_frame") is not None:
-                bs.append(int(s["end_frame"]) + 1)
-        return sorted(set(bs))
+    # The tool no longer re-cuts videos (2026-10-23): a wrong pellet or
+    # wrong cuts is escalated to deep review. Cuts a reviewer saved with
+    # the editor it used to have are still honoured on reopen.
 
     def _peek_manual_boundaries(self):
         """Restore a prior manual re-segmentation (saved in the review doc) so the
@@ -1865,140 +1798,6 @@ The notes box travels with the video.
             if b:
                 return sorted({int(x) for x in b})
         return None
-
-    def _reseg_cur_frame(self):
-        try:
-            return int(self.viewer.dims.current_step[0])
-        except Exception:
-            return 0
-
-    def _open_resegmentation_editor(self):
-        """Full-video segmentation editor: scrub the video, drop/remove segment
-        cuts at the current frame, then Apply to rebuild + re-score the segments
-        from those cuts. Used when the SEGMENTATION itself is wrong."""
-        seed = getattr(self, "_manual_boundaries", None) or self._current_boundaries()
-        self._reseg_boundaries = sorted({int(x) for x in seed})
-
-        while self._questions_layout.count():
-            child = self._questions_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        banner = QLabel(
-            "<b>Segmentation editor</b> -- the cuts below define the segments. "
-            "Scrub to the START of each real pellet segment and 'Add cut'. "
-            "'Apply' rebuilds and re-scores from your cuts.")
-        banner.setWordWrap(True)
-        banner.setStyleSheet(
-            "QLabel { background:#3a2a1a; border:1px solid #6a4a2a; padding:6px; }")
-        self._questions_layout.addWidget(banner)
-
-        self._reseg_summary = QLabel()
-        self._reseg_summary.setWordWrap(True)
-        self._questions_layout.addWidget(self._reseg_summary)
-
-        def _row(*btns):
-            r = QHBoxLayout()
-            for b in btns:
-                r.addWidget(b)
-            r.addStretch()
-            holder = QWidget()
-            holder.setLayout(r)
-            self._questions_layout.addWidget(holder)
-
-        add_btn = QPushButton("Add cut @ current frame")
-        add_btn.clicked.connect(self._reseg_add_cut)
-        rm_btn = QPushButton("Remove nearest cut")
-        rm_btn.clicked.connect(self._reseg_remove_nearest)
-        _row(add_btn, rm_btn)
-        clear_btn = QPushButton("Clear all cuts")
-        clear_btn.clicked.connect(self._reseg_clear)
-        reset_btn = QPushButton("Reset to algo cuts")
-        reset_btn.clicked.connect(self._reseg_reset)
-        _row(clear_btn, reset_btn)
-        apply_btn = QPushButton("Apply & reload segments")
-        apply_btn.setStyleSheet("font-weight:bold; background:#2a5a2a;")
-        apply_btn.clicked.connect(self._reseg_apply)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self._reseg_cancel)
-        _row(apply_btn, cancel_btn)
-
-        self._questions_layout.addStretch()
-        self._reseg_refresh()
-
-    def _reseg_refresh(self):
-        b = self._reseg_boundaries
-        n_seg = max(0, len(b) - 1)
-        cuts = ", ".join(str(x) for x in b) if b else "(none)"
-        self._reseg_summary.setText(
-            f"<b>{len(b)} cuts -> {n_seg} segments.</b>  Cuts: {cuts}")
-
-    def _reseg_add_cut(self):
-        self._reseg_boundaries = sorted(
-            set(self._reseg_boundaries) | {self._reseg_cur_frame()})
-        self._reseg_refresh()
-
-    def _reseg_remove_nearest(self):
-        if not self._reseg_boundaries:
-            return
-        f = self._reseg_cur_frame()
-        nearest = min(self._reseg_boundaries, key=lambda b: abs(b - f))
-        self._reseg_boundaries = [b for b in self._reseg_boundaries if b != nearest]
-        self._reseg_refresh()
-
-    def _reseg_clear(self):
-        self._reseg_boundaries = []
-        self._reseg_refresh()
-
-    def _reseg_reset(self):
-        self._reseg_boundaries = sorted({int(x) for x in self._current_boundaries()})
-        self._reseg_refresh()
-
-    def _reseg_cancel(self):
-        self._show_current_segment()
-
-    def _reseg_apply(self):
-        b = sorted({int(x) for x in getattr(self, "_reseg_boundaries", [])})
-        if len(b) < 2:
-            show_warning("Need at least 2 cuts (a start and an end) to define a segment.")
-            return
-        pend = self._pending_dir()
-        if pend is None or not self._video_stem:
-            show_warning("Re-segmentation needs a bundle loaded from the review queue.")
-            return
-        # RE-RUN mousereach on the reviewer's boundaries (reach -> outcome ->
-        # assignment) instead of blanking. Unchanged segments keep the algo's
-        # verdict, every segment shows an algo call, and fixing one boundary no
-        # longer forces a full re-score. This runs the real pipeline (loads
-        # models), so it takes ~1 min and the window may appear to pause.
-        self._status_label.setText(
-            "Re-running mousereach on your boundaries (reach + outcome + "
-            "assignment; ~1 min -- the window may pause)...")
-        try:
-            from qtpy.QtWidgets import QApplication
-            QApplication.processEvents()   # flush the status before the blocking run
-        except Exception:
-            pass
-        try:
-            from mousereach.review.staging import stage_video
-            stage_video(self._video_stem, pending_dir=pend, overwrite=True,
-                        verbose=False, boundaries_override=b)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            show_warning(f"Re-segmentation pipeline failed: {e}")
-            self._status_label.setText("Re-segmentation failed -- see console.")
-            return
-        # Reload the freshly re-scored bundle (real algo verdicts per segment).
-        self._manual_boundaries = None
-        self._review_records = {}
-        self._load_algo_data()
-        self._build_segment_list()
-        self._current_seg_idx = self._first_visible_idx()
-        self._show_current_segment()
-        show_info(
-            f"Re-segmented + re-scored into {len(self._segment_list)} segments -- "
-            f"unchanged ranges keep the algo's verdict; correct only what's wrong.")
 
     def _candidate_reach_ids(self, seg: Dict):
         """Reach ids algo-4's reduction could NOT rule out as misses for this
@@ -2145,47 +1944,6 @@ The notes box travels with the video.
                 rp["start_spin"].value(), rp["end_spin"].value(),
                 rp.get("all_detected", reaches))
         return None
-
-    def _make_segment_number_fix(self, seg: Dict) -> QWidget:
-        """One control for "this is actually segment N".
-
-        Defaults to what the segmenter said, so leaving it alone records
-        nothing. Changing it marks the segmentation as wrong for this stretch
-        and stores the real number, which is what makes an offset segmentation
-        findable later instead of being buried in free text.
-        """
-        w = QWidget()
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        w.setLayout(row)
-
-        n = seg.get("segment_num")
-        algo_n = int(n) if n is not None else 0
-        q = QLabel(f"Segmentation says this is segment {algo_n}. "
-                   "If that's wrong, which segment is this actually?")
-        q.setWordWrap(True)
-        row.addWidget(q, 1)
-
-        spin = QSpinBox()
-        spin.setRange(0, 60)
-        spin.setValue(algo_n)
-        spin.setMaximumWidth(70)
-        spin.setToolTip("If the segmentation has this stretch labelled as the "
-                        "wrong pellet presentation, set the real number here. "
-                        "Leave it alone if the number is right.")
-        row.addWidget(spin)
-
-        warn = QLabel("")
-        warn.setStyleSheet("color: #e08020; font-weight: bold;")
-        row.addWidget(warn)
-        row.addStretch()
-
-        def _changed(v):
-            warn.setText("  <- recorded as a segmentation error" if v != algo_n else "")
-        spin.valueChanged.connect(_changed)
-
-        self._q_widgets["_true_segment"] = {"spin": spin, "algo": algo_n}
-        return w
 
     def _make_reach_picker(self, seg: Dict) -> QWidget:
         """Inline reach picker: choose from detected reaches or draw a new one.
@@ -2761,9 +2519,6 @@ The notes box travels with the video.
 
         notes = self._notes_edit.toPlainText().strip() if hasattr(self, '_notes_edit') else ""
 
-        ts = self._q_widgets.get("_true_segment") or {}
-        true_seg = ts["spin"].value() if ts.get("spin") is not None else None
-
         return build_segment_record(
             segment_num=seg["segment_num"],
             pellet_num=seg["pellet_num"],
@@ -2777,7 +2532,6 @@ The notes box travels with the video.
             answers=answers,
             notes=notes,
             segment_span=_segment_span(seg),
-            true_segment_num=true_seg,
         )
 
     def _get_toggle_answer(self, key: str) -> Optional[bool]:

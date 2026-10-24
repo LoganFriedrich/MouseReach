@@ -86,9 +86,9 @@ The question panel takes one of three shapes, decided by `_segment_triage` (`:17
 
 The reach list is narrowed by `assignment.v2.triage_reduction.reduce_triaged_segment` to reaches that could not be ruled out as misses (`_candidate_reach_ids`, `:1675`); the ruled-out ones are built too but hidden behind a "Show all reaches" checkbox (`_make_reach_picker`, `:1859`). There is an explicit "No reach — nothing acted on this pellet" option (`:1906`), and choosing `untouched` clears and disables the reach picker so the two answers cannot contradict each other (`_sync_reach_picker_to_outcome`, `:2029`).
 
-Every segment also gets an **"Ignore windows"** box — frame ranges where something that is not a reach moved the pellet (`:1369`, `_make_abnormal_ranges_widget`, `:2161`) — a free-text notes box, and a **"Segmentation says this is segment N"** spin box for saying the cuts are offset (`:1321`, `_make_segment_number_fix`, `:1821`).
+Every segment also gets an **"Ignore windows"** box — frame ranges where something that is not a reach moved the pellet (`:1369`, `_make_abnormal_ranges_widget`, `:2161`) — and a free-text notes box. There is no control for saying the cuts are wrong: a wrong pellet or wrong cuts is never answered here, it is escalated (see "Escalating out of triage").
 
-Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Clear -> re-enter pipeline** (`:3069`). A segmentation editor reachable from the panel lets the reviewer re-cut the video and re-run the algorithms on their cuts (`_reseg_apply`, `:1632`); it calls `stage_video(..., boundaries_override=...)`, which reads the video and pose from their canonical archive locations, so it fails on a bundle whose video is not archived there (the failure is caught and shown as "Re-segmentation pipeline failed"). After a successful re-cut the widget empties its in-memory answers (`:1666`), and because saving always rewrites the whole review document (`save_causal_review`, `causal_review_io.py:236-279`), any answer given before the re-cut and not re-entered is replaced by an unanswered placeholder.
+Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Clear -> re-enter pipeline** (`:3069`). The tool cannot re-cut a video (its re-cut editor was removed 2026-10-23); cuts are fixed in deep review.
 
 Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and speed keys 1-6 (`_setup_keybindings`, `:2963`). There is no key for next/previous segment; those are buttons.
 
@@ -165,21 +165,22 @@ to ask about, and it stops holding the video.
 
 ### Escalating out of triage (since 2026-08-25)
 
-Two ways a triage reviewer sends a video to deep review instead of finishing
-it here:
+Part of triage is checking that the pellet on screen is the pellet the
+segment claims to be. If it is not -- the cuts are offset, missing or
+misplaced -- the reviewer answers nothing and presses **Escalate: bad
+segmentation -> deep review**. It saves the answers given so far (they
+re-attach by frame span after the boundary fix), moves the bundle to the
+deep-review queue with the notes text as the routing reason, and loads the
+next video (`_escalate_to_deep_review`).
 
-- **The corrected segment number.** The per-segment question "Segmentation
-  says this is segment N. If that's wrong, which segment is this actually?"
-  writes `true_segment_num` + `segmentation_wrong` into the record. The
-  reviewer keeps answering normally; at return time the watcher sees the
-  correction and diverts the whole video to the deep-review queue for manual
-  re-segmentation rather than re-injecting it (`review_return.py`,
-  `TriageStatus.seg_pending_reseg`). Once the cuts are hand-fixed
-  (`boundary_source: "human"`), the old correction stops blocking the video.
-- **The escalate button.** *Escalate: bad segmentation -> deep review* saves
-  the answers given so far (they re-attach by frame span after the boundary
-  fix), moves the bundle to the deep-review queue with the notes text as the
-  routing reason, and loads the next video (`_escalate_to_deep_review`).
+Until 2026-10-23 each segment also had a box, "Segmentation says this is
+segment N. If that's wrong, which segment is this actually?", which wrote
+`true_segment_num` + `segmentation_wrong` into the record. It was removed
+because the button does the same job in one step. Records written with it
+are still honoured: at return time the watcher diverts such a video to the
+deep-review queue (`review_return.py`, `TriageStatus.seg_pending_reseg`), and
+once the cuts are hand-fixed (`boundary_source: "human"`) the old correction
+stops blocking it.
 
 ### Two ways an unanswered question becomes an answer
 
@@ -215,7 +216,7 @@ human             {outcome, causal_reach, is_phantom, agreed}
 answers           {triage_kind, outcome_pick/outcome_override, causal_pick,
                    abnormal_ranges, reviewed: false for placeholders}
 notes             free text
-true_segment_num  present only if the reviewer changed the segment number
+true_segment_num  older records only (the control was removed 2026-10-23)
 segmentation_wrong  true, alongside true_segment_num
 ```
 
@@ -457,7 +458,7 @@ All 662 archived review files under `MouseReach_Pipeline/Analyzed` now carry spa
 
 Notes are returned to the caller and logged at warning level (`truth_resolver.py:109-110`, `causal_review_io.py:536-537`). Nothing is written back to the review file; the matching is redone every time.
 
-`true_segment_num` / `segmentation_wrong` — the answer the reviewer gives with the "Segmentation says this is segment N" control — plays no part in any of this. See [Declared but does nothing](#declared-but-does-nothing).
+`true_segment_num` / `segmentation_wrong` (found only in records written before 2026-10-23, when the control that wrote them was removed) play no part in any of this.
 
 ### Frame matching runs on one path only
 
@@ -520,7 +521,7 @@ Three specific hazards:
 
 1. **The pairing is positional, not by number.** `zip(reaches_data['segments'], outcomes_data['segments'])` at `feature_extractor.py:248` pairs the first reach-segment with the first outcome-segment and so on, and stops at the shorter list. If the two files disagree on how many segments there are — which is what the Segmentation Fixer produces until the video is re-run, since it rewrites only `_segments.json` — outcomes attach to the wrong reaches with nothing raised and no record left.
 
-2. **An offset is invisible.** Every segment still looks well formed; only the numbering is shifted, so pellet 7 as scored on the bench is compared against footage of pellet 8. The reviewer can now say so with the "Segmentation says this is segment N" control, and the answer is stored — but nothing reads it (see below), so an offset a person has identified still does not change any number.
+2. **An offset is invisible.** Every segment still looks well formed; only the numbering is shifted, so pellet 7 as scored on the bench is compared against footage of pellet 8. A triage reviewer who sees it escalates the video to deep review, where the cuts are fixed.
 
 3. **A re-cut can silently discard the review.** `index_review_by_segment` drops any review whose frames no longer line up with a current segment. Until 2026-10-21 the release check still counted such a review as resolved by number, so the video finished carrying the algorithm's call. Since then the release check matches by frames as well, and the segment stays open for a person.
 
@@ -649,7 +650,6 @@ was the cause. Removing the filter put 24 videos back in front of the reviewer (
 Each of these is code that runs, produces a value, and has no reader.
 
 - **Ignore windows / `abnormal_ranges`.** The reviewer marks frame ranges where something other than a reach moved the pellet; the answer is saved, carried onto the segment by both `apply_review_overrides` (`causal_review_io.py:503-504`) and `truth_resolver` (`truth_resolver.py:181-182`) — and read by nothing. There is no reference to `abnormal_ranges` anywhere outside `src/mousereach/review/`. The kinematics step never excludes those frames.
-- **`true_segment_num` and `segmentation_wrong`.** The reviewer's answer to "this is really segment N" is written into the record (`causal_review_io.py:226-228`) and read by nothing. Grepping `src/` and `scripts/` for either name returns only the writer and the widget that supplies it.
 - **`outcomes.exhaustive` in ground truth.** `_seg_overrides_from_gt` computes it and returns it; the caller assigns it to `_exhaustive_out` and never uses it (`truth_resolver.py:328`). Ground-truth outcome overrides apply per determined segment either way, so the flag changes nothing for outcomes. For *reaches*, `exhaustive` is load-bearing and does drop unlabelled algorithm reaches (`_apply_gt_reaches`, `:275-279`).
 - **`TriageStatus.clean`** (`triage_status.py:152-156`) — a property with no callers. The gate and the return scan read `seg_failed`, `unresolved` and `fully_resolved` directly.
 - **`TriageStatus.seg_needs_human`** (`:137`) — populated from the segmentation file (`:184`) and deliberately not acted on (`review_gate.py:89-105`).
