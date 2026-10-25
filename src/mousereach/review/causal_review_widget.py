@@ -40,6 +40,7 @@ from qtpy.QtGui import QFont, QColor
 import napari
 from napari.utils.notifications import show_info, show_warning, show_error
 
+from .keyboard import keep_typing_in_panel, review_keys_on_layer
 from .causal_review_io import (
     build_segment_record,
     collect_provenance,
@@ -362,6 +363,12 @@ class CausalReviewWidget(QWidget):
         self._build_ui()
         self._setup_keybindings()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Docked by now: what is typed in this panel stays in it and never
+        # runs the video's keys (review/keyboard.py).
+        keep_typing_in_panel(self)
+
     # ===================================================================
     # UI construction
     # ===================================================================
@@ -378,6 +385,9 @@ Re-segmentation tool instead (Review Queues tab).
 * Navigation: play/speed buttons, frame steps (keyboard: Space play/pause,
   b reverse, arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speed),
   segment prev/next.
+  The keys work while the video has the keyboard -- click the video
+  first. Anything typed while you are working in this panel stays in
+  the panel and never runs a key.
 * When the whole video is judged (and its cuts are right), press
   "Clear -> re-enter pipeline". THAT is what releases the video: the watcher
   re-runs it and results flow to the database automatically.
@@ -401,6 +411,9 @@ and settle it).
 
 Navigation: play/speed buttons and frame steps (keyboard: Space play/pause,
 b reverse, arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speed).
+The keys work while the video has the keyboard -- click the video first.
+Anything typed while you are working in this panel stays in the panel and
+never runs a key.
 The notes box travels with the video.
 """
 
@@ -846,6 +859,7 @@ The notes box travels with the video.
             else:
                 self.video_layer = self.viewer.add_image(
                     lazy, name=video_path.stem, rgb=True)
+                review_keys_on_layer(self.video_layer, self._review_keys)
             self._progress.setValue(40)
 
             # Load pose + algo/segments FIRST (both cheap) so the DLC overlay can
@@ -1124,6 +1138,7 @@ The notes box travels with the video.
                 points_data, name='DLC Points', size=3,
                 face_color=point_colors, **extra,
             )
+            review_keys_on_layer(self.points_layer, self._review_keys)
 
     # ===================================================================
     # Algo data loading
@@ -2063,6 +2078,12 @@ The notes box travels with the video.
         manual_row.addWidget(end_spin)
         manual_row.addStretch()
         layout.addLayout(manual_row)
+        # Choosing manual entry means a frame gets typed next: give Start the
+        # keyboard so the number lands in the box, not on the video's keys
+        # (review/keyboard.py). clicked, not toggled: restoring a saved answer
+        # must not move the keyboard.
+        manual_rb.clicked.connect(
+            lambda: (start_spin.setFocus(), start_spin.selectAll()))
 
         # (Abnormal / non-reach events are marked with the standalone "Ignore
         # windows" section on the segment -- not a reach-picker option -- so they
@@ -3220,33 +3241,37 @@ The notes box travels with the video.
         """Keyboard shortcuts, bound THROUGH napari (viewer.bind_key) so they
         actually fire in a docked widget AND are suppressed while a text field
         (notes) is focused -- which also stops napari's own single-key shortcuts
-        from hijacking the arrows/space during playback."""
-        v = self.viewer
+        from hijacking the arrows/space during playback.
 
-        @v.bind_key('Space', overwrite=True)
-        def _toggle_play(viewer):
+        The same keys are bound on the video and dots layers as they are added
+        (review_keys_on_layer): napari looks a key up in the selected layer's
+        shortcuts first, so without that 1 deleted dots and 2-5 changed the dots'
+        mode instead of setting the speed (review/keyboard.py)."""
+        def _toggle_play(_):
             if self.is_playing:
                 self._stop_play()
             else:
                 self._play_forward()
 
-        @v.bind_key('b', overwrite=True)
-        def _toggle_reverse(viewer):
+        def _toggle_reverse(_):
             if self.is_playing:
                 self._stop_play()
             else:
                 self._play_reverse()
 
+        keys = {'Space': _toggle_play, 'b': _toggle_reverse}
         for key, delta in [('Left', -1), ('Right', 1), ('Shift-Left', -10),
                            ('Shift-Right', 10), ('Control-Left', -100),
                            ('Control-Right', 100)]:
-            v.bind_key(key, (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
-                       overwrite=True)
+            keys[key] = (lambda d: (lambda _: self._jump_frames(d)))(delta)
 
         # Speed keys 1..6 -> 0.25, 0.5, 1, 2, 4, 8
         for key, spd in zip('123456', [0.25, 0.5, 1, 2, 4, 8]):
-            v.bind_key(key, (lambda s: (lambda viewer: self._set_speed(s)))(spd),
-                       overwrite=True)
+            keys[key] = (lambda s: (lambda _: self._set_speed(s)))(spd)
+
+        self._review_keys = keys
+        for key, func in keys.items():
+            self.viewer.bind_key(key, func, overwrite=True)
 
     def _play_forward(self):
         self.playback_direction = 1

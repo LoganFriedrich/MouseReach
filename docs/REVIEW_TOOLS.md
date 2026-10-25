@@ -91,6 +91,10 @@ Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Cl
 
 Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and speed keys 1-6 (`_setup_keybindings`, `:2963`). There is no key for next/previous segment; those are buttons.
 
+**The keys work while the video has the keyboard; what you type in the panel stays in the panel** (since 2026-10-24, `review/keyboard.py`; the Re-segmentation tool works the same way). Click the video to give it the keyboard. While the keyboard is in the review panel -- a number box, the notes, a button or choice you just clicked, the outcome list -- letters, numbers, Backspace, Delete and Enter never run a key; Space and the arrow keys still drive the video when the control you are on does not use them, so stepping after picking an outcome works as before. Choosing "Undetected reach (enter frames manually)" (or "No, it is at frame:" in the Re-segmentation tool) puts the keyboard in its number box, so the frame you type next lands there.
+
+Why: Logan, 2026-10-24 -- "when I type numbers into text fields ... sometimes keybinds go off". A number box keeps the digits typed into it, but the keyboard was often still on the control clicked just before (that choice, a "Use current frame" button, the outcome list), and napari hands any key a panel control leaves unused to the video's keys. Those were napari's own keys for the selected layer -- the tracking dots, added last -- not the review tool's: 1 deleted selected dots, 2-5 switched the dots to add, select, pan or transform mode (in add mode a click on the video adds a dot), Delete and Backspace deleted dots, and on the video layer 2 let a drag move the picture (and from a panel button, napari's Ctrl+Backspace deleted the dots layer itself). So the speed keys 1-5 never set the speed. Now the review tool's keys are bound on its video and dots layers too and napari's editing keys are switched off there: a review window edits nothing.
+
 ### Why this video is here: the banner (since 2026-10-23)
 
 Everything that holds a segment in triage is on screen, because the window is

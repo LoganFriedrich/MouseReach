@@ -78,6 +78,8 @@ from qtpy.QtWidgets import (
     QCheckBox, QSplitter, QSpinBox, QRadioButton, QButtonGroup,
 )
 
+from .keyboard import keep_typing_in_panel, review_keys_on_layer
+
 # How close a proposed boundary has to be to an existing one to count as "the
 # same boundary". The segmenter merges candidates within 30 frames, so anything
 # inside that is the same tray advance seen twice.
@@ -203,7 +205,9 @@ seg> jump ONE SEGMENT LENGTH (this video's median boundary spacing) -- the
 fast way to chase an offset that shifted every later segment; "Go to" jumps
 to a typed frame. Keyboard: Space = play/pause, b = reverse, arrows = 1
 frame, Shift-arrows = 10, Ctrl-arrows = 100, Alt-arrows = 1 segment,
-keys 1-6 = speed.
+keys 1-6 = speed. The keys work while the video has the keyboard -- click
+the video first. Anything typed while you are working in this panel stays in
+the panel and never runs a key.
 
 FINISHING: saving cuts does NOT release the video from the deep-review
 queue. When its cuts are right, open Deep Review on it and press
@@ -347,6 +351,11 @@ automatic.
         self.gw_spin.setRange(0, 10_000_000)
         self.gw_spin.setEnabled(False)
         self.gw_no.toggled.connect(self.gw_spin.setEnabled)
+        # Choosing "No" means a frame gets typed next: give the box the
+        # keyboard so the number lands there, not on the video's keys
+        # (review/keyboard.py). clicked runs after toggled has enabled the box.
+        self.gw_no.clicked.connect(
+            lambda: (self.gw_spin.setFocus(), self.gw_spin.selectAll()))
         r.addWidget(self.gw_spin)
         b = QPushButton("Use current frame")
         b.setToolTip("Copy the playhead's frame into the box. Pick the first "
@@ -972,41 +981,48 @@ automatic.
     def _bind_nav_keys(self):
         """The causal review tool's exact keyboard scheme, bound through
         napari so it fires in a docked widget: Space play/pause, b reverse,
-        arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speeds."""
-        if getattr(self, "_nav_keys_bound", False):
-            return
-        self._nav_keys_bound = True
-        v = self.viewer
+        arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speeds.
 
-        @v.bind_key('Space', overwrite=True)
-        def _toggle_play(viewer):
-            if self.is_playing:
-                self._stop_play()
-            else:
-                self._play_forward()
+        Called after every video load: the keys go on the viewer once, and on
+        the video and dots layers each time they are made, because napari looks
+        a key up in the selected layer's shortcuts first (review/keyboard.py)."""
+        if not getattr(self, "_nav_keys_bound", False):
+            self._nav_keys_bound = True
 
-        @v.bind_key('b', overwrite=True)
-        def _toggle_reverse(viewer):
-            if self.is_playing:
-                self._stop_play()
-            else:
-                self._play_reverse()
+            def _toggle_play(_):
+                if self.is_playing:
+                    self._stop_play()
+                else:
+                    self._play_forward()
 
-        for key, delta in [('Left', -1), ('Right', 1), ('Shift-Left', -10),
-                           ('Shift-Right', 10), ('Control-Left', -100),
-                           ('Control-Right', 100)]:
-            v.bind_key(key, (lambda d: (lambda viewer: self._jump_frames(d)))(delta),
-                       overwrite=True)
-        # One segment length at a time -- for chasing a shifted-by-one video.
-        v.bind_key('Alt-Left',
-                   lambda viewer: self._jump_frames(-self._segment_length()),
-                   overwrite=True)
-        v.bind_key('Alt-Right',
-                   lambda viewer: self._jump_frames(self._segment_length()),
-                   overwrite=True)
-        for key, spd in zip('123456', [0.25, 0.5, 1, 2, 4, 8]):
-            v.bind_key(key, (lambda s: (lambda viewer: self._set_speed(s)))(spd),
-                       overwrite=True)
+            def _toggle_reverse(_):
+                if self.is_playing:
+                    self._stop_play()
+                else:
+                    self._play_reverse()
+
+            keys = {'Space': _toggle_play, 'b': _toggle_reverse}
+            for key, delta in [('Left', -1), ('Right', 1), ('Shift-Left', -10),
+                               ('Shift-Right', 10), ('Control-Left', -100),
+                               ('Control-Right', 100)]:
+                keys[key] = (lambda d: (lambda _: self._jump_frames(d)))(delta)
+            # One segment length at a time -- for chasing a shifted-by-one video.
+            keys['Alt-Left'] = lambda _: self._jump_frames(-self._segment_length())
+            keys['Alt-Right'] = lambda _: self._jump_frames(self._segment_length())
+            for key, spd in zip('123456', [0.25, 0.5, 1, 2, 4, 8]):
+                keys[key] = (lambda s: (lambda _: self._set_speed(s)))(spd)
+            self._review_keys = keys
+            for key, func in keys.items():
+                self.viewer.bind_key(key, func, overwrite=True)
+        for layer in (self._video_layer, getattr(self, "_points_layer", None)):
+            if layer is not None and layer in self.viewer.layers:
+                review_keys_on_layer(layer, self._review_keys)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Docked by now: what is typed in this panel stays in it and never
+        # runs the video's keys (review/keyboard.py).
+        keep_typing_in_panel(self)
 
     # -------------------------------------------------------------- tables
 
