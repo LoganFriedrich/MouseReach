@@ -659,6 +659,10 @@ was the cause. Removing the filter put 24 videos back in front of the reviewer (
 
 ---
 
+## What importing the review package loads (since 2026-10-24)
+
+`import mousereach.review` loads only the light parts: the review-file I/O (`causal_review_io`, standard library only). The GUI names it offers -- the three widgets, `ComparisonPanel` and friends, `AlgoGTReviewMixin` -- are imported the first time something uses them (`_LAZY` and `__getattr__` in `review/__init__.py`), so `from mousereach.review import CausalReviewWidget` works exactly as before. Why: the watcher imports this package for `causal_review_io` and `triage_status`, and while the widgets were imported eagerly, a headless watcher loaded napari, Qt, vispy, pandas and scipy (about 2,600 modules, 4.6 s) the first time a cycle touched review code -- and a widget that failed to import took the watcher's review paths down with it. A new GUI module re-exported from the package goes in `_LAZY`, not in a plain import (`tests/test_review_package_loads_gui_lazily.py` fails otherwise).
+
 ## Declared but does nothing
 
 Each of these is code that runs, produces a value, and has no reader.
@@ -670,7 +674,7 @@ Each of these is code that runs, produces a value, and has no reader.
 - **`is_phantom`** in every review record: always `False`, never set.
 - **Boundary segments.** `is_boundary` is hard-coded `False` (`causal_review_widget.py:1043`) and set nowhere else, so the three branches that handle a boundary segment (`:1236`, `:1284`, `:2281`) never run and the guard at `:1749` is always true.
 - **`causal_review_index.json`.** Written on every save (`causal_review_io.py:690`, path at `:729`) so that, per the module docstring, the active-learning loop can bulk-read all reviews. Nothing reads it — no reader exists in `src/` or `scripts/`.
-- **`base.py`** — `AlgoGTReviewMixin`, `DiffItem`, `DiffSummary`. Re-exported by `review/__init__.py:116-119` and documented in this folder's `AGENTS.md` as the way to build a review widget. No class in the codebase uses the mixin and no code constructs a `DiffSummary`.
+- **`base.py`** — `AlgoGTReviewMixin`, `DiffItem`, `DiffSummary`. Re-exported by `review/__init__.py` (loaded on first use, like every GUI name there) and documented in this folder's `AGENTS.md` as the way to build a review widget. No class in the codebase uses the mixin and no code constructs a `DiffSummary`.
 - **`SavePanel`** in `save_panel.py:24` — never instantiated. Its sibling `SimpleSavePanel` (`:217`) is what the three per-step review widgets use.
 - **`unified_widget.UnifiedReviewWidget`** — reachable only from the napari plugin menu as "Review Tool (Tabbed)" (`napari.yaml:28-30`) and from its own `main` (`unified_widget.py:1123`). Its docstring claims the command `mousereach-review-tool` starts it (`:17`); that command starts the causal review tool. The launcher's "Review Tool" tab loads `GroundTruthWidget` instead (`launcher.py:282`).
 
