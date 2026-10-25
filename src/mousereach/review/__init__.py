@@ -110,42 +110,60 @@ Save ground truth:
 """
 
 # =============================================================================
-# BASE CLASSES
+# EAGER: the light parts
 # =============================================================================
-# Mixin class providing common functionality for review widgets
+# Review-file I/O (stdlib only). The watcher imports this package for these and
+# for triage_status; they must stay cheap.
 
-from .base import (
-    AlgoGTReviewMixin,  # Base mixin with video loading, navigation, etc.
-    DiffSummary         # Dataclass summarizing differences between algo and GT
-)
-
-# =============================================================================
-# UI COMPONENTS
-# =============================================================================
-# Reusable UI components for review widgets
-
-from .comparison_panel import (
-    ComparisonPanel,            # Panel showing algo vs GT comparison
-    ComparisonItem,             # Single item in comparison list
-    create_boundary_comparison, # Create comparison for boundary
-    create_reach_comparison,    # Create comparison for reach
-    create_outcome_comparison,  # Create comparison for outcome
-)
-
-# =============================================================================
-# WIDGETS
-# =============================================================================
-# The main review widgets
-
-from .unified_widget import UnifiedReviewWidget      # Legacy tabbed widget (deprecated)
-from .ground_truth_widget import GroundTruthWidget # Current widget (both modes)
-from .causal_review_widget import CausalReviewWidget  # Causal review tool
 from .causal_review_io import (
     save_causal_review,
     update_corpus_index,
     build_segment_record,
     collect_provenance,
 )
+
+# =============================================================================
+# LAZY: the GUI parts (PEP 562 -- loaded on first use)
+# =============================================================================
+# The widgets and their UI pieces load napari, Qt, vispy, pandas, scipy and
+# more (about 2,600 modules and several seconds). They used to be imported
+# here, so EVERY import of this package loaded them -- including the
+# watcher's, which only needs causal_review_io / triage_status: a headless
+# daemon loaded a whole GUI stack (measured 4.6 s, 2026-10-24) to call a path
+# helper, and a widget that failed to import took the watcher's review paths
+# down with it. Now a GUI name is imported the first time it is used;
+# ``from mousereach.review import CausalReviewWidget`` works as before.
+
+_LAZY = {
+    # Base mixin with video loading, navigation, etc.; differences summary
+    "AlgoGTReviewMixin": ".base",
+    "DiffSummary": ".base",
+    # Reusable UI components for review widgets
+    "ComparisonPanel": ".comparison_panel",
+    "ComparisonItem": ".comparison_panel",
+    "create_boundary_comparison": ".comparison_panel",
+    "create_reach_comparison": ".comparison_panel",
+    "create_outcome_comparison": ".comparison_panel",
+    # The review widgets
+    "UnifiedReviewWidget": ".unified_widget",        # legacy tabbed widget (deprecated)
+    "GroundTruthWidget": ".ground_truth_widget",     # current widget (both modes)
+    "CausalReviewWidget": ".causal_review_widget",   # causal review tool
+}
+
+
+def __getattr__(name):
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    from importlib import import_module
+    value = getattr(import_module(module, __name__), name)
+    globals()[name] = value      # later lookups skip this function
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY))
+
 
 # =============================================================================
 # GROUND TRUTH DATA STRUCTURES
