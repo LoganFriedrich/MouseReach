@@ -5,10 +5,9 @@ WHY
 Filing a video means it is done: what is filed is what the analyses use.
 Where a lab scores every tray by hand at the bench, the hand score is a
 second, independent reading of each pellet. A pellet the pipeline and the
-bench disagree about is not done -- a person has to look at it first -- and
-a video whose session should have hand scores but has none is not done
-either. So the watcher checks every video against its hand scores at the
-last step before filing:
+bench disagree about is not done -- a person has to look at it first. So the
+watcher checks every video against its hand scores at the last step before
+filing:
 
     every pellet agrees, or a person answered it   -> filed
     a pellet the person has not answered disagrees -> TRIAGE, the pellet
@@ -16,11 +15,12 @@ last step before filing:
         the video says displaced_sa"), shown beside it in the review tool
     no hand scores for the session:
         project not in required_projects           -> filed (nothing to compare)
-        project in required_projects               -> WAITS, unfiled, and is
-            listed in the attention file; once the scores file has been
-            rewritten after an import of the cohort's sheet that still did
-            not bring them, the listing says it MISSING -- a defect to fix
-            (the sheet, the import, or the video's name), not a delay
+        project in required_projects               -> WAITS, unfiled, until the
+            cohort's sheet has been imported after the video was ready (the
+            scores are entered the same day; the import may run only
+            nightly). If that import did not bring them, the session was
+            never scored by hand: there is nothing to compare, so nothing can
+            disagree, and the video is filed.
 
 What a person answered is never compared: a person's answer is the truth
 for that pellet, whatever the bench says. Easy and Flat trays have no pellet
@@ -166,11 +166,13 @@ def check(video_id: str, folder: Path) -> Verdict:
     return Verdict(AGREES, "every pellet agrees with the hand score", cohort_id=cohort_id)
 
 
-def is_missing(verdict: Verdict, ready_since: Optional[str]) -> bool:
-    """A waiting video's scores are MISSING (a defect, shown to a person) once
-    the cohort's sheet has been imported successfully after the video was
-    ready and they still did not come. Before that it is only waiting for the
-    next import."""
+def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
+    """True once the cohort's sheet has been imported successfully after the
+    video was ready and the session still has no hand scores: it was never
+    scored by hand, so there is nothing to compare and the video is filed.
+    Before that import it only waits. WHY file rather than hold: a record
+    that does not exist cannot disagree with the video, and the video is the
+    only record of that session (Logan, 2026-10-26)."""
     return bool(verdict.status == WAITING and verdict.last_import and ready_since
                 and verdict.last_import > ready_since)
 
@@ -198,21 +200,16 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                              "filed by itself once the check runs." % (vid, w["error"])),
                 })
                 continue
-            missing = w.get("missing")
             items.append({
-                "kind": "hand_scores_missing" if missing else "hand_scores_waiting",
-                "needs_person": bool(missing),
+                "kind": "hand_scores_waiting",
+                "needs_person": False,
                 "video_id": vid,
                 "cohort_id": w.get("cohort_id"),
                 "ready_since": w.get("ready_since"),
                 "last_import": w.get("last_import"),
-                "says": (("%s is processed but its session has no hand scores, and the "
-                          "%s sheet was imported after it was ready. Check that the sheet "
-                          "has this animal, date and tray (and that the video is named "
-                          "right); the video is filed once the scores come in.")
-                         if missing else
-                         ("%s is processed and waits for its hand scores (the %s sheet has "
-                          "not been imported since it was ready).")) % (vid, w.get("cohort_id")),
+                "says": ("%s is processed and waits for the %s sheet's next import, to be "
+                         "compared with its hand scores (filed without the comparison if "
+                         "that import has none)." % (vid, w.get("cohort_id"))),
             })
         tmp = d / f".{hostname}_hand_scores.json.tmp"
         tmp.write_text(json.dumps({"written_by": hostname, "items": items}, indent=1),

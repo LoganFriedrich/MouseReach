@@ -321,11 +321,13 @@ class BaseOrchestrator:
     def _hand_scores_allow_filing(self, video_id: str, folder: Path) -> bool:
         """The last check before a video is filed: its pellets against the
         session's hand scores (watcher/hand_scores.py says why and what each
-        answer means). True: file it. False: it is not filed now -- it went to
-        triage with its disagreeing pellets flagged, or it waits for its hand
-        scores (listed for a person once an import has failed to bring them),
-        or the check could not run (tried again when the scores file changes).
-        A video is never filed unchecked because a check failed."""
+        answer means). True: file it -- including a session the sheet's
+        import after the video was ready has no scores for (never scored by
+        hand: nothing to compare). False: it is not filed now -- it went to
+        triage with its disagreeing pellets flagged, or it waits for the
+        sheet's next import, or the check could not run (tried again when the
+        scores file changes). A video is never filed unchecked because a check
+        failed."""
         from mousereach.watcher import hand_scores
         if not hasattr(self, "_score_waits"):
             self._score_waits = {}
@@ -342,16 +344,18 @@ class BaseOrchestrator:
         if v.status == hand_scores.WAITING:
             row = self.db.get_video(video_id) or {}
             ready = row.get("processing_completed_at") or datetime.now().isoformat()
-            missing = hand_scores.is_missing(v, ready)
-            before = self._score_waits.get(video_id) or {}
-            if before.get("missing") != missing or "cohort_id" not in before:
-                logger.info(f"Not filing {video_id} yet: {v.reason} -- "
-                            + ("MISSING: the sheet was imported after the video was "
-                               "ready and they did not come" if missing else
-                               "waiting for the next import of the sheet"))
+            if hand_scores.scores_never_came(v, ready):
+                logger.info(f"Filing {video_id} without the hand-score comparison: the "
+                            f"{v.cohort_id} sheet was imported after it was ready and has "
+                            f"no scores for this session (never scored by hand)")
+                if self._score_waits.pop(video_id, None) is not None:
+                    self._write_score_attention()
+                return True
+            if "cohort_id" not in (self._score_waits.get(video_id) or {}):
+                logger.info(f"Not filing {video_id} yet: {v.reason} -- waiting for the "
+                            f"next import of the {v.cohort_id} sheet")
             self._score_waits[video_id] = {"stamp": stamp, "cohort_id": v.cohort_id,
-                                           "ready_since": ready, "last_import": v.last_import,
-                                           "missing": missing}
+                                           "ready_since": ready, "last_import": v.last_import}
             self._write_score_attention()
             return False
         if self._score_waits.pop(video_id, None) is not None:

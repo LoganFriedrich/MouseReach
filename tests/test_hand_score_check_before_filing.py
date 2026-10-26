@@ -4,8 +4,10 @@ WHY (Logan, 2026-10-26): "Videos should be checked to see if they disagree
 with bench immediately as a part of the pipeline. If they do, they should
 move to triage ... They shouldn't move out of the processing phase until
 they have for sure got no issues." Filing means done. A video whose
-session's hand scores are not there yet waits, unfiled; once an import of
-the sheet has failed to bring them, a person is told.
+session's hand scores are not there yet waits, unfiled, for the sheet's next
+import; if that import has none, the session was never scored by hand and the
+video is filed ("If can't compare to manual, then can't mismatch manual",
+Logan, 2026-10-26).
 """
 import json
 
@@ -55,9 +57,9 @@ def test_no_scores_waits_only_in_a_required_project(tmp_path, monkeypatch):
     folder = _setup(tmp_path, monkeypatch, scores={}, last_import="2026-10-26T20:05:00")
     v = hs.check(VID, folder)
     assert v.status == hs.WAITING and v.cohort_id == "ABC_02"
-    # an import after the video was ready that did not bring them: missing
-    assert hs.is_missing(v, "2026-10-26T10:00:00")
-    assert not hs.is_missing(v, "2026-10-26T21:00:00")
+    # an import after the video was ready that did not bring them: never scored
+    assert hs.scores_never_came(v, "2026-10-26T10:00:00")
+    assert not hs.scores_never_came(v, "2026-10-26T21:00:00")
     folder = _setup(tmp_path, monkeypatch, scores={}, required=())
     assert hs.check(VID, folder).status == hs.NOT_CHECKED
 
@@ -102,7 +104,7 @@ def test_a_waiting_video_is_not_filed_listed_and_not_picked_until_the_file_chang
     assert orch._waiting_for_hand_scores(VID)
     listed = json.loads((tmp_path / "nas" / "attention" / "HOST_hand_scores.json").read_text())
     assert [i["video_id"] for i in listed["items"]] == [VID]
-    assert listed["items"][0]["needs_person"] is False      # no import since it was ready
+    assert listed["items"][0]["needs_person"] is False      # waiting is never an alarm
     # the scores arrive: the file changes, the video is picked and filed
     f = tmp_path / "hand.csv"
     f.write_text("video_key,pellet,score\n%s,1,0\n" % VID, encoding="utf-8")
@@ -124,3 +126,11 @@ def test_a_check_that_cannot_run_never_files_the_video(tmp_path, monkeypatch):
     item = listed["items"][0]
     assert item["needs_person"] is True and item["kind"] == "hand_score_check_failed"
     assert "could not run" in item["says"]
+
+
+def test_a_session_the_next_import_has_no_scores_for_is_filed_without_comparison(tmp_path, monkeypatch):
+    """Never scored by hand: nothing to compare, so nothing can disagree."""
+    folder = _setup(tmp_path, monkeypatch, scores={}, last_import="2999-01-01T00:00:00")
+    orch = _orch(tmp_path, monkeypatch)
+    assert orch._hand_scores_allow_filing(VID, folder) is True
+    assert not orch._waiting_for_hand_scores(VID)

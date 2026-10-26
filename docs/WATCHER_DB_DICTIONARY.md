@@ -220,8 +220,9 @@ READ THIS BEFORE INTERPRETING A STATE
   idiom for 'cropped'. This is the single most misread value in the schema.
 
   'processed' on the processing server means analysed and waiting to be filed.
-  Since 2026-10-26 a video can stay 'processed' for a day or more: its session's
-  hand scores have not come yet (watcher/hand_scores.py). Such videos are listed
+  Since 2026-10-26 a video can stay 'processed' until the next import of its
+  sheet, waiting for its hand scores (watcher/hand_scores.py; filed without them
+  if that import has none). Such videos are listed
   in <NAS root>/attention/<host>_hand_scores.json; the processing log has no
   step for the wait (the watcher log says "Not filing ...").
 

@@ -308,10 +308,11 @@ last step before filing it:
   filed. What a person answers is taken as the truth, whatever the bench says.
 - **The session has no hand scores**, in a project whose every session is
   scored by hand (`required_projects` below): the video waits, processed but
-  not filed. It is filed by itself once the scores arrive. If the project's
-  sheet has been imported since the video was ready and the scores still are
-  not there, the video is listed as needing a person: the sheet is missing that
-  animal, date or tray, or the video's name does not match the sheet.
+  not filed, for the project's sheet to be imported (scores are entered the
+  same day; the import may run only nightly). If that import brings them, the
+  video is compared as above. If it does not, the session was never scored by
+  hand -- there is nothing to compare, so nothing can disagree -- and the video
+  is filed without the comparison.
 - **Easy and Flat trays**, and projects not listed as required, are filed
   without the comparison.
 - **The check cannot run** (the `hand_scores` path is wrong, the file cannot
@@ -319,10 +320,11 @@ last step before filing it:
   needing a person until the setting or the file is fixed.
 
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
-shows, in red at the top, **Needs your attention (N)** with one line per video
-whose hand scores are missing and what to check; it is hidden when nothing needs
-a person, and refreshes every 5 minutes and on Refresh. Videos that are only
-waiting for the sheet's next import are counted on a grey line below it. The
+shows, in red at the top, **Needs your attention (N)** with one line per thing
+a person must fix (today: a hand-score check that cannot run) and what to do; it
+is hidden when nothing needs a person, and refreshes every 5 minutes and on
+Refresh. Videos waiting for the sheet's next import are counted on a grey line
+below it. The
 lists behind it are `<NAS root>/attention/<PC name>_hand_scores.json` (rewritten
 whenever they change; `"needs_person": true` marks the ones to act on), and the
 watcher log says the same thing for each video ("Not filing ...").

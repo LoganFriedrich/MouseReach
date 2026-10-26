@@ -2245,9 +2245,11 @@ the session's hand scores (`watcher/hand_scores.py`, configured by the `hand_sco
 disagrees, and that no person has answered, is flagged (`flagged_for_review`, `flag_reason` "disagrees
 with the hand score: ...") and the video goes to triage through `route_to_queue`, as the review tool
 already shows such reasons. A session with no hand scores in a required project leaves the video in
-'processed', unfiled and not picked again until the scores file changes; it is listed in
-`<NAS root>/attention/<host>_hand_scores.json`, marked `needs_person` once the cohort's sheet was
-imported after the video was ready and still did not bring them. A check that cannot run never files
+'processed', unfiled and not picked again until the scores file changes, listed (grey, waiting) in
+`<NAS root>/attention/<host>_hand_scores.json`; once the cohort's sheet has been imported after the
+video was ready and still has no scores for it, the session was never scored by hand and the video
+is filed without the comparison (`scores_never_came`; Logan, 2026-10-26: "If can't compare to manual,
+then can't mismatch manual"). A check that cannot run never files
 the video, and its item is marked `needs_person` (kind `hand_score_check_failed`), so a wrong setting
 shows in red instead of quietly stopping the filing. WHY (Logan, 2026-10-26): filing means done, so a video must not leave processing until it
 has no issues; before this the comparison ran nightly on videos already filed and moved them back.
