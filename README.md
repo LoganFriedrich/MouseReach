@@ -315,9 +315,14 @@ last step before filing it:
 - **Easy and Flat trays**, and projects not listed as required, are filed
   without the comparison.
 
-The list of waiting videos is `<NAS root>/attention/<this PC>_hand_scores.json`
-(rewritten whenever it changes; entries with `"needs_person": true` are the ones
-to act on). The watcher log says the same thing for each video ("Not filing ...").
+**Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
+shows, in red at the top, **Needs your attention (N)** with one line per video
+whose hand scores are missing and what to check; it is hidden when nothing needs
+a person, and refreshes every 5 minutes and on Refresh. Videos that are only
+waiting for the sheet's next import are counted on a grey line below it. The
+lists behind it are `<NAS root>/attention/<PC name>_hand_scores.json` (rewritten
+whenever they change; `"needs_person": true` marks the ones to act on), and the
+watcher log says the same thing for each video ("Not filing ...").
 
 To turn it on, add to `~/.mousereach/config.json` (a running watcher picks up
 the change):

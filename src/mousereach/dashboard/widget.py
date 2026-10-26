@@ -664,8 +664,40 @@ class PipelineDashboard(QWidget):
         self._refresh_data()
         show_info(f"Pipeline scan complete: {len(self.all_files)} videos.")
 
+    # Items shown in the red panel before "... and N more".
+    ATTENTION_SHOWN = 8
+
+    def _update_attention(self):
+        """Fill the red panel from the watchers' lists (watcher/attention.py)."""
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.attention import read_items
+            items = read_items(Paths.NAS_ROOT) if Paths.NAS_ROOT else []
+        except Exception as e:
+            items = [{"needs_person": True, "says": "The attention lists could not be read (%s)." % e}]
+        urgent = [i for i in items if i.get("needs_person")]
+        waiting = [i for i in items if not i.get("needs_person")]
+        if urgent:
+            lines = ["<b>Needs your attention (%d)</b>" % len(urgent)]
+            lines += ["&bull; %s" % i.get("says", "") for i in urgent[:self.ATTENTION_SHOWN]]
+            if len(urgent) > self.ATTENTION_SHOWN:
+                lines.append("... and %d more (the full lists are in %s)" % (
+                    len(urgent) - self.ATTENTION_SHOWN, "attention\\ in the pipeline's NAS folder"))
+            self.attention_label.setText("<br>".join(lines))
+            self.attention_label.show()
+        else:
+            self.attention_label.hide()
+        if waiting:
+            self.waiting_label.setText(
+                "%d processed video(s) wait for their hand scores before they are filed; "
+                "they are filed by themselves after the sheet's next import." % len(waiting))
+            self.waiting_label.show()
+        else:
+            self.waiting_label.hide()
+
     def _refresh_clicked(self):
         """Refresh button: re-scan the folders (folder adapter) or reload."""
+        self._update_attention()
         if isinstance(self.adapter, FolderScanAdapter):
             self._start_folder_scan()
         else:
@@ -692,6 +724,28 @@ class PipelineDashboard(QWidget):
         info.setWordWrap(True)
         info.setStyleSheet("color: #888; font-size: 10px;")
         main_layout.addWidget(info)
+
+        # === Needs your attention ===
+        # Red, at the top, hidden when nothing needs a person: what the
+        # watchers list in <NAS root>/attention/ (watcher/attention.py). WHY
+        # here: all a person sees is the screen, and something only a person
+        # can fix (a session with no hand scores) must not sit in a log.
+        self.attention_label = QLabel("")
+        self.attention_label.setWordWrap(True)
+        self.attention_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.attention_label.setStyleSheet(
+            "padding:6px; background:#8b1a1a; color:white; font-size:11px;")
+        self.attention_label.hide()
+        main_layout.addWidget(self.attention_label)
+        self.waiting_label = QLabel("")
+        self.waiting_label.setWordWrap(True)
+        self.waiting_label.setStyleSheet("color:#aaa; font-size:10px; padding:2px 6px;")
+        self.waiting_label.hide()
+        main_layout.addWidget(self.waiting_label)
+        self._attention_timer = QTimer(self)
+        self._attention_timer.timeout.connect(self._update_attention)
+        self._attention_timer.start(5 * 60 * 1000)
+        QTimer.singleShot(0, self._update_attention)
 
         # === Tabs ===
         tabs = QTabWidget()

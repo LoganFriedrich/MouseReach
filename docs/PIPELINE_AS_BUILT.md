@@ -2252,6 +2252,11 @@ the video. WHY (Logan, 2026-10-26): filing means done, so a video must not leave
 has no issues; before this the comparison ran nightly on videos already filed and moved them back.
 Tests: `tests/test_hand_score_check_before_filing.py`.
 
+The Pipeline Dashboard shows every item of every list in `<NAS root>/attention/` whose
+`needs_person` is true in a red "Needs your attention (N)" panel at its top (hidden when there is
+none), and counts the waiting ones on a grey line (`watcher/attention.py`, `dashboard/widget.py`
+`_update_attention`; every 5 minutes and on Refresh). Tests: `tests/test_attention_panel.py`.
+
 ## Update 2026-10-22: the shared version index is no longer in WAL mode
 
 `pipeline_records/version_index.db` (on the shared drive; written when a manifest is written, read by
