@@ -60,7 +60,8 @@ def _cleared_seg_failed_bundle(queue_dir, stem, resolved: bool):
     if resolved:
         (b / f"{stem}_causal_review.json").write_text(
             json.dumps({"segments": [
-                {"segment_num": 3, "answers": {"reviewed": True}}]}),
+                {"segment_num": 3, "human": {"outcome": "untouched"},
+                 "answers": {"reviewed": True}}]}),
             encoding="utf-8")
     return b
 
