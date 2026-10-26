@@ -83,9 +83,10 @@ def _archive_result(error=None):
             "destination": None}
 
 
-def _proc_for_archive(monkeypatch, error):
+def _proc_for_archive(monkeypatch, error, tmp_path):
     o = _bare(ProcessingOrchestrator)
     o.staging_dir = None
+    o.processing_dir = tmp_path      # a real watcher always has one
     monkeypatch.setattr(orch.Paths, "TRIAGE_REVIEW", None)
     monkeypatch.setattr(orch.Paths, "DEEP_REVIEW", None)
     import mousereach.archive.core as ac
@@ -94,16 +95,16 @@ def _proc_for_archive(monkeypatch, error):
     return o
 
 
-def test_no_files_on_disk_is_terminal(monkeypatch):
+def test_no_files_on_disk_is_terminal(monkeypatch, tmp_path):
     """'No files found in Processing/' cannot be fixed by waiting; retrying
     it forever under backoff kept a gone-files row invisible for three days."""
-    o = _proc_for_archive(monkeypatch, "No files found in Processing/")
+    o = _proc_for_archive(monkeypatch, "No files found in Processing/", tmp_path)
     assert o._archive_to_nas({"id": "20240101_ABC0101_P1"}) is False
     assert o.db.called("mark_failed")
 
 
-def test_other_archive_errors_keep_the_backoff_retry(monkeypatch):
-    o = _proc_for_archive(monkeypatch, "destination busy")
+def test_other_archive_errors_keep_the_backoff_retry(monkeypatch, tmp_path):
+    o = _proc_for_archive(monkeypatch, "destination busy", tmp_path)
     assert o._archive_to_nas({"id": "20240101_ABC0101_P1"}) is False
     assert not o.db.called("mark_failed")          # retriable, not terminal
     assert o._archive_backoff_active("20240101_ABC0101_P1")

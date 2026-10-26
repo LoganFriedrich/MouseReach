@@ -112,3 +112,13 @@ def _no_writes_to_real_pipeline_folders():
             "config.Paths (and the processing root) at tmp_path instead:\n"
             + shown + more,
             pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_hand_scores(monkeypatch):
+    """No test reads this machine's hand-scores settings: the check before
+    filing (watcher/hand_scores.py) would otherwise compare a test's video with
+    the lab's real scores file, or hold it for scores it can never have. A test
+    of the check sets hand_scores.settings itself."""
+    from mousereach.watcher import hand_scores
+    monkeypatch.setattr(hand_scores, "settings", lambda: {})
