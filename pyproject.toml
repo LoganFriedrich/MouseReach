@@ -250,9 +250,13 @@ where = ["src"]
 # temporary folder and renames it to .pytest_cache. When the repo sits on a
 # network share the rename can fail, leaving the folder behind with permissions
 # only an administrator can clear (dozens accumulated). The suite needs no cache.
+# --ignore-glob: the folders already left behind must be skipped BEFORE pytest
+# looks inside them -- norecursedirs (below) is checked only after pytest has
+# asked whether the path is a folder, and that question itself fails with
+# "Access is denied" on a leftover this account cannot read (2026-10-26).
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-p no:cacheprovider"
+addopts = "-p no:cacheprovider --ignore-glob=*pytest-cache-files-*"
 # pytest's default skip list, plus folders a failed cache rename left behind.
 norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules",
                  "venv", "{arch}", "pytest-cache-files-*"]
