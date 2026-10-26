@@ -2236,6 +2236,22 @@ record"), at most 50 videos per pass so a backlog never holds up the work loop. 
 waits up to 30 s for another machine's write to finish, instead of Python's default 5 s.
 
 
+## Update 2026-10-26: checked against the hand scores before filing
+
+The last step before a video is filed (`_archive_to_nas` on the processing server,
+`_archive_locally_processed` on a node that also analyses) is now a comparison of its pellets with
+the session's hand scores (`watcher/hand_scores.py`, configured by the `hand_scores` section of
+`~/.mousereach/config.json`; README "Checked against the hand scores before filing"). A pellet that
+disagrees, and that no person has answered, is flagged (`flagged_for_review`, `flag_reason` "disagrees
+with the hand score: ...") and the video goes to triage through `route_to_queue`, as the review tool
+already shows such reasons. A session with no hand scores in a required project leaves the video in
+'processed', unfiled and not picked again until the scores file changes; it is listed in
+`<NAS root>/attention/<host>_hand_scores.json`, marked `needs_person` once the cohort's sheet was
+imported after the video was ready and still did not bring them. A check that cannot run never files
+the video. WHY (Logan, 2026-10-26): filing means done, so a video must not leave processing until it
+has no issues; before this the comparison ran nightly on videos already filed and moved them back.
+Tests: `tests/test_hand_score_check_before_filing.py`.
+
 ## Update 2026-10-22: the shared version index is no longer in WAL mode
 
 `pipeline_records/version_index.db` (on the shared drive; written when a manifest is written, read by

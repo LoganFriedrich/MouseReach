@@ -1,0 +1,212 @@
+"""Before a video is filed: its pellets against the session's hand scores.
+
+WHY
+---
+Filing a video means it is done: what is filed is what the analyses use.
+Where a lab scores every tray by hand at the bench, the hand score is a
+second, independent reading of each pellet. A pellet the pipeline and the
+bench disagree about is not done -- a person has to look at it first -- and
+a video whose session should have hand scores but has none is not done
+either. So the watcher checks every video against its hand scores at the
+last step before filing:
+
+    every pellet agrees, or a person answered it   -> filed
+    a pellet the person has not answered disagrees -> TRIAGE, the pellet
+        flagged with what each side says ("the hand score says retrieved;
+        the video says displaced_sa"), shown beside it in the review tool
+    no hand scores for the session:
+        project not in required_projects           -> filed (nothing to compare)
+        project in required_projects               -> WAITS, unfiled, and is
+            listed in the attention file; once the scores file has been
+            rewritten after an import of the cohort's sheet that still did
+            not bring them, the listing says it MISSING -- a defect to fix
+            (the sheet, the import, or the video's name), not a delay
+
+What a person answered is never compared: a person's answer is the truth
+for that pellet, whatever the bench says. Easy and Flat trays have no pellet
+outcomes and are never checked.
+
+WHERE THE SCORES COME FROM
+--------------------------
+A CSV file another tool writes (in this lab's setup, the database tool),
+one row per hand-scored pellet with columns video_key (the session as this
+pipeline names its video: 20250709_ABC0207_P1), pellet (1-20) and score
+(0 = not touched, 1 = displaced, 2 = retrieved), and beside it a JSON file
+of the same name holding "last_successful_import": {cohort id: when}. The
+pipeline never imports that tool; it only reads the file.
+
+CONFIGURATION (~/.mousereach/config.json; read on every check, so an edit
+applies to a running watcher):
+
+    "hand_scores": {
+        "path": "<the CSV file>",
+        "required_projects": ["PROJECT_A"]
+    }
+
+Without "path" nothing is checked and videos are filed as before.
+
+ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
+"""
+from __future__ import annotations
+
+import csv
+import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+HAND_WORDS = {0: "not touched", 1: "displaced", 2: "retrieved"}
+ALGO_CLASS = {"untouched": 0, "displaced_sa": 1, "displaced_outside": 1, "retrieved": 2}
+FLAG_REASON = "disagrees with the hand score"
+
+AGREES = "agrees"
+DISAGREES = "disagrees"
+WAITING = "waiting"
+NOT_CHECKED = "not_checked"
+
+
+@dataclass
+class Verdict:
+    status: str
+    reason: str
+    disagreements: Dict[int, str] = field(default_factory=dict)   # segment -> words
+    cohort_id: Optional[str] = None
+    last_import: Optional[str] = None     # the cohort's last successful sheet import
+
+
+def settings() -> dict:
+    """The "hand_scores" section of this machine's config file ({} if none)."""
+    from mousereach.config import config_file_path
+    try:
+        raw = json.loads(Path(config_file_path()).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw.get("hand_scores") or {}
+
+
+_CACHE = {"key": None, "scores": None, "manifest": None}
+
+
+def load(path: Path):
+    """({video_key: {pellet: score}}, manifest dict) for the scores file, read
+    again only when the file changes. Raises when it cannot be read."""
+    path = Path(path)
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime)
+    if _CACHE["key"] != key:
+        scores: Dict[str, Dict[int, int]] = {}
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                scores.setdefault(row["video_key"], {})[int(row["pellet"])] = int(row["score"])
+        manifest = {}
+        mp = path.with_suffix(".json")
+        if mp.is_file():
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+        _CACHE.update(key=key, scores=scores, manifest=manifest)
+    return _CACHE["scores"], _CACHE["manifest"]
+
+
+def scores_file_stamp() -> Optional[float]:
+    """Modification time of the configured scores file, or None."""
+    p = settings().get("path")
+    try:
+        return Path(p).stat().st_mtime if p else None
+    except OSError:
+        return None
+
+
+def check(video_id: str, folder: Path) -> Verdict:
+    """Compare a processed video in ``folder`` with its hand scores. Reads
+    only; flags and moves nothing (see the module docstring for what the
+    caller does with each verdict). Raises when a file it needs exists but
+    cannot be read -- a guess could file a video unchecked."""
+    from mousereach.config import is_outcome_free_tray
+    from mousereach.sync.database import parse_subject_id
+
+    if is_outcome_free_tray(video_id):
+        return Verdict(NOT_CHECKED, "Easy/Flat tray: no pellet outcomes")
+    cfg = settings()
+    if not cfg.get("path"):
+        return Verdict(NOT_CHECKED, "no hand-scores file configured")
+    subject = parse_subject_id(video_id) or ""
+    project = subject.split("_")[0]
+    cohort_id = "_".join(subject.split("_")[:2]) or None
+    scores, manifest = load(Path(cfg["path"]))
+    last = (manifest.get("last_successful_import") or {}).get(cohort_id)
+    hand = scores.get(video_id)
+    if hand is None:
+        if project and project in (cfg.get("required_projects") or []):
+            return Verdict(WAITING, "no hand scores for this session", cohort_id=cohort_id,
+                           last_import=last)
+        return Verdict(NOT_CHECKED, "no hand scores for this session (not required "
+                       "for %s)" % (project or "this project"), cohort_id=cohort_id)
+
+    from mousereach.watcher.route_cli import answered_segments_of
+    answered = answered_segments_of(video_id, folder)
+    if "all" in answered:
+        return Verdict(AGREES, "every pellet answered by a person", cohort_id=cohort_id)
+    out = json.loads((Path(folder) / f"{video_id}_pellet_outcomes.json").read_text(encoding="utf-8"))
+    disagree = {}
+    for seg in out.get("segments", []):
+        n = seg.get("segment_num")
+        if n is None or n in answered:
+            continue
+        a, h = ALGO_CLASS.get(seg.get("outcome")), hand.get(int(n))
+        if a is None or h is None or a == h:
+            continue
+        disagree[int(n)] = "the hand score says %s; the video says %s" % (
+            HAND_WORDS[h], seg.get("outcome"))
+    if disagree:
+        return Verdict(DISAGREES, "%d pellet(s) disagree with the hand score: %s" % (
+            len(disagree), ", ".join(str(s) for s in sorted(disagree))), disagree,
+            cohort_id=cohort_id)
+    return Verdict(AGREES, "every pellet agrees with the hand score", cohort_id=cohort_id)
+
+
+def is_missing(verdict: Verdict, ready_since: Optional[str]) -> bool:
+    """A waiting video's scores are MISSING (a defect, shown to a person) once
+    the cohort's sheet has been imported successfully after the video was
+    ready and they still did not come. Before that it is only waiting for the
+    next import."""
+    return bool(verdict.status == WAITING and verdict.last_import and ready_since
+                and verdict.last_import > ready_since)
+
+
+def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Optional[Path]:
+    """Write this machine's list of videos waiting for hand scores to
+    <nas root>/attention/<host>_hand_scores.json (replaced each time; empty
+    list when none wait), for the panels that show what needs a person.
+    Never raises."""
+    try:
+        d = Path(nas_root) / "attention"
+        d.mkdir(parents=True, exist_ok=True)
+        items = []
+        for vid, w in sorted(waits.items()):
+            missing = w.get("missing")
+            items.append({
+                "kind": "hand_scores_missing" if missing else "hand_scores_waiting",
+                "needs_person": bool(missing),
+                "video_id": vid,
+                "cohort_id": w.get("cohort_id"),
+                "ready_since": w.get("ready_since"),
+                "last_import": w.get("last_import"),
+                "says": (("%s is processed but its session has no hand scores, and the "
+                          "%s sheet was imported after it was ready. Check that the sheet "
+                          "has this animal, date and tray (and that the video is named "
+                          "right); the video is filed once the scores come in.")
+                         if missing else
+                         ("%s is processed and waits for its hand scores (the %s sheet has "
+                          "not been imported since it was ready).")) % (vid, w.get("cohort_id")),
+            })
+        tmp = d / f".{hostname}_hand_scores.json.tmp"
+        tmp.write_text(json.dumps({"written_by": hostname, "items": items}, indent=1),
+                       encoding="utf-8")
+        dest = d / f"{hostname}_hand_scores.json"
+        tmp.replace(dest)
+        return dest
+    except Exception as e:
+        logger.warning("Could not write the hand-scores attention list: %s", e)
+        return None

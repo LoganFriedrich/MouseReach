@@ -294,6 +294,48 @@ there is what runs at login.
 The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
 (e.g., during filming sessions).
 
+### Checked against the hand scores before filing
+
+Filing a video means it is done. Where a lab scores every tray by hand at the
+bench, the watcher compares each video with its session's hand scores as the
+last step before filing it:
+
+- **Every pellet agrees** (or a person already answered it in review): filed.
+- **A pellet disagrees**: the video goes to the **triage** queue. In the review
+  tool that pellet carries its reason, for example *disagrees with the hand
+  score: the hand score says retrieved; the video says displaced_sa*. Answer it
+  as usual; when every flagged pellet is answered the video comes back and is
+  filed. What a person answers is taken as the truth, whatever the bench says.
+- **The session has no hand scores**, in a project whose every session is
+  scored by hand (`required_projects` below): the video waits, processed but
+  not filed. It is filed by itself once the scores arrive. If the project's
+  sheet has been imported since the video was ready and the scores still are
+  not there, the video is listed as needing a person: the sheet is missing that
+  animal, date or tray, or the video's name does not match the sheet.
+- **Easy and Flat trays**, and projects not listed as required, are filed
+  without the comparison.
+
+The list of waiting videos is `<NAS root>/attention/<this PC>_hand_scores.json`
+(rewritten whenever it changes; entries with `"needs_person": true` are the ones
+to act on). The watcher log says the same thing for each video ("Not filing ...").
+
+To turn it on, add to `~/.mousereach/config.json` (a running watcher picks up
+the change):
+
+```json
+"hand_scores": {
+    "path": "<the hand-scores CSV your lab writes>",
+    "required_projects": ["PROJECT_A"]
+}
+```
+
+The CSV has one row per hand-scored pellet with the columns `video_key` (the
+session as MouseReach names its video, e.g. `20250709_ABC0207_P1`), `pellet`
+(1-20) and `score` (0 not touched, 1 displaced, 2 retrieved); a JSON file of the
+same name beside it may give `last_successful_import` per cohort (`ABC_02`),
+which is how "waiting" is told from "missing". Without `path`, nothing is
+checked.
+
 ---
 
 ## Archive
@@ -413,6 +455,7 @@ See INSTALL.md, Step 6.
 | `processing_root` | Pipeline working folders (DLC_Queue, Processing, Failed) | **Yes** |
 | `nas_drive` | Data repository / archive location | Optional |
 | `watcher.*` | Automated pipeline settings (DLC config, GPU, polling) | For watcher PC |
+| `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked before a video is filed (see "Checked against the hand scores before filing") | Optional |
 
 Configuration is saved to `~/.mousereach/config.json` and persists across sessions.
 

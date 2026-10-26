@@ -300,6 +300,74 @@ class BaseOrchestrator:
         entry = self._archive_backoff.get(video_id)
         return bool(entry) and time.time() < entry[1]
 
+    def _waiting_for_hand_scores(self, video_id: str) -> bool:
+        """True while this video waits for its hand scores and the scores
+        file has not changed since it was checked: picking it again could only
+        give the same answer, and the archive step is first in line, so it
+        would take every cycle (watcher/hand_scores.py)."""
+        w = getattr(self, "_score_waits", {}).get(video_id)
+        if not w:
+            return False
+        from mousereach.watcher import hand_scores
+        return w.get("stamp") == hand_scores.scores_file_stamp()
+
+    def _write_score_attention(self) -> None:
+        """Rewrite this machine's list of videos waiting for hand scores."""
+        from mousereach.watcher import hand_scores
+        if Paths.NAS_ROOT and hand_scores.settings().get("path"):
+            hand_scores.write_attention(Paths.NAS_ROOT, self.hostname,
+                                        getattr(self, "_score_waits", {}))
+
+    def _hand_scores_allow_filing(self, video_id: str, folder: Path) -> bool:
+        """The last check before a video is filed: its pellets against the
+        session's hand scores (watcher/hand_scores.py says why and what each
+        answer means). True: file it. False: it is not filed now -- it went to
+        triage with its disagreeing pellets flagged, or it waits for its hand
+        scores (listed for a person once an import has failed to bring them),
+        or the check could not run (tried again when the scores file changes).
+        A video is never filed unchecked because a check failed."""
+        from mousereach.watcher import hand_scores
+        if not hasattr(self, "_score_waits"):
+            self._score_waits = {}
+        stamp = hand_scores.scores_file_stamp()
+        try:
+            v = hand_scores.check(video_id, folder)
+        except Exception as e:
+            if video_id not in self._score_waits:
+                logger.warning(f"Not filing {video_id}: the hand-score check could not "
+                               f"run ({e}); trying again when the scores file changes")
+            self._score_waits[video_id] = {"stamp": stamp, "error": str(e)}
+            self._write_score_attention()
+            return False
+        if v.status == hand_scores.WAITING:
+            row = self.db.get_video(video_id) or {}
+            ready = row.get("processing_completed_at") or datetime.now().isoformat()
+            missing = hand_scores.is_missing(v, ready)
+            before = self._score_waits.get(video_id) or {}
+            if before.get("missing") != missing or "cohort_id" not in before:
+                logger.info(f"Not filing {video_id} yet: {v.reason} -- "
+                            + ("MISSING: the sheet was imported after the video was "
+                               "ready and they did not come" if missing else
+                               "waiting for the next import of the sheet"))
+            self._score_waits[video_id] = {"stamp": stamp, "cohort_id": v.cohort_id,
+                                           "ready_since": ready, "last_import": v.last_import,
+                                           "missing": missing}
+            self._write_score_attention()
+            return False
+        if self._score_waits.pop(video_id, None) is not None:
+            self._write_score_attention()
+        if v.status == hand_scores.DISAGREES:
+            from mousereach.watcher.review_gate import route_to_queue
+            from mousereach.watcher.route_cli import flag_segments
+            flag_segments(Path(folder) / f"{video_id}_pellet_outcomes.json",
+                          list(v.disagreements), hand_scores.FLAG_REASON,
+                          details=v.disagreements)
+            route_to_queue(video_id, Path(folder), Paths.TRIAGE_REVIEW, reason=v.reason,
+                           db=self.db, db_state="triage")
+            logger.info(f"Not filing {video_id}: {v.reason} -> triage")
+            return False
+        return True
+
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         self.config = config
@@ -2930,7 +2998,8 @@ class DLCOrchestrator(BaseOrchestrator):
         # DRAIN: the result exists; filing it is a file move, not analysis.
         if self.config.also_process:
             processed = [v for v in self.db.get_videos_in_state('processed')
-                         if not self._archive_backoff_active(v['video_id'])]
+                         if not self._archive_backoff_active(v['video_id'])
+                         and not self._waiting_for_hand_scores(v['video_id'])]
             pick = self._pick_from_pool(processed, priority_animal, 'animal_id',
                                         randomize=False)
             if pick is not None:
@@ -4141,6 +4210,10 @@ class DLCOrchestrator(BaseOrchestrator):
         from mousereach.archive.core import archive_video
 
         video_id = work['id']
+        # The last check before filing (watcher/hand_scores.py).
+        if not self._hand_scores_allow_filing(
+                video_id, Path(Paths.PROCESSING) if Paths.PROCESSING else Paths.DLC_QUEUE):
+            return
         logger.info(f"Archiving locally processed {video_id} to NAS")
         self.db.update_state(video_id, 'archiving')
         self.db.log_step(video_id, 'archive', 'started')
@@ -4513,6 +4586,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _reclaim_orphaned_work(self) -> dict:
         reclaimed = super()._reclaim_orphaned_work()
         self._export_missed_to_central()
+        # The list of videos waiting for hand scores is rebuilt by this run's
+        # checks: every waiting video is 'processed' and is checked again on
+        # its first pick, so nothing that still waits drops off for long.
+        self._score_waits = {}
+        self._write_score_attention()
         # Copies left in Processing after the video was filed into Analyzed
         # (three on this server from 2026-08-26, found 2026-10-22).
         self._set_aside_finished_copies()
@@ -4897,7 +4975,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # the NAS and out of every downstream pull. Ordering still applies --
         # the preferred tier is filed first.
         videos = [v for v in self.db.get_videos_in_state('processed')
-                  if not self._archive_backoff_active(v['video_id'])]
+                  if not self._archive_backoff_active(v['video_id'])
+                  and not self._waiting_for_hand_scores(v['video_id'])]
         pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
                                     randomize=False)
         if pick is not None:
@@ -5919,6 +5998,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     f"Not archiving {video_id} yet: a route into the {qstate} "
                     f"queue is building its bundle ({INCOMING_DIR_NAME}).")
                 return
+
+        # The last check before filing (watcher/hand_scores.py): a pellet the
+        # hand score disagrees with goes to triage, and a session whose hand
+        # scores have not come waits here, unfiled.
+        if not self._hand_scores_allow_filing(video_id, self.processing_dir):
+            return
 
         # Let go of the outcome detector's cached video handle first: it keeps
         # the LAST processed mp4 open until the next video replaces it, and the
