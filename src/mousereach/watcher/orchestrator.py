@@ -343,6 +343,12 @@ class BaseOrchestrator:
             return False
         if v.status == hand_scores.WAITING:
             row = self.db.get_video(video_id) or {}
+            # The ready time MUST be a column this program writes itself
+            # (datetime.now().isoformat(): local time, no zone), the same clock
+            # as the scores file's import times. Never created_at or any other
+            # column SQLite fills with CURRENT_TIMESTAMP: that is UTC, also with
+            # no zone, and two zone-less times in different zones compare wrong
+            # by the UTC offset without any error (Beh PC 1 session, 2026-10-26).
             ready = row.get("processing_completed_at") or datetime.now().isoformat()
             if hand_scores.scores_never_came(v, ready):
                 logger.info(f"Filing {video_id} without the hand-score comparison: the "
