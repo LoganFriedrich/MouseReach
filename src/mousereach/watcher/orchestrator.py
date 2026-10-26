@@ -4518,16 +4518,27 @@ class ProcessingOrchestrator(BaseOrchestrator):
         self._set_aside_finished_copies()
         return reclaimed
 
+    # At most this many videos are re-sent per pass, so a backlog drains over
+    # several passes instead of holding up the work loop on a slow share.
+    _SHARED_RECORD_BATCH = 50
+
     def _export_missed_to_central(self) -> int:
-        """At startup, send the shared record every archived video it lacks.
+        """Send the shared record every archived video whose row from THIS
+        machine is missing or older than the local row. Runs at start and
+        every 30 minutes (see __init__), at most _SHARED_RECORD_BATCH videos
+        per pass.
 
         WHY: a video's record goes to watcher_central.db right after it is
-        archived, and a failed export (a locked or unreachable share) was only
-        a warning, never retried -- five archived videos from the August and
-        September outages were missing from the shared record for good, found
-        2026-10-22. Only the processing server does this: here 'archived' means
-        filed into Analyzed; on a pose-only node it means "handed off".
-        Never raises; says how many it sent.
+        archived, and a failed export (a locked, busy or unreachable share) is
+        only a warning -- five archived videos from the August and September
+        outages were missing from the shared record for good, found
+        2026-10-22. This check first ran only at start and only looked for a
+        video with no row at all, from any machine. But a video posed on a GPU
+        PC already has that machine's row, so a failed export from here was
+        never sent again: the comparison is with this machine's own rows, and
+        an older one is re-sent too. Only the processing server does this:
+        here 'archived' means filed into Analyzed; on a pose-only node it
+        means "handed off". Never raises; says how many it sent.
         """
         import sqlite3
         try:
@@ -4539,22 +4550,29 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 return 0
             con = sqlite3.connect("file:%s?mode=ro" % central.as_posix(), uri=True, timeout=30)
             try:
-                have = {r[0] for r in con.execute("SELECT video_id FROM videos")}
+                have = dict(con.execute(
+                    "SELECT video_id, updated_at FROM videos WHERE source_machine = ?",
+                    (self.db._hostname,)))
             finally:
                 con.close()
             missing = [v["video_id"] for v in self.db.get_videos_in_state("archived")
-                       if v["video_id"] not in have]
-            for video_id in missing:
+                       if v["video_id"] not in have
+                       or (v.get("updated_at") or "") > (have[v["video_id"]] or "")]
+            batch = missing[:self._SHARED_RECORD_BATCH]
+            for video_id in batch:
                 self.db.export_to_central_db(video_id, central)
-            if missing:
-                logger.info("Startup: sent %d archived video(s) to the shared record, "
-                            "which lacked them (an earlier export had failed): %s%s",
-                            len(missing), ", ".join(missing[:5]),
-                            "" if len(missing) <= 5 else " and %d more" % (len(missing) - 5))
-            return len(missing)
+            if batch:
+                logger.info("Sent %d archived video(s) to the shared record, whose row from "
+                            "this machine was missing or out of date (an earlier export had "
+                            "failed): %s%s%s",
+                            len(batch), ", ".join(batch[:5]),
+                            "" if len(batch) <= 5 else " and %d more" % (len(batch) - 5),
+                            "" if len(missing) <= len(batch)
+                            else "; %d more at the next check" % (len(missing) - len(batch)))
+            return len(batch)
         except Exception as e:
-            logger.warning("Startup: could not check the shared record for missed "
-                           "exports (%s); will check again at the next start", e)
+            logger.warning("Could not check the shared record for missed exports (%s); "
+                           "will check again in 30 minutes", e)
             return 0
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
@@ -4602,6 +4620,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # restart is exactly when a backlog is waiting. Retiring a finished
         # recording is housekeeping; nothing waits on it.
         self._last_retire_mono = time.monotonic()
+        # Re-sending the shared-record exports that failed
+        # (_export_missed_to_central) runs at start and then every 30 minutes:
+        # a busy share loses an export at any hour, not only before a restart.
+        self._shared_record_min_s = 30 * 60
+        self._last_shared_record_mono = time.monotonic()
 
         if Paths.NAS_ROOT:
             try:
@@ -4776,6 +4799,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 logger.warning(f"Review-return scan failed: {e}")
             finally:
                 self._last_review_return_mono = time.monotonic()
+
+        # Periodic re-send of shared-record exports that failed (see __init__).
+        if (time.monotonic() - self._last_shared_record_mono
+                >= self._shared_record_min_s):
+            try:
+                with cycle.step("scan/shared record"):
+                    self._export_missed_to_central()
+            finally:
+                self._last_shared_record_mono = time.monotonic()
 
         # Periodic collage retirement: move any collage whose offspring have ALL
         # made it through the pipeline (version-current + review-clean) to ultimate

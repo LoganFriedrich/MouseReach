@@ -43,9 +43,13 @@ state it set was lost).
       row in `videos` is 'archived' by construction, so "this video is archived
       here" carries no information about its current state. Has columns the
       per-node schema does not (source_machine, exported_at).
-      An export that fails (locked or unreachable share) is only a warning; since
-      2026-10-22 the processing server sends any archived video the table lacks
-      at its next start ("Startup: sent N archived video(s) to the shared record").
+      An export that fails (locked, busy or unreachable share) is only a warning.
+      The processing server re-sends, at start and then every 30 minutes, every
+      archived video whose row from IT (source_machine = its name) is missing or
+      older than its own row, at most 50 per pass ("Sent N archived video(s) to
+      the shared record ..."). Before 2026-10-26 this ran only at start and only
+      for a video with no row from any machine, so a video a GPU PC had posed --
+      which has that PC's row -- was never re-sent.
 
       Tables `pipeline_collages` and `pipeline_videos`: LIVE CROSS-NODE
       COORDINATION between GPU nodes (watcher/coordination.py). Only

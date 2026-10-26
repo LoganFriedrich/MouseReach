@@ -2223,6 +2223,14 @@ now compares its archived rows with the shared table and sends what is missing
 (`ProcessingOrchestrator._export_missed_to_central`; only the server, where "archived" means filed
 in Analyzed). Tests: `tests/test_missed_central_exports.py`.
 
+**Changed 2026-10-26.** That check looked for a video with no row at all, from any machine. A video
+posed on a GPU PC already has that PC's row, so an export from the server that failed was never sent
+again (four were lost the morning of 2026-10-26, while the share was slow). It now compares the
+server's OWN rows (`source_machine`) with its archived videos and re-sends any that is missing or
+older than the local row. It runs at start and then every 30 minutes (cycle step "scan/shared
+record"), at most 50 videos per pass so a backlog never holds up the work loop. The export itself
+waits up to 30 s for another machine's write to finish, instead of Python's default 5 s.
+
 
 ## Update 2026-10-22: the shared version index is no longer in WAL mode
 

@@ -1511,7 +1511,11 @@ class WatcherDB:
         # Detect if central DB is on network drive
         is_network = self._detect_network_drive(central_db_path)
 
-        conn = sqlite3.connect(str(central_db_path), check_same_thread=False)
+        # Wait up to 30 s for another machine's write to finish (Python's
+        # default is 5 s): the share is sometimes slow enough that an ordinary
+        # write holds the file longer than that, and a failed export waits for
+        # the processing server's next re-send check (up to 30 minutes).
+        conn = sqlite3.connect(str(central_db_path), check_same_thread=False, timeout=30)
         conn.row_factory = sqlite3.Row
         if is_network:
             conn.execute("PRAGMA journal_mode=DELETE")
