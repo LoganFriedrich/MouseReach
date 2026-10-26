@@ -107,7 +107,10 @@ def session_coverage(sessions: List[str], nas_root: Path) -> Dict[str, str]:
     rows, collages = {}, {}
     db = Path(nas_root) / "watcher_central.db"
     if db.is_file():
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+        # A once-a-day report: it waits up to 10 minutes for the record to be
+        # readable rather than fail -- a write that crawls over a slow share
+        # can hold the file for minutes (2026-10-26 05:30, the report failed).
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=600)
         try:
             for vid, state in con.execute("SELECT video_id, state FROM videos"):
                 rows[vid] = state

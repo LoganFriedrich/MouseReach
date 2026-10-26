@@ -1818,7 +1818,11 @@ recording's own state (waiting to be cut / being cut / cut). A session with no r
 intake is "not imported". It writes `<list>.coverage.json` beside the list (counts by stage and
 each session's stage) and prints the counts. Read-only. WHY: once a list's recordings are
 imported its sessions spread across the pipeline, and nothing said how far the list had got
-without asking every machine. Tests: `tests/test_session_coverage.py`.
+without asking every machine. Tests: `tests/test_session_coverage.py`.
+
+It waits up to 10 minutes for the shared record to be readable (it waited 30 s until 2026-10-26,
+when the scheduled 05:30 run failed with "database is locked": on a slow share an ordinary write can
+hold the file for minutes). A once-a-day report has no reason to give up sooner.
 
 ## Update 2026-10-22: a GPU node retries the shared-record writes that failed
 
