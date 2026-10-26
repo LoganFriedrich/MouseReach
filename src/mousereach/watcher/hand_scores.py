@@ -32,8 +32,15 @@ A CSV file another tool writes (in this lab's setup, the database tool),
 one row per hand-scored pellet with columns video_key (the session as this
 pipeline names its video: 20250709_ABC0207_P1), pellet (1-20) and score
 (0 = not touched, 1 = displaced, 2 = retrieved), and beside it a JSON file
-of the same name holding "last_successful_import": {cohort id: when}. The
-pipeline never imports that tool; it only reads the file.
+of the same name holding:
+    "last_successful_import": {cohort id: when its last sheet import ended}
+    "sheets_seen":            [the cohort ids that have a sheet]
+    "full_import_at":         when the last import of every sheet ended
+A cohort with an import is judged by its own import time. A cohort with
+none either has a sheet (its first import is still to come: wait) or has
+no sheet (settled by the next import of every sheet). Keys the file does
+not have count as not known, and the video waits. The pipeline never imports
+that tool; it only reads the file.
 
 CONFIGURATION (~/.mousereach/config.json; read on every check, so an edit
 applies to a running watcher):
@@ -75,7 +82,8 @@ class Verdict:
     disagreements: Dict[int, str] = field(default_factory=dict)   # segment -> words
     cohort_id: Optional[str] = None
     last_import: Optional[str] = None     # the cohort's last successful sheet import
-    scores_written: Optional[str] = None  # when the scores file was last written
+    has_sheet: Optional[bool] = None      # the cohort has a sheet (None: not known)
+    full_import_at: Optional[str] = None  # the last import of every sheet ended
 
 
 def settings() -> dict:
@@ -141,7 +149,9 @@ def check(video_id: str, folder: Path) -> Verdict:
     if hand is None:
         if project and project in (cfg.get("required_projects") or []):
             return Verdict(WAITING, "no hand scores for this session", cohort_id=cohort_id,
-                           last_import=last, scores_written=manifest.get("written_at"))
+                           last_import=last, full_import_at=manifest.get("full_import_at"),
+                           has_sheet=(cohort_id in manifest["sheets_seen"]
+                                      if manifest.get("sheets_seen") is not None else None))
         return Verdict(NOT_CHECKED, "no hand scores for this session (not required "
                        "for %s)" % (project or "this project"), cohort_id=cohort_id)
 
@@ -176,13 +186,16 @@ def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     only record of that session (Logan, 2026-10-26)."""
     if verdict.status != WAITING or not ready_since:
         return False
-    # A cohort with no successful import at all -- no sheet, or a name no sheet
-    # has -- has nothing to wait for: it is judged by when the scores file was
-    # last written, i.e. an import after the video was ready that brought
-    # nothing for it. (Waiting on an import that can never happen would hold
-    # the video forever, shown only as waiting.)
-    ref = verdict.last_import or verdict.scores_written
-    return bool(ref and ref > ready_since)
+    if verdict.last_import:
+        return verdict.last_import > ready_since
+    # No import of this cohort at all. With a sheet, its first import is still
+    # to come: wait. With no sheet (or a cohort name no sheet has), nothing will
+    # come -- an import of EVERY sheet after the video was ready settles it.
+    # Not the file's own write time: a hand import of one other cohort moves
+    # that too, and would file this video before its sheet's first import.
+    if verdict.has_sheet is not False:
+        return False
+    return bool(verdict.full_import_at and verdict.full_import_at > ready_since)
 
 
 def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Optional[Path]:

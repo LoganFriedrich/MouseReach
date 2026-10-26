@@ -136,12 +136,31 @@ def test_a_session_the_next_import_has_no_scores_for_is_filed_without_comparison
     assert not orch._waiting_for_hand_scores(VID)
 
 
-def test_a_cohort_with_no_sheet_import_does_not_wait_forever(tmp_path, monkeypatch):
-    """No sheet for the cohort (or a name no sheet has): judged by when the
-    scores file was written after the video was ready."""
+def test_a_cohort_with_no_import_waits_for_its_sheet_or_for_an_import_of_every_sheet(tmp_path, monkeypatch):
+    """A cohort with a sheet waits for that sheet's first import; one with no
+    sheet is settled by the next import of every sheet -- never by the file's
+    own write time, which a hand import of another cohort also moves."""
     folder = _setup(tmp_path, monkeypatch, scores={}, last_import=None)
     v = hs.check(VID, folder)
-    assert v.status == hs.WAITING and v.last_import is None
-    v.scores_written = "2026-10-26T20:05:00"
+    assert v.status == hs.WAITING and v.last_import is None and v.has_sheet is None
+    v.full_import_at = "2026-10-26T20:05:00"
+    assert not hs.scores_never_came(v, "2026-10-26T10:00:00")     # not known: wait
+    v.has_sheet = True
+    assert not hs.scores_never_came(v, "2026-10-26T10:00:00")     # its sheet is coming
+    v.has_sheet = False
+    assert hs.scores_never_came(v, "2026-10-26T10:00:00")         # no sheet, all imported since
+    assert not hs.scores_never_came(v, "2026-10-26T21:00:00")     # not since it was ready
+
+
+def test_the_check_reads_which_cohorts_have_a_sheet_from_the_manifest(tmp_path, monkeypatch):
+    folder = _setup(tmp_path, monkeypatch, scores={})
+    (tmp_path / "hand.json").write_text(json.dumps({
+        "last_successful_import": {}, "sheets_seen": ["ABC_01"],
+        "full_import_at": "2026-10-26T20:05:00"}), encoding="utf-8")
+    hs._CACHE.update(key=None)
+    import os
+    f = tmp_path / "hand.csv"
+    os.utime(f, (f.stat().st_atime, f.stat().st_mtime + 5))   # the file changed
+    v = hs.check(VID, folder)
+    assert v.has_sheet is False and v.full_import_at == "2026-10-26T20:05:00"
     assert hs.scores_never_came(v, "2026-10-26T10:00:00")
-    assert not hs.scores_never_came(v, "2026-10-26T21:00:00")

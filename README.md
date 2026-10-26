@@ -312,9 +312,10 @@ last step before filing it:
   same day; the import may run only nightly). If that import brings them, the
   video is compared as above. If it does not, the session was never scored by
   hand -- there is nothing to compare, so nothing can disagree -- and the video
-  is filed without the comparison. A cohort with no sheet import at all (no
-  sheet, or a name no sheet has) does not wait for one: its videos are filed
-  once the hand-scores file has been rewritten after they were ready.
+  is filed without the comparison. A cohort with no sheet import at all waits
+  for its sheet's first import if it has a sheet; if it has none (or the name
+  matches no sheet), its videos are filed after the next import of every
+  sheet.
 - **Easy and Flat trays**, and projects not listed as required, are filed
   without the comparison.
 - **The check cannot run** (the `hand_scores` path is wrong, the file cannot
@@ -344,9 +345,11 @@ the change):
 The CSV has one row per hand-scored pellet with the columns `video_key` (the
 session as MouseReach names its video, e.g. `20250709_ABC0207_P1`), `pellet`
 (1-20) and `score` (0 not touched, 1 displaced, 2 retrieved); a JSON file of the
-same name beside it may give `last_successful_import` per cohort (`ABC_02`),
-which is how "waiting" is told from "missing". Without `path`, nothing is
-checked.
+same name beside it gives `last_successful_import` per cohort (`ABC_02`),
+`sheets_seen` (the cohorts that have a sheet) and `full_import_at` (the last
+import of every sheet), which is how "still waiting" is told from "never scored
+by hand". A key it lacks counts as not known, and the video waits. Without
+`path`, nothing is checked.
 
 ---
 
