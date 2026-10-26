@@ -35,9 +35,11 @@ def test_what_counts_as_typing():
 
 @pytest.fixture(scope="module")
 def viewer():
-    v = napari.Viewer(show=False)
-    yield v
-    v.close()
+    # One viewer whose layers are never removed (each test adds its own), and
+    # which is not closed: removing a layer -- closing does -- makes napari
+    # draw, and a machine without an OpenGL screen (the processing server's
+    # remote session) cannot. The hidden window goes with the test process.
+    yield napari.Viewer(show=False)
 
 
 @pytest.fixture
@@ -45,7 +47,6 @@ def tool(viewer):
     """The real review widget, docked in napari, with a dots layer the way it
     adds one (selected, because it was added last)."""
     from mousereach.review.causal_review_widget import CausalReviewWidget
-    viewer.layers.clear()
     w = CausalReviewWidget(viewer, triage_only=True)
     dock = viewer.window.add_dock_widget(w, area="right")
     w.showEvent(QShowEvent())                 # what docking and showing does
@@ -77,7 +78,7 @@ def test_a_number_typed_with_the_keyboard_on_a_button_runs_nothing(tool):
         QTest.keyClick(button, key)
         assert _unchanged(w, dots), key
     QTest.keyClick(button, Qt.Key_Backspace, Qt.ControlModifier)
-    assert len(napari.current_viewer().layers) == 1           # the dots layer is still there
+    assert dots in napari.current_viewer().layers             # the dots layer is still there
     QTest.keyClick(combo, Qt.Key_Delete)
     assert _unchanged(w, dots)
 
