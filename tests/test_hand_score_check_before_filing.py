@@ -134,3 +134,14 @@ def test_a_session_the_next_import_has_no_scores_for_is_filed_without_comparison
     orch = _orch(tmp_path, monkeypatch)
     assert orch._hand_scores_allow_filing(VID, folder) is True
     assert not orch._waiting_for_hand_scores(VID)
+
+
+def test_a_cohort_with_no_sheet_import_does_not_wait_forever(tmp_path, monkeypatch):
+    """No sheet for the cohort (or a name no sheet has): judged by when the
+    scores file was written after the video was ready."""
+    folder = _setup(tmp_path, monkeypatch, scores={}, last_import=None)
+    v = hs.check(VID, folder)
+    assert v.status == hs.WAITING and v.last_import is None
+    v.scores_written = "2026-10-26T20:05:00"
+    assert hs.scores_never_came(v, "2026-10-26T10:00:00")
+    assert not hs.scores_never_came(v, "2026-10-26T21:00:00")

@@ -2249,7 +2249,8 @@ already shows such reasons. A session with no hand scores in a required project 
 `<NAS root>/attention/<host>_hand_scores.json`; once the cohort's sheet has been imported after the
 video was ready and still has no scores for it, the session was never scored by hand and the video
 is filed without the comparison (`scores_never_came`; Logan, 2026-10-26: "If can't compare to manual,
-then can't mismatch manual"). A check that cannot run never files
+then can't mismatch manual"). A cohort with no successful import at all is judged by the scores
+file's `written_at` instead, so a video with no sheet behind it never waits forever. A check that cannot run never files
 the video, and its item is marked `needs_person` (kind `hand_score_check_failed`), so a wrong setting
 shows in red instead of quietly stopping the filing. WHY (Logan, 2026-10-26): filing means done, so a video must not leave processing until it
 has no issues; before this the comparison ran nightly on videos already filed and moved them back.

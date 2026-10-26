@@ -75,6 +75,7 @@ class Verdict:
     disagreements: Dict[int, str] = field(default_factory=dict)   # segment -> words
     cohort_id: Optional[str] = None
     last_import: Optional[str] = None     # the cohort's last successful sheet import
+    scores_written: Optional[str] = None  # when the scores file was last written
 
 
 def settings() -> dict:
@@ -140,7 +141,7 @@ def check(video_id: str, folder: Path) -> Verdict:
     if hand is None:
         if project and project in (cfg.get("required_projects") or []):
             return Verdict(WAITING, "no hand scores for this session", cohort_id=cohort_id,
-                           last_import=last)
+                           last_import=last, scores_written=manifest.get("written_at"))
         return Verdict(NOT_CHECKED, "no hand scores for this session (not required "
                        "for %s)" % (project or "this project"), cohort_id=cohort_id)
 
@@ -173,8 +174,15 @@ def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     Before that import it only waits. WHY file rather than hold: a record
     that does not exist cannot disagree with the video, and the video is the
     only record of that session (Logan, 2026-10-26)."""
-    return bool(verdict.status == WAITING and verdict.last_import and ready_since
-                and verdict.last_import > ready_since)
+    if verdict.status != WAITING or not ready_since:
+        return False
+    # A cohort with no successful import at all -- no sheet, or a name no sheet
+    # has -- has nothing to wait for: it is judged by when the scores file was
+    # last written, i.e. an import after the video was ready that brought
+    # nothing for it. (Waiting on an import that can never happen would hold
+    # the video forever, shown only as waiting.)
+    ref = verdict.last_import or verdict.scores_written
+    return bool(ref and ref > ready_since)
 
 
 def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Optional[Path]:

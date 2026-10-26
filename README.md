@@ -312,7 +312,9 @@ last step before filing it:
   same day; the import may run only nightly). If that import brings them, the
   video is compared as above. If it does not, the session was never scored by
   hand -- there is nothing to compare, so nothing can disagree -- and the video
-  is filed without the comparison.
+  is filed without the comparison. A cohort with no sheet import at all (no
+  sheet, or a name no sheet has) does not wait for one: its videos are filed
+  once the hand-scores file has been rewritten after they were ready.
 - **Easy and Flat trays**, and projects not listed as required, are filed
   without the comparison.
 - **The check cannot run** (the `hand_scores` path is wrong, the file cannot
