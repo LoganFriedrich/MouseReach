@@ -219,6 +219,12 @@ READ THIS BEFORE INTERPRETING A STATE
   the pose; the algorithms have not run yet. The collages table uses the same
   idiom for 'cropped'. This is the single most misread value in the schema.
 
+  'processed' on the processing server means analysed and waiting to be filed.
+  Since 2026-10-26 a video can stay 'processed' for a day or more: its session's
+  hand scores have not come yet (watcher/hand_scores.py). Such videos are listed
+  in <NAS root>/attention/<host>_hand_scores.json; the processing log has no
+  step for the wait (the watcher log says "Not filing ...").
+
   On a GPU node, a row can also be 'archived', 'triage' or 'deep_review' with
   source_path '(no file on this node)' for a video this node never cropped or
   posed. Since 2026-09-15 a GPU node checks the shared drive before it poses a
