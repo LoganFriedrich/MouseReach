@@ -711,7 +711,8 @@ options:
 ```
 usage: mousereach-route-to-queue [-h] [--worklist WORKLIST] --queue
                                  {triage,deep_review} --reason REASON
-                                 [--flag-segments FLAG_SEGMENTS] [--json]
+                                 [--flag-segments FLAG_SEGMENTS] [--recheck]
+                                 [--json]
                                  [video_id]
 
 mousereach-route-to-queue -- put an archived video into a review queue.
@@ -750,6 +751,14 @@ WHY: the release check counts such a segment answered, so a routed video went
 straight back out with nobody looking, and the next night's scan sent it again
 (2026-10). A caller cannot always know what a person answered; this command
 reads the review itself, so the rule holds whoever asks.
+
+The one exception is asked for by name: ``--recheck`` ("are you sure?").
+Each requested pellet a person answered is then REOPENED rather than dropped
+(reopen_answered): the answer is kept in the review file under
+``answers.recheck.previous``, the pellet is marked not yet answered, its flag
+reason carries the question, and the video stays in triage until a person
+answers that pellet again. The review file is copied to
+Analyzed/Archive/manual_corrections/ first. Ground truth is never reopened.
 
 THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
 -----------------------------------------------------------------------------
@@ -810,6 +819,10 @@ options:
   --flag-segments FLAG_SEGMENTS
                         Comma-separated segment numbers to flag (single-video
                         mode)
+  --recheck             Ask again about pellets a person already answered
+                        (their answer is kept and shown; the pellet stays open
+                        until answered again). Without it, answered pellets
+                        are never sent back.
   --json                Machine-readable results
 ```
 
