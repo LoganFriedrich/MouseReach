@@ -2248,7 +2248,8 @@ already shows such reasons. A session with no hand scores in a required project 
 'processed', unfiled and not picked again until the scores file changes; it is listed in
 `<NAS root>/attention/<host>_hand_scores.json`, marked `needs_person` once the cohort's sheet was
 imported after the video was ready and still did not bring them. A check that cannot run never files
-the video. WHY (Logan, 2026-10-26): filing means done, so a video must not leave processing until it
+the video, and its item is marked `needs_person` (kind `hand_score_check_failed`), so a wrong setting
+shows in red instead of quietly stopping the filing. WHY (Logan, 2026-10-26): filing means done, so a video must not leave processing until it
 has no issues; before this the comparison ran nightly on videos already filed and moved them back.
 Tests: `tests/test_hand_score_check_before_filing.py`.
 

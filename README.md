@@ -314,6 +314,9 @@ last step before filing it:
   animal, date or tray, or the video's name does not match the sheet.
 - **Easy and Flat trays**, and projects not listed as required, are filed
   without the comparison.
+- **The check cannot run** (the `hand_scores` path is wrong, the file cannot
+  be read): the video is held, never filed unchecked, and shown in red as
+  needing a person until the setting or the file is fixed.
 
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
 shows, in red at the top, **Needs your attention (N)** with one line per video

@@ -119,3 +119,8 @@ def test_a_check_that_cannot_run_never_files_the_video(tmp_path, monkeypatch):
     (folder / f"{VID}_pellet_outcomes.json").write_text("{not json", encoding="utf-8")
     orch = _orch(tmp_path, monkeypatch)
     assert orch._hand_scores_allow_filing(VID, folder) is False
+    # and a person is told, in red: a held video must never be silent
+    listed = json.loads((tmp_path / "nas" / "attention" / "HOST_hand_scores.json").read_text())
+    item = listed["items"][0]
+    assert item["needs_person"] is True and item["kind"] == "hand_score_check_failed"
+    assert "could not run" in item["says"]

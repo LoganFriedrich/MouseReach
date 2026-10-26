@@ -185,6 +185,19 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
         d.mkdir(parents=True, exist_ok=True)
         items = []
         for vid, w in sorted(waits.items()):
+            if w.get("error"):
+                # The check could not run, so the video is held (never filed
+                # unchecked) -- which is silent unless a person sees it: a
+                # wrong "path" in a machine's config would stop its filing.
+                items.append({
+                    "kind": "hand_score_check_failed", "needs_person": True,
+                    "video_id": vid, "cohort_id": w.get("cohort_id"),
+                    "says": ("%s is processed but not filed: the check against its hand "
+                             "scores could not run (%s). Fix the \"hand_scores\" setting in "
+                             "this PC's config.json, or the file it names; the video is "
+                             "filed by itself once the check runs." % (vid, w["error"])),
+                })
+                continue
             missing = w.get("missing")
             items.append({
                 "kind": "hand_scores_missing" if missing else "hand_scores_waiting",
