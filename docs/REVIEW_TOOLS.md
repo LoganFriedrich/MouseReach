@@ -221,7 +221,11 @@ Both matter before trusting `outcome_source: "human_review"` in the data.
 1. **Any navigation records the current segment.** "Save Segment + Next" (`:2480`), "Next Segment" (`:2939`) and "Prev Segment" (`:2930`) all call `_collect_answers()` and store the result. There is no "I did not answer this" state.
 2. **`_collect_answers` starts from the algorithm's values.** It initialises `human_outcome = seg["outcome"]` and `human_causal_reach = seg["causal_reach"]` (`:2299-2300`) and only replaces them where the reviewer actively picked something. The reach picker also pre-selects the candidate nearest the interaction frame (`:1946-1955`).
 
-The consequence: clicking past a `reach_uncertain` segment without touching anything writes a record whose `human.outcome` is the algorithm's outcome (`:2331`) and whose `human.causal_reach` is the pre-selected reach. On an `outcome_uncertain` or `both_uncertain` segment where the reviewer leaves the `-- select outcome --` sentinel alone (`:2344`, `:2356`), `human.outcome` stays the string `"triaged"`. That record counts as resolved everywhere — `resolved_segments` (`triage_status.py:98`) only checks that `answers.reviewed` is not `False` — so it releases the video from the queue, and where the review does get applied it is stamped `outcome_source: "human_review"` (`causal_review_io.py:500`). A segment can therefore reach the data labelled `"triaged"` with a person's name on it.
+The consequence: clicking past a `reach_uncertain` segment without touching anything writes a record whose `human.outcome` is the algorithm's outcome and whose `human.causal_reach` is the pre-selected reach -- a confirmation of the highlighted reach, by design.
+
+**Leaving `-- select outcome --` alone leaves the pellet OPEN (since 2026-10-26).** On an `outcome_uncertain` or `both_uncertain` segment where no outcome is picked, the record is saved with `answers.reviewed: false`, and the status line says `[OPEN] Segment N left open -- no outcome was picked`. The video stays in triage until someone picks an outcome (or presses Escalate, if the pellet or the cuts are wrong). Moving on without picking is allowed -- it is how you come back to a pellet later -- but it is never an answer.
+
+Before that date the record was saved with `human.outcome: "triaged"` and nothing marking it open, and every check counted it as answered: the video left the queue, was filed, and the results step stamped `"triaged"` onto the pellet as `outcome_source: "human_review"`. On 2026-10-26 that was 125 records in filed videos and 121 in the queues; their pellets reached the exports as "Undetermined". One rule now says what an answer is -- `causal_review_io.is_answered`: not a `reviewed: false` placeholder, and, for a pellet, an outcome other than `triaged`, `uncertain` or none -- and the release check, the gate, the hand-score check, routing, the restore and the results step all use it. Records saved the old way therefore count as open wherever they are, and the review window shows those pellets again.
 
 ### What is written
 
@@ -736,7 +740,6 @@ Stated here so nobody rediscovers it the hard way:
 - `queue_index.py:7` says "The tool MOVES a fully-reviewed video OUT of the folder". The tool removes the database row only; the watcher moves the folder.
 - `triage_clearing.py:14` and `unified_widget.py:17` both claim `mousereach-review-tool`.
 - `causal_review_widget.py:2509-2510` describes `_review_root()` as `Processing/Review/triage`. It returns the parent of the queue folder, `Processing/Review`, which is where `flagged_sessions.json` actually lives.
-- `causal_review_widget.py:2307-2308` says "a left-unanswered element stays 'triaged' — we never fabricate a decision the reviewer didn't make". The outcome string does stay `triaged`, but the record still counts as resolved, releases the video, and is stamped `outcome_source: "human_review"`.
 - `pyproject.toml:120-123` says the ground-truth triage resolver runs as a pipeline step. It does not.
 
 ---

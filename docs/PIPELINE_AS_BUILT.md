@@ -1710,7 +1710,9 @@ even when a person had cut it.
 
 **What changed.** One definition, `causal_review_io.answered_segments`: a CURRENT segment is
 answered when a review record's frames match it (`index_review_by_segment`, the matching
-the results step already used) and the record is not a `reviewed: False` placeholder.
+the results step already used) and the record is an answer (`is_answered`, since
+2026-10-26: not a `reviewed: False` placeholder, and for a pellet an outcome other than
+`triaged`, `uncertain` or none -- a pellet whose outcome was left unpicked is open).
 `triage_status.resolved_segments(review, segments_doc)` uses it; the gate, the return scan,
 the review tool and the queue index all pass the video's segments document. Without a
 segments document, answers still count by number (the only handle there is). When the

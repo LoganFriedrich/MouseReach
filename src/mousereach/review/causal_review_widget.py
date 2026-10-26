@@ -42,7 +42,9 @@ from napari.utils.notifications import show_info, show_warning, show_error
 
 from .keyboard import keep_typing_in_panel, review_keys_on_layer
 from .causal_review_io import (
+    UNDECIDED_OUTCOMES,
     build_segment_record,
+    is_answered,
     collect_provenance,
     save_causal_review,
     load_causal_review,
@@ -2524,6 +2526,14 @@ The notes box travels with the video.
                 if seg.get("outcome") not in ("abnormal", "abnormal_exception"):
                     agreed = False
 
+        # No outcome picked: the pellet is NOT answered, and the record says so,
+        # so the video stays in triage until someone picks one. WHY: saved as it
+        # was -- the algorithm's 'triaged' in the outcome and nothing marking it
+        # open -- it counted as an answer and the video was filed with a pellet
+        # nobody decided (2026-10-26; causal_review_io.is_answered).
+        if human_outcome in UNDECIDED_OUTCOMES:
+            answers["reviewed"] = False
+
         notes = self._notes_edit.toPlainText().strip() if hasattr(self, '_notes_edit') else ""
 
         return build_segment_record(
@@ -2618,10 +2628,19 @@ The notes box travels with the video.
         if record is not None:
             seg_num = record["segment_num"]
             self._review_records[seg_num] = record
-            show_info(f"Segment {seg_num} recorded")
-            self._status_label.setText(
-                f"[OK] Recorded segment {seg_num}  "
-                f"({len(self._review_records)} reviewed so far)")
+            if is_answered(record):
+                show_info(f"Segment {seg_num} recorded")
+                self._status_label.setText(
+                    f"[OK] Recorded segment {seg_num}  "
+                    f"({len(self._review_records)} reviewed so far)")
+            else:
+                # Said plainly, because moving on without picking is allowed
+                # and silently leaving the video in triage would look like a bug.
+                show_info(f"Segment {seg_num} left open: no outcome was picked")
+                self._status_label.setText(
+                    f"[OPEN] Segment {seg_num} left open -- no outcome was picked. The "
+                    f"video stays in triage until it is answered (pick an outcome, or "
+                    f"Escalate if the pellet or the cuts are wrong).")
 
         nxt = self._next_visible_idx(self._current_seg_idx)
         if nxt is not None:
@@ -2803,8 +2822,7 @@ The notes box travels with the video.
                 _, by_seg = load_causal_review(stem, d)
             except Exception:
                 by_seg = {}
-            if by_seg and all((r.get("answers") or {}).get("reviewed") is not False
-                              for r in by_seg.values()):
+            if by_seg and all(is_answered(r) for r in by_seg.values()):
                 return True
         return False
 

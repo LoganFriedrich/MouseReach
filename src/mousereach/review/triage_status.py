@@ -119,9 +119,9 @@ def resolved_segments(review_doc: Optional[Dict[str, Any]],
                       seg_doc: Optional[Dict[str, Any]] = None) -> Set[int]:
     """Segment numbers a human review has actively resolved.
 
-    A record counts as resolved when ``answers.reviewed is not False`` -- the
-    exact rule ``_bundle_reviewed`` uses (an explicit ``reviewed: False`` is a
-    deferred/unanswered segment).
+    A record counts as resolved when it is a person's answer
+    (``causal_review_io.is_answered``): not an explicit ``reviewed: False``
+    placeholder, and not a pellet saved with its outcome left undecided.
 
     Pass the video's segments document (``seg_doc``) and each answer counts for
     the CURRENT segment its frames match, exactly as the results step applies
@@ -136,12 +136,13 @@ def resolved_segments(review_doc: Optional[Dict[str, Any]],
         if current:
             return answered_segments(review_doc, current,
                                      human_segmentation=segmentation_is_human(seg_doc))
+    from .causal_review_io import is_answered
     out: Set[int] = set()
     for rec in review_doc.get("segments", []):
         sn = rec.get("segment_num")
         if sn is None:
             continue
-        if (rec.get("answers") or {}).get("reviewed") is not False:
+        if is_answered(rec):
             out.add(int(sn))
     return out
 

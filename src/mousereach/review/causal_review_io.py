@@ -627,8 +627,9 @@ def segmentation_is_human(seg_doc) -> bool:
 def answered_segments(review_doc, current_segments=None,
                       human_segmentation: bool = False) -> set:
     """CURRENT segment numbers a person has answered: their review's frames
-    match the segment (index_review_by_segment), and the record is not an
-    explicit ``reviewed: False`` placeholder.
+    match the segment (index_review_by_segment), and the record is an answer
+    (``is_answered``: not a ``reviewed: False`` placeholder, not a pellet left
+    undecided).
 
     WHY this is the one definition: the release check, the review gate and the
     queue views counted an answer by the segment NUMBER it was written against,
@@ -642,8 +643,7 @@ def answered_segments(review_doc, current_segments=None,
     """
     mapping, _ = index_review_by_segment(review_doc, current_segments,
                                          human_segmentation=human_segmentation)
-    return {int(sn) for sn, rec in mapping.items()
-            if ((rec or {}).get("answers") or {}).get("reviewed") is not False}
+    return {int(sn) for sn, rec in mapping.items() if is_answered(rec)}
 
 
 def index_review_by_segment(review_doc, current_segments=None,
@@ -818,8 +818,36 @@ def index_review_by_segment(review_doc, current_segments=None,
     return mapping, notes
 
 
-def _is_answered(rec) -> bool:
-    return ((rec or {}).get("answers") or {}).get("reviewed") is not False
+# Outcomes that are not a decision: the algorithm's own "triaged", an older
+# tool's "uncertain", and none at all.
+UNDECIDED_OUTCOMES = (None, "triaged", "uncertain")
+
+
+def is_answered(rec) -> bool:
+    """True when a saved review record is a person's ANSWER for its segment.
+
+    Not answered: a record marked ``reviewed: False`` (a segment the reviewer
+    never reached), and a pellet record whose outcome is still undecided. The
+    review window saves a pellet whose outcome question was left on
+    "-- select outcome --" with the algorithm's "triaged" still in it; until
+    2026-10-26 that counted as an answer, so a video with a pellet nobody
+    decided left triage and was FILED (125 such records in filed videos and 121
+    in the queues that day, reaching the exports as "Undetermined"). A
+    boundary record carries no pellet and needs no outcome.
+
+    The ONE definition: every check of whether a person answered a segment --
+    the release from triage, the review gate, the hand-score check, routing,
+    restoring answers in the review window -- comes here."""
+    rec = rec or {}
+    answers = rec.get("answers") or {}
+    if answers.get("reviewed") is False:
+        return False
+    if answers.get("is_boundary"):
+        return True
+    return (rec.get("human") or {}).get("outcome") not in UNDECIDED_OUTCOMES
+
+
+_is_answered = is_answered
 
 
 def _decided_reach(rec):
@@ -919,7 +947,9 @@ def apply_review_overrides(
     - untouched / abnormal_exception carry NO causal reach (``causal_reach_id``
       = None), so kinematics excludes them from causal-reach kinematics.
     - abnormal ignore-windows are carried onto the segment as ``abnormal_ranges``.
-    - Unreviewed segments (or ``reviewed: False`` placeholders) are untouched.
+    - Segments without an answer (``is_answered``: unreviewed, ``reviewed:
+      False`` placeholders, or a pellet saved with its outcome left undecided)
+      are untouched.
     """
     import copy
     out = copy.deepcopy(outcomes_data)
@@ -933,7 +963,10 @@ def apply_review_overrides(
         if not rec:
             continue
         ans = rec.get("answers") or {}
-        if ans.get("reviewed") is False:
+        # Not an answer (is_answered): a placeholder, or a pellet left undecided.
+        # Applying the latter stamped the algorithm's "triaged" onto the result
+        # as outcome_source "human_review" -- a non-answer recorded as a person's.
+        if not is_answered(rec):
             continue
         human = rec.get("human") or {}
         ho = human.get("outcome")
