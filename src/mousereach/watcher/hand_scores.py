@@ -36,7 +36,10 @@ of the same name holding:
     "last_successful_import": {cohort id: when its last sheet import ended}
     "sheets_seen":            [the cohort ids that have a sheet]
     "full_import_at":         when the last import of every sheet ended
-A cohort with an import is judged by its own import time. A cohort with
+Times are ISO 8601 (2026-10-26T20:05:00), in the same clock as the watcher's
+own (local time, no zone); one that cannot be read, or a zone mixed with
+none, counts as not known. A cohort with an import is judged by its own
+import time. A cohort with
 none either has a sheet (its first import is still to come: wait) or has
 no sheet (settled by the next import of every sheet). Keys the file does
 not have count as not known, and the video waits. The pipeline never imports
@@ -177,6 +180,18 @@ def check(video_id: str, folder: Path) -> Verdict:
     return Verdict(AGREES, "every pellet agrees with the hand score", cohort_id=cohort_id)
 
 
+def _after(a: Optional[str], b: Optional[str]) -> Optional[bool]:
+    """Whether time ``a`` is after time ``b``, read as times, not compared as
+    text: two tools write these, and text order is time order only while both
+    write the same shape. None when either cannot be read or one has a zone
+    and the other not -- the caller then treats it as not known (wait)."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(a)) > datetime.fromisoformat(str(b))
+    except (TypeError, ValueError):
+        return None
+
+
 def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     """True once the cohort's sheet has been imported successfully after the
     video was ready and the session still has no hand scores: it was never
@@ -187,7 +202,7 @@ def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     if verdict.status != WAITING or not ready_since:
         return False
     if verdict.last_import:
-        return verdict.last_import > ready_since
+        return _after(verdict.last_import, ready_since) is True
     # No import of this cohort at all. With a sheet, its first import is still
     # to come: wait. With no sheet (or a cohort name no sheet has), nothing will
     # come -- an import of EVERY sheet after the video was ready settles it.
@@ -195,7 +210,7 @@ def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     # that too, and would file this video before its sheet's first import.
     if verdict.has_sheet is not False:
         return False
-    return bool(verdict.full_import_at and verdict.full_import_at > ready_since)
+    return bool(verdict.full_import_at) and _after(verdict.full_import_at, ready_since) is True
 
 
 def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Optional[Path]:

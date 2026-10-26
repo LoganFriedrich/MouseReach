@@ -164,3 +164,14 @@ def test_the_check_reads_which_cohorts_have_a_sheet_from_the_manifest(tmp_path, 
     v = hs.check(VID, folder)
     assert v.has_sheet is False and v.full_import_at == "2026-10-26T20:05:00"
     assert hs.scores_never_came(v, "2026-10-26T10:00:00")
+
+
+def test_times_are_compared_as_times_and_an_unreadable_one_means_wait():
+    """Two tools write these times; text order equals time order only while
+    both write the same shape."""
+    v = hs.Verdict(hs.WAITING, "no hand scores", last_import="2026-10-26 20:05:00")
+    assert hs.scores_never_came(v, "2026-10-26T10:00:00.123456")    # space vs T: still a time
+    v.last_import = "2026-10-26T20:05:00Z"
+    assert not hs.scores_never_came(v, "2026-10-26T10:00:00")        # zone vs none: not known
+    v.last_import = "yesterday"
+    assert not hs.scores_never_came(v, "2026-10-26T10:00:00")        # unreadable: wait
