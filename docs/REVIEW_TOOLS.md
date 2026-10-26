@@ -196,6 +196,24 @@ not. A pellet the algorithm itself could not decide still opens on
 `-- select outcome --`: there is no outcome to offer (`_make_outcome_picker`,
 `is_bench_mismatch`).
 
+### A pellet asked again: "are you sure?" (since 2026-10-26)
+
+A pellet a person already answered can be sent back to triage on purpose, when
+there is reason to think the review slipped -- for example an answer of
+"retrieved" where the frames show the pellet lying in the scoring area for the
+rest of the segment (Logan: "toss these cases back at the review queue and be
+like - are you sure"). It arrives like any other triaged pellet, and its banner
+says why it is asked again and what the answer on file is. Answer it as usual:
+keep the earlier answer if it was right, or change it. Saving that pellet ends
+the question; until then the video stays in triage.
+
+What is kept: the earlier answer is not lost. The review file holds it under
+`answers.recheck.previous` (with the question and when it was asked), and a copy
+of the file as it was is in `Analyzed/Archive/manual_corrections/` named
+`<video>_causal_review.json.before_recheck_<time>`. How a pellet is sent back:
+`mousereach-route-to-queue --queue triage --recheck --worklist <file>` (without
+`--recheck`, a pellet a person answered is never sent back).
+
 ### Two ways an unanswered question becomes an answer
 
 Both matter before trusting `outcome_source: "human_review"` in the data.

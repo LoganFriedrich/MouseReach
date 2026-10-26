@@ -35,6 +35,14 @@ straight back out with nobody looking, and the next night's scan sent it again
 (2026-10). A caller cannot always know what a person answered; this command
 reads the review itself, so the rule holds whoever asks.
 
+The one exception is asked for by name: ``--recheck`` ("are you sure?").
+Each requested pellet a person answered is then REOPENED rather than dropped
+(reopen_answered): the answer is kept in the review file under
+``answers.recheck.previous``, the pellet is marked not yet answered, its flag
+reason carries the question, and the video stays in triage until a person
+answers that pellet again. The review file is copied to
+Analyzed/Archive/manual_corrections/ first. Ground truth is never reopened.
+
 THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
 -----------------------------------------------------------------------------
 The database is resolved exactly as the daemon resolves it
@@ -88,6 +96,7 @@ import argparse
 import time
 import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -165,15 +174,73 @@ def answered_segments_of(video_id: str, folder: Path) -> set:
     return answered | set(gt_segs)
 
 
+def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
+                    questions: Optional[dict] = None) -> List[int]:
+    """Ask a person again about pellets a person already answered ("are you
+    sure?"). Returns the segments reopened.
+
+    WHY: a person's answer is the truth for a pellet -- until there is reason to
+    think a review slipped. Logan, 2026-10-26, on answers of "retrieved" where
+    the frames show the pellet lying in the scoring area afterwards: "toss these
+    cases back at the review queue and be like - are you sure". So the answer is
+    not changed and not dropped: for each requested segment (matched by frames,
+    as the results step matches answers) the record keeps its answer under
+    ``answers.recheck.previous`` with the question and when it was asked, and is
+    marked ``answers.reviewed = False`` -- the established meaning of "not
+    answered yet" -- so the video stays in triage until a person answers that
+    pellet again. Saving it in the review tool writes a fresh record, which ends
+    the re-check. The review file is copied first to
+    <Analyzed>/Archive/manual_corrections/<name>.before_recheck_<time>."""
+    from datetime import datetime
+    from mousereach.config import Paths
+    from mousereach.review.causal_review_io import (index_review_by_segment,
+                                                    resolve_review_path,
+                                                    segmentation_is_human,
+                                                    segments_from_segmentation)
+    wanted = {int(s) for s in segment_nums}
+    questions = {int(k): str(v) for k, v in (questions or {}).items()}
+    rp = resolve_review_path(video_id, primary_dir=folder)
+    if rp is None or not Path(rp).is_file():
+        return []
+    rp = Path(rp)
+    review = json.loads(rp.read_text(encoding="utf-8"))
+    sp = Path(folder) / f"{video_id}_segments.json"
+    seg_doc = json.loads(sp.read_text(encoding="utf-8")) if sp.is_file() else None
+    current = segments_from_segmentation(seg_doc) if seg_doc else None
+    mapping, _ = index_review_by_segment(
+        review, current, human_segmentation=bool(seg_doc) and segmentation_is_human(seg_doc))
+    now = datetime.now().isoformat(timespec="seconds")
+    reopened = []
+    for sn in sorted(wanted):
+        rec = mapping.get(sn)
+        answers = (rec or {}).get("answers") or {}
+        if rec is None or answers.get("reviewed") is False:
+            continue
+        rec["answers"] = {"reviewed": False, "recheck": {
+            "asked_at": now, "question": questions.get(sn),
+            "previous": {"human": rec.get("human"), "answers": answers,
+                         "reviewer": review.get("reviewer"),
+                         "reviewed_at": review.get("reviewed_at")}}}
+        reopened.append(sn)
+    if reopened:
+        backup_dir = Path(Paths.ANALYZED_OUTPUT) / "Archive" / "manual_corrections"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(rp, backup_dir / ("%s.before_recheck_%s" % (
+            rp.name, now.replace("-", "").replace(":", "").replace("T", "_"))))
+        rp.write_text(json.dumps(review, indent=2), encoding="utf-8")
+    return reopened
+
+
 def route_video(video_id: str, queue: str, reason: str,
                 segment_nums: Optional[Iterable[int]] = None, db=None,
-                segment_details: Optional[dict] = None) -> dict:
+                segment_details: Optional[dict] = None,
+                recheck: bool = False) -> dict:
     """Flag (optional) and route one video. Returns a result dict; never raises."""
     from mousereach.config import Paths
     from mousereach.watcher.review_gate import route_to_queue
 
     res = {"video_id": video_id, "queue": queue, "flagged": [], "answered": [],
-           "routed": False, "deferred": False, "error": None}
+           "routed": False, "deferred": False, "error": None, "reopened": []}
     try:
         analyzed = Paths.ANALYZED_OUTPUT
         if not analyzed or not Path(analyzed).exists():
@@ -199,6 +266,12 @@ def route_video(video_id: str, queue: str, reason: str,
             wanted = sorted({int(s) for s in segment_nums})
             done = answered_segments_of(video_id, outcomes.parent)
             res["answered"] = wanted if "all" in done else [s for s in wanted if s in done]
+            if recheck and res["answered"]:
+                # Asked again on purpose ("are you sure?"): reopen the person's
+                # answers rather than skip them -- see reopen_answered.
+                res["reopened"] = reopen_answered(video_id, outcomes.parent,
+                                                  res["answered"], segment_details)
+                res["answered"] = [s for s in res["answered"] if s not in res["reopened"]]
             segment_nums = [s for s in wanted if s not in res["answered"]]
             if not segment_nums:
                 return res          # nothing left to ask; not routed, not a failure
@@ -262,6 +335,10 @@ def main(argv=None) -> int:
     ap.add_argument("--reason", required=True, help="Recorded in the routing manifest")
     ap.add_argument("--flag-segments", default="",
                     help="Comma-separated segment numbers to flag (single-video mode)")
+    ap.add_argument("--recheck", action="store_true",
+                    help="Ask again about pellets a person already answered (their answer "
+                         "is kept and shown; the pellet stays open until answered again). "
+                         "Without it, answered pellets are never sent back.")
     ap.add_argument("--json", action="store_true", help="Machine-readable results")
     args = ap.parse_args(argv)
 
@@ -289,15 +366,17 @@ def main(argv=None) -> int:
     results = []
     for v, segs, det in items:
         started = time.time()
-        r = route_video(v, args.queue, args.reason, segs, db=db, segment_details=det)
+        r = route_video(v, args.queue, args.reason, segs, db=db, segment_details=det,
+                        recheck=args.recheck)
         r["seconds"] = round(time.time() - started, 1)
         results.append(r)
         if not args.json:
             tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
                    else "done" if (r["answered"] and not r["error"])
                    else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
-            print("%s %s -> %s  flagged=%s  %s%s  (%.0f s)" % (
+            print("%s %s -> %s  flagged=%s  %s%s%s  (%.0f s)" % (
                 tag, r["video_id"], r["queue"], r["flagged"] or "-",
+                ("asked again: %s  " % r["reopened"]) if r.get("reopened") else "",
                 ("already answered by a person: %s  " % r["answered"]) if r["answered"] else "",
                 r["error"] or "", r["seconds"]), flush=True)
     if args.json:

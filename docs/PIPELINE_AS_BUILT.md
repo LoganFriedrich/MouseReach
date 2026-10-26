@@ -2236,6 +2236,16 @@ record"), at most 50 videos per pass so a backlog never holds up the work loop. 
 waits up to 30 s for another machine's write to finish, instead of Python's default 5 s.
 
 
+## Update 2026-10-26: asking a person again about a pellet they answered (--recheck)
+
+`mousereach-route-to-queue --recheck` reopens pellets a person already answered instead of skipping
+them (`route_cli.reopen_answered`): each matched (by frames) review record keeps its answer under
+`answers.recheck.previous`, is marked `answers.reviewed = False` (open), and the pellet is flagged with
+the question; the review file is first copied to `Analyzed/Archive/manual_corrections/`. The video
+stays in triage until that pellet is answered again. WHY: answers of "retrieved" whose frames show the
+pellet lying in the scoring area afterwards (Logan, 2026-10-26: "are you sure"). Ground truth is never
+reopened. Tests: `tests/test_route_recheck_answered.py`.
+
 ## Update 2026-10-26: checked against the hand scores before filing
 
 The last step before a video is filed (`_archive_to_nas` on the processing server,
