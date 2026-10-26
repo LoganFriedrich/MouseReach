@@ -71,7 +71,9 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-HAND_WORDS = {0: "missed", 1: "displaced", 2: "retrieved"}   # as the bench check words them
+# What happened to the PELLET: retrieved, displaced or untouched. ("Missed" is a
+# word for a reach that did not interact with the pellet, never for a pellet.)
+HAND_WORDS = {0: "untouched", 1: "displaced", 2: "retrieved"}
 ALGO_CLASS = {"untouched": 0, "displaced_sa": 1, "displaced_outside": 1, "retrieved": 2}
 FLAG_REASON = "bench disagreement"
 
