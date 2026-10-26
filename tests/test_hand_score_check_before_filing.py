@@ -50,7 +50,7 @@ def test_a_disagreeing_pellet_is_reported_and_one_a_person_answered_is_not(tmp_p
                     outcomes={1: "displaced_sa", 2: "retrieved", 3: "displaced_sa"}, answered={2})
     v = hs.check(VID, folder)
     assert v.status == hs.DISAGREES
-    assert v.disagreements == {1: "the hand score says retrieved; the video says displaced_sa"}
+    assert v.disagreements == {1: "the hand score says retrieved; the algorithm says displaced_sa"}
 
 
 def test_no_scores_waits_only_in_a_required_project(tmp_path, monkeypatch):
@@ -92,8 +92,12 @@ def test_a_disagreement_flags_the_pellet_and_routes_to_triage(tmp_path, monkeypa
     assert orch._hand_scores_allow_filing(VID, folder) is False
     seg = json.loads((folder / f"{VID}_pellet_outcomes.json").read_text())["segments"][0]
     assert seg["flagged_for_review"] is True
-    assert seg["flag_reason"] == ("disagrees with the hand score: the hand score says "
-                                  "retrieved; the video says untouched")
+    assert seg["flag_reason"] == ("bench disagreement: the hand score says "
+                                  "retrieved; the algorithm says untouched")
+    # the review tool recognises it, labels it and opens on the algorithm's answer
+    from mousereach.review.causal_review_widget import is_bench_mismatch, plain_flag_reason
+    assert is_bench_mismatch(seg["flag_reason"])
+    assert plain_flag_reason(seg["flag_reason"]) == "hand score mismatch (hand: retrieved, algo: untouched)"
     assert routed and routed[0][1]["db_state"] == "triage"
 
 

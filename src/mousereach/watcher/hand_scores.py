@@ -11,8 +11,11 @@ filing:
 
     every pellet agrees, or a person answered it   -> filed
     a pellet the person has not answered disagrees -> TRIAGE, the pellet
-        flagged with what each side says ("the hand score says retrieved;
-        the video says displaced_sa"), shown beside it in the review tool
+        flagged "bench disagreement: the hand score says retrieved; the
+        algorithm says displaced_sa" -- the wording the review tool already
+        knows from the nightly bench check, so it shows "hand score mismatch
+        (hand: retrieved, algo: displaced_sa)" and opens on the algorithm's
+        answer (is_bench_mismatch, plain_flag_reason)
     no hand scores for the session:
         project not in required_projects           -> filed (nothing to compare)
         project in required_projects               -> WAITS, unfiled, until the
@@ -68,9 +71,9 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-HAND_WORDS = {0: "not touched", 1: "displaced", 2: "retrieved"}
+HAND_WORDS = {0: "missed", 1: "displaced", 2: "retrieved"}   # as the bench check words them
 ALGO_CLASS = {"untouched": 0, "displaced_sa": 1, "displaced_outside": 1, "retrieved": 2}
-FLAG_REASON = "disagrees with the hand score"
+FLAG_REASON = "bench disagreement"
 
 AGREES = "agrees"
 DISAGREES = "disagrees"
@@ -171,7 +174,7 @@ def check(video_id: str, folder: Path) -> Verdict:
         a, h = ALGO_CLASS.get(seg.get("outcome")), hand.get(int(n))
         if a is None or h is None or a == h:
             continue
-        disagree[int(n)] = "the hand score says %s; the video says %s" % (
+        disagree[int(n)] = "the hand score says %s; the algorithm says %s" % (
             HAND_WORDS[h], seg.get("outcome"))
     if disagree:
         return Verdict(DISAGREES, "%d pellet(s) disagree with the hand score: %s" % (

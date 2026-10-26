@@ -302,8 +302,9 @@ last step before filing it:
 
 - **Every pellet agrees** (or a person already answered it in review): filed.
 - **A pellet disagrees**: the video goes to the **triage** queue. In the review
-  tool that pellet carries its reason, for example *disagrees with the hand
-  score: the hand score says retrieved; the video says displaced_sa*. Answer it
+  tool its banner reads, for example, *hand score mismatch (hand: retrieved,
+  algo: displaced_sa)*, and the outcome list opens on the algorithm's answer
+  (the same as for the nightly bench check). Answer it
   as usual; when every flagged pellet is answered the video comes back and is
   filed. What a person answers is taken as the truth, whatever the bench says.
 - **The session has no hand scores**, in a project whose every session is
