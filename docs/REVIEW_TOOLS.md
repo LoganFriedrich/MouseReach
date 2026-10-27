@@ -90,6 +90,7 @@ The reach list is narrowed by `assignment.v2.triage_reduction.reduce_triaged_seg
 - If a detected reach covers at least half of the frames you typed, that detected reach is the answer -- it is the same reach, and the detector's frames are kept (`causal_review_io.typed_reach_match`).
 - Otherwise it is a reach the detector missed. Your frames are saved as they are, and when the results are made it is added to the pellet's reach list -- exactly as a ground-truth reach is: it replaces any detected reach it overlaps, its measurements are computed over your frames, and it is the reach credited with the pellet (`reach_source: human_review`).
 - Either way the record keeps the frames you typed, as `typed`.
+- A typed reach longer than 300 frames is refused on the spot ("The reach you typed runs N frames ... no reach lasts that long"): no real reach comes close (detected reaches: median 13 frames, 99.9% at most 94), so it is a mistyped frame number, and measuring it would put nonsense into the data. The results step never adds one either (`MAX_TYPED_REACH_FRAMES`).
 
 Until that date a typed reach was swapped for any detected reach touching it by a single frame, and a reach the detector missed was never added, so its pellet's credit was lost or landed on a neighbouring reach (of 199 typed reaches on 2026-10-25: 14 lost the causal reach, 6 pointed to another reach, 2 ended with an outcome other than the person's).
 

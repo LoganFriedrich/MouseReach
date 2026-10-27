@@ -475,6 +475,15 @@ _TOUCHED_OUTCOMES = ("retrieved", "displaced_sa", "displaced_outside")
 # another reach). Both now call typed_reach_match.
 TYPED_REACH_COVER = 0.5
 
+# The longest a TYPED reach may be. A typed reach the detector missed is added
+# to the reach list with exactly these frames and measured over them, so a typo
+# in a frame number becomes a "reach" of hundreds of frames with nonsense
+# kinematics. Real reaches: median 13 frames, 99.9% at most 94 (799,201
+# detected reaches, 2026-10-26); typed ones: median 14, all but one at most 60.
+# The one outlier, 35183-35914 (732 frames), reads like a slip of the keys.
+# 300 frames is far past any real reach and still catches that.
+MAX_TYPED_REACH_FRAMES = 300
+
 
 def typed_reach_match(start, end, reaches):
     """The detected reach a typed [start, end] reach IS, or None when no detected
@@ -586,6 +595,11 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
         return ("The reach you chose (frames %d-%d) is outside segment %s, which runs "
                 "from frame %d to %d. As this video is cut, that reach cannot have "
                 "touched this segment's pellet." % (cr[0], cr[1], n, span[0], span[1]))
+    typed = ((rec.get("human") or {}).get("causal_reach") or {}).get("typed")
+    if typed and typed[1] - typed[0] + 1 > MAX_TYPED_REACH_FRAMES:
+        return ("The reach you typed runs %d frames (frames %d-%d); no reach lasts that "
+                "long. Check the two frame numbers and type them again."
+                % (typed[1] - typed[0] + 1, typed[0], typed[1]))
     return None
 
 

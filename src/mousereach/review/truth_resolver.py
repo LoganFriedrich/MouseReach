@@ -138,7 +138,8 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
     matching falls back to the segment number the review was written against,
     which a re-cut can have reassigned to different footage.
     """
-    from mousereach.review.causal_review_io import (index_review_by_segment, is_answered,
+    from mousereach.review.causal_review_io import (MAX_TYPED_REACH_FRAMES,
+                                                    index_review_by_segment, is_answered,
                                                     typed_reach_match)
 
     out: Dict[int, dict] = {}
@@ -186,8 +187,16 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
             elif ho in _TOUCHED_OUTCOMES:
                 # No detected reach is this one: the detector missed it. The
                 # frames the person gave are the fact; the stored id, if any,
-                # names some other reach. Added to the reach list below.
-                cid, review_reach = None, (_hs, _he)
+                # names some other reach. Added to the reach list below --
+                # unless it is longer than any reach can be (a mistyped frame
+                # number), which is never measured: no causal reach, and the
+                # review tool refuses such an answer (answer_problem).
+                cid = None
+                if _he - _hs + 1 <= MAX_TYPED_REACH_FRAMES:
+                    review_reach = (_hs, _he)
+                else:
+                    logger.warning("segment %s: typed reach %d-%d (%d frames) is longer than "
+                                   "any reach; not added", sn, _hs, _he, _he - _hs + 1)
         out[int(sn)] = {
             "outcome": ho,
             "causal_reach_id": cid if ho in _TOUCHED_OUTCOMES else None,

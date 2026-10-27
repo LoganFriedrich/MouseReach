@@ -78,3 +78,23 @@ def test_a_pellet_left_open_is_not_applied_as_a_human_answer(monkeypatch):
     reaches, outcomes = _resolve(monkeypatch, r, o, rev)
     assert outcomes["segments"][0]["outcome_source"] == "algo"
     assert len(reaches["segments"][0]["reaches"]) == 2
+
+
+def test_a_typed_reach_longer_than_any_reach_is_never_added(monkeypatch):
+    """A mistyped frame number (35183-35914, 732 frames, 2026-10-26) would become a
+    'reach' measured over 24 seconds of video."""
+    r, o, rev = _data({"outcome": "retrieved", "causal_reach": {"start": 300, "end": 1031}})
+    reaches, outcomes = _resolve(monkeypatch, r, o, rev)
+    assert len(reaches["segments"][0]["reaches"]) == 2
+    assert outcomes["segments"][0]["causal_reach_id"] is None
+
+
+def test_the_review_window_refuses_a_typed_reach_longer_than_any_reach():
+    from mousereach.review.causal_review_io import answer_problem
+    rec = {"segment_num": 2, "segment_span": {"start": 0, "end": 2000},
+           "human": {"outcome": "retrieved",
+                     "causal_reach": {"start": 300, "end": 1031, "typed": [300, 1031]}},
+           "answers": {"outcome_pick": "retrieved"}}
+    assert "runs 732 frames" in answer_problem(rec)
+    rec["human"]["causal_reach"] = {"start": 300, "end": 318, "typed": [300, 318]}
+    assert answer_problem(rec) is None
