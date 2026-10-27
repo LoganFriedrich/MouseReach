@@ -27,8 +27,17 @@ outcomes):
        segments it determined; non-exhaustive leaves undetermined segments algo).
 
 Provenance is stamped on every element:
-    outcome_source in {"algo","human_review","ground_truth"}   (per segment)
-    reach_source   in {"algo","ground_truth"}                  (per reach)
+    outcome_source in {"algo","human_review","ground_truth"}                (per segment)
+    reach_source   in {"algo","ground_truth","human_review"}                (per reach)
+
+A reviewer's typed causal reach (the review window's "Undetected reach (enter
+frames manually)") that no detected reach covers (causal_review_io.
+typed_reach_match) is a reach the detector missed. Since 2026-10-26 it joins the
+segment's reaches exactly as a supplementary GT reach does -- it replaces the
+detected reach it overlaps, if any, and its kinematics are computed over the
+frames the person typed -- and it is the segment's causal reach. Before, it was
+resolved only as a pointer into the detected reaches, so its answer was lost or
+landed on a neighbouring reach.
 
 Non-destructive (deep copies) and never raises on missing layers: a video with
 no human input resolves to pure algo. ASCII-only logging (Windows cp1252).
@@ -129,7 +138,8 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
     matching falls back to the segment number the review was written against,
     which a re-cut can have reassigned to different footage.
     """
-    from mousereach.review.causal_review_io import index_review_by_segment, is_answered
+    from mousereach.review.causal_review_io import (index_review_by_segment, is_answered,
+                                                    typed_reach_match)
 
     out: Dict[int, dict] = {}
     matched, notes = index_review_by_segment(doc, current_segments,
@@ -151,6 +161,7 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         hc = human.get("causal_reach") or {}
         stored = hc.get("reach_id")
         cid = stored
+        review_reach = None
         # The FRAMES are the durable fact; the reach_id is not. Reach ids are
         # renumbered on every run, so a review written against an earlier
         # reach list names an id this run does not have -- the id-only match
@@ -162,27 +173,26 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         # when they do not or nothing overlaps.
         if hc.get("start") is not None and current_segments:
             _hs, _he = int(hc["start"]), int(hc.get("end", hc["start"]))
-            best, best_ov = None, 0
-            for _seg in current_segments:
-                if int(_seg.get("segment_num", -1)) != int(sn):
-                    continue
-                for _r in (_seg.get("reaches") or []):
-                    _rs, _re = _r.get("start_frame"), _r.get("end_frame")
-                    if _rs is None or _re is None:
-                        continue
-                    ov = min(_he, int(_re)) - max(_hs, int(_rs)) + 1
-                    if ov > best_ov:
-                        best, best_ov = _r.get("reach_id"), ov
-            span = max(1, _he - _hs + 1)
-            if best is not None and best_ov >= 0.5 * span:
+            here = [r for _seg in current_segments
+                    if int(_seg.get("segment_num", -1)) == int(sn)
+                    for r in (_seg.get("reaches") or [])]
+            match = typed_reach_match(_hs, _he, here)
+            if match is not None:
+                best = match.get("reach_id")
                 if stored is not None and best != stored:
                     logger.info("review causal pick re-anchored by frames: segment %s id %s -> %s",
                                 sn, stored, best)
                 cid = best
+            elif ho in _TOUCHED_OUTCOMES:
+                # No detected reach is this one: the detector missed it. The
+                # frames the person gave are the fact; the stored id, if any,
+                # names some other reach. Added to the reach list below.
+                cid, review_reach = None, (_hs, _he)
         out[int(sn)] = {
             "outcome": ho,
             "causal_reach_id": cid if ho in _TOUCHED_OUTCOMES else None,
             "review_causal_reach_id": stored,
+            "review_reach": review_reach,
             "abnormal_ranges": ans.get("abnormal_ranges"),
             "reviewer": (doc or {}).get("reviewer"),
             "source": source,
@@ -245,11 +255,15 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]]) ->
             seg["interaction_frame"] = ov["interaction_frame"]
         if ov.get("abnormal_ranges"):
             seg["abnormal_ranges"] = ov["abnormal_ranges"]
+        seg.pop("review_reach_frames", None)
+        if ov.get("review_reach"):
+            seg["review_reach_frames"] = list(ov["review_reach"])
     return out
 
 
 # ---------------------------------------------------------------------------
-# per-reach layer (GT only -- review never edits reach boundaries/existence)
+# per-reach layer: GT, and (since 2026-10-26) a reviewer-typed reach the
+# detector missed; review never edits the boundaries of a detected reach
 # ---------------------------------------------------------------------------
 def _gt_reach_dict(r: dict, reach_num: int) -> dict:
     """Map a GT reach onto the algo reach-dict schema the extractor consumes.
@@ -309,6 +323,44 @@ def _merge_reaches(algo_reaches: List[dict], gt_reaches: List[dict]) -> List[dic
             d.setdefault("reach_source", "algo")
             final.append(d)
     return final
+
+
+def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict) -> dict:
+    """Add each reviewer-typed reach the detector missed (the module docstring
+    says why) to its segment's reaches, and make it that segment's causal reach.
+    It is merged exactly as a supplementary GT reach is (_merge_reaches: it
+    replaces the detected reach it overlaps), stamped reach_source
+    "human_review", and given a reach id no other reach in the video has.
+    ``outcomes_data`` is updated in place. Non-destructive for reaches_data."""
+    wanted = {}
+    for seg in outcomes_data.get("segments", []):
+        frames = seg.get("review_reach_frames")
+        if frames and seg.get("outcome_source") == "human_review" and seg.get("segment_num") is not None:
+            wanted[int(seg["segment_num"])] = (seg, frames)
+    if not wanted:
+        return reaches_data
+    out = copy.deepcopy(reaches_data)
+    next_id = 1 + max([int(r.get("reach_id") or 0) for sg in out.get("segments", [])
+                       for r in sg.get("reaches", [])] + [0])
+    for seg in out.get("segments", []):
+        try:
+            sn = int(seg.get("segment_num"))
+        except (TypeError, ValueError):
+            continue
+        if sn not in wanted:
+            continue
+        oseg, (s, e) = wanted[sn]
+        for a in seg.get("reaches", []):
+            a.setdefault("reach_source", "algo")
+        seg["reaches"] = _merge_reaches(seg.get("reaches", []), [
+            {"reach_id": next_id, "start_frame": int(s), "end_frame": int(e)}])
+        for r in seg["reaches"]:
+            if r.get("reach_id") == next_id:
+                r["reach_source"] = "human_review"
+        seg["n_reaches"] = len(seg["reaches"])
+        oseg["causal_reach_id"] = next_id
+        next_id += 1
+    return out
 
 
 def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
@@ -398,8 +450,9 @@ def resolve_truth_layers(
 
     outcomes_out = _apply_outcome_layers(outcomes_data, layers)
 
-    # ---- per-reach layer (GT only) ---------------------------------------
+    # ---- per-reach layers: GT, then reviewer-typed reaches the detector missed
     reaches_out = _apply_gt_reaches(reaches_data, gt) if gt else reaches_data
+    reaches_out = _add_reviewed_reaches(reaches_out, outcomes_out)
 
     if gt:
         logger.info(

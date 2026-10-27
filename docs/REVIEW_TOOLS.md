@@ -85,6 +85,14 @@ The question panel takes one of three shapes, decided by `_segment_triage` (`:17
 
 The reach list is narrowed by `assignment.v2.triage_reduction.reduce_triaged_segment` to reaches that could not be ruled out as misses (`_candidate_reach_ids`, `:1675`); the ruled-out ones are built too but hidden behind a "Show all reaches" checkbox (`_make_reach_picker`, `:1859`). There is an explicit "No reach — nothing acted on this pellet" option (`:1906`), and choosing `untouched` clears and disables the reach picker so the two answers cannot contradict each other (`_sync_reach_picker_to_outcome`, `:2029`).
 
+**A reach the list does not have: "Undetected reach (enter frames manually)".** Type its first and last frame. What is saved (since 2026-10-26):
+
+- If a detected reach covers at least half of the frames you typed, that detected reach is the answer -- it is the same reach, and the detector's frames are kept (`causal_review_io.typed_reach_match`).
+- Otherwise it is a reach the detector missed. Your frames are saved as they are, and when the results are made it is added to the pellet's reach list -- exactly as a ground-truth reach is: it replaces any detected reach it overlaps, its measurements are computed over your frames, and it is the reach credited with the pellet (`reach_source: human_review`).
+- Either way the record keeps the frames you typed, as `typed`.
+
+Until that date a typed reach was swapped for any detected reach touching it by a single frame, and a reach the detector missed was never added, so its pellet's credit was lost or landed on a neighbouring reach (of 199 typed reaches on 2026-10-25: 14 lost the causal reach, 6 pointed to another reach, 2 ended with an outcome other than the person's).
+
 Every segment also gets an **"Ignore windows"** box — frame ranges where something that is not a reach moved the pellet (`:1369`, `_make_abnormal_ranges_widget`, `:2161`) — and a free-text notes box. There is no control for saying the cuts are wrong: a wrong pellet or wrong cuts is never answered here, it is escalated (see "Escalating out of triage").
 
 Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Clear -> re-enter pipeline** (`:3069`). The tool cannot re-cut a video (its re-cut editor was removed 2026-10-23); cuts are fixed in deep review.
@@ -719,7 +727,7 @@ Two things to be precise about:
 - **The unit is a segment, not an element.** Within the per-segment outcome layers, a higher layer replaces the whole override for that segment — outcome, causal reach id and interaction frame together (`:160-162`, `:172-180`). Only a segment that no layer covers keeps the algorithm's values. The separate per-reach layer (ground truth only) is merged reach by reach (`_apply_gt_reaches`, `:249`).
 - **Both review tiers are stamped the same.** Triage-queue and deep-review-queue reviews are both labelled `"human_review"` (`:320-322`); the data does not record which tool produced the answer.
 
-Ground truth only overrides segments it marks determined (`:138-139`). Provenance is stamped per segment as `outcome_source` (`algo` / `human_review` / `ground_truth`) and per reach as `reach_source` (`algo` / `ground_truth`), with the algorithm's originals preserved as `algo_outcome` and `algo_causal_reach_id` (`:172-176`). Reviews never change reach boundaries or reach existence; only ground truth does, and only where `reaches.exhaustive` is set does it also delete algorithm reaches it never labelled (`:275-279`).
+Ground truth only overrides segments it marks determined (`:138-139`). Provenance is stamped per segment as `outcome_source` (`algo` / `human_review` / `ground_truth`) and per reach as `reach_source` (`algo` / `ground_truth` / `human_review`), with the algorithm's originals preserved as `algo_outcome` and `algo_causal_reach_id` (`:172-176`). Reviews never change the boundaries of a detected reach. A review adds a reach only when the reviewer typed one the detector missed (`_add_reviewed_reaches`, since 2026-10-26; see "A reach the list does not have" above). Ground truth changes boundaries and existence, and only where `reaches.exhaustive` is set does it also delete algorithm reaches it never labelled (`:275-279`). Only real answers are applied (`is_answered`): until 2026-10-26 this step applied a pellet left on "-- select outcome --" as a human answer of "triaged".
 
 The processing-dir layer is the one that does not work — see [Reviews mostly do not reach the numbers](#reviews-mostly-do-not-reach-the-numbers).
 

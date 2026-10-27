@@ -212,7 +212,7 @@ Each needs both landmarks above likelihood 0.7 at that frame, otherwise null.
 | Field | Plain English | How computed | Units | Filled today |
 |---|---|---|---|---|
 | `outcome_source` | `algo`, `human_review`, or `ground_truth` for this segment's outcome | Copied from the segment after truth layering (`:373`); the segment default `algo` is stamped at `truth_resolver.py:164-165` | text | On every reach whose features file was written by the current extractor (92% of Processing; older files predate the field) |
-| `reach_source` | `algo` or `ground_truth` for this reach's frame boundaries | `reach.get('reach_source', 'algo')` (`:374`) | text | Same — but no database column holds it (§8) |
+| `reach_source` | `algo`, `ground_truth`, or `human_review` (a reach a reviewer typed that the detector missed, since 2026-10-26) for this reach's frame boundaries | `reach.get('reach_source', 'algo')` (`:374`) | text | Same — but no database column holds it (§8) |
 | `reviewed_by` | Who reviewed | Copied from the segment (`:375`) | text | 0% in Processing (no reviewed videos there); 8.5% in the Analyzed sample; `FIELD_AUDIT.md` reports 19.6% over its 1,377 videos |
 | `algo_outcome` | What the algorithm said before a human overrode it | Copied from the segment (`:376`), stamped at `truth_resolver.py:172` | text | Same rows as `reviewed_by` |
 | `algo_causal_reach_id` | Which reach the algorithm blamed before a human overrode it | Copied from the segment (`:377`), stamped at `truth_resolver.py:173` from whatever `causal_reach_id` the algorithm had | count | **0%.** It preserves the algorithm's causal reach id, and the current detector never sets one (§2). `FIELD_AUDIT.md` also reports 0.0% over 1,377 videos. |

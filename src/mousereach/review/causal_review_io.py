@@ -465,6 +465,40 @@ def load_causal_review(video_stem: str, output_dir: Path):
 
 _TOUCHED_OUTCOMES = ("retrieved", "displaced_sa", "displaced_outside")
 
+# A reach a reviewer TYPES (the review window's "Undetected reach (enter frames
+# manually)" row) is the same as a detected reach only when that detected reach
+# covers at least this share of the typed frames. WHY one rule, in one place:
+# the window used to swap a typed reach for any detected reach touching it by a
+# single frame, while the results step matched by half the frames; a typed
+# reach between the two rules was recorded as one reach and resolved to another
+# (2026-10-25: of 199 typed reaches, 14 lost the causal reach and 6 pointed to
+# another reach). Both now call typed_reach_match.
+TYPED_REACH_COVER = 0.5
+
+
+def typed_reach_match(start, end, reaches):
+    """The detected reach a typed [start, end] reach IS, or None when no detected
+    reach covers at least TYPED_REACH_COVER of its frames (then it is a reach
+    the detector missed, and is kept with the frames the person typed).
+
+    ``reaches`` are dicts with start/end frames under ``start``/``end`` (the
+    review window's list) or ``start_frame``/``end_frame`` (reaches.json).
+    Frames are inclusive. The largest overlap wins."""
+    s, e = int(start), int(end)
+    span = max(1, e - s + 1)
+    best, best_ov = None, 0
+    for r in reaches or []:
+        rs = r.get("start", r.get("start_frame"))
+        re_ = r.get("end", r.get("end_frame"))
+        if rs is None or re_ is None:
+            continue
+        ov = min(e, int(re_)) - max(s, int(rs)) + 1
+        if ov > best_ov:
+            best, best_ov = r, ov
+    if best is not None and best_ov >= TYPED_REACH_COVER * span:
+        return best
+    return None
+
 
 def _span_of(rec):
     """The frames a reviewer actually looked at, or None."""

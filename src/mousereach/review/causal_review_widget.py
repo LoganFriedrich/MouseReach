@@ -45,6 +45,7 @@ from .causal_review_io import (
     UNDECIDED_OUTCOMES,
     build_segment_record,
     is_answered,
+    typed_reach_match,
     collect_provenance,
     save_causal_review,
     load_causal_review,
@@ -2343,29 +2344,22 @@ The notes box travels with the video.
     # ===================================================================
 
     def _snap_to_detected_reach(self, start, end, all_reaches):
-        """If a manually-typed [start, end] causal reach OVERLAPS an already-
-        detected reach (any frame overlap), return THAT reach
-        ({start, end, reach_id}) so it matches the algo -- instead of becoming a
-        phantom 'undetected' reach that would surface as a spurious 'absent' in
-        eval. Picks the largest-overlap reach; returns the typed range only if
-        nothing overlaps (a genuinely undetected reach)."""
-        try:
-            s, e = int(start), int(end)
-        except Exception:
-            s, e = start, end
-        best = None
-        for r in (all_reaches or []):
-            rs, re = r.get("start"), r.get("end")
-            if rs is None or re is None:
-                continue
-            if rs <= e and s <= re:                       # true interval overlap
-                ov = min(e, re) - max(s, rs)
-                if best is None or ov > best[0]:
-                    best = (ov, r)
-        if best is not None:
-            r = best[1]
-            return {"start": r["start"], "end": r["end"], "reach_id": r.get("reach_id")}
-        return {"start": s, "end": e}
+        """A manually-typed [start, end] causal reach, as recorded: the detected
+        reach it IS ({start, end, reach_id}) when one covers most of the typed
+        frames (causal_review_io.typed_reach_match), otherwise the typed frames
+        themselves -- a reach the detector missed, which the results step adds
+        to the reach list with these frames (truth_resolver). Either way the
+        frames the person typed are kept as ``typed`` for the record.
+
+        Until 2026-10-26 any detected reach touching the typed frames by a
+        single frame was taken instead, so an answer could land on the wrong
+        reach."""
+        s, e = int(start), int(end)
+        r = typed_reach_match(s, e, all_reaches)
+        if r is not None:
+            return {"start": r["start"], "end": r["end"], "reach_id": r.get("reach_id"),
+                    "typed": [s, e]}
+        return {"start": s, "end": e, "typed": [s, e]}
 
     def _collect_answers(self) -> Optional[Dict[str, Any]]:
         """Collect current segment's answers from the question widgets.

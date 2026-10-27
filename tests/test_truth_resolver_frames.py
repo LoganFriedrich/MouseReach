@@ -36,10 +36,14 @@ def test_frames_only_review_still_resolves():
     assert out[3]["review_causal_reach_id"] is None
 
 
-def test_stored_id_is_the_fallback_when_nothing_overlaps():
+def test_frames_no_reach_covers_are_a_reach_the_detector_missed_never_the_stored_id():
+    """Until 2026-10-26 the stored id was the fallback -- but in this run id 36
+    is a DIFFERENT reach (3990-4004), so the answer landed on it. The frames are
+    the fact: the reach is added with them (_add_reviewed_reaches)."""
     out = _seg_overrides_from_review(_review({"start": 5000, "end": 5010, "reach_id": 36}),
                                      "human_review", CURRENT)
-    assert out[3]["causal_reach_id"] == 36
+    assert out[3]["causal_reach_id"] is None
+    assert out[3]["review_reach"] == (5000, 5010)
 
 
 def test_no_segments_means_no_frame_matching():
