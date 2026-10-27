@@ -111,9 +111,16 @@ def test_classify_and_release_shared_engine(tmp_path):
     release must touch exactly the finished bundles and nothing else."""
     from mousereach.review.release_cli import classify_queue, release_finished
 
-    def mk(stem, review_segments=None, seg_doc=None, routing=None):
+    def mk(stem, review_segments=None, seg_doc=None, routing=None, gt=False):
         b = tmp_path / stem
         b.mkdir()
+        if gt:
+            # re-segmented in a ground-truth file: nothing leaves the queue
+            # un-re-segmented (review/resegmented.py)
+            (b / f"{stem}_unified_ground_truth.json").write_text(
+                json.dumps({"segmentation": {"boundaries": [
+                    {"verified": True, "verified_at": "2099-01-01T00:00:00"}]}}),
+                encoding="utf-8")
         if review_segments is not None:
             (b / f"{stem}_causal_review.json").write_text(
                 json.dumps({"segments": review_segments}), encoding="utf-8")
@@ -125,13 +132,13 @@ def test_classify_and_release_shared_engine(tmp_path):
                 json.dumps({"routed_reason": routing}), encoding="utf-8")
         return b
 
-    mk("20990101_ABC9901_P1",
+    mk("20990101_ABC9901_P1", gt=True,
        review_segments=[{"segment_num": 1, "human": {"outcome": "retrieved"}}])
     mk("20990101_ABC9902_P1", seg_doc={"boundary_source": "human"},
        routing="escalated: bad segmentation")
     mk("20990101_ABC9903_P1", seg_doc={"boundary_source": "human"},
        routing="qc_needs_review")
-    mk("20990101_ABC9904_P1",
+    mk("20990101_ABC9904_P1", gt=True,
        review_segments=[{"segment_num": 1, "human": {"outcome": None}},
                         {"segment_num": 2, "human": {"outcome": "missed"}}])
 

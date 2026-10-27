@@ -215,6 +215,10 @@ Each tool opens in its own window and has its own ? guide.
         if c["already"]:
             bits.append(f"{len(c['already'])} already released, awaiting "
                         f"pickup (~2 min)")
+        if c.get("not_resegmented"):
+            bits.append(f"{len(c['not_resegmented'])} not re-segmented since they "
+                        f"arrived -- they stay until someone sets or confirms "
+                        f"every cut in the segmentation fixer")
         self._release_info.setText("; ".join(bits) + ".")
         if n:
             self._release_btn.setText(

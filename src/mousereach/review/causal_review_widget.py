@@ -2737,10 +2737,8 @@ The notes box travels with the video.
         reason = ("reviewer escalated from triage: bad segmentation"
                   + (f" -- {note}" if note else ""))
         try:
-            from mousereach.config import Paths
-            from mousereach.watcher.review_gate import route_to_queue
-            route_to_queue(self._video_stem, Path(bundle), Paths.DEEP_REVIEW,
-                           reason=reason, db=None)
+            from mousereach.watcher.review_gate import escalate_to_deep_review
+            escalate_to_deep_review(self._video_stem, Path(bundle), reason)
             show_info(f"{self._video_stem} moved to the deep-review queue "
                       "(re-segmentation).")
             self._status_label.setText(
@@ -3189,7 +3187,15 @@ The notes box travels with the video.
                     (s.get("human") or {}).get("outcome") is not None
                     for s in segments
                 )
-                if complete and not marker.exists():
+                from mousereach.config import is_outcome_free_tray
+                from .resegmented import resegmented_since_entry
+                reseg_ok, reseg_why = (
+                    (True, "") if is_outcome_free_tray(self._video_stem)
+                    else resegmented_since_entry(Path(bundle), self._video_stem))
+                if complete and not marker.exists() and not reseg_ok:
+                    show_info(f"Answers saved. {self._video_stem} stays in the "
+                              f"re-segmentation queue -- {reseg_why}")
+                if complete and not marker.exists() and reseg_ok:
                     from .causal_review_io import _write_json
                     _write_json(marker, {
                         "type": "deep_review_cleared",
@@ -3374,6 +3380,17 @@ The notes box travels with the video.
             self._save_review()
         except Exception:
             pass
+        # Nothing leaves the re-segmentation queue un-re-segmented
+        # (review/resegmented.py): say so here, where the person can act on it,
+        # instead of writing a clear the watcher would then hold.
+        from mousereach.config import is_outcome_free_tray
+        if not is_outcome_free_tray(stem):
+            from .resegmented import resegmented_since_entry
+            ok, why = resegmented_since_entry(Path(bundle), stem)
+            if not ok:
+                show_error(f"{stem} cannot be cleared yet -- {why}")
+                self._status_label.setText(f"[NOT CLEARED] {stem}: {why}")
+                return
         try:
             from .causal_review_io import _write_json
             _write_json(Path(bundle) / f"{stem}_deep_review_cleared.json", {

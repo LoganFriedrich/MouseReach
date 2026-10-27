@@ -2519,3 +2519,35 @@ on; then it exits), or Ctrl+C / ending its task (running poses are stopped; thei
 given back at the next start).
 
 Tests: `tests/test_cpu_pose_pool.py`.
+
+## Update 2026-10-27: a video leaves the re-segmentation queue only once it is re-segmented
+
+The deep-review queue (`Processing/Review/deep_review`) is where a video's cuts are fixed.
+Until now a clear marker (`{video}_deep_review_cleared.json`) released a video on its own,
+whatever was in it and whenever it was written. That let an escalated video bounce: the
+triage tool's "Escalate: bad segmentation" button moved it here, a clear left over from an
+earlier deep review went with it, and the return scan released it within seconds; it re-ran
+on the same cuts and was back in triage before anyone could fix them.
+
+What holds now:
+
+1. **Escalating sets aside an earlier clear.** The button
+   (`review_gate.escalate_to_deep_review`) renames any clear in the bundle to
+   `{video}_deep_review_cleared_superseded_<time>.json` before moving it. The file is kept
+   and travels with the bundle; nothing reads it as a clear. Only the button does this --
+   the watcher's own routes into the queue fire only when there is no clear.
+2. **A clear releases a video only if a person has re-segmented it since it arrived**
+   (`review/resegmented.py`): the segments file was saved by a person in the segmentation
+   fixer (`boundary_source: "human"`, `corrected_at`) or a ground-truth file has every
+   boundary verified -- in either case after the bundle's `routed_at`. Hand-set cuts from
+   before it arrived do not count. The return scan enforces it (one log line per video per
+   watcher run); the review tool's Clear button and its complete-answers auto-clear refuse
+   and say why; `mousereach-review-release` and the Review Queues tab list such videos as
+   "not re-segmented since they arrived". Easy and Flat trays are never segmented and are
+   exempt.
+
+After the person's save, the video re-enters the pipeline with the person's cuts as its only
+cuts; everything computed from cuts is recomputed from them, and if questions remain it goes
+to triage again -- now about the new segments.
+
+Tests: `tests/test_escalation_voids_old_deep_review_clear.py`.

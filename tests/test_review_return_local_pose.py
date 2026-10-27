@@ -42,6 +42,14 @@ def _wire(monkeypatch, tmp_path):
     return triage, deep, proc
 
 
+def _hand_cuts(bundle):
+    """A person re-segmented it: nothing leaves the queue otherwise
+    (review/resegmented.py)."""
+    (bundle / f"{STEM}_segments.json").write_text(
+        json.dumps({"boundary_source": "human", "corrected_at": "2099-01-01T00:00:00",
+                    "boundaries": [10, 20]}), encoding="utf-8")
+
+
 def _split_bundle(deep, proc):
     """The September shape: the bundle holds the mp4 and the human's clear
     marker; pose and results stayed in the processing folder."""
@@ -50,6 +58,7 @@ def _split_bundle(deep, proc):
     (b / f"{STEM}.mp4").write_bytes(b"video")
     (b / f"{STEM}_deep_review_cleared.json").write_text(
         json.dumps({"cleared_by": "tester"}), encoding="utf-8")
+    _hand_cuts(b)
     pose = proc / f"{STEM}{NEW}.h5"
     pose.write_bytes(b"pose")
     (proc / f"{STEM}_segments.json").write_text("{}", encoding="utf-8")
@@ -109,6 +118,7 @@ def test_a_return_that_cannot_go_ahead_waits_an_hour(tmp_path, monkeypatch):
     b.mkdir()
     (b / f"{STEM}.mp4").write_bytes(b"video")
     (b / f"{STEM}_deep_review_cleared.json").write_text("{}", encoding="utf-8")
+    _hand_cuts(b)
     db = WatcherDB(db_path=tmp_path / "w.db")
     db.register_video(video_id=STEM, source_path=str(b / f"{STEM}.mp4"))
     db.force_state(STEM, "deep_review", reason="test setup")

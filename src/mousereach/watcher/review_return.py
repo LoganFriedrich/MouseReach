@@ -680,6 +680,9 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
 # deleted.
 QC_RECHECK_BUDGET_S = 30            # seconds of re-checks per scan
 _qc_recheck_cache: Dict[str, tuple] = {}
+# Cleared videos held because nobody re-segmented them: logged once per watcher
+# run, not once per scan (the scan runs every few seconds).
+_held_unsegmented_logged: set = set()
 _PERSON_FILE_SUFFIXES = ("_causal_review.json", "_deep_review_cleared.json",
                          "_unified_ground_truth.json")
 
@@ -1215,6 +1218,18 @@ def scan_review_queues(db, processing_dir: Path,
         # No empty-dir retire here: an empty folder has no clear marker, so it
         # is never acted on, and EMPTY_DIR_GRACE_SECONDS has nothing to guard.
         if _deep_review_cleared(bundle, stem):
+            # A clear releases the video only once a person has re-segmented
+            # it since it arrived here (review/resegmented.py says why). Easy
+            # and Flat trays are never segmented, so the rule does not apply.
+            if not is_outcome_free_tray(stem):
+                from mousereach.review.resegmented import resegmented_since_entry
+                ok, why = resegmented_since_entry(bundle, stem)
+                if not ok:
+                    if stem not in _held_unsegmented_logged:
+                        _held_unsegmented_logged.add(stem)
+                        logger.warning("Re-segmentation queue: %s is cleared but %s",
+                                       stem, why)
+                    continue
             if not _return_backing_off(stem) and _return_to_processing(
                     bundle, stem, processing_dir, db, "deep_review_cleared"):
                 summary["deep_returned"] += 1

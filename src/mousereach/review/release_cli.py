@@ -84,11 +84,21 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
       partial         [(stem, answered, total)]
       unreviewed      [stem]
       already         [stem]                      marker present, awaiting the return scan
+      not_resegmented [(stem, why)]               nobody re-segmented it since it arrived:
+                                                  it cannot leave (review/resegmented.py)
     """
+    from mousereach.config import is_outcome_free_tray
+    from mousereach.review.resegmented import resegmented_since_entry
     out = {"complete": [], "fixed_release": [], "fixed_held": [],
-           "partial_walk": [], "partial": [], "unreviewed": [], "already": []}
+           "partial_walk": [], "partial": [], "unreviewed": [], "already": [],
+           "not_resegmented": []}
     for bundle in _bundle_dirs(queue_root):
         stem = bundle.name
+        if not is_outcome_free_tray(stem):
+            ok, why = resegmented_since_entry(bundle, stem)
+            if not ok:
+                out["not_resegmented"].append((stem, why))
+                continue
         if (bundle / f"{stem}_deep_review_cleared.json").is_file():
             out["already"].append(stem)
             continue
@@ -213,6 +223,7 @@ def main(argv=None) -> int:
     unreviewed, already = cls["unreviewed"], cls["already"]
     fixed_release, fixed_held = cls["fixed_release"], cls["fixed_held"]
     partial_walk = cls["partial_walk"]
+    not_reseg = cls["not_resegmented"]
 
     print(f"Deep-review queue: {len(bundles)} bundle(s)")
     print(f"  complete (every segment has a human outcome): {len(complete)}")
@@ -234,6 +245,10 @@ def main(argv=None) -> int:
     for stem, a, t in partial:
         print(f"    {stem}  {a}/{t}")
     print(f"  no review answers yet: {len(unreviewed)}")
+    print(f"  NOT re-segmented since it arrived -- cannot leave until someone "
+          f"sets or confirms every cut in the segmentation fixer: {len(not_reseg)}")
+    for stem, why in not_reseg:
+        print(f"    {stem}")
     if already:
         print(f"  already cleared (marker present, awaiting return scan): "
               f"{len(already)}")

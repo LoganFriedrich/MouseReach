@@ -184,6 +184,33 @@ re-attach by frame span after the boundary fix), moves the bundle to the
 deep-review queue with the notes text as the routing reason, and loads the
 next video (`_escalate_to_deep_review`).
 
+**Escalating cancels any earlier deep-review clear (since 2026-10-27).**
+Pressing the button means a new problem with the cuts has been found, so a
+video that was cleared in deep review before is no longer cleared. Its old
+`{stem}_deep_review_cleared.json` is renamed to
+`{stem}_deep_review_cleared_superseded_<time>.json` (kept, never deleted) as
+the video moves, and it waits in deep review until someone clears it again.
+Only the button does this (`escalate_to_deep_review` in `review_gate.py`);
+the watcher's own routes into deep review happen only when there is no clear.
+Before this, the old clear went along with the video, the watcher read it as
+"done" and released the video within seconds, and it came back to triage on
+the same cuts -- the button seemed to do nothing.
+
+**Nothing leaves the re-segmentation queue until it has been re-segmented
+(since 2026-10-27).** A clear is not enough on its own: the video stays
+until a person has set or confirmed every cut AFTER it arrived in the queue
+-- by saving in the segmentation fixer (which marks the whole list of cuts
+as theirs), or in a ground-truth file with every boundary verified. Cuts set
+by hand before it arrived do not count: a video sent back is there because
+those cuts were found wrong. Pressing Clear on a video nobody has
+re-segmented says so ("cannot be cleared yet -- not re-segmented: ...") and
+leaves it in place; a complete answer-save there keeps the answers and says
+the same. The Review Queues tab and `mousereach-review-release` list these
+videos as "not re-segmented since they arrived". Easy and Flat trays are
+never segmented, so the rule does not apply to them. The check is
+`review/resegmented.py`; the watcher applies it in the return scan
+(`review_return.py`), so a clear written any other way is held too.
+
 Until 2026-10-23 each segment also had a box, "Segmentation says this is
 segment N. If that's wrong, which segment is this actually?", which wrote
 `true_segment_num` + `segmentation_wrong` into the record. It was removed

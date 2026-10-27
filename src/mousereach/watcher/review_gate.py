@@ -349,6 +349,44 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
     (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
+def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Path]:
+    """Set aside an earlier deep-review clear when a reviewer escalates.
+
+    Pressing "Escalate: bad segmentation -> deep review" means the reviewer has
+    found a new problem with the cuts (Logan, 2026-10-27: "If you click the
+    button it should remove any deep review clearing ... Basically means you
+    found a new issue"). Only the button does this: the automatic routes into
+    deep review fire only when no clear exists. Left in place, it travelled with
+    the bundle, and the return scan -- which reads "cleared" from the marker
+    alone -- released the video from deep review within seconds of the
+    escalation, re-ran it on the same cuts and put it back in triage: the
+    reviewer's "Escalate: bad segmentation" button did nothing visible
+    (20250627_CNT0107_P3, 2026-10-27, cleared 2026-09-08). The marker is
+    renamed, never deleted, so the earlier clear stays on record and goes on
+    travelling with the bundle under a name nothing reads as a clear. Done
+    BEFORE the move, so no scan can see the old marker in the new queue. A
+    rename that fails raises: moving the video with a live clear would only
+    bounce it again, and the caller says so to the reviewer.
+    """
+    marker = Path(source_dir) / f"{video_id}_deep_review_cleared.json"
+    if not marker.is_file():
+        return None
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    kept = marker.with_name(f"{video_id}_deep_review_cleared_superseded_{stamp}.json")
+    marker.rename(kept)
+    logger.info("Routing %s to deep review: earlier deep-review clear set aside as %s",
+                video_id, kept.name)
+    return kept
+
+
+def escalate_to_deep_review(video_id: str, bundle: Path, reason: str) -> Path:
+    """The triage tool's Escalate button: set aside any earlier deep-review
+    clear (see supersede_deep_review_clear), then move the video to deep review."""
+    supersede_deep_review_clear(video_id, bundle)
+    return route_to_queue(video_id, Path(bundle), Paths.DEEP_REVIEW,
+                          reason=reason, db=None)
+
+
 def route_to_queue(
     video_id: str,
     processing_dir: Path,
