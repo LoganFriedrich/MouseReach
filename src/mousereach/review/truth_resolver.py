@@ -129,7 +129,7 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
     matching falls back to the segment number the review was written against,
     which a re-cut can have reassigned to different footage.
     """
-    from mousereach.review.causal_review_io import index_review_by_segment
+    from mousereach.review.causal_review_io import index_review_by_segment, is_answered
 
     out: Dict[int, dict] = {}
     matched, notes = index_review_by_segment(doc, current_segments,
@@ -138,7 +138,11 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         logger.warning("review re-anchoring: %s", n)
     for sn, rec in matched.items():
         ans = rec.get("answers") or {}
-        if ans.get("reviewed") is False:
+        # Only a person's ANSWER counts (is_answered): not a reviewed:False
+        # placeholder, and not a pellet saved with its outcome left on the
+        # algorithm's "triaged" -- which was applied here as a human answer
+        # until 2026-10-26, the same gap apply_review_overrides had.
+        if not is_answered(rec):
             continue
         human = rec.get("human") or {}
         ho = human.get("outcome")
