@@ -72,5 +72,5 @@ def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
                 return True, "every boundary verified in %s" % gt_path.name
 
     return False, ("not re-segmented: %s. Open it in the segmentation fixer, "
-                   "set or confirm every cut and save; it leaves deep review "
+                   "set or confirm every cut and save; it leaves the queue "
                    "after that." % stale)

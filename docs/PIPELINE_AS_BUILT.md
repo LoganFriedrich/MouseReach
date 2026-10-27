@@ -2551,3 +2551,9 @@ cuts; everything computed from cuts is recomputed from them, and if questions re
 to triage again -- now about the new segments.
 
 Tests: `tests/test_escalation_voids_old_deep_review_clear.py`.
+
+Names: from 2026-10-27 the tools and operator docs call this queue the
+**re-segmentation queue** (and its review tool Re-segmentation Review);
+"deep review" is kept for ground-truthing with the ground-truth tool. The
+sections above keep the old name as they were written. Folder, database state
+and file names are unchanged.

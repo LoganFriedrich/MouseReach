@@ -90,7 +90,7 @@ STAGE_INFO = {
     "outdated":     ("Out of date, reprocess",     "Was processed with older algorithm versions -- reprocess to bring it up to date.", "act"),
     "crystallized": ("Locked (published)",         "Locked against reprocessing (e.g. frozen for a publication).", "done"),
     "triage":       ("Waiting for triage review",  "Held out of the database -- a reviewer must answer a per-element question (Review Queues tab).", "act"),
-    "deep_review":  ("Waiting for deep review",    "Held out -- segmentation failed or was escalated; needs the deep-review tools (Review Queues tab).", "act"),
+    "deep_review":  ("Waiting for re-segmentation", "Held out -- segmentation failed or was escalated; needs its cuts fixed in the re-segmentation tools (Review Queues tab).", "act"),
     "failed":       ("Failed, needs a look",       "Processing errored out -- needs investigation.", "bad"),
     # Folder-scan stages (video's stage = which pipeline folder it sits in)
     "raw_collage":  ("Raw collage, needs cropping", "An 8-camera collage in the intake folder -- not yet cropped into single-mouse videos.", "wait"),
@@ -122,7 +122,7 @@ STAGE_FILTERS = [
                      "archiving", "raw_collage", "cropped"}),
     ("Done (final output)", {"processed", "archived", "crystallized", "analyzed"}),
     ("Needs triage review", {"triage"}),
-    ("Needs deep review", {"deep_review"}),
+    ("Needs re-segmentation", {"deep_review"}),
     ("Needs reprocessing (outdated)", {"outdated"}),
     ("Failed", {"failed"}),
     ("Quarantined", {"quarantined"}),
@@ -1687,7 +1687,7 @@ class PipelineDashboard(QWidget):
                 review_item = QTableWidgetItem("Deep")
                 review_item.setBackground(QBrush(QColor(244, 67, 54)))  # Red
                 review_item.setForeground(QBrush(QColor(255, 255, 255)))
-                review_item.setToolTip("Held -- waiting on deep review (seg-failed / escalated)")
+                review_item.setToolTip("Held -- waiting on re-segmentation (bad cuts / escalated)")
             elif rs == "reviewed":
                 review_item = QTableWidgetItem("✓")
                 review_item.setBackground(QBrush(QColor(76, 175, 80)))  # Green
@@ -1796,7 +1796,7 @@ class PipelineDashboard(QWidget):
             "",
             "Review holds:",
             f"  Needs triage review:   {review_counts.get('triage', 0)}",
-            f"  Needs deep review:     {review_counts.get('deep_review', 0)}",
+            f"  Needs re-segmentation: {review_counts.get('deep_review', 0)}",
             f"  Human review saved:    {review_counts.get('reviewed', 0)}",
             "",
             f"Ground truth files:      {has_gt}/{total}",
@@ -1857,7 +1857,7 @@ class PipelineDashboard(QWidget):
         root = Paths.DEEP_REVIEW if deep else Paths.TRIAGE_REVIEW
         bundle = (root / video_id) if root else None
         if not bundle or not bundle.exists():
-            show_info(f"No {'deep-review' if deep else 'triage'} bundle found for {video_id}. "
+            show_info(f"No {'re-segmentation' if deep else 'triage'} bundle found for {video_id}. "
                       f"(Use the Review Queues tab for the full queue.)")
             return
         try:

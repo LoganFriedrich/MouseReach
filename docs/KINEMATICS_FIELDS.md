@@ -401,7 +401,7 @@ Reads the features file (`:109-110`). Six of its columns read keys that the feat
 
 ## 9. Human corrections, and one path that cannot fire
 
-`extract` calls `resolve_truth_layers` (`:220-225`), which resolves each segment's outcome and each reach independently by ground truth > deep review > triage review > algorithm (`review/truth_resolver.py:315-334`), and can replace the reach list itself when ground truth marks its reach set exhaustive (`:275-282`). Provenance lands in `outcome_source` and `reach_source`.
+`extract` calls `resolve_truth_layers` (`:220-225`), which resolves each segment's outcome and each reach independently by ground truth > re-segmentation > triage review > algorithm (`review/truth_resolver.py:315-334`), and can replace the reach list itself when ground truth marks its reach set exhaustive (`:275-282`). Provenance lands in `outcome_source` and `reach_source`.
 
 That resolver takes a **directory** as `primary_dir` and looks for `<dir>/<video>/<video>_causal_review.json` or `<dir>/<video>_causal_review.json` (`truth_resolver.py:72-88`). But every production caller passes a **file** path: `resolve_review_path` returns the review file itself (`review/causal_review_io.py:83-90`) and the watcher, `run_all.py` and `reprocess_to_current.py` hand that straight in as `review_path`; the CLI builds `Path(_rd) / f"{video_name}_causal_review.json"` (`kinematics/cli.py:123`) and does the same. The lookup then builds paths like `.../X_causal_review.json/X_causal_review.json`, `is_file()` returns false, and that layer is silently skipped.
 

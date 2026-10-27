@@ -1,6 +1,6 @@
 """The Escalate button sets aside any earlier deep-review clear.
 
-Pressing "Escalate: bad segmentation -> deep review" means a person has found a
+Pressing "Escalate: bad segmentation -> re-segmentation" means a person has found a
 new problem with the cuts. A clear from an earlier deep review used to travel
 with the bundle, and the return scan -- which reads "cleared" from the marker
 alone -- released the video from deep review within seconds, re-ran it on the

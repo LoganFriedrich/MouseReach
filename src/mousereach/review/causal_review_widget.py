@@ -409,7 +409,7 @@ and settle it).
   the video's review file; when every flagged segment is answered, the
   watcher re-injects the video automatically -- no further action.
 * Wrong pellet, or wrong cuts: do not answer. Press "Escalate: bad
-  segmentation -> deep review"; the cuts are fixed there.
+  segmentation -> re-segmentation"; the cuts are fixed there.
 * "Flag Session" marks the whole mouse+day session for mandatory review.
 
 Navigation: play/speed buttons and frame steps (keyboard: Space play/pause,
@@ -432,7 +432,7 @@ The notes box travels with the video.
         header.setLayout(header_layout)
 
         tool_name = ("Triage Review Tool" if self._triage_only
-                     else ("Deep Review Tool" if self._deep_review
+                     else ("Re-segmentation Review" if self._deep_review
                            else "Causal Review Tool"))
         title_row = QHBoxLayout()
         title = QLabel("<b>" + tool_name + "</b>")
@@ -622,12 +622,12 @@ The notes box travels with the video.
         # one element) -- the whole video needs manual re-segmentation, so it
         # moves to the deep-review queue right now instead of waiting for the
         # per-element answers to finish.
-        self._escalate_btn = QPushButton("Escalate: bad segmentation -> deep review")
+        self._escalate_btn = QPushButton("Escalate: bad segmentation -> re-segmentation")
         self._escalate_btn.setStyleSheet("background: #5a1616; color: white;")
         self._escalate_btn.setToolTip(
             "The segment boundaries themselves are wrong (offset, missing, or "
             "misplaced cuts). Saves what you have answered so far and moves the "
-            "whole video to the deep-review queue for manual re-segmentation. "
+            "whole video to the re-segmentation queue, where the cuts are fixed. "
             "Put what you saw in the notes first -- it becomes the routing reason."
         )
         self._escalate_btn.clicked.connect(self._escalate_to_deep_review)
@@ -639,8 +639,10 @@ The notes box travels with the video.
         self._clear_deep_btn = QPushButton("Clear -> re-enter pipeline")
         self._clear_deep_btn.setStyleSheet("background: #3a5a16; color: white; font-weight: bold;")
         self._clear_deep_btn.setToolTip(
-            "Deep review done: save the review, mark this video cleared, and let "
-            "the watcher re-inject it at the start of the pipeline."
+            "Re-segmentation done: save the review, mark this video cleared, and "
+            "let the watcher re-inject it at the start of the pipeline. Only "
+            "possible once its cuts were saved in the Re-segmentation tool since "
+            "it arrived."
         )
         self._clear_deep_btn.clicked.connect(self._clear_deep_review)
         self._clear_deep_btn.setVisible(self._deep_review)
@@ -741,27 +743,29 @@ The notes box travels with the video.
             banner.setText(
                 "<b>Why this video is here:</b> %s<br>"
                 "The segment CUTS are in question. Fix them in the "
-                "Re-segmentation tool (saving there releases the video), or "
-                "-- if the cuts are actually fine -- answer the questions and "
-                "press Clear." % reason)
+                "Re-segmentation tool -- or, if they are actually fine, confirm "
+                "them there -- and save; saving releases the video. Nothing "
+                "leaves this queue until its cuts have been saved there." % reason)
         elif reason and "qc" in reason.lower():
             banner.setStyleSheet(base + "background:#5a4a16; color:white;")
             banner.setText(
                 "<b>Why this video is here:</b> the pipeline's own quality "
                 "self-check flagged the whole video (%s).<br>"
                 "<b>Your job:</b> watch enough to judge whether the tracking "
-                "follows the paw and pellet. If it does, press Clear -- the "
+                "follows the paw and pellet. If it does, confirm the cuts in "
+                "the Re-segmentation tool and save, then press Clear -- nothing "
+                "leaves this queue until its cuts have been saved there; the "
                 "flag stays attached to this video's data either way. If the "
                 "tracking is visibly broken, do NOT Clear: press \"Flag "
-                "Session (needs review)\" instead. Re-segmentation is NOT "
-                "the fix here; the cuts are not the question." % reason)
+                "Session (needs review)\" instead." % reason)
         else:
             banner.setStyleSheet(base + "background:#3a3a3a; color:white;")
             banner.setText(
                 "<b>Why this video is here:</b> no routing reason was "
                 "recorded (an older bundle -- that is a bookkeeping gap, not "
-                "your problem).<br>Look it over, answer anything flagged, and "
-                "press Clear when you are satisfied.")
+                "your problem).<br>Look it over, answer anything flagged, "
+                "confirm or fix its cuts in the Re-segmentation tool and save, "
+                "then press Clear.")
         banner.setVisible(True)
 
     _TRIAGE_KIND_WORDS = {
@@ -2394,7 +2398,7 @@ The notes box travels with the video.
                 "If what you see really happens to a different pellet or segment than "
                 "the one shown, the algorithm is on the wrong pellet here: do not answer "
                 "-- write what you saw in the notes and press \"Escalate: bad "
-                "segmentation -> deep review\". Otherwise choose a reach inside this "
+                "segmentation -> re-segmentation\". Otherwise choose a reach inside this "
                 "segment.")
 
     def _tell_not_recorded(self, blocking: bool = False) -> None:
@@ -2708,12 +2712,13 @@ The notes box travels with the video.
                 db=None)
         except Exception as e:
             show_error(f"Flagged session {key}, but could not divert "
-                       f"{self._video_stem} to deep review: {e}")
+                       f"{self._video_stem} to the re-segmentation queue: {e}")
             logger.exception("flag session: divert to deep review failed")
             return
-        show_info(f"Session {key} flagged; {self._video_stem} moved to deep review.")
+        show_info(f"Session {key} flagged; {self._video_stem} moved to the "
+                  f"re-segmentation queue.")
         self._status_label.setText(
-            f"[FLAG] Session {key} flagged -- {self._video_stem} -> deep review.")
+            f"[FLAG] Session {key} flagged -- {self._video_stem} -> re-segmentation.")
         self._load_next_video()
 
     def _escalate_to_deep_review(self):
@@ -2739,10 +2744,10 @@ The notes box travels with the video.
         try:
             from mousereach.watcher.review_gate import escalate_to_deep_review
             escalate_to_deep_review(self._video_stem, Path(bundle), reason)
-            show_info(f"{self._video_stem} moved to the deep-review queue "
+            show_info(f"{self._video_stem} moved to the re-segmentation queue "
                       "(re-segmentation).")
             self._status_label.setText(
-                f"[ESCALATED] {self._video_stem} -> deep review (bad segmentation).")
+                f"[ESCALATED] {self._video_stem} -> re-segmentation (bad segmentation).")
         except Exception as e:
             show_error(f"Could not escalate {self._video_stem}: {e}")
             logger.exception("escalate to deep review failed")

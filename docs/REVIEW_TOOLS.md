@@ -24,7 +24,7 @@ These two use different matching rules, they look in different places, and right
 | Tool | How it starts | The question it exists to answer | What it writes |
 |---|---|---|---|
 | **Triage Review** | `mousereach-review-tool`; GUI "Review Queues" tab -> Open Triage Review | "The algorithm could not decide one specific thing about this segment. What is the answer?" | `{stem}_causal_review.json` in the video's bundle |
-| **Deep Review** | GUI "Review Queues" tab -> Open Deep Review (no console command) | "Segmentation or quality control failed on this whole video. Is it usable, and can it go back through the pipeline?" | `{stem}_causal_review.json` plus `{stem}_deep_review_cleared.json` |
+| **Re-segmentation Review** | GUI "Review Queues" tab -> Open Re-segmentation Review (no console command) | "Segmentation or quality control failed on this whole video. Is it usable, and can it go back through the pipeline?" | `{stem}_causal_review.json` plus `{stem}_deep_review_cleared.json` |
 | **Segmentation Fixer** | `mousereach-fix-segmentation` | "Are this video's segment cuts in the right places?" — nothing else | Overwrites `{stem}_segments.json` with the corrected cuts |
 | **Ground Truth Tool** | `mousereach-gt` or `mousereach-unified-review` | "What actually happens in this video, frame by frame, regardless of what the algorithm said?" | `{stem}_unified_ground_truth.json` |
 | **Review Tool** | `mousereach-review-legacy`; the "3 - Review Tool" tab of `mousereach` | "The algorithm's output files are wrong — correct them in place." | Overwrites `{stem}_segments.json`, `{stem}_reaches.json`, `{stem}_pellet_outcomes.json` |
@@ -58,7 +58,7 @@ A picked video is shown when all of these hold (`_bundle_eligible`; `_bundle_nee
 - no ground-truth file exists for the video anywhere — ground truth counts as the answer (`causal_review_widget.py:2604-2605`; `has_gt`, `causal_review_io.py:596`),
 - its triaged elements are not already all resolved (`_bundle_reviewed`, `:2539`).
 
-The failed-segmentation skip (`_bundle_eligible`) runs in **both** modes, including deep review. That is a problem for the Deep Review tool: see [Deep Review](#deep-review).
+The failed-segmentation skip (`_bundle_eligible`) runs in **both** modes, including re-segmentation. That is a problem for the Re-segmentation Review tool: see [Re-segmentation Review](#re-segmentation).
 
 ### What counts as a triaged element
 
@@ -75,7 +75,7 @@ In triage mode the walk visits **only** triaged segments (`_visible_indices`, `:
 
 ### What the person is shown and asked
 
-The whole video is loaded once as a decode-on-demand layer; navigation only moves the playhead (`_load_video`, `:487`). The view opens on the relevant reach — the reviewer's own earlier answer if there is one, otherwise the algorithm's causal reach, otherwise the reach nearest the interaction frame (`_relevant_reach`, `:590`) — landing 25 frames early (`OPEN_LEAD`, `:485`), with 45 frames of padding around the reach (`WINDOW_PAD`, `:482`; `_compute_segment_window`, `:635`). **An `untouched` call opens 30 frames before the segment's end instead, whether or not the mouse reached** (`_opens_at_end`, since 2026-10-24): untouched is judged by where the pellet is when the segment ends. Before that, an untouched pellet with no reaches opened at the end but one with reaches -- every hand-score mismatch the algorithm called untouched -- opened on a reach, in triage a median of 172 frames and up to 1,825 frames before the end, so the reviewer had to skip forward to see it. If the reviewer changes the call and picks a reach, the pellet opens on that reach. Tracking points are drawn as coloured dots; in deep review each also carries its name, because the names jumping is what tells a reviewer it is time to call a new segment, and triage leaves them off for speed. There is no pillar circle (dropped for speed, 2026-10-23).
+The whole video is loaded once as a decode-on-demand layer; navigation only moves the playhead (`_load_video`, `:487`). The view opens on the relevant reach — the reviewer's own earlier answer if there is one, otherwise the algorithm's causal reach, otherwise the reach nearest the interaction frame (`_relevant_reach`, `:590`) — landing 25 frames early (`OPEN_LEAD`, `:485`), with 45 frames of padding around the reach (`WINDOW_PAD`, `:482`; `_compute_segment_window`, `:635`). **An `untouched` call opens 30 frames before the segment's end instead, whether or not the mouse reached** (`_opens_at_end`, since 2026-10-24): untouched is judged by where the pellet is when the segment ends. Before that, an untouched pellet with no reaches opened at the end but one with reaches -- every hand-score mismatch the algorithm called untouched -- opened on a reach, in triage a median of 172 frames and up to 1,825 frames before the end, so the reviewer had to skip forward to see it. If the reviewer changes the call and picks a reach, the pellet opens on that reach. Tracking points are drawn as coloured dots; in re-segmentation each also carries its name, because the names jumping is what tells a reviewer it is time to call a new segment, and triage leaves them off for speed. There is no pillar circle (dropped for speed, 2026-10-23).
 
 The question panel takes one of three shapes, decided by `_segment_triage` (`:1770`):
 
@@ -96,7 +96,7 @@ Until that date a typed reach was swapped for any detected reach touching it by 
 
 Every segment also gets an **"Ignore windows"** box — frame ranges where something that is not a reach moved the pellet (`:1369`, `_make_abnormal_ranges_widget`, `:2161`) — and a free-text notes box. There is no control for saying the cuts are wrong: a wrong pellet or wrong cuts is never answered here, it is escalated (see "Escalating out of triage").
 
-Two more buttons: **Flag Session** (`:2514`) and, in deep-review mode only, **Clear -> re-enter pipeline** (`:3069`). The tool cannot re-cut a video (its re-cut editor was removed 2026-10-23); cuts are fixed in deep review.
+Two more buttons: **Flag Session** (`:2514`) and, in re-segmentation mode only, **Clear -> re-enter pipeline** (`:3069`). The tool cannot re-cut a video (its re-cut editor was removed 2026-10-23); cuts are fixed in re-segmentation.
 
 Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and speed keys 1-6 (`_setup_keybindings`, `:2963`). There is no key for next/previous segment; those are buttons.
 
@@ -133,7 +133,7 @@ Open: outcome + causal reach (possible tracking artifact)
 
 Part of every triage answer is checking that the event happened to the pellet
 shown. If it did not, answer nothing and press **Escalate: bad segmentation ->
-deep review** (see "Escalating out of triage").
+re-segmentation** (see "Escalating out of triage").
 
 ### Fitting a small screen, and plain words (since 2026-10-23 evening)
 
@@ -146,7 +146,7 @@ deep review** (see "Escalating out of triage").
   their own rows and long questions wrap.
 - `mousereach-review-tool` opens with napari's layer panels hidden and the
   no tracking-point names in triage, so the video gets the room (Window menu
-  brings the panels back; deep review shows the names).
+  brings the panels back; re-segmentation shows the names).
 
 ### An answer that cannot count is not recorded (since 2026-10-23)
 
@@ -164,14 +164,14 @@ The same two tests decide what the pipeline drops when it applies answers
 the tool never accepts an answer the pipeline will throw away. Part of triage is
 checking that what happened, happened to the pellet shown: when the algorithm
 is on the wrong pellet or segment, **do not answer -- write what you saw in the
-notes and press *Escalate: bad segmentation -> deep review***. The cuts are
+notes and press *Escalate: bad segmentation -> re-segmentation***. The cuts are
 fixed there, by a person, in the re-segmentation tool.
 
 A triaged segment that is too short to be a pellet is never left in triage at
-all: the gate sends the video to deep review with the reason "segmentation:
+all: the gate sends the video to re-segmentation with the reason "segmentation:
 segment(s) N ... too short to be a pellet presentation", and the return scan
 moves any such bundle already sitting in triage. If a person has cleared the
-video in deep review and kept those cuts, there is no pellet in such a segment
+video in re-segmentation and kept those cuts, there is no pellet in such a segment
 to ask about, and it stops holding the video.
 
 ### Escalating out of triage (since 2026-08-25)
@@ -179,19 +179,19 @@ to ask about, and it stops holding the video.
 Part of triage is checking that the pellet on screen is the pellet the
 segment claims to be. If it is not -- the cuts are offset, missing or
 misplaced -- the reviewer answers nothing and presses **Escalate: bad
-segmentation -> deep review**. It saves the answers given so far (they
+segmentation -> re-segmentation**. It saves the answers given so far (they
 re-attach by frame span after the boundary fix), moves the bundle to the
-deep-review queue with the notes text as the routing reason, and loads the
+re-segmentation queue with the notes text as the routing reason, and loads the
 next video (`_escalate_to_deep_review`).
 
-**Escalating cancels any earlier deep-review clear (since 2026-10-27).**
+**Escalating cancels any earlier re-segmentation clear (since 2026-10-27).**
 Pressing the button means a new problem with the cuts has been found, so a
-video that was cleared in deep review before is no longer cleared. Its old
+video that was cleared in re-segmentation before is no longer cleared. Its old
 `{stem}_deep_review_cleared.json` is renamed to
 `{stem}_deep_review_cleared_superseded_<time>.json` (kept, never deleted) as
-the video moves, and it waits in deep review until someone clears it again.
+the video moves, and it waits in re-segmentation until someone clears it again.
 Only the button does this (`escalate_to_deep_review` in `review_gate.py`);
-the watcher's own routes into deep review happen only when there is no clear.
+the watcher's own routes into re-segmentation happen only when there is no clear.
 Before this, the old clear went along with the video, the watcher read it as
 "done" and released the video within seconds, and it came back to triage on
 the same cuts -- the button seemed to do nothing.
@@ -216,7 +216,7 @@ segment N. If that's wrong, which segment is this actually?", which wrote
 `true_segment_num` + `segmentation_wrong` into the record. It was removed
 because the button does the same job in one step. Records written with it
 are still honoured: at return time the watcher diverts such a video to the
-deep-review queue (`review_return.py`, `TriageStatus.seg_pending_reseg`), and
+re-segmentation queue (`review_return.py`, `TriageStatus.seg_pending_reseg`), and
 once the cuts are hand-fixed (`boundary_source: "human"`) the old correction
 stops blocking it.
 
@@ -302,7 +302,15 @@ New saves stamp the document `schema_version: "1.1"` (`causal_review_io.py:268`)
 
 ---
 
-## Working the deep-review queue: the operator's walkthrough
+## Working the re-segmentation queue: the operator's walkthrough
+
+> **Names (2026-10-27).** The queue for videos whose cuts need fixing is the
+> **re-segmentation queue**; the review tool opened on it is **Re-segmentation
+> Review**. Both used to be called "deep review" -- a name kept for
+> ground-truthing with the ground-truth tool, which is a different job. The
+> folder (`Processing/Review/deep_review`), the database state `deep_review`
+> and the clear file `{video}_deep_review_cleared.json` keep their old names:
+> every machine reads them.
 
 This section is for the person doing the work, no codebase knowledge assumed.
 Everything below it in this document is the engineering detail behind these
@@ -328,7 +336,7 @@ terminal.)
 
 When napari opens, find the **Review Queues** tab in the right-hand dock. It
 shows how many videos are waiting in each queue and has three buttons: *Open
-Triage Review*, *Open Deep Review*, and *Open Re-segmentation*. Each opens in
+Triage Review*, *Open Re-segmentation Review*, and *Open Re-segmentation*. Each opens in
 its own window.
 
 **Which button to press.** Deep-review videos are there for one of two broad
@@ -355,11 +363,11 @@ reasons, and each has its tool:
   Saving marks the cuts as human-made -- the pipeline will keep them.
 - **Something else is wrong with the whole video** (escalated for a reason
   that is not boundaries, or you need to re-judge every segment's outcome).
-  Press **Open Deep Review**. It walks every segment of the video asking the
+  Press **Open Re-segmentation Review**. It walks every segment of the video asking the
   same outcome/causal-reach questions as triage review.
 
 **Finishing a video.** Fixing the cuts does NOT release the video by itself.
-After the cuts are right (or after a full deep review), open **Deep Review**
+After the cuts are right (or after a full re-segmentation), open **Re-segmentation Review**
 on that video and press **Clear -> re-enter pipeline**. That is the release:
 the watcher then re-runs the video from segmentation onward -- keeping any
 human-made cuts -- and the results flow to the database automatically. Nothing
@@ -371,18 +379,18 @@ Review if you have judged every segment and all is well.
 
 ---
 
-## Deep Review
+## Re-segmentation Review
 
 The same widget with `deep_review=True` (`causal_review_widget.py:198-203`). Differences:
 
 - It reads the `DEEP_REVIEW` queue, not the triage queue (`queue_launcher_widget.py:123-126`).
 - `triage_only` is forced off (`:210`), so **every** segment is walked.
 - The **Clear -> re-enter pipeline** button appears. It saves the review, then writes `{stem}_deep_review_cleared.json` into the bundle (`_clear_deep_review`, `:3069`, marker at `:3085`). That marker is what the watcher looks for.
-- The same marker can be written in bulk from a terminal: `mousereach-review-release` lists every deep-review bundle's completeness (judged on `human.outcome` per segment -- never `answers.reviewed`, which nothing has ever written) and with `--clear` releases the fully-answered ones. It is the button's bulk form for reviews completed without the second step, not an automatic release.
+- The same marker can be written in bulk from a terminal: `mousereach-review-release` lists every re-segmentation bundle's completeness (judged on `human.outcome` per segment -- never `answers.reviewed`, which nothing has ever written) and with `--clear` releases the fully-answered ones. It is the button's bulk form for reviews completed without the second step, not an automatic release.
 
 It has no console command. It opens from the "Review Queues" launcher tab (`queue_launcher_widget.py:123`) or from the pipeline dashboard for one named video (`dashboard/widget.py:1488`).
 
-**It cannot open the videos it exists for.** The bundle pool skips any bundle whose segmentation failed (`:2665-2666`), and "segmentation failed" is the main reason the gate routes a video to deep review in the first place (`review_gate.py:87-88`). Of the 120 bundles in the deep-review queue right now, 17 meet that test and are invisible to the tool; one more has no segments file at all, which the gate counts as failed (`triage_status.segmentation_failed`, `triage_status.py:50-51`) but the widget counts as fine (`:2610`, which returns `False` on any read error). The Segmentation Fixer below is the tool that can open them.
+**It cannot open the videos it exists for.** The bundle pool skips any bundle whose segmentation failed (`:2665-2666`), and "segmentation failed" is the main reason the gate routes a video to re-segmentation in the first place (`review_gate.py:87-88`). Of the 120 bundles in the re-segmentation queue right now, 17 meet that test and are invisible to the tool; one more has no segments file at all, which the gate counts as failed (`triage_status.segmentation_failed`, `triage_status.py:50-51`) but the widget counts as fine (`:2610`, which returns `False` on any read error). The Segmentation Fixer below is the tool that can open them.
 
 ---
 
@@ -392,7 +400,7 @@ It has no console command. It opens from the "Review Queues" launcher tab (`queu
 Review Queues tab (`queue_launcher_widget._open_reseg`). Segment cuts only: no
 outcomes, no reaches, no causal attribution.
 
-It walks the deep-review queue (or `--queue-dir`) and offers bundles that need a
+It walks the re-segmentation queue (or `--queue-dir`) and offers bundles that need a
 human's cuts, three ways in (`_needs_reseg`): the segmenter's own non-empty
 `needs_human` list (its record of having had to force its answer, written by
 `save_segmentation`, `segmentation/core/segmenter_robust.py:931`); a
@@ -451,7 +459,7 @@ Saving copies the original aside, then rewrites `{stem}_segments.json` with
 
 Two things it does not do:
 
-- **It releases the video only when the routing reason names segmentation.** On save it writes `{stem}_deep_review_cleared.json` when the bundle's recorded routing reason mentions segmentation/mislabel -- fixing cuts is then exactly the work the video was routed for. A bundle routed on other grounds (a QC hold, an unrecorded reason) is deliberately NOT released by a cut-fix, because the clear marker is a blanket human-clear token the watcher gate honors; the status bar says so and the Deep Review tool's Clear (or `mousereach-review-release`) remains the path out once the real concern is resolved.
+- **It releases the video only when the routing reason names segmentation.** On save it writes `{stem}_deep_review_cleared.json` when the bundle's recorded routing reason mentions segmentation/mislabel -- fixing cuts is then exactly the work the video was routed for. A bundle routed on other grounds (a QC hold, an unrecorded reason) is deliberately NOT released by a cut-fix, because the clear marker is a blanket human-clear token the watcher gate honors; the status bar says so and the Re-segmentation Review tool's Clear (or `mousereach-review-release`) remains the path out once the real concern is resolved.
 - **It does not re-run anything.** The bundle's reaches, outcomes and assignments still describe the old cuts until the video goes back through the pipeline. The re-run keeps the human cuts: segmentation preserves a `boundary_source: "human"` segments file instead of overwriting it (`segmentation/core/batch.py::process_single`).
 
 Nothing routes videos here on the strength of `needs_human` alone. That routing was added and then deliberately switched off — the gate records the verdict and ignores it, with the reasoning written out in full at `review_gate.py:89-105`. What DOES route videos here (since 2026-08-25): a reviewer setting a corrected segment number in triage (the return scan diverts the video instead of re-injecting it, `review_return.py`), the triage tool's "Escalate: bad segmentation" button, and the ReprocessingScanner's divert when a pending review declares a mislabel (`reprocessor.py`).
@@ -502,7 +510,7 @@ For each triaged segment it loads only that segment's frames plus padding (`--pr
 - in `_pellet_outcomes.json`: the same clearing fields plus `human_verified: true`, the person's outcome, interaction frame, outcome-known frame and `causal_reach_id` (`:570-590`);
 - a `{stem}_unified_ground_truth.json` next to the bundle's algorithm JSONs (`:599`; path from `_unified_gt_path_for_video`, `:642`).
 
-Two consequences of that third write are easy to miss. The object it saves is `self.gt`, the *unfiltered* one seeded from the algorithm — rows nobody touched are in it with `determined: false`. The truth layering skips undetermined rows (`truth_resolver.py:138-139`), so no false values leak into the numbers, but **the file's existence alone** makes `has_gt()` true (`causal_review_io.py:596`), which (a) removes the video from the causal review tool's queue as "already ground-truthed" and (b) in a deep-review bundle counts as a clearance all by itself (`review_return.py:112-114`).
+Two consequences of that third write are easy to miss. The object it saves is `self.gt`, the *unfiltered* one seeded from the algorithm — rows nobody touched are in it with `determined: false`. The truth layering skips undetermined rows (`truth_resolver.py:138-139`), so no false values leak into the numbers, but **the file's existence alone** makes `has_gt()` true (`causal_review_io.py:596`), which (a) removes the video from the causal review tool's queue as "already ground-truthed" and (b) in a re-segmentation bundle counts as a clearance all by itself (`review_return.py:112-114`).
 
 `--qc-count N` blends N spot-checks into the same walk (`qc_pool.py`). These are segments the algorithm was **confident** about — segmentation did not fail, the outcome is a committed class, the segment is not flagged, and for touched outcomes a causal reach was committed (`iter_passing_segments`, `qc_pool.py:78-142`) — sampled round-robin across cohort+date strata, never-checked first (`sample`, `:184`). The reviewer gets two buttons instead of the marking UI: *Algo is RIGHT* logs agreement; *Algo is WRONG* logs disagreement **and** sets `flagged_for_review` back on that segment so it re-enters triage (`_flag_segment_for_triage`, `:429-444`). State lives in `<parent of the corpus root>/_QC/qc_state.json` plus an append-only `qc_drift_log.jsonl` (`qc_pool.py:160`, `:167-173`). `--qc-report` prints the agreement rate and exits without opening napari (`triage_clearing.py:729-742`). `--qc-count` is ignored outside corpus-root mode (`:803-804`).
 
@@ -595,7 +603,7 @@ Three specific hazards:
 
 1. **The pairing is positional, not by number.** `zip(reaches_data['segments'], outcomes_data['segments'])` at `feature_extractor.py:248` pairs the first reach-segment with the first outcome-segment and so on, and stops at the shorter list. If the two files disagree on how many segments there are — which is what the Segmentation Fixer produces until the video is re-run, since it rewrites only `_segments.json` — outcomes attach to the wrong reaches with nothing raised and no record left.
 
-2. **An offset is invisible.** Every segment still looks well formed; only the numbering is shifted, so pellet 7 as scored on the bench is compared against footage of pellet 8. A triage reviewer who sees it escalates the video to deep review, where the cuts are fixed.
+2. **An offset is invisible.** Every segment still looks well formed; only the numbering is shifted, so pellet 7 as scored on the bench is compared against footage of pellet 8. A triage reviewer who sees it escalates the video to re-segmentation, where the cuts are fixed.
 
 3. **A re-cut can silently discard the review.** `index_review_by_segment` drops any review whose frames no longer line up with a current segment. Until 2026-10-21 the release check still counted such a review as resolved by number, so the video finished carrying the algorithm's call. Since then the release check matches by frames as well, and the segment stays open for a person.
 
@@ -615,7 +623,7 @@ Set in `config.py:164-166`, derived from `NAS_ROOT`:
 | `Paths.TRIAGE_REVIEW` | `<nas>/Processing/Review/triage` | per-element questions |
 | `Paths.DEEP_REVIEW` | `<nas>/Processing/Review/deep_review` | failed segmentation, failed quality control, escalations |
 
-The deep-review folder was once `Processing/Review/flagged_for_review`. That name is retired for the folder only -- `flagged_for_review` is still a field in the segments, reaches and outcomes files and a database column. A migrated drive holds a plain file at the old folder path, so old code that tries to use it fails loudly instead of rebuilding it.
+The re-segmentation folder was once `Processing/Review/flagged_for_review`. That name is retired for the folder only -- `flagged_for_review` is still a field in the segments, reaches and outcomes files and a database column. A migrated drive holds a plain file at the old folder path, so old code that tries to use it fails loudly instead of rebuilding it.
 
 An unset `nas_root` makes all three `None` (since 2026-10-22), and the launcher tab reports "queue not configured" (`queue_launcher_widget.py:112-113`). Run `mousereach-setup`, or use the Setup panel's "Shared pipeline folder" field, to set it. **Why no fallback:** until 2026-10-22 an unset `nas_root` was guessed as `<NAS drive>/! DLC Output`, a layout retired in 2026, so the queue paths resolved to real-looking folders in the old place and the review tools would have worked there as if nothing were wrong. Saving from setup also used to delete `nas_root`, which made the guess a live risk on every machine. `Paths.NAS_ROOT_ORIGIN` is now `config` or `unset`.
 
@@ -654,22 +662,22 @@ A new bundle is built out of sight and appears in one step. `move_video_bundle` 
 
 Only `scan_review_queues` (`review_return.py`) moves a bundle out. It runs inside the watcher every 10th poll cycle (`orchestrator.py:1345`, `:1391-1395`) and handles at most **10 bundles per scan** (`MAX_RETURNS_PER_SCAN`, `review_return.py`) so returning does not starve the pipeline.
 
-Because the queues are shared storage scanned by every watcher node, every mutation the scan performs — a return, a stale-bundle retire, a divert to deep review — first takes a per-video claim marker in `{REVIEW_ROOT}/.return_claims/` (`_claim_return` / `_with_return_claim`, `review_return.py`). The marker is created exclusively (`watcher/claim_marker.py`): the file server creates it only if it does not already exist, so when two nodes race exactly one succeeds, and the marker records which host holds it. A stem another node holds is skipped this pass and re-examined next scan. A marker is broken only when its holder has stopped writing its status report (`Processing/.node_status/<host>.json`) for 3 hours, both times read from the file server so the machines' clock differences do not matter; an old marker whose holder is still reporting is never broken. If the claim folder cannot be made, nothing is moved that pass. With no shared root configured the claim is a no-op. (Until 2026-10-21 the marker was written, re-read after 0.5 s, and broken after 2 hours by age alone.) Scanning a bundle never takes a claim — only touching it does.
+Because the queues are shared storage scanned by every watcher node, every mutation the scan performs — a return, a stale-bundle retire, a divert to re-segmentation — first takes a per-video claim marker in `{REVIEW_ROOT}/.return_claims/` (`_claim_return` / `_with_return_claim`, `review_return.py`). The marker is created exclusively (`watcher/claim_marker.py`): the file server creates it only if it does not already exist, so when two nodes race exactly one succeeds, and the marker records which host holds it. A stem another node holds is skipped this pass and re-examined next scan. A marker is broken only when its holder has stopped writing its status report (`Processing/.node_status/<host>.json`) for 3 hours, both times read from the file server so the machines' clock differences do not matter; an old marker whose holder is still reporting is never broken. If the claim folder cannot be made, nothing is moved that pass. With no shared root configured the claim is a no-op. (Until 2026-10-21 the marker was written, re-read after 0.5 s, and broken after 2 hours by age alone.) Scanning a bundle never takes a claim — only touching it does.
 
 **An empty triage folder is left alone for 30 minutes before it is filed away.** An empty folder is not a bundle; it is residue of an earlier divert or return, and the scan retires it to `_Problematic` -- but only once its modification time is older than `EMPTY_DIR_GRACE_SECONDS` (30 minutes, `review_return.py`). **Why:** a router may have just created the folder and still be moving files in (routing into an existing bundle, or after a failed rename, fills the folder in place), and the time is stamped by the share's clock, which can differ from the scanning node's by many minutes. A time in the future, or one that cannot be read, counts as young. Real residue simply waits for a later scan. The same scan warns once per watcher run about any `<queue>/.incoming/<stem>/` older than 30 minutes and never touches it: those files are the video's only copy, and whether the route is still running or died is for a person to judge.
 
-**A bundle of a video that has since been archived is filed away (since 2026-10-22).** If this node's record says the video is `archived` and nobody wrote anything in the bundle (no review, no clear marker, no ground truth), the bundle is a leftover when either (a) it holds no results at all -- typically just the .mp4 a return could not delete while the review tool still had it open -- or (b) every file in it is older than the video's archived results in Analyzed. The scan moves it to `_Problematic` with a note saying which (`_superseded_by_archive`, `review_return.py`), in either queue. **Why:** such bundles asked a person for work already done; between 2026-09-10 and 09-29 twenty videos a person had cleared came back to deep review as a bare .mp4 and fifteen were cleared a second time. A bundle the nightly bench-disagreement scan puts in a queue is never caught: its results leave Analyzed when it is routed, and its routing record is written after the archive. Anything a person wrote keeps the bundle in the queue.
+**A bundle of a video that has since been archived is filed away (since 2026-10-22).** If this node's record says the video is `archived` and nobody wrote anything in the bundle (no review, no clear marker, no ground truth), the bundle is a leftover when either (a) it holds no results at all -- typically just the .mp4 a return could not delete while the review tool still had it open -- or (b) every file in it is older than the video's archived results in Analyzed. The scan moves it to `_Problematic` with a note saying which (`_superseded_by_archive`, `review_return.py`), in either queue. **Why:** such bundles asked a person for work already done; between 2026-09-10 and 09-29 twenty videos a person had cleared came back to re-segmentation as a bare .mp4 and fifteen were cleared a second time. A bundle the nightly bench-disagreement scan puts in a queue is never caught: its results leave Analyzed when it is routed, and its routing record is written after the archive. Anything a person wrote keeps the bundle in the queue.
 
-**A triage copy that only repeats the deep-review bundle is filed away (since 2026-10-22).** Older escalations sometimes split a bundle: the results moved to deep review and the mp4 stayed in triage. When the same video has a folder in both queues and segmentation failed, the scan compares the two. If every file in the triage folder has a file of the same name in the deep-review folder with exactly the same bytes, the triage folder holds nothing the reviewer's copy lacks, and the scan moves it to `_Problematic` with a note saying why (`_is_leftover_copy`, `review_return.py`). The deep-review bundle is not touched. If anything differs (a different byte, or a file the deep-review copy does not have), both copies stay where they are, and the log says "exists in BOTH queues" each scan until a person sorts them out. **Why:** until this rule, every such leftover sat there for good, and the scan logged the same line every few minutes (one video, 231 times in three days). Sizes are compared first and the files are read only when every size matches. A pair that is not a leftover is read once, not on every scan.
+**A triage copy that only repeats the re-segmentation bundle is filed away (since 2026-10-22).** Older escalations sometimes split a bundle: the results moved to re-segmentation and the mp4 stayed in triage. When the same video has a folder in both queues and segmentation failed, the scan compares the two. If every file in the triage folder has a file of the same name in the re-segmentation folder with exactly the same bytes, the triage folder holds nothing the reviewer's copy lacks, and the scan moves it to `_Problematic` with a note saying why (`_is_leftover_copy`, `review_return.py`). The re-segmentation bundle is not touched. If anything differs (a different byte, or a file the re-segmentation copy does not have), both copies stay where they are, and the log says "exists in BOTH queues" each scan until a person sorts them out. **Why:** until this rule, every such leftover sat there for good, and the scan logged the same line every few minutes (one video, 231 times in three days). Sizes are compared first and the files are read only when every size matches. A pair that is not a leftover is read once, not on every scan.
 
 - **Triage**: the bundle leaves when it has triaged elements, all of them are resolved, and segmentation has not failed (`:247`). "Resolved" means a saved review answered the segment **or ground truth determined it** — `triage_status` folds in `gt_resolved_segments` since 2026-08-28, and treats a fully certified video (`completion_status.all_complete`, or reaches and outcomes both exhaustive) as resolved outright.
 
   Before that fix the release side was narrower than the admission side. `evaluate_gate` had always subtracted GT-determined segments, but `triage_status.resolved_segments` read the causal-review document alone, so a bundle whose questions GT had answered could never satisfy `fully_resolved`. The review tool skipped the same bundle because `has_gt()` said there was nothing to ask. Nobody asked and nobody released: measured 2026-08-28, 7 bundles were stuck exactly there, one of them since July.
 - **Deep review**: the bundle leaves when `{stem}_deep_review_cleared.json` exists, or a ground-truth file sits in the bundle (`:108-115`).
-- **Deep review, held by the quality check alone (since 2026-10-22)**: a bundle whose routing reason is `qc_needs_review` and that holds no file a person wrote (a review, a clear marker, ground truth) has the quality check re-run on it. The pose-tracking layer is not re-run -- its stored flags are carried over, so a hold it made stays (except a ruler-variation hold: since 2026-10-23 the check only records a ruler that varies within a video, so those holds are released) -- and the file-based layers are. If nothing critical remains, the bundle leaves for a fresh run: its mp4 and pose files go back to the posed folder (`Processing/Posed`), its other files go to `_Problematic/_released_qc_holds_<date>/<stem>/` with a note, and the video's state becomes `dlc_complete`, so intake takes it in its priority turn (Easy and Flat only when nothing else waits). It is not sent straight to `processing`: anything there blocks intake of new work. Nothing in the posed folder is replaced. The posed folder usually still holds the video's files (intake leaves them there until the video is archived); the same file there -- same size and modified time (the quick check rsync and robocopy use; every copy in the chain keeps the time), or the same SHA-256 when the times differ -- is kept as the one copy and the bundle's duplicate is removed, while a copy that differs leaves the bundle for a person. If a move fails, every move is undone and the bundle stays. Re-checks take at most 30 seconds of each scan, and a bundle is re-checked once until its files change (`_qc_hold_lifted`, `_release_to_posed`, `review_return.py`). **Why:** a corrected check otherwise leaves every hold it made by mistake in a person's queue -- the check once demanded an outcomes file Easy and Flat trays never get, and 469 such bundles sat in deep review for that alone.
-- **Triage with a failed segmentation**: the return scan diverts the bundle to deep review -- it can never satisfy the triage release condition (which requires a sound segmentation), and before this divert existed such bundles had no route out at all. The processing-side gate honors an existing human clear marker even when the segmentation self-check still reports failure, and since 2026-09-09 the return scan honors the same marker: a bundle carrying `{stem}_deep_review_cleared.json` is never diverted (the deep-review question is answered) and may release from triage once its triaged segments are answered, seg self-check notwithstanding. Before that, the gate's honor and the scan's raw `seg_failed` divert fought each other and a cleared video with unresolved triage segments lapped processing -> triage -> deep review -> processing indefinitely (one video made 43 laps in a day).
+- **Deep review, held by the quality check alone (since 2026-10-22)**: a bundle whose routing reason is `qc_needs_review` and that holds no file a person wrote (a review, a clear marker, ground truth) has the quality check re-run on it. The pose-tracking layer is not re-run -- its stored flags are carried over, so a hold it made stays (except a ruler-variation hold: since 2026-10-23 the check only records a ruler that varies within a video, so those holds are released) -- and the file-based layers are. If nothing critical remains, the bundle leaves for a fresh run: its mp4 and pose files go back to the posed folder (`Processing/Posed`), its other files go to `_Problematic/_released_qc_holds_<date>/<stem>/` with a note, and the video's state becomes `dlc_complete`, so intake takes it in its priority turn (Easy and Flat only when nothing else waits). It is not sent straight to `processing`: anything there blocks intake of new work. Nothing in the posed folder is replaced. The posed folder usually still holds the video's files (intake leaves them there until the video is archived); the same file there -- same size and modified time (the quick check rsync and robocopy use; every copy in the chain keeps the time), or the same SHA-256 when the times differ -- is kept as the one copy and the bundle's duplicate is removed, while a copy that differs leaves the bundle for a person. If a move fails, every move is undone and the bundle stays. Re-checks take at most 30 seconds of each scan, and a bundle is re-checked once until its files change (`_qc_hold_lifted`, `_release_to_posed`, `review_return.py`). **Why:** a corrected check otherwise leaves every hold it made by mistake in a person's queue -- the check once demanded an outcomes file Easy and Flat trays never get, and 469 such bundles sat in re-segmentation for that alone.
+- **Triage with a failed segmentation**: the return scan diverts the bundle to re-segmentation -- it can never satisfy the triage release condition (which requires a sound segmentation), and before this divert existed such bundles had no route out at all. The processing-side gate honors an existing human clear marker even when the segmentation self-check still reports failure, and since 2026-09-09 the return scan honors the same marker: a bundle carrying `{stem}_deep_review_cleared.json` is never diverted (the re-segmentation question is answered) and may release from triage once its triaged segments are answered, seg self-check notwithstanding. Before that, the gate's honor and the scan's raw `seg_failed` divert fought each other and a cleared video with unresolved triage segments lapped processing -> triage -> re-segmentation -> processing indefinitely (one video made 43 laps in a day).
 
-Returning moves the bundle's data files, including the review file, into the local processing directory, drops the queue-only metadata, deletes the now-empty bundle directory, and sets the video back to `processing` so the pipeline re-runs it and the gate re-checks (`_return_to_processing`). Queue-only metadata is matched by exact name -- `<stem>_manifest.json`, `<stem>_routing.json`, `manifest.json` -- so `<stem>_processing_manifest.json`, the video's provenance record, travels back with the bundle. **Why:** the old suffix match on `_manifest.json` caught the processing manifest too and deleted it from every returned bundle. A normal re-run regenerates it before the review gate; that regeneration is best-effort, though, so if it fails, or a segmentation failure routes the video before it runs, the old manifest stays beside the new outputs. The pose recorded for the re-run is the one `_resolve_inputs` selected (`select_pose_file`), not whichever `.h5` happened to move last. **Why:** a bundle can hold two poses (a re-pose leaves the old model's file beside the new one), and the last-moved rule re-ran such videos on the wrong, often older, pose. Gate-routed bundles carry their own mp4 and pose; only older staged bundles point at an mp4 and pose left in Analyzed. It refuses and leaves the bundle alone if files of the video are still in the queue's `.incoming/<stem>/` build folder, if the database row cannot be created, if the pose file cannot be found, or if the state cannot be set — a clearance is never spent on a run that would fail. The pose is looked for, in order, in the bundle, the bundle's manifest, Analyzed, pose staging (`Processing/Posed`), and -- since 2026-10-21 -- the processing folder the return delivers to and the pose the video's own row records; outside the bundle only a pose of the currently declared model is accepted. **Why the last two:** an older divert between the queues moved only the mp4 into deep review and left the pose and results on the node that ran the video, and two cleared videos then failed to return on every scan for weeks. A return refused for a missing pose or for files left in `.incoming` is tried again after an hour (`RETURN_RETRY_S`), not on every scan, and its ERROR line says so. Each scan re-reads a triage bundle's files only when the bundle has changed since the last scan (its files' names, sizes and modified times) or the video's ground truth has; saving an answer changes the bundle, so it is seen on the next scan.
+Returning moves the bundle's data files, including the review file, into the local processing directory, drops the queue-only metadata, deletes the now-empty bundle directory, and sets the video back to `processing` so the pipeline re-runs it and the gate re-checks (`_return_to_processing`). Queue-only metadata is matched by exact name -- `<stem>_manifest.json`, `<stem>_routing.json`, `manifest.json` -- so `<stem>_processing_manifest.json`, the video's provenance record, travels back with the bundle. **Why:** the old suffix match on `_manifest.json` caught the processing manifest too and deleted it from every returned bundle. A normal re-run regenerates it before the review gate; that regeneration is best-effort, though, so if it fails, or a segmentation failure routes the video before it runs, the old manifest stays beside the new outputs. The pose recorded for the re-run is the one `_resolve_inputs` selected (`select_pose_file`), not whichever `.h5` happened to move last. **Why:** a bundle can hold two poses (a re-pose leaves the old model's file beside the new one), and the last-moved rule re-ran such videos on the wrong, often older, pose. Gate-routed bundles carry their own mp4 and pose; only older staged bundles point at an mp4 and pose left in Analyzed. It refuses and leaves the bundle alone if files of the video are still in the queue's `.incoming/<stem>/` build folder, if the database row cannot be created, if the pose file cannot be found, or if the state cannot be set — a clearance is never spent on a run that would fail. The pose is looked for, in order, in the bundle, the bundle's manifest, Analyzed, pose staging (`Processing/Posed`), and -- since 2026-10-21 -- the processing folder the return delivers to and the pose the video's own row records; outside the bundle only a pose of the currently declared model is accepted. **Why the last two:** an older divert between the queues moved only the mp4 into re-segmentation and left the pose and results on the node that ran the video, and two cleared videos then failed to return on every scan for weeks. A return refused for a missing pose or for files left in `.incoming` is tried again after an hour (`RETURN_RETRY_S`), not on every scan, and its ERROR line says so. Each scan re-reads a triage bundle's files only when the bundle has changed since the last scan (its files' names, sizes and modified times) or the video's ground truth has; saving an answer changes the bundle, so it is seen on the next scan.
 
 **No review tool moves a bundle between folders.** The only `shutil` calls in `review/` are the Segmentation Fixer copying a file aside before overwriting it (`fix_segmentation_widget.py:444`) and the ground-truth migration helper (`unified_gt.py:877`). A bundle with a complete review sits in the folder until the watcher's return scan picks it up.
 
@@ -685,7 +693,7 @@ Until 2026-10-23 the tool READ this list at launch and, if it held any row for t
 
 **Now:** pressing "Flag Session (needs review)" saves the current review, records the
 session in `Processing/Review/flagged_sessions.json` as provenance, and **routes the
-video to the deep-review queue** via `route_to_queue`, then advances to the next video.
+video to the re-segmentation queue** via `route_to_queue`, then advances to the next video.
 The flag is a note about the session; the divert is the action. Nothing filters on the
 flag any more.
 
@@ -747,13 +755,13 @@ Each of these is code that runs, produces a value, and has no reader.
 `resolve_truth_layers` (`truth_resolver.py:289`) builds layers low to high and merges them (`_apply_outcome_layers`, `:153-183`):
 
 ```
-ground truth  >  processing-dir review  >  deep-review-queue review  >  triage-queue review  >  algorithm
+ground truth  >  processing-dir review  >  re-segmentation-queue review  >  triage-queue review  >  algorithm
 ```
 
 Two things to be precise about:
 
 - **The unit is a segment, not an element.** Within the per-segment outcome layers, a higher layer replaces the whole override for that segment — outcome, causal reach id and interaction frame together (`:160-162`, `:172-180`). Only a segment that no layer covers keeps the algorithm's values. The separate per-reach layer (ground truth only) is merged reach by reach (`_apply_gt_reaches`, `:249`).
-- **Both review tiers are stamped the same.** Triage-queue and deep-review-queue reviews are both labelled `"human_review"` (`:320-322`); the data does not record which tool produced the answer.
+- **Both review tiers are stamped the same.** Triage-queue and re-segmentation-queue reviews are both labelled `"human_review"` (`:320-322`); the data does not record which tool produced the answer.
 
 Ground truth only overrides segments it marks determined (`:138-139`). Provenance is stamped per segment as `outcome_source` (`algo` / `human_review` / `ground_truth`) and per reach as `reach_source` (`algo` / `ground_truth` / `human_review`), with the algorithm's originals preserved as `algo_outcome` and `algo_causal_reach_id` (`:172-176`). Reviews never change the boundaries of a detected reach. A review adds a reach only when the reviewer typed one the detector missed (`_add_reviewed_reaches`, since 2026-10-26; see "A reach the list does not have" above). Ground truth changes boundaries and existence, and only where `reaches.exhaustive` is set does it also delete algorithm reaches it never labelled (`:275-279`). Only real answers are applied (`is_answered`): until 2026-10-26 this step applied a pellet left on "-- select outcome --" as a human answer of "triaged".
 
@@ -763,8 +771,8 @@ The processing-dir layer is the one that does not work — see [Reviews mostly d
 
 Two different lookups, with different rules:
 
-- `resolve_review_path` (`causal_review_io.py:55`) returns the **file**, most recently modified wins (`:90`), checking an explicit directory the caller passes (usually the processing directory), then the triage queue's bundle for that video, then the directory holding the canonical video. It never raises; nothing found means the caller does nothing. It does not look in the deep-review queue. This is what the gate and every kinematics caller use.
-- `truth_resolver` uses its own set: the triage queue, the deep-review queue, and the `primary_dir` it is handed (`truth_resolver.py:315-317`). It needs directories.
+- `resolve_review_path` (`causal_review_io.py:55`) returns the **file**, most recently modified wins (`:90`), checking an explicit directory the caller passes (usually the processing directory), then the triage queue's bundle for that video, then the directory holding the canonical video. It never raises; nothing found means the caller does nothing. It does not look in the re-segmentation queue. This is what the gate and every kinematics caller use.
+- `truth_resolver` uses its own set: the triage queue, the re-segmentation queue, and the `primary_dir` it is handed (`truth_resolver.py:315-317`). It needs directories.
 
 ---
 
@@ -792,7 +800,7 @@ Stated here so nobody rediscovers it the hard way:
 | `--all-segments` | `mousereach-review-tool` | Walk every segment instead of only triaged ones (`:3126`). |
 | `--worklist FILE` | `mousereach-review-tool` | CSV or JSON of `vid` + `segment_num`. Only those videos are offered and only those segments walked — and unlike the normal pool, already-reviewed and ground-truthed videos are included (`:2709-2718`). |
 | `--cv` | `mousereach-review-tool` | Use pixel-based pellet localisation to narrow candidate reaches. Off by default because it decodes the video over the network; without it the narrowing uses tracking data only (`_get_cv_states`, `:1713`, gated at `:1727`). |
-| `--queue-dir` | `mousereach-fix-segmentation` | Queue of bundles to work through; defaults to the deep-review queue (`fix_segmentation_widget.py:482-490`). |
+| `--queue-dir` | `mousereach-fix-segmentation` | Queue of bundles to work through; defaults to the re-segmentation queue (`fix_segmentation_widget.py:482-490`). |
 | `--corpus-root` / `--algo-dir` | `mousereach-triage-clearing` | Bundle-per-video layout vs one flat folder. `--algo-dir` wins (`triage_clearing.py:749`). |
 | `--include-cleared` | `mousereach-triage-clearing` | Put already-cleared segments back in the worklist. |
 | `--qc-count N` / `--qc-report` | `mousereach-triage-clearing` | Blend N spot-checks into the session / print the agreement rate and exit. `--qc-count` is ignored outside corpus-root mode (`:803-804`). |

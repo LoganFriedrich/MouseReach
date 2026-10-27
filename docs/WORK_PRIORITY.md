@@ -74,7 +74,7 @@ watchers pick up a change within a minute; the review tools apply it to the next
 video they hand out. Nothing needs restarting.
 
 **Who obeys it.** The processing watchers, for every kind of work they choose
-between. The triage review tool and the deep review tool, when they choose which
+between. The triage review tool and the re-segmentation tool, when they choose which
 video to show next. The re-segmentation queue. And the order in which videos a
 reviewer has cleared re-enter the pipeline, which matters because only ten of
 them go back per cycle. And which re-pose requests a graphics-card machine takes
@@ -298,7 +298,7 @@ The default already does this. Nothing to write.
 - `src/mousereach/watcher/control_widget.py` -- the "Work priority (whole lab)"
   box that writes that file.
 - The review side, which reads the same order:
-  `review/causal_review_widget.py` `_pick_by_priority` (triage and deep review
+  `review/causal_review_widget.py` `_pick_by_priority` (triage and re-segmentation
   -- top group first, random inside it), `review/fix_segmentation_widget.py`
   `_load_queue`, and `watcher/review_return.py` `_bundles`, which decides which
   cleared videos re-enter the pipeline first when only ten go back per cycle.

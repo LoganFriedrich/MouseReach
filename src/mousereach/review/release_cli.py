@@ -197,7 +197,7 @@ def _completeness(bundle: Path, stem: str) -> Tuple[int, int]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="mousereach-review-release",
-        description="List deep-review bundles by review completeness "
+        description="List re-segmentation-queue bundles by review completeness "
                     "(human.outcome per segment); --clear writes the release "
                     "marker for fully-answered bundles so the watcher's "
                     "return scan re-injects them.")
@@ -215,7 +215,7 @@ def main(argv=None) -> int:
     queue = getattr(Paths, "DEEP_REVIEW", None)
     bundles = _bundle_dirs(queue)
     if not bundles:
-        print(f"Deep-review queue is empty or missing: {queue}")
+        print(f"Re-segmentation queue is empty or missing: {queue}")
         return 0
 
     cls = classify_queue(queue)
@@ -225,7 +225,7 @@ def main(argv=None) -> int:
     partial_walk = cls["partial_walk"]
     not_reseg = cls["not_resegmented"]
 
-    print(f"Deep-review queue: {len(bundles)} bundle(s)")
+    print(f"Re-segmentation queue: {len(bundles)} bundle(s)")
     print(f"  complete (every segment has a human outcome): {len(complete)}")
     for stem, a, t in complete:
         print(f"    {stem}  {a}/{t}")

@@ -352,7 +352,7 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
 def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Path]:
     """Set aside an earlier deep-review clear when a reviewer escalates.
 
-    Pressing "Escalate: bad segmentation -> deep review" means the reviewer has
+    Pressing "Escalate: bad segmentation -> re-segmentation" means the reviewer has
     found a new problem with the cuts (Logan, 2026-10-27: "If you click the
     button it should remove any deep review clearing ... Basically means you
     found a new issue"). Only the button does this: the automatic routes into

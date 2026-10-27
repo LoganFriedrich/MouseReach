@@ -1,4 +1,4 @@
-"""Review Queues launcher tab -- clear the Triage and Deep-Review folders.
+"""Review Queues launcher tab -- clear the Triage and Re-segmentation folders.
 
 "The GUI is god": an operator clears the pipeline's two human-review queues by
 clicking, without a terminal. This tab shows how many videos are waiting in each
@@ -6,7 +6,7 @@ queue and opens the right review tool for each:
 
   * Triage queue (Paths.TRIAGE_REVIEW) -- per-element "which reach / what
     outcome" questions; opens the causal review tool in TRIAGED-ONLY mode.
-  * Deep-Review queue (Paths.DEEP_REVIEW) -- segmentation-failed or escalated
+  * Re-segmentation queue (Paths.DEEP_REVIEW) -- segmentation-failed or escalated
     videos; opens the causal review tool in DEEP-REVIEW mode (full-segment walk +
     a CLEAR button that writes {stem}_deep_review_cleared.json so the watcher
     re-injects the video at the pipeline start).
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class ReviewQueuesWidget(QWidget):
-    """Launcher tab to open + clear the Triage / Deep-Review queues."""
+    """Launcher tab to open + clear the Triage / Re-segmentation queues."""
 
     def __init__(self, napari_viewer=None):
         super().__init__()
@@ -52,17 +52,18 @@ Refresh button.
 * Open Triage Review -- per-segment questions (which reach, what outcome,
   bench-sheet disagreements). Resolving every flagged segment releases the
   video automatically.
-* Open Deep Review -- full-video walk for held-out videos; its
-  "Clear -> re-enter pipeline" button is what releases a deep-review video.
+* Open Re-segmentation Review -- full-video walk for videos held for their
+  cuts; its "Clear -> re-enter pipeline" button releases one, once its cuts
+  were saved in Re-segmentation since it arrived.
 * Open Re-segmentation -- fix WHERE the segment cuts are, guided
   segment-by-segment. Use for boundary/numbering problems. Saving now
   releases the video by itself IF it was routed here for segmentation;
   otherwise the status bar says why it stays.
 * Release finished videos -- one button that removes every FINISHED
-  video from the deep-review queue and sends it back through the
+  video from the re-segmentation queue and sends it back through the
   pipeline (fully answered reviews + hand-fixed segmentations routed
   for segmentation). It never touches videos held for other reasons;
-  those say so and release via Clear inside Deep Review.
+  those say so and release via Clear inside Re-segmentation Review.
 
 Each tool opens in its own window and has its own ? guide.
 """
@@ -81,7 +82,7 @@ Each tool opens in its own window and has its own ? guide.
 
         intro = QLabel(
             "Clear the pipeline's human-review queues. Each opens in its own "
-            "window. Resolving a triage video (or clearing a deep-review video) "
+            "window. Resolving a triage video (or clearing a re-segmentation video) "
             "sends it back through the pipeline automatically."
         )
         intro.setWordWrap(True)
@@ -101,19 +102,19 @@ Each tool opens in its own window and has its own ? guide.
         root.addWidget(tri)
 
         # --- Deep review ---
-        deep = QGroupBox("Deep-Review queue  (seg-failed / escalated)")
+        deep = QGroupBox("Re-segmentation queue  (bad cuts / escalated)")
         dl = QVBoxLayout(deep)
         self._deep_count = QLabel("(counting...)")
         self._deep_count.setStyleSheet("font-weight:bold;")
         dl.addWidget(self._deep_count)
-        dbtn = QPushButton("Open Deep Review")
+        dbtn = QPushButton("Open Re-segmentation Review")
         dbtn.setStyleSheet("background:#3a5a16; color:white; font-weight:bold;")
         dbtn.clicked.connect(self._open_deep)
         dl.addWidget(dbtn)
         sbtn = QPushButton("Open Re-segmentation")
         sbtn.setStyleSheet("background:#5a3a16; color:white; font-weight:bold;")
         sbtn.setToolTip(
-            "Fix segment boundaries by hand for deep-review videos whose "
+            "Fix segment boundaries by hand for re-segmentation videos whose "
             "problem is the segmentation (segmenter needs_human, "
             "reviewer-declared mislabels, triage escalations). Saving stamps "
             "the cuts as human-made so the pipeline keeps them on re-run."
@@ -139,7 +140,7 @@ Each tool opens in its own window and has its own ? guide.
             "minutes and re-runs from the reach stage on the existing pose; "
             "hand-set cuts are preserved. Videos held for other reasons (a QC "
             "hold, no routing reason recorded) are NOT touched by this button "
-            "-- open Deep Review and use 'Clear -> re-enter pipeline' on those "
+            "-- open Re-segmentation Review and use 'Clear -> re-enter pipeline' on those "
             "once their real concern is addressed.")
         self._release_btn.setEnabled(False)
         self._release_btn.clicked.connect(self._release_finished_clicked)
@@ -173,7 +174,7 @@ Each tool opens in its own window and has its own ? guide.
         from mousereach.config import Paths
         for lbl, root, name in (
             (self._triage_count, getattr(Paths, "TRIAGE_REVIEW", None), "Triage"),
-            (self._deep_count, getattr(Paths, "DEEP_REVIEW", None), "Deep-Review"),
+            (self._deep_count, getattr(Paths, "DEEP_REVIEW", None), "Re-segmentation"),
         ):
             n = self._count(root)
             if n < 0:
@@ -208,10 +209,10 @@ Each tool opens in its own window and has its own ? guide.
         if held:
             bits.append(f"{held} held back -- routed for something a cut-fix "
                         f"does not address; release those with Clear inside "
-                        f"Deep Review")
+                        f"Re-segmentation Review")
         if pw:
             bits.append(f"{pw} answered for every triaged segment -- open "
-                        f"Deep Review to judge and Clear them")
+                        f"Re-segmentation Review to judge and Clear them")
         if c["already"]:
             bits.append(f"{len(c['already'])} already released, awaiting "
                         f"pickup (~2 min)")
@@ -243,7 +244,7 @@ Each tool opens in its own window and has its own ? guide.
             show_info("Nothing finished to release.")
             return
         held = len(c["fixed_held"])
-        msg = (f"Release {n} finished video(s) OUT of the deep-review queue "
+        msg = (f"Release {n} finished video(s) OUT of the re-segmentation queue "
                f"and back into the pipeline?\n\n"
                f"  {len(c['complete'])} with every segment answered\n"
                f"  {len(c['fixed_release'])} with segmentation fixed by hand "
@@ -253,7 +254,7 @@ Each tool opens in its own window and has its own ? guide.
         if held:
             msg += (f"\n\n{held} video(s) will NOT be touched (routed for "
                     f"something a cut-fix does not address) -- they stay in "
-                    f"the queue until cleared inside Deep Review.")
+                    f"the queue until cleared inside Re-segmentation Review.")
         if QMessageBox.question(
                 self, "Release finished videos?", msg,
                 QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
@@ -280,10 +281,11 @@ Each tool opens in its own window and has its own ? guide.
     def _open_deep(self):
         from mousereach.config import Paths
         self._open_queue(getattr(Paths, "DEEP_REVIEW", None),
-                         triage_only=False, deep_review=True, title="Deep Review")
+                         triage_only=False, deep_review=True,
+                         title="Re-segmentation Review")
 
     def _open_reseg(self):
-        """Open the fix-segmentation tool over the deep-review queue in its own
+        """Open the fix-segmentation tool over the re-segmentation queue in its own
         window -- manual boundary cuts for videos whose problem is the
         segmentation itself."""
         from mousereach.config import Paths

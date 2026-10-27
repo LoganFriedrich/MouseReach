@@ -28,7 +28,7 @@ walkthroughs of the review tools themselves.
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
-- [Bulk release check for deep-review bundles (human-invoked; gates on human.outcome)](#bulk-release-check-for-deep-review-bundles-human-invoked-gates-on-human-outcome) -- `mousereach-review-release`
+- [Bulk release check for re-segmentation bundles (human-invoked; gates on human.outcome)](#bulk-release-check-for-re-segmentation-bundles-human-invoked-gates-on-human-outcome) -- `mousereach-review-release`
 - [Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)](#pipeline-census-total-workload-per-stage-breakdown-pace-and-eta-headless-json) -- `mousereach-census`
 - [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
@@ -669,14 +669,14 @@ options:
                         (slower: decodes each loaded video over the NAS).
 ```
 
-## Bulk release check for deep-review bundles (human-invoked; gates on human.outcome)
+## Bulk release check for re-segmentation bundles (human-invoked; gates on human.outcome)
 
 ### `mousereach-review-release`
 
 ```
 usage: mousereach-review-release [-h] [--clear]
 
-List deep-review bundles by review completeness (human.outcome per segment);
+List re-segmentation bundles by review completeness (human.outcome per segment);
 --clear writes the release marker for fully-answered bundles so the watcher's
 return scan re-injects them.
 

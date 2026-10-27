@@ -484,9 +484,10 @@ automatic.
                  "Throw away every change on this video and restore the "
                  "algorithm's original cuts."),
                 ("Save these cuts", self._save, "font-weight: bold;",
-                 "Write the corrected cuts (stamped human-made, kept by the "
-                 "pipeline) and load the next video. Does NOT release the "
-                 "video from deep review -- that is Deep Review's Clear button."),
+                 "Write the cuts (stamped human-made, kept by the pipeline) "
+                 "and load the next video. A video sent here for its cuts is "
+                 "released by this save; one sent for another reason is "
+                 "released by the Clear button in Re-segmentation Review."),
                 ("Skip this video", self._next_video, "",
                  "Move on WITHOUT saving anything on this video; it stays in "
                  "the queue.")):
@@ -1236,7 +1237,7 @@ automatic.
                     self.status.setText(
                         self.status.text()
                         + "  NOT auto-released: routed for '%s', which fixing "
-                          "cuts does not address -- use the Deep Review "
+                          "cuts does not address -- use Re-segmentation Review's "
                           "tool's Clear when that is resolved."
                         % (reason_txt or "an unrecorded reason"))
         except Exception as e:
@@ -1247,7 +1248,7 @@ automatic.
 
 
 def main():
-    """Launch the segmentation fixer over the deep-review queue."""
+    """Launch the segmentation fixer over the re-segmentation queue."""
     import argparse
     import napari
     from mousereach.config import Paths
@@ -1257,12 +1258,12 @@ def main():
                     "advances the segmenter found but did not use.")
     ap.add_argument("--queue-dir", type=Path, default=None,
                     help="Queue of bundles to work through "
-                         "(default: the deep-review queue)")
+                         "(default: the re-segmentation queue)")
     args = ap.parse_args()
 
     queue = args.queue_dir or getattr(Paths, "DEEP_REVIEW", None)
     if queue is None:
-        print("[FAIL] no deep-review queue configured; pass --queue-dir")
+        print("[FAIL] no re-segmentation queue configured; pass --queue-dir")
         return 1
 
     print("Segmentation fixer over %s" % queue)
