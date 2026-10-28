@@ -407,6 +407,55 @@ on network drives).
 mousereach-setup --show
 ```
 
+### Step 4 (once per lab, not per PC): The Lab Settings File
+
+Some settings are the same for everyone in the lab -- for example where the
+lab's hand-scores file is. Instead of typing them into every person's
+`config.json` on every PC, the lab writes them ONCE into a file on the shared
+storage drive. Every PC and every person then reads that same file.
+
+**Where it goes:** in the shared pipeline folder -- the folder your
+`nas_root` setting names (the one holding `Unanalyzed`, `Processing` and
+`Analyzed`) -- with exactly this name:
+
+```
+<storage root>\mousereach_lab_config.json
+```
+
+MouseReach finds it from `nas_root` alone. There is nothing to set on each PC
+and no environment variable.
+
+**What it holds** (today: the `hand_scores` section; replace everything in
+`<angle brackets>`, use `\\` between folder names):
+
+```json
+{
+    "hand_scores": {
+        "path": "<path to hand_pellet_scores.csv>",
+        "required_projects": ["PROJECT_A"]
+    }
+}
+```
+
+To make it: open Notepad, paste the text above, fill in your values, and save
+it as `mousereach_lab_config.json` (choose "All files" as the type so Notepad
+does not add `.txt`) in the storage root.
+
+**Which value wins:**
+
+1. A person's own `%USERPROFILE%\.mousereach\config.json`, if it has the
+   setting (the whole `hand_scores` section, not single lines of it).
+2. Otherwise the lab settings file.
+3. Otherwise the setting is unset, exactly as before the file existed.
+
+So nothing that already works changes, and one person can still override a
+setting for themselves by putting it in their own `config.json`.
+
+**If something is wrong:** if the file is missing, or is not valid JSON,
+MouseReach says so once (a warning naming the file) and carries on with the
+setting unset. A running watcher and an open review window read the file
+again each time they need it, so a fix takes effect without a restart.
+
 ---
 
 ## Daily Usage

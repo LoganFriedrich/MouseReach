@@ -312,8 +312,11 @@ other side can see:
   disagreement: the algorithm saw the pellet land in the SA.
 
 The hand scores are read from the same scores file the before-filing check
-reads (the `"hand_scores"` `"path"` setting in this computer's
-`~/.mousereach/config.json`; see `watcher/hand_scores.py`). The decision itself
+reads (the `"hand_scores"` `"path"` setting: the reviewer's own
+`~/.mousereach/config.json` if it has a `"hand_scores"` section, otherwise the
+lab settings file `<storage root>/mousereach_lab_config.json`, so a reviewer
+needs no setting of their own; see `watcher/hand_scores.py` and INSTALL.md,
+Part 6, Step 4). If neither has it, the box never appears. The decision itself
 is `review/double_disagreement.py`; the box is `_passes_double_check` in
 `causal_review_widget.py`. If you press Escalate, Flag Session or Clear while the
 open pellet's answer would bring up the box, the box comes first; "Take another

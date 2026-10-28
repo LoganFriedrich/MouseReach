@@ -52,6 +52,103 @@ def _load_config() -> dict:
 
 _config = _load_config()
 
+
+# =============================================================================
+# THE SHARED LAB SETTINGS FILE (on the storage drive)
+# =============================================================================
+# Some settings are the same for everyone in a lab: where the lab's
+# hand-scores file is, for example. Writing them into every person's own
+# config.json on every PC means one person or one PC is always missing them,
+# and then a feature quietly does nothing for that person. So a lab can keep
+# such settings ONCE, in a file on the storage drive every MouseReach machine
+# already reaches:
+#
+#     <nas_root>/mousereach_lab_config.json
+#
+# WHY found from nas_root and nothing else: every machine and every user that
+# runs MouseReach has nas_root (nothing works without it), so the file is
+# found with no environment variable, no per-user setting and no per-PC step.
+# WHY a file of its own and not the lab profiles file (setup/lab_profiles):
+# that file holds per-PC DEFAULTS that mousereach-setup copies into a PC's
+# config.json once; it is found by an environment variable and matched by
+# hostname. This file is the opposite: settings read LIVE, the same for every
+# PC and person, never copied anywhere. Mixing the two would make it unclear
+# whether editing a value changes anything without re-running setup.
+#
+# Precedence (lab_setting): the person's own config.json first, then this
+# file, else unset. A top-level key in config.json replaces the whole of that
+# key in the lab file (sections are not merged), so a person can still
+# override one setting for themselves exactly as before.
+
+LAB_CONFIG_NAME = "mousereach_lab_config.json"
+
+_LAB_CONFIG_REPORTED = set()   # (path, problem) already said, so it is said once
+
+
+def lab_config_path(user_config: Optional[dict] = None) -> Optional[Path]:
+    """Where the shared lab settings file is: <nas_root>/mousereach_lab_config.json,
+    or None when this user's config.json has no nas_root."""
+    cfg = _load_config() if user_config is None else user_config
+    root = cfg.get("nas_root")
+    return Path(root) / LAB_CONFIG_NAME if root else None
+
+
+def _say_once(path, problem: str, message: str) -> None:
+    """Say a problem with the lab file once per run, as a log warning (which
+    reaches the console when nothing else handles it). ASCII only."""
+    key = (str(path), problem)
+    if key in _LAB_CONFIG_REPORTED:
+        return
+    _LAB_CONFIG_REPORTED.add(key)
+    import logging
+    logging.getLogger(__name__).warning(message)
+
+
+def load_lab_config(user_config: Optional[dict] = None) -> dict:
+    """The shared lab settings file's contents, or {} when there is none or it
+    cannot be read. Never raises: a missing or broken lab file leaves those
+    settings unset, which is what they were before the file existed. Read
+    again on every call, so an edit reaches a running watcher."""
+    path = lab_config_path(user_config)
+    if path is None:
+        return {}
+    try:
+        if not path.is_file():
+            _say_once(path, "missing",
+                      "No shared lab settings file at %s. Settings that are not in "
+                      "this user's own config.json are unset." % path)
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("it does not hold a JSON object")
+        return data
+    except Exception as e:
+        _say_once(path, "unreadable",
+                  "The shared lab settings file %s could not be read (%s). Settings "
+                  "that are not in this user's own config.json are unset until it "
+                  "is fixed." % (path, e))
+        return {}
+
+
+def lab_setting(key: str, default=None):
+    """One setting, looked up in this order:
+
+    1. this user's own ~/.mousereach/config.json, if it has ``key``;
+    2. the shared lab settings file on the storage drive
+       (<nas_root>/mousereach_lab_config.json), if it has ``key``;
+    3. ``default`` (unset).
+
+    A key in the user's config.json wins whole, even when its value is an
+    empty section, so a person can switch a lab-wide setting off for
+    themselves. Both files are read on every call."""
+    user = _load_config()
+    if user.get(key) is not None:
+        return user[key]
+    lab = load_lab_config(user)
+    if lab.get(key) is not None:
+        return lab[key]
+    return default
+
 # =============================================================================
 # DRIVE MAPPINGS - CONFIGURABLE VIA CONFIG FILE OR ENVIRONMENT VARIABLES
 # =============================================================================

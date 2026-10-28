@@ -1820,8 +1820,8 @@ recording's own state (waiting to be cut / being cut / cut). A session with no r
 intake is "not imported". It writes `<list>.coverage.json` beside the list (counts by stage and
 each session's stage) and prints the counts. Read-only. WHY: once a list's recordings are
 imported its sessions spread across the pipeline, and nothing said how far the list had got
-without asking every machine. Tests: `tests/test_session_coverage.py`.
-
+without asking every machine. Tests: `tests/test_session_coverage.py`.
+
 It waits up to 10 minutes for the shared record to be readable (it waited 30 s until 2026-10-26,
 when the scheduled 05:30 run failed with "database is locked": on a slow share an ordinary write can
 hold the file for minutes). A once-a-day report has no reason to give up sooner.
@@ -2253,7 +2253,8 @@ reopened. Tests: `tests/test_route_recheck_answered.py`.
 The last step before a video is filed (`_archive_to_nas` on the processing server,
 `_archive_locally_processed` on a node that also analyses) is now a comparison of its pellets with
 the session's hand scores (`watcher/hand_scores.py`, configured by the `hand_scores` section of
-`~/.mousereach/config.json`; README "Checked against the hand scores before filing"). A pellet that
+`~/.mousereach/config.json` -- or, since 2026-10-28, of the lab settings file on the storage drive,
+see the update of that date; README "Checked against the hand scores before filing"). A pellet that
 disagrees, and that no person has answered, is flagged (`flagged_for_review`, `flag_reason` "disagrees
 with the hand score: ...") and the video goes to triage through `route_to_queue`, as the review tool
 already shows such reasons. A session with no hand scores in a required project leaves the video in
@@ -2564,3 +2565,32 @@ Names: from 2026-10-27 the tools and operator docs call this queue the
 "deep review" is kept for ground-truthing with the ground-truth tool. The
 sections above keep the old name as they were written. Folder, database state
 and file names are unchanged.
+
+## Update 2026-10-28: lab-wide settings come from one file on the storage drive
+
+Before this, every setting was read only from the person's own `~/.mousereach/config.json`. A
+setting the whole lab shares therefore had to be typed into every person's file on every PC, and
+anyone whose file lacked it silently got nothing: a reviewer with no `hand_scores` section never saw
+the review window's "check your answer" box.
+
+Now `config.lab_setting(key)` looks a setting up in this order: the person's own `config.json` if it
+has the key (the whole value, sections are not merged), else the lab settings file
+`<nas_root>/mousereach_lab_config.json`, else unset. The file is found from `nas_root` alone, which
+every machine and user already has: no environment variable, no per-user or per-PC step. Both files
+are read on every call, so an edit reaches a running watcher and an open review window. A missing or
+unreadable lab file (not JSON, or not a JSON object) is reported once per run as a log warning naming
+the file, and the setting stays unset -- the same as before the file existed. A user config with no
+`nas_root` has no lab file and says nothing.
+
+WHY a new file rather than the lab profiles file (`setup/lab_profiles.json`): that file holds per-PC
+DEFAULTS that `mousereach-setup` copies into a PC's `config.json` once, matched by hostname and found
+through `MOUSEREACH_LAB_PROFILES`. The lab settings file is the opposite: read live, the same for
+everyone, never copied. Keeping them apart keeps it clear whether an edit takes effect by itself
+(lab settings) or only after setup is re-run (profiles).
+
+Reader of it today: `hand_scores.settings()`, which every hand-score reader goes through -- the check
+before filing (`check`), the scores-file stamp the watcher uses to avoid re-checking a waiting video
+(`scores_file_stamp`), the attention list (`_write_score_attention`), and the review window's
+`pellet_hand_score`. So the watcher and the review window always read the same settings for the same
+person. The "check could not run" attention message now names the lab file as the usual place to fix
+the setting. Operator steps: INSTALL.md, Part 6, Step 4. Tests: `tests/test_lab_config.py`.

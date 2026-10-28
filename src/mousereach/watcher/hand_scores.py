@@ -48,14 +48,17 @@ no sheet (settled by the next import of every sheet). Keys the file does
 not have count as not known, and the video waits. The pipeline never imports
 that tool; it only reads the file.
 
-CONFIGURATION (~/.mousereach/config.json; read on every check, so an edit
-applies to a running watcher):
+CONFIGURATION (read on every check, so an edit applies to a running watcher):
 
     "hand_scores": {
         "path": "<the CSV file>",
         "required_projects": ["PROJECT_A"]
     }
 
+in this user's ~/.mousereach/config.json, or -- the usual place, so every
+person on every PC gets it -- in the lab's shared settings file on the
+storage drive, <nas_root>/mousereach_lab_config.json (config.lab_setting).
+A "hand_scores" section in the user's own file replaces the lab file's.
 Without "path" nothing is checked and videos are filed as before.
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
@@ -95,13 +98,17 @@ class Verdict:
 
 
 def settings() -> dict:
-    """The "hand_scores" section of this machine's config file ({} if none)."""
-    from mousereach.config import config_file_path
+    """The "hand_scores" settings ({} if none): this user's own config.json if
+    it has the section, else the lab's shared settings file on the storage
+    drive (config.lab_setting). Every reader -- the check before filing, the
+    scores-file stamp, the review window's check-your-answer box -- comes
+    through here, so they all read the same file for the same person."""
+    from mousereach.config import lab_setting
     try:
-        raw = json.loads(Path(config_file_path()).read_text(encoding="utf-8"))
+        value = lab_setting("hand_scores")
     except Exception:
         return {}
-    return raw.get("hand_scores") or {}
+    return value if isinstance(value, dict) else {}
 
 
 _CACHE = {"key": None, "scores": None, "manifest": None}
@@ -266,9 +273,11 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                     "kind": "hand_score_check_failed", "needs_person": True,
                     "video_id": vid, "cohort_id": w.get("cohort_id"),
                     "says": ("%s is processed but not filed: the check against its hand "
-                             "scores could not run (%s). Fix the \"hand_scores\" setting in "
-                             "this PC's config.json, or the file it names; the video is "
-                             "filed by itself once the check runs." % (vid, w["error"])),
+                             "scores could not run (%s). Fix the \"hand_scores\" setting "
+                             "(in the lab's mousereach_lab_config.json on the storage "
+                             "drive, or in this PC's config.json if it has its own), or "
+                             "the file it names; the video is filed by itself once the "
+                             "check runs." % (vid, w["error"])),
                 })
                 continue
             items.append({

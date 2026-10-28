@@ -326,8 +326,10 @@ last step before filing it:
 **The review window reads the same scores.** When a reviewer's answer for a
 pellet disagrees with both the algorithm and the hand score, a "check your
 answer" box asks them to look again before saving; the reviewer's answer
-always wins (docs/REVIEW_TOOLS.md, "Check your answer"). Without a
-`hand_scores` path on the reviewing computer the box never appears.
+always wins (docs/REVIEW_TOOLS.md, "Check your answer"). The reviewer needs no
+setting of their own: the path comes from the lab settings file unless their own
+`config.json` has a `hand_scores` section. Without a path in either, the box
+never appears.
 
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
 shows, in red at the top, **Needs your attention (N)** with one line per thing
@@ -339,15 +341,21 @@ lists behind it are `<NAS root>/attention/<PC name>_hand_scores.json` (rewritten
 whenever they change; `"needs_person": true` marks the ones to act on), and the
 watcher log says the same thing for each video ("Not filing ...").
 
-To turn it on, add to `~/.mousereach/config.json` (a running watcher picks up
-the change):
+To turn it on for the whole lab, put this in the lab settings file on the
+storage drive, `<storage root>/mousereach_lab_config.json` (see "Lab settings
+file" below; a running watcher and an open review window pick up the change):
 
 ```json
-"hand_scores": {
-    "path": "<the hand-scores CSV your lab writes>",
-    "required_projects": ["PROJECT_A"]
+{
+    "hand_scores": {
+        "path": "<path to hand_pellet_scores.csv>",
+        "required_projects": ["PROJECT_A"]
+    }
 }
 ```
+
+A `"hand_scores"` section in a person's own `~/.mousereach/config.json` still
+works and wins over the lab file for that person.
 
 The CSV has one row per hand-scored pellet with the columns `video_key` (the
 session as MouseReach names its video, e.g. `20250709_ABC0207_P1`), `pellet`
@@ -477,9 +485,20 @@ See INSTALL.md, Step 6.
 | `processing_root` | Pipeline working folders (DLC_Queue, Processing, Failed) | **Yes** |
 | `nas_drive` | Data repository / archive location | Optional |
 | `watcher.*` | Automated pipeline settings (DLC config, GPU, polling) | For watcher PC |
-| `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked before a video is filed (see "Checked against the hand scores before filing") | Optional |
+| `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked before a video is filed (see "Checked against the hand scores before filing"). Usually kept in the lab settings file instead (below) | Optional |
 
 Configuration is saved to `~/.mousereach/config.json` and persists across sessions.
+
+### Lab settings file
+
+Settings that are the same for everyone in a lab (today: `hand_scores`) can be
+written once in `<storage root>/mousereach_lab_config.json`, where the storage
+root is the folder `nas_root` names. Every PC and person finds it from
+`nas_root`; nothing is set per PC or per user. For each setting MouseReach
+uses the person's own `config.json` if it has that key (the whole section),
+else the lab file, else leaves it unset. A missing or unreadable lab file is
+reported once and leaves the setting unset. INSTALL.md, Part 6, Step 4 shows
+how to create it.
 
 ---
 
