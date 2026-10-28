@@ -135,6 +135,36 @@ def scores_file_stamp() -> Optional[float]:
         return None
 
 
+def pellet_hand_score(video_id: str, pellet: int):
+    """(score, "") for one pellet's hand score (0/1/2, see HAND_WORDS), or
+    (None, why not) when there is none to compare with. Never raises.
+
+    Used by the review window's speed bump (review/double_disagreement.py),
+    which asks a person to look again before saving an answer that disagrees
+    with BOTH the algorithm and this score. The pellet is keyed exactly as
+    ``check`` keys it (the segment number), so the review window and the
+    before-filing check always read the same score for the same pellet. A
+    missing file or row is not an error here: the speed bump simply does not
+    run for that answer."""
+    try:
+        from mousereach.config import is_outcome_free_tray
+        if is_outcome_free_tray(video_id):
+            return None, "Easy/Flat tray: no pellet outcomes"
+        cfg = settings()
+        if not cfg.get("path"):
+            return None, "no hand-scores file configured"
+        scores, _manifest = load(Path(cfg["path"]))
+    except Exception as e:
+        return None, "hand-scores file could not be read (%s)" % e
+    hand = scores.get(video_id)
+    if hand is None:
+        return None, "no hand scores for this session"
+    s = hand.get(int(pellet))
+    if s not in HAND_WORDS:
+        return None, "no hand score for pellet %s" % pellet
+    return s, ""
+
+
 def check(video_id: str, folder: Path) -> Verdict:
     """Compare a processed video in ``folder`` with its hand scores. Reads
     only; flags and moves nothing (see the module docstring for what the

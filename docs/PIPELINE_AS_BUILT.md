@@ -2270,6 +2270,13 @@ shows in red instead of quietly stopping the filing. WHY (Logan, 2026-10-26): fi
 has no issues; before this the comparison ran nightly on videos already filed and moved them back.
 Tests: `tests/test_hand_score_check_before_filing.py`.
 
+The same scores are also read by the review window (since 2026-10-28):
+`hand_scores.pellet_hand_score(video, pellet)` returns one pellet's score, keyed by segment
+number exactly as `check` keys it, or `(None, why not)` -- it never raises. The review window uses
+it to ask a person to look again before saving an answer that disagrees with BOTH the algorithm
+and the hand score (`review/double_disagreement.py`; docs/REVIEW_TOOLS.md "Check your answer").
+Nothing in the watcher calls it, and the before-filing check is unchanged.
+
 The Pipeline Dashboard shows every item of every list in `<NAS root>/attention/` whose
 `needs_person` is true in a red "Needs your attention (N)" panel at its top (hidden when there is
 none), and counts the waiting ones on a grey line (`watcher/attention.py`, `dashboard/widget.py`
