@@ -258,13 +258,14 @@ answer disagrees with what the algorithm said for that pellet **and** with the
 tray sheet's hand score for that pellet, a box appears before anything is
 saved. It says plainly what each one said, for example:
 
-> The algorithm said displaced (in SA). The tray sheet says displaced. You
-> answered retrieved.
+> Algorithm: displaced (in SA). Tray sheet: displaced. You: retrieved.
+>
+> Did you watch well past the causal reach? A pellet can vanish for a moment
+> and still be in the SA.
 
-The box also reminds you to **watch well past the causal reach** before keeping
-your answer. A pellet knocked off the pillar can bounce out of view for a few
-frames and still be lying in the SA afterwards; stopping too soon after the
-reach makes it look as if the pellet was taken.
+The question is there because stopping too soon after the reach is the usual
+way this goes wrong: a pellet knocked off the pillar can bounce out of view for
+a few frames and still be lying in the SA afterwards.
 
 **The two buttons.**
 

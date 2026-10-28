@@ -64,8 +64,8 @@ def test_the_algorithm_cannot_tell_left_the_sa_from_eaten():
 
 def test_the_box_says_plainly_what_disagrees():
     t = dd.dialog_text("retrieved", "displaced_sa", DISPLACED)
-    assert t.startswith("The algorithm said displaced (in SA). The tray sheet says "
-                        "displaced. You answered retrieved.")
+    assert t.startswith("Algorithm: displaced (in SA). Tray sheet: displaced. "
+                        "You: retrieved.")
     t.encode("ascii")
 
 

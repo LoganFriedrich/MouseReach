@@ -104,12 +104,9 @@ def dialog_text(human: str, algo: str, hand: int) -> str:
     that prompted the box: a reviewer answered "retrieved" for a pellet that
     went out of view for a few frames after the reach and was still bouncing
     around the SA -- watching a little longer shows it."""
-    return ("The algorithm said %s. The tray sheet says %s. You answered %s.\n\n"
-            "Both disagree with your answer. You may well be right -- you are "
-            "watching the video. Before you keep it, watch well past the "
-            "causal reach: a pellet can disappear from view for a moment and "
-            "still be bouncing around the SA. If you are sure, keep your "
-            "answer; otherwise take another look before saving."
+    return ("Algorithm: %s. Tray sheet: %s. You: %s.\n\n"
+            "Did you watch well past the causal reach? A pellet can vanish "
+            "for a moment and still be in the SA."
             % (PLAIN_OUTCOME.get(algo, algo), HAND_WORDS.get(hand, hand),
                PLAIN_OUTCOME.get(human, human)))
 
