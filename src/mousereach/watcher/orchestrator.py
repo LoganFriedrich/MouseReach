@@ -399,26 +399,10 @@ class BaseOrchestrator:
                             f"{v.cohort_id} sheet was imported after it was ready and has "
                             f"no scores for this session (never scored by hand)")
             elif v.status == hand_scores.DISAGREES:
-                from mousereach.watcher.route_cli import flag_segments
-                out_path = Path(folder) / f"{video_id}_pellet_outcomes.json"
-                details = dict(v.disagreements)
-                # A pellet the pipeline had already flagged keeps that reason
-                # after the bench one: the reviewer must see both, and the
-                # text must still START with "bench disagreement" -- that is
-                # how the review tool recognises it (is_bench_mismatch).
-                # On a second check of the same file the old reason is our own
-                # bench text: only the "(also: ...)" part it carries is kept.
-                for seg in json.loads(out_path.read_text(encoding="utf-8")).get("segments", []):
-                    n, old = seg.get("segment_num"), str(seg.get("flag_reason") or "")
-                    if n not in details or not seg.get("flagged_for_review"):
-                        continue
-                    if old.lower().startswith(hand_scores.FLAG_REASON):
-                        i = old.find(" (also: ")
-                        old = old[i + len(" (also: "):-1] if i >= 0 and old.endswith(")") else ""
-                    if old:
-                        details[n] = "%s (also: %s)" % (details[n], old)
-                flag_segments(out_path, list(details), hand_scores.FLAG_REASON,
-                              details=details)
+                # Flagged only; the gate then sends the video to triage once,
+                # with every open question (flag_disagreements says how an
+                # earlier reason is kept).
+                hand_scores.flag_disagreements(folder, video_id, v)
                 logger.info(f"{video_id}: {v.reason} -- flagged for triage")
             hand_scores.record(folder, video_id, v, stamp)
         except Exception as e:

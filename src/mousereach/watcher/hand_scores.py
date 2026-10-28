@@ -237,6 +237,36 @@ def check(video_id: str, folder: Path) -> Verdict:
                    last_import=last, hand=hand)
 
 
+def flag_disagreements(folder: Path, video_id: str, verdict: Verdict) -> list:
+    """Flag every pellet of a DISAGREES verdict for triage in the video's
+    <video>_pellet_outcomes.json, with the reason "bench disagreement: the
+    hand score says X; the algorithm says Y". Returns the segments flagged.
+
+    A pellet the pipeline had already flagged keeps that reason after the
+    bench one, "(also: ...)": the reviewer must see both, and the text must
+    still START with "bench disagreement" -- that is how the review tool
+    recognises it (is_bench_mismatch). On a second check of the same file
+    the old reason is our own bench text: only the "(also: ...)" part it
+    carries is kept, so flagging twice gives the same text as once.
+
+    Used by the pipeline before the review gate (orchestrator
+    _hand_score_precheck) and by anything that re-checks videos already
+    waiting in a review queue, so both write exactly the same flag."""
+    from mousereach.watcher.route_cli import flag_segments
+    out_path = Path(folder) / f"{video_id}_pellet_outcomes.json"
+    details = dict(verdict.disagreements)
+    for seg in json.loads(out_path.read_text(encoding="utf-8")).get("segments", []):
+        n, old = seg.get("segment_num"), str(seg.get("flag_reason") or "")
+        if n not in details or not seg.get("flagged_for_review"):
+            continue
+        if old.lower().startswith(FLAG_REASON):
+            i = old.find(" (also: ")
+            old = old[i + len(" (also: "):-1] if i >= 0 and old.endswith(")") else ""
+        if old:
+            details[n] = "%s (also: %s)" % (details[n], old)
+    return flag_segments(out_path, list(details), FLAG_REASON, details=details)
+
+
 # The word kept in the outcomes file for each verdict (see the module
 # docstring, "EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO"). A WAITING verdict
 # is only ever recorded once scores_never_came() has said the scores will not
