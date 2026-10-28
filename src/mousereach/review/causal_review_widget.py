@@ -41,6 +41,7 @@ import napari
 from napari.utils.notifications import show_info, show_warning, show_error
 
 from .keyboard import keep_typing_in_panel, review_keys_on_layer
+from . import double_disagreement as dd
 from .causal_review_io import (
     UNDECIDED_OUTCOMES,
     build_segment_record,
@@ -391,6 +392,12 @@ Re-segmentation tool instead (Review Queues tab).
   The keys work while the video has the keyboard -- click the video
   first. Anything typed while you are working in this panel stays in
   the panel and never runs a key.
+* "Check your answer" box: if your outcome disagrees with BOTH the
+  algorithm and the tray sheet's hand score, a box says what each said
+  before anything is saved. "Take another look" (the default) saves
+  nothing and keeps you on the same pellet with the video as it was;
+  "Keep my answer" saves and moves on as usual. You are watching the
+  video, so your answer wins -- the box only asks you to be sure.
 * When the whole video is judged (and its cuts are right), press
   "Clear -> re-enter pipeline". THAT is what releases the video: the watcher
   re-runs it and results flow to the database automatically.
@@ -408,6 +415,12 @@ and settle it).
 * "Save Segment + Next" records the answer and moves on. Answers save into
   the video's review file; when every flagged segment is answered, the
   watcher re-injects the video automatically -- no further action.
+* "Check your answer" box: if your outcome disagrees with BOTH the
+  algorithm and the tray sheet's hand score, a box says what each said
+  before anything is saved. "Take another look" (the default) saves
+  nothing and keeps you on the same pellet with the video as it was;
+  "Keep my answer" saves and moves on as usual. You are watching the
+  video, so your answer wins -- the box only asks you to be sure.
 * Wrong pellet, or wrong cuts: do not answer. Press "Escalate: bad
   segmentation -> re-segmentation"; the cuts are fixed there.
 * "Flag Session" marks the whole mouse+day session for mandatory review.
@@ -2623,6 +2636,9 @@ The notes box travels with the video.
             # Stay on this segment: the reviewer fixes the answer or escalates.
             self._tell_not_recorded(blocking=True)
             return
+        if record is not None and not self._passes_double_check(record):
+            # "Take another look": nothing saved, same question, same video.
+            return
         if record is not None:
             seg_num = record["segment_num"]
             self._review_records[seg_num] = record
@@ -2649,6 +2665,67 @@ The notes box travels with the video.
                       if self._triage_only
                       else "Last segment -- saving review and loading next video.")
             self._save_and_next_video()
+
+    # ===================================================================
+    # Speed bump: an answer both the algorithm and the tray sheet contradict
+    # ===================================================================
+
+    def _passes_double_check(self, record: Dict[str, Any]) -> bool:
+        """True to save ``record`` as usual; False when the reviewer chose
+        "Take another look" (then nothing may be saved and the same question
+        stays open, with the video where it is).
+
+        WHY: answers that look like fatigue errors were found among filed
+        pellets -- "retrieved" where both the algorithm and the tray sheet's
+        hand score said displaced. The person watching the video outranks
+        both, so this never blocks or changes an answer; it only asks once
+        more before saving one that BOTH readings contradict. The decision
+        lives in review/double_disagreement.py; this method only fetches the
+        hand score, shows the box, and notes a kept answer in the record
+        (answers["double_disagreement"]) so it can be audited later. No hand
+        score to compare with: the answer is saved as usual and one console
+        line says the check did not run."""
+        if not record or (record.get("answers") or {}).get("is_boundary"):
+            return True
+        human = (record.get("human") or {}).get("outcome")
+        algo = (record.get("algo") or {}).get("outcome")
+        seg_num = record.get("segment_num")
+        answers = record.setdefault("answers", {})
+        prev = dd.already_kept(self._review_records.get(seg_num), human)
+        if prev is not None:
+            answers[dd.FIELD] = prev   # already asked about this same answer
+            return True
+        if not dd.disagrees_with_algorithm(human, algo):
+            return True                # agrees with the algorithm (or it has none)
+        from mousereach.watcher.hand_scores import pellet_hand_score
+        hand, why_not = pellet_hand_score(self._video_stem, seg_num)
+        if hand is None:
+            print(f"[!] Algorithm-and-sheet check not run for {self._video_stem} "
+                  f"segment {seg_num}: {why_not}")
+            return True
+        if not dd.double_disagreement(human, algo, hand):
+            return True
+        if not self._ask_keep_answer(dd.dialog_text(human, algo, hand)):
+            self._status_label.setText(
+                f"[LOOK AGAIN] Segment {seg_num}: nothing saved -- the question "
+                f"is still open.")
+            return False
+        answers[dd.FIELD] = dd.kept_record(human, algo, hand, _get_timestamp())
+        return True
+
+    def _ask_keep_answer(self, text: str) -> bool:
+        """The box. True = "Keep my answer"; False = "Take another look" (the
+        default button, and also what Esc or closing the box means)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Your answer disagrees with the algorithm and the tray sheet")
+        box.setText(text)
+        keep = box.addButton("Keep my answer", QMessageBox.AcceptRole)
+        look = box.addButton("Take another look", QMessageBox.RejectRole)
+        box.setDefaultButton(look)
+        box.setEscapeButton(look)
+        box.exec_()
+        return box.clickedButton() is keep
 
     # ===================================================================
     # Review queue (Pending folder) navigation
@@ -2699,7 +2776,8 @@ The notes box travels with the video.
             self._status_label.setText(f"[FLAG] Session {key} flagged (no bundle to divert).")
             return
         try:
-            self._save_review()
+            if self._save_review() is False:
+                return   # take another look: the flag is recorded, the video is not moved
         except Exception as e:
             logger.warning("flag session: could not save review first: %s", e)
         try:
@@ -2734,7 +2812,8 @@ The notes box travels with the video.
             show_error("No bundle loaded -- escalation only works on a queue bundle.")
             return
         try:
-            self._save_review()
+            if self._save_review() is False:
+                return   # take another look: nothing moved yet
         except Exception as e:
             logger.warning("escalate: could not save review first: %s", e)
         note = (self._notes_edit.toPlainText().strip()
@@ -3075,7 +3154,8 @@ The notes box travels with the video.
 
     def _save_and_next_video(self):
         """Save this video's review, then load the next video in the queue."""
-        self._save_review()
+        if self._save_review() is False:
+            return   # the reviewer chose to take another look
         self._pop_from_index_if_resolved()
         self._load_next_video()
 
@@ -3105,6 +3185,10 @@ The notes box travels with the video.
         # Collect current segment's answers if not already saved
         record = self._collect_answers()
         if record is not None:
+            if not self._passes_double_check(record):
+                # "Take another look": nothing is saved -- not this answer and
+                # not the file -- and the caller stays where it is.
+                return False
             self._review_records[record["segment_num"]] = record
         elif getattr(self, "_answer_problem", None):
             self._tell_not_recorded()
@@ -3225,6 +3309,8 @@ The notes box travels with the video.
         # Save current before leaving
         record = self._collect_answers()
         if record is not None:
+            if not self._passes_double_check(record):
+                return   # "Take another look": stay on this segment
             self._review_records[record["segment_num"]] = record
         elif getattr(self, "_answer_problem", None):
             self._tell_not_recorded()
@@ -3236,6 +3322,8 @@ The notes box travels with the video.
     def _next_segment(self):
         record = self._collect_answers()
         if record is not None:
+            if not self._passes_double_check(record):
+                return   # "Take another look": stay on this segment
             self._review_records[record["segment_num"]] = record
         elif getattr(self, "_answer_problem", None):
             self._tell_not_recorded()
@@ -3382,7 +3470,8 @@ The notes box travels with the video.
             return
         # Save the human's work first (it travels with the bundle to Processing).
         try:
-            self._save_review()
+            if self._save_review() is False:
+                return   # take another look: nothing cleared yet
         except Exception:
             pass
         # Nothing leaves the re-segmentation queue un-re-segmented

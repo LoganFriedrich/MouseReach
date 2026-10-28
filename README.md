@@ -323,6 +323,12 @@ last step before filing it:
   be read): the video is held, never filed unchecked, and shown in red as
   needing a person until the setting or the file is fixed.
 
+**The review window reads the same scores.** When a reviewer's answer for a
+pellet disagrees with both the algorithm and the hand score, a "check your
+answer" box asks them to look again before saving; the reviewer's answer
+always wins (docs/REVIEW_TOOLS.md, "Check your answer"). Without a
+`hand_scores` path on the reviewing computer the box never appears.
+
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
 shows, in red at the top, **Needs your attention (N)** with one line per thing
 a person must fix (today: a hand-score check that cannot run) and what to do; it

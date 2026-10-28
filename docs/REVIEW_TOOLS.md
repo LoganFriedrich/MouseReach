@@ -250,6 +250,70 @@ of the file as it was is in `Analyzed/Archive/manual_corrections/` named
 `mousereach-route-to-queue --queue triage --recheck --worklist <file>` (without
 `--recheck`, a pellet a person answered is never sent back).
 
+### "Check your answer": when both the algorithm and the tray sheet disagree (since 2026-10-28)
+
+**When the box appears.** You pick an outcome for a pellet and save it ("Save
+Segment + Next", "Save Review", "Next Segment" or "Prev Segment"). If your
+answer disagrees with what the algorithm said for that pellet **and** with the
+tray sheet's hand score for that pellet, a box appears before anything is
+saved. It says plainly what each one said, for example:
+
+> The algorithm said displaced (in SA). The tray sheet says displaced. You
+> answered retrieved.
+
+**The two buttons.**
+
+- **Take another look** (the highlighted button; pressing Enter, Esc or closing
+  the box does the same). Nothing is saved. You stay on the same pellet, the
+  video stays where it was, and you can keep watching. Save again when you are
+  ready -- if you still give the same answer, the box asks once more.
+- **Keep my answer.** Your answer is saved and the tool moves on exactly as it
+  would have without the box. The saved answer also notes that the box was shown
+  and that you kept your answer (`answers.double_disagreement` in the review
+  file), so it can be found later.
+
+**Why it exists.** Answers that looked like tiredness mistakes were found among
+finished pellets: "retrieved" where the algorithm and the tray sheet both said
+displaced. You are watching the video, so your answer outranks both of them --
+the box never changes or refuses your answer. It is only a speed bump in front of
+the one kind of answer most likely to be clicked on autopilot: one that two
+separate readings of the same pellet both contradict.
+
+**When the box does NOT appear.**
+
+- Your answer agrees with the algorithm, or agrees with the tray sheet.
+- The algorithm had no outcome for the pellet (it could not decide).
+- There is no hand score to compare with: no scores file is set up on this
+  computer, the file cannot be read, or it has no row for this session or this
+  pellet. The answer is saved as usual and one line in the console says
+  `[!] Algorithm-and-sheet check not run for <video> segment <n>: <why>`.
+- The answer is not a pellet outcome (for example `abnormal`).
+- You already saw the box for this pellet and kept this same answer.
+
+**How "disagrees" is judged.** Each comparison is made only at the detail the
+other side can see:
+
+- *The tray sheet* records a pellet as untouched, displaced or retrieved. It has
+  one "displaced", so it cannot tell "displaced in the SA" from "displaced
+  outside the SA": either of those answers agrees with a sheet that says
+  displaced. The answer is put on the sheet's scale with the same table the
+  before-filing hand-score check uses (`watcher/hand_scores.py`, `ALGO_CLASS`).
+- *The algorithm* cannot see a pellet leave the SA. A pellet that leaves unseen
+  looks to it exactly like one that was eaten, so it calls it "retrieved" (it
+  never says "displaced outside SA"). Against the algorithm, "retrieved" and
+  "displaced outside SA" therefore count as the same answer ("the pellet left
+  the SA"). "Retrieved" against the algorithm's "displaced (in SA)" is still a
+  disagreement: the algorithm saw the pellet land in the SA.
+
+The hand scores are read from the same scores file the before-filing check
+reads (the `"hand_scores"` `"path"` setting in this computer's
+`~/.mousereach/config.json`; see `watcher/hand_scores.py`). The decision itself
+is `review/double_disagreement.py`; the box is `_passes_double_check` in
+`causal_review_widget.py`. If you press Escalate, Flag Session or Clear while the
+open pellet's answer would bring up the box, the box comes first; "Take another
+look" then stops that button too: the video is not moved (Flag Session has
+already recorded the session flag itself; press it again when ready).
+
 ### Two ways an unanswered question becomes an answer
 
 Both matter before trusting `outcome_source: "human_review"` in the data.
@@ -288,7 +352,11 @@ pellet_num
 algo              {outcome, causal_reach, interaction_frame}   as it stood
 human             {outcome, causal_reach, is_phantom, agreed}
 answers           {triage_kind, outcome_pick/outcome_override, causal_pick,
-                   abnormal_ranges, reviewed: false for placeholders}
+                   abnormal_ranges, reviewed: false for placeholders,
+                   double_disagreement: present only when the "check your
+                   answer" box was shown and the reviewer kept the answer:
+                   {shown, kept, human_outcome, algo_outcome, hand_score,
+                   hand_word, at}}
 notes             free text
 true_segment_num  older records only (the control was removed 2026-10-23)
 segmentation_wrong  true, alongside true_segment_num
