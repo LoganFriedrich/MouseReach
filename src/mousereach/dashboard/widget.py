@@ -689,8 +689,9 @@ class PipelineDashboard(QWidget):
             self.attention_label.hide()
         if waiting:
             self.waiting_label.setText(
-                "%d processed video(s) wait for their hand scores before they are filed; "
-                "they are filed by themselves after the sheet's next import." % len(waiting))
+                "%d analysed video(s) are held before triage and kinematics until their "
+                "hand scores arrive; they go on by themselves after the sheet's next "
+                "import." % len(waiting))
             self.waiting_label.show()
         else:
             self.waiting_label.hide()

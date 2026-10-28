@@ -48,7 +48,7 @@ def test_the_dashboard_shows_what_needs_a_person_in_red_and_hides_when_none(tmp_
     assert not dash.attention_label.isHidden()
     assert "Needs your attention (1)" in dash.attention_label.text()
     assert "20250909_ABC0216_P1 has no hand scores" in dash.attention_label.text()
-    assert "1 processed video(s) wait" in dash.waiting_label.text()
+    assert "1 analysed video(s) are held before triage" in dash.waiting_label.text()
 
     lst.write_text(json.dumps({"items": []}))
     dash._update_attention()

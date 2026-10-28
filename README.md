@@ -294,34 +294,50 @@ there is what runs at login.
 The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
 (e.g., during filming sessions).
 
-### Checked against the hand scores before filing
+### Checked against the hand scores before triage
 
 Filing a video means it is done. Where a lab scores every tray by hand at the
-bench, the watcher compares each video with its session's hand scores as the
-last step before filing it:
+bench, the watcher compares each video with its session's hand scores right
+after analysing it -- before it decides whether the video needs a person
+(triage or re-segmentation) or goes on to kinematics and filing. That way a
+reviewer sees every question about a video in one visit, and no video is
+filed before it has been compared:
 
-- **Every pellet agrees** (or a person already answered it in review): filed.
-- **A pellet disagrees**: the video goes to the **triage** queue. In the review
-  tool its banner reads, for example, *hand score mismatch (hand: retrieved,
-  algo: displaced_sa)*, and the outcome list opens on the algorithm's answer
-  (the same as for the nightly bench check). Answer it
-  as usual; when every flagged pellet is answered the video comes back and is
-  filed. What a person answers is taken as the truth, whatever the bench says.
+- **Every pellet agrees** (or a person already answered it in review): the
+  video carries on exactly as it would without the check.
+- **A pellet disagrees**: that pellet becomes a triage question, and the video
+  goes to the **triage** queue together with any other question it has. In
+  the review tool its banner reads, for example, *hand score mismatch (hand:
+  retrieved, algo: displaced_sa)*, and the outcome list opens on the
+  algorithm's answer (the same as for the nightly bench check). Answer it as
+  usual; when every flagged pellet is answered the video comes back, finishes
+  and is filed. What a person answers is taken as the truth, whatever the
+  bench says.
 - **The session has no hand scores**, in a project whose every session is
-  scored by hand (`required_projects` below): the video waits, processed but
-  not filed, for the project's sheet to be imported (scores are entered the
-  same day; the import may run only nightly). If that import brings them, the
-  video is compared as above. If it does not, the session was never scored by
-  hand -- there is nothing to compare, so nothing can disagree -- and the video
-  is filed without the comparison. A cohort with no sheet import at all waits
-  for its sheet's first import if it has a sheet; if it has none (or the name
-  matches no sheet), its videos are filed after the next import of every
-  sheet.
-- **Easy and Flat trays**, and projects not listed as required, are filed
+  scored by hand (`required_projects` below): the video is analysed and then
+  **held** -- it stays in the Processing folder, before triage and kinematics
+  -- until the project's sheet is next imported (scores are entered the same
+  day; the import may run only nightly). If that import brings them, the
+  video is compared as above and carries on by itself. If it does not, the
+  session was never scored by hand -- there is nothing to compare, so nothing
+  can disagree -- and the video carries on without the comparison. A cohort
+  with no sheet import at all waits for its sheet's first import if it has a
+  sheet; if it has none (or the name matches no sheet), its videos carry on
+  after the next import of every sheet. Held videos do not stop new videos
+  being taken in.
+- **Easy and Flat trays**, and projects not listed as required, carry on
   without the comparison.
 - **The check cannot run** (the `hand_scores` path is wrong, the file cannot
-  be read): the video is held, never filed unchecked, and shown in red as
-  needing a person until the setting or the file is fixed.
+  be read): the video is held, never passed unchecked, and shown in red as
+  needing a person until the setting or the file is fixed; it then carries on
+  by itself.
+
+Every time the sheet is read for a video, every pellet's hand score is kept
+inside that video's outcomes file (`<video>_pellet_outcomes.json`, key
+`hand_scores`), so it travels with the video into the review queue and into
+Analyzed. If the watcher is restarted while videos are held, each held video
+is analysed once more and checked again -- nothing is lost, it only costs the
+analysis time.
 
 **The review window uses the same scores.** When a reviewer's answer for a
 pellet disagrees with both the algorithm and the hand score, a "check your
@@ -337,11 +353,14 @@ kept scores until it is analysed again; for it the box never appears.
 shows, in red at the top, **Needs your attention (N)** with one line per thing
 a person must fix (today: a hand-score check that cannot run) and what to do; it
 is hidden when nothing needs a person, and refreshes every 5 minutes and on
-Refresh. Videos waiting for the sheet's next import are counted on a grey line
-below it. The
+Refresh. Videos held for the sheet's next import are counted on a grey line
+below it, and the census (`mousereach-census`) prints how many of the videos in
+the analysis step are only waiting for hand scores. The
 lists behind it are `<NAS root>/attention/<PC name>_hand_scores.json` (rewritten
 whenever they change; `"needs_person": true` marks the ones to act on), and the
-watcher log says the same thing for each video ("Not filing ...").
+watcher log says the same thing for each video ("Holding ... before triage and
+kinematics"); the video's processing log has one `hand_score_check` row for
+the wait.
 
 To turn it on for the whole lab, put this in the lab settings file on the
 storage drive, `<storage root>/mousereach_lab_config.json` (see "Lab settings
@@ -487,7 +506,7 @@ See INSTALL.md, Step 6.
 | `processing_root` | Pipeline working folders (DLC_Queue, Processing, Failed) | **Yes** |
 | `nas_drive` | Data repository / archive location | Optional |
 | `watcher.*` | Automated pipeline settings (DLC config, GPU, polling) | For watcher PC |
-| `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked before a video is filed (see "Checked against the hand scores before filing"). Usually kept in the lab settings file instead (below) | Optional |
+| `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked right after a video is analysed, before triage (see "Checked against the hand scores before triage"). Usually kept in the lab settings file instead (below) | Optional |
 
 Configuration is saved to `~/.mousereach/config.json` and persists across sessions.
 

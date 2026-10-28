@@ -31,7 +31,7 @@ Against the tray sheet: the sheet scores a pellet 0 / 1 / 2 (untouched /
 displaced / retrieved; watcher/hand_scores.py HAND_WORDS). It has ONE
 "displaced", so it cannot tell displaced-in-the-SA from displaced-outside-
 the-SA. The answer is turned into the sheet's scale with the same table the
-before-filing check uses (hand_scores.ALGO_CLASS, where displaced_sa and
+pipeline's hand-score check uses (hand_scores.ALGO_CLASS, where displaced_sa and
 displaced_outside are both 1), so "displaced outside SA" against a sheet's
 "displaced" is agreement.
 

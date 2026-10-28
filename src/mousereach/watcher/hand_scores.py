@@ -1,4 +1,4 @@
-"""Before a video is filed: its pellets against the session's hand scores.
+"""After analysis, before triage: a video's pellets against the session's hand scores.
 
 WHY
 ---
@@ -6,24 +6,36 @@ Filing a video means it is done: what is filed is what the analyses use.
 Where a lab scores every tray by hand at the bench, the hand score is a
 second, independent reading of each pellet. A pellet the pipeline and the
 bench disagree about is not done -- a person has to look at it first. So the
-watcher checks every video against its hand scores at the last step before
-filing:
+watcher compares every analysed video with its hand scores right after the
+analysis and the quality check, BEFORE the gate decides whether the video
+goes to triage, deep review or on to kinematics and filing:
 
-    every pellet agrees, or a person answered it   -> filed
-    a pellet the person has not answered disagrees -> TRIAGE, the pellet
-        flagged "bench disagreement: the hand score says retrieved; the
-        algorithm says displaced_sa" -- the wording the review tool already
-        knows from the nightly bench check, so it shows "hand score mismatch
-        (hand: retrieved, algo: displaced_sa)" and opens on the algorithm's
-        answer (is_bench_mismatch, plain_flag_reason)
+    every pellet agrees, or a person answered it   -> on to the gate as usual
+    a pellet the person has not answered disagrees -> the pellet is flagged
+        "bench disagreement: the hand score says retrieved; the algorithm
+        says displaced_sa", and the gate sends the video to TRIAGE once, with
+        that pellet and any other open question together. The wording is the
+        one the review tool already knows from the nightly bench check, so it
+        shows "hand score mismatch (hand: retrieved, algo: displaced_sa)" and
+        opens on the algorithm's answer (is_bench_mismatch,
+        plain_flag_reason). A reason the pipeline had already flagged that
+        pellet for is kept after it: "... (also: <the old reason>)".
     no hand scores for the session:
-        project not in required_projects           -> filed (nothing to compare)
-        project in required_projects               -> WAITS, unfiled, until the
-            cohort's sheet has been imported after the video was ready (the
-            scores are entered the same day; the import may run only
-            nightly). If that import did not bring them, the session was
-            never scored by hand: there is nothing to compare, so nothing can
-            disagree, and the video is filed.
+        project not in required_projects           -> on to the gate
+        project in required_projects               -> HELD, in Processing,
+            before triage and kinematics, until the cohort's sheet has been
+            imported after the video entered Processing (the scores are
+            entered the same day; the import may run only nightly). If that
+            import did not bring them, the session was never scored by hand:
+            there is nothing to compare, so nothing can disagree, and the
+            video goes on to the gate.
+
+WHY before triage and not before filing (moved 2026-10-28; from 2026-10-26
+it was the last step before filing): checked at filing, a video with a
+triage question went to the queue, was answered, came back, and only then
+met the hand score -- and a disagreement sent it to the queue a second time.
+Checked before the gate, a person sees every question about a video in one
+visit, and a video that disagrees never gets kinematics first.
 
 What a person answered is never compared: a person's answer is the truth
 for that pellet, whatever the bench says. Easy and Flat trays have no pellet
@@ -79,7 +91,7 @@ in this user's ~/.mousereach/config.json, or -- the usual place, so every
 person on every PC gets it -- in the lab's shared settings file on the
 storage drive, <nas_root>/mousereach_lab_config.json (config.lab_setting).
 A "hand_scores" section in the user's own file replaces the lab file's.
-Without "path" nothing is checked and videos are filed as before.
+Without "path" nothing is checked and videos go on to the gate as before.
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
@@ -341,12 +353,13 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                 items.append({
                     "kind": "hand_score_check_failed", "needs_person": True,
                     "video_id": vid, "cohort_id": w.get("cohort_id"),
-                    "says": ("%s is processed but not filed: the check against its hand "
-                             "scores could not run (%s). Fix the \"hand_scores\" setting "
-                             "(in the lab's mousereach_lab_config.json on the storage "
-                             "drive, or in this PC's config.json if it has its own), or "
-                             "the file it names; the video is filed by itself once the "
-                             "check runs." % (vid, w["error"])),
+                    "says": ("%s is analysed but held before triage and kinematics: the "
+                             "check against its hand scores could not run (%s). Fix the "
+                             "\"hand_scores\" setting (in the lab's "
+                             "mousereach_lab_config.json on the storage drive, or in this "
+                             "PC's config.json if it has its own), or the file it names; "
+                             "the video goes on by itself once the check runs."
+                             % (vid, w["error"])),
                 })
                 continue
             items.append({
@@ -356,9 +369,10 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                 "cohort_id": w.get("cohort_id"),
                 "ready_since": w.get("ready_since"),
                 "last_import": w.get("last_import"),
-                "says": ("%s is processed and waits for the %s sheet's next import, to be "
-                         "compared with its hand scores (filed without the comparison if "
-                         "that import has none)." % (vid, w.get("cohort_id"))),
+                "says": ("%s is analysed and held before triage and kinematics until the "
+                         "%s sheet's next import, to be compared with its hand scores "
+                         "(it goes on without the comparison if that import has none)."
+                         % (vid, w.get("cohort_id"))),
             })
         tmp = d / f".{hostname}_hand_scores.json.tmp"
         tmp.write_text(json.dumps({"written_by": hostname, "items": items}, indent=1),

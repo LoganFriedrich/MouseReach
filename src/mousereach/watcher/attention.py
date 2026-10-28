@@ -7,8 +7,10 @@ items of this shape:
     {"kind": "...", "needs_person": true/false, "video_id": "...",
      "cohort_id": "...", "says": "<one sentence a person can act on>"}
 
-"needs_person" true is something a person must fix; false is something that
-is only waiting (shown, never as an alarm). The lists are rewritten whenever
+"needs_person" true is something a person must fix (e.g. a hand-score check
+that cannot run); false is something that is only waiting, shown, never as
+an alarm (e.g. an analysed video held before triage and kinematics until its
+cohort's sheet is next imported). The lists are rewritten whenever
 they change and empty when nothing is listed, so reading them all is the
 current picture. Read by the Pipeline Dashboard's red panel, and by any other
 tool that shows the lab what needs doing.

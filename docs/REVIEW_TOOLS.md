@@ -222,8 +222,11 @@ stops blocking it.
 
 ### A hand-score mismatch opens on the algorithm's answer (since 2026-10-24)
 
-When the bench check sends a finished pellet back because the hand-scored sheet
-disagrees with the algorithm (banner: *hand score mismatch (hand: X, algo: Y)*),
+When a pellet is in triage because the hand-scored sheet disagrees with the
+algorithm (banner: *hand score mismatch (hand: X, algo: Y)*) -- found by the
+watcher's own check right after analysis (since 2026-10-28, before the video
+reaches triage, so it arrives together with the video's other questions) or,
+for an older filed video, by the nightly bench check --
 the outcome list opens with the **algorithm's outcome selected**, not
 `-- select outcome --`. The algorithm is usually the one that is right (Logan,
 2026-10-24), so if it is, "Save Segment + Next" is all it takes, and that records
@@ -305,7 +308,7 @@ other side can see:
   one "displaced", so it cannot tell "displaced in the SA" from "displaced
   outside the SA": either of those answers agrees with a sheet that says
   displaced. The answer is put on the sheet's scale with the same table the
-  before-filing hand-score check uses (`watcher/hand_scores.py`, `ALGO_CLASS`).
+  watcher's hand-score check uses (`watcher/hand_scores.py`, `ALGO_CLASS`).
 - *The algorithm* cannot see a pellet leave the SA. A pellet that leaves unseen
   looks to it exactly like one that was eaten, so it calls it "retrieved" (it
   never says "displaced outside SA"). Against the algorithm, "retrieved" and
@@ -346,7 +349,7 @@ Before that date the record was saved with `human.outcome: "triaged"` and nothin
 
 On reopening, `_load_saved_review` drops the placeholders and jumps to the first segment no one has answered. An answer stands whatever the algorithm has said since -- a person's answer is what happened in those frames (until 2026-10-24 a changed algorithm call re-opened it, and reviewers were asked again about pellets they had answered).
 
-**Triage walks only the pellets still open when the video loads** (since 2026-10-24, `open_triaged_indices`). A video can come back -- the nightly hand-score check sends finished videos back for pellets nobody has looked at -- while its pellet file still flags the pellets a person answered before; "Next" used to walk those too and show the earlier answers. Now they are skipped (the console says how many), and a pellet answered in this session stays reachable with Prev.
+**Triage walks only the pellets still open when the video loads** (since 2026-10-24, `open_triaged_indices`). A video can come back for pellets nobody has looked at -- a re-run raised a new question, or, for an older filed video, the nightly hand-score check sent it back (since 2026-10-28 the watcher compares new videos with their hand scores before they first reach triage, so those questions arrive in the first visit) -- while its pellet file still flags the pellets a person answered before; "Next" used to walk those too and show the earlier answers. Now they are skipped (the console says how many), and a pellet answered in this session stays reachable with Prev.
 
 **Since 2026-10-22 the restore matches each saved answer to the segment whose frames it covers** (`restore_review_for_segments`), the same rule the release check and the results step use. Until then it matched by segment number. After a re-cut renumbered the segments, an answer about other footage came back on today's segment N, so the tool counted N as done and never showed it. The release check, which matches by frames, still counted N as unanswered, so the video could never be finished. The reviewer's new answer for the old frames was then saved beside the old one, and the next save stamped segment N's frames onto the old answer. What the restore does now:
 

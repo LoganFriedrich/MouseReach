@@ -171,6 +171,19 @@ class TestArchivedStateTransition:
             db.update_state('v1', st)
         assert db.get_video('v1')['state'] == 'archived'
 
+    def test_filing_no_longer_checks_the_hand_scores(self):
+        """The hand-score check runs before the review gate since 2026-10-28
+        (_hand_score_precheck), so a 'processed' video has passed it and
+        filing does not check again."""
+        import inspect
+        from mousereach.watcher import orchestrator as o
+        for fn in (o.ProcessingOrchestrator._archive_to_nas,
+                   o.DLCOrchestrator._archive_locally_processed):
+            src = inspect.getsource(fn)
+            assert "_hand_score_precheck(" not in src, fn.__qualname__
+            assert "hand_scores.check(" not in src, fn.__qualname__
+        assert not hasattr(o.BaseOrchestrator, "_hand_scores_allow_filing")
+
     def test_both_roles_hop_through_archiving(self):
         import inspect
         from mousereach.watcher import orchestrator as o

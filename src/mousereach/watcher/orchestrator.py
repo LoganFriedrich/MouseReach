@@ -301,15 +301,28 @@ class BaseOrchestrator:
         return bool(entry) and time.time() < entry[1]
 
     def _waiting_for_hand_scores(self, video_id: str) -> bool:
-        """True while this video waits for its hand scores and the scores
-        file has not changed since it was checked: picking it again could only
-        give the same answer, and the archive step is first in line, so it
-        would take every cycle (watcher/hand_scores.py)."""
+        """True while this video is held for its hand scores and the scores
+        file has not changed since it was checked: running it again could only
+        give the same answer, and an analysed video in 'processing' would
+        otherwise be picked by the pipeline step every cycle
+        (watcher/hand_scores.py)."""
         w = getattr(self, "_score_waits", {}).get(video_id)
         if not w:
             return False
         from mousereach.watcher import hand_scores
         return w.get("stamp") == hand_scores.scores_file_stamp()
+
+    def _held_for_hand_scores(self, video_id: str) -> bool:
+        """True for a video this watcher holds for its hand scores (waiting
+        for the sheet's import, or a check that could not run), whether or not
+        the scores file has changed since.
+
+        WHY its own question: such a video is analysed already and sits in
+        'processing' only to wait. It must not count against
+        max_local_pending, the limit on videos taken in for analysis -- a
+        night's waiting videos would otherwise fill the limit and stop all
+        intake until the next sheet import."""
+        return video_id in getattr(self, "_score_waits", {})
 
     def _write_score_attention(self) -> None:
         """Rewrite this machine's list of videos waiting for hand scores."""
@@ -318,66 +331,108 @@ class BaseOrchestrator:
             hand_scores.write_attention(Paths.NAS_ROOT, self.hostname,
                                         getattr(self, "_score_waits", {}))
 
-    def _hand_scores_allow_filing(self, video_id: str, folder: Path) -> bool:
-        """The last check before a video is filed: its pellets against the
-        session's hand scores (watcher/hand_scores.py says why and what each
-        answer means). True: file it -- including a session the sheet's
-        import after the video was ready has no scores for (never scored by
-        hand: nothing to compare). False: it is not filed now -- it went to
-        triage with its disagreeing pellets flagged, or it waits for the
-        sheet's next import, or the check could not run (tried again when the
-        scores file changes). A video is never filed unchecked because a check
-        failed."""
+    def _hand_score_precheck(self, video_id: str, folder: Path) -> bool:
+        """Compare an analysed video with its session's hand scores, after
+        the quality check and BEFORE the review gate (watcher/hand_scores.py
+        says why and what each answer means). True: go on to the gate.
+        False: hold the video where it is -- in 'processing', its files in
+        ``folder`` -- and stop this run before the gate.
+
+        WHY here and not before filing (moved 2026-10-28): checked at
+        filing, a video with a triage question went to the queue, was
+        answered, came back, and only then met the hand score; a
+        disagreement then sent it to the queue a second time. Checked before
+        the gate, every question about a video reaches a person in ONE visit.
+        Not inside review_gate.evaluate_gate: that is pure (no reading of
+        outside files) and is also used by the batch tools.
+
+        - A pellet disagrees: it is flagged "bench disagreement: ..." and the
+          run goes on to the gate, which sends the video to triage once,
+          with every open question. A reason the pipeline had already
+          flagged the pellet for is kept after it, "(also: ...)".
+        - No hand scores yet in a required project: held, listed (grey) in
+          the attention file, logged once as a 'hand_score_check' step, and
+          not picked again until the scores file changes. Once the cohort's
+          sheet has been imported after the video entered processing with
+          still no scores, the session was never scored by hand and the
+          video goes on.
+        - The check cannot run: held, listed in red as needing a person. A
+          video never goes past this point unchecked because a check failed.
+        Every time the sheet was read, its scores are kept in the outcomes
+        file (hand_scores.record) for the review window."""
         from mousereach.watcher import hand_scores
         if not hasattr(self, "_score_waits"):
             self._score_waits = {}
+        prev = self._score_waits.get(video_id) or {}
         stamp = hand_scores.scores_file_stamp()
         try:
             v = hand_scores.check(video_id, folder)
-        except Exception as e:
-            if video_id not in self._score_waits:
-                logger.warning(f"Not filing {video_id}: the hand-score check could not "
-                               f"run ({e}); trying again when the scores file changes")
-            self._score_waits[video_id] = {"stamp": stamp, "error": str(e)}
-            self._write_score_attention()
-            return False
-        if v.status == hand_scores.WAITING:
-            row = self.db.get_video(video_id) or {}
-            # The ready time MUST be a column this program writes itself
-            # (datetime.now().isoformat(): local time, no zone), the same clock
-            # as the scores file's import times. Never created_at or any other
-            # column SQLite fills with CURRENT_TIMESTAMP: that is UTC, also with
-            # no zone, and two zone-less times in different zones compare wrong
-            # by the UTC offset without any error (Beh PC 1 session, 2026-10-26).
-            ready = row.get("processing_completed_at") or datetime.now().isoformat()
-            if hand_scores.scores_never_came(v, ready):
-                logger.info(f"Filing {video_id} without the hand-score comparison: the "
+            if v.status == hand_scores.WAITING:
+                row = self.db.get_video(video_id) or {}
+                # The ready time MUST be a column this program writes itself
+                # (datetime.now().isoformat(): local time, no zone), the same
+                # clock as the scores file's import times. Never created_at or
+                # any other column SQLite fills with CURRENT_TIMESTAMP: that is
+                # UTC, also with no zone, and two zone-less times in different
+                # zones compare wrong by the UTC offset without any error (Beh
+                # PC 1 session, 2026-10-26). processing_started_at, not
+                # processing_completed_at: a held video is never 'processed'.
+                # The first wait's time is kept, so a re-run of the pipeline
+                # cannot move it later.
+                ready = (prev.get("ready_since") or row.get("processing_started_at")
+                         or datetime.now().isoformat())
+                if not hand_scores.scores_never_came(v, ready):
+                    if "cohort_id" not in prev:
+                        logger.info(f"Holding {video_id} before triage and kinematics: "
+                                    f"{v.reason} -- waiting for the next import of the "
+                                    f"{v.cohort_id} sheet")
+                        self.db.log_step(
+                            video_id, 'hand_score_check', 'waiting',
+                            message=(f"analysed; held before triage and kinematics until "
+                                     f"the {v.cohort_id} sheet's next import"))
+                    self._score_waits[video_id] = {"stamp": stamp, "cohort_id": v.cohort_id,
+                                                   "ready_since": ready,
+                                                   "last_import": v.last_import}
+                    self._write_score_attention()
+                    return False
+                logger.info(f"{video_id} goes on without the hand-score comparison: the "
                             f"{v.cohort_id} sheet was imported after it was ready and has "
                             f"no scores for this session (never scored by hand)")
-                if self._score_waits.pop(video_id, None) is not None:
-                    self._write_score_attention()
-                return True
-            if "cohort_id" not in (self._score_waits.get(video_id) or {}):
-                logger.info(f"Not filing {video_id} yet: {v.reason} -- waiting for the "
-                            f"next import of the {v.cohort_id} sheet")
-            self._score_waits[video_id] = {"stamp": stamp, "cohort_id": v.cohort_id,
-                                           "ready_since": ready, "last_import": v.last_import}
+            elif v.status == hand_scores.DISAGREES:
+                from mousereach.watcher.route_cli import flag_segments
+                out_path = Path(folder) / f"{video_id}_pellet_outcomes.json"
+                details = dict(v.disagreements)
+                # A pellet the pipeline had already flagged keeps that reason
+                # after the bench one: the reviewer must see both, and the
+                # text must still START with "bench disagreement" -- that is
+                # how the review tool recognises it (is_bench_mismatch).
+                # On a second check of the same file the old reason is our own
+                # bench text: only the "(also: ...)" part it carries is kept.
+                for seg in json.loads(out_path.read_text(encoding="utf-8")).get("segments", []):
+                    n, old = seg.get("segment_num"), str(seg.get("flag_reason") or "")
+                    if n not in details or not seg.get("flagged_for_review"):
+                        continue
+                    if old.lower().startswith(hand_scores.FLAG_REASON):
+                        i = old.find(" (also: ")
+                        old = old[i + len(" (also: "):-1] if i >= 0 and old.endswith(")") else ""
+                    if old:
+                        details[n] = "%s (also: %s)" % (details[n], old)
+                flag_segments(out_path, list(details), hand_scores.FLAG_REASON,
+                              details=details)
+                logger.info(f"{video_id}: {v.reason} -- flagged for triage")
+            hand_scores.record(folder, video_id, v, stamp)
+        except Exception as e:
+            if not prev.get("error"):
+                logger.warning(f"Holding {video_id} before triage and kinematics: the "
+                               f"hand-score check could not run ({e}); trying again when "
+                               f"the scores file changes")
+            self._score_waits[video_id] = {"stamp": stamp, "error": str(e),
+                                           "ready_since": prev.get("ready_since")}
             self._write_score_attention()
             return False
         if self._score_waits.pop(video_id, None) is not None:
             self._write_score_attention()
-        if v.status == hand_scores.DISAGREES:
-            from mousereach.watcher.review_gate import route_to_queue
-            from mousereach.watcher.route_cli import flag_segments
-            flag_segments(Path(folder) / f"{video_id}_pellet_outcomes.json",
-                          list(v.disagreements), hand_scores.FLAG_REASON,
-                          details=v.disagreements)
-            route_to_queue(video_id, Path(folder), Paths.TRIAGE_REVIEW, reason=v.reason,
-                           db=self.db, db_state="triage")
-            logger.info(f"Not filing {video_id}: {v.reason} -> triage")
-            return False
         return True
-
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         self.config = config
@@ -3008,8 +3063,7 @@ class DLCOrchestrator(BaseOrchestrator):
         # DRAIN: the result exists; filing it is a file move, not analysis.
         if self.config.also_process:
             processed = [v for v in self.db.get_videos_in_state('processed')
-                         if not self._archive_backoff_active(v['video_id'])
-                         and not self._waiting_for_hand_scores(v['video_id'])]
+                         if not self._archive_backoff_active(v['video_id'])]
             pick = self._pick_from_pool(processed, priority_animal, 'animal_id',
                                         randomize=False)
             if pick is not None:
@@ -3023,7 +3077,11 @@ class DLCOrchestrator(BaseOrchestrator):
         # DRAIN: the video and its pose are already here, already occupying
         # this node's disk. Finishing it is what frees the node.
         if self.config.also_process:
-            processing = self.db.get_videos_in_state('processing')
+            # A video held for its hand scores is skipped until the scores
+            # file changes (_waiting_for_hand_scores): running it again could
+            # only hold it again.
+            processing = [v for v in self.db.get_videos_in_state('processing')
+                          if not self._waiting_for_hand_scores(v['video_id'])]
             pick = self._pick_from_pool(processing, priority_animal, 'animal_id')
             if pick is not None:
                 return {
@@ -4006,7 +4064,19 @@ class DLCOrchestrator(BaseOrchestrator):
                     return False
         logger.info(f"Running local pipeline on {video_id} (also_process mode)")
 
-        self.db.update_state(video_id, 'processing')
+        # A video held for its hand scores (_hand_score_precheck) is analysed
+        # already; when the scores file changes it is picked again only to be
+        # checked again, so the stage outputs it has are reused, not redone.
+        # After a watcher restart the list of held videos is empty and the
+        # video simply runs in full once.
+        resume = (self._held_for_hand_scores(video_id)
+                  and all((processing_dir / f"{video_id}{sfx}").exists()
+                          for sfx in ("_segments.json", "_reaches.json")))
+        # Already 'processing' (a held video picked again): leave the row as
+        # it is -- update_state would re-stamp processing_started_at, which is
+        # the time the hand-score wait is measured from.
+        if (video_data.get('state') or '') != 'processing':
+            self.db.update_state(video_id, 'processing')
         self.db.log_step(video_id, 'local_pipeline', 'started')
         pipeline_start = time.time()
 
@@ -4014,7 +4084,11 @@ class DLCOrchestrator(BaseOrchestrator):
             # Step 1: Segmentation
             self.db.log_step(video_id, 'segmentation', 'started')
             step_start = time.time()
-            seg_result = seg_single(dlc_path)
+            if resume:
+                logger.info(f"Reusing analysis outputs for {video_id} (held for hand scores)")
+                seg_result = {'success': True, 'status': 'reused', 'n_boundaries': 0}
+            else:
+                seg_result = seg_single(dlc_path)
             seg_duration = time.time() - step_start
 
             if seg_result.get('success', False):
@@ -4060,7 +4134,8 @@ class DLCOrchestrator(BaseOrchestrator):
 
             self.db.log_step(video_id, 'reach_detection', 'started')
             step_start = time.time()
-            reach_result = reach_single(dlc_path, seg_path)
+            reach_result = ({'total_reaches': 0} if resume
+                            else reach_single(dlc_path, seg_path))
             reach_duration = time.time() - step_start
             self.db.log_step(video_id, 'reach_detection', 'completed',
                             message=f"reaches={reach_result.get('total_reaches', 0)}",
@@ -4072,11 +4147,14 @@ class DLCOrchestrator(BaseOrchestrator):
             tray_type = tray_info.get('tray_type', 'P')
             skip_outcomes = tray_type in ('E', 'F')
 
+            resume_outcomes = resume and (
+                processing_dir / f"{video_id}_pellet_outcomes.json").exists()
             if not skip_outcomes:
                 reach_path = processing_dir / f"{video_id}_reaches.json"
                 self.db.log_step(video_id, 'outcome_detection', 'started')
                 step_start = time.time()
-                outcome_result = outcome_single(dlc_path, seg_path, reach_path)
+                outcome_result = ({'n_segments': 0} if resume_outcomes
+                                  else outcome_single(dlc_path, seg_path, reach_path))
                 outcome_duration = time.time() - step_start
                 self.db.log_step(video_id, 'outcome_detection', 'completed',
                                 message=f"segments={outcome_result.get('n_segments', 0)}",
@@ -4086,7 +4164,9 @@ class DLCOrchestrator(BaseOrchestrator):
             # Step 3.5: Reach Assignment (algo-4) -- causal-reach attribution.
             # Runs before the gate (a touched segment with no committed causal
             # reach counts as triaged).
-            if not skip_outcomes:
+            if not skip_outcomes and not (
+                    resume_outcomes
+                    and (processing_dir / f"{video_id}_reach_assignments.json").exists()):
                 try:
                     assign_reaches_for_video(processing_dir, video_id, dlc_path)
                 except Exception as e:
@@ -4142,6 +4222,14 @@ class DLCOrchestrator(BaseOrchestrator):
                 triage_result.save(processing_dir / f"{video_id}_triage.json")
             except Exception as e:
                 logger.warning(f"Unified triage failed for {video_id}: {e}")
+
+            # Hand scores, before the gate (_hand_score_precheck): a
+            # disagreeing pellet is flagged so the gate sends it to triage
+            # with every other open question; a session whose scores have not
+            # come is held here, in Processing, until they do.
+            if not self._hand_score_precheck(video_id, processing_dir):
+                logger.info(f"Local pipeline held for hand scores: {video_id}")
+                return True
 
             # GATE: nothing reaches kinematics / connectome.db until it is CLEAN.
             # seg soft-fail / QC-critical -> DEEP_REVIEW; unresolved triage ->
@@ -4220,10 +4308,8 @@ class DLCOrchestrator(BaseOrchestrator):
         from mousereach.archive.core import archive_video
 
         video_id = work['id']
-        # The last check before filing (watcher/hand_scores.py).
-        if not self._hand_scores_allow_filing(
-                video_id, Path(Paths.PROCESSING) if Paths.PROCESSING else Paths.DLC_QUEUE):
-            return
+        # No hand-score check here: it runs before the gate
+        # (_hand_score_precheck), so a 'processed' video has passed it.
         logger.info(f"Archiving locally processed {video_id} to NAS")
         self.db.update_state(video_id, 'archiving')
         self.db.log_step(video_id, 'archive', 'started')
@@ -4596,9 +4682,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _reclaim_orphaned_work(self) -> dict:
         reclaimed = super()._reclaim_orphaned_work()
         self._export_missed_to_central()
-        # The list of videos waiting for hand scores is rebuilt by this run's
-        # checks: every waiting video is 'processed' and is checked again on
-        # its first pick, so nothing that still waits drops off for long.
+        # The list of videos held for their hand scores lives only in memory,
+        # so it starts empty: every held video is still in 'processing' with
+        # its files in place, the pipeline step picks it up again, runs it in
+        # full once (nothing marks its outputs as reusable after a restart)
+        # and checks it again -- so nothing that still waits drops off.
         self._score_waits = {}
         self._write_score_attention()
         # Copies left in Processing after the video was filed into Analyzed
@@ -4985,8 +5073,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # the NAS and out of every downstream pull. Ordering still applies --
         # the preferred tier is filed first.
         videos = [v for v in self.db.get_videos_in_state('processed')
-                  if not self._archive_backoff_active(v['video_id'])
-                  and not self._waiting_for_hand_scores(v['video_id'])]
+                  if not self._archive_backoff_active(v['video_id'])]
         pick = self._pick_from_pool(videos, priority_animal, 'animal_id',
                                     randomize=False)
         if pick is not None:
@@ -5005,7 +5092,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
                   if not self._held_elsewhere_active(v['video_id'])]
         if videos:
             # Check disk space cap
-            processing_count = len(self.db.get_videos_in_state('processing'))
+            # Videos held for their hand scores are analysed already and only
+            # wait in 'processing' (_held_for_hand_scores): they are not work
+            # waiting for the pipeline, so they do not use up the limit.
+            processing_count = sum(
+                1 for v in self.db.get_videos_in_state('processing')
+                if not self._held_for_hand_scores(v['video_id']))
             if processing_count >= self.config.max_local_pending:
                 # The normal state, not a fault: the node holds only what it is
                 # about to start (config.max_local_pending), so the pipeline runs
@@ -5033,7 +5125,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # also what makes a deadlock guard unnecessary: a local pool full of
         # deferred videos drains itself on the very first pass, so intake can
         # never be blocked by work that has no way out.
-        videos = self.db.get_videos_in_state('processing')
+        # A video held for its hand scores is skipped until the scores file
+        # changes (_waiting_for_hand_scores): running it again could only hold
+        # it again, and it would take the pipeline step every cycle.
+        videos = [v for v in self.db.get_videos_in_state('processing')
+                  if not self._waiting_for_hand_scores(v['video_id'])]
         if videos:
             pick = self._pick_from_pool(videos, priority_animal, 'animal_id')
             if pick is not None:
@@ -5680,6 +5776,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
         _run_seg = _start_idx <= 0 or not _seg_out.exists()
         _run_reach = _start_idx <= 1 or not _reach_out.exists()
         _run_outcome = _start_idx <= 2 or not _outcome_out.exists()
+        # A video held for its hand scores (_hand_score_precheck) is analysed
+        # already; it is picked again only because the scores file changed,
+        # to be checked again -- so every stage output it has is reused.
+        # After a watcher restart the list of held videos is empty and the
+        # video simply runs in full once.
+        if self._held_for_hand_scores(video_id):
+            _run_seg = not _seg_out.exists()
+            _run_reach = _run_seg or not _reach_out.exists()
+            _run_outcome = _run_reach or not _outcome_out.exists()
 
         # --- Step 1: Segmentation ---
         self.db.log_step(video_id, 'segmentation', 'started')
@@ -5873,6 +5978,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning(f"Unified triage failed for {video_id}: {e}")
 
+        # --- Hand scores, before the gate (_hand_score_precheck) ---
+        # A disagreeing pellet is flagged, so the gate below sends the video to
+        # triage once, with every open question. A session whose hand scores
+        # have not come is held here -- 'processing', files in place -- and
+        # this run stops: no gate, no kinematics, no filing until it goes on.
+        if not self._hand_score_precheck(video_id, self.processing_dir):
+            logger.info(f"Pipeline held for hand scores: {video_id} "
+                        f"({pipeline_duration:.1f}s; triage and kinematics wait)")
+            return
+
         # --- GATE: nothing reaches kinematics / connectome.db until it is CLEAN ---
         # seg soft-fail or QC-critical -> DEEP_REVIEW; any unresolved triaged
         # element -> TRIAGE. A held video's whole bundle is MOVED out of
@@ -6009,11 +6124,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     f"queue is building its bundle ({INCOMING_DIR_NAME}).")
                 return
 
-        # The last check before filing (watcher/hand_scores.py): a pellet the
-        # hand score disagrees with goes to triage, and a session whose hand
-        # scores have not come waits here, unfiled.
-        if not self._hand_scores_allow_filing(video_id, self.processing_dir):
-            return
+        # No hand-score check here: it runs before the gate
+        # (_hand_score_precheck), so a 'processed' video has passed it.
 
         # Let go of the outcome detector's cached video handle first: it keeps
         # the LAST processed mp4 open until the next video replaces it, and the

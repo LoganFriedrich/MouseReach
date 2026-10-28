@@ -255,7 +255,7 @@ Three things this does NOT do, which matter:
 Videos deliberately locked for a publication are put in the state 'crystallized', not 'archived', so the sweep never sees them (versions.py:242, reprocessor.py:164).
 One related safeguard falls short of a check: when a video has pose files from two models side by side, select_pose_file prefers the one matching the declared current scorer; if none matches it takes the newest, logs a warning that the video should be re-posed, and proceeds anyway (manifest.py:89-135).
 
-Bench-sheet disagreement routing is NOT part of the watcher (it was, briefly, 2026-08-25 to 2026-08-28). Comparing pipeline outcomes with hand-scored sheets is an integrator's job -- a database tool that holds both -- and MouseReach must run with no such tool present. What MouseReach provides is the generic command `mousereach-route-to-queue` (watcher/route_cli.py): flag specific segments of an archived video and move it into the triage or deep-review queue with a recorded reason, through the same route_to_queue the pipeline uses itself. Whatever decides a video needs a person asks through that command; the watcher never reaches into another tool's environment or database. Likewise the central-database sync (sync/database.py) is configuration (`central_db`), absent by default, and cross-node coordination lives in MouseReach's own watcher_central.db on the NAS root.
+Bench-sheet disagreement ROUTING of filed videos is NOT part of the watcher (it was, briefly, 2026-08-25 to 2026-08-28). What the watcher does since 2026-10-26 is compare each video it analyses with a hand-scores FILE, if one is configured -- since 2026-10-28 right before the review gate (`_hand_score_precheck`, `watcher/hand_scores.py`; see the 2026-10-28 update) -- and MouseReach runs exactly as before with no such file. Comparing already-filed videos with the sheets stays an integrator's job -- a database tool that holds both -- and MouseReach must run with no such tool present. What MouseReach provides is the generic command `mousereach-route-to-queue` (watcher/route_cli.py): flag specific segments of an archived video and move it into the triage or deep-review queue with a recorded reason, through the same route_to_queue the pipeline uses itself. Whatever decides a video needs a person asks through that command; the watcher never reaches into another tool's environment or database. Likewise the central-database sync (sync/database.py) is configuration (`central_db`), absent by default, and cross-node coordination lives in MouseReach's own watcher_central.db on the NAS root.
 
 3. WHAT HAPPENS TO THE OLD FILES - superseded, not overwritten (since 2026-08-21)
 For a video marked outdated with a narrow scope, the second watcher copies every file whose name starts with the video identifier from Analyzed down to the local Processing folder — a copy, so the originals stay where they are (orchestrator.py:1574-1577). The algorithms re-run and overwrite the copies. Then the finished set is moved back to Analyzed/<project>/<cohort> by archive_video. That move used to be a bare shutil.move onto the same filename, which silently replaced whatever was there, destroying the previous generation's segments, reaches, outcomes, assignments, triage record, manifest and kinematics with nothing kept. Since commit 627877d (2026-08-21) archive_video calls supersede_video_outputs FIRST whenever anything for that video is already at the destination: the earlier generation is swept, checksum-verified, into the versioned Archive tree, and if that sweep reports any failure the archive REFUSES to proceed rather than move new files on top of old ones. The video itself and any ground-truth or human-review file are deliberately left in place, so a review still travels with its video. Since 2026-10-22 a file that is identical to the archived one (same size and time, or the same SHA-256 when the times differ) is not swept either: a re-run copies the video and pose down and hands them back unchanged, and sweeping them stored a duplicate pose per re-run and cost 60-100 s of copying.
@@ -2248,6 +2248,61 @@ stays in triage until that pellet is answered again. WHY: answers of "retrieved"
 pellet lying in the scoring area afterwards (Logan, 2026-10-26: "are you sure"). Ground truth is never
 reopened. Tests: `tests/test_route_recheck_answered.py`.
 
+## Update 2026-10-28: the hand-score check runs before triage, not before filing
+
+The comparison of a video's pellets with the session's hand scores (see the 2026-10-26 update below
+for what it compares and where the scores come from) moved from the last step before filing to the
+point right after the analysis and the quality check, BEFORE the review gate
+(`_hand_score_precheck` in `watcher/orchestrator.py`; on the processing server in `_run_pipeline`, on a
+node that also analyses in `_run_local_pipeline`). WHY: at filing, a video with a triage question
+went to the queue, was answered, came back, and only then met the hand score -- a disagreement sent
+it to the queue a second time. Before the gate, every question about a video reaches a person in one
+visit, and no video gets kinematics before it has been compared. The check is NOT inside
+`review_gate.evaluate_gate`, which stays pure and is also used by `pipeline/run_all.py` and
+`pipeline/reprocess_to_current.py` (those batch tools do not compare with hand scores).
+
+What each answer does now:
+
+- **A pellet disagrees** (and no person answered it): the pellet is flagged (`flagged_for_review`,
+  `flag_reason` "bench disagreement: the hand score says X; the algorithm says Y") and the run goes
+  on to the gate. A flagged pellet is a triage question (`triage_status.triaged_segments`), so the
+  gate sends the video to triage once, with that pellet and every other open question. Nothing is
+  routed by the check itself. A reason the pipeline had already flagged the pellet for is kept after
+  the bench text, "... (also: <old reason>)", so the review tool still recognises it (it looks for
+  "bench disagreement" at the start) and the reviewer sees both.
+- **Agrees, not required, Easy/Flat, no scores file configured**: on to the gate, as before.
+- **No hand scores yet in a required project**: the video is HELD. It stays in 'processing' with all
+  its files in the local Processing folder; the run stops before the gate (no triage, no
+  kinematics, no filing). It is listed (grey, waiting) in `<NAS root>/attention/<host>_hand_scores.json`,
+  the processing log gets one `hand_score_check` / `waiting` row, and the pipeline step does not pick
+  it again until the scores file changes. When it does change, the video is run again only to be
+  checked again: its segmentation, reaches, outcomes and assignment are reused, the quality check and
+  the hand-score check run again. Once the cohort's sheet has been imported after the video entered
+  'processing' (`processing_started_at`, kept from the first wait) and still has no scores for it,
+  the session was never scored by hand and the video goes on to the gate.
+- **The check cannot run**: held the same way, listed in red (`needs_person`, kind
+  `hand_score_check_failed`), and tried again when the scores file changes.
+
+Held videos do not count against `max_local_pending` (`_held_for_hand_scores`): they are analysed
+already, and a night of them would otherwise stop all intake until the next sheet import. They
+occupy local disk exactly as the waiting 'processed' videos did before. The list of held videos lives
+only in the watcher's memory: after a restart it is empty, every held video is picked once more,
+runs in full (nothing marks its outputs reusable after a restart) and is checked again. On a node
+that also analyses, a held video picked again keeps its row as it is (`processing_started_at` is not
+re-stamped).
+
+Removed: the check before filing (`_hand_scores_allow_filing`, and its calls in `_archive_to_nas` and
+`_archive_locally_processed`), and the filing picks' skip of waiting videos. There is no second check
+at filing: a 'processed' video has passed this one. Videos that were 'processed' but unfiled when
+this was deployed were never compared; bringing them through the new check is a deploy step, not
+something the watcher does by itself.
+
+Visible to a person: the Pipeline Dashboard's grey line ("analysed video(s) are held before triage
+and kinematics until their hand scores arrive"), the attention list, and the census, which prints
+"of which waiting for hand scores: N" under the analysis line. Tests:
+`tests/test_hand_score_check_before_triage.py` (renamed from `..._before_filing.py`),
+`tests/test_archive_gate.py`.
+
 ## Update 2026-10-28: every pellet's hand score is kept with the video
 
 Whenever the hand-score check reads the sheet for a video, `hand_scores.record` writes what the sheet
@@ -2276,13 +2331,16 @@ ignore it. Tests: `tests/test_hand_score_check_before_filing.py` (the `record` t
 
 ## Update 2026-10-26: checked against the hand scores before filing
 
+(Superseded 2026-10-28: the check now runs before the review gate, not before filing -- see the
+update of that date above. This section is kept as the record of what ran from 2026-10-26.)
+
 The last step before a video is filed (`_archive_to_nas` on the processing server,
 `_archive_locally_processed` on a node that also analyses) is now a comparison of its pellets with
 the session's hand scores (`watcher/hand_scores.py`, configured by the `hand_scores` section of
 `~/.mousereach/config.json` -- or, since 2026-10-28, of the lab settings file on the storage drive,
-see the update of that date; README "Checked against the hand scores before filing"). A pellet that
-disagrees, and that no person has answered, is flagged (`flagged_for_review`, `flag_reason` "disagrees
-with the hand score: ...") and the video goes to triage through `route_to_queue`, as the review tool
+see the update of that date; README "Checked against the hand scores before triage"). A pellet that
+disagrees, and that no person has answered, is flagged (`flagged_for_review`, `flag_reason` "bench
+disagreement: the hand score says X; the algorithm says Y") and the video goes to triage through `route_to_queue`, as the review tool
 already shows such reasons. A session with no hand scores in a required project leaves the video in
 'processed', unfiled and not picked again until the scores file changes, listed (grey, waiting) in
 `<NAS root>/attention/<host>_hand_scores.json`; once the cohort's sheet has been imported after the
@@ -2616,7 +2674,7 @@ everyone, never copied. Keeping them apart keeps it clear whether an edit takes 
 (lab settings) or only after setup is re-run (profiles).
 
 Reader of it today: `hand_scores.settings()`, which every hand-score reader goes through -- the check
-before filing (`check`), the scores-file stamp the watcher uses to avoid re-checking a waiting video
+before triage (`check`), the scores-file stamp the watcher uses to avoid re-checking a waiting video
 (`scores_file_stamp`) and the attention list (`_write_score_attention`). The review window reads no
 setting: it reads the score the check kept in the video's outcomes file (`score_from_outcomes`). The "check could not run" attention message now names the lab file as the usual place to fix
 the setting. Operator steps: INSTALL.md, Part 6, Step 4. Tests: `tests/test_lab_config.py`.

@@ -379,6 +379,12 @@ def estimate_eta(machine_backlog: int, human_backlog: int,
     return out
 
 
+# Attention-list kinds that mean "analysed, held for its hand scores"
+# (watcher/hand_scores.write_attention): waiting for the sheet's import, or a
+# check that could not run.
+HAND_SCORE_HOLD_KINDS = ("hand_scores_waiting", "hand_score_check_failed")
+
+
 def run_census(window_days: int = 14) -> dict:
     """The whole census, as one JSON-able dict. See the module docstring for
     what is deliberately absent (the database view)."""
@@ -510,6 +516,22 @@ def run_census(window_days: int = 14) -> dict:
             s["no_review_document"] = len(skipped)
             review[qname] = s
 
+    # Of the sessions in the analysis step, how many are analysed already and
+    # only HELD for their hand scores (the watcher's hand-score check before
+    # triage, watcher/hand_scores.py). WHY: without it a night of held videos
+    # reads as a stalled pipeline. Read from the watchers' attention lists,
+    # the same lists the dashboard shows; an unreadable list counts nothing
+    # here (the dashboard already shows it as an alarm).
+    held_for_hand_scores = 0
+    try:
+        from mousereach.watcher.attention import read_items
+        held = {i.get("video_id") for i in (read_items(nas) if nas else [])
+                if i.get("kind") in HAND_SCORE_HOLD_KINDS}
+        held_for_hand_scores = sum(1 for sid, el in elements.items()
+                                   if el == "mousereach" and sid in held)
+    except Exception:
+        pass
+
     total = len(sessions)
     return {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -523,6 +545,7 @@ def run_census(window_days: int = 14) -> dict:
         "by_element": {k: by_element.get(k, 0)
                        for k in ELEMENT_ORDER if by_element.get(k)},
         "by_project": by_project,
+        "held_for_hand_scores": held_for_hand_scores,   # part of "mousereach"
         "eta": eta,                               # question 4
         "review": review,
         "sessions": per_session,                  # per-sid, for the DB-side join
@@ -563,6 +586,9 @@ def _print_table(c: dict) -> None:
     for el, n in c["by_element"].items():
         p = 100.0 * n / tot["expected"] if tot["expected"] else 0
         print("  %-12s %6d  (%4.1f%%)  %s" % (el, n, p, label.get(el, "")))
+        if el == "mousereach" and c.get("held_for_hand_scores"):
+            print("  %-12s %6s  of which waiting for hand scores: %d (analysed, held "
+                  "before triage)" % ("", "", c["held_for_hand_scores"]))
     print()
     projs = sorted(c["by_project"])
     if projs:
