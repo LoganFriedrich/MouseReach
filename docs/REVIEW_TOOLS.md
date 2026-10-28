@@ -261,6 +261,11 @@ saved. It says plainly what each one said, for example:
 > The algorithm said displaced (in SA). The tray sheet says displaced. You
 > answered retrieved.
 
+The box also reminds you to **watch well past the causal reach** before keeping
+your answer. A pellet knocked off the pillar can bounce out of view for a few
+frames and still be lying in the SA afterwards; stopping too soon after the
+reach makes it look as if the pellet was taken.
+
 **The two buttons.**
 
 - **Take another look** (the highlighted button; pressing Enter, Esc or closing

@@ -396,7 +396,9 @@ Re-segmentation tool instead (Review Queues tab).
   algorithm and the tray sheet's hand score, a box says what each said
   before anything is saved. "Take another look" (the default) saves
   nothing and keeps you on the same pellet with the video as it was;
-  "Keep my answer" saves and moves on as usual. You are watching the
+  "Keep my answer" saves and moves on as usual. Before keeping it,
+  watch well past the causal reach: a pellet can be out of view for a
+  moment and still be bouncing around the SA. You are watching the
   video, so your answer wins -- the box only asks you to be sure.
 * When the whole video is judged (and its cuts are right), press
   "Clear -> re-enter pipeline". THAT is what releases the video: the watcher
@@ -419,7 +421,9 @@ and settle it).
   algorithm and the tray sheet's hand score, a box says what each said
   before anything is saved. "Take another look" (the default) saves
   nothing and keeps you on the same pellet with the video as it was;
-  "Keep my answer" saves and moves on as usual. You are watching the
+  "Keep my answer" saves and moves on as usual. Before keeping it,
+  watch well past the causal reach: a pellet can be out of view for a
+  moment and still be bouncing around the SA. You are watching the
   video, so your answer wins -- the box only asks you to be sure.
 * Wrong pellet, or wrong cuts: do not answer. Press "Escalate: bad
   segmentation -> re-segmentation"; the cuts are fixed there.

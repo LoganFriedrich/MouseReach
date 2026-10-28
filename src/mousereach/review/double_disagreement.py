@@ -98,11 +98,18 @@ def double_disagreement(human: Optional[str], algo: Optional[str],
 
 
 def dialog_text(human: str, algo: str, hand: int) -> str:
-    """What the box says, plainly: what each reading said, and the answer."""
+    """What the box says, plainly: what each reading said, and the answer.
+
+    The reminder to watch past the causal reach is there because of the case
+    that prompted the box: a reviewer answered "retrieved" for a pellet that
+    went out of view for a few frames after the reach and was still bouncing
+    around the SA -- watching a little longer shows it."""
     return ("The algorithm said %s. The tray sheet says %s. You answered %s.\n\n"
             "Both disagree with your answer. You may well be right -- you are "
-            "watching the video. If you are sure, keep your answer; otherwise "
-            "take another look before saving."
+            "watching the video. Before you keep it, watch well past the "
+            "causal reach: a pellet can disappear from view for a moment and "
+            "still be bouncing around the SA. If you are sure, keep your "
+            "answer; otherwise take another look before saving."
             % (PLAIN_OUTCOME.get(algo, algo), HAND_WORDS.get(hand, hand),
                PLAIN_OUTCOME.get(human, human)))
 

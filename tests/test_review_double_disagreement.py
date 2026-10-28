@@ -69,6 +69,13 @@ def test_the_box_says_plainly_what_disagrees():
     t.encode("ascii")
 
 
+def test_the_box_reminds_to_watch_past_the_causal_reach():
+    # the error it exists for: a pellet out of view for a moment after the
+    # reach, still in the SA, answered "retrieved"
+    t = dd.dialog_text("retrieved", "displaced_sa", DISPLACED)
+    assert "watch well past the causal reach" in t
+
+
 # ---------------------------------------------------------------------------
 # The hand score lookup (reuses the before-filing check's loader)
 # ---------------------------------------------------------------------------
