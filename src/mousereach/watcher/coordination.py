@@ -81,6 +81,31 @@ NODE_LOCAL_STATES = {
 }
 
 
+def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[Path]:
+    """The video's file IF this node may work on it, else None.
+
+    locate_video_file returns the recorded path whenever that file exists. For
+    a single another machine has claimed for pose, the recorded path is its
+    claimed copy in ``<Single_Animal>/.inflight/<that host>/`` -- on the shared
+    drive, so it exists for EVERY node. Taking that as "the file is here" made
+    a restarting GPU node adopt the other machine's dlc_running row, reclaim it
+    to dlc_queued and pose the video a second time (2026-10-28: every GPU
+    restart took the 12 videos the server's CPU pose pool was posing). A file
+    in another host's claim folder is that host's, so it counts as not here;
+    the row is then recorded as elsewhere, as for any video whose files sit on
+    another machine. This node's own claim folder is still its own.
+    """
+    from mousereach.watcher.single_claim import claim_holder
+    local_file = locate_video_file(
+        video_id, raw=remote.get('source_path'),
+        search_archive=False, search_staging=False)
+    if local_file is not None:
+        holder = claim_holder(local_file)
+        if holder is not None and holder != hostname:
+            return None
+    return local_file
+
+
 # A review hold is this node's own verdict that a person must look at the video.
 # Holds sit outside VIDEO_STATE_ORDER, so _state_index ranks them -1 and EVERY
 # remote state used to compare as "ahead" of them: a pose-only node's 'archived'
@@ -812,10 +837,8 @@ class PipelineCoordinator:
                     # adopt another node's hand-off as its own 'dlc_complete'
                     # row (watcher/locate.py docstring).
                     claims_in_flight = remote_state in NODE_LOCAL_STATES
-                    local_file = locate_video_file(
-                        video_id, raw=remote.get('source_path'),
-                        search_archive=False,
-                        search_staging=False) if claims_in_flight else None
+                    local_file = (_file_on_this_node(video_id, remote, hostname)
+                                  if claims_in_flight else None)
 
                     if local_file is None and claims_in_flight:
                         # Another node owns the work and holds the files. Say so
@@ -870,9 +893,7 @@ class PipelineCoordinator:
                     # work slot each (~32 s), about six minutes of every startup,
                     # for ever. Recorded once as unresolvable instead.
                     if remote_state in NODE_LOCAL_STATES:
-                        local_file = locate_video_file(
-                            video_id, raw=remote.get('source_path'),
-                            search_archive=False, search_staging=False)
+                        local_file = _file_on_this_node(video_id, remote, hostname)
                         if local_file is None:
                             if local_state != 'unresolvable':
                                 try:

@@ -2694,3 +2694,23 @@ before triage (`check`), the scores-file stamp the watcher uses to avoid re-chec
 (`scores_file_stamp`) and the attention list (`_write_score_attention`). The review window reads no
 setting: it reads the score the check kept in the video's outcomes file (`score_from_outcomes`). The "check could not run" attention message now names the lab file as the usual place to fix
 the setting. Operator steps: INSTALL.md, Part 6, Step 4. Tests: `tests/test_lab_config.py`.
+
+## Update 2026-10-28: startup recovery no longer adopts another machine's claimed single
+
+A single that a machine has claimed for pose sits in `Single_Animal/.inflight/<that machine>/`
+on the shared drive, and the shared record's file path for the video points at that claimed
+copy. Because the folder is shared, that file exists for every machine. When a graphics-card
+watcher started, cross-node recovery asked only "does the recorded file exist?", got yes, and
+took the other machine's in-progress ('dlc_running') video as its own. The startup reclaim then
+put it back in this machine's queue, and the video was posed a second time. Every restart of a
+graphics-card watcher did this to all the videos the CPU pose pool was posing at that moment
+(12 at a time).
+
+Recovery now treats a file in ANOTHER machine's claim folder as "not on this node"
+(`coordination._file_on_this_node`). The video is recorded as being elsewhere (unresolvable on
+this node, with the holder named), exactly like any video whose files are on another machine,
+and is never picked up here. A file in this machine's OWN claim folder is still its own.
+
+What an operator sees: nothing, except that a graphics-card watcher no longer spends its first
+minutes after a restart on videos another machine already has. A machine that adopted such
+videos before this change records them as elsewhere at its next restart.

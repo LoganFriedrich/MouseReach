@@ -92,6 +92,11 @@ state it set was lost).
       Recovery moves a node's own row forward to match, but never replaces a
       'triage' or 'deep_review' row with a record written before it (since
       2026-10-22; before, an older 'archived' here cleared a newer hold).
+      A working-state row is adopted only when the video's file is on this
+      node; a source_path in ANOTHER machine's Single_Animal/.inflight/<host>/
+      claim folder does not count, although the shared drive makes it exist
+      everywhere (since 2026-10-28; before, a restarting GPU node adopted and
+      re-posed every video the CPU pose pool was holding).
 
 For reprocessing questions the processing server's live database decides. It is
 the only role with `reprocesses_partial` true (orchestrator.py:433); GPU nodes
