@@ -2248,6 +2248,22 @@ stays in triage until that pellet is answered again. WHY: answers of "retrieved"
 pellet lying in the scoring area afterwards (Logan, 2026-10-26: "are you sure"). Ground truth is never
 reopened. Tests: `tests/test_route_recheck_answered.py`.
 
+## Update 2026-10-28: each review answer records who gave it
+
+A causal review file (`<video>_causal_review.json`, its durable copy under `review_records/reviews/`)
+carried one `reviewer` / `reviewed_at` for the whole file, rewritten by every save -- so one answer
+saved by a second person re-credited every earlier answer in the file to them. `save_causal_review`
+now gives every answered segment record its own `reviewer` and `reviewed_at`
+(`stamp_segment_reviewers`): this save's for an answer that is new or changed since the file was last
+saved (compared on outcome, causal reach, phantom flag, answers, notes, true segment number --
+matched by segment number, else by frame span), the earlier record's otherwise (or, for a file
+written before this, that file's own file-level values). Placeholders get none. The file-level fields
+are kept and mean "last save". Readers that need who answered a segment -- `update_corpus_index`,
+`apply_review_overrides` (the `reviewed_by` stamped onto results), `truth_resolver`, and
+`route_cli.reopen_answered` -- use the record's own values and fall back to the file-level ones
+(`segment_reviewer`). Existing review files are not rewritten. Operator description:
+docs/REVIEW_TOOLS.md "The record format". Tests: `tests/test_review_per_segment_reviewer.py`.
+
 ## Update 2026-10-28: the hand-score check runs before triage, not before filing
 
 The comparison of a video's pellets with the session's hand scores (see the 2026-10-26 update below

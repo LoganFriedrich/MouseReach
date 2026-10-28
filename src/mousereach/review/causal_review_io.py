@@ -358,6 +358,117 @@ def build_segment_record(
 # Save per-video review file
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Who answered each segment
+# ---------------------------------------------------------------------------
+# WHY per segment: a review file used to carry ONE "reviewer" and
+# "reviewed_at" for the whole file. One person saving a single answer in a
+# video another person had answered earlier then made the file credit the
+# second person with every answer in it, the first person's included. Each
+# segment's record now carries its own "reviewer" and "reviewed_at", set only
+# when that segment's answer is new or changed in a save; an unchanged answer
+# keeps the values it had. The file-level fields stay as they were and mean
+# "who saved the file last, and when". Readers that need "who answered
+# segment N" use segment_reviewer(), which falls back to the file-level
+# fields for files written before this (2026-10-28).
+
+# The parts of a record that ARE the person's answer. Not "algo" (it changes
+# when the algorithm is re-run), not human.agreed (it is derived from the
+# algorithm's call), not segment_num / pellet_num / segment_span (a re-cut
+# renumbers them without anyone answering anything).
+def _answer_signature(rec: Dict[str, Any]) -> str:
+    human = rec.get("human") or {}
+    return json.dumps({
+        "outcome": human.get("outcome"),
+        "causal_reach": human.get("causal_reach"),
+        "is_phantom": human.get("is_phantom"),
+        "answers": rec.get("answers"),
+        "notes": rec.get("notes"),
+        "true_segment_num": rec.get("true_segment_num"),
+    }, sort_keys=True, default=str)
+
+
+def _previous_review(video_stem: str, output_dir: Path) -> Optional[Dict[str, Any]]:
+    """The review as last saved -- the working copy about to be replaced, or
+    else the durable copy -- or None. Never raises: without it every answer
+    in this save is simply treated as given now."""
+    for path in (Path(output_dir) / f"{video_stem}_causal_review.json",
+                 durable_review_path(video_stem)):
+        try:
+            if path is not None and Path(path).is_file():
+                return _read_json(Path(path))
+        except Exception:
+            continue
+    return None
+
+
+def segment_reviewer(rec: Dict[str, Any], doc: Optional[Dict[str, Any]] = None):
+    """(reviewer, reviewed_at) of ONE segment's answer: the record's own
+    values, or -- for a file saved before records carried them -- the
+    file-level ones."""
+    rec, doc = rec or {}, doc or {}
+    return (rec.get("reviewer") or doc.get("reviewer"),
+            rec.get("reviewed_at") or doc.get("reviewed_at"))
+
+
+def stamp_segment_reviewers(
+    segments: List[Dict[str, Any]],
+    previous: Optional[Dict[str, Any]],
+    reviewer: str,
+    timestamp: str,
+) -> List[Dict[str, Any]]:
+    """Give every answered record its own "reviewer" and "reviewed_at"
+    (see the comment block above for why). For each record:
+
+    - not answered (a ``reviewed: False`` placeholder): no reviewer -- nobody
+      answered it; any left over from an earlier answer is removed;
+    - the same answer as the previous save's record for that segment (matched
+      by segment number, else by frame span): keeps that record's reviewer
+      and time, or, if the previous file had none per record, the previous
+      file's own -- the person who saved that file gave that answer;
+    - otherwise (new or changed): this save's reviewer and time.
+
+    Returns new record dicts; the caller's are not changed."""
+    prev_doc = previous or {}
+    by_num: Dict[int, Dict[str, Any]] = {}
+    by_span: Dict[str, Dict[str, Any]] = {}
+    for p in prev_doc.get("segments") or []:
+        if p.get("segment_num") is not None:
+            by_num[int(p["segment_num"])] = p
+        if p.get("segment_span"):
+            by_span[json.dumps(p["segment_span"], sort_keys=True)] = p
+    out = []
+    for rec in segments:
+        rec = dict(rec)
+        if (rec.get("answers") or {}).get("reviewed") is False:
+            rec.pop("reviewer", None)
+            rec.pop("reviewed_at", None)
+            out.append(rec)
+            continue
+        sig = _answer_signature(rec)
+        cands = []
+        if rec.get("segment_num") is not None:
+            cands.append(by_num.get(int(rec["segment_num"])))
+        if rec.get("segment_span"):
+            cands.append(by_span.get(json.dumps(rec["segment_span"], sort_keys=True)))
+        same = next((p for p in cands if p is not None
+                     and (p.get("answers") or {}).get("reviewed") is not False
+                     and _answer_signature(p) == sig), None)
+        if same is not None:
+            who, when = segment_reviewer(same, prev_doc)
+        elif not prev_doc and rec.get("reviewer") and rec.get("reviewed_at"):
+            # No previous file to compare with (moved, or not readable) and the
+            # record already says who answered it: it came back from a saved
+            # review unchanged -- keep it.
+            who, when = rec["reviewer"], rec["reviewed_at"]
+        else:
+            who, when = reviewer, timestamp
+        rec["reviewer"] = who or reviewer
+        rec["reviewed_at"] = when or timestamp
+        out.append(rec)
+    return out
+
+
 def save_causal_review(
     video_stem: str,
     output_dir: Path,
@@ -378,11 +489,16 @@ def save_causal_review(
         reviewer is looking. This may be a transient triage bundle, so it is
         never the only copy written (see ``durable_review_dir``).
     segments : list of dict
-        Per-segment review records (from ``build_segment_record``).
+        Per-segment review records (from ``build_segment_record``). Each
+        answered record is saved with its own "reviewer" / "reviewed_at"
+        (``stamp_segment_reviewers``): this save's for an answer that is new
+        or changed since the file was last saved, the earlier ones otherwise.
     provenance : dict
         Algo version stamps (from ``collect_provenance``).
     reviewer : str, optional
-        Reviewer name; defaults to OS username.
+        Reviewer name; defaults to OS username. Saved at file level as "who
+        saved the file last"; per segment only for the answers this save
+        gives or changes.
     unmatched_answers : list of dict, optional
         Earlier answers whose frames match no current segment
         (``restore_review_for_segments``). Kept under ``UNMATCHED_ANSWERS_KEY``
@@ -395,6 +511,8 @@ def save_causal_review(
     """
     reviewer = reviewer or _get_username()
     timestamp = _get_timestamp()
+    segments = stamp_segment_reviewers(
+        segments, _previous_review(video_stem, output_dir), reviewer, timestamp)
 
     doc: Dict[str, Any] = {
         "type": "causal_review",
@@ -1026,8 +1144,11 @@ def apply_review_overrides(
         seg["outcome"] = ho
         seg["causal_reach_id"] = hc.get("reach_id") if ho in _TOUCHED_OUTCOMES else None
         seg["outcome_source"] = "human_review"
-        if reviewer:
-            seg["reviewed_by"] = reviewer
+        # Who answered this segment; the file-level reviewer only for files
+        # saved before records carried their own (segment_reviewer).
+        who = rec.get("reviewer") or reviewer
+        if who:
+            seg["reviewed_by"] = who
         if ans.get("abnormal_ranges"):
             seg["abnormal_ranges"] = ans["abnormal_ranges"]
     return out
@@ -1296,8 +1417,10 @@ def update_corpus_index(
             "pellet_num": seg.get("pellet_num"),
             "review_file": str(review_file_path),
             "durable_file": str(durable_review_path(video_stem) or ""),
-            "reviewer": reviewer,
-            "reviewed_at": reviewed_at,
+            # Who answered THIS segment (the record's own values, saved by
+            # save_causal_review), not who saved the file last.
+            "reviewer": seg.get("reviewer") or reviewer,
+            "reviewed_at": seg.get("reviewed_at") or reviewed_at,
             "human_outcome": human.get("outcome"),
             "agreed": human.get("agreed", False),
             # --- everything below is what makes a lost review recoverable ---

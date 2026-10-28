@@ -203,7 +203,9 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
             "review_causal_reach_id": stored,
             "review_reach": review_reach,
             "abnormal_ranges": ans.get("abnormal_ranges"),
-            "reviewer": (doc or {}).get("reviewer"),
+            # Who answered this segment, not who saved the file last
+            # (causal_review_io.segment_reviewer).
+            "reviewer": rec.get("reviewer") or (doc or {}).get("reviewer"),
             "source": source,
         }
     return out

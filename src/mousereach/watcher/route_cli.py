@@ -216,11 +216,15 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
         answers = (rec or {}).get("answers") or {}
         if rec is None or answers.get("reviewed") is False:
             continue
+        # Who gave the answer being questioned: the record's own values, or
+        # the file's for a review saved before records carried them. The
+        # reopened record is nobody's answer, so it carries no reviewer.
         rec["answers"] = {"reviewed": False, "recheck": {
             "asked_at": now, "question": questions.get(sn),
             "previous": {"human": rec.get("human"), "answers": answers,
-                         "reviewer": review.get("reviewer"),
-                         "reviewed_at": review.get("reviewed_at")}}}
+                         "reviewer": rec.pop("reviewer", None) or review.get("reviewer"),
+                         "reviewed_at": (rec.pop("reviewed_at", None)
+                                         or review.get("reviewed_at"))}}}
         reopened.append(sn)
     if reopened:
         backup_dir = Path(Paths.ANALYZED_OUTPUT) / "Archive" / "manual_corrections"

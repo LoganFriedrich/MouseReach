@@ -376,7 +376,38 @@ answers           {triage_kind, outcome_pick/outcome_override, causal_pick,
 notes             free text
 true_segment_num  older records only (the control was removed 2026-10-23)
 segmentation_wrong  true, alongside true_segment_num
+reviewer          who gave THIS segment's answer (since 2026-10-28; absent
+                  on a placeholder nobody answered)
+reviewed_at       when that answer was given (same rule)
 ```
+
+**Who answered which segment (since 2026-10-28).** The file as a whole also
+has a `reviewer` and a `reviewed_at`. Those mean only "who saved this file
+last, and when". Until 2026-10-28 they were the only record of who answered,
+so when a second person opened a video someone else had partly answered and
+saved one answer, the file then named the second person for every answer in
+it, including all of the first person's. Now each answered segment carries its
+own `reviewer` and `reviewed_at`:
+
+- When you save, a segment whose answer you gave or changed in that save gets
+  your name and the time.
+- A segment whose answer is the same as it was in the file before your save
+  keeps the name and time it already had. So opening someone else's video,
+  stepping through their answers and saving does not make them yours.
+- An unanswered segment (a placeholder) has no name.
+- A file saved before 2026-10-28 has no per-segment names. Anything that needs
+  to know who answered a segment then uses the file's own `reviewer` and
+  `reviewed_at` instead, exactly as before -- old files still read, and nothing
+  rewrites them. The next save of such a file keeps that file-level name on the
+  answers it does not change.
+
+"The same answer" means the same outcome, causal reach, notes and answer
+details; what the algorithm said, the segment's number and its frames do not
+count, because they change when the video is re-run or re-cut without anyone
+answering anything. The corpus index (`causal_review_index.json`), the results
+step (the `reviewed_by` field it writes onto each pellet) and the "are you sure?"
+re-check (`mousereach-route-to-queue --recheck`) all credit each segment to the
+person in its own record (`causal_review_io.segment_reviewer`).
 
 New saves stamp the document `schema_version: "1.1"` (`causal_review_io.py:268`). Older files were given spans by a backfill that left the version alone, so **no existing review file carries 1.1**: all 662 review files under `MouseReach_Pipeline/Analyzed` say `1.0` and all 662 have spans.
 
