@@ -2688,7 +2688,13 @@ The notes box travels with the video.
         hand score, shows the box, and notes a kept answer in the record
         (answers["double_disagreement"]) so it can be audited later. No hand
         score to compare with: the answer is saved as usual and one console
-        line says the check did not run."""
+        line says the check did not run.
+
+        The hand score is the one the pipeline kept in this video's outcomes
+        file when it compared the video with the sheet (hand_scores.record,
+        under "hand_scores"). WHY from there: it is the very score the
+        pipeline compared with, it travels inside the bundle, and the review
+        window needs no setting or access to the scores file."""
         if not record or (record.get("answers") or {}).get("is_boundary"):
             return True
         human = (record.get("human") or {}).get("outcome")
@@ -2701,8 +2707,8 @@ The notes box travels with the video.
             return True
         if not dd.disagrees_with_algorithm(human, algo):
             return True                # agrees with the algorithm (or it has none)
-        from mousereach.watcher.hand_scores import pellet_hand_score
-        hand, why_not = pellet_hand_score(self._video_stem, seg_num)
+        from mousereach.watcher.hand_scores import score_from_outcomes
+        hand, why_not = score_from_outcomes(getattr(self, "_outcomes_data", None), seg_num)
         if hand is None:
             print(f"[!] Algorithm-and-sheet check not run for {self._video_stem} "
                   f"segment {seg_num}: {why_not}")

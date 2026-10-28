@@ -111,9 +111,9 @@ def test_a_lab_file_that_is_not_an_object_is_unreadable(home, caplog):
 
 def test_a_user_with_only_the_shared_keys_gets_hand_scores_from_the_lab_file(
         home, tmp_path, monkeypatch):
-    """A reviewer's config.json with only the machine keys (no hand_scores)
-    reads the lab's hand scores: settings() resolves, and the review window's
-    lookup finds the score."""
+    """A user's config.json with only the machine keys (no hand_scores)
+    reads the lab's hand scores: settings() resolves, and the check's loader
+    finds the score."""
     monkeypatch.setattr(hs, "settings", REAL_SETTINGS)
     scores = tmp_path / "hand.csv"
     scores.write_text("video_key,pellet,score\n20250709_ABC0207_P1,7,1\n", encoding="utf-8")
@@ -122,7 +122,8 @@ def test_a_user_with_only_the_shared_keys_gets_hand_scores_from_the_lab_file(
     home.lab_file({"hand_scores": {"path": str(scores), "required_projects": ["ABC"]}})
     hs._CACHE.update(key=None)
     assert hs.settings() == {"path": str(scores), "required_projects": ["ABC"]}
-    assert hs.pellet_hand_score("20250709_ABC0207_P1", 7) == (1, "")
+    scores_by_video, _manifest = hs.load(hs.settings()["path"])
+    assert scores_by_video["20250709_ABC0207_P1"] == {7: 1}
     assert hs.scores_file_stamp() == scores.stat().st_mtime
 
 

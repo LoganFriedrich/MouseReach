@@ -2297,12 +2297,13 @@ shows in red instead of quietly stopping the filing. WHY (Logan, 2026-10-26): fi
 has no issues; before this the comparison ran nightly on videos already filed and moved them back.
 Tests: `tests/test_hand_score_check_before_filing.py`.
 
-The same scores are also read by the review window (since 2026-10-28):
-`hand_scores.pellet_hand_score(video, pellet)` returns one pellet's score, keyed by segment
-number exactly as `check` keys it, or `(None, why not)` -- it never raises. The review window uses
-it to ask a person to look again before saving an answer that disagrees with BOTH the algorithm
-and the hand score (`review/double_disagreement.py`; docs/REVIEW_TOOLS.md "Check your answer").
-Nothing in the watcher calls it, and the before-filing check is unchanged.
+The same scores are also used by the review window (since 2026-10-28) to ask a person to look
+again before saving an answer that disagrees with BOTH the algorithm and the hand score
+(`review/double_disagreement.py`; docs/REVIEW_TOOLS.md "Check your answer"). It reads the score the
+check kept in the video's outcomes file (`hand_scores.score_from_outcomes`, see "every pellet's hand
+score is kept with the video" above), not the scores file: a reviewer needs no setting, and a video
+analysed before scores were kept simply gets no box. (For a few hours on 2026-10-28 it read the
+scores file through `pellet_hand_score`, which is removed.)
 
 The Pipeline Dashboard shows every item of every list in `<NAS root>/attention/` whose
 `needs_person` is true in a red "Needs your attention (N)" panel at its top (hidden when there is
@@ -2616,7 +2617,6 @@ everyone, never copied. Keeping them apart keeps it clear whether an edit takes 
 
 Reader of it today: `hand_scores.settings()`, which every hand-score reader goes through -- the check
 before filing (`check`), the scores-file stamp the watcher uses to avoid re-checking a waiting video
-(`scores_file_stamp`), the attention list (`_write_score_attention`), and the review window's
-`pellet_hand_score`. So the watcher and the review window always read the same settings for the same
-person. The "check could not run" attention message now names the lab file as the usual place to fix
+(`scores_file_stamp`) and the attention list (`_write_score_attention`). The review window reads no
+setting: it reads the score the check kept in the video's outcomes file (`score_from_outcomes`). The "check could not run" attention message now names the lab file as the usual place to fix
 the setting. Operator steps: INSTALL.md, Part 6, Step 4. Tests: `tests/test_lab_config.py`.

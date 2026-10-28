@@ -289,9 +289,11 @@ separate readings of the same pellet both contradict.
 
 - Your answer agrees with the algorithm, or agrees with the tray sheet.
 - The algorithm had no outcome for the pellet (it could not decide).
-- There is no hand score to compare with: no scores file is set up on this
-  computer, the file cannot be read, or it has no row for this session or this
-  pellet. The answer is saved as usual and one line in the console says
+- There is no hand score to compare with: the video was analysed before the
+  pipeline started keeping hand scores with each video (2026-10-28), the
+  session has no hand scores, the lab has no scores file set up, or the sheet
+  has no score for this pellet. The answer is saved as usual and one line in
+  the console says
   `[!] Algorithm-and-sheet check not run for <video> segment <n>: <why>`.
 - The answer is not a pellet outcome (for example `abnormal`).
 - You already saw the box for this pellet and kept this same answer.
@@ -311,12 +313,14 @@ other side can see:
   the SA"). "Retrieved" against the algorithm's "displaced (in SA)" is still a
   disagreement: the algorithm saw the pellet land in the SA.
 
-The hand scores are read from the same scores file the before-filing check
-reads (the `"hand_scores"` `"path"` setting: the reviewer's own
-`~/.mousereach/config.json` if it has a `"hand_scores"` section, otherwise the
-lab settings file `<storage root>/mousereach_lab_config.json`, so a reviewer
-needs no setting of their own; see `watcher/hand_scores.py` and INSTALL.md,
-Part 6, Step 4). If neither has it, the box never appears. The decision itself
+The hand score shown is the one the pipeline itself compared the pellet with:
+when the watcher checks a video against the tray sheet it keeps every pellet's
+hand score inside the video's own outcomes file (`<video>_pellet_outcomes.json`,
+key `"hand_scores"`), and the review window reads it from there
+(`hand_scores.score_from_outcomes`). So the review window needs no setting of
+its own and no access to the scores file, and the score always travels with the
+video into the queue. A video analysed before 2026-10-28 has no kept scores
+until it is analysed again, and the box does not appear for it. The decision itself
 is `review/double_disagreement.py`; the box is `_passes_double_check` in
 `causal_review_widget.py`. If you press Escalate, Flag Session or Clear while the
 open pellet's answer would bring up the box, the box comes first; "Take another

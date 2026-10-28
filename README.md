@@ -323,13 +323,15 @@ last step before filing it:
   be read): the video is held, never filed unchecked, and shown in red as
   needing a person until the setting or the file is fixed.
 
-**The review window reads the same scores.** When a reviewer's answer for a
+**The review window uses the same scores.** When a reviewer's answer for a
 pellet disagrees with both the algorithm and the hand score, a "check your
 answer" box asks them to look again before saving; the reviewer's answer
-always wins (docs/REVIEW_TOOLS.md, "Check your answer"). The reviewer needs no
-setting of their own: the path comes from the lab settings file unless their own
-`config.json` has a `hand_scores` section. Without a path in either, the box
-never appears.
+always wins (docs/REVIEW_TOOLS.md, "Check your answer"). The watcher keeps every
+pellet's hand score inside the video's own outcomes file when it compares the
+video (key `hand_scores` in `<video>_pellet_outcomes.json`), and the review
+window reads it from there -- so a reviewer needs no setting at all, and sees the
+very score the pipeline compared with. A video analysed before 2026-10-28 has no
+kept scores until it is analysed again; for it the box never appears.
 
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
 shows, in red at the top, **Needs your attention (N)** with one line per thing

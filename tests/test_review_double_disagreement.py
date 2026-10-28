@@ -77,30 +77,26 @@ def test_the_box_reminds_to_watch_past_the_causal_reach():
 
 
 # ---------------------------------------------------------------------------
-# The hand score lookup (reuses the before-filing check's loader)
+# The hand score lookup: the score the pipeline kept in the outcomes file
 # ---------------------------------------------------------------------------
 
-def _scores(tmp_path, monkeypatch, rows):
-    f = tmp_path / "hand.csv"
-    f.write_text("video_key,pellet,score\n" + "".join(
-        "%s,%d,%d\n" % (VID, p, s) for p, s in rows.items()), encoding="utf-8")
-    monkeypatch.setattr(hs, "settings", lambda: {"path": str(f)})
-    hs._CACHE.update(key=None)
+def _scores(rows):
+    """The outcomes document as the pipeline leaves it after the check
+    (hand_scores.record): the session's scores under "hand_scores"."""
+    return {"segments": [], "hand_scores": {
+        "pellets": {str(p): s for p, s in rows.items()}, "verdict": "agrees"}}
 
 
-def test_hand_score_lookup(tmp_path, monkeypatch):
-    _scores(tmp_path, monkeypatch, {3: 1})
-    assert hs.pellet_hand_score(VID, 3) == (1, "")
-    assert hs.pellet_hand_score(VID, 4)[0] is None
-    assert hs.pellet_hand_score("20250709_ABC0299_P1", 3)[0] is None
+def test_hand_score_lookup():
+    doc = _scores({3: 1})
+    assert hs.score_from_outcomes(doc, 3) == (1, "")
+    assert hs.score_from_outcomes(doc, 4)[0] is None
 
 
-def test_hand_score_lookup_never_raises(tmp_path, monkeypatch):
-    monkeypatch.setattr(hs, "settings", lambda: {})
-    assert hs.pellet_hand_score(VID, 3)[0] is None
-    monkeypatch.setattr(hs, "settings", lambda: {"path": str(tmp_path / "missing.csv")})
-    hs._CACHE.update(key=None)
-    score, why = hs.pellet_hand_score(VID, 3)
+def test_hand_score_lookup_never_raises():
+    assert hs.score_from_outcomes({}, 3)[0] is None
+    assert hs.score_from_outcomes(None, 3)[0] is None
+    score, why = hs.score_from_outcomes({"hand_scores": {"pellets": 7}}, 3)
     assert score is None and "could not be read" in why
 
 
@@ -120,12 +116,14 @@ class _Label:
         self.text = t
 
 
-def _stub(record, answer_box, records=None):
+def _stub(record, answer_box, records=None, outcomes=None):
     """A stand-in for the window with one segment open; ``answer_box`` is what
-    the reviewer clicks (True = keep, False = take another look)."""
+    the reviewer clicks (True = keep, False = take another look);
+    ``outcomes`` is the loaded outcomes file (where the hand scores are kept)."""
     calls = {"asked": [], "shown": 0, "saved_video": 0}
     stub = SimpleNamespace(
         _video_stem=VID, _review_records=dict(records or {}), _current_seg_idx=0,
+        _outcomes_data=outcomes or {},
         _triage_only=True, _status_label=_Label(),
         _collect_answers=lambda: json.loads(json.dumps(record)),
         _next_visible_idx=lambda i: i + 1,
@@ -143,9 +141,9 @@ def _quiet_qt(monkeypatch):
     monkeypatch.setattr(w, "show_info", lambda *a, **k: None)
 
 
-def test_take_another_look_saves_nothing_and_stays(tmp_path, monkeypatch):
-    _scores(tmp_path, monkeypatch, {3: DISPLACED})
-    stub, calls = _stub(_record(3, "retrieved", "displaced_sa"), answer_box=False)
+def test_take_another_look_saves_nothing_and_stays():
+    stub, calls = _stub(_record(3, "retrieved", "displaced_sa"), answer_box=False,
+                        outcomes=_scores({3: DISPLACED}))
     CausalReviewWidget._save_segment_and_advance(stub)
     assert len(calls["asked"]) == 1
     assert stub._review_records == {}          # nothing recorded
@@ -154,9 +152,9 @@ def test_take_another_look_saves_nothing_and_stays(tmp_path, monkeypatch):
     assert "LOOK AGAIN" in stub._status_label.text
 
 
-def test_keep_my_answer_saves_and_advances_with_a_note(tmp_path, monkeypatch):
-    _scores(tmp_path, monkeypatch, {3: DISPLACED})
-    stub, calls = _stub(_record(3, "retrieved", "displaced_sa"), answer_box=True)
+def test_keep_my_answer_saves_and_advances_with_a_note():
+    stub, calls = _stub(_record(3, "retrieved", "displaced_sa"), answer_box=True,
+                        outcomes=_scores({3: DISPLACED}))
     CausalReviewWidget._save_segment_and_advance(stub)
     rec = stub._review_records[3]
     assert rec["human"]["outcome"] == "retrieved"   # never changed
@@ -170,15 +168,16 @@ def test_keep_my_answer_saves_and_advances_with_a_note(tmp_path, monkeypatch):
     assert len(calls["asked"]) == 1
 
 
-def test_no_box_when_either_agrees_or_no_hand_score(tmp_path, monkeypatch, capsys):
-    _scores(tmp_path, monkeypatch, {3: RETRIEVED})
-    stub, calls = _stub(_record(3, "retrieved", "displaced_sa"), answer_box=False)
+def test_no_box_when_either_agrees_or_no_hand_score(capsys):
+    stub, calls = _stub(_record(3, "retrieved", "displaced_sa"), answer_box=False,
+                        outcomes=_scores({3: RETRIEVED}))
     CausalReviewWidget._save_segment_and_advance(stub)
     assert calls["asked"] == [] and 3 in stub._review_records
     assert dd.FIELD not in stub._review_records[3]["answers"]
 
     # no hand-score row for this pellet: saved as usual, one line says so
-    stub, calls = _stub(_record(5, "retrieved", "displaced_sa"), answer_box=False)
+    stub, calls = _stub(_record(5, "retrieved", "displaced_sa"), answer_box=False,
+                        outcomes=_scores({3: RETRIEVED}))
     CausalReviewWidget._save_segment_and_advance(stub)
     assert calls["asked"] == [] and 5 in stub._review_records
     out = capsys.readouterr().out
