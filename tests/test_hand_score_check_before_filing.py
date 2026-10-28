@@ -179,3 +179,80 @@ def test_times_are_compared_as_times_and_an_unreadable_one_means_wait():
     assert not hs.scores_never_came(v, "2026-10-26T10:00:00")        # zone vs none: not known
     v.last_import = "yesterday"
     assert not hs.scores_never_came(v, "2026-10-26T10:00:00")        # unreadable: wait
+
+
+# ---------------------------------------------------------------------------
+# Every pellet's score is kept with the video (hand_scores.record)
+# ---------------------------------------------------------------------------
+
+def _kept(folder):
+    return json.loads((folder / f"{VID}_pellet_outcomes.json").read_text())
+
+
+def test_record_keeps_every_pellet_and_every_other_key(tmp_path, monkeypatch):
+    folder = _setup(tmp_path, monkeypatch, scores={1: 2, 2: 0, 3: 1},
+                    outcomes={1: "retrieved", 2: "untouched", 3: "displaced_outside"},
+                    last_import="2026-10-26T20:05:00")
+    v = hs.check(VID, folder)
+    assert v.status == hs.AGREES
+    assert hs.record(folder, VID, v, 123.0) is True
+    doc = _kept(folder)
+    assert [s["segment_num"] for s in doc["segments"]] == [1, 2, 3]   # untouched
+    kept = doc["hand_scores"]
+    assert kept["pellets"] == {"1": 2, "2": 0, "3": 1}
+    assert kept["verdict"] == "agrees"
+    assert kept["source_mtime"] == 123.0
+    assert kept["cohort_last_import"] == "2026-10-26T20:05:00"
+    assert kept["read_at"]
+    assert not list(folder.glob("*.tmp"))
+
+
+def test_record_keeps_the_scores_when_a_person_answered_every_pellet(tmp_path, monkeypatch):
+    folder = _setup(tmp_path, monkeypatch, scores={1: 2, 2: 0},
+                    outcomes={1: "untouched", 2: "retrieved"}, answered={"all"})
+    v = hs.check(VID, folder)
+    assert v.status == hs.AGREES and v.reason == "every pellet answered by a person"
+    hs.record(folder, VID, v, 1.0)
+    assert _kept(folder)["hand_scores"]["pellets"] == {"1": 2, "2": 0}
+
+
+def test_record_keeps_disagreeing_and_unscored_sessions_too(tmp_path, monkeypatch):
+    folder = _setup(tmp_path, monkeypatch, scores={1: 2}, outcomes={1: "untouched"})
+    v = hs.check(VID, folder)
+    hs.record(folder, VID, v, 1.0)
+    assert _kept(folder)["hand_scores"]["verdict"] == "disagrees"
+    # not a required project, no row: the sheet was read, pellets empty
+    folder = _setup(tmp_path, monkeypatch, scores={}, required=(), outcomes={1: "untouched"})
+    v = hs.check(VID, folder)
+    hs.record(folder, VID, v, 1.0)
+    assert _kept(folder)["hand_scores"] == dict(_kept(folder)["hand_scores"],
+                                                pellets={}, verdict="not_required")
+    # a waiting session whose scores never came
+    folder = _setup(tmp_path, monkeypatch, scores={}, outcomes={1: "untouched"})
+    v = hs.check(VID, folder)
+    assert v.status == hs.WAITING
+    hs.record(folder, VID, v, 1.0)
+    assert _kept(folder)["hand_scores"]["verdict"] == "never_scored"
+
+
+def test_nothing_is_recorded_when_the_sheet_was_not_read(tmp_path, monkeypatch):
+    folder = _setup(tmp_path, monkeypatch, scores={1: 2}, outcomes={1: "untouched"})
+    v = hs.check("20250709_ABC0207_E1", folder)                # Easy tray
+    assert hs.record(folder, "20250709_ABC0207_E1", v, 1.0) is False
+    monkeypatch.setattr(hs, "settings", lambda: {})            # no scores file
+    v = hs.check(VID, folder)
+    assert hs.record(folder, VID, v, 1.0) is False
+    assert "hand_scores" not in _kept(folder)
+
+
+def test_score_from_outcomes_reads_one_pellet_and_never_raises():
+    doc = {"hand_scores": {"pellets": {"3": 1}, "verdict": "agrees"}}
+    assert hs.score_from_outcomes(doc, 3) == (1, "")
+    assert hs.score_from_outcomes(doc, 4)[0] is None
+    score, why = hs.score_from_outcomes({"segments": []}, 3)       # analysed before
+    assert score is None and "no hand scores kept" in why
+    score, why = hs.score_from_outcomes(
+        {"hand_scores": {"pellets": {}, "verdict": "never_scored"}}, 3)
+    assert score is None and "no hand scores" in why
+    assert hs.score_from_outcomes(None, 3)[0] is None
+    assert hs.score_from_outcomes({"hand_scores": {"pellets": "junk"}}, 3)[0] is None

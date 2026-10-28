@@ -29,6 +29,26 @@ What a person answered is never compared: a person's answer is the truth
 for that pellet, whatever the bench says. Easy and Flat trays have no pellet
 outcomes and are never checked.
 
+EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO
+-------------------------------------------
+Whenever the sheet was read for a video, ``record`` writes what it said into
+the video's <video>_pellet_outcomes.json under the top-level key
+"hand_scores":
+
+    "hand_scores": {"pellets": {"1": 2, "2": 0, ...},   # segment -> 0/1/2
+                    "verdict": "agrees" | "disagrees" | "never_scored"
+                               | "not_required",
+                    "source_mtime": <the scores file's modification time>,
+                    "cohort_last_import": <the cohort's last sheet import>,
+                    "read_at": <when this check read it>}
+
+"pellets" is empty when the session has no row in the sheet. Nothing is
+written for Easy/Flat trays or when no scores file is configured. WHY: the
+review window's check-your-answer box (review/double_disagreement.py) reads
+the score from here (score_from_outcomes), so the reviewer sees exactly the
+score the pipeline compared with, travelling inside the bundle, and the
+review window needs no access to the scores file at all.
+
 WHERE THE SCORES COME FROM
 --------------------------
 A CSV file another tool writes (in this lab's setup, the database tool),
@@ -95,6 +115,10 @@ class Verdict:
     last_import: Optional[str] = None     # the cohort's last successful sheet import
     has_sheet: Optional[bool] = None      # the cohort has a sheet (None: not known)
     full_import_at: Optional[str] = None  # the last import of every sheet ended
+    # What the sheet says for this session, {segment: 0/1/2}: {} when the sheet
+    # was read and has no row for it, None when it was not read at all (Easy/
+    # Flat tray, no scores file configured). record() keeps it with the video.
+    hand: Optional[Dict[int, int]] = None
 
 
 def settings() -> dict:
@@ -196,14 +220,21 @@ def check(video_id: str, folder: Path) -> Verdict:
             return Verdict(WAITING, "no hand scores for this session", cohort_id=cohort_id,
                            last_import=last, full_import_at=manifest.get("full_import_at"),
                            has_sheet=(cohort_id in manifest["sheets_seen"]
-                                      if manifest.get("sheets_seen") is not None else None))
+                                      if manifest.get("sheets_seen") is not None else None),
+                           hand={})
         return Verdict(NOT_CHECKED, "no hand scores for this session (not required "
-                       "for %s)" % (project or "this project"), cohort_id=cohort_id)
+                       "for %s)" % (project or "this project"), cohort_id=cohort_id,
+                       last_import=last, hand={})
+    # From here on every verdict carries the session's scores (``hand``), so
+    # record() can keep each pellet's score with the video -- also when no
+    # pellet is compared because a person answered them all.
+    hand = dict(hand)
 
     from mousereach.watcher.route_cli import answered_segments_of
     answered = answered_segments_of(video_id, folder)
     if "all" in answered:
-        return Verdict(AGREES, "every pellet answered by a person", cohort_id=cohort_id)
+        return Verdict(AGREES, "every pellet answered by a person", cohort_id=cohort_id,
+                       last_import=last, hand=hand)
     out = json.loads((Path(folder) / f"{video_id}_pellet_outcomes.json").read_text(encoding="utf-8"))
     disagree = {}
     for seg in out.get("segments", []):
@@ -218,8 +249,75 @@ def check(video_id: str, folder: Path) -> Verdict:
     if disagree:
         return Verdict(DISAGREES, "%d pellet(s) disagree with the hand score: %s" % (
             len(disagree), ", ".join(str(s) for s in sorted(disagree))), disagree,
-            cohort_id=cohort_id)
-    return Verdict(AGREES, "every pellet agrees with the hand score", cohort_id=cohort_id)
+            cohort_id=cohort_id, last_import=last, hand=hand)
+    return Verdict(AGREES, "every pellet agrees with the hand score", cohort_id=cohort_id,
+                   last_import=last, hand=hand)
+
+
+# The word kept in the outcomes file for each verdict (see the module
+# docstring, "EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO"). A WAITING verdict
+# is only ever recorded once scores_never_came() has said the scores will not
+# come, so it is kept as "never_scored"; a video still waiting is not recorded.
+RECORD_WORDS = {AGREES: "agrees", DISAGREES: "disagrees", WAITING: "never_scored",
+                NOT_CHECKED: "not_required"}
+RECORD_KEY = "hand_scores"
+
+
+def record(folder: Path, video_id: str, verdict: Verdict, stamp: Optional[float]) -> bool:
+    """Keep what the sheet said for this session in the video's
+    <video>_pellet_outcomes.json, under the top-level key "hand_scores"
+    (module docstring). Returns True when written, False when there is
+    nothing to keep (the sheet was not read: Easy/Flat tray, no scores file
+    configured, or no outcomes file). Raises when the outcomes file exists
+    but cannot be read or written -- the caller then holds the video, as for
+    any check that could not run.
+
+    Read-modify-write of the WHOLE file, written to a temporary file beside it
+    and then put in place with one rename: every other key the pipeline wrote
+    is kept, and a reader never sees a half-written file."""
+    from datetime import datetime
+    if verdict.hand is None:
+        return False
+    path = Path(folder) / f"{video_id}_pellet_outcomes.json"
+    if not path.is_file():
+        return False
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data[RECORD_KEY] = {
+        "pellets": {str(int(k)): int(v) for k, v in sorted(verdict.hand.items())},
+        "verdict": RECORD_WORDS.get(verdict.status, verdict.status),
+        "source_mtime": stamp,
+        "cohort_last_import": verdict.last_import,
+        "read_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    return True
+
+
+def score_from_outcomes(outcomes_doc, pellet):
+    """(score, "") for one pellet's hand score (0/1/2, see HAND_WORDS) as
+    record() kept it in the video's outcomes file, or (None, why not) when
+    there is none to compare with. Never raises.
+
+    Used by the review window's check-your-answer box
+    (review/double_disagreement.py). WHY from the outcomes file and not the
+    scores file: it is the score the pipeline compared this pellet with, it
+    travels inside the review bundle, and the review window then needs no
+    setting or access to the scores file. Keyed by segment number, exactly
+    as check() keys it."""
+    try:
+        kept = (outcomes_doc or {}).get(RECORD_KEY)
+        if not isinstance(kept, dict):
+            return None, "no hand scores kept with this video (analysed before they were kept)"
+        s = (kept.get("pellets") or {}).get(str(int(pellet)))
+    except Exception as e:
+        return None, "hand scores kept with this video could not be read (%s)" % e
+    if s not in HAND_WORDS:
+        if not kept.get("pellets"):
+            return None, "this session has no hand scores (%s)" % kept.get("verdict")
+        return None, "no hand score for pellet %s" % pellet
+    return s, ""
 
 
 def _after(a: Optional[str], b: Optional[str]) -> Optional[bool]:

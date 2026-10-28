@@ -2248,6 +2248,32 @@ stays in triage until that pellet is answered again. WHY: answers of "retrieved"
 pellet lying in the scoring area afterwards (Logan, 2026-10-26: "are you sure"). Ground truth is never
 reopened. Tests: `tests/test_route_recheck_answered.py`.
 
+## Update 2026-10-28: every pellet's hand score is kept with the video
+
+Whenever the hand-score check reads the sheet for a video, `hand_scores.record` writes what the sheet
+said into the video's `<video>_pellet_outcomes.json`, under a new top-level key:
+
+    "hand_scores": {"pellets": {"1": 2, "2": 0, ...},
+                    "verdict": "agrees" | "disagrees" | "never_scored" | "not_required",
+                    "source_mtime": <modification time of the scores file that was read>,
+                    "cohort_last_import": <the cohort's last sheet import, or null>,
+                    "read_at": <when it was read, local time>}
+
+`pellets` is keyed by segment number (the same numbering `check` compares with) and holds 0
+(untouched), 1 (displaced) or 2 (retrieved) for every pellet the sheet has for that session -- also
+when no pellet was compared because a person had answered them all. It is `{}` when the sheet has no
+row for the session (`never_scored`: a required project whose next import brought nothing;
+`not_required`: a project that does not need hand scores). Nothing is written for an Easy or Flat
+tray, or on a machine with no scores file configured. The whole file is read, the key set, and the
+file written to a temporary file and renamed into place, so every other key stays and no reader sees
+half a file; `record` raises when the file cannot be read or written, so its caller can hold the
+video rather than pass it unchecked. Every later writer of the outcomes file (the QC verdict stamp, `flag_segments`)
+reads and rewrites the whole document, so the key travels with the bundle into the review queues and
+into Analyzed. `hand_scores.score_from_outcomes(doc, pellet)` reads one pellet's kept score back, or
+`(None, why not)`; it never raises. WHY: the review window's check-your-answer box can then show the
+very score the pipeline compared with, from the bundle itself. Readers that do not know the key
+ignore it. Tests: `tests/test_hand_score_check_before_filing.py` (the `record` tests).
+
 ## Update 2026-10-26: checked against the hand scores before filing
 
 The last step before a video is filed (`_archive_to_nas` on the processing server,
