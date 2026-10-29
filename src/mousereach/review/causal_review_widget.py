@@ -1150,6 +1150,15 @@ The notes box travels with the video.
         # it used to leave the previous video's dots on screen.
         if self.points_layer is not None and self.points_layer in self.viewer.layers:
             self.points_layer.data = points_data
+            # Re-take the list of dots on screen NOW, before the colours are set.
+            # napari keeps that list (which points sit on the current frame) and
+            # skips re-taking it while the layer is hidden. A reviewer who hid the
+            # dots and moved to a video with fewer points then crashed the load:
+            # setting the colours redraws, the redraw read the previous video's
+            # list, and that list pointed past the end of the new points (Colin,
+            # 2026-10-29: "index 596438 is out of bounds ... size 564876").
+            # force=True re-takes it even while hidden.
+            self.points_layer.refresh(force=True)
             if len(points_data):
                 self.points_layer.face_color = point_colors
                 if labels:
