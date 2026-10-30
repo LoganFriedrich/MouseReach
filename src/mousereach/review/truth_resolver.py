@@ -79,14 +79,28 @@ def _read_json(p) -> Optional[dict]:
 
 
 def _review_doc(stem: str, base) -> Optional[dict]:
-    """Read ``<stem>_causal_review.json`` from a review bundle base, accepting
-    either ``base/<stem>/<file>`` (bundle layout) or ``base/<file>`` (a bare
-    processing dir). Returns the parsed doc or None."""
+    """Read ``<stem>_causal_review.json`` from ``base``, which may be a review
+    bundle root (``base/<stem>/<file>``), a bare processing dir
+    (``base/<file>``), or the review FILE itself. Returns the parsed doc or None.
+
+    WHY the file form: the kinematics extractor is handed the review file it
+    is applying (``review_path``) and passes it on here as ``primary_dir``.
+    Until 2026-10-30 only the two directory forms were tried, so a review that
+    existed ONLY in the processing folder -- not yet in a queue bundle or the
+    durable store -- was never read by the truth layering, and the extractor
+    quietly fell back to the algorithm's answers (ISSUES.md 2026-10-27, item
+    2). A file is accepted only when it is this video's review by name, so a
+    path to some other video's file cannot be applied to this one."""
     if not base or not stem:
         return None
     base = Path(base)
-    for cand in (base / stem / f"{stem}_causal_review.json",
-                 base / f"{stem}_causal_review.json"):
+    name = f"{stem}_causal_review.json"
+    try:
+        if base.is_file():
+            return (_read_json(base) or None) if base.name == name else None
+    except OSError:
+        return None
+    for cand in (base / stem / name, base / name):
         try:
             if cand.is_file():
                 d = _read_json(cand)
