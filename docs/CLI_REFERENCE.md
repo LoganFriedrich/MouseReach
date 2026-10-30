@@ -1669,6 +1669,12 @@ Reset failed videos so the watcher picks them up again.
   --from-step STEP   Restart from this pipeline step instead of the beginning.
 ```
 
+Since 2026-10-30 the processing server retries a failed video on its own: an hour
+after the failure, while the video has retries left (`watcher.max_retries`, 3 by
+default) and its video and pose files are still in its Processing folder. Only a
+video that has used up its retries, or whose files are gone, still needs this
+command. `mousereach-watch-status` lists the failed videos.
+
 ### `mousereach-watch-quarantine`
 
 ```

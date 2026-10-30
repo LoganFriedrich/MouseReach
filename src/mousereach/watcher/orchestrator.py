@@ -5123,6 +5123,37 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     'data': pick
                 }
 
+        # Priority 3b: Retry -- a video that FAILED on this node, later.
+        # DRAIN, so never gated: its files are already on this disk. WHY this
+        # bucket exists (Logan, 2026-10-30, on an algorithm crash: "fail it,
+        # then do it again another time"): a crash in segmentation, reach or
+        # outcome detection marked the video 'failed' and nothing ever looked
+        # at that state again, so a transient fault -- the two failures on the
+        # server on 2026-10-23 were both "[WinError 5] Access is denied" on a
+        # temp file the step had just written -- held a video for ever until a
+        # person ran mousereach-watch-reprocess. A failed video is retried
+        # once its wait is over and while it has retries left
+        # (_failed_retry_due); after that it stays failed and is listed by
+        # mousereach-watch-status, where a person can see it.
+        due = [v for v in self.db.get_videos_in_state('failed')
+               if self._failed_retry_due(v)]
+        if due:
+            pick = self._pick_from_pool(due, priority_animal, 'animal_id')
+            if pick is not None:
+                vid = pick['video_id']
+                attempt = int(pick.get('error_count') or 0) + 1
+                note = (f"retrying after a failure (attempt {attempt} of "
+                        f"{self._max_retries()}); last error: "
+                        f"{pick.get('error_message') or '?'}")
+                self.db.update_state(vid, 'processing')
+                self.db.log_step(vid, 'retry', 'started', message=note)
+                logger.info(f"{vid}: {note}")
+                return {
+                    'type': 'pipeline',
+                    'id': vid,
+                    'data': dict(pick, state='processing')
+                }
+
         # Priority 4: Reprocess outdated videos
         outdated = self.db.get_videos_in_state('outdated')
         if outdated:
@@ -5174,6 +5205,45 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     }
 
         return None
+
+    # How long a failed video waits before it is run again. An hour: long
+    # enough for whatever locked a file or dropped a share to clear, short
+    # enough that a video is not held past the day it was recorded. Not a
+    # setting -- nothing in the lab has needed a different value.
+    RETRY_FAILED_AFTER_S = 3600
+
+    def _max_retries(self) -> int:
+        return int(getattr(self.config, 'max_retries', 3) or 3)
+
+    def _failed_retry_due(self, row: dict, now: Optional[datetime] = None) -> bool:
+        """Whether a 'failed' row should be run again now.
+
+        True when all of these hold:
+          * it has a retry left: error_count < watcher.max_retries (3 by default;
+            mark_failed counts one per attempt, see _already_failed);
+          * its wait is over: last_error_at is at least RETRY_FAILED_AFTER_S ago
+            (a row with no last_error_at is due -- there is nothing to wait for);
+          * its files are still here: the video and a pose this node can run
+            (resolve_pose_input), so the retry is a real run and not a second
+            failure for "DLC h5 not found".
+
+        Never raises: a row this cannot judge is not retried.
+        """
+        try:
+            if int(row.get('error_count') or 0) >= self._max_retries():
+                return False
+            last = row.get('last_error_at')
+            if last:
+                when = datetime.fromisoformat(str(last))
+                if ((now or datetime.now()) - when).total_seconds() < self.RETRY_FAILED_AFTER_S:
+                    return False
+            vid = row['video_id']
+            pdir = self.processing_dir
+            if not pdir or not (Path(pdir) / f"{vid}.mp4").is_file():
+                return False
+            return resolve_pose_input(row.get('dlc_output_path'), vid, pdir) is not None
+        except Exception:
+            return False
 
     # =========================================================================
     # DISPATCH
