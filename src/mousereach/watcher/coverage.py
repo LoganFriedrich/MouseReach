@@ -36,8 +36,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import sys
+import tempfile
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +66,44 @@ def _names(folder) -> set:
             return {e.name for e in it}
     except OSError:
         return set()
+
+
+def _change_counter(db: Path) -> Optional[int]:
+    """SQLite's own count of committed writes (file header bytes 24-27), or None
+    while a write is under way (its rollback journal exists beside the file)."""
+    if db.with_name(db.name + "-journal").exists():
+        return None
+    with open(db, "rb") as f:
+        f.seek(24)
+        return int.from_bytes(f.read(4), "big")
+
+
+def _settled_copy(db: Path, dest: Path, tries: int = 20, pause: float = 30.0) -> Path:
+    """Copy the shared record to a local file, taken between two writes.
+
+    WHY a copy (2026-10-29): reading the record in place on the share waits on
+    every other machine's writes. A 10-minute wait was not enough on
+    2026-10-29 05:30 -- something held the file longer -- and the report
+    failed; a long read in place can also make the watchers' own writes fail.
+    A file copy is not blocked by SQLite's locks, and the report then reads at
+    leisure from the copy.
+
+    WHY it can be trusted: the record commits through a rollback journal, so a
+    write in progress always has a "-journal" file beside it, and every
+    finished write raises the counter in the file's header. A copy taken with
+    no journal present and the same counter before and after is one moment's
+    complete record. Otherwise it waits and tries again: up to 10 minutes, as
+    patient as the in-place read was.
+    """
+    for attempt in range(tries):
+        before = _change_counter(db)
+        if before is not None:
+            shutil.copyfile(db, dest)
+            if _change_counter(db) == before == _change_counter(dest):
+                return dest
+        time.sleep(pause)
+    raise RuntimeError("could not take a settled copy of %s in %d tries: it was being "
+                       "written to every time" % (db, tries))
 
 
 def _sessions_in_collage(stem: str) -> List[str]:
@@ -107,19 +148,19 @@ def session_coverage(sessions: List[str], nas_root: Path) -> Dict[str, str]:
     rows, collages = {}, {}
     db = Path(nas_root) / "watcher_central.db"
     if db.is_file():
-        # A once-a-day report: it waits up to 10 minutes for the record to be
-        # readable rather than fail -- a write that crawls over a slow share
-        # can hold the file for minutes (2026-10-26 05:30, the report failed).
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=600)
-        try:
-            for vid, state in con.execute("SELECT video_id, state FROM videos"):
-                rows[vid] = state
-            for vid, state in con.execute("SELECT video_id, state FROM pipeline_videos"):
-                rows.setdefault(vid, state)
-            for fn, state in con.execute("SELECT filename, state FROM pipeline_collages"):
-                collages[Path(fn).stem] = state
-        finally:
-            con.close()
+        # Read from a local copy, never in place (see _settled_copy).
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = _settled_copy(db, Path(tmp) / db.name)
+            con = sqlite3.connect(f"file:{copy.as_posix()}?mode=ro", uri=True)
+            try:
+                for vid, state in con.execute("SELECT video_id, state FROM videos"):
+                    rows[vid] = state
+                for vid, state in con.execute("SELECT video_id, state FROM pipeline_videos"):
+                    rows.setdefault(vid, state)
+                for fn, state in con.execute("SELECT filename, state FROM pipeline_collages"):
+                    collages[Path(fn).stem] = state
+            finally:
+                con.close()
     for s in wanted:
         if s not in stage and s in rows:
             stage[s] = STATE_STAGE.get(rows[s], rows[s])

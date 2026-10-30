@@ -7,6 +7,8 @@ machine. One stage per session, first match wins (watcher/coverage.py).
 import json
 import sqlite3
 
+import pytest
+
 import mousereach.watcher.coverage as cov
 from mousereach.config import Paths
 
@@ -84,3 +86,51 @@ def test_the_command_writes_counts_beside_the_list(tmp_path, monkeypatch):
     assert out["sessions"] == 1
     assert out["by_stage"] == {"not imported": 1}
     assert out["not_session_names"] == ["not a session"]
+
+
+def _record(path, counter_writes=1):
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE t (x)")
+    for i in range(counter_writes):
+        con.execute("INSERT INTO t VALUES (?)", (i,))
+        con.commit()
+    con.close()
+
+
+def test_the_record_is_read_from_a_copy_taken_between_writes(tmp_path):
+    """2026-10-29: reading the shared record in place waited 10 minutes on another
+    machine's lock and failed. The report reads a local copy instead."""
+    from mousereach.watcher import coverage
+    db = tmp_path / "watcher_central.db"
+    _record(db)
+    copy = coverage._settled_copy(db, tmp_path / "copy.db", tries=1, pause=0)
+    assert copy.read_bytes() == db.read_bytes()
+
+
+def test_no_copy_is_taken_while_a_write_is_under_way(tmp_path, monkeypatch):
+    from mousereach.watcher import coverage
+    db = tmp_path / "watcher_central.db"
+    _record(db)
+    journal = db.with_name(db.name + "-journal")
+    journal.write_bytes(b"in progress")           # a writer's rollback journal
+    with pytest.raises(RuntimeError, match="being written"):
+        coverage._settled_copy(db, tmp_path / "copy.db", tries=2, pause=0)
+    journal.unlink()                              # the write finished
+    assert coverage._settled_copy(db, tmp_path / "copy.db", tries=1, pause=0).is_file()
+
+
+def test_a_copy_that_a_write_overtook_is_taken_again(tmp_path, monkeypatch):
+    from mousereach.watcher import coverage
+    db = tmp_path / "watcher_central.db"
+    _record(db)
+    real_copy, calls = coverage.shutil.copyfile, []
+
+    def copy_then_someone_writes(src, dst):
+        real_copy(src, dst)
+        if not calls:                             # first copy: a write lands mid-copy
+            con = sqlite3.connect(src); con.execute("INSERT INTO t VALUES (99)"); con.commit(); con.close()
+        calls.append(1)
+    monkeypatch.setattr(coverage.shutil, "copyfile", copy_then_someone_writes)
+    copy = coverage._settled_copy(db, tmp_path / "copy.db", tries=3, pause=0)
+    assert len(calls) == 2
+    assert sqlite3.connect(copy).execute("SELECT COUNT(*) FROM t").fetchone()[0] == 2

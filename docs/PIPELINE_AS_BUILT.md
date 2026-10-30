@@ -1826,6 +1826,21 @@ It waits up to 10 minutes for the shared record to be readable (it waited 30 s u
 when the scheduled 05:30 run failed with "database is locked": on a slow share an ordinary write can
 hold the file for minutes). A once-a-day report has no reason to give up sooner.
 
+**Update 2026-10-29: it reads a local copy, never the record in place.** On 2026-10-29 05:30
+the 10-minute wait ran out too: something held the record for longer, and the report failed.
+Waiting longer would only move the limit. The report now copies the record to a temporary
+local file and reads that; a file copy is not blocked by the database's locks, and a long read
+can no longer hold up the watchers' writes either. The copy is trusted only when it was taken
+between two writes: the record commits through a rollback journal, so a write in progress
+always has a `watcher_central.db-journal` file beside it, and every finished write raises a
+counter in the file's header. A copy taken with no journal present and the same counter before
+and after is accepted; otherwise the report waits 30 s and copies again, up to 20 times (10
+minutes). If every try met a write, it stops with "could not take a settled copy ... it was being
+written to every time", and the scheduled task's log and the morning health check show that
+line. The temporary copy is deleted when the report finishes. A run on the live server
+2026-10-29 took 80 s. Tests: `tests/test_session_coverage.py` (a copy between writes, none
+while a write is under way, a copy a write overtook is taken again).
+
 ## Update 2026-10-22: a GPU node retries the shared-record writes that failed
 
 A GPU node writes each video's state to the shared record (`watcher_central.db`,
