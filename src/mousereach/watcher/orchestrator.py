@@ -5067,6 +5067,43 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 'data': pick
             }
 
+        # Priority 1b: Retry -- a video that FAILED on this node, later.
+        # DRAIN, so never gated: its files are already on this disk. WHY it
+        # sits BEFORE intake: intake refills the local pool to its cap every
+        # cycle and the pipeline bucket drains it, so while staged work lasts
+        # neither ever comes back empty, and a bucket placed after them would
+        # be reached only when the supply runs dry -- on 2026-10-30 the two
+        # failed videos sat unretried behind 131 intakes an hour. A due retry
+        # is rare (one per video per hour, three at most) and costs intake one
+        # cycle. WHY this bucket exists (Logan, 2026-10-30, on an algorithm crash: "fail it,
+        # then do it again another time"): a crash in segmentation, reach or
+        # outcome detection marked the video 'failed' and nothing ever looked
+        # at that state again, so a transient fault -- the two failures on the
+        # server on 2026-10-23 were both "[WinError 5] Access is denied" on a
+        # temp file the step had just written -- held a video for ever until a
+        # person ran mousereach-watch-reprocess. A failed video is retried
+        # once its wait is over and while it has retries left
+        # (_failed_retry_due); after that it stays failed and is listed by
+        # mousereach-watch-status, where a person can see it.
+        due = [v for v in self.db.get_videos_in_state('failed')
+               if self._failed_retry_due(v)]
+        if due:
+            pick = self._pick_from_pool(due, priority_animal, 'animal_id')
+            if pick is not None:
+                vid = pick['video_id']
+                attempt = int(pick.get('error_count') or 0) + 1
+                note = (f"retrying after a failure (attempt {attempt} of "
+                        f"{self._max_retries()}); last error: "
+                        f"{pick.get('error_message') or '?'}")
+                self.db.update_state(vid, 'processing')
+                self.db.log_step(vid, 'retry', 'started', message=note)
+                logger.info(f"{vid}: {note}")
+                return {
+                    'type': 'pipeline',
+                    'id': vid,
+                    'data': dict(pick, state='processing')
+                }
+
         # Priority 2: Intake - videos discovered in staging, not yet copied locally
         # ADMIT: this is the door that puts a new video on this node's disk and
         # spends a slot of max_local_pending. It is the one that must wait.
@@ -5121,37 +5158,6 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     'type': 'pipeline',
                     'id': pick['video_id'],
                     'data': pick
-                }
-
-        # Priority 3b: Retry -- a video that FAILED on this node, later.
-        # DRAIN, so never gated: its files are already on this disk. WHY this
-        # bucket exists (Logan, 2026-10-30, on an algorithm crash: "fail it,
-        # then do it again another time"): a crash in segmentation, reach or
-        # outcome detection marked the video 'failed' and nothing ever looked
-        # at that state again, so a transient fault -- the two failures on the
-        # server on 2026-10-23 were both "[WinError 5] Access is denied" on a
-        # temp file the step had just written -- held a video for ever until a
-        # person ran mousereach-watch-reprocess. A failed video is retried
-        # once its wait is over and while it has retries left
-        # (_failed_retry_due); after that it stays failed and is listed by
-        # mousereach-watch-status, where a person can see it.
-        due = [v for v in self.db.get_videos_in_state('failed')
-               if self._failed_retry_due(v)]
-        if due:
-            pick = self._pick_from_pool(due, priority_animal, 'animal_id')
-            if pick is not None:
-                vid = pick['video_id']
-                attempt = int(pick.get('error_count') or 0) + 1
-                note = (f"retrying after a failure (attempt {attempt} of "
-                        f"{self._max_retries()}); last error: "
-                        f"{pick.get('error_message') or '?'}")
-                self.db.update_state(vid, 'processing')
-                self.db.log_step(vid, 'retry', 'started', message=note)
-                logger.info(f"{vid}: {note}")
-                return {
-                    'type': 'pipeline',
-                    'id': vid,
-                    'data': dict(pick, state='processing')
                 }
 
         # Priority 4: Reprocess outdated videos
