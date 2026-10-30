@@ -2783,3 +2783,48 @@ would change which copy of a review wins and add a lookup per video to every
 version scan, so it is left for its own change.
 
 Tests: `tests/test_filing_rules.py`.
+
+## Update 2026-10-30: the version scan walked the archive once per manifest-less video
+
+**What was wrong.** The scan builds one index of every processing manifest in
+`Analyzed` (`ReprocessingScanner._index_archive`). For a video the index did not
+hold, it fell back to
+`iter_files(archive_dir, "<stem>_processing_manifest.json")` -- a full recursive
+walk of the whole tree, to look for ONE file name. A video with no manifest on
+disk never satisfies that fallback, so it paid a whole-tree walk on every pass,
+for ever, and the cost grew with the tree.
+
+**What it cost.** Measured on the live archive on 2026-10-30, read-only, against
+a copy of the watcher's own database and cache:
+
+| phase | before | after |
+|---|---|---|
+| one index walk of `Analyzed` | 61.5 s | 61.5 s |
+| review index (6,813 stems) | 2.4 s | 1.1 s |
+| per-video loop | **1,014.9 s** | **54.8 s** |
+| whole scan | **1,078.8 s** | **72.7 s** |
+
+47 videos had no manifest; 47 walks at about 21.6 s each is the entire loop
+cost. In the watcher's own logs the passes were 6-50 s on 22-24 October and
+2,100-3,500 s by 30 October, while the archived corpus grew only 15% (5,910 ->
+6,813) -- so this was not corpus growth. **The orchestrator processes nothing
+while a scan runs**, which is how a video taken in at 23:51 did not start until
+07:01.
+
+**What it is now.** `_deep_manifest_index()` does that walk at most ONCE per
+scan, on first need, and every missed stem is served from it; it is dropped at
+the start of each scan because the tree changes between passes. Same tree, same
+exclusions (never inside a superseded folder), same first-hit-wins order, so the
+manifest found for any given stem is unchanged -- scanning the same archive
+gives 6,813 scanned, 5,918 current, 0 outdated, 47 no-manifest, 0 errors either
+way.
+
+**Still per-video, deliberately.** `_segments_human_fixed` and
+`_divert_mislabel_to_deep_review` each walk the tree, but are reached only for a
+video whose pending review declares a segment mislabel -- none in current
+passes. Left alone rather than widening the change on an unmeasured cost.
+
+Tests: `tests/test_version_scan_walks_once.py` asserts the WALK COUNT does not
+grow with the number of videos the index missed, and that the fallback still
+finds a manifest filed outside the indexed folders while still never reading a
+superseded one.

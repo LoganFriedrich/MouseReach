@@ -114,6 +114,9 @@ class ReprocessingScanner:
         # opened the review on every pass to read one field -- 1,614 files and
         # ~107 s of a ~220 s warm pass, measured 2026-10-22.
         self._reviewed_at_cache: dict = {}
+        # Rebuilt at the start of every scan (see _deep_manifest_index): the
+        # tree changes between passes, so this one is never persisted.
+        self._deep_manifests: Optional[dict] = None
         self._cache_path = Path(cache_path) if cache_path else None
         self._load_caches()
 
@@ -229,6 +232,7 @@ class ReprocessingScanner:
             'unsupported_tray_videos': [],
         }
 
+        self._deep_manifests = None     # one walk per scan, not per video
         # Load current versions
         current = get_current_versions(self.nas_root)
         # Say so every scan while the declaration disagrees with the code:
@@ -801,41 +805,60 @@ class ReprocessingScanner:
                 pass
         return self._load_manifest(video_id)
 
-    def _load_manifest(self, video_id: str) -> Optional[dict]:
-        """Find and load processing manifest for an archived video.
+    def _deep_manifest_index(self) -> dict:
+        """``{stem: path}`` for every manifest in the tree at ANY depth, from
+        ONE walk, built the first time a stem misses the scan's index and kept
+        for the rest of that scan.
 
-        Searches the archive directory tree for {video_id}_processing_manifest.json.
+        WHY THIS EXISTS. The fallback used to be a per-video
+        ``iter_files(archive_dir, "<stem>_processing_manifest.json")`` -- a full
+        recursive walk of Analyzed, per video, to look for ONE name. A video
+        whose manifest the scan's index does not hold (archived somewhere the
+        index does not cover, or simply with no manifest on disk) therefore cost
+        a whole-tree walk, and a video with no manifest cost one on EVERY pass
+        because nothing ever satisfies it. Measured on 2026-10-30: 55 such
+        videos out of 5,965 with a supported tray, about 35 s a walk, ~32
+        minutes of a 37-minute pass -- and the work loop does nothing while a
+        scan runs. The same walk now serves all of them.
+
+        Same tree, same exclusions and same first-hit-wins order as the old
+        per-video walk (one ``iter_files`` in os.walk order), so the manifest
+        found for any stem is unchanged."""
+        if self._deep_manifests is None:
+            from mousereach.pipeline.analyzed_tree import iter_files
+            suffix = "_processing_manifest.json"
+            found: dict = {}
+            for path in iter_files(self.archive_dir, "*" + suffix):
+                found.setdefault(path.name[: -len(suffix)], path)
+            self._deep_manifests = found
+            logger.info("Deep manifest index built from one walk: %d manifest(s) "
+                        "(for stems the scan's index missed)", len(found))
+        return self._deep_manifests
+
+    def _load_manifest(self, video_id: str) -> Optional[dict]:
+        """Find and load processing manifest for an archived video, or None.
+
+        The folder the video is filed in first (the filing rule says where, and
+        it is never a superseded folder); then the one-walk deep index for
+        anything filed elsewhere. No walk is ever done for a single video.
         """
         if not self.archive_dir.exists():
             return None
-        from mousereach.pipeline.analyzed_tree import iter_files
-
-        # The folder the video is filed in first (the filing rule says where;
-        # it is never a superseded folder); the whole-tree search only when the
-        # manifest is not there.
         from mousereach.archive.core import filed_folder
         try:
             manifest_path = filed_folder(video_id, self.archive_dir) / f"{video_id}_processing_manifest.json"
         except Exception:
             manifest_path = None
-        if manifest_path is not None and manifest_path.is_file():
-            try:
-                with open(manifest_path) as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read manifest {manifest_path}: {e}")
-
-        # Fall back to recursive search -- never into Analyzed/Archive/, for
-        # the same reason (a deeper superseded copy keeps the same name).
-        for manifest_path in iter_files(self.archive_dir,
-                                        f"{video_id}_processing_manifest.json"):
-            try:
-                with open(manifest_path) as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read manifest {manifest_path}: {e}")
-
-        return None
+        if manifest_path is None or not manifest_path.is_file():
+            manifest_path = self._deep_manifest_index().get(video_id)
+        if manifest_path is None:
+            return None
+        try:
+            with open(manifest_path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to read manifest {manifest_path}: {e}")
+            return None
 
     def get_version_report(self) -> str:
         """Generate a human-readable version compliance report."""
