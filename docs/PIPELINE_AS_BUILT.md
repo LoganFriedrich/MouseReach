@@ -2865,9 +2865,10 @@ state again (the embedded report above still says "No watcher ever picks up a
 video in state 'failed'"; that was true until today). Logan: "fail it, then do
 it again another time". `ProcessingOrchestrator._select_work_item` has a new
 drain bucket between archive and intake (first placed after the pipeline
-bucket, but intake refills the pool and pipeline drains it every cycle while
-staged work lasts, so a bucket behind them was never reached -- the two failed
-videos sat unretried behind 131 intakes an hour): a 'failed' row is put back to
+bucket; moved ahead of intake so that a due retry runs when its hour is up
+rather than whenever intake and pipeline both happen to come back empty -- in
+the event the first two retries did run from the old position, six minutes
+after the restart, and both videos went clean to Analyzed): a 'failed' row is put back to
 'processing' and run when `_failed_retry_due` holds -- `error_count` below
 `watcher.max_retries` (3), at least `RETRY_FAILED_AFTER_S` (one hour) since
 `last_error_at`, and the video and a runnable pose still in this node's

@@ -5070,12 +5070,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Priority 1b: Retry -- a video that FAILED on this node, later.
         # DRAIN, so never gated: its files are already on this disk. WHY it
         # sits BEFORE intake: intake refills the local pool to its cap every
-        # cycle and the pipeline bucket drains it, so while staged work lasts
-        # neither ever comes back empty, and a bucket placed after them would
-        # be reached only when the supply runs dry -- on 2026-10-30 the two
-        # failed videos sat unretried behind 131 intakes an hour. A due retry
-        # is rare (one per video per hour, three at most) and costs intake one
-        # cycle. WHY this bucket exists (Logan, 2026-10-30, on an algorithm crash: "fail it,
+        # cycle and the pipeline bucket drains it, so a bucket placed after
+        # them is reached only in a cycle where both come back empty -- which
+        # does happen between intakes (the first two retries ran within six
+        # minutes of the restart, from that position), but depends on the
+        # supply, not on the video's own wait being over. A due retry is rare
+        # (one per video per hour, three at most) and costs intake one cycle.
+        # WHY this bucket exists (Logan, 2026-10-30, on an algorithm crash: "fail it,
         # then do it again another time"): a crash in segmentation, reach or
         # outcome detection marked the video 'failed' and nothing ever looked
         # at that state again, so a transient fault -- the two failures on the
