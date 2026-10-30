@@ -10,6 +10,7 @@ To configure: Run 'mousereach-setup' command
 
 import os
 import json
+import time
 from pathlib import Path
 from typing import Optional, List
 
@@ -471,27 +472,20 @@ class AnimalID:
         parsed = AnimalID.parse(animal_id)
         return parsed.get('experiment', 'UNKNOWN')
 
-    # Project mapping: experiment code -> project folder name
-    PROJECT_MAP = {
-        'CNT': 'Connectome',
-        'ENCR': 'Enhancer',
-        # Old ASPA cohorts use single-letter or short prefixes
-        'H': 'ASPA', 'I': 'ASPA', 'J': 'ASPA', 'K': 'ASPA',
-        'L': 'ASPA', 'M': 'ASPA', 'N': 'ASPA',
-        'G': 'ASPA', 'D': 'ASPA', 'F': 'ASPA',
-        'ABS': 'ASPA',
-        'Opt': 'ASPA',
-    }
-
     @staticmethod
     def get_project_and_cohort(animal_id: str) -> tuple:
         """Get (project_folder, cohort_folder) for archive destination.
 
-        Examples:
-            CNT0304 -> ('Connectome', 'CNT03')
-            ENCR0102 -> ('Enhancer', 'ENCR01')
-            H01 -> ('ASPA', 'H')
-            OptG05 -> ('ASPA', 'OptG')
+        The folders come from the lab's filing rules (``filing_rules``): the
+        project folder may be several levels (``GrantA/PROJA``), and the cohort
+        folder is the rule's template filled in. With the rules
+        ``{"PROJA": {"folder": "GrantA/PROJA", "cohort_folder": "{CODE}_{NN}"}}``:
+
+            PROJA0304 -> ('GrantA/PROJA', 'PROJA_03')
+
+        A project with no rule files under its own code, with no per-cohort
+        folders (``PROJB0102 -> ('PROJB', 'PROJB')``) -- what every project
+        got before the rules existed, so nothing unconfigured moves.
 
         Returns:
             (project, cohort) tuple
@@ -508,15 +502,89 @@ class AnimalID:
             if not experiment:
                 return ('UNKNOWN', 'UNKNOWN')
 
-        project = AnimalID.PROJECT_MAP.get(experiment, experiment)
-        cohort_num = parsed.get('cohort', '')
+        rule = filing_rules().get(experiment)
+        if rule is None:
+            return (experiment, experiment)
+        cohort_num = parsed.get('cohort', '') if parsed.get('valid') else ''
+        template = rule["cohort_folder"]
+        if "{NN}" in template and not cohort_num:
+            # An id too short to carry a cohort number (old lettered ids such
+            # as H01): one folder for the code, never a folder named "H_".
+            template = "{CODE}"
+        return (rule["folder"], template.replace("{CODE}", experiment).replace("{NN}", cohort_num))
 
-        if parsed.get('valid') and experiment in ('CNT', 'ENCR'):
-            cohort_folder = f"{experiment}{cohort_num}"
-        else:
-            cohort_folder = experiment
 
-        return (project, cohort_folder)
+# =============================================================================
+# FILING RULES -- which Analyzed folder each project's finished videos go in
+# =============================================================================
+# WHY THEY ARE SETTINGS: the folder a project files under is a fact about the
+# lab (which grant a project belongs to, how its cohort folders are named), so
+# it lives in the shared lab settings file on the storage drive, key "filing",
+# never in this code:
+#
+#     "filing": {
+#         "PROJA": {"folder": "GrantA/PROJA", "cohort_folder": "{CODE}_{NN}"},
+#         "PROJB": {"folder": "GrantA/PROJB", "cohort_folder": "{CODE}_{NN}"},
+#         "PROJC": {"folder": "PROJC",        "cohort_folder": "{CODE}"}
+#     }
+#
+# "folder" is a path under Analyzed, one or more levels, "/" between them.
+# "cohort_folder" names the folder inside it: {CODE} is the project code from
+# the animal id, {NN} its two-digit cohort number. Every machine reads the same
+# file, so a video is filed in the same place whichever machine archives it,
+# and every reader that asks "where is this video's folder" gets one answer.
+#
+# Changing a rule does NOT move videos already filed. Move them with the rule
+# (see docs/PIPELINE_AS_BUILT.md, "Filing folders come from the lab settings"):
+# until they are moved, the reconcile report lists them as in the wrong place.
+
+_FILING_TTL_S = 60.0
+_FILING_CACHE = {"at": 0.0, "rules": None}
+_FILING_FIELDS = ("folder", "cohort_folder")
+
+
+def _check_filing_rule(code: str, rule) -> dict:
+    """One rule, checked; ValueError (naming the code and what is wrong) if bad.
+
+    WHY so strict: a rule that is wrong files videos somewhere nobody looks,
+    silently. Refusing it stops the archive step with a message instead."""
+    if not isinstance(rule, dict) or set(rule) - set(_FILING_FIELDS) \
+            or not all(isinstance(rule.get(k), str) and rule[k].strip() for k in _FILING_FIELDS):
+        raise ValueError("filing rule for %s must be {\"folder\": ..., \"cohort_folder\": ...}, "
+                         "both non-empty text" % code)
+    folder = rule["folder"].strip().replace("\\", "/").strip("/")
+    parts = folder.split("/")
+    if any(p in ("", ".", "..") for p in parts) or ":" in folder:
+        raise ValueError("filing rule for %s: folder %r must be a plain path under Analyzed "
+                         "(names separated by /, no drive, no . or ..)" % (code, rule["folder"]))
+    template = rule["cohort_folder"].strip()
+    leftover = template.replace("{CODE}", "").replace("{NN}", "")
+    if any(ch in leftover for ch in "{}/\\:") or leftover in (".", ".."):
+        raise ValueError("filing rule for %s: cohort_folder %r may hold only {CODE}, {NN} and "
+                         "plain text" % (code, rule["cohort_folder"]))
+    return {"folder": folder, "cohort_folder": template}
+
+
+def filing_rules() -> dict:
+    """``{project code: {"folder", "cohort_folder"}}`` from the lab settings
+    ("filing"); {} when none are set. Raises ValueError for a malformed rule.
+
+    ONLY the shared lab file, never a person's own config.json (unlike
+    ``lab_setting``): a personal override would make one machine file videos
+    where every other machine's lookups never look.
+
+    Read at most once a minute: the work-priority sort asks for every item in
+    every cycle, and each read is a round trip to the shared drive. An edit
+    therefore reaches a running watcher within a minute."""
+    now = time.monotonic()
+    if _FILING_CACHE["rules"] is not None and now - _FILING_CACHE["at"] < _FILING_TTL_S:
+        return _FILING_CACHE["rules"]
+    raw = load_lab_config().get("filing") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("the lab setting \"filing\" must map project codes to rules")
+    rules = {str(code).strip(): _check_filing_rule(code, rule) for code, rule in raw.items()}
+    _FILING_CACHE.update(at=now, rules=rules)
+    return rules
 
 
 # =============================================================================
@@ -641,12 +709,9 @@ class Geometry:
 # =============================================================================
 
 def get_experiment_output_dir(animal_id: str) -> Path:
-    """Get the final output directory for a video based on project/cohort.
-
-    Examples:
-        CNT0304 -> Analyzed/Connectome/CNT03/
-        ENCR0102 -> Analyzed/Enhancer/ENCR01/
-        H01 -> Analyzed/ASPA/H/
+    """Get the final output directory for a video based on project/cohort:
+    ``Analyzed/<project folder>/<cohort folder>/``, both from the lab's filing
+    rules (see ``filing_rules``). E.g. PROJA0304 -> Analyzed/GrantA/PROJA/PROJA_03/.
     """
     project, cohort = AnimalID.get_project_and_cohort(animal_id)
     return Paths.ANALYZED_OUTPUT / project / cohort

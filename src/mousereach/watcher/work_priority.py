@@ -216,7 +216,12 @@ def project_labels(item: dict) -> set:
         except Exception:
             continue
         if project and project != "UNKNOWN":
+            # A project folder may be several levels (grant/project); each
+            # level is a name a lab may order by.
             labels.add(_text(project))
+            for part in str(project).replace("\\", "/").split("/"):
+                if part:
+                    labels.add(_text(part))
         code = AnimalID.parse(animal).get("experiment") or ""
         if not code and cohort_folder and cohort_folder != "UNKNOWN":
             code = cohort_folder

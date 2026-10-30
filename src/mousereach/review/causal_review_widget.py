@@ -2884,6 +2884,10 @@ The notes box travels with the video.
                 dirs.append(Path(cvp).parent)
         except Exception:
             pass
+        # Where the video is filed NOW: the manifest's folder goes stale when
+        # the finished-work folders are reorganised.
+        from mousereach.review.bundle_media import filed_media_dirs
+        dirs += [d for d in filed_media_dirs(stem)[:1] if d not in dirs]
 
         # Human-resolved segment set, from wherever the review was saved.
         resolved: set = set()

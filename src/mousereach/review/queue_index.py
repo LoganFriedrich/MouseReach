@@ -180,6 +180,10 @@ def seed_from_folder(pending_dir, db_path: Optional[Path] = None, *,
                     dirs.append(Path(cvp).parent)
             except Exception:
                 pass
+            # Where the video is filed NOW: the manifest's folder goes stale
+            # when the finished-work folders are reorganised.
+            from mousereach.review.bundle_media import filed_media_dirs
+            dirs += [d for d in filed_media_dirs(stem)[:1] if d not in dirs]
             for d in dirs:
                 try:
                     doc, by = load_causal_review(stem, d)

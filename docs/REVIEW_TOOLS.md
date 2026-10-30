@@ -882,6 +882,19 @@ Ground truth only overrides segments it marks determined (`:138-139`). Provenanc
 
 The processing-dir layer is the one that does not work — see [Reviews mostly do not reach the numbers](#reviews-mostly-do-not-reach-the-numbers).
 
+### Where a bundle's video and pose are found (since 2026-10-30)
+
+A bundle that carries no copy of its video records where the video was filed,
+as an absolute path, when the bundle is made. That path goes stale when the
+finished-work folders are reorganised (on 2026-10-30 each project's folder
+was put inside its grant's folder). The review window therefore looks, in
+order: the path the bundle recorded; a copy inside the bundle folder; the
+folder the video is filed in NOW, by the lab's filing rules (and, for the
+pose, the same-named folder of each `DLC Model <N>` tree beside it)
+(`review/bundle_media.py`, `filed_media_dirs`). The queue index and the
+review window's "already answered" check look in that filed folder too, for a
+review saved beside the video. Nothing in the bundle is rewritten.
+
 ### Where a saved review is looked for
 
 Two different lookups, with different rules:

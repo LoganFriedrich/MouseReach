@@ -96,22 +96,21 @@ class TestEffectiveTrayType:
 
 class TestProjectAndCohort:
 
-    def test_a_project_is_named_by_its_code_and_by_its_folder(self):
-        """Whatever mapping the tool ships, both spellings select the same video.
+    def test_a_project_is_named_by_its_code_and_by_its_folder(self, monkeypatch):
+        """Both spellings select the same video: the code, and the folder the
+        lab's filing rules put it in (every level of it)."""
+        import mousereach.config as config
+        monkeypatch.setattr(config, "filing_rules", lambda: {
+            "PRJA": {"folder": "GrantA/ProjectA", "cohort_folder": "{CODE}_{NN}"}})
+        labels = wp.project_labels({"video_id": "20250704_PRJA0101_P1"})
+        assert {"PRJA", "GRANTA", "PROJECTA", "GRANTA/PROJECTA"} <= labels
 
-        Read out of AnimalID.PROJECT_MAP rather than written down here, so this
-        test names no project and cannot go stale when the map changes.
-        """
-        code, folder = next((c, f) for c, f in AnimalID.PROJECT_MAP.items()
-                            if len(c) >= 3 and f.upper() != c.upper())
-        labels = wp.project_labels({"video_id": "20250704_%s0101_P1" % code})
-        assert {code.upper(), folder.upper()} <= labels
-
-    def test_a_short_lettered_id_resolves_without_listing_letters(self):
-        """Old lettered cohort ids are selected by their project name."""
-        letter, folder = next((c, f) for c, f in AnimalID.PROJECT_MAP.items()
-                              if len(c) == 1)
-        assert folder.upper() in wp.project_labels({"animal_id": letter + "11"})
+    def test_a_short_lettered_id_resolves_without_listing_letters(self, monkeypatch):
+        """Old lettered cohort ids are selected by their project folder."""
+        import mousereach.config as config
+        monkeypatch.setattr(config, "filing_rules", lambda: {
+            "H": {"folder": "ProjectOld", "cohort_folder": "{CODE}"}})
+        assert "PROJECTOLD" in wp.project_labels({"animal_id": "H11"})
 
     def test_an_unmapped_code_still_names_itself(self):
         assert wp.project_labels({"video_id": "20250704_PRJA0101_P1"}) == {"PRJA"}

@@ -425,17 +425,43 @@ storage drive. Every PC and every person then reads that same file.
 MouseReach finds it from `nas_root` alone. There is nothing to set on each PC
 and no environment variable.
 
-**What it holds** (today: the `hand_scores` section; replace everything in
-`<angle brackets>`, use `\\` between folder names):
+**What it holds** (today: the `hand_scores` and `filing` sections; replace
+everything in `<angle brackets>`, use `\\` between folder names in a path):
 
 ```json
 {
     "hand_scores": {
         "path": "<path to hand_pellet_scores.csv>",
         "required_projects": ["PROJECT_A"]
+    },
+    "filing": {
+        "PROJECT_A": {"folder": "<Grant>/PROJECT_A", "cohort_folder": "{CODE}_{NN}"},
+        "PROJECT_B": {"folder": "<Grant>/PROJECT_B", "cohort_folder": "{CODE}_{NN}"}
     }
 }
 ```
+
+**`filing` -- where each project's finished videos are filed.** One line per
+project code (the capital letters an animal id starts with). `folder` is the
+folder under `Analyzed` the project's videos go in -- one or more names with
+`/` between them, so projects of one grant can sit together in the grant's
+folder. `cohort_folder` names the folder inside it for each cohort: `{CODE}` is
+replaced by the project code and `{NN}` by the two-digit cohort number, so
+`"{CODE}_{NN}"` gives `PROJECT_A_03` for cohort 3; `"{CODE}"` alone puts every
+cohort in one folder. With the example above, video `20260101_PROJECT_A0304_P1`
+would be filed in `Analyzed\<Grant>\PROJECT_A\PROJECT_A_03\`.
+
+- A project with no line here is filed in `Analyzed\<CODE>\<CODE>\` (for
+  example `Analyzed\PROJECT_C\PROJECT_C\`).
+- A line that could file somewhere unexpected (a drive letter, `..`, an empty
+  name, anything but `{CODE}`, `{NN}` and plain text in `cohort_folder`) is
+  refused: the video is not filed, and the watcher log says which line is
+  wrong. Nothing is filed in a guessed place.
+- Changing a line does NOT move videos already filed. Until they are moved to
+  the new folder, the reconcile report lists them as in the wrong place. Move
+  them with the watcher stopped (see docs/PIPELINE_AS_BUILT.md, "Filing
+  folders come from the lab settings").
+- A changed line reaches every running watcher within a minute.
 
 To make it: open Notepad, paste the text above, fill in your values, and save
 it as `mousereach_lab_config.json` (choose "All files" as the type so Notepad
@@ -450,6 +476,10 @@ does not add `.txt`) in the storage root.
 
 So nothing that already works changes, and one person can still override a
 setting for themselves by putting it in their own `config.json`.
+
+**Except `filing`:** it is read from the lab settings file ONLY. A `filing`
+section in a person's own `config.json` is ignored, because one machine filing
+videos somewhere else would hide them from every other machine.
 
 **If something is wrong:** if the file is missing, or is not valid JSON,
 MouseReach says so once (a warning naming the file) and carries on with the

@@ -122,3 +122,21 @@ def _no_real_hand_scores(monkeypatch):
     of the check sets hand_scores.settings itself."""
     from mousereach.watcher import hand_scores
     monkeypatch.setattr(hand_scores, "settings", lambda: {})
+
+
+# The filing layout every test sees unless it sets its own: one project folder
+# level, cohort folders named code+number. Tests written before the filing
+# rules were settings build their fixtures in this shape.
+TEST_FILING_RULES = {
+    "CNT": {"folder": "Connectome", "cohort_folder": "{CODE}{NN}"},
+    "ENCR": {"folder": "Enhancer", "cohort_folder": "{CODE}{NN}"},
+}
+
+
+@pytest.fixture(autouse=True)
+def _no_real_filing_rules(monkeypatch):
+    """No test reads this machine's filing rules (the lab settings file on the
+    storage drive): where a test's video is filed must not depend on the lab's
+    real layout. A test of the rules themselves sets config.filing_rules."""
+    import mousereach.config as config
+    monkeypatch.setattr(config, "filing_rules", lambda: dict(TEST_FILING_RULES))

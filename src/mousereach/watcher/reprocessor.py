@@ -43,23 +43,6 @@ def earliest_stale_stage(stale_components) -> str:
     return min(stages, key=_POST_DLC_ORDER.index)
 
 
-def _outside_superseded(root: Path, hits):
-    """Drop hits of a depth-limited glob over Analyzed that sit inside a
-    superseded folder. WHY: ``glob("*/*/<name>")`` never enters deep trees, but
-    Analyzed/Archive/<folder>/<file> is exactly two levels deep -- the same
-    depth as a live Analyzed/<project>/<cohort>/<file> -- and superseded files
-    keep their original names, so the glob alone reads an older generation as
-    live. Any superseded directory component rejects the hit, matching
-    analyzed_tree.iter_files (which never enters such a folder at any depth)."""
-    from mousereach.pipeline.analyzed_tree import is_superseded_dir
-    for p in hits:
-        try:
-            dir_parts = p.relative_to(root).parts[:-1]
-        except ValueError:
-            dir_parts = p.parts[:-1]
-        if not any(is_superseded_dir(d) for d in dir_parts):
-            yield p
-
 
 def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
     """{video_id: set of DLC scorers whose pose file is in the archive}.
@@ -768,39 +751,32 @@ class ReprocessingScanner:
 
     def _index_archive(self):
         """``(manifests {stem: path}, manifest mtimes, features mtimes)`` for the
-        live archive, from ONE listing of each Analyzed/<project>/<cohort> folder.
+        live archive, from ONE listing of every folder under Analyzed.
 
-        Same files the two depth-2 globs found (``*/*/*_processing_manifest.json``
-        and ``*/*/*_features.json``), never inside a superseded folder
-        (_outside_superseded says why), and dot-names skipped as glob skips
-        them. The modified times come from the listing itself. WHY: the globs
-        were followed by a separate network stat per file -- every manifest
-        and every features file, every half hour (~2 minutes a pass on
-        2026-10-21)."""
-        from mousereach.pipeline.analyzed_tree import is_superseded_dir
+        Every manifest and features file at any depth below a project folder,
+        never inside a superseded folder (analyzed_tree says why) and never a
+        dot-name or anything inside a dot-folder. The modified times come from
+        the listing itself. WHY: separate network stats per file cost ~2
+        minutes a pass on 2026-10-21. WHY any depth: this used to list exactly
+        Analyzed/<project>/<cohort>, and a project folder may now be two levels
+        (grant/project) -- a fixed depth would have dropped every video filed
+        that way from the version scan without a word."""
+        from mousereach.pipeline.analyzed_tree import iter_file_entries
         man, man_t, feat_t = {}, {}, {}
         root = self.archive_dir
         if not root.exists():
             return man, man_t, feat_t
-
-        def dirs(d):
-            with os.scandir(d) as it:
-                return [e.path for e in it if e.is_dir() and not e.name.startswith(".")
-                        and not is_superseded_dir(e.name)]
-
-        for d1 in dirs(root):
-            for d2 in dirs(d1):
-                with os.scandir(d2) as it:
-                    for e in it:
-                        n = e.name
-                        if n.startswith("."):
-                            continue
-                        if n.endswith("_processing_manifest.json") and e.is_file():
-                            s = n[: -len("_processing_manifest.json")]
-                            man[s] = Path(e.path)
-                            man_t[s] = e.stat().st_mtime
-                        elif n.endswith("_features.json") and e.is_file():
-                            feat_t[n[: -len("_features.json")]] = e.stat().st_mtime
+        for e in iter_file_entries(root, "*.json"):
+            rel = Path(e.path).relative_to(root).parts
+            if len(rel) < 3 or any(p.startswith(".") for p in rel):
+                continue
+            n = e.name
+            if n.endswith("_processing_manifest.json"):
+                s = n[: -len("_processing_manifest.json")]
+                man[s] = Path(e.path)
+                man_t[s] = e.stat().st_mtime
+            elif n.endswith("_features.json"):
+                feat_t[n[: -len("_features.json")]] = e.stat().st_mtime
         return man, man_t, feat_t
 
     def _load_manifest_indexed(self, video_id: str, manifest_index: dict,
@@ -834,11 +810,15 @@ class ReprocessingScanner:
             return None
         from mousereach.pipeline.analyzed_tree import iter_files
 
-        # Try direct glob first (project/cohort/manifest). Superseded hits are
-        # dropped: Analyzed/Archive/<folder>/<manifest> is also two levels deep,
-        # and an archived manifest would be compared as the video's live one.
-        for manifest_path in _outside_superseded(self.archive_dir, self.archive_dir.glob(
-                f"*/*/{video_id}_processing_manifest.json")):
+        # The folder the video is filed in first (the filing rule says where;
+        # it is never a superseded folder); the whole-tree search only when the
+        # manifest is not there.
+        from mousereach.archive.core import filed_folder
+        try:
+            manifest_path = filed_folder(video_id, self.archive_dir) / f"{video_id}_processing_manifest.json"
+        except Exception:
+            manifest_path = None
+        if manifest_path is not None and manifest_path.is_file():
             try:
                 with open(manifest_path) as f:
                     return json.load(f)

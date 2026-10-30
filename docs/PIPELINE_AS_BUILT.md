@@ -316,7 +316,7 @@ So the database is written BEFORE the files are filed, not after. This is the re
 
 THE MOVE TO ANALYZED
 
-The move collects every file in the source folder whose name begins with the video id - the .mp4, the DeepLabCut pose files, all algorithm .json files, the provenance manifest, the triage file, and any ground-truth or human-review files sitting alongside - and moves them as a group (archive/core.py:146-148, :183). The destination is Analyzed/{project}/{cohort}/, worked out from the animal id in the filename: CNT0304 goes to Analyzed/Connectome/CNT03/, ENCR0102 to Analyzed/Enhancer/ENCR01/, H01 to Analyzed/ASPA/H/ (archive/core.py:82-92, config.py:344-376). An unparseable id lands in Analyzed/UNKNOWN/UNKNOWN/.
+The move collects every file in the source folder whose name begins with the video id - the .mp4, the DeepLabCut pose files, all algorithm .json files, the provenance manifest, the triage file, and any ground-truth or human-review files sitting alongside - and moves them as a group (archive/core.py:146-148, :183). The destination is Analyzed/{project folder}/{cohort folder}/, worked out from the animal id in the filename by the lab's filing rules (the "filing" section of the lab settings file; see "Filing folders come from the lab settings" below): with the rule {"folder": "GrantA/PROJA", "cohort_folder": "{CODE}_{NN}"}, PROJA0304 goes to Analyzed/GrantA/PROJA/PROJA_03/. A project with no rule goes to Analyzed/<CODE>/<CODE>/ (archive/core.py filed_folder, config.py AnimalID.get_project_and_cohort). An unparseable id lands in Analyzed/UNKNOWN/UNKNOWN/.
 
 The two roles call this differently, and it is the main practical difference between them:
   - GPU machine with watcher.also_process = true: the move is called with the readiness check switched off, so it just runs (watcher/orchestrator.py:1204-1208). Files come from the machine's local DLC_Queue folder, and leftovers there are deleted afterwards.
@@ -2729,3 +2729,57 @@ and is never picked up here. A file in this machine's OWN claim folder is still 
 What an operator sees: nothing, except that a graphics-card watcher no longer spends its first
 minutes after a restart on videos another machine already has. A machine that adopted such
 videos before this change records them as elsewhere at its next restart.
+
+
+## Update 2026-10-30: Filing folders come from the lab settings
+
+**What was wrong.** Which folder under `Analyzed` a project's finished videos go
+in was written into the code: a fixed map of project codes to folder names,
+and per-cohort folders for two codes only. A second project of the same grant
+was therefore filed BESIDE the grant's folder, not inside it, all its cohorts
+in one folder, and changing that needed a code change. Several lookups also
+assumed a filed video sits exactly two folders below `Analyzed`
+(`<project>/<cohort>`): the version scan's index, its per-video manifest
+lookup, and the route tool's outcomes lookup.
+
+**What it is now.**
+
+- `config.filing_rules()` reads the `filing` section of the shared lab settings
+  file (`<nas_root>/mousereach_lab_config.json`) -- the lab file ONLY, never a
+  person's own config.json, so every machine files in the same place. It is
+  read at most once a minute. A malformed rule raises, and the archive step
+  stops with that message rather than filing somewhere unexpected.
+- `AnimalID.get_project_and_cohort` applies the rule; a project with no rule
+  files under `<CODE>/<CODE>`.
+- `archive.core.filed_folder(video_id, root)` is the one answer to "where is
+  this video filed"; `get_archive_destination` is it under `Analyzed`.
+- The version scan's index walks every folder (the pruned walk of
+  `pipeline/analyzed_tree.py`), at any depth. The per-video manifest lookup
+  and the route tool look in the filed folder first and walk the tree only if
+  the file is not there.
+- Review bundles that carry no copy of their video record absolute paths into
+  `Analyzed`. When the manifest's path no longer exists and the bundle has no
+  copy, `review/bundle_media.py` now looks where the video is filed now, and the
+  per-model pose tree beside it (`<project folder>/DLC Model <N>/<cohort folder>`).
+  The queue index and the review window look there too for saved reviews.
+- The work-priority labels of a video include every level of its project
+  folder, so the work order may name a grant or a project.
+
+**Moving videos when a rule changes.** Changing a rule moves nothing. Until the
+filed videos are moved, the reconcile report lists them as in the wrong place,
+and the watcher re-runs nothing because of it. To move them: stop the
+processing watcher with its stop flag; move each old cohort folder to its new
+place on the same drive (a rename; nothing is copied); move each per-model pose
+tree's cohort folders the same way (`<project folder>/DLC Model <N>/<cohort
+folder>`); restart the watcher. mousedb's reach import recognises a results
+file that only moved (same name, size and time as a ledger entry whose old path
+is gone) and carries its ledger entry over instead of importing it again.
+
+**Not changed.** `review/staging.py resolve_canonical_paths` still looks for a
+video in `<root>/CNTnn/`, which matches no layout in use; the review lookups
+that depend on it ("beside the canonical video") find nothing there today,
+exactly as before (see the 2026-10-22 note above). Making that lookup work
+would change which copy of a review wins and add a lookup per video to every
+version scan, so it is left for its own change.
+
+Tests: `tests/test_filing_rules.py`.

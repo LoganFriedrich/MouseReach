@@ -512,14 +512,22 @@ Configuration is saved to `~/.mousereach/config.json` and persists across sessio
 
 ### Lab settings file
 
-Settings that are the same for everyone in a lab (today: `hand_scores`) can be
-written once in `<storage root>/mousereach_lab_config.json`, where the storage
-root is the folder `nas_root` names. Every PC and person finds it from
-`nas_root`; nothing is set per PC or per user. For each setting MouseReach
-uses the person's own `config.json` if it has that key (the whole section),
-else the lab file, else leaves it unset. A missing or unreadable lab file is
-reported once and leaves the setting unset. INSTALL.md, Part 6, Step 4 shows
-how to create it.
+Settings that are the same for everyone in a lab (today: `hand_scores` and
+`filing`) can be written once in `<storage root>/mousereach_lab_config.json`,
+where the storage root is the folder `nas_root` names. Every PC and person
+finds it from `nas_root`; nothing is set per PC or per user. For each setting
+MouseReach uses the person's own `config.json` if it has that key (the whole
+section), else the lab file, else leaves it unset -- except `filing`, which is
+read from the lab file only. A missing or unreadable lab file is reported once
+and leaves the setting unset. INSTALL.md, Part 6, Step 4 shows how to create it.
+
+`filing` says which folder under `Analyzed` each project's finished videos go
+in, and how its cohort folders are named -- for example every project of one
+grant inside the grant's folder, one folder per cohort
+(`Analyzed/<Grant>/PROJECT_A/PROJECT_A_03/`). A project with no line files in
+`Analyzed/<CODE>/<CODE>/`. Every lookup of a filed video (the version scan,
+reconcile, the review tools) asks the same rule, so they find the video at any
+depth.
 
 ---
 

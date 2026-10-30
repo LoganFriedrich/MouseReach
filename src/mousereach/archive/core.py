@@ -124,7 +124,20 @@ def get_archive_destination(video_id: str) -> Path:
         video_id: Video identifier (e.g., "20250704_CNT0101_P1")
 
     Returns:
-        Destination folder path (e.g., Analyzed/Connectome/CNT01/)
+        Destination folder path: Analyzed/<project folder>/<cohort folder>/,
+        from the lab's filing rules (config.filing_rules)
+    """
+    return filed_folder(video_id, Paths.ANALYZED_OUTPUT)
+
+
+def filed_folder(video_id: str, analyzed_root) -> Path:
+    """The folder under ``analyzed_root`` where ``video_id`` is filed.
+
+    The one rule for "where does this video live": the archive step files
+    there, and every lookup of a filed video should look there first instead
+    of guessing a depth. WHY: lookups that assumed Analyzed/<project>/<cohort>
+    was exactly two levels stopped finding anything once a project folder could
+    be two levels itself (grant/project).
     """
     # Extract animal ID from video_id (format: DATE_ANIMALID_TRAY)
     parts = video_id.split("_")
@@ -134,7 +147,7 @@ def get_archive_destination(video_id: str) -> Path:
     else:
         project, cohort = "UNKNOWN", "UNKNOWN"
 
-    return Paths.ANALYZED_OUTPUT / project / cohort
+    return Path(analyzed_root) / project / cohort
 
 
 def _same_file(a: Path, b: Path) -> bool:

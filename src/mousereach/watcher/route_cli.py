@@ -117,17 +117,19 @@ IN_FLIGHT_STATES = ("dlc_queued", "dlc_running", "dlc_complete",
 
 def _find_outcomes(analyzed: Path, video_id: str) -> Optional[Path]:
     """The video's pellet_outcomes file under the Analyzed tree, or None."""
-    from mousereach.pipeline.analyzed_tree import first_file, is_superseded_dir
+    from mousereach.archive.core import filed_folder
+    from mousereach.pipeline.analyzed_tree import first_file
     name = f"{video_id}_pellet_outcomes.json"
-    # Analyzed/Archive/<folder>/<name> is exactly two levels deep, so the fast
-    # glob matched superseded outputs too -- and route_video then wrote review
-    # flags into the ARCHIVED file and moved an archive folder into a review
-    # queue. Skip any hit that sits under a superseded folder.
-    for hit in analyzed.glob(f"*/*/{name}"):
-        if any(is_superseded_dir(p) for p in hit.relative_to(analyzed).parts[:-1]):
-            continue
-        return hit
-    # Same rule for the full-depth fallback: never enter Analyzed/Archive/.
+    # The folder the filing rule names first. It is never a superseded folder,
+    # which matters: a superseded copy keeps this name, and a hit there once
+    # made route_video write review flags into the ARCHIVED file.
+    try:
+        hit = filed_folder(video_id, analyzed) / name
+        if hit.is_file():
+            return hit
+    except Exception:
+        pass
+    # The whole tree otherwise, never entering Analyzed/Archive/.
     return first_file(analyzed, name)
 
 
