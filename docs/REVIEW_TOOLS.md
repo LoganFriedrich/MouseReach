@@ -848,7 +848,7 @@ was the cause. Removing the filter put 24 videos back in front of the reviewer (
 
 Each of these is code that runs, produces a value, and has no reader.
 
-- **Ignore windows / `abnormal_ranges`.** The reviewer marks frame ranges where something other than a reach moved the pellet; the answer is saved, carried onto the segment by both `apply_review_overrides` (`causal_review_io.py:503-504`) and `truth_resolver` (`truth_resolver.py:181-182`) — and read by nothing. There is no reference to `abnormal_ranges` anywhere outside `src/mousereach/review/`. The kinematics step never excludes those frames.
+- ~~**Ignore windows / `abnormal_ranges`.**~~ Read by the kinematics since extractor 2.2.0 (2026-10-30): a reach that overlaps a window by any frame is left out of every measurement, and the features file records it under the segment's `reaches_left_out` (see `docs/KINEMATICS_FIELDS.md` §7). Until then the windows were saved, carried onto the segment, and read by nothing.
 - **`outcomes.exhaustive` in ground truth.** `_seg_overrides_from_gt` computes it and returns it; the caller assigns it to `_exhaustive_out` and never uses it (`truth_resolver.py:328`). Ground-truth outcome overrides apply per determined segment either way, so the flag changes nothing for outcomes. For *reaches*, `exhaustive` is load-bearing and does drop unlabelled algorithm reaches (`_apply_gt_reaches`, `:275-279`).
 - **`TriageStatus.clean`** (`triage_status.py:152-156`) — a property with no callers. The gate and the return scan read `seg_failed`, `unresolved` and `fully_resolved` directly.
 - **`TriageStatus.seg_needs_human`** (`:137`) — populated from the segmentation file (`:184`) and deliberately not acted on (`review_gate.py:89-105`).

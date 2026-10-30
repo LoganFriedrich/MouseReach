@@ -142,6 +142,13 @@ class SegmentFeatures:
     mean_tracking_quality: Optional[float] = None  # Overall DLC confidence
     tracking_dropout_frames: int = 0  # Frames with poor/no tracking
 
+    # Reaches a reviewer's ignore window took out of the measurements (see
+    # split_reaches_by_ignore_windows). `reaches` and `n_reaches` hold only
+    # the reaches that were measured; these say what was left out and why.
+    n_reaches_left_out: int = 0
+    reaches_left_out: Optional[List[Dict]] = None
+    ignore_windows: Optional[List[Dict]] = None
+
     def __post_init__(self):
         if self.reaches is None:
             self.reaches = []
@@ -166,10 +173,68 @@ class VideoFeatures:
         return data
 
 
+def split_reaches_by_ignore_windows(reaches, ignore_windows):
+    """Return ``(kept, left_out)``: the reaches to measure, and the reaches a
+    reviewer's ignore windows take out of the measurements.
+
+    An ignore window is a frame range a reviewer marked in the review tool
+    ("Ignore windows" box) because something other than a reach moved the
+    pellet there -- a tail, a bump, the tray being nudged. It is saved in the
+    review as ``answers.abnormal_ranges`` and carried onto the segment as
+    ``abnormal_ranges`` ([{"start_frame", "end_frame", "reason"}, ...]).
+
+    WHY a reach that OVERLAPS a window is left out entirely rather than kept
+    and marked (Logan, 2026-10-30: "leave it out"): the window says the
+    footage there is not the behaviour being studied, and a reach whose frames
+    include any of it would have its velocity, path and extent computed over
+    frames that are not the reach. The cardinal rule -- every frame boundary
+    error contaminates kinematics -- applies here with the frames named by a
+    person. Until this function existed the windows were saved and read by
+    nothing outside the review tools, so they changed no measurement.
+
+    Overlap is inclusive on both ends: a reach touching a window by one frame
+    is out. ``left_out`` records each reach's id and frames and the window
+    that removed it, so the features file still says the reach happened.
+    """
+    windows = []
+    for w in ignore_windows or []:
+        try:
+            a, b = int(w.get("start_frame")), int(w.get("end_frame"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        windows.append((min(a, b), max(a, b)))
+    if not windows:
+        return list(reaches), []
+    kept, left_out = [], []
+    for r in reaches:
+        try:
+            rs, re_ = int(r.get("start_frame")), int(r.get("end_frame"))
+        except (TypeError, ValueError, AttributeError):
+            kept.append(r)
+            continue
+        hit = next(((a, b) for a, b in windows if rs <= b and re_ >= a), None)
+        if hit is None:
+            kept.append(r)
+        else:
+            left_out.append({
+                "reach_id": r.get("reach_id"),
+                "start_frame": rs, "end_frame": re_,
+                "ignore_window": {"start_frame": hit[0], "end_frame": hit[1]},
+            })
+    return kept, left_out
+
+
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.1.0"  # 2.1: the algorithm's causal reach finally reaches the
+    VERSION = "2.2.0"  # 2.2 (2026-10-30): a reviewer's ignore windows now take
+                       # the reaches they touch out of the measurements
+                       # (split_reaches_by_ignore_windows); n_reaches counts the
+                       # measured reaches and n_reaches_left_out / reaches_left_out
+                       # / ignore_windows say what was left out. Identical output
+                       # for a video with no ignore windows, so 2.1.0 is declared
+                       # compatible and only reviewed videos with windows re-run.
+                       # 2.1: the algorithm's causal reach finally reaches the
                        # data. Reach assignment (algo-4) writes is_causal per
                        # reach into {video}_reach_assignments.json; until now
                        # nothing loaded that file, so causal_reach was False on
@@ -349,14 +414,24 @@ class FeatureExtractor:
                 seg_data['ruler_pixels']
             )
 
+            # A reviewer's ignore windows take the reaches they touch out of
+            # every measurement below (split_reaches_by_ignore_windows says
+            # why). Done here, once, so the temporal context, the pellet
+            # positioning and the per-reach features all see the same list.
+            measured_reaches, left_out = split_reaches_by_ignore_windows(
+                seg_data['reaches'], outcome_data.get('abnormal_ranges'))
+            if left_out:
+                print(f"[feature_extractor] segment {seg_num}: {len(left_out)} reach(es) "
+                      f"left out of the measurements by a reviewer's ignore window(s)")
+
             # Compute temporal context
             temporal_context = self._compute_temporal_context(
                 seg_data,
-                seg_data['reaches']
+                measured_reaches
             )
 
             # Compute pellet positioning (before first reach)
-            first_reach_start = seg_data['reaches'][0]['start_frame'] if seg_data['reaches'] else None
+            first_reach_start = measured_reaches[0]['start_frame'] if measured_reaches else None
             pellet_positioning = self._compute_pellet_positioning(
                 df,
                 seg_data['start_frame'],
@@ -380,9 +455,12 @@ class FeatureExtractor:
                 outcome=outcome_data.get('outcome'),
                 outcome_confidence=outcome_data.get('confidence'),
                 outcome_flagged=outcome_data.get('flagged_for_review', False),
-                n_reaches=seg_data['n_reaches'],
+                n_reaches=len(measured_reaches),
                 causal_reach_id=outcome_data.get('causal_reach_id'),
                 reaches=[],
+                n_reaches_left_out=len(left_out),
+                reaches_left_out=left_out or None,
+                ignore_windows=(outcome_data.get('abnormal_ranges') or None),
                 attention_score=attention_score,
                 **body_features,  # Unpack body feature dict
                 **temporal_context,  # Unpack temporal context
@@ -391,8 +469,8 @@ class FeatureExtractor:
             )
 
             # Extract features for each reach in this segment
-            n_reaches = len(seg_data['reaches'])
-            for i, reach in enumerate(seg_data['reaches']):
+            n_reaches = len(measured_reaches)
+            for i, reach in enumerate(measured_reaches):
                 reach_features = self._extract_reach_features(
                     reach,
                     df,

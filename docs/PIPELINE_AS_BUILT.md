@@ -2828,3 +2828,53 @@ Tests: `tests/test_version_scan_walks_once.py` asserts the WALK COUNT does not
 grow with the number of videos the index missed, and that the fallback still
 finds a manifest filed outside the indexed folders while still never reading a
 superseded one.
+
+## Update 2026-10-30: ignore windows reach the kinematics; a review handed as a file is read; failed videos are retried
+
+Three of the open items in ISSUES.md "2026-10-27 (00:45): what MouseReach still
+cannot do flawlessly", with Logan's rulings of 2026-10-30.
+
+**Ignore windows now change the measurements.** The review tool's "Ignore
+windows" box marks frame ranges where something other than a reach moved the
+pellet. The answer was saved as `answers.abnormal_ranges`, carried onto the
+segment as `abnormal_ranges`, and read by nothing outside `review/`. Now
+`FeatureExtractor.extract` (kinematics/core/feature_extractor.py,
+`split_reaches_by_ignore_windows`) leaves out every reach that overlaps a
+window by any frame -- Logan: "leave it out" -- before the temporal context,
+the pellet positioning and the per-reach features are computed. The segment
+record gains `n_reaches_left_out`, `reaches_left_out` (each left-out reach's id,
+frames and the window) and `ignore_windows`; `n_reaches` is the number
+measured. Extractor version 2.1.0 -> 2.2.0. The output is the same for a video
+with no ignore windows, so `pipeline_versions.json` declares 2.1.0 compatible
+(the segmenter 2.2.3 precedent) and the 18 archived videos whose review carries
+a window were marked for a kinematics-only re-run by hand, once, instead of
+staling 6,800 videos. How they were found: every file in
+`review_records/reviews/` with a non-empty `abnormal_ranges` (18 of 3,471).
+
+**A review handed to the truth layering as a FILE is read.** The extractor
+passes its `review_path` -- the review file -- to `resolve_truth_layers` as
+`primary_dir`, and `truth_resolver._review_doc` tried only `<dir>/<stem>/<file>`
+and `<dir>/<file>`. A review saved only in the processing folder was never
+read by the layering; the durable copy of record normally covered it. The
+lookup now accepts the file itself, and only when it is this video's review by
+name.
+
+**A failed video is retried later.** A crash in segmentation, reach or outcome
+detection marked the video 'failed' and no work bucket ever looked at that
+state again (the embedded report above still says "No watcher ever picks up a
+video in state 'failed'"; that was true until today). Logan: "fail it, then do
+it again another time". `ProcessingOrchestrator._select_work_item` has a new
+drain bucket after the pipeline bucket: a 'failed' row is put back to
+'processing' and run when `_failed_retry_due` holds -- `error_count` below
+`watcher.max_retries` (3), at least `RETRY_FAILED_AFTER_S` (one hour) since
+`last_error_at`, and the video and a runnable pose still in this node's
+Processing folder. The attempt is written to the processing log as step
+'retry'. A video that has used up its retries stays failed and is listed by
+`mousereach-watch-status`; `mousereach-watch-reprocess` still resets it. The
+two videos failed on the server when this was written (both "[WinError 5]
+Access is denied" on a `_segments.json.tmp`, 2026-10-23) are the case this is
+for. The GPU role is unchanged: it already re-drives a failed pose at startup.
+
+Tests: `tests/test_ignore_windows_leave_reaches_out.py`,
+`tests/test_truth_resolver_reads_review_file.py`,
+`tests/test_failed_videos_are_retried_later.py`.

@@ -314,7 +314,7 @@ Measured over the Processing corpus: 5,337 of 199,690 reaches (2.7%) contain any
 
 ---
 
-## 7. Per-segment fields (25)
+## 7. Per-segment fields (28)
 
 One record per pellet presentation. All are written to `{video}_features.json`; only five of them ever reach the database (§8).
 
@@ -326,7 +326,10 @@ One record per pellet presentation. All are written to `{video}_features.json`; 
 | `outcome` | What happened to the pellet | copied from outcome detection (`:293`) | text | 100% |
 | `outcome_confidence` | Detector's confidence | copied (`:294`) | 0-1 | **Null on every segment the current detector produces.** Present on 3,980 of 22,920 Processing segments — exactly the 199 legacy videos. |
 | `outcome_flagged` | Detector asked for human review | copied (`:295`) | true/false | 11.5% of current segments |
-| `n_reaches` | Reach count | copied from the reach file (`:296`) | count | A separate source from `n_reaches_in_segment`, which counts the list |
+| `n_reaches` | Reach count | since extractor 2.2.0: the number of reaches MEASURED, after a reviewer's ignore windows (next three rows) are applied; before 2.2.0 copied from the reach file | count | Equals `n_reaches_in_segment` and the length of `reaches` |
+| `n_reaches_left_out` | Reaches a reviewer's ignore window took out of the measurements | `split_reaches_by_ignore_windows` (extractor 2.2.0) | count | 0 when the segment has no ignore windows |
+| `reaches_left_out` | Which reaches were left out and by which window | list of `{reach_id, start_frame, end_frame, ignore_window}` | list | null when nothing was left out. The reach is recorded here so the file still says it happened; it has no row in `reaches` and no kinematics |
+| `ignore_windows` | The reviewer's ignore windows for this segment | copied from the review (`answers.abnormal_ranges`, carried onto the segment as `abnormal_ranges`) | list of `{start_frame, end_frame, reason}` | null when none. A window names frames where something other than a reach moved the pellet. **A reach touching a window by even one frame is left out of every measurement** (Logan, 2026-10-30: "leave it out"), because its velocity, path and extent would otherwise be computed over frames a person has said are not the reach. The temporal-context and pellet-positioning fields above are computed from the measured reaches only |
 | `causal_reach_id` | Which reach caused the outcome | copied (`:297`) | count | Null on every current segment (§2) |
 | `attention_score` | Share of frames the mouse was at the tray | frames where `Nose_likelihood > 0.9` and `Nose_y > median(BOXR_y) − 80`, ÷ total × 100 (`:790-808`) | percent 0-100 | The 80 is raw pixels, not scaled by `ruler_pixels`. Median 45.6 over the Processing corpus. |
 | `mean_head_width_mm` | Average ear-to-ear distance | mean over frames with both ears above likelihood 0.7 (`:694-702`) | mm | |
