@@ -2882,3 +2882,38 @@ for. The GPU role is unchanged: it already re-drives a failed pose at startup.
 Tests: `tests/test_ignore_windows_leave_reaches_out.py`,
 `tests/test_truth_resolver_reads_review_file.py`,
 `tests/test_failed_videos_are_retried_later.py`.
+
+## Update 2026-10-30: a GPU node's shared-record writes survive an unreachable shared database
+
+Found by the Lab DLC PC session after its restart onto d543c4d while
+`watcher_central.db` was locked (ISSUES.md 2026-10-30 11:00). Four gaps in
+`DLCOrchestrator`'s shared-record code, all closed in one change:
+
+1. **Writes were dropped while the coordinator was unavailable.**
+   `_sync_to_connectome` returned before queuing when `self.coordinator` was
+   None, so every state change between a failed startup connect and the
+   reconnect was lost for good (a hand-off to Posed and the next pose start,
+   that morning). Now the write is queued in the same failed-writes list that a
+   locked database already fed, and the reconnect lands it.
+2. **A write that failed just before a stop was lost with the process.** The
+   failed-writes list is memory only. It still is -- the durable copy is the
+   node's own `watcher.db` -- because the startup fill now brings the record to
+   it (3).
+3. **The startup fill only ADDED rows that were missing entirely.** A row of
+   this host that existed but was behind stayed wrong. `_put_missing_on_shared_record`
+   now also corrects every row carrying this host's name whose state differs
+   from the local one, with `sync_video_state_unless_newer`, so a row updated
+   since (by this host's later write or another host's) is left alone. Rows
+   owned by another host are never touched. It also marks itself pending when
+   it could not run at all (coordinator None), so the reconnect's next scan runs
+   it instead of forgetting it.
+4. **The reconnect was tried only when a collage came up for selection**, so a
+   node that started mid-pose stayed disconnected until that pose ended. The
+   scan phase now tries `_retry_coordinator` first, and a successful reconnect
+   schedules the reconciliation for that scan.
+
+The processing server's `ProcessingOrchestrator` does not use this path (it has
+no coordinator and writes `videos`/`processing_log` through `export_to_central_db`,
+whose own re-send is `_export_missed_to_central`).
+
+Tests: `tests/test_shared_record_survives_a_lost_connection.py`.

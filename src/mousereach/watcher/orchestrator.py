@@ -1596,10 +1596,22 @@ class DLCOrchestrator(BaseOrchestrator):
         but only 3 were on record a day after the 10-21 lock failures. Other
         nodes read that record before cutting a collage, so a missing child is
         a collage another node may cut and pose a second time.
+
+        With NO coordinator (the shared database did not answer at startup and
+        has not been reached since) the write is QUEUED, not dropped. WHY
+        (Lab DLC PC, 2026-10-30): this used to return before queuing, so every
+        state change between a failed startup connect and the reconnect was
+        lost for good -- a hand-off and the next pose start went unrecorded
+        that morning. The reconnect (_retry_coordinator) then lands the queue
+        at the next scan and reconciles this host's rows from the local
+        database (_put_missing_on_shared_record), which is the durable copy.
         """
-        if not self.coordinator:
-            return
         pending = self._failed_shared_writes()
+        if not self.coordinator:
+            pending[video_id] = (state, dict(kwargs), datetime.now().isoformat())
+            logger.debug(f"Shared record unavailable; {video_id} -> {state} queued "
+                         f"({len(pending)} write(s) wait for the reconnect)")
+            return
         try:
             self.coordinator.sync_video_state(video_id, self.hostname, state, **kwargs)
             pending.pop(video_id, None)       # a newer write supersedes a failed one
@@ -1648,56 +1660,85 @@ class DLCOrchestrator(BaseOrchestrator):
     _SHARED_FILL_RETRY_S = 600
 
     def _put_missing_on_shared_record(self) -> int:
-        """Put on the shared record every video this node has that the record
-        lacks entirely (see _sync_to_connectome for why). Existing rows are never
-        touched. Runs at startup; if the record is unavailable part-way, the
-        fill is marked unfinished and a later scan resumes it
-        (_finish_shared_record_fill) -- it used to wait for the next restart,
-        and one PC left 668 videos off that way (2026-10-22). Written in batches
-        (insert_video_states_if_absent): one row per connection opened the
-        shared file hundreds of times in seconds. Never raises; returns how
-        many were added."""
+        """Bring the shared record up to date with this node's local database
+        (see _sync_to_connectome for why): put on record every video this node
+        has that the record lacks entirely, and correct every row of THIS host
+        whose state is behind the local one. Rows another host owns are never
+        touched. Runs at startup and after every reconnect; if the record is
+        unavailable, or unavailable part-way, the fill is marked unfinished and
+        a later scan resumes it (_finish_shared_record_fill) -- it used to wait
+        for the next restart, and one PC left 668 videos off that way
+        (2026-10-22). Written in batches (insert_video_states_if_absent): one
+        row per connection opened the shared file hundreds of times in seconds.
+        Never raises; returns how many rows were added or corrected.
+
+        WHY rows that are behind are corrected too (Lab DLC PC, 2026-10-30):
+        a write that fails just before the watcher stops is lost with the
+        process, and the old fill only added rows that were missing entirely,
+        so a video whose row existed stayed wrong for good -- a video posed and
+        handed off at 10:59 was still on record as "posing" an hour later. The
+        local database is the durable copy; the record is brought to it with
+        sync_video_state_unless_newer, so a row updated since (by this host's
+        later write or another host's) is left alone."""
         if not getattr(self, 'coordinator', None):
+            # Could not run at all: remember to, so the reconnect's next scan
+            # runs it (it used to return 0 and forget).
+            self._shared_fill_pending = True
             return 0
         self._shared_fill_attempted = time.monotonic()
         try:
-            on_record = set(self.coordinator.get_all_video_states())
+            on_record = self.coordinator.get_all_video_states()
         except Exception as e:
             self._shared_fill_pending = True
             logger.warning(f"Could not read the shared record to fill in missing "
                            f"videos ({e}); a later scan tries again")
             return 0
-        missing = []
+        missing, behind = [], []
         for state in self._SHARED_RECORD_STATES:
             try:
                 rows = self.db.get_videos_in_state(state)
             except Exception:
                 continue
             for row in rows:
-                if row['video_id'] in on_record:
-                    continue
-                missing.append({
+                local = {
                     'video_id': row['video_id'], 'hostname': self.hostname,
                     'state': state,
                     'updated_at': row.get('updated_at') or datetime.now().isoformat(),
                     'collage_id': row.get('collage_id'),
                     'source_path': row.get('current_path') or row.get('source_path'),
-                })
-        if not missing:
+                }
+                shared = on_record.get(row['video_id'])
+                if shared is None:
+                    missing.append(local)
+                elif (shared.get('hostname') == self.hostname
+                        and shared.get('state') != state):
+                    behind.append(local)
+        if not missing and not behind:
             self._shared_fill_pending = False
             return 0
+        added = corrected = 0
         try:
-            added = self.coordinator.insert_video_states_if_absent(missing)
+            if missing:
+                added = self.coordinator.insert_video_states_if_absent(missing)
+            for local in behind:
+                if self.coordinator.sync_video_state_unless_newer(
+                        local['video_id'], self.hostname, local['state'],
+                        local['updated_at'], collage_id=local['collage_id'],
+                        source_path=local['source_path']):
+                    corrected += 1
         except Exception as e:
             self._shared_fill_pending = True
             logger.warning(f"The shared record became unavailable while filling in "
-                           f"{len(missing)} missing video(s) ({e}); what was written "
-                           f"stays, and a later scan finishes the rest")
-            return 0
+                           f"{len(missing)} missing and {len(behind)} out-of-date "
+                           f"video(s) ({e}); what was written stays, and a later scan "
+                           f"finishes the rest")
+            return added + corrected
         self._shared_fill_pending = False
-        logger.info(f"Put {added} video(s) on the shared record that it lacked "
+        logger.info(f"Shared record brought up to date from this node's database: "
+                    f"{added} video(s) put on record that it lacked, {corrected} of "
+                    f"{len(behind)} out-of-date row(s) of this host corrected "
                     f"(earlier writes had failed)")
-        return added
+        return added + corrected
 
     def _finish_shared_record_fill(self) -> int:
         """Resume a fill the shared record interrupted, at most once every
@@ -1883,9 +1924,17 @@ class DLCOrchestrator(BaseOrchestrator):
         self._coordinator_init_error = None
         self._coordinator_unavailable_since = None
         self._claims_unavailable_warned_at = None
+        # Everything this node did while the record was unreachable is in its
+        # local database and in the queue of failed writes; the next scan
+        # lands the queue and reconciles this host's rows
+        # (_put_missing_on_shared_record), without waiting out the fill's
+        # usual cadence.
+        self._shared_fill_pending = True
+        self._shared_fill_attempted = 0.0
         logger.info(
             "Collage coordination database is available again%s; this node crops "
-            "collages again. Cross-node recovery runs at the next watcher restart.",
+            "collages again and brings its rows on the shared record up to date at "
+            "the next scan. Cross-node recovery runs at the next watcher restart.",
             f" (unavailable since {since})" if since else "")
         return True
 
@@ -2912,7 +2961,11 @@ class DLCOrchestrator(BaseOrchestrator):
         self._single_claim_upkeep(force=True)
         # Shared-record writes that failed since the last scan (see
         # _sync_to_connectome), and a startup fill the record interrupted.
-        # Before the scan, so other nodes see them sooner.
+        # Before the scan, so other nodes see them sooner. The reconnect is
+        # tried here first: until 2026-10-30 it was tried only when a collage
+        # came up for selection, so a node that started mid-pose with the
+        # record unreachable stayed disconnected until that pose ended.
+        self._retry_coordinator()
         self._retry_failed_shared_writes()
         self._finish_shared_record_fill()
 
