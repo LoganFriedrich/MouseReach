@@ -352,8 +352,13 @@ class WatcherDB:
                     try:
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                         logger.debug(f"Added column {table}.{column}")
-                    except Exception:
-                        pass  # Column already exists
+                    except Exception as err:
+                        # "Already exists" is the normal case on every start after
+                        # the first. WHY report the rest: a locked database also
+                        # landed here, and then the column was missing with no
+                        # sign of why later writes to it failed.
+                        if "duplicate column" not in str(err).lower():
+                            logger.warning(f"Could not add column {table}.{column}: {err}")
                 conn.commit()
             finally:
                 conn.close()
