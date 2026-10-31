@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+logger = logging.getLogger(__name__)
+
 # Touched outcomes: a real reach moved/removed the pellet, so a causal reach
 # MUST be committed. A touched segment with no committed causal reach is an
 # unresolved assignment -> triage.
@@ -286,7 +288,8 @@ def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as err:
+        logger.warning('Could not read %s, so it counts as absent: %s', p, err)
         return None
 
 

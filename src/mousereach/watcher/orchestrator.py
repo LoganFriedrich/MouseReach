@@ -1697,7 +1697,8 @@ class DLCOrchestrator(BaseOrchestrator):
         for state in self._SHARED_RECORD_STATES:
             try:
                 rows = self.db.get_videos_in_state(state)
-            except Exception:
+            except Exception as err:
+                logger.warning("Could not read this node's %s videos, so the shared record was not brought up to date for them: %s", state, err)
                 continue
             for row in rows:
                 local = {
@@ -1812,7 +1813,8 @@ class DLCOrchestrator(BaseOrchestrator):
             if (archived_here is not None
                     and (Path(archived_here) / f"{video_id}_processing_manifest.json").is_file()):
                 return 'archived', "already analysed and filed in the archive"
-        except Exception:
+        except Exception as err:
+            logger.warning('%s: could not check the archive, so it counts as not filed: %s', video_id, err)
             pass
         return None
 
@@ -3967,7 +3969,8 @@ class DLCOrchestrator(BaseOrchestrator):
             try:
                 from mousereach.watcher import repose
                 repose.note_failure(video_id, self.hostname, str(e))
-            except Exception:
+            except Exception as err:
+                logger.warning('%s: could not leave the re-pose requester a failure note: %s', video_id, err)
                 pass
             raise
         return True
@@ -4254,7 +4257,8 @@ class DLCOrchestrator(BaseOrchestrator):
                             )
                             with open(json_path, 'w') as f:
                                 json.dump(data, f, indent=2)
-                        except Exception:
+                        except Exception as err:
+                            logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
                             pass
                 triage_result.save(processing_dir / f"{video_id}_triage.json")
             except Exception as e:
@@ -4407,7 +4411,8 @@ class DLCOrchestrator(BaseOrchestrator):
                     for f in self._get_associated_files(Path(d), video_id):
                         try:
                             f.unlink()
-                        except Exception:
+                        except Exception as err:
+                            logger.warning('Could not remove %s after archiving: %s', f, err)
                             pass
                 # The archive holds the video now. A shared copy this node
                 # claimed for it is removed only against the archived mp4 (the
@@ -6082,7 +6087,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         )
                         with open(json_path, 'w') as f:
                             json.dump(data, f, indent=2)
-                    except Exception:
+                    except Exception as err:
+                        logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
                         pass
             triage_result.save(self.processing_dir / f"{video_id}_triage.json")
             logger.info(

@@ -654,7 +654,8 @@ class ReprocessingScanner:
                 return review if str(reviewed_at) > str(created_at) else None
             review_mtime = key[2] if key is not None else review.stat().st_mtime
             return review if review_mtime > ft else None
-        except Exception:
+        except Exception as err:
+            logger.warning('%s: could not check for a pending review, so it counts as having none: %s', video_id, err)
             return None
 
     def _drop_human_seg_staleness(self, video_id: str, manifest_index,
@@ -704,7 +705,8 @@ class ReprocessingScanner:
             from mousereach.review.triage_status import segmentation_corrected
             doc = json.loads(Path(review_path).read_text(encoding="utf-8"))
             return bool(segmentation_corrected(doc))
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read review %s, so it counts as declaring no mislabel: %s', review_path, err)
             return False
 
     def _segments_human_fixed(self, video_id: str) -> bool:
@@ -721,7 +723,8 @@ class ReprocessingScanner:
                 return False
             return json.loads(seg.read_text(
                 encoding="utf-8")).get("boundary_source") == "human"
-        except Exception:
+        except Exception as err:
+            logger.warning('%s: could not read its segments, so they count as not human-fixed: %s', video_id, err)
             return False
 
     def _divert_mislabel_to_deep_review(self, video_id: str) -> None:

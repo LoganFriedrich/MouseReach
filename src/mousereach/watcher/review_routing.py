@@ -356,5 +356,6 @@ def read_routing_manifest(bundle_dir: Path, video_id: str) -> Optional[Dict]:
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as err:
+        logger.warning('Could not read %s, so it counts as absent: %s', p, err)
         return None

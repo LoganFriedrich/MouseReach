@@ -24,6 +24,9 @@ import os
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
+
+import logging
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field, asdict
 
 
@@ -1097,7 +1100,8 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
                     b.determined = True
                     b.determined_by = seg_data.get("created_by", "unknown")
                     b.determined_at = seg_data.get("created_at")
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read %s, so its boundary corrections were not applied: %s', seg_gt_path, err)
             pass
 
     # Load old reach GT and apply reach corrections
@@ -1123,7 +1127,8 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
                             r.exclude_from_analysis = r_gt.get("exclude_from_analysis", False)
                             r.exclude_reason = r_gt.get("exclude_reason")
                             break
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read %s, so its reach corrections were not applied: %s', reach_gt_path, err)
             pass
 
     # Load old outcome GT and apply corrections
@@ -1151,7 +1156,8 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
                             if seg_gt.get("outcome_known_frame") is not None:
                                 o.outcome_known_frame = seg_gt.get("outcome_known_frame")
                             break
-            except Exception:
+            except Exception as err:
+                logger.warning('Could not read %s, so its outcome corrections were not applied: %s', outcome_gt_path, err)
                 pass
             break
 

@@ -864,7 +864,8 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
             for src, dst in reversed(done):
                 try:
                     _safe_move(dst, src)
-                except Exception:
+                except Exception as err:
+                    logger.error('%s: could not move %s back to %s while undoing a release, so this bundle is now split: %s', stem, dst, src, err)
                     pass
             try:
                 dest.rmdir()            # only if the undo left it empty
@@ -1035,7 +1036,8 @@ def scan_review_queues(db, processing_dir: Path,
             continue
         try:
             st = _cached_triage_status(bundle, stem, signature)
-        except Exception:
+        except Exception as err:
+            logger.warning('%s: could not read its review status, so it was skipped this scan: %s', stem, err)
             continue
         # A human's deep-review clearance outranks the machine's seg self-check
         # -- the SAME honor rule the gate applies (review_gate seg_failed

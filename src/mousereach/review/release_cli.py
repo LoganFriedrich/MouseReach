@@ -34,6 +34,9 @@ import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 SEGMENTATION_REASON_KEYWORDS = ("segmentation", "mislabel", "re-seg", "reseg")
 
@@ -60,7 +63,8 @@ def _boundary_source_human(bundle: Path, stem: str) -> bool:
     p = Path(bundle) / f"{stem}_segments.json"
     try:
         return json.loads(p.read_text(encoding="utf-8")).get("boundary_source") == "human"
-    except Exception:
+    except Exception as err:
+        logger.warning('Could not read %s, so its boundaries count as not human-made: %s', p, err)
         return False
 
 

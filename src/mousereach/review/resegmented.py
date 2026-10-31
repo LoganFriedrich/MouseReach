@@ -29,11 +29,17 @@ import json
 from pathlib import Path
 from typing import Optional, Tuple
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def _read(path: Path) -> Optional[dict]:
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except Exception as err:
+        logger.warning('Could not read %s, so it counts as absent: %s', path, err)
         return None
 
 

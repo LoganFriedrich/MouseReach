@@ -87,6 +87,9 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import logging
+logger = logging.getLogger(__name__)
+
 from mousereach.census.runner import bundles_in, claimed_singles, ids_in_dir
 from mousereach.pipeline.analyzed_tree import SUPERSEDED_DIR_NAMES
 from mousereach.pipeline.pipe_structure import UNMIGRATED_MESSAGE, retired_folders_present
@@ -189,7 +192,10 @@ def _rel(p, root) -> str:
 def _read_json(p) -> Optional[dict]:
     try:
         return json.loads(Path(p).read_text(encoding="utf-8"))
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except Exception as err:
+        logger.warning('Could not read %s, so it counts as absent: %s', p, err)
         return None
 
 

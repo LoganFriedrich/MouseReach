@@ -125,7 +125,8 @@ def resolve_review_path(video_stem: str, primary_dir=None) -> Optional[Path]:
             p = d / f"{video_stem}_causal_review.json"
             if p.is_file():
                 found.append(p)
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not look for a review in %s: %s', d, err)
             pass
     if not found:
         return None
@@ -397,7 +398,8 @@ def _previous_review(video_stem: str, output_dir: Path) -> Optional[Dict[str, An
         try:
             if path is not None and Path(path).is_file():
                 return _read_json(Path(path))
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read the saved review %s, so every answer counts as given now: %s', path, err)
             continue
     return None
 

@@ -2917,3 +2917,35 @@ no coordinator and writes `videos`/`processing_log` through `export_to_central_d
 whose own re-send is `_export_missed_to_central`).
 
 Tests: `tests/test_shared_record_survives_a_lost_connection.py`.
+
+## Update 2026-10-30: failures that used to be silent in review and the watcher
+
+**Clearing a deep review now stops if the answers did not save.** It used to carry
+on, sending the video onward and losing what the person had entered. They now see
+"Your answers did not save" and the video stays where it is.
+
+**A database column that cannot be added is now reported.** Only "already exists",
+the normal case, stays quiet.
+
+**These now write a line to the log instead of saying nothing.** What the code does
+next has not changed, so look in the log when a video behaves as if something were
+missing:
+
+- An unreadable review, status, routing or segments file, which still counts as
+  absent. A file that does not exist is normal and stays quiet.
+- An unreadable human review file in the truth layers, logged as an ERROR, because
+  the video is then measured without those answers.
+- A release that could not be undone, logged as an ERROR, because that bundle is
+  left split between two folders and needs a person to put it back together.
+- A triage verdict that could not be written into a results file, a leftover file
+  after archiving, and a failed check of the archive or of this node's own videos.
+- A saved reach answer that could not be restored to the screen, and a video left
+  out of the re-segmentation queue because it could not be read.
+- Old ground-truth corrections that could not be applied.
+
+The log is not somewhere a reviewer looks, so only the first change above reaches
+the person at the moment it happens.
+
+**The rest were read and left alone.** Of 149 silent handlers in these two folders,
+the others only affect the display, an optional feature, or something retried on the
+next pass.

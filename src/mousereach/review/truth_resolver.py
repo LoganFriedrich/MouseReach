@@ -74,7 +74,10 @@ def _read_json(p) -> Optional[dict]:
     try:
         with open(p) as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except Exception as err:
+        logger.error('Could not read %s, so any human answers in it are ignored: %s', p, err)
         return None
 
 
@@ -132,7 +135,8 @@ def _durable_review_doc(stem: str) -> Optional[dict]:
         p = durable_review_path(stem)
         if p is not None and p.is_file():
             return _read_json(p) or None
-    except Exception:
+    except Exception as err:
+        logger.warning('Could not read the durable review of %s: %s', stem, err)
         pass
     return None
 

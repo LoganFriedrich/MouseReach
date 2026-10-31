@@ -43,6 +43,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import logging
+logger = logging.getLogger(__name__)
+
 import numpy as np
 
 
@@ -527,7 +530,8 @@ automatic.
             if rp.is_file() and segmentation_corrected(
                     json.loads(rp.read_text(encoding="utf-8"))):
                 return True
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read the review of %s: %s', bundle, err)
             pass
         try:
             rj = bundle / ("%s_routing.json" % stem)
@@ -536,7 +540,8 @@ automatic.
                     encoding="utf-8")).get("routed_reason", "")).lower()
                 if "segment" in reason or "re-seg" in reason:
                     return True
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read the routing record of %s: %s', bundle, err)
             pass
         return False
 
@@ -565,7 +570,8 @@ automatic.
                     if not any(abs(int(c["frame"]) - b) <= SAME_BOUNDARY_FRAMES
                                for b in cuts))
                 self._queue.append((bundle, spare))
-            except Exception:
+            except Exception as err:
+                logger.warning('Left %s out of the re-segmentation queue, because it could not be read: %s', bundle, err)
                 continue
         # The lab's order decides which videos come first. Within one tier,
         # most alternatives first: a video where the segmenter bailed out has
