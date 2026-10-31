@@ -2623,7 +2623,8 @@ The notes box travels with the video.
                         man = rp["reach_group"].button(len(reaches))
                         if man is not None:
                             man.setChecked(True)
-                    except Exception:
+                    except Exception as err:
+                        logger.warning('Could not restore a saved reach answer %s, so its row is blank: %s', hc, err)
                         pass
 
         # Restore the ignore windows (abnormal non-reach events).
@@ -2955,7 +2956,8 @@ The notes box travels with the video.
         OUT of the auto-review queue (pending a proper failed-seg triage flow)."""
         try:
             sd = json.loads((b / f"{b.name}_segments.json").read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as err:
+            logger.warning('Could not read the segments of %s, so it counts as not failed: %s', b, err)
             return False
         c = sd.get("overall_confidence")
         if c is not None and c <= 0.0:
@@ -3495,8 +3497,14 @@ The notes box travels with the video.
         try:
             if self._save_review() is False:
                 return   # take another look: nothing cleared yet
-        except Exception:
-            pass
+        except Exception as err:
+            # The save failed, so the person's answers exist only on screen.
+            # WHY stop: clearing anyway sent the video on and advanced to the next
+            # one, losing the answers without a word.
+            logger.error("%s: the review did not save, so it was not cleared: %s", stem, err)
+            show_error(f"Your answers did not save, so {stem} was NOT cleared: {err}")
+            self._status_label.setText(f"[NOT CLEARED] {stem}: the review did not save")
+            return
         # Nothing leaves the re-segmentation queue un-re-segmented
         # (review/resegmented.py): say so here, where the person can act on it,
         # instead of writing a clear the watcher would then hold.
