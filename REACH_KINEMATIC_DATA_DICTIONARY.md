@@ -125,8 +125,8 @@ apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 | `righthand_motion_smoothness` | How smooth vs jerky the motion was (dimensionless, 1 = smoothest). | `1 / (1 + mean(|jerk|))`, where jerk is the third difference of the augmented trajectory. |
 | `righthand_lateral_deviation_px` / `_mm` | Maximum perpendicular distance from the synthetic-pre-to-synthetic-post line. | `max(|((p - pre) x (post - pre))| / |post - pre|)` over all augmented trajectory points. |
 | `righthand_mean_speed_px_per_frame` / `_mm_per_frame` | Average speed across the reach. | `total_path / number_of_inter_frame_segments` (segments include the ones bridging the synthetic anchors). |
-| `righthand_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest moment. | `max(frame_to_frame_distance)`. |
-| `righthand_apex_speed_px_per_frame` / `_mm_per_frame` | Speed at the per-point apex. | Frame-to-frame distance straddling the per-point apex frame. |
+| `righthand_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest single step along the path. | `max(frame_to_frame_distance)` on the augmented nose-relative trajectory, so the steps from the start anchor and to the end anchor count and can be the largest. |
+| `righthand_apex_speed_px_per_frame` / `_mm_per_frame` | Speed leaving the per-point apex. | Frame-to-frame distance from the per-point apex frame to the next point on the augmented nose-relative trajectory. When the apex is the last detected frame, that next point is the end anchor. |
 
 ## Section 5. Cross-paw timing
 
@@ -134,7 +134,7 @@ apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 |---|---|---|
 | `paw_apex_lead_frames` | How spread out the four paw apexes were. | `max(per-point apex frames) - min(per-point apex frames)`. |
 | `paw_leading_point` | Which paw point apexed first. | `argmin` over per-point apex frames. One of `righthand` / `rhleft` / `rhright` / `rhout`. |
-| `paw_velocity_correlation` | How synchronized the four paw points' speed profiles were. Dimensionless, in `[-1, 1]`. | Mean of pairwise Pearson r across the four points' frame-to-frame speed series, computed over real reach frames in the nose-relative coordinate frame. |
+| `paw_velocity_correlation` | How synchronized the four paw points' speed profiles were. Dimensionless, in `[-1, 1]`. | Mean of pairwise Pearson r across the four points' frame-to-frame speed series, on the augmented nose-relative trajectories, so the steps from the start anchor and to the end anchor are in every series. Empty when the reach has no anchor. |
 
 ## Section 6. Inter-paw shape proxies
 

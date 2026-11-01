@@ -2,7 +2,7 @@
 
 Describes: `src/mousereach/kinematics/core/feature_extractor.py`, `src/mousereach/kinematics/cli.py`, `src/mousereach/kinematics/analysis/reach_export.py`, `src/mousereach/export/features_csv.py`, `src/mousereach/sync/database.py`, `src/mousereach/review/truth_resolver.py`, `REACH_KINEMATIC_DATA_DICTIONARY.md`
 
-Verified against: b65fcf0 (2026-08-23)
+Verified against: b65fcf0 (2026-08-23). A `:123` reference means a line of `feature_extractor.py` at that commit, and the percentages were measured then. Sections 5.4, 5.5, 6 (opening), 6.1, 6.3 and 6.7 describe extractor 2.3.0: they were checked against the code at 966f182 and name functions instead of lines.
 
 ---
 
@@ -36,7 +36,7 @@ One class, `FeatureExtractor` (`feature_extractor.py:169`), turns three files in
 
 **Run by**: `mousereach-grasp-analyze` (`kinematics/cli.py:17`, entry point at `pyproject.toml:132`), the watcher (`watcher/orchestrator.py:1154` and `:2103`), `pipeline/run_all.py:121`, and `pipeline/reprocess_to_current.py:259`.
 
-**Sizes.** `ReachFeatures` declares 44 fields: 43 named values plus a nested dictionary called `extended` holding a further 161 named values. `SegmentFeatures` declares 26: 25 values plus the reach list. Counted by parsing the dataclasses; the 161 confirmed by reading shipped files.
+**Sizes.** `ReachFeatures` declares 44 fields: 43 named values plus a nested dictionary called `extended` holding a further 165 named values. `SegmentFeatures` declares 26: 25 values plus the reach list. Counted by parsing the dataclasses; the 161 from before extractor 2.3.0 confirmed by reading shipped files, and the four anchor columns added by 2.3.0 read from the code (§6.7).
 
 ---
 
@@ -120,7 +120,7 @@ Three places in the code agree with that, and two do not.
 
 ## 5. Per-reach fields (43, outside `extended`)
 
-"Filled today" is measured on the Processing corpus (199,690 reaches) unless another source is named.
+"Filled today" is measured on the Processing corpus (199,690 reaches) unless another source is named. Sections 5.4 and 5.5 changed with extractor 2.3.0 and have not been re-measured, so they say when a value is empty instead of how often.
 
 ### 5.1 Identity and position in the segment
 
@@ -154,25 +154,31 @@ Ground-truth-substituted reaches also get `None` for all three, deliberately: th
 
 ### 5.4 Speed and path of the wrist point
 
-All four use only the `RightHand` point (`:451-452`), and none of them gate on likelihood.
+All four use only the `RightHand` point, along its anchored path (`anchored_hand_path`, §6.1; computed in `_compute_velocity_features`). That path is the detected positions with the start anchor before them and the end anchor after them, so a reach of n detected frames has n + 1 steps. Unlike the `extended` block, the nose is not subtracted, so these are measured in image coordinates. The detected positions are not gated on likelihood; the nose and slit corner that place an anchor are (§6.1).
 
 | Field | Plain English | How computed | Units | Filled today |
 |---|---|---|---|---|
-| `peak_velocity_px_per_frame` | Fastest single-frame move of the wrist during the reach | max of frame-to-frame straight-line distance (`:455-457`, `:475`) | pixels per frame | 100% |
-| `mean_velocity_px_per_frame` | Average per-frame move of the wrist | mean of the same (`:476`) | pixels per frame | 100% |
-| `velocity_at_apex_px_per_frame` | Wrist speed at the apex | The step *starting* at the apex: `velocity[apex_frame - start_frame]` (`:469-471`) | pixels per frame | 94.7%. **Null exactly when the apex is the reach's last frame** — there is no step starting there, so the index falls off the end of the array and the guard at `:470` returns `None`. Checked on 755 null cases in an 80-video sample: 755 of 755 had `apex_frame == end_frame`. |
-| `velocity_at_apex_mm_per_sec` | The same converted | `× 9.0/ruler_pixels × 30.0` (`:405-407`) | mm per second, at an assumed 30 fps | 94.7%, same rows |
+| `peak_velocity_px_per_frame` | Fastest single-frame move of the wrist along its anchored path | Largest of the n + 1 frame-to-frame straight-line distances. The first and last steps, between an anchor and a detected position, count, and they can be the largest | pixels per frame | Empty when the reach has no anchor |
+| `mean_velocity_px_per_frame` | Average per-frame move of the wrist along its anchored path | Mean of the same n + 1 distances | pixels per frame | Empty when the reach has no anchor |
+| `velocity_at_apex_px_per_frame` | Wrist speed leaving the apex | The step *starting* at the apex: `velocity[apex_frame - start_frame + 1]`, where the + 1 skips the step from the start anchor. When the apex is the last detected frame this is the step to the end anchor, so it ends at a calculated point and not at a detected position | pixels per frame | Empty when the reach has no anchor, or no apex frame (third note below) |
+| `velocity_at_apex_mm_per_sec` | The same converted | `× 9.0/ruler_pixels × 30.0` | mm per second, at an assumed 30 fps | Same rows as `velocity_at_apex_px_per_frame` |
 
-Two notes on the apex index. First, `_compute_velocity_features` strips missing values out of the speed series *before* indexing into it (`:460` then `:471`), so a gap earlier in the reach would shift which frame "at apex" refers to. In practice this cannot fire: the DeepLabCut `.h5` files contain no missing coordinates at all (12 whole videos checked, 24.1 million cells, zero nulls). Second, that same fact means there is no quality gate anywhere in this section — a frame where DeepLabCut was 5% confident contributes its coordinate at full weight to every path length, speed and area below.
+Rows from an extractor before 2.3.0 mean something different: their steps ran between detected positions only, with no anchors, and `velocity_at_apex` was empty whenever the apex was the reach's last frame. The row's extractor version says which it is.
 
-Third, an inconsistency worth knowing: `:399` and `:415` compute the apex index as `apex_frame - start_frame if apex_frame else None`, which treats frame 0 as missing, while `:425` uses `if apex_frame is not None`. A reach whose apex is video frame 0 would get body features but no velocity or hand angle. No such reach was found in the corpus.
+Three notes on these values. First, peak and mean skip a missing step, but the apex step is read from the unfiltered series, so a gap cannot shift which frame "at apex" refers to; a missing step at the apex just leaves the value empty. Second, there is no quality gate on the detected positions anywhere in this section: DeepLabCut always gives a coordinate, so a frame where it was 5% confident contributes at full weight to every path length, speed and area below.
+
+Third, an inconsistency worth knowing: `_extract_reach_features` computes the apex index for velocity and hand angle as `apex_frame - start_frame if apex_frame else None`, which treats frame 0 as missing, while the body features test `if apex_frame is not None`. A reach whose apex is video frame 0 would get body features but no velocity at apex and no hand angle at apex.
 
 ### 5.5 Path shape of the wrist point
 
+Computed in `_compute_trajectory_features` on the same anchored path as §5.4, in image coordinates.
+
 | Field | Plain English | How computed | Units | Filled today |
 |---|---|---|---|---|
-| `trajectory_straightness` | 1.0 = the wrist went in a straight line; near 0 = it wandered | first-to-last straight-line distance ÷ total path length (`:494-500`) | dimensionless 0-1 | 100% |
-| `trajectory_smoothness` | 1.0 = perfectly smooth; smaller = jerkier | `1 / (1 + mean|third difference of position|)` (`:507-518`) | dimensionless 0-1 | 98.7%. Null for reaches under 3 frames. |
+| `trajectory_straightness` | 1.0 = the wrist went in a straight line from anchor to anchor; near 0 = it wandered, or went out and came back near where it started | Straight-line distance from the start anchor to the end anchor ÷ total length of the anchored path | dimensionless 0-1 | Empty when the reach has no anchor |
+| `trajectory_smoothness` | 1.0 = perfectly smooth; smaller = jerkier | `1 / (1 + mean|third difference of position|)` along the anchored path, so the anchors are in the differences | dimensionless 0-1 | Empty when the reach has no anchor, and for a reach of one detected frame, whose three path points are too few for a third difference |
+
+Rows from an extractor before 2.3.0 ran these between the first and last detected positions, and smoothness was empty below four detected frames.
 
 ### 5.6 Paw orientation
 
@@ -230,11 +236,11 @@ Four more with the same story as `tracking_quality_score`: a name in the datacla
 
 ---
 
-## 6. The `extended` block: 161 values per reach
+## 6. The `extended` block: 165 values per reach
 
-Produced by `_extended_features` (`:1425-1464`) and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message (`:443-444`) — the reach still ships, with 161 values missing and no other warning. Measured across all 199,690 reaches in the Processing corpus: **zero** such errors.
+Produced by `_extended_features` and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message — the reach still ships, with all 165 values missing and no other warning.
 
-Of the 161 values, 151 are non-null on every one of 21,508 reaches checked. Only the ten `_at_contact` columns are ever null, and they are null almost always (§2).
+Rows from an extractor before 2.3.0 hold the same block without the four anchor columns of §6.7, so 161 values. The ten `_at_contact` columns are null almost always (§2). A reach with no anchor (§6.1) also has null path measures: the 16 path columns of each paw point (§6.2) and `paw_velocity_correlation`.
 
 ### 6.1 The coordinate frame these use
 
@@ -245,7 +251,7 @@ Two things are done before every measurement of where the paw is (`anchored_hand
    * frame before detection (`start_frame - 1`): the midpoint of Nose and BOXL in that frame
    * frame after the paw disappears (`end_frame + 1`): the midpoint of Nose and BOXR in that frame
 
-   These are geometry, not tracking, so the reach always starts and ends at a defined place instead of wherever DeepLabCut first noticed the paw. Since extractor 2.3.0 this also covers the wrist velocity and trajectory measures and `paw_velocity_correlation`.
+   These are geometry, not tracking, so the reach always starts and ends at a defined place instead of wherever DeepLabCut first noticed the paw. Since extractor 2.3.0 the anchors also cover the wrist velocity and trajectory measures (§5.4, §5.5), which do not subtract the nose, and `paw_velocity_correlation` (§6.3), which does.
 
 **Which measures include the anchors.** Peak, mean and apex wrist velocity, trajectory straightness and smoothness, total path, lateral spread, swept area, path directness, motion smoothness, lateral deviation, mean, peak and apex speed, and velocity correlation. The apex frame and `extension_past_nose` use detected frames, because they ask for the paw's furthest point and an anchor can never be that. Paw shape, visibility and the head measures use detected frames, because the anchors say nothing about them. `duration_frames` still counts detected frames.
 
@@ -291,11 +297,15 @@ One dead branch: `:1154-1157` is an `elif` meant to handle the apex being the la
 
 ### 6.3 Coordination between the four points — 3 values
 
+Computed in `_cross_paw_timing`.
+
 | Column | Plain English | How computed | Units |
 |---|---|---|---|
-| `paw_apex_lead_frames` | How spread out in time the four points' apexes were | latest apex − earliest apex (`:1176`); null if fewer than two points have an apex | frames |
-| `paw_leading_point` | Which point apexed first | the point with the smallest apex frame, as a name (`:1177-1178`) | text: one of the four |
-| `paw_velocity_correlation` | How much the four points sped up and slowed down together | mean of the six pairwise Pearson correlations of the frame-to-frame speed series, real frames only (`:1186-1207`) | dimensionless, -1 to 1 |
+| `paw_apex_lead_frames` | How spread out in time the four points' apexes were | latest apex − earliest apex; null if fewer than two points have an apex | frames |
+| `paw_leading_point` | Which point apexed first | the point with the smallest apex frame, as a name. Apexes come from detected frames (§6.2). A tie goes to the first in the order `righthand`, `rhleft`, `rhright`, `rhout`; null if fewer than two points have an apex | text: one of the four names |
+| `paw_velocity_correlation` | How much the four points sped up and slowed down together | mean of the pairwise Pearson correlations of the four frame-to-frame speed series (up to six pairs; a pair with a constant series is skipped), on the anchored nose-relative paths, so the first and last steps, from the start anchor and to the end anchor, are in every series. Null when the reach has no anchor or no pair could be correlated | dimensionless, -1 to 1 |
+
+On rows from an extractor before 2.3.0, `paw_velocity_correlation` used detected frames only.
 
 ### 6.4 Paw shape — 3 measures × 8 time points × 2 units = 48
 
@@ -331,6 +341,15 @@ Measured over the Processing corpus: 5,337 of 199,690 reaches (2.7%) contain any
 | `tray_contact_duration_frames` | Intended: frames where the pellet was jiggling while the wrist was hidden — a proxy for the paw being on the tray | count of frames where the 4-frame rolling standard deviation of `Pellet_x` exceeds 2 px **and** `Pillar_likelihood < 0.5` **and** `RightHand_likelihood < 0.5` (`:1414-1421`) | frames |
 
 **This value is zero on 199,682 of 199,690 reaches.** Only 8 reaches in the whole Processing corpus have a non-zero count. That is structural, not incidental: the window is a *detected reach*, which means the wrist was visible enough to be detected, while the third condition requires the wrist to be invisible. Returns 0 for reaches shorter than 4 frames (`:1411-1412`) and `None` if any of those three columns is missing from the tracking file (`:1422-1423`). The 2-pixel threshold is a raw pixel constant, not scaled by `ruler_pixels`, so it means a different physical distance on differently-zoomed videos.
+
+### 6.7 How the anchors were placed — 4 values
+
+New in extractor 2.3.0, from `anchored_hand_path` on the `RightHand` point. All four paw points share the same anchors, because an anchor depends only on the nose and a slit corner.
+
+| Column | Plain English | How computed | Units |
+|---|---|---|---|
+| `anchor_start_source` / `anchor_end_source` | How this end's anchor was placed | `anchor_frame`: nose and slit corner both trusted (likelihood at least 0.7) in the anchor frame. `nearest_frame`: a landmark was not trusted there, so its nearest trusted position within 30 frames was used. `video_edge`: the anchor frame is outside the video, so the nearest frame inside it stands in. `none`: no trusted landmark in range, so there is no anchor | text |
+| `anchor_start_in_neighbour_reach` / `anchor_end_in_neighbour_reach` | The anchor frame falls inside another detected reach | Only the nose and slit are read from that frame, never the hand, and the anchor stands | True / False |
 
 ---
 
@@ -457,7 +476,7 @@ Two things segments do **not** control. Reach frame windows are never clipped to
 
 | Failure | What happens | Where |
 |---|---|---|
-| Anything inside the extended feature block raises | The reach ships with `extended = {'_extended_features_error': message}` — 161 values missing, one key present | `feature_extractor.py:443-444` |
+| Anything inside the extended feature block raises | The reach ships with `extended = {'_extended_features_error': message}` — all 165 values missing, one key present | `_extract_reach_features` in `feature_extractor.py` |
 | Truth layering raises | Printed, then fall back to review-only, then to raw algorithm | `:226-227`, `:238-239` |
 | Database sync fails, for any reason | `sync_file_to_database` returns `False` and never raises | `sync/database.py:857-858` |
 | Database sync fails, from the CLI | `except Exception: pass` — and the call cannot raise anyway, so nothing is printed either way | `kinematics/cli.py:143-144` |
