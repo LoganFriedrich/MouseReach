@@ -155,10 +155,18 @@ def dlc_to_trc(
 
     # Slice to reach if specified
     if reach_frames is not None:
+        # The limb's motion includes the trip from and back to the nose, which
+        # tracking cannot see, so the reach's two anchor frames are part of it
+        # (mousereach.kinematics.core.anchored_path says why).
+        from mousereach.kinematics.core.anchored_path import anchored_reach_frames
         start, end = reach_frames
-        df = df.iloc[start:end + 1].reset_index(drop=True)
+        anchored = anchored_reach_frames(df, start, end)
+        if anchored is None:
+            raise ValueError(
+                f"Reach {start}-{end} has no anchor: no trusted nose or slit corner near its ends")
+        df = anchored
         if z_data is not None:
-            z_data = z_data[start:end + 1]
+            z_data = z_data[[max(start - 1, 0), *range(start, end + 1), min(end + 1, len(z_data) - 1)]]
 
     n_frames = len(df)
     dlc_parts = list(marker_map.keys())

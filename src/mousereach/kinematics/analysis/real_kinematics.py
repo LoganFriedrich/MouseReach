@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from mousereach.config import Paths
+from mousereach.kinematics.core.anchored_path import anchored_hand_path
 
 FPS = 30
 RULER_MM = 9.0  # ruler = 9mm
@@ -85,33 +86,31 @@ def compute_kinematics(x, y, ruler_px, fps=30):
 def load_dlc_data(dlc_path):
     """Load DLC tracking data from .h5 file."""
     df = pd.read_hdf(dlc_path)
-    # Flatten multi-index columns
-    df.columns = ['_'.join(col).strip() for col in df.columns.values]
+    # Flatten multi-index columns, leaving out the scorer as the feature extractor does
+    df.columns = ['_'.join(col[1:]).strip() for col in df.columns.values]
     return df
 
 
 def get_hand_trajectory(dlc_df, start_frame, end_frame):
-    """Extract hand position for reach frames."""
+    """Extract hand position for the reach, with both anchors.
+
+    A reach starts and ends at the nose, so the frames just outside the detected
+    ones belong to its path (anchored_hand_path says why). A reach with no anchor
+    gives nothing, rather than a path measured from wherever tracking began.
+    """
     # Try different hand point names
-    hand_cols = [
-        ('RightHand_x', 'RightHand_y'),
-        ('RHOut_x', 'RHOut_y'),
-        ('RHLeft_x', 'RHLeft_y'),
-    ]
+    for point in ('RightHand', 'RHOut', 'RHLeft'):
+        if f'{point}_x' not in dlc_df.columns or f'{point}_y' not in dlc_df.columns:
+            continue
+        path = anchored_hand_path(dlc_df, point, start_frame, end_frame)
+        if not path.ok:
+            continue
+        x, y = path.x, path.y
 
-    for x_col, y_col in hand_cols:
-        # Find matching columns (may have scorer prefix)
-        x_matches = [c for c in dlc_df.columns if x_col in c and '_likelihood' not in c]
-        y_matches = [c for c in dlc_df.columns if y_col in c and '_likelihood' not in c]
-
-        if x_matches and y_matches:
-            x = dlc_df[x_matches[0]].iloc[start_frame:end_frame+1].values
-            y = dlc_df[y_matches[0]].iloc[start_frame:end_frame+1].values
-
-            # Filter out NaN/invalid values
-            valid = ~(np.isnan(x) | np.isnan(y))
-            if np.sum(valid) > 3:
-                return x[valid], y[valid]
+        # Filter out NaN/invalid values
+        valid = ~(np.isnan(x) | np.isnan(y))
+        if np.sum(valid) > 3:
+            return x[valid], y[valid]
 
     return None, None
 

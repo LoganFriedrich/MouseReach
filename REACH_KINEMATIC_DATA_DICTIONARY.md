@@ -13,15 +13,27 @@ and how it is computed.
   trajectory feature, the paw point's position is nose-subtracted at every
   frame: `paw_relative = paw - nose`. This isolates paw motion from incidental
   body / head motion.
-* **Synthetic slit anchors bracket the trajectory.** Every trajectory feature
-  is computed on an "augmented" trajectory that prepends one synthetic frame
-  at the reach start and appends one at the reach end:
-    * Pre-anchor (nose-relative): `(BoxL - Nose) / 2` evaluated at `start_frame`
-      (i.e., the midpoint of `Nose` and `BoxL`, then nose-subtracted).
-    * Post-anchor (nose-relative): `(BoxR - Nose) / 2` evaluated at `end_frame`.
-  The anchors give a geometrically defined reach boundary that does not depend
-  on which frame DLC happened to first/last detect the paw, and they are the
-  reference endpoints for path directness and lateral deviation.
+* **A reach starts and ends at the nose, so both ends of every path are anchored.**
+  The hand is hidden behind the box wall just before it is detected and just
+  after it disappears. Every measure of where the paw is therefore includes two
+  anchored frames, placed by `anchored_hand_path`
+  (`kinematics/core/anchored_path.py`):
+    * Frame before detection (`start_frame - 1`): every hand point is between the
+      left slit corner (`BOXL`) and the nose.
+    * Frame after the paw disappears (`end_frame + 1`): every hand point is
+      between the right slit corner (`BOXR`) and the nose.
+  "Between" is the midpoint, an assumption held in one constant. The anchors give
+  a physical boundary that does not depend on where tracking first or last saw
+  the paw, and they are the endpoints for path directness and lateral deviation.
+  `reach_duration_frames` still counts detected frames, so a path covers
+  `duration + 1` frame steps. The first and last steps are real movement seen as
+  one frame's change, so they are large and can set peak speed.
+* **How each row's anchors were placed is on the row.** `anchor_start_source` and
+  `anchor_end_source` say `anchor_frame` (nose and corner trusted in that frame),
+  `nearest_frame` (a landmark taken from its nearest trusted frame within 30),
+  `video_edge` (the frame is outside the video), or `none` (no anchor, so path
+  measures are empty). `anchor_start_in_neighbour_reach` and
+  `anchor_end_in_neighbour_reach` mark an anchor frame inside another detected reach.
 * **Image y increases downward.** Reach extension out through the slit moves
   the paw toward the bottom of the frame, i.e., positive y in image and
   nose-relative coordinates. Larger `extension_past_nose` means a paw
@@ -98,8 +110,8 @@ that pair specifically.
 ## Section 4. Per-paw-point trajectory features
 
 For each of the four paw points (`righthand`, `rhleft`, `rhright`, `rhout`),
-the same set of trajectory features is computed on the augmented, nose-relative
-trajectory. The column root below is shown for `righthand`; the same suffixes
+the same set of trajectory features is computed on the anchored, nose-relative
+path. The column root below is shown for `righthand`; the same suffixes
 apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 
 | Column | Meaning | Calculation |
@@ -127,7 +139,8 @@ apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 ## Section 6. Inter-paw shape proxies
 
 Three intra-paw geometric measurements, summarised at six time points and as
-overall statistics. Operates on real reach frames (no synthetic anchors).
+overall statistics. Detected frames only: these describe the paw's shape, and at
+an anchor every point is in one place.
 
 | Measure | Column root | Calculation |
 |---|---|---|

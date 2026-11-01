@@ -280,6 +280,10 @@ def infer_skeleton_video(
     """
     Infer skeleton for all frames in a video (or frame range).
 
+    This solves each frame as tracked. To solve one reach including the hidden
+    trip from and back to the nose, pass the table from
+    mousereach.kinematics.core.anchored_path.anchored_reach_frames.
+
     Args:
         df: Full DLC DataFrame (flat column names)
         mm_per_px: Scale factor from ruler

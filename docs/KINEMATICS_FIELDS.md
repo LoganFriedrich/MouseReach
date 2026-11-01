@@ -238,16 +238,36 @@ Of the 161 values, 151 are non-null on every one of 21,508 reaches checked. Only
 
 ### 6.1 The coordinate frame these use
 
-Two things are done before the per-paw trajectory measurements (`_build_augmented_nose_relative_trajectory`, `:998-1032`):
+Two things are done before every measurement of where the paw is (`anchored_hand_path` in `kinematics/core/anchored_path.py`, whose text explains the rule):
 
 1. **Nose subtraction.** Every paw position becomes `paw − nose` at the same frame, so head movement does not count as paw movement.
-2. **Two synthetic anchor frames** are added, one before the reach and one after:
-   * before: the midpoint of Nose and BOXL at `start_frame`, i.e. `(BOXL − Nose)/2` in nose-relative terms (`:1023-1024`)
-   * after: the midpoint of Nose and BOXR at `end_frame` (`:1027-1028`)
+2. **Two anchor frames** are added, because a reach starts and ends at the nose and the hand is hidden in these frames:
+   * frame before detection (`start_frame - 1`): the midpoint of Nose and BOXL in that frame
+   * frame after the paw disappears (`end_frame + 1`): the midpoint of Nose and BOXR in that frame
 
-   These are geometry, not tracking, so the reach always starts and ends at a defined place instead of wherever DeepLabCut first noticed the paw.
+   These are geometry, not tracking, so the reach always starts and ends at a defined place instead of wherever DeepLabCut first noticed the paw. Since extractor 2.3.0 this also covers the wrist velocity and trajectory measures and `paw_velocity_correlation`.
 
-**Which measures include the two synthetic points.** Everything computed from the array `x`/`y` returned at `:1050` does: total path, lateral spread, swept area, path directness, motion smoothness, lateral deviation, mean speed, peak speed, and apex speed. Only the apex frame and `extension_past_nose` strip them, via `real_y = y[1:-1]` (`:1057`). Everything in §6.3, §6.4 and §6.5 uses real frames only.
+**Which measures include the anchors.** Peak, mean and apex wrist velocity, trajectory straightness and smoothness, total path, lateral spread, swept area, path directness, motion smoothness, lateral deviation, mean, peak and apex speed, and velocity correlation. The apex frame and `extension_past_nose` use detected frames, because they ask for the paw's furthest point and an anchor can never be that. Paw shape, visibility and the head measures use detected frames, because the anchors say nothing about them. `duration_frames` still counts detected frames.
+
+**Where a landmark is untrusted.** `anchor_start_source` and `anchor_end_source` on the row say how each anchor was placed (`anchor_frame`, `nearest_frame`, `video_edge`, or `none`). With `none`, the path measures are empty.
+
+**Every place in the code that reads paw position, and whether it uses the anchors:**
+
+| Place | What it does with paw position | Anchors? | Why |
+|---|---|---|---|
+| `kinematics/core/feature_extractor.py`: wrist velocity and trajectory, per-point path and speed, velocity correlation | Measures movement | Yes | This is the rule |
+| `kinematics/core/feature_extractor.py`: hand angle, paw shape, visibility, pellet-motion count | Paw shape, or how well it was seen | No | At an anchor all points are one place and nobody saw them |
+| `kinematics/analysis/real_kinematics.py` | Measures movement | Yes | This is the rule |
+| `biomech/dlc_to_trc.py` | Limb motion for one reach | Yes | The limb's trip from and back to the nose is part of the movement |
+| `biomech/skeleton_inference.py` | Solves one frame as tracked | Through its input | Pass `anchored_reach_frames` to solve one reach |
+| `lib/causal_attribution.py` | Paw's furthest point from the nose | No | Asks for a maximum, which an anchor can never be |
+| `reach/` detectors, refiners, polisher, and `reach/v8/` | Decide when a reach happens | No | They decide from what was seen, and the anchors depend on their answer |
+| `reach/analysis/` | Evaluate reach detection | No | Same |
+| `outcomes/` | Decide what happened to the pellet | No | Decides from what was seen |
+| `lib/pillar_geometry.py` | Lists tracked point names | No | Reads no paw position |
+| `pipeline/triage.py`, `dlc/core/quality.py` | Tracking quality | No | Judges the tracker, so needs what it reported |
+| `review/ground_truth_widget.py`, `reach/review_widget.py` | Show tracked values, find visible frames | No | A reviewer must see what was tracked |
+| `config.py` | Lists point names | No | Reads no position |
 
 ### 6.2 Per paw point — four points × 19 values = 76
 

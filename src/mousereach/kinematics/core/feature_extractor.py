@@ -13,6 +13,8 @@ import json
 import numpy as np
 import pandas as pd
 
+from mousereach.kinematics.core.anchored_path import AnchoredPath, anchored_hand_path
+
 
 @dataclass
 class ReachFeatures:
@@ -227,7 +229,14 @@ def split_reaches_by_ignore_windows(reaches, ignore_windows):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.2.0"  # 2.2 (2026-10-30): a reviewer's ignore windows now take
+    VERSION = "2.3.0"  # 2.3 (2026-10-31): every paw-position measurement goes
+                       # through anchored_hand_path: a reach starts and ends at the
+                       # nose, so the frame before detection and the frame after the
+                       # paw disappears are part of its path. The flat velocity and
+                       # trajectory columns ignored this; the per-paw ones placed the
+                       # anchors from the wrong frames. Changes those values, so no
+                       # earlier version is compatible. Adds anchor_* columns.
+                       # 2.2 (2026-10-30): a reviewer's ignore windows now take
                        # the reaches they touch out of the measurements
                        # (split_reaches_by_ignore_windows); n_reaches counts the
                        # measured reaches and n_reaches_left_out / reaches_left_out
@@ -475,7 +484,12 @@ class FeatureExtractor:
                     reach,
                     df,
                     seg_data['ruler_pixels'],
-                    outcome_data
+                    outcome_data,
+                    other_reaches=[
+                        (r['start_frame'], r['end_frame'])
+                        for sg in reaches_data['segments'] for r in sg['reaches']
+                        if r is not reach
+                    ],
                 )
 
                 # Set contextual flags
@@ -583,9 +597,16 @@ class FeatureExtractor:
         reach: Dict,
         df: pd.DataFrame,
         ruler_pixels: float,
-        outcome_data: Dict
+        outcome_data: Dict,
+        other_reaches: Optional[List[Tuple[int, int]]] = None,
     ) -> ReachFeatures:
-        """Extract all features for a single reach."""
+        """Extract all features for a single reach.
+
+        duration_frames stays the count of DETECTED frames (end - start + 1): the
+        anchors say where the hidden hand is, they are not extra tracked footage.
+        The anchored path therefore spans duration_frames + 1 frame steps, and speeds
+        are measured over those steps.
+        """
 
         reach_id = reach['reach_id']
         start_frame = reach['start_frame']
@@ -633,8 +654,13 @@ class FeatureExtractor:
         # Extract reach trajectory for this reach
         reach_df = df.iloc[start_frame:end_frame+1]
 
+        # Where the wrist was, including the two frames it is hidden beside the nose
+        # (anchored_path says why). Velocity and trajectory below use this, never
+        # reach_df, so they cannot miss the start and end of the movement.
+        wrist_path = anchored_hand_path(df, 'RightHand', start_frame, end_frame, other_reaches)
+
         # Compute velocity features
-        velocity_features = self._compute_velocity_features(reach_df, apex_frame - start_frame if apex_frame else None)
+        velocity_features = self._compute_velocity_features(wrist_path, apex_frame - start_frame if apex_frame else None)
         features.velocity_at_apex_px_per_frame = velocity_features['velocity_at_apex']
         features.peak_velocity_px_per_frame = velocity_features['peak_velocity']
         features.mean_velocity_px_per_frame = velocity_features['mean_velocity']
@@ -645,7 +671,7 @@ class FeatureExtractor:
             features.velocity_at_apex_mm_per_sec = features.velocity_at_apex_px_per_frame * px_to_mm * self.FRAMERATE
 
         # Compute trajectory features
-        traj_features = self._compute_trajectory_features(reach_df)
+        traj_features = self._compute_trajectory_features(wrist_path)
         features.trajectory_straightness = traj_features['straightness']
         features.trajectory_smoothness = traj_features['smoothness']
 
@@ -677,48 +703,54 @@ class FeatureExtractor:
                 end_frame=end_frame,
                 interaction_frame=features.interaction_frame,
                 ruler_pixels=ruler_pixels,
+                other_reaches=other_reaches,
             )
         except Exception as exc:
             features.extended = {'_extended_features_error': str(exc)}
 
         return features
 
-    def _compute_velocity_features(self, reach_df: pd.DataFrame, apex_idx: Optional[int]) -> Dict:
-        """Compute velocity features from RightHand trajectory."""
+    def _compute_velocity_features(self, path: AnchoredPath, apex_idx: Optional[int]) -> Dict:
+        """Compute velocity features from the anchored RightHand path.
 
-        rh_x = reach_df['RightHand_x'].values
-        rh_y = reach_df['RightHand_y'].values
+        The first and last steps run from the start anchor to the first detected
+        position and from the last detected position to the end anchor. They are
+        real movement of the hand, covered in one frame as far as the tracker can
+        tell, so they count, and they can set peak_velocity.
+        """
+        empty = {'velocity_at_apex': None, 'peak_velocity': None, 'mean_velocity': None}
+        if not path.ok:
+            return empty
 
-        # Compute frame-to-frame velocity
-        dx = np.diff(rh_x)
-        dy = np.diff(rh_y)
-        velocity = np.sqrt(dx**2 + dy**2)
+        # Compute frame-to-frame velocity, including the steps to and from the anchors
+        velocity = np.sqrt(np.diff(path.x)**2 + np.diff(path.y)**2)
+        measured = velocity[~np.isnan(velocity)]
+        if len(measured) == 0:
+            return empty
 
-        # Handle NaNs
-        velocity = velocity[~np.isnan(velocity)]
-
-        if len(velocity) == 0:
-            return {
-                'velocity_at_apex': None,
-                'peak_velocity': None,
-                'mean_velocity': None
-            }
-
+        # apex_idx counts detected frames; the path has the start anchor before them.
+        # This is the step leaving the apex.
         velocity_at_apex = None
-        if apex_idx is not None and 0 <= apex_idx < len(velocity):
-            velocity_at_apex = float(velocity[apex_idx])
+        if apex_idx is not None and 0 <= apex_idx + 1 < len(velocity) and not np.isnan(velocity[apex_idx + 1]):
+            velocity_at_apex = float(velocity[apex_idx + 1])
 
         return {
             'velocity_at_apex': velocity_at_apex,
-            'peak_velocity': float(velocity.max()),
-            'mean_velocity': float(velocity.mean())
+            'peak_velocity': float(measured.max()),
+            'mean_velocity': float(measured.mean())
         }
 
-    def _compute_trajectory_features(self, reach_df: pd.DataFrame) -> Dict:
-        """Compute trajectory straightness and smoothness."""
+    def _compute_trajectory_features(self, path: AnchoredPath) -> Dict:
+        """Compute trajectory straightness and smoothness on the anchored path.
 
-        rh_x = reach_df['RightHand_x'].values
-        rh_y = reach_df['RightHand_y'].values
+        Straightness is anchor to anchor over path length: start point to end point,
+        across the slit, against the whole trip out and back.
+        """
+        if not path.ok:
+            return {'straightness': None, 'smoothness': None}
+
+        rh_x = path.x
+        rh_y = path.y
 
         # Remove NaNs
         valid = ~(np.isnan(rh_x) | np.isnan(rh_y))
@@ -763,7 +795,12 @@ class FeatureExtractor:
         }
 
     def _compute_orientation_features(self, reach_df: pd.DataFrame, apex_idx: Optional[int]) -> Dict:
-        """Compute hand orientation from RH keypoints."""
+        """Compute hand orientation from RH keypoints.
+
+        Detected frames only: this is the angle between two hand points, the shape of
+        the paw and not where it is, and the anchors put all points in one place, where
+        no angle exists (see anchored_path).
+        """
 
         # Use RHLeft and RHRight to compute hand angle
         rhl_x = reach_df['RHLeft_x'].values
@@ -1233,42 +1270,6 @@ class FeatureExtractor:
         'RHOut': 'rhout',
     }
 
-    def _build_augmented_nose_relative_trajectory(
-        self,
-        df: pd.DataFrame,
-        paw_point: str,
-        start_frame: int,
-        end_frame: int,
-    ) -> Tuple[np.ndarray, np.ndarray, Tuple[float, float], Tuple[float, float]]:
-        """
-        Construct a nose-subtracted paw trajectory bracketed by synthetic slit anchors.
-
-        Synthetic pre-anchor: midpoint of (Nose, BoxL) at start_frame, then nose-subtracted.
-            (= (BoxL - Nose) / 2 in nose-relative coords)
-        Synthetic post-anchor: midpoint of (BoxR, Nose) at end_frame, then nose-subtracted.
-            (= (BoxR - Nose) / 2 in nose-relative coords)
-
-        Returns:
-            (x, y) nose-relative augmented trajectory arrays (length = real_frames + 2),
-            (pre_x, pre_y) synthetic pre-anchor in nose-relative coords,
-            (post_x, post_y) synthetic post-anchor in nose-relative coords.
-        """
-        real_df = df.iloc[start_frame:end_frame + 1]
-        paw_x = real_df[f'{paw_point}_x'].values - real_df['Nose_x'].values
-        paw_y = real_df[f'{paw_point}_y'].values - real_df['Nose_y'].values
-
-        s_row = df.iloc[start_frame]
-        pre_x = (s_row['BOXL_x'] - s_row['Nose_x']) / 2.0
-        pre_y = (s_row['BOXL_y'] - s_row['Nose_y']) / 2.0
-
-        e_row = df.iloc[end_frame]
-        post_x = (e_row['BOXR_x'] - e_row['Nose_x']) / 2.0
-        post_y = (e_row['BOXR_y'] - e_row['Nose_y']) / 2.0
-
-        x = np.concatenate([[pre_x], paw_x, [post_x]])
-        y = np.concatenate([[pre_y], paw_y, [post_y]])
-        return x, y, (float(pre_x), float(pre_y)), (float(post_x), float(post_y))
-
     def _paw_trajectory_features(
         self,
         df: pd.DataFrame,
@@ -1276,18 +1277,22 @@ class FeatureExtractor:
         start_frame: int,
         end_frame: int,
         ruler_pixels: float,
+        other_reaches: Optional[List[Tuple[int, int]]] = None,
     ) -> Dict[str, Optional[float]]:
         """
-        Compute the per-paw-point trajectory feature group on the augmented,
-        nose-relative trajectory. Image y increases downward, so reach extension
-        out through the slit produces y > 0 in nose-relative coords.
+        Compute the per-paw-point trajectory feature group on the anchored,
+        nose-relative path (anchored_hand_path: a reach starts and ends at the nose,
+        so the hidden frames at each end belong to its path). Image y increases
+        downward, so reach extension out through the slit produces y > 0 in
+        nose-relative coords. With no anchor the path measures are empty; the apex
+        and extension need only detected frames, so they are still given.
         """
         prefix = self.PAW_COL_PREFIX[paw_point]
         mm_per_px = self.RULER_MM / ruler_pixels if ruler_pixels and ruler_pixels > 0 else 0.0
 
-        x, y, (pre_x, pre_y), (post_x, post_y) = self._build_augmented_nose_relative_trajectory(
-            df, paw_point, start_frame, end_frame
-        )
+        path = anchored_hand_path(df, paw_point, start_frame, end_frame, other_reaches)
+        x, y = path.nose_relative()
+        pre_x, pre_y, post_x, post_y = x[0], y[0], x[-1], y[-1]
 
         out: Dict[str, Optional[float]] = {}
 
@@ -1305,6 +1310,16 @@ class FeatureExtractor:
         out[f'{prefix}_apex_frame'] = apex_frame
         out[f'{prefix}_extension_past_nose_px'] = ext_px
         out[f'{prefix}_extension_past_nose_mm'] = ext_px * mm_per_px if ext_px is not None else None
+
+        if not path.ok:
+            for name in ('total_path_px', 'total_path_mm', 'lateral_spread_px', 'lateral_spread_mm',
+                         'swept_area_px2', 'swept_area_mm2', 'path_directness', 'motion_smoothness',
+                         'lateral_deviation_px', 'lateral_deviation_mm',
+                         'mean_speed_px_per_frame', 'mean_speed_mm_per_frame',
+                         'peak_speed_px_per_frame', 'peak_speed_mm_per_frame',
+                         'apex_speed_px_per_frame', 'apex_speed_mm_per_frame'):
+                out[f'{prefix}_{name}'] = None
+            return out
 
         # Frame-to-frame segment lengths on the augmented trajectory.
         dx = np.diff(x)
@@ -1404,6 +1419,7 @@ class FeatureExtractor:
         df: pd.DataFrame,
         start_frame: int,
         end_frame: int,
+        other_reaches: Optional[List[Tuple[int, int]]] = None,
     ) -> Dict[str, Optional[float]]:
         """Cross-paw apex timing and velocity-profile coordination."""
         out: Dict[str, Optional[float]] = {}
@@ -1419,16 +1435,14 @@ class FeatureExtractor:
             out['paw_leading_point'] = None
 
         # Velocity-correlation: mean pairwise Pearson r of frame-to-frame speed
-        # series across the four paw points (real frames only, no synthetic anchors).
+        # series across the four paw points, on the anchored paths: speed is about
+        # where the paw is, so the steps to and from the nose count.
         speed_series = []
-        real_df = df.iloc[start_frame:end_frame + 1]
-        nose_x = real_df['Nose_x'].values
-        nose_y = real_df['Nose_y'].values
         for p in self.PAW_POINTS:
-            px = real_df[f'{p}_x'].values - nose_x
-            py = real_df[f'{p}_y'].values - nose_y
-            if px.size < 2:
+            path = anchored_hand_path(df, p, start_frame, end_frame, other_reaches)
+            if not path.ok:
                 continue
+            px, py = path.nose_relative()
             sp = np.sqrt(np.diff(px) ** 2 + np.diff(py) ** 2)
             speed_series.append(sp)
 
@@ -1463,7 +1477,9 @@ class FeatureExtractor:
         paw_spread_max (max of all 6 pairwise distances).
 
         Each measure summarised at start/apex/end/contact and as max/min/mean/range
-        over the reach. Operates on real frames only (no synthetic anchors).
+        over the reach. Detected frames only: these are distances between hand points,
+        the shape of the paw and not where it is, and at an anchor every point is in one
+        place, which would read as a paw of zero width (see anchored_path).
         """
         prefix_map = {
             'paw_width_proxy': ('px', 'mm', 1),
@@ -1578,6 +1594,9 @@ class FeatureExtractor:
         interaction_frame: Optional[int],
     ) -> Dict[str, Optional[float]]:
         """
+        Detected frames only: this is how well each point was seen, and nobody
+        saw the hand at an anchor (see anchored_path).
+
         Per-paw-point likelihood profile across the reach. Likelihood is
         dimensionless (0-1); reported as visibility because dropouts often
         carry behavioural signal (rotation, grasp closure, occlusion).
@@ -1639,6 +1658,9 @@ class FeatureExtractor:
         end_frame: int,
     ) -> Optional[int]:
         """
+        Detected frames only: this reads the pellet and how well the wrist was seen,
+        never where the wrist was (see anchored_path).
+
         Count of frames within the reach window where pellet/tray motion is
         detected while the wrist (RightHand) is not confidently tracked.
 
@@ -1668,21 +1690,30 @@ class FeatureExtractor:
         end_frame: int,
         interaction_frame: Optional[int],
         ruler_pixels: float,
+        other_reaches: Optional[List[Tuple[int, int]]] = None,
     ) -> Dict[str, Optional[float]]:
         """Run all extended-feature groups and return a flat dict."""
         ext: Dict[str, Optional[float]] = {}
+
+        # How this reach's two anchors were placed, so an anchor that came from a
+        # stand-in frame, or that does not exist, is visible on the row itself.
+        _anchors = anchored_hand_path(df, 'RightHand', start_frame, end_frame, other_reaches)
+        ext['anchor_start_source'] = _anchors.start_source
+        ext['anchor_end_source'] = _anchors.end_source
+        ext['anchor_start_in_neighbour_reach'] = _anchors.start_in_neighbour
+        ext['anchor_end_in_neighbour_reach'] = _anchors.end_in_neighbour
 
         # Per-paw-point trajectory features (4 points x ~14 columns each)
         per_point_apex: Dict[str, Optional[int]] = {}
         for p in self.PAW_POINTS:
             point_features = self._paw_trajectory_features(
-                df, p, start_frame, end_frame, ruler_pixels
+                df, p, start_frame, end_frame, ruler_pixels, other_reaches
             )
             ext.update(point_features)
             per_point_apex[p] = point_features[f'{self.PAW_COL_PREFIX[p]}_apex_frame']
 
         # Cross-paw timing and coordination
-        ext.update(self._cross_paw_timing(per_point_apex, df, start_frame, end_frame))
+        ext.update(self._cross_paw_timing(per_point_apex, df, start_frame, end_frame, other_reaches))
 
         # Inter-paw shape proxies
         ext.update(self._paw_shape_features(

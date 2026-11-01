@@ -2949,3 +2949,25 @@ the person at the moment it happens.
 **The rest were read and left alone.** Of 149 silent handlers in these two folders,
 the others only affect the display, an optional feature, or something retried on the
 next pass.
+
+## Update 2026-10-31: both ends of a reach are anchored at the nose
+
+**What changed.** A reach starts and ends at the nose, and the hand is hidden there
+just before it is detected and just after it disappears. Every measure of where the
+paw is now counts two extra frames: the frame before detection, with the hand between
+the left slit corner and the nose, and the frame after the paw disappears, with the
+hand between the right slit corner and the nose. Before, the wrist velocity and
+trajectory columns ignored these frames, and the per-point columns placed them using
+the wrong frames.
+
+**What to expect in the numbers.** Paths get longer. Peak speed can now be set by the
+jump to or from an anchor. Duration does not change, because it still counts detected
+frames. The extractor is version 2.3.0 and no older version counts as current, so
+every filed video has its kinematics recalculated, with old results kept in the archive.
+
+**When a landmark cannot be trusted.** Each reach row says how each anchor was placed,
+and a reach with no anchor has empty path measures. It is not measured from a guess.
+
+**Where the detail is.** `kinematics/core/anchored_path.py` explains the rule, and
+`docs/KINEMATICS_FIELDS.md` section 6.1 lists every place that reads paw position and
+why it does or does not use the anchors.
