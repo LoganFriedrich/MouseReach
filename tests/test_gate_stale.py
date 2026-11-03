@@ -49,7 +49,7 @@ def test_gate_returns_stale_when_outcomes_predate_segments(tmp_path, monkeypatch
         seg_failed = False
 
     monkeypatch.setattr(rg, "triage_status", lambda d, v: _St())
-    monkeypatch.setattr(rg, "_gt_certification", lambda v: (False, set()))
+    monkeypatch.setattr(rg, "_gt_certification", lambda v, d=None: (False, set()))
     decision, reason, _ = rg.evaluate_gate(vid, tmp_path, "auto_approved")
     assert decision == rg.DECISION_STALE
     assert "predate" in reason
@@ -75,7 +75,7 @@ def test_gate_stale_by_in_file_dates_despite_fresh_mtimes(tmp_path, monkeypatch)
         seg_failed = False
 
     monkeypatch.setattr(rg, "triage_status", lambda d, v: _St())
-    monkeypatch.setattr(rg, "_gt_certification", lambda v: (False, set()))
+    monkeypatch.setattr(rg, "_gt_certification", lambda v, d=None: (False, set()))
     decision, reason, _ = rg.evaluate_gate(vid, tmp_path, "auto_approved")
     assert decision == rg.DECISION_STALE
     assert "in-file dates" in reason

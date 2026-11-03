@@ -41,32 +41,20 @@ DECISION_DEEP = "deep_review"
 DECISION_STALE = "stale_outputs"
 
 
-def _gt_certification(video_id: str) -> Tuple[bool, set]:
+def _gt_certification(video_id: str, processing_dir=None) -> Tuple[bool, set]:
     """``(fully_exhaustive, gt_determined_outcome_segnums)`` for a video's GT.
 
     ``fully_exhaustive`` is True when GT marks the whole video complete
     (``completion_status.all_complete`` or both reaches+outcomes exhaustive) --
     a human has certified every element, so the whole video is human truth. The
     second value is the set of segment_nums whose outcome GT determined, used to
-    clear those specific segments when GT is only partial. Never raises."""
-    try:
-        from ..review.causal_review_io import find_gt
-        p = find_gt(video_id)
-        if not p:
-            return False, set()
-        gt = json.loads(Path(p).read_text(encoding="utf-8"))
-        cs = gt.get("completion_status") or {}
-        rr = (gt.get("reaches") or {}).get("exhaustive")
-        oo = (gt.get("outcomes") or {}).get("exhaustive")
-        full = bool(cs.get("all_complete")) or bool(rr and oo)
-        segs = set()
-        for seg in ((gt.get("outcomes") or {}).get("segments") or []):
-            sn = seg.get("segment_num")
-            if sn is not None and seg.get("determined") is not False:
-                segs.add(int(sn))
-        return full, segs
-    except Exception:
-        return False, set()
+    clear those specific segments when GT is only partial. Never raises.
+
+    The ground truth beside the video (``processing_dir``) is found first --
+    triage_status.gt_resolved_segments says why; it is the one reading of
+    ground truth, so the gate and the release check cannot disagree."""
+    from ..review.triage_status import gt_resolved_segments
+    return gt_resolved_segments(video_id, extra_dirs=(processing_dir,))
 
 
 def evaluate_gate(
@@ -85,7 +73,7 @@ def evaluate_gate(
     (and that GT did not already determine) -> TRIAGE. Otherwise -> CLEAN.
     """
     st = triage_status(processing_dir, video_id)
-    gt_full, gt_segs = _gt_certification(video_id)
+    gt_full, gt_segs = _gt_certification(video_id, processing_dir)
     if gt_full:
         return DECISION_CLEAN, "ground_truth_exhaustive", st
     # Easy and Flat trays are never held for a person (Logan, 2026-10-23:

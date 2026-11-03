@@ -72,7 +72,7 @@ def site(tmp_path, monkeypatch):
     import mousereach.review.causal_review_io as cri
     import mousereach.review.triage_status as ts
     monkeypatch.setattr(cri, "durable_review_dir", lambda: None)
-    monkeypatch.setattr(ts, "gt_resolved_segments", lambda video_id: (False, set()))
+    monkeypatch.setattr(ts, "gt_resolved_segments", lambda video_id, extra_dirs=(): (False, set()))
     return {"tmp": tmp_path, "proc": proc, "results": results,
             "outcomes": outcomes, "triage": triage}
 

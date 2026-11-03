@@ -149,7 +149,7 @@ def resolved_segments(review_doc: Optional[Dict[str, Any]],
     return out
 
 
-def gt_resolved_segments(video_id: str) -> "tuple[bool, Set[int]]":
+def gt_resolved_segments(video_id: str, extra_dirs=()) -> "tuple[bool, Set[int]]":
     """What ground truth has already determined for this video.
 
     GROUND TRUTH IS AN ANSWER. ``evaluate_gate`` has always known that -- it
@@ -167,11 +167,23 @@ def gt_resolved_segments(video_id: str) -> "tuple[bool, Set[int]]":
     (``completion_status.all_complete``, or reaches AND outcomes both
     exhaustive) -- such a video has no unanswered element by definition.
 
+    ``extra_dirs``: folders to look in BEFORE the corpus-wide index -- the
+    folder the video's files are in (the processing folder of a run, a review
+    bundle). WHY (2026-11-03): ground truth travels with a video's files, but
+    the index lists only what was there when it was built, once per process.
+    A re-run copies the ground truth into the processing folder AFTER that, so
+    the gate could not see it and sent videos whose open segments ground truth
+    had answered back to a person -- 5 of the videos pulled back on
+    2026-11-01..02. Ground truth is a person's answer, and a person's answer
+    is never asked again (Logan, 2026-11-03: "Any segment whose boundaries and
+    causal reach and outcome have all already been reviewed by a human should
+    never under any condition require a human to look at it ever again.").
+
     Never raises: no GT, unreadable GT, or a missing index all yield
     ``(False, set())``, which leaves the previous behaviour exactly as it was."""
     try:
         from .causal_review_io import find_gt
-        p = find_gt(video_id)
+        p = find_gt(video_id, extra_dirs=tuple(d for d in extra_dirs if d))
         if not p:
             return False, set()
         gt = json.loads(Path(p).read_text(encoding="utf-8"))
@@ -328,6 +340,14 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # whose questions GT had determined could never satisfy fully_resolved, while
     # the review tool skipped it because has_gt() said there was nothing to ask.
     # Nobody asked, nobody released, and it sat in the queue forever.
+    # The release side reads the corpus index only, NOT ground truth inside
+    # ``directory`` (the gate reads both, review_gate._gt_certification).
+    # Deliberately, for now (2026-11-03): 16 triage bundles hold ground truth
+    # that answers every open segment and that the index cannot see (it covers
+    # this machine's processing folder, not the shared queues). Reading it here
+    # would release all 16 on the next scan -- a full re-run and filing of each
+    # -- while moving queue items is on hold pending Logan's decision. Pass
+    # extra_dirs=(directory,) once that is decided.
     gt_full, gt_segs = gt_resolved_segments(video_id)
     res = tri if gt_full else (res | gt_segs)
 

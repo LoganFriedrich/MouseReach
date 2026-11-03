@@ -170,7 +170,7 @@ def answered_segments_of(video_id: str, folder: Path) -> set:
     if sp.is_file():
         seg_doc = json.loads(sp.read_text(encoding="utf-8"))
     answered = set(resolved_segments(review, seg_doc)) if review else set()
-    gt_full, gt_segs = gt_resolved_segments(video_id)
+    gt_full, gt_segs = gt_resolved_segments(video_id, extra_dirs=(folder,))
     if gt_full:
         return {"all"}
     return answered | set(gt_segs)
