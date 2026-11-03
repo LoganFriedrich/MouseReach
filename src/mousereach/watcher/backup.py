@@ -166,7 +166,11 @@ class BackupWatcher:
                 # data, and copying them failed every night (2026-10-13 on).
                 "/XD", "__pycache__", ".git", ".claims", ".pytest_cache",
                 "pytest-cache-files-*",
-                "/XF", "*.pyc", "watcher.db-journal",     # Exclude files
+                # *.tmp: a file another job is still writing (the nightly export
+                # writes each CSV as .tmp, then renames it). Copying one fails
+                # once it is renamed mid-copy, which marked the sync failed on
+                # 2026-11-03; the finished file is copied on the next run.
+                "/XF", "*.pyc", "watcher.db-journal", "*.tmp",     # Exclude files
             ], capture_output=True, text=True, timeout=self.robocopy_timeout)
 
             # Robocopy exit codes: 0=no changes, 1=files copied, 2=extra files,

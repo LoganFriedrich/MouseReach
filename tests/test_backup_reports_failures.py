@@ -37,7 +37,16 @@ def test_test_residue_is_never_copied(monkeypatch):
                         and SimpleNamespace(returncode=1, stdout="", stderr=""))
     b.BackupWatcher("Y:/src", "X:/dst")._sync_dir("Y:/src", "X:/dst")
     xd = seen["cmd"][seen["cmd"].index("/XD") + 1: seen["cmd"].index("/XF")]
-    assert "pytest-cache-files-*" in xd and ".pytest_cache" in xd
+    assert "pytest-cache-files-*" in xd and ".pytest_cache" in xd
+
+def test_a_file_still_being_written_is_never_copied(monkeypatch):
+    # The nightly export writes each CSV as .tmp and renames it; copying one
+    # mid-rename failed the sync on 2026-11-03.
+    seen = {}
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: seen.setdefault("cmd", cmd)
+                        and SimpleNamespace(returncode=1, stdout="", stderr=""))
+    b.BackupWatcher("Y:/src", "X:/dst")._sync_dir("Y:/src", "X:/dst")
+    assert "*.tmp" in seen["cmd"][seen["cmd"].index("/XF") + 1:]
 
 
 def _run_main_once(monkeypatch, failures):
