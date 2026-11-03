@@ -8,16 +8,22 @@ import numpy as np
 import pandas as pd
 
 from mousereach.config import Paths
-from mousereach.kinematics.core.anchored_path import anchored_hand_path
+from mousereach.kinematics.core.anchored_path import anchored_hand_path, tracked_steps
 
 FPS = 30
 RULER_MM = 9.0  # ruler = 9mm
 
 
 def compute_kinematics(x, y, ruler_px, fps=30):
-    """Compute kinematic features from x,y trajectory."""
+    """Compute kinematic features from an anchored x,y trajectory.
+
+    x[0] and x[-1] are the anchors, from get_hand_trajectory. Peak speed leaves out
+    the steps to and from them, which measure geometry and not how fast the hand moved
+    (anchored_path.tracked_steps). Path, straightness, mean speed, acceleration and
+    jerk stay on the whole path. Needs two tracked positions, so one step between them.
+    """
     n = len(x)
-    if n < 3:
+    if n < 4:
         return {}
 
     # Convert to mm
@@ -74,7 +80,7 @@ def compute_kinematics(x, y, ruler_px, fps=30):
         "path_length_mm": round(path_length, 3),
         "direct_distance_mm": round(direct_dist, 3),
         "straightness": round(straightness, 3),
-        "peak_speed_mm_s": round(np.max(inst_speed), 2) if len(inst_speed) > 0 else 0,
+        "peak_speed_mm_s": round(np.max(tracked_steps(inst_speed)), 2),
         "mean_speed_mm_s": round(np.mean(inst_speed), 2) if len(inst_speed) > 0 else 0,
         "peak_accel_mm_s2": round(np.max(accel_mag), 2) if len(accel_mag) > 0 else 0,
         "mean_accel_mm_s2": round(np.mean(accel_mag), 2) if len(accel_mag) > 0 else 0,

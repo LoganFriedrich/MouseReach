@@ -154,16 +154,16 @@ Ground-truth-substituted reaches also get `None` for all three, deliberately: th
 
 ### 5.4 Speed and path of the wrist point
 
-All four use only the `RightHand` point, along its anchored path (`anchored_hand_path`, §6.1; computed in `_compute_velocity_features`). That path is the detected positions with the start anchor before them and the end anchor after them, so a reach of n detected frames has n + 1 steps. Unlike the `extended` block, the nose is not subtracted, so these are measured in image coordinates. The detected positions are not gated on likelihood; the nose and slit corner that place an anchor are (§6.1).
+All four use only the `RightHand` point, along its anchored path (`anchored_hand_path`, §6.1; computed in `_compute_velocity_features`). That path is the detected positions with the start anchor before them and the end anchor after them, so a reach of n detected frames has n + 1 steps. Mean velocity uses all of them. Peak velocity and velocity at apex use only the n - 1 steps between two detected frames (`tracked_steps`), because the first and last steps join a calculated point to a detected one and are charged to one frame, so they measure geometry and not how fast the hand moved. Unlike the `extended` block, the nose is not subtracted, so these are measured in image coordinates. The detected positions are not gated on likelihood; the nose and slit corner that place an anchor are (§6.1).
 
 | Field | Plain English | How computed | Units | Filled today |
 |---|---|---|---|---|
-| `peak_velocity_px_per_frame` | Fastest single-frame move of the wrist along its anchored path | Largest of the n + 1 frame-to-frame straight-line distances. The first and last steps, between an anchor and a detected position, count, and they can be the largest | pixels per frame | Empty when the reach has no anchor |
-| `mean_velocity_px_per_frame` | Average per-frame move of the wrist along its anchored path | Mean of the same n + 1 distances | pixels per frame | Empty when the reach has no anchor |
-| `velocity_at_apex_px_per_frame` | Wrist speed leaving the apex | The step *starting* at the apex: `velocity[apex_frame - start_frame + 1]`, where the + 1 skips the step from the start anchor. When the apex is the last detected frame this is the step to the end anchor, so it ends at a calculated point and not at a detected position | pixels per frame | Empty when the reach has no anchor, or no apex frame (third note below) |
+| `peak_velocity_px_per_frame` | Fastest single-frame move of the wrist along its anchored path | Largest of the n - 1 straight-line distances between two detected frames. The first and last steps, between an anchor and a detected position, do not count, so this can never be an anchor jump | pixels per frame | Empty for a reach of one detected frame. A reach with no anchor still has it |
+| `mean_velocity_px_per_frame` | Average per-frame move of the wrist along its anchored path | Mean of all n + 1 distances, anchor steps included: the whole trip, nose to nose | pixels per frame | Empty when the reach has no anchor |
+| `velocity_at_apex_px_per_frame` | Wrist speed leaving the apex | The step *starting* at the apex, to the next detected frame. Never an anchor step | pixels per frame | Empty when the apex is the last detected frame (no detected frame follows it), or no apex frame (third note below). A reach with no anchor still has it |
 | `velocity_at_apex_mm_per_sec` | The same converted | `× 9.0/ruler_pixels × 30.0` | mm per second, at an assumed 30 fps | Same rows as `velocity_at_apex_px_per_frame` |
 
-Rows from an extractor before 2.3.0 mean something different: their steps ran between detected positions only, with no anchors, and `velocity_at_apex` was empty whenever the apex was the reach's last frame. The row's extractor version says which it is.
+Rows from other extractor versions, by the version on the row. **Before 2.3.0:** every step ran between detected positions, with no anchors, so peak and apex are measured as in 2.4.0, while mean, straightness and smoothness are not. **2.3.0 exactly:** peak could be an anchor jump, and `velocity_at_apex` on a last-frame apex was the step to the end anchor; do not compare these two values across that version.
 
 Three notes on these values. First, peak and mean skip a missing step, but the apex step is read from the unfiltered series, so a gap cannot shift which frame "at apex" refers to; a missing step at the apex just leaves the value empty. Second, there is no quality gate on the detected positions anywhere in this section: DeepLabCut always gives a coordinate, so a frame where it was 5% confident contributes at full weight to every path length, speed and area below.
 
@@ -240,7 +240,7 @@ Four more with the same story as `tracking_quality_score`: a name in the datacla
 
 Produced by `_extended_features` and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message — the reach still ships, with all 165 values missing and no other warning.
 
-Rows from an extractor before 2.3.0 hold the same block without the four anchor columns of §6.7, so 161 values. The ten `_at_contact` columns are null almost always (§2). A reach with no anchor (§6.1) also has null path measures: the 16 path columns of each paw point (§6.2) and `paw_velocity_correlation`.
+Rows from an extractor before 2.3.0 hold the same block without the four anchor columns of §6.7, so 161 values. The ten `_at_contact` columns are null almost always (§2). A reach with no anchor (§6.1) also has null path measures: 12 path columns of each paw point (§6.2) and `paw_velocity_correlation`. Its peak and apex speed are still given, because they read detected frames only (on 2.3.0 rows they were null too).
 
 ### 6.1 The coordinate frame these use
 
@@ -253,7 +253,7 @@ Two things are done before every measurement of where the paw is (`anchored_hand
 
    These are geometry, not tracking, so the reach always starts and ends at a defined place instead of wherever DeepLabCut first noticed the paw. Since extractor 2.3.0 the anchors also cover the wrist velocity and trajectory measures (§5.4, §5.5), which do not subtract the nose, and `paw_velocity_correlation` (§6.3), which does.
 
-**Which measures include the anchors.** Peak, mean and apex wrist velocity, trajectory straightness and smoothness, total path, lateral spread, swept area, path directness, motion smoothness, lateral deviation, mean, peak and apex speed, and velocity correlation. The apex frame and `extension_past_nose` use detected frames, because they ask for the paw's furthest point and an anchor can never be that. Paw shape, visibility and the head measures use detected frames, because the anchors say nothing about them. `duration_frames` still counts detected frames.
+**Which measures include the anchors.** Mean wrist velocity, trajectory straightness and smoothness, total path, lateral spread, swept area, path directness, motion smoothness, lateral deviation, mean speed, and velocity correlation. Since extractor 2.4.0, peak and apex speed (wrist and per-point) leave out the first and last steps, so they come only from steps between two detected frames: `tracked_steps` in `anchored_path.py` says why. The apex frame and `extension_past_nose` use detected frames, because they ask for the paw's furthest point and an anchor can never be that. Paw shape, visibility and the head measures use detected frames, because the anchors say nothing about them. `duration_frames` still counts detected frames.
 
 **Where a landmark is untrusted.** `anchor_start_source` and `anchor_end_source` on the row say how each anchor was placed (`anchor_frame`, `nearest_frame`, `video_edge`, or `none`). With `none`, the path measures are empty.
 
@@ -261,9 +261,10 @@ Two things are done before every measurement of where the paw is (`anchored_hand
 
 | Place | What it does with paw position | Anchors? | Why |
 |---|---|---|---|
-| `kinematics/core/feature_extractor.py`: wrist velocity and trajectory, per-point path and speed, velocity correlation | Measures movement | Yes | This is the rule |
+| `kinematics/core/feature_extractor.py`: mean wrist velocity, trajectory, per-point path and mean speed, velocity correlation | Measures movement | Yes | This is the rule |
+| `kinematics/core/feature_extractor.py`: peak and apex speed, wrist and per-point | How fast the hand moved | No, the steps to and from them are left out | Those steps measure geometry, not speed |
 | `kinematics/core/feature_extractor.py`: hand angle, paw shape, visibility, pellet-motion count | Paw shape, or how well it was seen | No | At an anchor all points are one place and nobody saw them |
-| `kinematics/analysis/real_kinematics.py` | Measures movement | Yes | This is the rule |
+| `kinematics/analysis/real_kinematics.py` | Measures movement | Yes, except `peak_speed_mm_s`, which leaves out the anchor steps | As the two rows above |
 | `biomech/dlc_to_trc.py` | Limb motion for one reach | Yes | The limb's trip from and back to the nose is part of the movement |
 | `biomech/skeleton_inference.py` | Solves one frame as tracked | Through its input | Pass `anchored_reach_frames` to solve one reach |
 | `lib/causal_attribution.py` | Paw's furthest point from the nose | No | Asks for a maximum, which an anchor can never be |
@@ -290,10 +291,10 @@ The four points are `RightHand`, `RHLeft`, `RHRight`, `RHOut` (`:990`), written 
 | `_motion_smoothness` | 1.0 = smoothest; smaller = jerkier | `1/(1 + mean|third difference|)` on the anchored path (`:1109-1115`) | dimensionless |
 | `_lateral_deviation_px` / `_mm` | Furthest the path strayed from the straight anchor-to-anchor line | max perpendicular distance (`:1123-1131`) | pixels / mm |
 | `_mean_speed_px_per_frame` / `_mm_per_frame` | Average speed | total path ÷ number of steps (`:1134-1141`) | pixels or mm per frame |
-| `_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest single step | max step length (`:1136`, `:1142-1143`) | pixels or mm per frame |
-| `_apex_speed_px_per_frame` / `_mm_per_frame` | Speed at this point's own apex | the step immediately after the apex frame in the anchored array (`:1147-1159`) | pixels or mm per frame |
+| `_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest single step | largest step between two detected frames; never an anchor step. Null for a reach of one detected frame | pixels or mm per frame |
+| `_apex_speed_px_per_frame` / `_mm_per_frame` | Speed at this point's own apex | the step from the apex frame to the next detected frame. Null when this point's apex is the last detected frame | pixels or mm per frame |
 
-One dead branch: `:1154-1157` is an `elif` meant to handle the apex being the last frame. It cannot run. The anchored arrays have `n_real + 2` points, so the step array has `n_real + 1` entries, while the apex index runs 0 to `n_real − 1`; `apex_idx + 1` is at most `n_real`, always inside the array. When the apex is the last real frame, apex speed is therefore the step from that frame to the synthetic post-anchor — a geometric quantity, not a measured one.
+Rows from extractors before 2.4.0 differ on those two: their peak could be an anchor step, and a last-frame apex speed was the step to the end anchor. Those are geometry, not measured speed, which is why 2.4.0 removed them.
 
 ### 6.3 Coordination between the four points — 3 values
 
@@ -303,7 +304,7 @@ Computed in `_cross_paw_timing`.
 |---|---|---|---|
 | `paw_apex_lead_frames` | How spread out in time the four points' apexes were | latest apex − earliest apex; null if fewer than two points have an apex | frames |
 | `paw_leading_point` | Which point apexed first | the point with the smallest apex frame, as a name. Apexes come from detected frames (§6.2). A tie goes to the first in the order `righthand`, `rhleft`, `rhright`, `rhout`; null if fewer than two points have an apex | text: one of the four names |
-| `paw_velocity_correlation` | How much the four points sped up and slowed down together | mean of the pairwise Pearson correlations of the four frame-to-frame speed series (up to six pairs; a pair with a constant series is skipped), on the anchored nose-relative paths, so the first and last steps, from the start anchor and to the end anchor, are in every series. Null when the reach has no anchor or no pair could be correlated | dimensionless, -1 to 1 |
+| `paw_velocity_correlation` | How much the four points sped up and slowed down together | mean of the pairwise Pearson correlations of the four frame-to-frame speed series (up to six pairs; a pair with a constant series is skipped), on the anchored nose-relative paths, so the first and last steps, from the start anchor and to the end anchor, are in every series (unchanged in 2.4.0). Null when the reach has no anchor or no pair could be correlated | dimensionless, -1 to 1 |
 
 On rows from an extractor before 2.3.0, `paw_velocity_correlation` used detected frames only.
 

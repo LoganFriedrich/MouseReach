@@ -22,12 +22,18 @@ and how it is computed.
       left slit corner (`BOXL`) and the nose.
     * Frame after the paw disappears (`end_frame + 1`): every hand point is
       between the right slit corner (`BOXR`) and the nose.
-  "Between" is the midpoint, an assumption held in one constant. The anchors give
+  "Between" is the midpoint, confirmed by the lab and held in one constant. The anchors give
   a physical boundary that does not depend on where tracking first or last saw
   the paw, and they are the endpoints for path directness and lateral deviation.
   `reach_duration_frames` still counts detected frames, so a path covers
-  `duration + 1` frame steps. The first and last steps are real movement seen as
-  one frame's change, so they are large and can set peak speed.
+  `duration + 1` frame steps.
+* **Peak speed and speed at the apex leave out the first and last steps.** Those two
+  steps join a calculated point to a detected one and are charged to one frame, so
+  they measure geometry, not how fast the hand moved. Both values come only from
+  steps between two detected frames: an anchor step can never be the peak, an apex
+  on the last detected frame has no speed, and a reach with no anchor still has both.
+  Path length, straightness, mean speed and velocity correlation keep the anchors.
+  Since extractor 2.4.0; on 2.3.0 rows these two values counted the anchor steps.
 * **How each row's anchors were placed is on the row.** `anchor_start_source` and
   `anchor_end_source` say `anchor_frame` (nose and corner trusted in that frame),
   `nearest_frame` (a landmark taken from its nearest trusted frame within 30),
@@ -125,8 +131,8 @@ apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 | `righthand_motion_smoothness` | How smooth vs jerky the motion was (dimensionless, 1 = smoothest). | `1 / (1 + mean(|jerk|))`, where jerk is the third difference of the augmented trajectory. |
 | `righthand_lateral_deviation_px` / `_mm` | Maximum perpendicular distance from the synthetic-pre-to-synthetic-post line. | `max(|((p - pre) x (post - pre))| / |post - pre|)` over all augmented trajectory points. |
 | `righthand_mean_speed_px_per_frame` / `_mm_per_frame` | Average speed across the reach. | `total_path / number_of_inter_frame_segments` (segments include the ones bridging the synthetic anchors). |
-| `righthand_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest single step along the path. | `max(frame_to_frame_distance)` on the augmented nose-relative trajectory, so the steps from the start anchor and to the end anchor count and can be the largest. |
-| `righthand_apex_speed_px_per_frame` / `_mm_per_frame` | Speed leaving the per-point apex. | Frame-to-frame distance from the per-point apex frame to the next point on the augmented nose-relative trajectory. When the apex is the last detected frame, that next point is the end anchor. |
+| `righthand_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest single step along the path. | `max(frame_to_frame_distance)` over steps between two detected frames on the nose-relative trajectory; the steps from the start anchor and to the end anchor do not count. Empty for a reach of one detected frame. |
+| `righthand_apex_speed_px_per_frame` / `_mm_per_frame` | Speed leaving the per-point apex. | Frame-to-frame distance from the per-point apex frame to the next detected frame on the nose-relative trajectory. Empty when the apex is the last detected frame, because the next point would be the end anchor. |
 
 ## Section 5. Cross-paw timing
 

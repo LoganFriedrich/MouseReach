@@ -20,8 +20,17 @@ and straighter than it was, by different amounts in different animals. The two e
 are physical facts, so they are stated here rather than left to the tracker.
 
 WHERE THE POINTS SIT. ``ANCHOR_FRACTION_FROM_NOSE`` is the one place that says how
-far along the line from nose to slit corner each point sits. The rule says
-"between" without a fraction, so one half (the midpoint) is an ASSUMPTION.
+far along the line from nose to slit corner each point sits: one half, the midpoint.
+
+WHICH MEASURES LEAVE THE ANCHOR STEPS OUT. The path, its length and its straightness
+run nose to nose, anchors included. Peak speed and speed at the apex do not: they
+read ``tracked_steps``, which drops the first and last step. Those two steps are a
+hand nobody saw, moved between a calculated point and the first or last detected
+position and charged to a single frame however long the trip behind the wall really
+took. Their length is a statement about geometry, not a speed. A peak taken over them
+reports that jump on about half of all reaches, and a speed "at the apex" taken from
+one says nothing about the apex. So a value that claims to be how fast the hand was
+moving comes only from steps between two detected frames, and needs no anchor at all.
 
 WHEN A LANDMARK CANNOT BE TRUSTED. An anchor is never invented silently. Each reach
 records in ``start_source`` and ``end_source`` how its anchor was placed:
@@ -54,7 +63,8 @@ from typing import Iterable, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-# The assumption about "between": how far from the nose towards the slit corner.
+# What "between" means: how far from the nose towards the slit corner. The midpoint,
+# confirmed by Logan 2026-11-02.
 ANCHOR_FRACTION_FROM_NOSE = 0.5
 # Below this a landmark's position is not used for an anchor. It is the threshold
 # the rest of the extractor uses for trusting a point.
@@ -92,6 +102,19 @@ class AnchoredPath:
         """The path with the nose subtracted frame by frame, so head movement does
         not count as paw movement."""
         return self.x - self.nose_x, self.y - self.nose_y
+
+
+def tracked_steps(steps: np.ndarray) -> np.ndarray:
+    """The frame-to-frame steps of an anchored path that join two detected frames.
+
+    ``steps`` has one value per step of the path, so its first value leaves the start
+    anchor and its last arrives at the end anchor; both are dropped (the module
+    docstring says why). What remains lines up with the detected frames:
+    ``tracked_steps(steps)[i]`` is the step leaving detected frame i, and a reach of n
+    detected frames has n - 1 of them. The last detected frame has none, so a speed
+    leaving it does not exist rather than being read from the anchor.
+    """
+    return steps[1:-1]
 
 
 def _trusted_position(df: pd.DataFrame, point: str, frame: int) -> Optional[Tuple[float, float, bool]]:

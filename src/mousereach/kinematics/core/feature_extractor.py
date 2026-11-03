@@ -13,7 +13,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from mousereach.kinematics.core.anchored_path import AnchoredPath, anchored_hand_path
+from mousereach.kinematics.core.anchored_path import AnchoredPath, anchored_hand_path, tracked_steps
 
 
 @dataclass
@@ -229,7 +229,14 @@ def split_reaches_by_ignore_windows(reaches, ignore_windows):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.3.0"  # 2.3 (2026-10-31): every paw-position measurement goes
+    VERSION = "2.4.0"  # 2.4 (2026-11-02): peak speed and speed at the apex, wrist
+                       # and per-point, leave out the first and last anchor steps
+                       # (anchored_path.tracked_steps says why). The path, its length
+                       # and straightness still run nose to nose. A last-frame apex
+                       # has no speed again, and because these values no longer read
+                       # an anchor, a reach with no anchor now has them. Changes
+                       # those values, so no earlier version is compatible.
+                       # 2.3 (2026-10-31): every paw-position measurement goes
                        # through anchored_hand_path: a reach starts and ends at the
                        # nose, so the frame before detection and the frame after the
                        # paw disappears are part of its path. The flat velocity and
@@ -604,8 +611,9 @@ class FeatureExtractor:
 
         duration_frames stays the count of DETECTED frames (end - start + 1): the
         anchors say where the hidden hand is, they are not extra tracked footage.
-        The anchored path therefore spans duration_frames + 1 frame steps, and speeds
-        are measured over those steps.
+        The anchored path therefore spans duration_frames + 1 frame steps. Mean speed
+        is measured over all of them; peak speed and speed at the apex only over the
+        duration_frames - 1 between detected frames.
         """
 
         reach_id = reach['reach_id']
@@ -713,31 +721,30 @@ class FeatureExtractor:
     def _compute_velocity_features(self, path: AnchoredPath, apex_idx: Optional[int]) -> Dict:
         """Compute velocity features from the anchored RightHand path.
 
-        The first and last steps run from the start anchor to the first detected
-        position and from the last detected position to the end anchor. They are
-        real movement of the hand, covered in one frame as far as the tracker can
-        tell, so they count, and they can set peak_velocity.
+        Peak and apex come only from steps between two detected frames. The first and
+        last steps join a calculated point to a detected one and are charged to a
+        single frame, so they measure geometry and not how fast the hand moved
+        (anchored_path.tracked_steps). Peak and apex therefore need no anchor, and a
+        reach without one still has them. An apex on the last detected frame has no
+        step leaving it, so its velocity is empty rather than read from the anchor.
+
+        Mean is the whole trip, nose to nose, over all its steps, so it does need both
+        anchors.
         """
-        empty = {'velocity_at_apex': None, 'peak_velocity': None, 'mean_velocity': None}
-        if not path.ok:
-            return empty
-
-        # Compute frame-to-frame velocity, including the steps to and from the anchors
         velocity = np.sqrt(np.diff(path.x)**2 + np.diff(path.y)**2)
-        measured = velocity[~np.isnan(velocity)]
-        if len(measured) == 0:
-            return empty
+        tracked = tracked_steps(velocity)
+        measured = tracked[~np.isnan(tracked)]
 
-        # apex_idx counts detected frames; the path has the start anchor before them.
-        # This is the step leaving the apex.
+        # apex_idx counts detected frames, and tracked[i] is the step leaving frame i.
         velocity_at_apex = None
-        if apex_idx is not None and 0 <= apex_idx + 1 < len(velocity) and not np.isnan(velocity[apex_idx + 1]):
-            velocity_at_apex = float(velocity[apex_idx + 1])
+        if apex_idx is not None and 0 <= apex_idx < len(tracked) and not np.isnan(tracked[apex_idx]):
+            velocity_at_apex = float(tracked[apex_idx])
 
+        whole_trip = velocity[~np.isnan(velocity)]
         return {
             'velocity_at_apex': velocity_at_apex,
-            'peak_velocity': float(measured.max()),
-            'mean_velocity': float(measured.mean())
+            'peak_velocity': float(measured.max()) if len(measured) else None,
+            'mean_velocity': float(whole_trip.mean()) if path.ok and len(whole_trip) else None,
         }
 
     def _compute_trajectory_features(self, path: AnchoredPath) -> Dict:
@@ -1284,8 +1291,9 @@ class FeatureExtractor:
         nose-relative path (anchored_hand_path: a reach starts and ends at the nose,
         so the hidden frames at each end belong to its path). Image y increases
         downward, so reach extension out through the slit produces y > 0 in
-        nose-relative coords. With no anchor the path measures are empty; the apex
-        and extension need only detected frames, so they are still given.
+        nose-relative coords. With no anchor the path measures are empty; the apex,
+        extension, peak speed and apex speed need only detected frames, so they are
+        still given.
         """
         prefix = self.PAW_COL_PREFIX[paw_point]
         mm_per_px = self.RULER_MM / ruler_pixels if ruler_pixels and ruler_pixels > 0 else 0.0
@@ -1311,13 +1319,25 @@ class FeatureExtractor:
         out[f'{prefix}_extension_past_nose_px'] = ext_px
         out[f'{prefix}_extension_past_nose_mm'] = ext_px * mm_per_px if ext_px is not None else None
 
+        # Peak and apex speed, from steps between two detected frames only: the anchor
+        # steps measure geometry, not how fast the hand moved (anchored_path.tracked_steps).
+        # tracked[i] is the step leaving detected frame i, so an apex on the last
+        # detected frame has no speed.
+        tracked = tracked_steps(np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2))
+        peak_speed = float(np.nanmax(tracked)) if tracked.size and not np.all(np.isnan(tracked)) else None
+        apex_speed = None
+        if apex_idx_real is not None and apex_idx_real < tracked.size and not np.isnan(tracked[apex_idx_real]):
+            apex_speed = float(tracked[apex_idx_real])
+        out[f'{prefix}_peak_speed_px_per_frame'] = peak_speed
+        out[f'{prefix}_peak_speed_mm_per_frame'] = peak_speed * mm_per_px if peak_speed is not None else None
+        out[f'{prefix}_apex_speed_px_per_frame'] = apex_speed
+        out[f'{prefix}_apex_speed_mm_per_frame'] = apex_speed * mm_per_px if apex_speed is not None else None
+
         if not path.ok:
             for name in ('total_path_px', 'total_path_mm', 'lateral_spread_px', 'lateral_spread_mm',
                          'swept_area_px2', 'swept_area_mm2', 'path_directness', 'motion_smoothness',
                          'lateral_deviation_px', 'lateral_deviation_mm',
-                         'mean_speed_px_per_frame', 'mean_speed_mm_per_frame',
-                         'peak_speed_px_per_frame', 'peak_speed_mm_per_frame',
-                         'apex_speed_px_per_frame', 'apex_speed_mm_per_frame'):
+                         'mean_speed_px_per_frame', 'mean_speed_mm_per_frame'):
                 out[f'{prefix}_{name}'] = None
             return out
 
@@ -1383,33 +1403,13 @@ class FeatureExtractor:
         out[f'{prefix}_lateral_deviation_px'] = max_perp
         out[f'{prefix}_lateral_deviation_mm'] = max_perp * mm_per_px if max_perp is not None else None
 
-        # Speeds. Mean speed = path_length / number_of_inter_frame_segments.
+        # Mean speed = path_length / number_of_inter_frame_segments: the whole trip.
         if seg_len.size > 0 and not np.all(np.isnan(seg_len)):
             mean_speed = float(np.nansum(seg_len) / seg_len.size)
-            peak_speed = float(np.nanmax(seg_len))
         else:
             mean_speed = None
-            peak_speed = None
         out[f'{prefix}_mean_speed_px_per_frame'] = mean_speed
         out[f'{prefix}_mean_speed_mm_per_frame'] = mean_speed * mm_per_px if mean_speed is not None else None
-        out[f'{prefix}_peak_speed_px_per_frame'] = peak_speed
-        out[f'{prefix}_peak_speed_mm_per_frame'] = peak_speed * mm_per_px if peak_speed is not None else None
-
-        # Apex speed: segment length straddling the per-point apex frame
-        # (uses the segment immediately after the apex frame in the augmented array).
-        apex_speed = None
-        if apex_idx_real is not None:
-            idx_aug = apex_idx_real + 1  # +1 to skip the synthetic pre-anchor
-            if idx_aug < seg_len.size:
-                v = seg_len[idx_aug]
-                if not np.isnan(v):
-                    apex_speed = float(v)
-            elif idx_aug - 1 >= 0:
-                v = seg_len[idx_aug - 1]
-                if not np.isnan(v):
-                    apex_speed = float(v)
-        out[f'{prefix}_apex_speed_px_per_frame'] = apex_speed
-        out[f'{prefix}_apex_speed_mm_per_frame'] = apex_speed * mm_per_px if apex_speed is not None else None
 
         return out
 

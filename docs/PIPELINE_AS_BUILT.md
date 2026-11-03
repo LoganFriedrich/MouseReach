@@ -2960,8 +2960,8 @@ hand between the right slit corner and the nose. Before, the wrist velocity and
 trajectory columns ignored these frames, and the per-point columns placed them using
 the wrong frames.
 
-**What to expect in the numbers.** Paths get longer. Peak speed can now be set by the
-jump to or from an anchor. Duration does not change, because it still counts detected
+**What to expect in the numbers.** Paths get longer. Peak speed could be set by the
+jump to or from an anchor until the 2026-11-02 update below. Duration does not change, because it still counts detected
 frames. The extractor is version 2.3.0 and no older version counts as current, so
 every filed video has its kinematics recalculated, with old results kept in the archive.
 
@@ -2971,3 +2971,30 @@ and a reach with no anchor has empty path measures. It is not measured from a gu
 **Where the detail is.** `kinematics/core/anchored_path.py` explains the rule, and
 `docs/KINEMATICS_FIELDS.md` section 6.1 lists every place that reads paw position and
 why it does or does not use the anchors.
+
+## Update 2026-11-02: peak speed and speed at the apex leave out the anchor steps
+
+**What changed.** Peak speed and speed at the apex, for the wrist and for each paw
+point, now come only from steps between two detected frames. The first and last steps
+of a path join a calculated point to a detected one and are charged to a single frame,
+so they say how far apart those places are, not how fast the hand moved. Measured over
+them, the peak was the anchor jump on about half of all reaches. The path, its length,
+its straightness, mean speed and velocity correlation still run nose to nose.
+
+**What to expect in the numbers.** The wrist's peak speed and speed at the apex return to
+what they were before extractor 2.3.0 on the same reach. A reach whose furthest point is its last
+detected frame has no speed at the apex, because no detected frame follows. A reach of
+one detected frame has no peak speed. A reach with no anchor now does have both, since
+neither reads an anchor. No column was added or removed.
+
+**What happens to filed videos.** The extractor is version 2.4.0 and no older version
+counts as current, so the watcher's version scan marks every filed Pillar video for a
+kinematics recalculation (old results go to the archive) and works through them on its
+own. Until it finishes, a file can hold rows from both versions: `extractor_version` on
+the row says which.
+
+**The midpoint is settled.** "Between the slit edge and the nose" is the midpoint, held
+in `ANCHOR_FRACTION_FROM_NOSE`. It was an assumption before this update.
+
+**Where the detail is.** `tracked_steps` in `kinematics/core/anchored_path.py` and
+sections 5.4, 6.1 and 6.2 of `docs/KINEMATICS_FIELDS.md`.

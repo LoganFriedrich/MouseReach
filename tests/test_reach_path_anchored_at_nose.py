@@ -71,11 +71,14 @@ def test_no_trusted_landmark_means_no_anchor_and_no_path_measurements():
     p = anchored_hand_path(df, "RightHand", 10, 14)
     assert not p.ok and p.start_source == "none" and np.isnan(p.x[0])
     fx = FeatureExtractor()
-    assert fx._compute_velocity_features(p, 2)["peak_velocity"] is None
+    v = fx._compute_velocity_features(p, 2)
+    assert v["mean_velocity"] is None
+    assert v["peak_velocity"] == 0.0 and v["velocity_at_apex"] == 0.0   # detected frames only
     assert fx._compute_trajectory_features(p)["straightness"] is None
     out = fx._paw_trajectory_features(df, "RightHand", 10, 14, 34.0)
     assert out["righthand_total_path_px"] is None
     assert out["righthand_mean_speed_px_per_frame"] is None
+    assert out["righthand_peak_speed_px_per_frame"] == 0.0              # detected frames only
     assert out["righthand_apex_frame"] is not None      # needs detected frames only
 
 
@@ -92,8 +95,8 @@ def test_the_flat_columns_measure_the_trip_to_and_from_the_slit():
     # 30 px from the anchor out to a hand that then stays still, and 30 px or so back.
     step = float(np.hypot(5.0, 30.0))
     v = fx._compute_velocity_features(p, 2)
-    assert v["peak_velocity"] == pytest.approx(step)
     assert v["mean_velocity"] == pytest.approx(2 * step / 6)   # 6 steps for 5 frames
+    assert v["peak_velocity"] == 0.0                            # the jumps do not count
     assert v["velocity_at_apex"] == 0.0                         # the step after the apex
     t = fx._compute_trajectory_features(p)
     assert t["straightness"] == pytest.approx(10.0 / (2 * step))
@@ -105,7 +108,8 @@ def test_duration_stays_the_detected_frames_and_the_row_says_how_it_was_anchored
              "end_frame": 14, "duration_frames": 5}
     f = fx._extract_reach_features(reach, _pose(), 34.0, {}, other_reaches=[(15, 18)])
     assert f.duration_frames == 5
-    assert f.peak_velocity_px_per_frame == pytest.approx(float(np.hypot(5.0, 30.0)))
+    assert f.peak_velocity_px_per_frame == 0.0
+    assert f.mean_velocity_px_per_frame == pytest.approx(2 * float(np.hypot(5.0, 30.0)) / 6)
     assert f.extended["anchor_start_source"] == "anchor_frame"
     assert f.extended["anchor_end_in_neighbour_reach"] is True
     assert "_extended_features_error" not in f.extended
