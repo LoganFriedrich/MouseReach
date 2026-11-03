@@ -755,6 +755,23 @@ An unset `nas_root` makes all three `None` (since 2026-10-22), and the launcher 
 
 The segmenter's own `needs_human` verdict is read into the status object (`triage_status.py:184`) and deliberately not acted on (`review_gate.py:89-105`).
 
+**Where the gate looks for ground truth (since 2026-11-03).** First in the folder the video is in
+-- the processing folder during a run, the bundle in a queue -- and only then in the corpus-wide
+index (`triage_status.gt_resolved_segments`, the one reading of ground truth shared by the gate
+and `mousereach-route-to-queue`). The queue's release check does not yet look inside the bundle:
+16 triage bundles hold ground truth answering every open segment, and reading it would release
+them all on the next scan, which waits on a decision. **Why:** the index is built once per watcher
+process, and a re-run copies the ground truth into the processing folder after that; reading the
+index alone, the gate sent videos whose open segments ground truth had answered back to a person
+(5 of them on 2026-11-01..02). Logan, 2026-11-03: "Any segment whose boundaries and causal reach and
+outcome have all already been reviewed by a human should never under any condition require a human
+to look at it ever again."
+
+**A filed video re-run for kinematics only (since 2026-11-03)** re-runs none of the four algorithms,
+no quality check (so item 3 does not apply) and no hand-score
+comparison; the gate still runs and can ask only about a segment no person answered
+(`filed_rerun_reuses_analysis`, `orchestrator.py`; docs/PIPELINE_AS_BUILT.md, update of 2026-11-03).
+
 On a hold, `route_to_queue` (`:159`) moves the whole bundle out of the processing directory, writes a queue manifest so the review tool can open the bundle in place (`:138-156`), and sets the database state to `triage` or `deep_review`. If the normal state transition is rejected the code forces the state rather than letting disk and database disagree (`:178-194`).
 
 A new bundle is built out of sight and appears in one step. `move_video_bundle` (`review_routing.py`) moves the files into `<queue>/.incoming/<stem>/`, writes the routing manifest there, and then publishes the folder as `<queue>/<stem>/` with a single directory rename. **Why:** a move onto the shared drive is a copy that takes seconds per file, and the watcher's return scan reads the queues meanwhile. When the bundle folder was created first and filled in place, the scan saw it empty and filed it away mid-route (every remaining move then failed with "No such file or directory"), and a half-filled folder could be judged as a bundle before its files arrived. The readers that judge, retire or release bundles skip names starting with `.` (readers that key on stem-named files match nothing there by accident, not by rule), and the build folder sits under the queue itself so the rename never crosses a drive. A bundle that already exists (a re-route, or a divert into an existing bundle) is already visible and is filled in place as before. The routing manifest lists `moved_files` and `failed_files` (each file that could not be moved, with the error), so a part-moved bundle shows in the record rather than only in a log. A route that dies partway leaves its files in `.incoming/<stem>/` and the next route of that video reuses them; until then `mousereach-reconcile` lists the video as held, "being routed into <queue>, or an interrupted route -- check if this persists". If a concurrent route of the same video publishes the shared build folder first, the rest of this route's files and its routing manifest go into the published bundle, and a failed manifest write never stops the publish. A file that could not be merged in the fallback stays in `.incoming/<stem>/`, and the return refuses that bundle, naming the folder, until a person folds the file in -- returning would re-run the video without it (typically a locked mp4).

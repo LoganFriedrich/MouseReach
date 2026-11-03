@@ -161,6 +161,12 @@ Version tracking (added by migration, db.py:331)
                                             a pose already on disk
                             'reach', 'outcome', 'kinematics'
                                             re-run from that stage onward
+                            A 'kinematics' re-run of a filed video
+                            (archived_at set) reuses every algorithm output
+                            and skips the quality triage and the hand-score
+                            check; the review gate still runs and asks only
+                            about segments no person answered (since
+                            2026-11-03; PIPELINE_AS_BUILT.md).
                           NULL when not outdated. A leftover non-NULL value on
                           an 'archived' row is stale and means nothing.
   mark_reason             NULL for a scanner mark; set for a HAND-mark. The

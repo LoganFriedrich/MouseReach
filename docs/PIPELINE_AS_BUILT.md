@@ -2998,3 +2998,62 @@ in `ANCHOR_FRACTION_FROM_NOSE`. It was an assumption before this update.
 
 **Where the detail is.** `tracked_steps` in `kinematics/core/anchored_path.py` and
 sections 5.4, 6.1 and 6.2 of `docs/KINEMATICS_FIELDS.md`.
+
+## Update 2026-11-03: a recalculation re-runs no algorithm and no triage, and never re-asks a person's answer
+
+**The rulings (Logan, 2026-11-03).** "What should happen is that only what calculations changed
+should be recalculated without rerunning the 4 step / triage algo parts." And: "Any segment whose
+boundaries and causal reach and outcome have all already been reviewed by a human should never
+under any condition require a human to look at it ever again."
+
+**What a version bump now does, by what changed.** The version scan marks a filed video
+'outdated' with the earliest stage whose version changed (`reprocess_scope`). The re-run then:
+
+| What changed | Recomputed | Quality triage and hand-score check | Review gate |
+|---|---|---|---|
+| Only the kinematic extractor (scope `kinematics`) | feature extraction only | **skipped** | runs; asks only about segments no person answered |
+| A saved review the filed kinematics have not applied yet (also scope `kinematics`) | feature extraction only (it applies the review) | **skipped** | runs; same |
+| Outcome detector (scope `outcome`) | outcomes, reach assignment, kinematics | run | runs |
+| Reach detector (scope `reach`) | reaches onward | run | runs |
+| Segmenter, or a new pose (scope `segmentation` / `full`) | everything | run | runs |
+
+The quality triage and the hand-score comparison judge the four algorithms' outputs; when none
+was recomputed they are not run again. The watcher log says "filed video, re-run for 'kinematics'
+only ... no quality triage, no hand-score check", and the watcher database gets a `triage` step
+marked `skipped`.
+
+**Ground truth beside the video is an answer the gate now sees.** The gate and
+`mousereach-route-to-queue` read ground truth through one function,
+`triage_status.gt_resolved_segments`, which now looks in the video's own folder (the processing
+folder of a run, or the video's results folder) before the corpus-wide index. Before this, only the index
+was read. It is built once per watcher process, so ground truth copied into the processing folder
+by a re-run was invisible, and videos whose open segments ground truth had answered were sent
+back to a person. 5 of the videos pulled back on 2026-11-01..02 were this.
+
+**Still open, waiting on a decision.** (1) A filed video with a segment NO person ever answered
+(the algorithm's own "triaged" outcome, filed before the gate existed or before the question was
+answered): the gate still sends it to triage on a kinematics-only re-run, as it always has. (2) A
+saved answer the matching code sets aside because its causal reach lies outside the frames it
+records, or because two saved answers for the same frames disagree (`index_review_by_segment`):
+those segments still count as unanswered. The code that sets them aside says why -- a review-tool
+fault once filed answers under the wrong segment -- so whether such an answer settles its segment
+is a decision for the lab, not a guess for the code. (3) `mousereach-route-to-queue --recheck`
+("are you sure?") still reopens a person's answer on purpose when someone asks for it. (4) The
+queue's release check still reads ground truth from the index only: 16 triage bundles hold ground
+truth answering every open segment, and reading it would release all of them on the next scan
+while moving queue items is on hold.
+
+**When every check still runs:** a new video; a video coming back from a review queue (it
+re-enters 'processing' with no start stage); a video held for its hand scores and picked again; a
+filed video whose re-run had to remake any of segmentation, reaches, outcomes or reach assignment
+(including a reused output that turned out to be missing); a video never filed (no
+`archived_at`); and a video whose filing the watcher cannot read.
+
+**One case not covered.** If the watcher is killed in the middle of a kinematics-only re-run
+(Task Scheduler End, a crash, a power cut), the video is left in 'processing' with no record of
+its start stage and is picked up next time as an ordinary run: every stage and every check. The
+stop flag never does this -- it waits for the current video to finish.
+
+**Where it lives.** `filed_rerun_reuses_analysis` in `watcher/orchestrator.py` (the rule and its
+reasons), used by `ProcessingOrchestrator._run_pipeline`; `gt_resolved_segments` in
+`review/triage_status.py`; tests in `tests/test_filed_rerun_skips_checks.py`.

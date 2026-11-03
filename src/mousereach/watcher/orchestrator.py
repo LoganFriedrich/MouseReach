@@ -131,6 +131,49 @@ def archived_pose_candidates(video_id: str, declared, archive_dir) -> list:
     return list(iter_files(archive_dir, pattern))
 
 
+def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
+                                recomputed_stages) -> bool:
+    """Whether this run is a re-run of a FILED video that recomputed none of
+    the four algorithms -- segmentation, reach detection, outcome detection,
+    reach assignment -- because only a later calculation (kinematics) changed.
+
+    True only when all three hold:
+      * the run is a re-run of a version-outdated video (reprocess_start_stage
+        is set -- only _reprocess_video sets it, and only for an 'outdated'
+        row, which the version scan makes from an 'archived' one);
+      * the video has been filed before (archived_at is set);
+      * none of the four algorithms ran in this run (``recomputed_stages`` is
+        empty: every output was reused).
+
+    What such a run does NOT do (_run_pipeline): it re-runs no algorithm, no
+    quality triage (pipeline.triage.triage_video) and no hand-score comparison
+    (_hand_score_precheck). WHY (Logan, 2026-11-03): "What should happen is
+    that only what calculations changed should be recalculated without
+    rerunning the 4 step / triage algo parts." Those checks judge outputs that
+    were not recomputed, and re-running them is how 8 filed videos came back
+    to a queue when the kinematic extractor went 2.2.0 -> 2.3.0 -> 2.4.0
+    (2026-10-31..11-02).
+
+    What it still does: the review gate. The gate asks a person only about a
+    segment NO person has answered (Logan, 2026-11-03: "Any segment whose
+    boundaries and causal reach and outcome have all already been reviewed by
+    a human should never under any condition require a human to look at it
+    ever again."). Whether a filed video with a segment no person ever
+    answered should be held at all is an open decision; until it is made the
+    gate behaves as it always has for such a segment.
+
+    Everything else is a full run with every check:
+      * a new video (no reprocess_start_stage);
+      * a video coming back from a review queue -- it re-enters through
+        'processing' with no start stage;
+      * a video held for its hand scores and picked again (no start stage);
+      * a filed video whose re-run recomputed any algorithm (a new segmenter,
+        reach or outcome detector, a pose change, or a reused output that was
+        missing and had to be made): what the checks judge is new.
+    """
+    return bool(reprocess_start_stage) and bool(archived_at) and not recomputed_stages
+
+
 def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
     """Is the queue folder named after this video where THIS run's results
     went, or a leftover from an earlier round?
@@ -5904,6 +5947,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             _run_seg = not _seg_out.exists()
             _run_reach = _run_seg or not _reach_out.exists()
             _run_outcome = _run_reach or not _outcome_out.exists()
+        # Which stages this run actually recomputes -- filled in below as each
+        # one runs. Read by filed_rerun_reuses_analysis before the checks.
+        _recomputed = []
 
         # --- Step 1: Segmentation ---
         self.db.log_step(video_id, 'segmentation', 'started')
@@ -5912,6 +5958,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         try:
             if _run_seg:
                 seg_result = seg_single(dlc_path)
+                _recomputed.append('segmentation')
             else:
                 logger.info(f"Reusing segmentation for {video_id} (dependency-aware reprocess)")
                 seg_result = {'success': True, 'status': 'reused', 'n_boundaries': 0}
@@ -5970,6 +6017,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         try:
             if _run_reach:
                 reach_result = reach_single(dlc_path, seg_path)
+                _recomputed.append('reach')
             else:
                 logger.info(f"Reusing reach detection for {video_id} (dependency-aware reprocess)")
                 reach_result = {'total_reaches': 0}
@@ -6002,6 +6050,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             try:
                 if _run_outcome:
                     outcome_result = outcome_single(dlc_path, seg_path, reach_path)
+                    _recomputed.append('outcome')
                 else:
                     logger.info(f"Reusing outcomes for {video_id} (dependency-aware reprocess)")
                     outcome_result = {'n_segments': 0}
@@ -6030,6 +6079,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             step_start = time.time()
             try:
                 if _run_outcome or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists():
+                    _recomputed.append('assignment')
                     assign_reaches_for_video(self.processing_dir, video_id, dlc_path)
                 else:
                     logger.info(f"Reusing assignment for {video_id} (dependency-aware reprocess)")
@@ -6064,8 +6114,55 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception as e:
             self._set_aside_stale_manifest(self.processing_dir, video_id, e)
 
+        # --- Filed video, only a downstream calculation changed ---
+        # filed_rerun_reuses_analysis says when and why (Logan, 2026-11-03:
+        # only what changed is recalculated, "without rerunning the 4 step /
+        # triage algo parts"). Such a run skips the quality triage and the
+        # hand-score comparison; the gate still runs and can only ask about a
+        # segment no person has answered.
+        try:
+            _archived_at = (self.db.get_video(video_id) or {}).get('archived_at')
+        except Exception as e:
+            # Cannot tell whether it was filed: a full set of checks (the cautious way).
+            logger.warning(f"{video_id}: could not read whether it was filed before "
+                           f"({e}); running every check")
+            _archived_at = None
+        _reuses_analysis = filed_rerun_reuses_analysis(
+            video_data.get("reprocess_start_stage"), _archived_at, _recomputed)
+        if _reuses_analysis:
+            logger.info(
+                f"{video_id}: filed video, re-run for "
+                f"'{video_data.get('reprocess_start_stage')}' only; the four "
+                f"algorithms' outputs reused -- no quality triage, no hand-score "
+                f"check; the gate asks only about segments no person answered")
+            self.db.log_step(
+                video_id, 'triage', 'skipped',
+                message="filed video re-run for a downstream calculation only; "
+                        "no algorithm output was recomputed")
+        if self._run_checks_before_kinematics(
+                video_id, dlc_path, pipeline_duration, triage_video, run_gate,
+                DECISION_CLEAN, rerun_triage_and_hand_scores=not _reuses_analysis):
+            return  # held: by the hand-score check or by the gate
+
+        self._extract_features_and_finish(video_id, dlc_path, skip_outcomes,
+                                          pipeline_duration)
+
+    def _run_checks_before_kinematics(self, video_id, dlc_path, pipeline_duration,
+                                      triage_video, run_gate, DECISION_CLEAN,
+                                      rerun_triage_and_hand_scores=True) -> bool:
+        """Quality triage, hand-score comparison and the review gate, in that
+        order. True when the video was held (by the hand-score check or the
+        gate) and the run must stop before kinematics.
+
+        ``rerun_triage_and_hand_scores`` False (a filed video whose re-run
+        recomputed no algorithm, filed_rerun_reuses_analysis): the quality
+        triage and the hand-score comparison are skipped and only the gate
+        runs (item 3 of the gate, the quality verdict, then does not apply)."""
         # --- Unified QC triage (DLC coherence / structural / cross-step / outliers) ---
         qc_verdict = 'auto_approved'
+        if not rerun_triage_and_hand_scores:
+            return self._gate_held(video_id, run_gate, DECISION_CLEAN, qc_verdict,
+                                   pipeline_duration)
         try:
             triage_result = triage_video(
                 video_id=video_id,
@@ -6106,8 +6203,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not self._hand_score_precheck(video_id, self.processing_dir):
             logger.info(f"Pipeline held for hand scores: {video_id} "
                         f"({pipeline_duration:.1f}s; triage and kinematics wait)")
-            return
+            return True
 
+        return self._gate_held(video_id, run_gate, DECISION_CLEAN, qc_verdict,
+                               pipeline_duration)
+
+    def _gate_held(self, video_id, run_gate, DECISION_CLEAN, qc_verdict,
+                   pipeline_duration) -> bool:
+        """Run the review gate; True when it held the video (moved to a queue)."""
         # --- GATE: nothing reaches kinematics / connectome.db until it is CLEAN ---
         # seg soft-fail or QC-critical -> DEEP_REVIEW; any unresolved triaged
         # element -> TRIAGE. A held video's whole bundle is MOVED out of
@@ -6121,8 +6224,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if decision != DECISION_CLEAN:
             logger.info(f"Pipeline held: {video_id} -> {decision} "
                         f"({pipeline_duration:.1f}s, kinematics deferred until cleared)")
-            return
+            return True
+        return False
 
+    def _extract_features_and_finish(self, video_id, dlc_path, skip_outcomes,
+                                     pipeline_duration):
+        """Feature extraction (kinematics), then 'processed' so the archive
+        step files the video. Reached only by a video the gate passed CLEAN."""
         # --- Step 4/5: Feature Extraction + DB sync (CLEAN videos ONLY) ---
         if not skip_outcomes:
             reach_path = self.processing_dir / f"{video_id}_reaches.json"
