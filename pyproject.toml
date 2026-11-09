@@ -119,6 +119,9 @@ mousereach-census = "mousereach.census.runner:main"
 # Put a video into a review queue with a reason (generic; the way an external
 # integrator such as a database tool asks MouseReach to hold a video for a person)
 mousereach-route-to-queue = "mousereach.watcher.route_cli:main"
+# Send named videos back to a GPU for a new pose when their pose is not trusted
+# (same model, distrusted machine); the re-pose round trip does the rest
+mousereach-repose-videos = "mousereach.watcher.repose_videos:main"
 
 # Provenance checks -- what the pipeline actually produces, and whether the
 # documents still describe the code.

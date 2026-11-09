@@ -3058,3 +3058,65 @@ stop flag never does this -- it waits for the current video to finish.
 **Where it lives.** `filed_rerun_reuses_analysis` in `watcher/orchestrator.py` (the rule and its
 reasons), used by `ProcessingOrchestrator._run_pipeline`; `gt_resolved_segments` in
 `review/triage_status.py`; tests in `tests/test_filed_rerun_skips_checks.py`.
+
+## Update 2026-11-09: sending videos back for a new pose when the pose itself is not trusted
+
+**The problem.** The re-pose round trip (`watcher/repose.py`, section 5 and the 2026-09-12 notes)
+asks a graphics-card machine for a new pose only when the DECLARED MODEL changes, and every one of
+its decisions goes by the scorer name in the pose file. A pose made with the declared model by a
+machine whose poses the lab decides not to keep -- for example the CPU pose pool
+(`watcher/cpu_pose_pool.py`), whose poses are close to but not identical to a graphics card's --
+carries the declared scorer. So the version scan calls such a video current and never marks it;
+and if someone marked it by hand, the publish and adopt steps would find the declared-scorer pose
+still sitting in the posed folder or the results folder, treat it as "the new pose", and re-run the
+analysis on the very pose that was to be replaced, with no graphics card involved.
+
+**The command.** `mousereach-repose-videos --ids <file> --label <name> --reason <text> [--dry-run]
+[--limit N] [--report <file.json>]`, run on the processing server. For each video, in this order:
+
+1. Every live copy of the pose is moved out of every place the round trip looks: the results folder
+   in Analyzed (and the same cohort folder of any `DLC Model N` tree), the review bundle if the
+   video is held in triage or deep review, and the copy in `Processing/Posed`. The pose and every
+   output computed from it (segments, reaches, outcomes, assignments, triage verdict, features,
+   processing manifest) go to `Analyzed/Archive/<label>/` by the normal checksum-verified supersede
+   move. **Why a separate archive folder:** the distrusted pose has exactly the same file name as
+   the pose that replaces it; in the usual `DLC Model N` folder the two would be indistinguishable
+   later.
+2. It checks that no pose of the video is left in any of those places. If one is, the video is left
+   as it is and reported "incomplete"; its row is NOT marked.
+3. Only then is the row marked 'outdated', scope 'full', with the reason as its `mark_reason`. The
+   reason is what keeps the version scan from un-marking a row whose versions compare current.
+4. It writes the re-pose request into `Processing/Repose_Queue/`, naming the video file a
+   graphics-card machine should copy.
+
+**The video file is never archived or deleted.** A filed video's mp4 stays in its results folder
+beside any human review, and the request names it. A held video's bundle is renamed, as one folder,
+to `Processing/Repose_Queue/_parked/<video>/` (the video and the queue's notes are what is left in
+it), the posed folder's duplicate mp4 goes to `_parked/<video>/posed_copy/`, the server's claim on
+the posed copy is released, and the request names the parked mp4. **Why parked there:** a
+graphics-card machine may not read from the posed folder (it is the server's intake) and the review
+queues are not searched for videos, so the request must name a file somewhere else on the shared
+drive; the request queue's own folder keeps everything about a re-pose in one place. Nothing reads
+subfolders of the request queue as requests.
+
+**Refused and left untouched:** a held video with a saved human review, deep-review clearance or
+ground truth (a person is working on it); a row in any state other than archived, triage or
+deep_review, or no row; a video whose request is already out; a bundle still being routed into a
+queue. `--dry-run` prints what would move where and changes nothing.
+
+**From there the existing round trip carries it unchanged:** a graphics-card watcher claims the
+request, copies the video, poses it, stages the pose in `Processing/Posed`; the server adopts it
+(scope narrows to 'segmentation', pose path recorded) and re-runs segmentation, reaches, outcomes
+and kinematics on it, then the hand-score check, the review gate, and filing or triage. A filed
+video's human review is applied again by the extractor (segments matched by frames; the causal
+reach by its reach number in the old reaches file -- after a re-pose that renumbers reaches, check
+that reach by its frames).
+
+**What it does not do.** It does not touch the database integration: rows already imported from a
+filed video's old results stay until the re-run is filed and imported, which replaces them. The
+parked folders are left after the round trip closes; they hold duplicates of videos that have been
+re-filed or re-queued.
+
+**Where it lives.** `watcher/repose_videos.py` (`plan_and_move`, `main`); tests in
+`tests/test_repose_videos.py`, including one that fails if the row is marked while any copy of the
+pose is still in place.
