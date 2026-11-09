@@ -31,6 +31,7 @@ walkthroughs of the review tools themselves.
 - [Bulk release check for re-segmentation bundles (human-invoked; gates on human.outcome)](#bulk-release-check-for-re-segmentation-bundles-human-invoked-gates-on-human-outcome) -- `mousereach-review-release`
 - [Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)](#pipeline-census-total-workload-per-stage-breakdown-pace-and-eta-headless-json) -- `mousereach-census`
 - [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
+- [Send named videos back to a GPU for a new pose when their pose is not trusted (same model, distrusted machine); the re-pose round trip does the rest](#send-named-videos-back-to-a-gpu-for-a-new-pose-when-their-pose-is-not-trusted-same-model-distrusted-machine-the-re-pose-round-trip-does-the-rest) -- `mousereach-repose-videos`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
 - [Triage auto-resolve (pre-check before human review): if a triaged segment has a matching unified GT entry, lift the flag and copy the GT outcome. Runs as a step in the normal processing pipeline; only segments without GT remain triaged for the napari review tool.](#triage-auto-resolve-pre-check-before-human-review-if-a-triaged-segment-has-a-matching-unified-gt-entry-lift-the-flag-and-copy-the-gt-outcome-runs-as-a-step-in-the-normal-processing-pipeline-only-segments-without-gt-remain-triaged-for-the-napari-review-tool) -- `mousereach-resolve-triage-from-gt`
 - [Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes into per-reach permanent output for kinematic analysis)](#step-4b-reach-assignment-joins-v8-reaches-v6-cascade-outcomes-into-per-reach-permanent-output-for-kinematic-analysis) -- `mousereach-assign-reaches`
@@ -824,6 +825,30 @@ options:
                         until answered again). Without it, answered pellets
                         are never sent back.
   --json                Machine-readable results
+```
+
+## Send named videos back to a GPU for a new pose when their pose is not trusted (same model, distrusted machine); the re-pose round trip does the rest
+
+### `mousereach-repose-videos`
+
+```
+usage: mousereach-repose-videos [-h] --ids IDS --label LABEL --reason REASON
+                                [--dry-run] [--limit LIMIT] [--report REPORT]
+
+Send named videos back to a GPU node for a new pose, because their current
+pose is not trusted. Moves the old pose and every output made from it to
+Analyzed/Archive/<label>/, then marks the video for a new pose and writes the
+re-pose request. Run on the processing server. Use --dry-run first.
+
+options:
+  -h, --help       show this help message and exit
+  --ids IDS        text file with one video id per line
+  --label LABEL    name of the archive folder the old outputs go to
+                   (Analyzed/Archive/<label>/), e.g. 'CPU pose <dates>'
+  --reason REASON  why, recorded on each video (required)
+  --dry-run        print what would happen; change nothing
+  --limit LIMIT    act on at most this many videos (0 = all)
+  --report REPORT  also write the per-video report here (JSON)
 ```
 
 ## Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.
