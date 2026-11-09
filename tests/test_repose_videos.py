@@ -53,7 +53,7 @@ def env(tmp_path, monkeypatch):
         d.mkdir(parents=True)
     for name, val in {"NAS_ROOT": nas, "REPOSE_QUEUE": queue, "DLC_STAGING": posed,
                       "ANALYZED_OUTPUT": nas / "Analyzed", "TRIAGE_REVIEW": triage,
-                      "DEEP_REVIEW": deep}.items():
+                      "DEEP_REVIEW": deep, "REVIEW_ROOT": triage.parent}.items():
         monkeypatch.setattr(repose.Paths, name, val, raising=False)
     monkeypatch.setattr(rv, "_durable_review", lambda vid: (
         durable / f"{vid}_causal_review.json"
@@ -262,3 +262,48 @@ def test_the_round_trip_then_waits_for_a_gpu_pose_and_adopts_it(env):
     assert (row["state"], row["reprocess_scope"]) == ("outdated", "segmentation")
     assert row["dlc_output_path"].endswith(f"{HELD}{SC}.h5")
     assert not (env.queue / f"{HELD}.json").exists()
+
+
+# ---------------------------------------------------------------- the queue never sees a half-moved bundle
+
+def test_held_bundle_leaves_the_queue_whole_before_anything_is_moved(env, monkeypatch):
+    """WHY (2026-11-09): pose and outputs were moved out of the bundle while it
+    still sat in the triage queue; the watcher's review-return scan read the
+    half-emptied bundle as "segmentation failed" and diverted the rest of it to
+    deep review mid-move. The queue must hold the whole bundle or nothing."""
+    import mousereach.archive.supersede as sup
+    real = sup.supersede_video_outputs
+    seen = []
+
+    def spy(video_id, source_dir, *a, **kw):
+        seen.append((Path(source_dir), (env.triage / video_id).exists()))
+        return real(video_id, source_dir, *a, **kw)
+    monkeypatch.setattr(sup, "supersede_video_outputs", spy)
+    assert _run(env, HELD)["status"] == "requested"
+    assert seen and all(not in_queue for _, in_queue in seen)
+    assert env.queue / rv.PARKED / HELD in [p for p, _ in seen]
+    assert not (env.triage.parent / ".return_claims" / f"{HELD}.claim").exists()
+
+
+def test_bundle_the_watcher_is_moving_is_refused_untouched(env, monkeypatch):
+    from mousereach.watcher import claim_marker
+    claims = env.triage.parent / ".return_claims"
+    assert claim_marker.take(claims, HELD, "srv", suffix=".claim")      # the watcher
+    r = _run(env, HELD)
+    assert r["status"] == "refused" and "watcher" in r["why"]
+    assert (env.triage / HELD / f"{HELD}{SC}.h5").is_file()
+    assert (env.posed / f"{HELD}{SC}.h5").is_file()
+    assert env.db.get_video(HELD)["state"] == "triage"
+
+
+def test_a_run_stopped_after_parking_finishes_from_the_parked_folder(env, monkeypatch):
+    import os
+    parked = env.queue / rv.PARKED / HELD
+    parked.parent.mkdir(parents=True)
+    os.rename(env.triage / HELD, parked)                 # stopped right after step 0
+    r = _run(env, HELD)
+    assert r["status"] == "requested" and r["where"] == "parked (resumed)"
+    assert not any(p.name.startswith(HELD + "DLC") for p in parked.iterdir())
+    assert not any(p.name.startswith(HELD + "DLC") for p in env.posed.iterdir())
+    assert (parked / f"{HELD}.mp4").is_file()
+    assert env.db.get_video(HELD)["reprocess_scope"] == "full"

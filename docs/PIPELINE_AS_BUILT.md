@@ -3112,6 +3112,8 @@ video's human review is applied again by the extractor (segments matched by fram
 reach by its reach number in the old reaches file -- after a re-pose that renumbers reaches, check
 that reach by its frames).
 
+**A held bundle leaves its queue in one rename (fixed 2026-11-09).** At first the command moved the pose and outputs out of a held bundle while the bundle still sat in the triage queue. The watcher's review-return scan read one such half-emptied bundle as "segmentation failed" and moved the rest of it into deep review in the middle of the run. The bundle is now renamed, as one folder, to `Repose_Queue/_parked/<video>/` before anything is moved out of it. The rename runs under the claim the scan itself takes (`Processing/Review/.return_claims/<video>.claim`, held as `<host>-repose`), so the queue only ever holds the whole bundle or nothing. If the scan holds the claim, the video is refused for now. A run stopped after the rename finishes from the parked folder when it is run again. Tests are in `tests/test_repose_videos.py`.
+
 **The re-run takes the video from the posed folder when there is no filed copy (fixed 2026-11-09).** A held video has no results folder holding its mp4. The re-run copies only DLC files from the posed folder, so the first held video re-posed this way ran without a video, and the triage bundle it routed had none for the reviewer to open. `_reprocess_copy_set` (`watcher/orchestrator.py`) now adds `<video>.mp4` from the posed folder, then from `Repose_Queue/_parked/<video>/`, whenever no other folder supplied one. A filed copy still wins. Tests are in `tests/test_reprocess_copy_set.py`.
 
 **What it does not do.** It does not touch the database integration: rows already imported from a

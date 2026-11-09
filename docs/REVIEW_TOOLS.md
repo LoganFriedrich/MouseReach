@@ -864,7 +864,7 @@ not trusted and it has to be posed again on a graphics-card machine (see PIPELIN
 "Update 2026-11-09"). Its questions were asked about a pose that is being thrown away, so they
 are withdrawn with it; the new pose gets its own run, its own gate and, if needed, new questions.
 
-**What a reviewer sees.** The bundle disappears from the queue. Its video and the queue's notes
+**What a reviewer sees.** The bundle disappears from the queue in one step (the whole folder is renamed out; it is never seen half-emptied). Its video and the queue's notes
 move to `Processing/Repose_Queue/_parked/<video>/`; its pose and the algorithm's outputs move to
 `Analyzed/Archive/<label>/`. Nothing is deleted.
 

@@ -41,10 +41,13 @@ The video file itself is never archived and never deleted:
 
   * a FILED video's mp4 stays where it is, beside its human review (if any);
     the re-run copies that folder down and applies the review again;
-  * a HELD video's bundle (triage / deep review) is taken out of its queue:
-    its mp4 and the queue's own notes go to
-    ``Processing/Repose_Queue/_parked/<video_id>/`` and the request names that
-    file. WHY there: the request must name a file a GPU node may read
+  * a HELD video's bundle (triage / deep review) leaves its queue FIRST, as
+    one folder rename to ``Processing/Repose_Queue/_parked/<video_id>/``,
+    under the review queues' own claim (step 0 in the code says why); the
+    pose and outputs are then moved out of the parked folder, so what stays
+    there is the mp4 and the queue's notes, and the request names that mp4.
+    A run stopped after the rename finishes from the parked folder when run
+    again. WHY there: the request must name a file a GPU node may read
     (never the posed folder -- that is the server's intake), and the review
     queues are not searched for videos. The posed folder's duplicate mp4 goes
     to ``_parked/<video_id>/posed_copy/``.
@@ -246,17 +249,55 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
         if parked.exists():
             return refuse(f"{parked} already exists (an earlier re-pose?); "
                           f"nothing is overwritten")
+    elif state in ("triage", "deep_review") and parked.is_dir():
+        # A run stopped after the bundle left its queue: finish from the
+        # parked folder (the moves below are no-ops for what already went).
+        rep["where"] = "parked (resumed)"
     elif results is not None and _files(results, video_id):
         rep["where"] = "filed"
     else:
         return refuse("no results folder and no review bundle found")
+    held = bundle is not None or rep["where"] == "parked (resumed)"
+
+    # ---- 0. a held bundle leaves its queue in ONE rename, under the queue's
+    # own claim. WHY (2026-11-09): files used to be moved out of the bundle
+    # while it still sat in the queue. The watcher's review-return scan then
+    # read a bundle with no segments file as "segmentation failed" and
+    # diverted what was left of it into deep review in the middle of the
+    # move. Renaming the whole folder first means the queue only ever holds
+    # the complete bundle or nothing, and taking the claim the scan takes
+    # (``.return_claims/<video>.claim``) means the scan is never halfway
+    # through moving it when the rename happens. The claim is held under its
+    # own name, not this machine's, because the watcher on the same machine
+    # would otherwise count it as its own.
+    if bundle is not None and not dry_run:
+        claim_dir = Path(Paths.REVIEW_ROOT) / ".return_claims" if getattr(
+            Paths, "REVIEW_ROOT", None) else None
+        holder = f"{hostname}-repose"
+        from mousereach.watcher import claim_marker
+        if claim_dir is not None and not claim_marker.take(
+                claim_dir, video_id, holder, suffix=".claim"):
+            return refuse("the watcher is moving this bundle right now; run it again later")
+        try:
+            if not bundle.is_dir():
+                return refuse("its bundle left the queue while this run looked at it")
+            parked.parent.mkdir(parents=True, exist_ok=True)
+            os.rename(bundle, parked)
+        except OSError as e:
+            rep["status"], rep["why"] = "incomplete", f"could not park the bundle: {e}"
+            return rep
+        finally:
+            if claim_dir is not None:
+                claim_marker.release(claim_dir, video_id, holder, suffix=".claim")
+        rep["parked"].append(f"{bundle} -> {parked}")
 
     # ---- 1. move the distrusted pose (and its outputs) out of every place ----
     from mousereach.archive.supersede import supersede_video_outputs
     # WHY the results folder even for a held video: a video re-run while filed
     # can be held AND have a pose in Analyzed; any declared-scorer pose left
     # there would be adopted as "the new pose" without a GPU.
-    places = [p for p in (bundle, results) if p is not None]
+    here = (bundle if (dry_run and bundle is not None) else parked) if held else None
+    places = [p for p in (here, results) if p is not None]
     places += _model_dirs(results)
     if posed is not None:
         places.append(posed)
@@ -283,30 +324,26 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
 
     # ---- the video file: kept in place (filed) or parked (held) ----
     try:
-        if bundle is None:
+        if not held:
             mp4 = results / f"{video_id}.mp4"
             if not mp4.is_file() and not dry_run:
                 rep["status"], rep["why"] = "incomplete", f"no video file in {results}"
                 return rep
         else:
-            # What is left of the bundle (the video, the queue's notes, any
-            # subfolder) moves as ONE folder rename -- nothing is picked apart
-            # and nothing can be left behind in the queue.
+            # The bundle already left its queue as one folder (step 0); what
+            # stays in it is the video and the queue's notes.
             mp4 = parked / f"{video_id}.mp4"
-            for f in _files(bundle, video_id):
-                if dry_run and (_is_pose(f, video_id) or any(
-                        f.name.endswith(s) for s in _ALGO)):
-                    continue                        # would have gone to the archive
-                rep["parked"].append(f"{f} -> {parked / f.name}")
-            if not dry_run:
-                parked.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(bundle), str(parked))
+            if dry_run:
+                for f in _files(bundle, video_id):
+                    if _is_pose(f, video_id) or any(f.name.endswith(s) for s in _ALGO):
+                        continue                    # would have gone to the archive
+                    rep["parked"].append(f"{f} -> {parked / f.name}")
         if posed is not None:
             for f in _files(posed, video_id):
                 if f.suffix.lower() == ".mp4":
                     rep["parked"].append(
                         f"{f} -> {_move(f, parked / 'posed_copy', dry_run)}")
-        if bundle is not None and not dry_run and not mp4.is_file():
+        if held and not dry_run and not mp4.is_file():
             alt = parked / "posed_copy" / f"{video_id}.mp4"
             if not alt.is_file():
                 rep["status"] = "incomplete"
