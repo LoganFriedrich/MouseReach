@@ -876,6 +876,8 @@ frames). The causal reach is re-applied by its reach number from the old reaches
 a re-pose that renumbers reaches it can point at a different reach: compare the reach's frames
 after the re-run.
 
+When the re-posed video comes back with questions, it re-enters the queue as an ordinary bundle, video included. The first one did not (2026-11-09): the re-run took no video from the posed folder, so its bundle had none. Fixed in `_reprocess_copy_set` the same day.
+
 ## What importing the review package loads (since 2026-10-24)
 
 `import mousereach.review` loads only the light parts: the review-file I/O (`causal_review_io`, standard library only). The GUI names it offers -- the three widgets, `ComparisonPanel` and friends, `AlgoGTReviewMixin` -- are imported the first time something uses them (`_LAZY` and `__getattr__` in `review/__init__.py`), so `from mousereach.review import CausalReviewWidget` works exactly as before. Why: the watcher imports this package for `causal_review_io` and `triage_status`, and while the widgets were imported eagerly, a headless watcher loaded napari, Qt, vispy, pandas and scipy (about 2,600 modules, 4.6 s) the first time a cycle touched review code -- and a widget that failed to import took the watcher's review paths down with it. A new GUI module re-exported from the package goes in `_LAZY`, not in a plain import (`tests/test_review_package_loads_gui_lazily.py` fails otherwise).

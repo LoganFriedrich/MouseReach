@@ -246,6 +246,27 @@ def _reprocess_copy_set(source_dirs, pose_dir, video_id):
                 if filter_pose and d == Path(pose_dir) and "DLC" not in f.name:
                     continue
                 out.append(f)
+    # The video itself, when no folder above supplied it. WHY (2026-11-09): a
+    # video re-posed while held in a review queue (mousereach-repose-videos)
+    # has no filed results folder holding its mp4 -- its video sits beside the
+    # newly staged pose in the posed folder and, parked, in the re-pose
+    # queue. The filter above keeps only DLC files from the pose folder, so
+    # the re-run ran without a video and the triage bundle it routed had none
+    # for the reviewer to open. A video never clobbers anything, so taking it
+    # from the pose folder (then the parked copy) is safe.
+    name = f"{video_id}.mp4"
+    if not any(f.name == name for f in out):
+        candidates = [Path(pose_dir) / name]
+        queue = getattr(Paths, "REPOSE_QUEUE", None)
+        if queue:
+            candidates.append(Path(queue) / "_parked" / video_id / name)
+        for c in candidates:
+            try:
+                if c.is_file():
+                    out.append(c)
+                    break
+            except OSError:
+                continue
     return out
 
 

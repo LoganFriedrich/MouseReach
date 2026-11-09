@@ -3112,6 +3112,8 @@ video's human review is applied again by the extractor (segments matched by fram
 reach by its reach number in the old reaches file -- after a re-pose that renumbers reaches, check
 that reach by its frames).
 
+**The re-run takes the video from the posed folder when there is no filed copy (fixed 2026-11-09).** A held video has no results folder holding its mp4. The re-run copies only DLC files from the posed folder, so the first held video re-posed this way ran without a video, and the triage bundle it routed had none for the reviewer to open. `_reprocess_copy_set` (`watcher/orchestrator.py`) now adds `<video>.mp4` from the posed folder, then from `Repose_Queue/_parked/<video>/`, whenever no other folder supplied one. A filed copy still wins. Tests are in `tests/test_reprocess_copy_set.py`.
+
 **What it does not do.** It does not touch the database integration: rows already imported from a
 filed video's old results stay until the re-run is filed and imported, which replaces them. The
 parked folders are left after the round trip closes; they hold duplicates of videos that have been
