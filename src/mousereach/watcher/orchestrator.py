@@ -482,7 +482,20 @@ class BaseOrchestrator:
         # across polls (watcher/recording_guard.py). Said once at startup, so
         # a person reading the log knows why this node may sit idle.
         guard = self._get_recording_guard()
-        if guard.enabled:
+        if guard.enabled and guard.whole_window:
+            # Whole-window mode: the clock alone decides, so the program list
+            # is not mentioned -- naming it would suggest an open recorder
+            # still matters.
+            from mousereach.watcher.recording_guard import format_days, format_hours
+            if guard.hours is None and guard.days is None:
+                logger.info("watcher.pause_during_recording_hours is on but no "
+                            "recording_hours/recording_days are set, so it never pauses.")
+            else:
+                logger.info("No work during recording hours (%s, %s), whatever "
+                            "programs are open; full work outside them.",
+                            format_days(guard.days) if guard.days else "every day",
+                            format_hours(guard.hours) if guard.hours else "all day")
+        elif guard.enabled:
             # _ascii: the names are typed by a person, and one non-ASCII
             # character would crash this line on a Windows console.
             from mousereach.watcher.recording_guard import _ascii
