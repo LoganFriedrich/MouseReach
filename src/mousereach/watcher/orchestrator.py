@@ -516,7 +516,8 @@ class BaseOrchestrator:
                 getattr(config, 'pause_while_running', None) or [],
                 grace_seconds=getattr(config, 'pause_resume_grace_seconds', 120),
                 recording_hours=getattr(config, 'recording_hours', None),
-                recording_days=getattr(config, 'recording_days', None))
+                recording_days=getattr(config, 'recording_days', None),
+                whole_window=getattr(config, 'pause_during_recording_hours', False))
         return guard
 
     def _is_paused(self) -> bool:
@@ -648,17 +649,20 @@ class BaseOrchestrator:
         grace = fresh.pause_resume_grace_seconds
         hours = fresh.recording_hours
         days = fresh.recording_days
+        whole = bool(getattr(fresh, 'pause_during_recording_hours', False))
         old_names = list(getattr(config, 'pause_while_running', None) or [])
         old_grace = getattr(config, 'pause_resume_grace_seconds', 120)
         old_hours = getattr(config, 'recording_hours', None)
         old_days = getattr(config, 'recording_days', None)
+        old_whole = bool(getattr(config, 'pause_during_recording_hours', False))
         if (names == old_names and grace == old_grace
-                and hours == old_hours and days == old_days):
+                and hours == old_hours and days == old_days and whole == old_whole):
             return
         config.pause_while_running = names
         config.pause_resume_grace_seconds = grace
         config.recording_hours = hours
         config.recording_days = days
+        config.pause_during_recording_hours = whole
 
         old_guard = getattr(self, '_recording_guard', None)
         same_programs = (old_guard is not None and
@@ -671,10 +675,18 @@ class BaseOrchestrator:
             old_guard.grace_seconds = max(0, int(grace))
             old_guard.hours = parse_hours(hours)
             old_guard.days = parse_days(days)
+            old_guard._hours_text = hours if old_guard.hours is not None else None
+            old_guard._days_text = days if old_guard.days is not None else None
+            old_guard.whole_window = whole
         else:
             self._recording_guard = None
             self._get_recording_guard().inherit_history(old_guard)
-        if names:
+        if whole:
+            logger.info(_ascii(
+                f"Recording settings changed: no work at all during the recording "
+                f"window ({days or 'every day'}, {hours or 'any hour'}), whether or not "
+                f"a program is open; full work outside it."))
+        elif names:
             logger.info(_ascii(
                 f"Recording-program settings changed: now pauses while any of "
                 f"these run: {', '.join(names)} (work resumes {grace} s after the "

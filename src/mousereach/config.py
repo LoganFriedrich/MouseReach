@@ -959,6 +959,14 @@ class WatcherConfig:
             days = ", ".join(str(d).strip() for d in days if str(d).strip())
         self.recording_days: Optional[str] = (
             days.strip() if isinstance(days, str) and days.strip() else None)
+        # Pause for the WHOLE recording window above, whether or not a
+        # recording program is open. WHY: an open program is a poor signal --
+        # it is left open after the day's filming and kept the node idle all
+        # day -- and a lab that films in fixed hours wants exactly "no work in
+        # these hours, full work outside them". Off by default = the program
+        # rule as before. Needs recording_hours and/or recording_days.
+        self.pause_during_recording_hours: bool = bool(
+            cfg.get('pause_during_recording_hours', False))
         # Say on this machine's screen when its work has actually stopped for a
         # recording program ("safe to record"), and when it starts stopping.
         # WHY: the pause is not instant -- the pose or crop running at that
@@ -1013,6 +1021,8 @@ class WatcherConfig:
             d['recording_hours'] = self.recording_hours
         if self.recording_days:
             d['recording_days'] = self.recording_days
+        if self.pause_during_recording_hours:
+            d['pause_during_recording_hours'] = True
         # Only when turned OFF: on is the default, and a file full of defaults
         # hides the settings someone actually chose.
         if not self.notify_safe_to_record:

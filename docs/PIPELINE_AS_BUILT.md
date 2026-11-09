@@ -92,6 +92,7 @@ All of these live in ~/.mousereach/config.json on each machine, and setup defaul
   - watcher.pause_while_running - programs that pause this watcher while they run (process names such as recorder.exe). Empty by default, which means the watcher never checks for any program. A running watcher follows edits to it without a restart.
   - watcher.pause_resume_grace_seconds - how long every listed program must have been closed before work starts again, default 120.
   - watcher.recording_days / watcher.recording_hours - optional, e.g. "Mon-Fri" and "08:00-18:00" on the machine's clock: when recording can happen at all. Outside them an open listed program does not pause the watcher. Empty = any day / any hour (since 2026-10-22).
+  - watcher.pause_during_recording_hours - optional, true/false (default false). True = the recording days/hours ARE the rule: no work at all inside them, whether or not a recording program is open, and full work outside them whatever is open (a pose running when the window starts is stopped). Set it on a machine that films in fixed hours: an open recording program is left open after filming and kept the node idle. Edit ~/.mousereach/config.json; a running watcher follows the change without a restart.
   - backup.enabled - whether the separate Y:-to-X: backup daemon will start.
 
 ---

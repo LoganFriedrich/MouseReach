@@ -47,6 +47,18 @@ A value that cannot be read is treated as empty -- the safe side, since it
 pauses more, never less. When and on which days a lab records is the lab's
 fact, so it lives in the configuration, never in the code.
 
+PAUSE FOR THE WHOLE WINDOW (optional)
+-------------------------------------
+``watcher.pause_during_recording_hours: true`` turns the window above into the
+whole rule: inside the recording hours and days the watcher does no work at
+all, whether or not any program is open; outside them it works, whatever is
+open. WHY: the open program turned out to be a poor signal -- it is left open
+after filming and kept the node idle for the rest of the window -- and a lab
+filming in fixed hours wants exactly "nothing in these hours". A pose still
+running when the window starts is stopped, as for an open program. It needs
+recording_hours and/or recording_days; with neither set it pauses nothing
+(there is no window), and the program list, if any, is not consulted.
+
 HOW NAMES ARE MATCHED
 ---------------------
 Case-insensitively (Windows does not care about case, and neither does a
@@ -340,12 +352,19 @@ class RecordingGuard:
                  cache_seconds: float = 5,
                  recording_hours: Optional[str] = None,
                  recording_days=None,
-                 local_now=None):
+                 local_now=None,
+                 whole_window: bool = False):
         self.names = clean_names(names)
+        # True = pause for the whole recording window, program or not (module
+        # docstring, PAUSE FOR THE WHOLE WINDOW).
+        self.whole_window = bool(whole_window)
         # Optional hours and days in which recording can happen at all (module
         # docstring). None = any hour / any day, exactly as before.
         self.hours = parse_hours(recording_hours)
         self.days = parse_days(recording_days)
+        # As typed, only for the reason text a person reads.
+        self._hours_text = recording_hours if self.hours is not None else None
+        self._days_text = recording_days if self.days is not None else None
         if local_now is None:
             from datetime import datetime
             local_now = datetime.now
@@ -367,8 +386,9 @@ class RecordingGuard:
 
     @property
     def enabled(self) -> bool:
-        """True when any program is configured. False = never pauses."""
-        return bool(self.names)
+        """True when any program is configured, or the whole recording window
+        pauses. False = never pauses."""
+        return bool(self.names) or self.whole_window
 
     def inherit_history(self, previous: Optional["RecordingGuard"]) -> None:
         """Carry an older guard's memory (what was seen running, and when it
@@ -427,6 +447,13 @@ class RecordingGuard:
 
     def reason(self) -> Optional[str]:
         """None when nothing blocks work; else why work must wait (ASCII)."""
+        if self.whole_window:
+            if self.hours is None and self.days is None:
+                return None      # no window set: nothing to pause for
+            if self.outside_recording_time():
+                return None
+            return _ascii("recording hours (%s, %s): no work until they end"
+                          % (self._days_text or "every day", self._hours_text or "all day"))
         if not self.names:
             return None
         if self.outside_recording_time():
@@ -494,5 +521,6 @@ def pause_reason(processing_root: Optional[Path] = None,
             getattr(config, "pause_while_running", None) or [],
             grace_seconds=getattr(config, "pause_resume_grace_seconds", 120),
             recording_hours=getattr(config, "recording_hours", None),
-            recording_days=getattr(config, "recording_days", None))
+            recording_days=getattr(config, "recording_days", None),
+            whole_window=getattr(config, "pause_during_recording_hours", False))
     return guard.reason()

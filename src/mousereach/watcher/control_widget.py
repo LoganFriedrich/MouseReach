@@ -601,16 +601,23 @@ class WatcherControlWidget(QWidget):
         """The panel's RecordingGuard for ``cfg``'s program list, or None when
         no programs are listed. Rebuilt only when the list or grace changes."""
         names = list(getattr(cfg, "pause_while_running", None) or [])
-        if not names:
+        whole = bool(getattr(cfg, "pause_during_recording_hours", False))
+        if not names and not whole:
             self._guard, self._guard_key = None, None
             return None
         grace = getattr(cfg, "pause_resume_grace_seconds", None)
         grace = DEFAULT_RESUME_GRACE_SECONDS if grace is None else int(grace)
-        key = (tuple(n.lower() for n in names), grace)
+        hours = getattr(cfg, "recording_hours", None)
+        days = getattr(cfg, "recording_days", None)
+        key = (tuple(n.lower() for n in names), grace, whole, hours, days)
         if self._guard is None or key != self._guard_key:
             # Lazy import: the panel must still open on an install without it.
+            # WHY the hours and days too: with whole-window pausing they ARE the
+            # rule, and a Run Once must not pose inside the window.
             from mousereach.watcher.recording_guard import RecordingGuard
-            self._guard = RecordingGuard(names, grace_seconds=grace)
+            self._guard = RecordingGuard(names, grace_seconds=grace,
+                                         recording_hours=hours, recording_days=days,
+                                         whole_window=whole)
             self._guard_key = key
         return self._guard
 
