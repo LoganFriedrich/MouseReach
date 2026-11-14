@@ -1442,6 +1442,11 @@ def update_corpus_index(
         if seg.get("true_segment_num") is not None:
             entry["true_segment_num"] = seg["true_segment_num"]
             entry["segmentation_wrong"] = True
+        # How long the pellet took a person (review/pellet_timing.py), kept
+        # here too so a lost review file does not take it with it. Absent on
+        # records saved before the review window timed pellets.
+        if seg.get("timing"):
+            entry["timing"] = seg["timing"]
         entries[key] = entry
 
     index["last_updated"] = _get_timestamp()

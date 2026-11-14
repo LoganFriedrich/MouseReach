@@ -132,6 +132,10 @@ def _stub(record, answer_box, records=None, outcomes=None):
     stub._show_current_segment = lambda: calls.__setitem__("shown", calls["shown"] + 1)
     stub._save_and_next_video = lambda: calls.__setitem__("saved_video", calls["saved_video"] + 1)
     stub._passes_double_check = lambda rec: CausalReviewWidget._passes_double_check(stub, rec)
+    # Records are stored through _store_record (it also closes the pellet's
+    # timing visit; with no visit open it stores the record as given).
+    stub._open_visit, stub._carried_timing = None, {}
+    stub._store_record = lambda rec: CausalReviewWidget._store_record(stub, rec)
     return stub, calls
 
 

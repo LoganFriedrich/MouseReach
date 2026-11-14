@@ -34,7 +34,7 @@ from qtpy.QtWidgets import (
     QTextEdit, QRadioButton, QButtonGroup, QSizePolicy,
     QFileDialog, QProgressBar, QCheckBox, QMessageBox,
 )
-from qtpy.QtCore import Qt, Signal, QTimer
+from qtpy.QtCore import Qt, Signal, QTimer, QObject, QEvent
 from qtpy.QtGui import QFont, QColor
 
 import napari
@@ -42,6 +42,8 @@ from napari.utils.notifications import show_info, show_warning, show_error
 
 from .keyboard import keep_typing_in_panel, review_keys_on_layer
 from . import double_disagreement as dd
+from . import pellet_timing
+from .pellet_timing import ActiveTimeAccumulator
 from .causal_review_io import (
     UNDECIDED_OUTCOMES,
     build_segment_record,
@@ -63,6 +65,7 @@ from .causal_review_io import (
     bundle_manifest_path,
     _get_username,
     _get_timestamp,
+    index_review_by_segment,
 )
 
 # The flag-session and escalate handlers log their failures here; it was
@@ -297,6 +300,33 @@ class _NotesTextEdit(QTextEdit):
 # Widget
 # ---------------------------------------------------------------------------
 
+class _InputWatcher(QObject):
+    """Tells the pellet clock that the person used the mouse or keyboard.
+
+    Installed on the whole application, because the reviewer's input mostly
+    lands on napari's canvas and controls, not on this panel. It only notes
+    the time and never consumes an event (always returns False)."""
+
+    _INPUT_EVENTS = None
+
+    def __init__(self, on_input):
+        super().__init__()
+        self._on_input = on_input
+        if _InputWatcher._INPUT_EVENTS is None:
+            _InputWatcher._INPUT_EVENTS = frozenset(
+                getattr(QEvent, name) for name in (
+                    "MouseMove", "MouseButtonPress", "MouseButtonDblClick",
+                    "Wheel", "KeyPress") if hasattr(QEvent, name))
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() in self._INPUT_EVENTS:
+                self._on_input()
+        except Exception:
+            pass   # a clock must never break the review window
+        return False
+
+
 class CausalReviewWidget(QWidget):
     """Per-segment causal-reach review tool.
 
@@ -364,6 +394,22 @@ class CausalReviewWidget(QWidget):
         self.playback_timer = QTimer()
         self.playback_timer.timeout.connect(self._playback_step)
 
+        # Pellet timing: when each pellet was shown, when its answer was
+        # taken, and how long the person was actively at the window in
+        # between (review/pellet_timing.py says why and what counts). The
+        # open visit is (video stem, segment number, shown_at); it closes
+        # when that segment's record is stored (_store_record).
+        self._pellet_clock = ActiveTimeAccumulator()
+        self._open_visit: Optional[Tuple[str, int, str]] = None
+        # Timing from an earlier session for pellets nobody answered (a
+        # restore drops their placeholder records, not their visits).
+        self._carried_timing: Dict[int, Any] = {}
+        self._input_watcher = _InputWatcher(self._pellet_clock.note_input)
+        self._input_watcher_on = False
+        self._pellet_clock_timer = QTimer()
+        self._pellet_clock_timer.timeout.connect(self._tick_pellet_clock)
+        self._pellet_clock_timer.start(pellet_timing.SAMPLE_INTERVAL_MS)
+
         self._build_ui()
         self._setup_keybindings()
 
@@ -372,6 +418,79 @@ class CausalReviewWidget(QWidget):
         # Docked by now: what is typed in this panel stays in it and never
         # runs the video's keys (review/keyboard.py).
         keep_typing_in_panel(self)
+        self._watch_input(True)
+
+    def closeEvent(self, event):
+        self._watch_input(False)
+        super().closeEvent(event)
+
+    # ===================================================================
+    # Pellet timing (review/pellet_timing.py)
+    # ===================================================================
+
+    def _timing_tool(self) -> str:
+        if self._deep_review:
+            return "resegmentation_review"
+        return "triage_review" if self._triage_only else "causal_review"
+
+    def _watch_input(self, on: bool) -> None:
+        """Install / remove the application-wide input watcher."""
+        try:
+            from qtpy.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is None or on == self._input_watcher_on:
+                return
+            if on:
+                app.installEventFilter(self._input_watcher)
+            else:
+                app.removeEventFilter(self._input_watcher)
+            self._input_watcher_on = on
+        except Exception as e:
+            logger.debug("pellet clock input watcher: %s", e)
+
+    def _tick_pellet_clock(self) -> None:
+        """Once a second: count the second if this window is the active one
+        (the person is looking at it, not at another program)."""
+        try:
+            win = self.window()
+            active = bool(win is not None and win.isActiveWindow())
+        except Exception:
+            active = False
+        self._pellet_clock.tick(active)
+
+    def _begin_visit(self, seg_num: int) -> None:
+        """The pellet is on screen: start its visit. Re-showing the pellet
+        already open keeps that visit (and its clock) running."""
+        key = (self._video_stem, int(seg_num))
+        if self._open_visit is not None and self._open_visit[:2] == key:
+            return
+        self._open_visit = (key[0], key[1], pellet_timing.now_iso())
+        self._pellet_clock.reset()
+
+    def _store_record(self, record: Dict[str, Any]) -> None:
+        """Store a segment's record, closing its open visit.
+
+        Every place that keeps an answer comes here, so a visit is closed
+        exactly once: the first store after the pellet was shown adds the
+        visit (with answered_at only when the record IS an answer --
+        causal_review_io.is_answered); a later store of the same record
+        without a new showing keeps the timing it already had."""
+        sn = int(record["segment_num"])
+        prior = self._review_records.get(sn)
+        prev_timing = ((prior or {}).get(pellet_timing.TIMING_KEY)
+                       if prior is not None else self._carried_timing.get(sn))
+        ov = self._open_visit
+        if ov is not None and ov[:2] == (self._video_stem, sn):
+            visit = pellet_timing.make_visit(
+                shown_at=ov[2],
+                answered_at=pellet_timing.now_iso() if is_answered(record) else None,
+                active_seconds=self._pellet_clock.seconds,
+                tool=self._timing_tool())
+            record = pellet_timing.add_visit(record, prev_timing, visit)
+            self._open_visit = None
+        else:
+            record = pellet_timing.carry_timing(record, prev_timing)
+        self._review_records[sn] = record
 
     # ===================================================================
     # UI construction
@@ -1233,6 +1352,7 @@ The notes box travels with the video.
             candidates.append(self.video_path.parent)
         self._unmatched_answers = []
         self._restore_notes = []
+        self._carried_timing = {}
         doc = None
         for d in candidates:
             try:
@@ -1263,6 +1383,20 @@ The notes box travels with the video.
             self._restore_notes = list(notes)
             self._review_records = restored
             self._unmatched_answers = unmatched
+            # Answered records carry their timing back with them. A pellet
+            # someone looked at but left open has only a placeholder, which
+            # the restore drops; keep its visits so the next save still has
+            # them (a revisit adds to them, never overwrites).
+            try:
+                mapping, _ = index_review_by_segment(
+                    doc, current, human_segmentation=human)
+                for sn, rec in mapping.items():
+                    t = (rec or {}).get(pellet_timing.TIMING_KEY)
+                    if t and int(sn) not in restored:
+                        self._carried_timing[int(sn)] = t
+            except Exception as e:
+                logger.debug("review restore %s: timing not carried: %s",
+                             self._video_stem, e)
 
         def _done(seg):
             return segment_answered(seg, self._review_records)
@@ -1552,6 +1686,9 @@ The notes box travels with the video.
         # Pre-populate from saved record if re-visiting
         if seg["segment_num"] in self._review_records:
             self._restore_answers(seg["segment_num"])
+
+        # The pellet is on screen now: its clock starts here.
+        self._begin_visit(seg["segment_num"])
 
     def _navigate_to_segment(self, seg: Dict[str, Any]):
         """Open the playhead ON the relevant reach -- the causal reach for a
@@ -2655,7 +2792,7 @@ The notes box travels with the video.
             return
         if record is not None:
             seg_num = record["segment_num"]
-            self._review_records[seg_num] = record
+            self._store_record(record)
             if is_answered(record):
                 show_info(f"Segment {seg_num} recorded")
                 self._status_label.setText(
@@ -3214,7 +3351,11 @@ The notes box travels with the video.
                 # "Take another look": nothing is saved -- not this answer and
                 # not the file -- and the caller stays where it is.
                 return False
-            self._review_records[record["segment_num"]] = record
+            self._store_record(record)
+            # The reviewer may stay on this pellet after a plain Save; time
+            # spent from here on is a further visit. If the save moves on to
+            # another video, the next pellet shown replaces this visit.
+            self._begin_visit(record["segment_num"])
         elif getattr(self, "_answer_problem", None):
             self._tell_not_recorded()
 
@@ -3244,6 +3385,9 @@ The notes box travels with the video.
                     notes="",
                     segment_span=_segment_span(seg),
                 ))
+                # Time spent on it in an earlier session, if any, stays.
+                segments[-1] = pellet_timing.carry_timing(
+                    segments[-1], self._carried_timing.get(sn))
 
         # Provenance from the algo JSONs (bundle dir in manifest mode); the
         # review file itself saves next to the video (_review_dir).
@@ -3336,7 +3480,7 @@ The notes box travels with the video.
         if record is not None:
             if not self._passes_double_check(record):
                 return   # "Take another look": stay on this segment
-            self._review_records[record["segment_num"]] = record
+            self._store_record(record)
         elif getattr(self, "_answer_problem", None):
             self._tell_not_recorded()
         prev = self._prev_visible_idx(self._current_seg_idx)
@@ -3349,7 +3493,7 @@ The notes box travels with the video.
         if record is not None:
             if not self._passes_double_check(record):
                 return   # "Take another look": stay on this segment
-            self._review_records[record["segment_num"]] = record
+            self._store_record(record)
         elif getattr(self, "_answer_problem", None):
             self._tell_not_recorded()
         nxt = self._next_visible_idx(self._current_seg_idx)

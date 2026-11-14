@@ -347,6 +347,16 @@ Before that date the record was saved with `human.outcome: "triaged"` and nothin
 
 `_save_review` (`:2844`) writes `{stem}_causal_review.json` into the bundle directory (`_review_dir`, `:880`) **and, since 2026-08-24, a durable copy at `{NAS}/review_records/reviews/{stem}_causal_review.json` first**. The bundle copy is the one the reviewer edits; the durable copy is the one nothing regenerates. Before this, a bundle-resident review was destroyed by any reprocess that recreated the bundle, and 41 reviewed videos had no other copy anywhere. It contains **one record per segment in the video**, not per reviewed segment: segments the reviewer never visited get a placeholder with `answers: {"reviewed": false}` (`:2867-2880`). It also calls `update_corpus_index` (`causal_review_io.py:690`), which appends to `{NAS}/review_records/causal_review_index.json`; failures there are printed and swallowed (`:2910-2911`).
 
+**How long each pellet took (since 2026-11-14).** Each segment's record also carries `timing`, written by Triage Review and Re-segmentation Review alike (`review/pellet_timing.py`; the window's `_begin_visit` and `_store_record`). WHY: "how long does it take to settle one pellet?" used to be estimated from the gaps between save times, which measure the whole session -- several pellets per save, pauses, other windows -- not the pellet. Now the window writes it down per pellet:
+
+- `shown_at` -- when the pellet was first put on screen (local time with its UTC offset, e.g. `2026-11-14T10:03:12-06:00`; the offset keeps times comparable across the daylight-saving change).
+- `answered_at` -- when the answer that stands was taken: the moment the record was stored with a real answer (`causal_review_io.is_answered`). A visit that left the pellet open (no outcome picked) has `answered_at: null`.
+- `active_seconds` -- the seconds the person was actually at it. A second counts only when the review window is the active window **and** there was a mouse move, click, scroll or key press within the last 60 seconds; the window checks this about once a second. Walking away or switching to another program stops the clock within a minute. Watching a pellet play for over a minute without touching anything also stops it -- that is the simple rule chosen, not a measure of attention.
+- `tool` -- `triage_review`, `resegmentation_review` (or `causal_review` for the plain, non-triage mode).
+- `visits` -- every time the pellet was on screen, each with its own `shown_at`, `answered_at`, `active_seconds` and `tool`. A visit starts when the pellet is shown and ends when its record is stored (Next, Prev, Save Segment + Next, or a save of the whole file). **Coming back to a pellet adds a visit; it never overwrites one**, including across sessions and for pellets left open. The four fields above summarize the visits: first `shown_at`, latest `answered_at`, total `active_seconds`, latest `tool`. So "time to settle one pellet" is `timing.active_seconds`.
+
+After a plain Save the reviewer may stay on the same pellet; time from then on is a further visit. A pellet with no question (a boundary segment), or an answer that was refused, records no visit. No names are added: who answered is still the segment's own `reviewer`. Timing is not part of "the same answer" (below), so looking at a pellet again without changing its answer never re-credits it. The corpus index (`causal_review_index.json`) carries a copy of each segment's `timing`, so a lost review file does not take it with it. Records saved before 2026-11-14 have no `timing`; nothing requires one, and every reader of review records ignores keys it does not use.
+
 On reopening, `_load_saved_review` drops the placeholders and jumps to the first segment no one has answered. An answer stands whatever the algorithm has said since -- a person's answer is what happened in those frames (until 2026-10-24 a changed algorithm call re-opened it, and reviewers were asked again about pellets they had answered).
 
 **Triage walks only the pellets still open when the video loads** (since 2026-10-24, `open_triaged_indices`). A video can come back for pellets nobody has looked at -- a re-run raised a new question, or, for an older filed video, the nightly hand-score check sent it back (since 2026-10-28 the watcher compares new videos with their hand scores before they first reach triage, so those questions arrive in the first visit) -- while its pellet file still flags the pellets a person answered before; "Next" used to walk those too and show the earlier answers. Now they are skipped (the console says how many), and a pellet answered in this session stays reachable with Prev.
@@ -379,6 +389,10 @@ segmentation_wrong  true, alongside true_segment_num
 reviewer          who gave THIS segment's answer (since 2026-10-28; absent
                   on a placeholder nobody answered)
 reviewed_at       when that answer was given (same rule)
+timing            how long the pellet took (since 2026-11-14; absent on older
+                  records): {shown_at, answered_at, active_seconds, tool,
+                  visits: [{shown_at, answered_at, active_seconds, tool}, ...]}
+                  -- see "How long each pellet took" above
 ```
 
 **Who answered which segment (since 2026-10-28).** The file as a whole also

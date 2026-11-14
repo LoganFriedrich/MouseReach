@@ -255,6 +255,7 @@
     "src/mousereach/review/comparison_panel.py",
     "src/mousereach/review/fix_segmentation_widget.py",
     "src/mousereach/review/ground_truth_widget.py",
+    "src/mousereach/review/pellet_timing.py",
     "src/mousereach/review/qc_pool.py",
     "src/mousereach/review/queue_index.py",
     "src/mousereach/review/queue_launcher_widget.py",
