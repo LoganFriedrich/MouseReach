@@ -45,7 +45,7 @@ for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
 # an old setuptools install, and it shadows the real dist-info -- metadata
 # reports 2.3.0 there while pip reports 2.16.0.dev0. A literal cannot be fooled
 # by that.
-__version__ = "2.16.0-dev"
+__version__ = "2.17.0-dev"
 
 __author__ = "Logan Friedrich"
 
