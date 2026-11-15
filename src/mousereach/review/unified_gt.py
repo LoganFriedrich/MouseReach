@@ -278,10 +278,14 @@ def save_unified_gt(gt: UnifiedGroundTruth, video_path: Path,
     # Update completion status
     gt.update_completion_status()
 
-    # Convert to dict and save
+    # Convert to dict and save. Through a temporary file and one rename
+    # (fsutil.write_json_atomic), never in place: opening the real file for
+    # writing empties it first, so a crash mid-save used to leave a truncated
+    # ground-truth file that load_unified_gt rejects and every other reader
+    # takes for "no ground truth" -- a person's answers lost silently.
+    from mousereach.pipeline.fsutil import write_json_atomic
     data = _unified_gt_to_dict(gt)
-    with open(gt_path, "w") as f:
-        json.dump(data, f, indent=2)
+    write_json_atomic(gt_path, data, indent=2)
 
     return gt_path
 

@@ -1,0 +1,205 @@
+"""Files holding a person's answers (and the stage outputs the quality
+verdict is stamped into) are replaced in one step, never rewritten in place.
+
+WHY: opening a file for writing empties it first. A crash, a closed window or
+a lost share connection part-way through a write left a truncated file, and
+the readers take an unreadable review copy for "no answers" and an unreadable
+ground-truth file for "no ground truth" -- a person's work lost silently.
+
+The tests simulate a disk that fails part-way through a write: the first
+write to any file opened for writing puts half its text on disk and then
+raises. Whatever the writer does, the file that was there before must still
+be complete afterwards, and no stray file named after the video may be left
+(the router and the archiver carry every file whose name starts with the
+video's name). Everything here uses invented video names.
+"""
+import builtins
+import io
+import json
+import os
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+VID = "PRJ0101_20990101_P1"
+
+
+# ---------------------------------------------------------------------------
+# A disk that fails part-way through a write
+# ---------------------------------------------------------------------------
+
+class _HalfWriter:
+    """Wraps a real file: the first write puts half its data on disk, then
+    the disk 'fills up'."""
+
+    def __init__(self, f):
+        self._f = f
+
+    def write(self, data):
+        self._f.write(data[: max(1, len(data) // 2)])
+        self._f.flush()
+        raise OSError(28, "No space left on device (simulated)")
+
+    def writelines(self, lines):
+        for ln in lines:
+            self.write(ln)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._f.close()
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+
+@pytest.fixture
+def failing_disk(monkeypatch):
+    """While active, every file opened for writing fails half-way through
+    its first write. Covers open(), Path.write_text, os.fdopen and
+    shutil.copy* (all of which go through io.open)."""
+    real_open = io.open
+    state = {"on": False}
+
+    def fake_open(file, mode="r", *a, **kw):
+        f = real_open(file, mode, *a, **kw)
+        if state["on"] and any(c in mode for c in "wax+"):
+            return _HalfWriter(f)
+        return f
+
+    monkeypatch.setattr(io, "open", fake_open)
+    monkeypatch.setattr(builtins, "open", fake_open)
+    # retries of a refused rename must not really sleep
+    import mousereach.pipeline.fsutil as fsutil
+    monkeypatch.setattr(fsutil.time, "sleep", lambda s: None, raising=False)
+    return state
+
+
+def _stray(folder: Path, keep):
+    """Files in ``folder`` other than ``keep`` (names)."""
+    return sorted(p.name for p in Path(folder).iterdir() if p.name not in keep)
+
+
+def _write(path: Path, doc):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# MRR-12i: ground truth
+# ---------------------------------------------------------------------------
+
+def _gt(video_name):
+    from mousereach.review.unified_gt import UnifiedGroundTruth
+    return UnifiedGroundTruth(video_name=video_name)
+
+
+def test_ground_truth_survives_a_failed_save(tmp_path, failing_disk):
+    from mousereach.review import unified_gt as ug
+    video = tmp_path / f"{VID}.mp4"
+    video.write_bytes(b"")
+    gt_path = ug.save_unified_gt(_gt(VID), video)
+    before = gt_path.read_text(encoding="utf-8")
+    assert json.loads(before)["video_name"] == VID
+
+    failing_disk["on"] = True
+    with pytest.raises(OSError):
+        ug.save_unified_gt(_gt(VID), video)
+    failing_disk["on"] = False
+
+    # the earlier ground truth is complete and readable, and nothing else
+    # named after the video was left beside it
+    assert gt_path.read_text(encoding="utf-8") == before
+    assert ug.load_unified_gt(video) is not None
+    assert _stray(tmp_path, {video.name, gt_path.name}) == []
+
+
+def test_ground_truth_unserialisable_content_leaves_old_file(tmp_path, monkeypatch):
+    """Content that cannot be written as JSON fails BEFORE the file is
+    touched (it used to be streamed into the emptied file)."""
+    from mousereach.review import unified_gt as ug
+    video = tmp_path / f"{VID}.mp4"
+    video.write_bytes(b"")
+    gt_path = ug.save_unified_gt(_gt(VID), video)
+    before = gt_path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(ug, "_unified_gt_to_dict",
+                        lambda gt: {"video_name": VID, "pad": "x" * 200000,
+                                    "bad": object()})
+    with pytest.raises(TypeError):
+        ug.save_unified_gt(_gt(VID), video)
+    assert gt_path.read_text(encoding="utf-8") == before
+
+
+# ---------------------------------------------------------------------------
+# The shared writer itself
+# ---------------------------------------------------------------------------
+
+def test_atomic_writer_retries_a_refused_rename_then_succeeds(tmp_path, monkeypatch):
+    from mousereach.pipeline import fsutil
+    monkeypatch.setattr(fsutil.time, "sleep", lambda s: None)
+    target = tmp_path / f"{VID}_x.json"
+    _write(target, {"v": 1})
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def refuse_twice(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            e = PermissionError(13, "file in use")
+            e.winerror = 32
+            raise e
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", refuse_twice)
+    fsutil.write_json_atomic(target, {"v": 2})
+    assert json.loads(target.read_text(encoding="utf-8")) == {"v": 2}
+    assert calls["n"] == 3
+    assert _stray(tmp_path, {target.name}) == []
+
+
+def test_atomic_writer_gives_up_loudly_and_cleans_up(tmp_path, monkeypatch):
+    from mousereach.pipeline import fsutil
+    monkeypatch.setattr(fsutil.time, "sleep", lambda s: None)
+    target = tmp_path / f"{VID}_x.json"
+    _write(target, {"v": 1})
+
+    def always_refuse(src, dst):
+        e = PermissionError(13, "file in use")
+        e.winerror = 32
+        raise e
+
+    monkeypatch.setattr(os, "replace", always_refuse)
+    with pytest.raises(PermissionError):
+        fsutil.write_json_atomic(target, {"v": 2})
+    assert json.loads(target.read_text(encoding="utf-8")) == {"v": 1}
+    assert _stray(tmp_path, {target.name}) == []
+
+
+def test_temporary_name_never_starts_with_the_video_name(tmp_path, monkeypatch):
+    """A temporary file a crash leaves behind must not be swept up with the
+    video's files, and remove_leftover_temps finds it again."""
+    from mousereach.pipeline import fsutil
+    target = tmp_path / f"{VID}_segments.json"
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append(Path(src).name)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    fsutil.write_json_atomic(target, {"v": 1})
+    assert seen and not seen[0].startswith(VID) and seen[0].startswith(".")
+
+    left = tmp_path / f".{target.name}.abc123.tmp"
+    left.write_text("{", encoding="utf-8")
+    other = tmp_path / f".{VID}_reaches.json.abc123.tmp"
+    other.write_text("{", encoding="utf-8")
+    assert fsutil.remove_leftover_temps(target) == 1
+    assert not left.exists() and other.exists()

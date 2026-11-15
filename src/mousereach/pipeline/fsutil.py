@@ -82,3 +82,165 @@ def dump_json_with_retry(path, data, attempts: int = RETRY_ATTEMPTS,
 
     retry_transient(_attempt, attempts=attempts, base_delay=base_delay,
                     what=str(path))
+
+
+# ---------------------------------------------------------------------------
+# Atomic replacement of a whole file
+# ---------------------------------------------------------------------------
+#
+# WHY: review files, ground truth, routing records and stage outputs were
+# written in place (open "w", then write). Opening for writing empties the file
+# first, so a crash, a killed window or a lost share connection part-way
+# through leaves a truncated file. Readers treat an unreadable review copy as
+# "no answers" and an unreadable ground-truth file as "no ground truth", so a
+# torn write silently loses a person's work instead of failing.
+#
+# The writers below never open the real file for writing. They write the whole
+# content to a temporary file in the SAME folder, flush it to disk, and then
+# swap it in with one os.replace. A reader sees either the old complete file or
+# the new complete file, never a mix. If anything fails, the old file is left
+# exactly as it was and the temporary file is removed.
+#
+# The temporary name starts with a dot: ".<name>.<random>.tmp". WHY: the review
+# router and the archiver take every file whose name STARTS WITH the video's
+# stem; a temporary file named "<stem>....tmp" left by a crash would be carried
+# along as if it were one of the video's outputs. A dot-name never matches a
+# stem, and remove_leftover_temps finds it again by the same pattern.
+#
+# os.replace is retried: on Windows (and over SMB) it is refused with a sharing
+# violation while another program has the destination open, which clears in
+# seconds. After the retries the error is raised, so a stuck file fails loudly.
+
+REPLACE_ATTEMPTS = 5
+REPLACE_BASE_DELAY = 1.0
+
+
+def _temp_prefix(path: Path) -> str:
+    return "." + path.name + "."
+
+
+def _fsync_file(p) -> None:
+    """Flush a closed file's content to disk (best effort on shares that do
+    not support it -- the replace is still atomic)."""
+    import os
+    try:
+        fd = os.open(str(p), os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _replace_into_place(tmp: Path, path: Path, attempts: int,
+                        base_delay: float) -> None:
+    import os
+    try:
+        retry_transient(lambda: os.replace(str(tmp), str(path)),
+                        attempts=attempts, base_delay=base_delay,
+                        what=str(path))
+    except BaseException:
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
+        raise
+
+
+def write_text_atomic(path, text: str, encoding: str = "utf-8",
+                      attempts: int = REPLACE_ATTEMPTS,
+                      base_delay: float = REPLACE_BASE_DELAY) -> Path:
+    """Replace ``path`` with ``text`` in one step (see the block comment above).
+
+    The folder must exist. On failure the old file is untouched, no temporary
+    file is left, and the error is raised."""
+    import os
+    import tempfile
+    path = Path(path)
+    fd, tmp_name = tempfile.mkstemp(prefix=_temp_prefix(path), suffix=".tmp",
+                                    dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(text)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+    except BaseException:
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
+        raise
+    _replace_into_place(tmp, path, attempts, base_delay)
+    return path
+
+
+def write_json_atomic(path, data, attempts: int = REPLACE_ATTEMPTS,
+                      base_delay: float = REPLACE_BASE_DELAY,
+                      trailing_newline: bool = False, **json_kwargs) -> Path:
+    """Replace ``path`` with ``data`` as JSON in one step.
+
+    The JSON text is built BEFORE anything touches the disk, so data that
+    cannot be serialised raises with the old file untouched. ``json_kwargs``
+    go to ``json.dumps`` (indent, default, ...)."""
+    text = json.dumps(data, **json_kwargs)
+    if trailing_newline:
+        text += "\n"
+    return write_text_atomic(path, text, attempts=attempts,
+                             base_delay=base_delay)
+
+
+def copy_file_atomic(src, dest, attempts: int = REPLACE_ATTEMPTS,
+                     base_delay: float = REPLACE_BASE_DELAY) -> Path:
+    """Copy ``src`` over ``dest`` in one step, keeping ``src``'s modified time
+    (as shutil.copy2 does). ``dest``'s folder must exist."""
+    import os
+    import shutil
+    import tempfile
+    dest = Path(dest)
+    fd, tmp_name = tempfile.mkstemp(prefix=_temp_prefix(dest), suffix=".tmp",
+                                    dir=str(dest.parent))
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(str(src), str(tmp))
+        _fsync_file(tmp)
+    except BaseException:
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
+        raise
+    _replace_into_place(tmp, dest, attempts, base_delay)
+    return dest
+
+
+def remove_leftover_temps(path) -> int:
+    """Delete temporary files a crashed atomic write of ``path`` left behind.
+
+    Only for a writer that knows nobody else is writing ``path`` at the same
+    moment (a temporary file in use by a live writer would be deleted under
+    it). Returns how many were removed."""
+    path = Path(path)
+    n = 0
+    try:
+        for p in path.parent.glob(_glob_escape(_temp_prefix(path)) + "*.tmp"):
+            try:
+                p.unlink()
+                n += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return n
+
+
+def _glob_escape(s: str) -> str:
+    import glob
+    return glob.escape(s)

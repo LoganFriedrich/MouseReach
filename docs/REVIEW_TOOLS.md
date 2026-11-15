@@ -445,6 +445,20 @@ New saves stamp the document `schema_version: "1.1"` (`causal_review_io.py:268`)
 
 ---
 
+### How review files are written
+
+Every file a review tool or the watcher writes about a person's answers -- the review copies (`{stem}_causal_review.json`, beside the bundle and in `review_records/reviews/`), the clear markers (`{stem}_deep_review_cleared.json`), ground truth (`{stem}_unified_ground_truth.json`), the corpus index (`review_records/causal_review_index.json`), `flagged_sessions.json`, and the answers a routing command reopens or flags -- is written the same way:
+
+1. the whole new content is written to a hidden temporary file beside the real one, named `.<file name>.<random>.tmp`;
+2. it is flushed to disk;
+3. it is swapped in with one rename.
+
+What this means for a person:
+
+- **A crash cannot cut a file in half.** Anyone reading the file sees either the old complete version or the new complete version. Before, a crash mid-save left a truncated file, and a truncated review was read as "no answers" -- the next save then had nothing to carry forward from it.
+- **A save can be refused for a few seconds.** Windows will not replace a file another program has open. The rename is retried for about ten seconds; if it still fails, the save reports an error and the previous file is unchanged. Nothing is half-written. Close whatever has the file open (an editor, another review window) and save again.
+- **A leftover `.tmp` file is harmless.** It is only left if the computer died between steps 1 and 3. Its name starts with a dot, so the router and the archiver -- which take every file whose name starts with the video's name -- never carry it along. It can be deleted.
+
 ## Working the re-segmentation queue: the operator's walkthrough
 
 > **Names (2026-10-27).** The queue for videos whose cuts need fixing is the
@@ -643,6 +657,8 @@ Two save buttons (`:585-625`):
 - **Save as Ground Truth** (`_save_ground_truth`, `:1980`) writes a filtered copy containing only items a person actually determined.
 
 Both write `{stem}_unified_ground_truth.json` next to the video (`unified_gt.save_unified_gt`, `unified_gt.py:252`). Ground truth outranks every review downstream, and having one anywhere removes the video from the review queue entirely (`_bundle_needs_review`, `causal_review_widget.py:2604-2605`).
+
+A save never rewrites the ground-truth file in place. The new content is written to a hidden temporary file in the same folder (its name starts with a dot, `.{stem}_unified_ground_truth.json.<random>.tmp`), flushed to disk, and then swapped in with one rename. So a crash, a closed window or a lost network connection in the middle of a save leaves the previous ground truth complete -- never a cut-off file that every reader would take for "no ground truth". If another program has the file open at that moment, the rename is tried again for about ten seconds; if it still cannot be done, the save shows an error and the file on disk is the previous version. Save again once the other program has let go of the file. (`fsutil.write_json_atomic`; the same writer is used for every review file -- see "How review files are written" below.)
 
 The video dropdown is filled from the pipeline index (`_populate_video_dropdown`, `:652`) and capped at 30 entries (`:675`); if the index is unavailable the dropdown falls back to "Browse for video..." and the error is shown in the status line (`:699-705`).
 
