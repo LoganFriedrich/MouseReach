@@ -39,3 +39,26 @@ def resolve_watcher_db_path() -> Path:
     if override:
         return Path(override)
     return require_processing_root() / "watcher.db"
+
+
+def open_watcher_db_if_present():
+    """``(db, None)`` for this node's own watcher database, or ``(None, why)``.
+
+    For callers outside the daemon that MOVE a video between review queues
+    (the review tools' Escalate and Flag Session buttons): they record the
+    move in the same database the daemon writes, so the folder the video is
+    in and its database state agree. Never creates the file -- WatcherDB()
+    would build an empty decoy -- and never raises: a caller that cannot open
+    the database still has its own job to do, and says so to the person.
+    """
+    try:
+        path = resolve_watcher_db_path()
+    except Exception as e:
+        return None, f"the watcher database could not be found ({e})"
+    if not Path(path).is_file():
+        return None, f"no watcher database at {path}"
+    try:
+        from mousereach.watcher.db import WatcherDB
+        return WatcherDB(path), None
+    except Exception as e:
+        return None, f"the watcher database {path} could not be opened ({e})"

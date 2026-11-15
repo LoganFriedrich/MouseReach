@@ -2800,6 +2800,9 @@ The notes box travels with the video.
                 return   # take another look: the flag is recorded, the video is not moved
         except Exception as e:
             logger.warning("flag session: could not save review first: %s", e)
+        # The move is recorded in the watcher database as 'deep_review', so
+        # the folder and the database agree (_watcher_db_for_move says why).
+        db, db_note = self._watcher_db_for_move()
         try:
             from mousereach.config import Paths
             from mousereach.watcher.review_gate import route_to_queue
@@ -2807,17 +2810,36 @@ The notes box travels with the video.
                 self._video_stem, Path(bundle), Paths.DEEP_REVIEW,
                 reason=(f"reviewer flagged session {key}"
                         + (f" -- {reason}" if reason else "")),
-                db=None)
+                db=db, db_state="deep_review")
         except Exception as e:
             show_error(f"Flagged session {key}, but could not divert "
                        f"{self._video_stem} to the re-segmentation queue: {e}")
             logger.exception("flag session: divert to deep review failed")
             return
         show_info(f"Session {key} flagged; {self._video_stem} moved to the "
-                  f"re-segmentation queue.")
+                  f"re-segmentation queue." + db_note)
         self._status_label.setText(
             f"[FLAG] Session {key} flagged -- {self._video_stem} -> re-segmentation.")
         self._load_next_video()
+
+    @staticmethod
+    def _watcher_db_for_move():
+        """``(db, note)`` for moving a video between queues from this tool.
+
+        ``db`` is the watcher's own database, so a move records the video's
+        new state there ('deep_review') and the folder and the database agree.
+        WHY: Escalate and Flag Session used to move the bundle with no
+        database, leaving the row at 'triage' while the video sat in deep
+        review. When the database cannot be opened (``db`` None) the move still
+        happens and ``note`` tells the person the state was not updated."""
+        from mousereach.watcher.db_location import open_watcher_db_if_present
+        db, why = open_watcher_db_if_present()
+        if db is None:
+            logger.warning("queue move without the watcher database: %s", why)
+            return None, (f"\n\nNote: the watcher's record was not updated ({why}); "
+                          f"it catches up when the video comes back from "
+                          f"re-segmentation.")
+        return db, ""
 
     def _escalate_to_deep_review(self):
         """The reviewer says the SEGMENTATION is wrong: move the whole video to
@@ -2840,11 +2862,12 @@ The notes box travels with the video.
                 if hasattr(self, "_notes_edit") else "")
         reason = ("reviewer escalated from triage: bad segmentation"
                   + (f" -- {note}" if note else ""))
+        db, db_note = self._watcher_db_for_move()
         try:
             from mousereach.watcher.review_gate import escalate_to_deep_review
-            escalate_to_deep_review(self._video_stem, Path(bundle), reason)
+            escalate_to_deep_review(self._video_stem, Path(bundle), reason, db=db)
             show_info(f"{self._video_stem} moved to the re-segmentation queue "
-                      "(re-segmentation).")
+                      "(re-segmentation)." + db_note)
             self._status_label.setText(
                 f"[ESCALATED] {self._video_stem} -> re-segmentation (bad segmentation).")
         except Exception as e:

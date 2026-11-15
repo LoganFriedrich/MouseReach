@@ -388,12 +388,26 @@ def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Pat
     return kept
 
 
-def escalate_to_deep_review(video_id: str, bundle: Path, reason: str) -> Path:
+def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
+                            db=None) -> Path:
     """The triage tool's Escalate button: set aside any earlier deep-review
-    clear (see supersede_deep_review_clear), then move the video to deep review."""
+    clear (see supersede_deep_review_clear), then move the video to deep review
+    and record 'deep_review' in the watcher database ``db``.
+
+    WHY the database: the button used to route with no database, so the bundle
+    sat in deep review while the row still said 'triage' -- status views read
+    the row, the GPU nodes and reconcile read the folder, and the two disagreed
+    until the video came back. Pass the daemon's own database
+    (db_location.open_watcher_db_if_present). With ``db`` None the move still
+    happens (the person's decision is what matters) and the disagreement is
+    logged; it heals when the video returns from deep review."""
     supersede_deep_review_clear(video_id, bundle)
+    if db is None:
+        logger.warning(f"Escalate {video_id}: no watcher database given; the bundle "
+                       f"moves to deep review but the row keeps its state until "
+                       f"the video returns")
     return route_to_queue(video_id, Path(bundle), Paths.DEEP_REVIEW,
-                          reason=reason, db=None)
+                          reason=reason, db=db, db_state="deep_review")
 
 
 def route_to_queue(

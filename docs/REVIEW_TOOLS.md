@@ -184,6 +184,13 @@ re-attach by frame span after the boundary fix), moves the bundle to the
 re-segmentation queue with the notes text as the routing reason, and loads the
 next video (`_escalate_to_deep_review`).
 
+**The watcher's record follows the move (since 2026-11-15).** Escalate and Flag Session now
+record the video as `deep_review` in the watcher's own database as they move it (the same
+database the watcher writes; it is never created by the tool). Before, the row kept saying
+`triage` while the video sat in re-segmentation, so status views and the queue folders
+disagreed until it came back. If the tool cannot open that database, the video still moves and
+the message says the record was not updated; the record catches up when the video returns.
+
 **Escalating cancels any earlier re-segmentation clear (since 2026-10-27).**
 Pressing the button means a new problem with the cuts has been found, so a
 video that was cleared in re-segmentation before is no longer cleared. Its old

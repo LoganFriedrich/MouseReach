@@ -3211,3 +3211,16 @@ before the check runs, so a crash cannot leave an earlier verdict sitting with t
 **Where it lives.** `watcher/orchestrator.py` `BaseOrchestrator._run_quality_triage` (one step for
 both roles); `watcher/review_gate.py` `QC_TRIAGE_FAILED`, `evaluate_gate`; tests in
 `tests/test_triage_fails_closed.py`.
+
+## Update 2026-11-15: Escalate and Flag Session record the move in the watcher database
+
+The review tool's **Escalate: bad segmentation** and **Flag Session** buttons move a video from the
+triage queue into deep review. They used to move it with no database, so the row still said
+`triage` while the bundle was in deep review. They now open the watcher's own database
+(`db_location.open_watcher_db_if_present`: the configured `watcher.db_path`, else
+`<processing_root>/watcher.db`; never created) and record `deep_review` as part of the move
+(`review_gate.escalate_to_deep_review(..., db=...)`, `route_to_queue(..., db_state="deep_review")`).
+If the database cannot be opened, the move still happens, the tool says the record was not
+updated, and the row catches up when the video returns. Tests:
+`tests/test_escalate_records_deep_review.py`.
+
