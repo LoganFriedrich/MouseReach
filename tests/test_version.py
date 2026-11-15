@@ -7,7 +7,7 @@ It read "2.4.0" while pyproject.toml said "2.16.0-dev" -- every manifest written
 since February named a version that did not exist.
 
 Reading it from installed metadata instead does not help here: a stale
-`mousereach.egg-info` sits in `src/` in both the Y: and the C: tree, left over
+`mousereach.egg-info` can sit in `src/` of a working copy, left over
 from an old setuptools install, and it shadows the real dist-info.
 `importlib.metadata.version("mousereach")` returns 2.3.0 from it while pip
 reports 2.16.0.dev0. So the literal stays, and this test is what keeps it honest.

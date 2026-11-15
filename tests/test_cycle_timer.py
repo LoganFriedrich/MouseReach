@@ -1,7 +1,7 @@
 """Every step of a watcher cycle is timed, and a slow cycle says where its time went.
 
 WHY: a processing node spent most of its time in scans between work items
-(about 20 s of work, then 8-10 minutes until the next item) and nothing in the
+(seconds of work, then minutes until the next item) and nothing in the
 log said which scan. These tests pin the line that now says so.
 """
 from mousereach.watcher.cycle_timer import CycleTimer

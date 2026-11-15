@@ -42,8 +42,8 @@ START_END_WINDOW = 30  # frames at start / end to compute median position
 # requirement (fragile to 4.0 wobble/paw) to clean_frac >= 0.6.
 # frac_inside gate unchanged (robust on 4.0).
 COMMIT_CLEAN_FRAC = 0.6
-# Transition zone around segmenter's seg_end. Per the 2026-05-01 user
-# reframing: GT outcome_known_frame marks "new segment is solidly started";
+# Transition zone around segmenter's seg_end. GT outcome_known_frame marks
+# "new segment is solidly started";
 # segmenter's seg_end marks "old segment is clearly ending"; between them
 # is a transitional zone where apparatus is in flux and mouse can mess
 # with things. Discard +/- 5 frames around seg_end. Effective last-clean-
@@ -87,7 +87,7 @@ class Stage2PelletStableUntouched(Stage):
 
     def decide(self, seg: SegmentInput) -> StageDecision:
         # CLEAN current-segment range -- exclude the +5 transition zone
-        # at segment end (per 2026-05-01 user reframing). Frames
+        # at segment end. Frames
         # seg_end - 5 to seg_end + 5 are no-man's-land.
         clean_end = seg.seg_end - TRANSITION_ZONE_HALF
         if clean_end <= seg.seg_start:
@@ -134,14 +134,14 @@ class Stage2PelletStableUntouched(Stage):
         # (seg_end - 15, seg_end - 5) -- the +/- 5 around seg_end - 10
         # pre-anchor -- but the EMITTED OKF is the latest clean frame
         # so trust comparison against (walked-back) GT OKF stays in
-        # clean territory. See `cascade_trust_framework.md`.
+        # clean territory (see trust_calibrator).
         anchor_frame = seg.seg_end - TRANSITION_ZONE_HALF
         analysis_window_size = 2 * ANCHOR_HALF_WINDOW + 1
         aw_start_in_sub = max(0, n - analysis_window_size)
         aw_inside = inside[aw_start_in_sub:]
         aw_lk = plk[aw_start_in_sub:]
 
-        # Per the user's 2026-05-01 design: Stage 1 is for the cleanest
+        # By design, Stage 1 is for the cleanest
         # cases only. ANY frame in the analysis window where the pellet
         # is obscured (lk < threshold), not inside the pillar circle,
         # or paw is close to the pellet -> defer to Stage 2 which
@@ -189,9 +189,7 @@ class Stage2PelletStableUntouched(Stage):
             # of our analysis window. This is the cascade's last clean
             # frame from this segment, semantically distinct from
             # GT-er's outcome_known_frame (which marks "new segment is
-            # solidly started"). See `feature_philosophy_event_anchored
-            # _walking.md` and `untouched_outcome_known_frame_derivation
-            # .md`.
+            # solidly started").
             okf = anchor_frame  # seg.seg_end - ANCHOR_BACK_OFFSET (=10)
             feats["outcome_known_frame_emitted"] = int(okf)
             return StageDecision(

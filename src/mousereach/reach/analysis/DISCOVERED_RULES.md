@@ -1,7 +1,7 @@
 # Reach Detection Rules - Derived from Ground Truth Analysis
 
 Analysis date: 2026-01-12
-Video analyzed: 20251021_CNT0405_P4 (321 reaches, 37109 frames)
+Video analyzed: one exhaustively annotated video (321 reaches, 37109 frames)
 
 ---
 

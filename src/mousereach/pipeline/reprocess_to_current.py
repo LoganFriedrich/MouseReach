@@ -77,7 +77,7 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
     right review queue and write a manifest pointing at the REAL canonical video
     (Analyzed) + pose (DLC Model 4). Does NOT finalize / supersede -- the old
     outputs stay put until the video clears review and re-runs clean. Never
-    clobbers an existing bundle (respects Colin's in-progress work). Returns a
+    clobbers an existing bundle (respects a reviewer's in-progress work). Returns a
     summary dict."""
     from mousereach.config import Paths
     from mousereach.watcher.transfer import safe_move
@@ -157,7 +157,7 @@ def reprocess_video_to_current(
     from mousereach.watcher.transfer import safe_copy
 
     if sync_db is None:
-        sync_db = finalize  # live finalize syncs current kinematics to connectome.db
+        sync_db = finalize  # live finalize syncs current kinematics to the central database
     dlc_h5 = Path(dlc_h5)
     video_file = Path(video_file) if video_file else find_video_file(video_id)
     video_dir = video_file.parent if video_file else None
@@ -315,7 +315,7 @@ def reprocess_video_to_current(
     summary["finalized_moved"] = moved
     summary["decision_final"] = decision
 
-    # Clean video -> sync the current kinematics into connectome.db. The sync does
+    # Clean video -> sync the current kinematics into the central database. The sync does
     # an atomic per-video replace (DELETE old rows for this video, INSERT new), so
     # re-syncing a reprocessed video swaps its old-version rows for the current
     # ones -- no duplicates, no version blending.
@@ -338,7 +338,7 @@ def build_reprocess_worklist(limit: Optional[int] = None, *,
 
     - already in a review queue (Pending / Deep_Review) -- those were already
       processed with the current stack and are held for human review; reprocessing
-      would clobber Colin's in-progress work.
+      would clobber a reviewer's in-progress work.
 
     GT'd videos are NOT excluded by default: reprocessing them is safe (the gate
     treats an exhaustively-GT'd video as clean and the truth-resolver makes GT win

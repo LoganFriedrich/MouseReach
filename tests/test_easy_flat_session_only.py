@@ -1,9 +1,8 @@
 """Easy and Flat trays are session-only: not segmented, no outcomes, never held.
 
-WHY (Logan, 2026-10-23): "Easy and flat should never get triaged"; "Pellet
-outcomes don't matter for easy and flats"; "They also don't get segmented"
-(pellets are presented, "we just don't care about it"); "Easy and flat don't
-need kinematics". What they need is the session's reaches. Before this, the
+WHY: Easy and Flat trays are never triaged, their pellet outcomes do not
+matter, they are not segmented (pellets are presented, but not scored), and
+they need no kinematics. What they need is the session's reaches. Before this, the
 segmenter cut them into pellet windows, and a failed cut or a quality flag
 held them for a person. Built under tmp_path.
 """
@@ -162,7 +161,7 @@ def test_a_filed_easy_or_flat_without_its_session_file_is_rerun_once(tmp_path, m
     import mousereach.review.causal_review_io as crio
     from mousereach.watcher.reprocessor import ReprocessingScanner
     current = {"versions": {"dlc_scorer": SCORER, "segmenter": "9.9.9"}}   # Pillar is current
-    coh = tmp_path / "Analyzed" / "Connectome" / "CNT99"
+    coh = tmp_path / "Analyzed" / "Project_A" / "CNT99"
     coh.mkdir(parents=True)
     for vid in (EF, EASY, PILLAR):
         (coh / f"{vid}_processing_manifest.json").write_text(json.dumps(
@@ -183,7 +182,7 @@ def test_a_filed_easy_or_flat_without_its_session_file_is_rerun_once(tmp_path, m
 
 
 def test_the_retired_reject_command_moves_nothing(tmp_path, monkeypatch, capsys):
-    # It used to park Easy/Flat in a folder nothing processed (772 found there).
+    # It used to park Easy/Flat in a folder nothing processed.
     from mousereach.segmentation.core.triage import cli_reject_unsupported
     video = tmp_path / f"{EF}.mp4"
     video.write_bytes(b"v")

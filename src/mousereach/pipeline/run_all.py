@@ -2,7 +2,7 @@
 the watcher's automatic pipeline, for a video an operator opens by hand.
 
 Chain: segmentation -> reach detection -> outcome detection -> assignment
-(algo-4, causal reach) -> gate check -> kinematics + connectome.db sync.
+(algo-4, causal reach) -> gate check -> kinematics + central-database sync.
 
 Requires the video to already have a DLC pose h5 beside it (crop + DLC are
 node-specific/GPU steps; if the pose is missing the driver says so and points at
@@ -125,7 +125,7 @@ def run_all_steps(video_path, progress: Optional[Callable[[str, str], None]] = N
             )
             fp = processing_dir / f"{stem}_features.json"
             fp.write_text(json.dumps(feats.to_dict(), indent=2), encoding="utf-8")
-            _p("db_sync", "syncing to connectome.db")
+            _p("db_sync", "syncing to the central database")
             try:
                 from mousereach.sync.database import sync_file_to_database
                 sync_file_to_database(fp)

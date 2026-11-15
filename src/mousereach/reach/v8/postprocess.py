@@ -162,9 +162,8 @@ def trim_leading_sustained_lk(
         TOLERANCE_ERROR(start_early) reduced 71 -> 1 (99% reduction).
       - start_delta abs_median held at 0 on both corpora (Cardinal Rule).
 
-    Snapshots:
-      Improvement_Snapshots/reach_detection/v8.0.1_dev_leading_trim_sustained_sweep/
-      Improvement_Snapshots/reach_detection/v8.0.1_dev_sustained_trim_holdout_gate/
+    Snapshots: v8.0.1_dev_leading_trim_sustained_sweep and
+    v8.0.1_dev_sustained_trim_holdout_gate (kept with the calibration records).
 
     Parameters
     ----------
@@ -244,9 +243,8 @@ def trim_trailing_sustained_lk(
     catch more SPAN-LONG cases but chew into clean reach tails, dropping
     TP. T=0.60 is the conservative sweet spot.
 
-    Snapshot:
-      Improvement_Snapshots/reach_detection/v8.0.3_dev_trailing_trim_sweep/
-      RESULTS.md (ship decision document).
+    Snapshot: v8.0.3_dev_trailing_trim_sweep (ship decision document, kept
+    with the calibration records).
 
     Parameters
     ----------
@@ -385,8 +383,8 @@ def apex_split_at_trough(
         the cal saturation point and is Pareto-optimal vs 0.90 on
         holdout (fewer over-splits at same FN gain).
 
-    Snapshot: Improvement_Snapshots/reach_detection/
-    v8.0.2_dev_apex_split_holdout_gate/RESULTS.md
+    Snapshot: v8.0.2_dev_apex_split_holdout_gate (kept with the calibration
+    records).
 
     Parameters
     ----------

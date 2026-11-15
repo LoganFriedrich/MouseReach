@@ -1,8 +1,8 @@
 """Return-scan safety: never break a route in flight, never lose provenance,
 never re-run a returned video on the wrong pose.
 
-WHY (2026-09-14, first real run of an integrator routing Analyzed videos into
-the triage queue):
+WHY (found when an integrator first routed Analyzed videos into the triage
+queue):
   * the return scan retired a just-created, still-empty bundle folder to
     _Problematic while the router was copying files into it -- every remaining
     move failed. Empty folders are now residue only once they are old, and a

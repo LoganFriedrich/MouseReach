@@ -4,7 +4,7 @@ Pressing "Escalate: bad segmentation -> re-segmentation" means a person has foun
 new problem with the cuts. A clear from an earlier deep review used to travel
 with the bundle, and the return scan -- which reads "cleared" from the marker
 alone -- released the video from deep review within seconds, re-ran it on the
-same cuts and put it back in triage (20250627_CNT0107_P3, 2026-10-27).
+same cuts and put it back in triage.
 """
 import json
 

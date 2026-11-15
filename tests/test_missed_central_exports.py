@@ -1,12 +1,11 @@
 """The processing server re-sends the shared record what it lacks.
 
-WHY (2026-10-22): an export that failed right after archiving (a locked or
-unreachable share) was a warning and never retried, so five archived videos
-from the August/September outages were missing from watcher_central.db for
-good. WHY the check compares THIS machine's rows (2026-10-26): it first
-looked for a video with no row from any machine, but a video posed on a GPU
-PC already has that PC's row, so a failed export from the server was never
-sent again; four were lost that morning while the share was slow.
+WHY: an export that failed right after archiving (a locked or unreachable
+share) was a warning and never retried, so archived videos from a share outage
+were missing from watcher_central.db for good. WHY the check compares THIS
+machine's rows: it first looked for a video with no row from any machine, but
+a video posed on a GPU node already has that node's row, so a failed export
+from the server was never sent again while the share was slow.
 """
 import sqlite3
 

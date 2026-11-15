@@ -27,7 +27,7 @@ that forgot to. Both need a human to say which.
 
 READING THE DATABASE
 --------------------
-It reads the parquet snapshot, never connectome.db. The database lives on a
+It reads the parquet snapshot, never the central database. The database lives on a
 network share in a mode where a writer blocks readers outright, so while the
 watcher is running any read fails partway through.
 
@@ -493,7 +493,7 @@ def main(argv=None) -> int:
         n_files = max((i["files"] for i in res["files"].values()), default=0)
         corpus = ("Read over **%d videos** that are finished and current at every "
                   "stage. The database side comes from the parquet snapshot, never "
-                  "from connectome.db while a watcher is running." % n_files)
+                  "from the central database while a watcher is running." % n_files)
         if not res.get("database_compared", True):
             corpus += (" No snapshot was available for this run, so the database "
                        "column was not compared.")

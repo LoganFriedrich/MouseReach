@@ -1,6 +1,6 @@
 """The shared version index uses the rollback journal, never WAL.
 
-WHY (2026-10-22): SQLite documents WAL as unsafe on a network filesystem -- its
+WHY: SQLite documents WAL as unsafe on a network filesystem -- its
 -shm index is shared memory, which machines reading the file over the share do
 not share -- and version_index.db lives on the shared drive, read and written
 from several machines.

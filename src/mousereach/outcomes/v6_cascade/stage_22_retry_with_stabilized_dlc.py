@@ -8,9 +8,8 @@ Question this stage answers:
     that it couldn't before?"
 
 Why:
-    Per user 2026-05-03: "we are basically doing something really
-    smart which is not messing with what we are looking at unless we
-    really really need to". The cascade runs Stages 1-21 on raw DLC.
+    Don't alter what is being looked at unless it is really needed.
+    The cascade runs Stages 1-21 on raw DLC.
     For segments still in residual after that, this stage re-runs
     Stage 21 logic with conservatively-stabilized pellet data.
 

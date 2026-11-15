@@ -1,6 +1,6 @@
 """Failures that could lose or misstate work must leave a trace.
 
-WHY (2026-10-30): a review of the silent error handlers in the review and watcher
+WHY: a review of the silent error handlers in the review and watcher
 code found a save failure that still cleared the video, and unreadable files that
 looked exactly like missing ones. Whatever is decided next, a person looking into
 it has to be able to see that a read failed.

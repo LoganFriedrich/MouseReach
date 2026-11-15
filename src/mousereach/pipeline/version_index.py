@@ -1,14 +1,14 @@
 """Per-video version index -- WHICH algo versions each video was processed with,
 recorded at processing time so the dashboard READS instead of SCANNING.
 
-The model (per Logan, 2026-08)
-------------------------------
+The model
+---------
 - The writer already knows the answer. ``create_processing_manifest()`` composes
   the exact versions a video was processed with, then writes them to that video's
   ``_processing_manifest.json``. Nothing else learns anything new later.
 - So the dashboard should not re-derive it. Before this module it did: an rglob
-  across the archive for ~2,657 manifests, then a NAS read+parse of each one
-  (~22 ms) to answer "is this video current?". That is thousands of round-trips
+  across the archive for every manifest, then a NAS read+parse of each one
+  to answer "is this video current?". That is thousands of round-trips
   for data that was already known at write time.
 - => WRITERS PUSH, READERS READ. Every manifest write upserts one row here; the
   dashboard reads the whole table in a single query.
@@ -233,7 +233,7 @@ def status_maps(current_versions: Optional[dict],
 def seed_from_manifests(roots, db_path: Optional[Path] = None, progress=None) -> dict:
     """Backfill the index from the manifests already on disk.
 
-    Needed once, because ~2,657 videos were processed before this index existed.
+    Needed once, because videos processed before this index existed are not in it.
     Also serves as the self-heal / rebuild path, which is what lets readers treat
     the index as an optimisation rather than a source of truth.
 

@@ -1,8 +1,8 @@
 """
-mousereach.watcher.backup - Y: to X: backup synchronization.
+mousereach.watcher.backup - primary storage to backup NAS synchronization.
 
 Monitors the pipeline directories for changes and syncs them to the backup NAS
-via robocopy. Runs on the processing server where Y: is local storage.
+via robocopy. Runs on the machine where the primary storage is local.
 
 Usage:
     mousereach-backup              Start backup watcher daemon
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class BackupWatcher:
-    """Watch Y: for changes, sync to X: via robocopy."""
+    """Watch the source root for changes, sync to the backup root via robocopy."""
 
     # Directories to sync (relative to source_root)
     DEFAULT_SYNC_DIRS = [
@@ -46,7 +46,7 @@ class BackupWatcher:
                 Steady-state incrementals finish in minutes; the FIRST seed of
                 a terabyte-scale tree needs hours -- a timed-out seed leaves
                 the backup partial and logs an error every cycle until someone
-                notices (it did, 2026-09-10). Raise via config for seeding.
+                notices. Raise via config for seeding.
         """
         self.source_root = Path(source_root)
         self.backup_root = Path(backup_root)
@@ -163,13 +163,13 @@ class BackupWatcher:
                 "/NJS",         # No job summary
                 # Exclude dirs. pytest-cache-files-* are test-run residue that
                 # pytest leaves unreadable on a network share; they are never
-                # data, and copying them failed every night (2026-10-13 on).
+                # data, and copying them failed every night.
                 "/XD", "__pycache__", ".git", ".claims", ".pytest_cache",
                 "pytest-cache-files-*",
                 # *.tmp: a file another job is still writing (the nightly export
                 # writes each CSV as .tmp, then renames it). Copying one fails
-                # once it is renamed mid-copy, which marked the sync failed on
-                # 2026-11-03; the finished file is copied on the next run.
+                # once it is renamed mid-copy, which marked the sync failed;
+                # the finished file is copied on the next run.
                 "/XF", "*.pyc", "watcher.db-journal", "*.tmp",     # Exclude files
             ], capture_output=True, text=True, timeout=self.robocopy_timeout)
 
@@ -258,8 +258,7 @@ def main():
 
     # Optional scope override: backup.sync_dirs (list of paths relative to
     # source_root). WHY: the default three-tree scope can exceed the backup
-    # volume's free space (measured 7.0 TB of sources vs 6.3 TB free,
-    # 2026-09-10); a lab must be able to protect what fits rather than have
+    # volume's free space; a lab must be able to protect what fits rather than have
     # robocopy fill the disk and fail partway with no complete tree.
     sync_dirs = backup_config.get('sync_dirs') or None
     if sync_dirs is not None and (not isinstance(sync_dirs, list)

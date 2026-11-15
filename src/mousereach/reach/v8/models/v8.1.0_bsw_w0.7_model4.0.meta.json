@@ -13,5 +13,5 @@
   "n_train_videos": 37,
   "n_train_frames": 1413715,
   "n_features": 405,
-  "recapitulates": "Colin recalib_4.0_sandbox locked reach config (w0.7); pairs with trim 0.90/N2 (reach v8.1.0)"
+  "recapitulates": "locked 4.0 reach config (w0.7); pairs with trim 0.90/N2 (reach v8.1.0)"
 }

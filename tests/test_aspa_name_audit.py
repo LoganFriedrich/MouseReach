@@ -1,6 +1,6 @@
 """Checking an archive's recording names against its own cuts.
 
-WHY (2026-10-23): ASPA's archive names every animal twice -- in the recording's
+WHY: ASPA's archive names every animal twice -- in the recording's
 name and in its own cut of each seat -- and where the two disagree the pipeline,
 which trusts the recording's name, files one animal's video under another's id.
 A cut is traced to its recording by length (every cut of a recording is as long
@@ -74,12 +74,12 @@ def test_a_trimmed_recording_is_traced_through_its_cuts(tmp_path):
     # The surviving recording is untrimmed (longer than its cuts). L09's cut is
     # named by it; L13's cut is as long as L09's, so it came out of it too --
     # and the picture shows it in seat 5, which the recording names L14.
-    rec = "20221209_L09,L10,L11,L12,L14,L15,K03,K04_P1.mkv"
-    root, length = _archive(tmp_path, {rec: 48338},
-                            {"20221209_L09_P1.mp4": 37220, "20221209_L13_P1.mp4": 37220},
+    rec = "20220605_L09,L10,L11,L12,L14,L15,K03,K04_P1.mkv"
+    root, length = _archive(tmp_path, {rec: 48000},
+                            {"20220605_L09_P1.mp4": 37200, "20220605_L13_P1.mp4": 37200},
                             cohort="L")
     res = na.audit(root, ["L"], length=length,
-                   picture=_picture({("20221209_L13_P1.mp4", rec): 4}))
+                   picture=_picture({("20220605_L13_P1.mp4", rec): 4}))
     assert res["consistent"] == 1
     (c,) = res["conflicts"]
     (x,) = c["cuts_named_differently"]
@@ -88,11 +88,11 @@ def test_a_trimmed_recording_is_traced_through_its_cuts(tmp_path):
 
 
 def test_a_cut_in_a_seat_named_as_empty_is_a_conflict(tmp_path):
-    rec = "20221118_L09,L10,L11,L12,L14,L15,000,002_P1.mkv"
-    root, length = _archive(tmp_path, {rec: 37525}, {"20221118_L13_P1.mp4": 37525},
+    rec = "20220604_L09,L10,L11,L12,L14,L15,000,002_P1.mkv"
+    root, length = _archive(tmp_path, {rec: 37500}, {"20220604_L13_P1.mp4": 37500},
                             cohort="L")
     res = na.audit(root, ["L"], length=length,
-                   picture=_picture({("20221118_L13_P1.mp4", rec): 6}))
+                   picture=_picture({("20220604_L13_P1.mp4", rec): 6}))
     (x,) = res["conflicts"][0]["cuts_named_differently"]
     assert (x["seat"], x["recording_names_seat"]) == (7, "(empty)")
 

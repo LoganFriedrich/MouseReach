@@ -4,7 +4,7 @@ The watcher imports mousereach.review for causal_review_io and triage_status
 (stdlib-only modules), but review/__init__.py imported every widget, so a
 headless daemon loaded napari, Qt, vispy, pandas and scipy -- about 2,600
 modules, 4.6 s -- the first time a cycle touched review code, and a widget that
-failed to import took the watcher's review paths down with it (2026-10-24).
+failed to import took the watcher's review paths down with it.
 """
 import subprocess
 import sys

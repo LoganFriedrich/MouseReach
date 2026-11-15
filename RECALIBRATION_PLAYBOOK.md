@@ -260,23 +260,20 @@ A recalibration is complete when all of these exist:
 
 ---
 
-## Example: 2026-04 new-DLC recalibration
+## Example: a new-DLC recalibration
 
-This playbook was first written during the 2026-03-27 DLC model swap.
-The validation run lives at
-`<improvement root>\validation_runs\DLC_2026_03_27\`. That directory is a
-worked example of the steps above — reports, generalization queue, and
-SUMMARY.md if/when it exists.
+A validation run for a DLC model swap would live at
+`<improvement root>\validation_runs\<trigger>_<date>\`, holding the
+reports, the generalization queue, and SUMMARY.md once it exists.
 
-Triggering circumstance: a new DLC training run produced cleaner
+Typical triggering circumstance: a new DLC training run produces cleaner
 tracking, but MouseReach thresholds tuned for the old DLC's noise
-profile now triggered on small motions that were previously smoothed
-away. Outcome accuracy dropped from 98.5% (old DLC + old thresholds) to
-94.5% (new DLC + old thresholds) on the 49-video GT corpus. The
-recalibration targeted phantom reaches, retrieval-miss rate, interaction
-timing, and reach-extent truncation. The `displaced_outside` class was
-explicitly marked as an acceptable gap (pellets flying out as
-single-frame streaks; essentially undetectable).
+profile now trigger on small motions that were previously smoothed
+away, so outcome accuracy on the GT corpus drops with the new DLC and
+the old thresholds. Such a recalibration targets phantom reaches,
+retrieval-miss rate, interaction timing, and reach-extent truncation.
+The `displaced_outside` class is an example of an acceptable gap
+(pellets flying out as single-frame streaks; essentially undetectable).
 
 ---
 
@@ -289,7 +286,7 @@ The current extent definition
 the apparatus (right slit edge). This creates two issues:
 
 1. **Negative extent** is possible and common — it happens whenever the
-   hand didn't cross BOXR. Current data shows 54% of ground-truth-marked
+   hand didn't cross BOXR. A large share of ground-truth-marked
    real reaches have negative extent, which means "negative extent" is
    NOT a valid "not a reach" signal even though thresholds treat it that
    way. The filtering conflates partial-reach (hand behind slit, real

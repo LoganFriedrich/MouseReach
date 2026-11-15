@@ -56,7 +56,7 @@ def invalidate_stale_downstream(seg_path, video_stem, archive_dir):
     A boundary change voids reaches, outcomes, assignments and features --
     they all describe the OLD cuts. Leaving them in place re-circulated
     corrected videos to triage with data for different spans, and risked a
-    causal reach attributed to the wrong pellet (2026-09-08). Removing them
+    causal reach attributed to the wrong pellet. Removing them
     also forces every stage to recompute even under a reuse-scoped rerun.
 
     Qt-free so it is testable bare. Raises on failure -- the caller must

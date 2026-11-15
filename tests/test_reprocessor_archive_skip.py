@@ -14,7 +14,7 @@ Each test builds a tmp Analyzed tree with a same-named decoy under
 Analyzed/Archive/ and calls the real scanner code. Every test below fails
 against the old rglob/glob code; the reason is stated per test. Tests that
 place ONLY a decoy are order-independent. Tests with a live copy AND a decoy
-also rely on the fact that the old walks visit "Archive" before "Connectome"
+also rely on the fact that the old walks visit "Archive" before "Project_A"
 (alphabetical directory order on NTFS, where these tests run); they
 additionally pin that live data is still found.
 """
@@ -54,7 +54,7 @@ def _analyzed(tmp_path):
 
 
 def _live_cohort(tmp_path):
-    d = _analyzed(tmp_path) / "Connectome" / "CNT01"
+    d = _analyzed(tmp_path) / "Project_A" / "CNT01"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -67,7 +67,7 @@ def _decoy_dir(tmp_path, *parts):
 
 
 def _live_pose_dir(tmp_path):
-    d = _analyzed(tmp_path) / "Connectome" / "DLC Model 4" / "CNT01"
+    d = _analyzed(tmp_path) / "Project_A" / "DLC Model 4" / "CNT01"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -255,7 +255,7 @@ def test_pending_review_fallback_walk_ignores_archived_features(tmp_path,
     # two levels deep: the old glob("*/*/<manifest>") matched this
     ("superseded_processing_root_3.1",),
     # deeper: only the old rglob fallback matched this
-    ("2026-09-01", "Connectome", "CNT01"),
+    ("2026-09-01", "Project_A", "CNT01"),
 ])
 def test_load_manifest_ignores_an_archived_manifest(tmp_path, decoy_parts):
     """Old code returned the archived manifest for a stem with no live one."""
@@ -282,7 +282,7 @@ def test_load_manifest_ignores_a_pre_backfill_backup_under_archived(tmp_path):
 
 def test_load_manifest_returns_the_live_manifest_over_an_archived_one(
         tmp_path):
-    """Old code's glob visited Analyzed/Archive before Analyzed/Connectome and
+    """Old code's glob visited Analyzed/Archive before Analyzed/Project_A and
     returned the archived manifest first."""
     _write_json(_live_cohort(tmp_path) / f"{STEM}_processing_manifest.json",
                 {"which": "live"})

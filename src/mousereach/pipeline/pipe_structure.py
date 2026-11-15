@@ -29,7 +29,7 @@ Target layout (relative to the pipe root = the configured data-pipe drive):
         Failed/
     Analyzed/                         everything done (per-cohort below, on demand)
         <project>/<cohort>/
-            multi/  single/  historical/     historical = non-CNT / old-tool copies
+            multi/  single/  historical/     historical = copies made by older tools
         Archive/                      superseded old-version outputs; every walk
                                       of Analyzed skips it (analyzed_tree.py)
 

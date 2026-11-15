@@ -85,8 +85,8 @@ UNAVAILABLE = None   # what a count is when it cannot be computed -- never 0
 def tray_from_stem(stem, db_tray=None):
     """Effective tray letter: the database value if present, else the filename.
 
-    WHY the fallback is not optional: on a live corpus the tray column was NULL on
-    967 of 1,216 rows in one state alone, because sessions returning from a review
+    WHY the fallback is not optional: the tray column can be NULL on most rows of
+    a state, because sessions returning from a review
     queue were re-registered without their metadata. Code that trusts the column
     silently stops distinguishing trays and degrades to arbitrary ordering.
     """

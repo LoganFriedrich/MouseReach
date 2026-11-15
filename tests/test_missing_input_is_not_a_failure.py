@@ -5,9 +5,8 @@ something about a machine. Conflating them spends the video's retry, parks it, a
 puts a scientific-looking verdict on a video nobody ever examined.
 
 This is not hypothetical. Staging a video's pose files is not atomic across files, so a
-node can look for the set while another node is still writing it -- and on 2026-09-19 a
-video sat 'failed' for nine days because of a race lasting about one minute, with every
-file present the whole time.
+node can look for the set while another node is still writing it -- and a race lasting
+about one minute left a video 'failed' for days, with every file present the whole time.
 """
 from types import SimpleNamespace
 

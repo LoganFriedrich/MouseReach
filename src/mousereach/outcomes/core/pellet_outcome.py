@@ -958,9 +958,8 @@ class PelletOutcomeDetector:
                 # off-pillar pellet cluster post-grab. If one exists, the
                 # pellet wasn't actually retrieved -- DLC eventually saw
                 # it at an off-pillar resting position. Catches the
-                # displaced->retrieved Stage-0-grab false positives from
-                # the v4.0.0 walkthrough cluster (cases 13, 16, 19, 23,
-                # 26 patterns).
+                # displaced->retrieved Stage-0-grab false positives seen
+                # as a cluster in reviewed cases.
                 cluster_check_start = grab_frame if grab_frame is not None else seg_start
                 off_pillar_cluster = self.detect_sustained_off_pillar_cluster(
                     df, seg_start, seg_end, ruler,
@@ -1225,7 +1224,7 @@ class PelletOutcomeDetector:
                                             f"disappearance)"
                                         )
                                     else:
-                                        # Per outcome_signals_from_prior_corpus_survey:
+                                        # Per a survey of the prior corpus:
                                         # sustained pellet disappearance IS the
                                         # primary signal for retrieved (median 1135
                                         # frames for retrieved vs 3 frames for
@@ -1250,7 +1249,7 @@ class PelletOutcomeDetector:
                                 # (Signal 21 negative). Both conditions together
                                 # mean the pellet definitively left the pillar AND
                                 # is not visible elsewhere on the tray -> retrieved.
-                                # Catches case-1 / cases-2/5 walkthrough patterns.
+                                # Catches patterns seen in reviewed cases.
                                 if pillar_transition['fired']:
                                     off_pillar_cluster = self.detect_sustained_off_pillar_cluster(
                                         df, seg_start, seg_end, ruler,
@@ -1375,11 +1374,11 @@ class PelletOutcomeDetector:
                                     # The "spike + paw + return to pillar" signature
                                     # WITH pillar lk transition firing means: paw
                                     # grabbed the pellet, pellet is gone, DLC switched
-                                    # to tracking the now-visible pillar tip. Per
-                                    # pellet_cannot_return_to_pillar memory: the
+                                    # to tracking the now-visible pillar tip. A
+                                    # pellet cannot return to the pillar: the
                                     # "return" is mistracking, not real return.
-                                    # Pellet was retrieved (case-1 / cases-1-12 of
-                                    # the v4.0.0 walkthrough).
+                                    # Pellet was retrieved (seen in reviewed
+                                    # cases).
                                     if pillar_transition['fired']:
                                         outcome = 'retrieved'
                                         confidence = 0.85
@@ -1493,10 +1492,8 @@ class PelletOutcomeDetector:
                     # upstream), no reach physically occurred -- the
                     # apparent end_distance > 0.25 is ASPA placement variance,
                     # not a real displacement. Force untouched.
-                    # This catches the 10 untouched-FP cluster identified in
-                    # the v4.0.0 outcome walkthrough (CNT0209_P3 segs
-                    # 5/10/12/13/18/19, CNT0310_P2 seg 10, CNT0401_P4 segs
-                    # 15/19, CNT0209_P4 seg 2). All had 0 paw-at-apparatus
+                    # This catches an untouched-FP cluster identified in
+                    # outcome review. All had 0 paw-at-apparatus
                     # frames, 0 nose-at-slit frames, 0 algo reaches, and ~36
                     # px ASPA placement drift.
                     n_segment_reaches = (
@@ -1517,7 +1514,7 @@ class PelletOutcomeDetector:
                         # When the algo's "no sustained displacement detected"
                         # heuristic dismisses a high end_distance to displaced_sa,
                         # check for the pillar-uncovering+no-off-pillar-cluster
-                        # signature. Per walkthrough cases 4, 11, 15: the high
+                        # signature. In reviewed cases the high
                         # end_distance reading is from DLC mistracking at the
                         # pillar rim or apparatus edge, not a real off-pillar
                         # pellet. The pellet was actually retrieved.
@@ -1772,7 +1769,7 @@ class PelletOutcomeDetector:
         data["validation_timestamp"] = datetime.now().isoformat()
 
         # Absorb a reviewer GUI's brief hold on the output file (a stage
-        # write died on exactly this, 2026-09-05); a persistent hold still
+        # write died on exactly this); a persistent hold still
         # raises and fails the stage loudly.
         from mousereach.pipeline.fsutil import dump_json_with_retry
         dump_json_with_retry(output_path, data, indent=2)

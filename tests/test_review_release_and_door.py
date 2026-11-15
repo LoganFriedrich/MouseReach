@@ -1,7 +1,7 @@
 """The outdated two-way door and the bulk release check.
 
-'outdated' must not be a one-way state (declaration accidents marked 1,255
-rows in August 2026 with no way back), and release completeness is
+'outdated' must not be a one-way state (a declaration accident can mark
+many rows, and there was no way back), and release completeness is
 judged by causal_review_io.is_answered, the one definition of a person's
 answer (a record marked reviewed: False is open, whatever its outcome says).
 """
@@ -87,7 +87,7 @@ def test_routing_reason_gates_segmentation_release(tmp_path):
 
 def test_ghost_segment_flags_are_ignored(tmp_path):
     """A triage flag naming a segment that does not exist is unanswerable and
-    must not hold the bundle forever (seven live bundles were flagged on
+    must not hold the bundle forever (live bundles were found flagged on
     segment 21 of a 20-segment video)."""
     from mousereach.review.triage_status import triage_status
     stem = "20990101_ABC9905_P1"

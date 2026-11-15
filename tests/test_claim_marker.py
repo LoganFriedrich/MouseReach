@@ -67,8 +67,8 @@ def _race(args):
 
 
 def test_racing_nodes_never_both_win(tmp_path):
-    """The property everything else rests on. Measured on the lab's share
-    before it was relied on; here on whatever disk the tests run on."""
+    """The property everything else rests on, checked here on whatever disk
+    the tests run on."""
     keys = [f"vid{i}" for i in range(60)]
     start = time.time() + 1.5
     with get_context("spawn").Pool(3) as pool:

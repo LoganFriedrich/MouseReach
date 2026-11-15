@@ -20,7 +20,7 @@ What it does, in order:
      reason is then "<reason>: <its words>", and the review tool shows it on
      screen beside that pellet (WHY: all a reviewer sees is the tool, so a
      pellet sent back must say why -- a reviewer met finished videos coming
-     back with no reason given, 2026-10-23),
+     back with no reason given),
   3. moves the video's bundle into the queue with a routing manifest
      (review_gate.route_to_queue), updating the watcher database.
 
@@ -31,8 +31,8 @@ a person (or ground truth) has already answered -- matched by the FRAMES the
 answer is about, the rule the release check uses -- is dropped from the list
 and reported as "answered". If nothing is left, the video is not routed.
 WHY: the release check counts such a segment answered, so a routed video went
-straight back out with nobody looking, and the next night's scan sent it again
-(2026-10). A caller cannot always know what a person answered; this command
+straight back out with nobody looking, and the next night's scan sent it again.
+A caller cannot always know what a person answered; this command
 reads the review itself, so the rule holds whoever asks.
 
 The one exception is asked for by name: ``--recheck`` ("are you sure?").
@@ -203,9 +203,9 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
     sure?"). Returns the segments reopened.
 
     WHY: a person's answer is the truth for a pellet -- until there is reason to
-    think a review slipped. Logan, 2026-10-26, on answers of "retrieved" where
-    the frames show the pellet lying in the scoring area afterwards: "toss these
-    cases back at the review queue and be like - are you sure". So the answer is
+    think a review slipped -- e.g. answers of "retrieved" where the frames show
+    the pellet lying in the scoring area afterwards go back to the review queue
+    as "are you sure?". So the answer is
     not changed and not dropped: for each requested segment (matched by frames,
     as the results step matches answers) the record keeps its answer under
     ``answers.recheck.previous`` with the question and when it was asked, and is
@@ -408,8 +408,8 @@ def main(argv=None) -> int:
     # Each result is printed (and flushed) the moment its video is done, with
     # how long it took. WHY: the nightly bench check runs this under a time
     # limit, and printing only at the end meant a run stopped part-way left no
-    # record of what it had routed -- nor of where the time went (2026-10-24:
-    # stopped after 3 hours with 34 videos routed and not one line written).
+    # record of what it had routed -- nor of where the time went (a run was
+    # stopped by its time limit with not one line written).
     results = []
     for v, segs, det in items:
         started = time.time()

@@ -29,7 +29,7 @@
     ],
     "n_frames": 743024,
     "n_positive_frames": 39528,
-    "corpus": "_corpus/2026-04-30_restart_inventory (train_pool + test_holdout, exhaustive subset)"
+    "corpus": "train_pool + test_holdout, exhaustive subset"
   },
   "training_config": {
     "boundary_buffer": 1,
@@ -41,7 +41,7 @@
     "early_stopping": false
   },
   "holdout_test_summary": {
-    "snapshot": "Improvement_Snapshots/reach_detection/v8.0.0_holdout_generalization_BSW_w0.8/",
+    "snapshot": "v8.0.0_holdout_generalization_BSW_w0.8",
     "n_exhaustive_holdout_reaches": 328,
     "tp": 301,
     "fp": 54,
@@ -53,7 +53,7 @@
     "verdict": "GENERALIZES (within 5pp of LOOCV calibration; recall improved with full data; no new failure modes)"
   },
   "calibration_reference": {
-    "snapshot": "Improvement_Snapshots/reach_detection/v8.0.0_dev_boundary_sample_weight_b1_w0.8/",
+    "snapshot": "v8.0.0_dev_boundary_sample_weight_b1_w0.8",
     "loocv_tp": 1935,
     "loocv_fp": 330,
     "loocv_fn": 440,

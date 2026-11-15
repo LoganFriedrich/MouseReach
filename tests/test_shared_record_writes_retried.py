@@ -1,9 +1,9 @@
 """A shared-record write that fails is retried, and never overwrites anything newer.
 
-WHY (2026-10-22): a GPU node's writes to the shared record (watcher_central.db)
+WHY: a GPU node's writes to the shared record (watcher_central.db)
 were best-effort -- a failure when the shared database was locked was logged at
-DEBUG and dropped. The record fell behind for good: one collage's 8 singles all
-existed, but only 3 were on record a day after the 10-21 lock failures. Other
+DEBUG and dropped. The record fell behind for good: a collage's singles all
+existed, but only some were on record a day after the lock failures. Other
 nodes read that record before cutting a collage, so a missing child is a
 collage another node may cut and pose a second time. Built under tmp_path with
 a real coordination database.
@@ -143,8 +143,8 @@ def test_a_batch_fill_never_touches_existing_rows(tmp_path):
 
 
 def test_an_interrupted_fill_is_finished_by_a_later_scan(tmp_path):
-    # 2026-10-22: one PC's startup fill stopped after 471 rows on "unable to
-    # open database file" and left 668 for the next restart.
+    # A startup fill can stop partway on "unable to open database file" and
+    # leave the rest for the next restart.
     node = _node(tmp_path)
     node.db.register_video(video_id=V2, source_path="x")
     node.db.force_state(V2, "archived", reason="test fixture")

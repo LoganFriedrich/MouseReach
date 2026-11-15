@@ -8,8 +8,8 @@ gave up before it had even asked whether the subject was known.
 
 ASPA is a project in exactly the way CNT is: mousedb models projects, ASPA videos
 run through the same pipeline, and they are filed to Analyzed/ASPA. Hardcoding one
-project's prefix quietly excluded a whole project's results. 61 ASPA videos on the
-processing server had been analysed, filed, and silently skipped.
+project's prefix quietly excluded a whole project's results: ASPA videos had
+been analyzed, filed, and silently skipped.
 
 Parsing is delegated to `AnimalID.parse` -- the same decomposition the pipeline
 uses to route a video to its project folder -- so the sync and the filing cannot
@@ -26,23 +26,23 @@ class TestEveryProjectResolves:
     @pytest.mark.parametrize("video,expected", [
         ("20250624_CNT0115_P2", "CNT_01_15"),
         ("20260724_CNT0501_P2", "CNT_05_01"),
-        ("20220811_ASPA1011_P3", "ASPA_10_11"),
-        ("20220811_ASPA0901_P1", "ASPA_09_01"),
-        ("20220811_ASPA1016_P2", "ASPA_10_16"),
+        ("20220103_ASPA1011_P3", "ASPA_10_11"),
+        ("20220103_ASPA0901_P1", "ASPA_09_01"),
+        ("20220103_ASPA1016_P2", "ASPA_10_16"),
     ])
     def test_video_name_to_subject_id(self, video, expected):
         assert parse_subject_id(video) == expected
 
     def test_aspa_is_not_special_cased(self):
         """CNT and ASPA decompose by the same rule: {letters}{cohort}{subject}."""
-        assert parse_subject_id("20220811_ASPA1011_P3") == "ASPA_10_11"
+        assert parse_subject_id("20220103_ASPA1011_P3") == "ASPA_10_11"
         assert parse_subject_id("20250624_CNT1011_P3") == "CNT_10_11"
 
     @pytest.mark.parametrize("suffix", [
         "_features", "_reaches", "_pellet_outcomes", "_segments"])
     def test_output_file_stems_resolve_too(self, suffix):
         """The sync is handed a features file, not a bare video name."""
-        assert parse_subject_id(f"20220811_ASPA1011_P3{suffix}") == "ASPA_10_11"
+        assert parse_subject_id(f"20220103_ASPA1011_P3{suffix}") == "ASPA_10_11"
 
     @pytest.mark.parametrize("already", ["CNT_01_15", "ASPA_10_11"])
     def test_database_form_passes_through(self, already):

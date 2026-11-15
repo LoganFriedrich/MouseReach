@@ -3,8 +3,7 @@
 WHY: the install guide has every new machine run the dry run before its
 watcher starts, and it used to build the whole watcher (start-up recovery) and
 call the real scans -- registering files and moving videos between states, in
-the local database and the shared one (104 recordings advanced on one machine,
-2026-08-30). The preview opens the database read-only and lists folders; these
+the local database and the shared one. The preview opens the database read-only and lists folders; these
 tests prove the database bytes and the folder tree are unchanged after it.
 """
 import hashlib

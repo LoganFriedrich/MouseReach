@@ -1,6 +1,6 @@
 """Finding the watcher process must not read every process's command line.
 
-WHY: on a busy server that took about 85 seconds per call, and the Watcher
+WHY: on a busy machine that took over a minute per call, and the Watcher
 Control panel asks every few seconds on the GUI thread, which froze the panel.
 health._watcher_processes lists program names from one system snapshot and
 reads command lines only for Python and MouseReach programs. These tests fake

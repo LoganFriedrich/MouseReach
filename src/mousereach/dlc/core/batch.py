@@ -75,7 +75,7 @@ def find_videos_for_dlc(
     Returns videos that don't have a corresponding DLC output file.
     Easy and Flat (E, F) are included: they are processed (last, by the
     work order), never turned away -- a video left out here was posed by
-    nobody (2026-10-23). ``reject_unsupported_tray=True`` still filters them
+    nobody. ``reject_unsupported_tray=True`` still filters them
     for a caller that really wants Pillar only.
     """
     from mousereach.config import is_supported_tray_type

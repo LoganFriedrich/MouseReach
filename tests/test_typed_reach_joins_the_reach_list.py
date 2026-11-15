@@ -1,11 +1,10 @@
 """A reach a reviewer typed that the detector missed joins the reach list.
 
-WHY (2026-10-26): the review window's "Undetected reach (enter frames manually)"
+WHY: the review window's "Undetected reach (enter frames manually)"
 row swapped a typed reach for any detected reach touching it by one frame, and
 the results step resolved a typed reach only as a pointer into the detected
 reaches -- so a reach the detector missed was never added (no kinematics), and
-its answer was lost or landed on a neighbouring reach (of 199 typed reaches on
-2026-10-25: 14 lost the causal reach, 6 pointed to another reach). Now one rule
+its answer was lost or landed on a neighboring reach. Now one rule
 decides when a typed reach IS a detected reach (a detected reach covers at least
 half its frames), and otherwise the typed reach is added exactly as a
 supplementary ground-truth reach is, and is the causal reach. The results step
@@ -81,7 +80,7 @@ def test_a_pellet_left_open_is_not_applied_as_a_human_answer(monkeypatch):
 
 
 def test_a_typed_reach_longer_than_any_reach_is_never_added(monkeypatch):
-    """A mistyped frame number (35183-35914, 732 frames, 2026-10-26) would become a
+    """A mistyped frame number (a range of several hundred frames) would become a
     'reach' measured over 24 seconds of video."""
     r, o, rev = _data({"outcome": "retrieved", "causal_reach": {"start": 300, "end": 1031}})
     reaches, outcomes = _resolve(monkeypatch, r, o, rev)

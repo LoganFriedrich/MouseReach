@@ -1,7 +1,7 @@
 """Pausing for the whole recording window, program or not.
 
 WHY: an open recording program turned out to be a poor signal -- it stays open
-after filming and kept the behaviour-room nodes idle for the rest of the
+after filming and kept the recording nodes idle for the rest of the
 window. With watcher.pause_during_recording_hours the window itself is the
 rule: no work inside it whatever is open, full work outside it whatever is open.
 """

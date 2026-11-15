@@ -3,7 +3,7 @@
 WHY: the pipeline routes a bundle seconds after its own readers finish with
 the mp4; the OS handle is sometimes still closing (WinError 32). _safe_move
 used to warn-and-skip, silently leaving the mp4 behind in Processing while
-the rest of the bundle moved -- 81 part-moved bundles on 2026-09-09 alone.
+the rest of the bundle moved -- many part-moved bundles in a single day.
 """
 import pytest
 

@@ -14,9 +14,9 @@ THE CLAIM IS AN EXCLUSIVE CREATE
 ``take`` creates ``<claim dir>/<key><suffix>`` with ``O_CREAT | O_EXCL``. The
 file server performs "create only if it does not exist" as one operation, so
 when several nodes race, exactly one create succeeds and every other one gets
-"file exists". Measured on the lab's share before this was relied on
-(2026-10-21): three processes racing for each of 400 keys, every key won
-exactly once, none twice, none lost. The marker then records which host holds
+"file exists". Measured on an SMB share before this was relied on: several
+processes racing for each of hundreds of keys, every key won exactly once,
+none twice, none lost. The marker then records which host holds
 it.
 
 Why a marker and not a rename of the item itself (the singles folder's
@@ -36,8 +36,8 @@ turn of the holder's work loop) for ``GONE_AFTER``.
 
 Both times compared are stamped by the FILE SERVER: the holder's report's
 modified time, and "now" taken as the newest report anyone has written. The
-machines' own clocks are never compared. WHY: the lab's clocks disagree by
-about 21 minutes (2026-10-21), and an age measured against a reading node's
+machines' own clocks are never compared. WHY: machine clocks can disagree by
+many minutes, and an age measured against a reading node's
 clock would expire a live node's claim early or keep a dead one late.
 
 A holder that has never written a report (an older watcher, or a host that no

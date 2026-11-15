@@ -207,8 +207,8 @@ class Paths:
     # nas_root is the shared pipeline folder: the one holding Unanalyzed/,
     # Processing/, Analyzed/ and pipeline_versions.json. Every path below hangs
     # off it, and every one is None when it is not configured.
-    # WHY no fallback: until 2026-10-22 an unset nas_root was GUESSED as
-    # <nas_drive>/! DLC Output, a layout retired in 2026. Every derived path
+    # WHY no fallback: an unset nas_root used to be GUESSED as a folder of an
+    # older, retired layout on the NAS drive. Every derived path
     # then pointed at the old place and a node looked like it was working
     # right up until someone went looking for its output; the watcher refused
     # to start there, but the review tools and intake commands make no such
@@ -262,7 +262,7 @@ class Paths:
     LAB_PRIORITY = NAS_ROOT / "priority_order.json" if NAS_ROOT else None
 
     # --- Human-review queue roots (NAS -- cross-node visible) ---
-    # A video only reaches kinematics + connectome.db when it is CLEAN. Anything
+    # A video only reaches kinematics + the central database when it is CLEAN. Anything
     # the algo cannot commit is held OUT of the archive+DB as a self-contained
     # bundle here until a human clears it. Two queues:
     #   TRIAGE_REVIEW (Processing/Review/triage) -- per-element "which reach / what
@@ -897,13 +897,13 @@ class WatcherConfig:
         # How many posed videos the processing node keeps on its own disk
         # waiting for the pipeline. Small on purpose: intake is visited before
         # the pipeline, so with a large number the node takes videos in for
-        # hours before analysing any (200 meant ~8 hours on 2026-10-21), and
+        # hours before analysing any, and
         # every video it holds is one no other node can take. A node takes in
         # only what it is about to start.
         self.max_local_pending: int = cfg.get('max_local_pending', 2)
-        self.also_process: bool = cfg.get('also_process', False)  # DLC PCs also run seg/reach/outcomes
+        self.also_process: bool = cfg.get('also_process', False)  # GPU (dlc_pc) nodes also run seg/reach/outcomes
         # How many re-pose requests a GPU node keeps in flight at once. Each
-        # one is a ~1 GB copy into the local queue plus ~14 min of GPU, and a
+        # one is a large copy into the local queue plus a full pose run, and a
         # request stays claimed until the pose comes back, so a small number
         # keeps claims short-lived and leaves requests for other GPU nodes.
         self.repose_batch: int = int(cfg.get('repose_batch', 2))
@@ -937,7 +937,7 @@ class WatcherConfig:
             if isinstance(n, str) and n.strip()]
         # Resume only after no listed program has run for this many seconds.
         # WHY: operators often close the recording program and reopen it a
-        # moment later; starting a 14-minute pose in that gap would compete
+        # moment later; starting a many-minute pose in that gap would compete
         # with the next recording or be thrown away seconds later.
         try:
             self.pause_resume_grace_seconds: int = max(
@@ -947,7 +947,7 @@ class WatcherConfig:
         # Hours in which recording can happen at all, e.g. "08:00-18:00" (this
         # machine's clock). Outside them an open recording program does not
         # pause the watcher. WHY: the program is routinely left open after the
-        # day's recording and the node then idled until someone closed it (G12).
+        # day's recording and the node then idled until someone closed it.
         # Empty = any hour, as before. See mousereach.watcher.recording_guard.
         hours = cfg.get('recording_hours')
         self.recording_hours: Optional[str] = (

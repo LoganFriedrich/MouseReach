@@ -22,7 +22,7 @@ and how it is computed.
       left slit corner (`BOXL`) and the nose.
     * Frame after the paw disappears (`end_frame + 1`): every hand point is
       between the right slit corner (`BOXR`) and the nose.
-  "Between" is the midpoint, confirmed by the lab and held in one constant. The anchors give
+  "Between" is the midpoint, a fixed choice held in one constant. The anchors give
   a physical boundary that does not depend on where tracking first or last saw
   the paw, and they are the endpoints for path directness and lateral deviation.
   `reach_duration_frames` still counts detected frames, so a path covers
@@ -76,8 +76,8 @@ and how it is computed.
 | LeftEar / RightEar | `LeftEar` / `RightEar` | Used for head-width and head-angle posture features. |
 
 The four paw points form a stable but non-symmetric quadrilateral. `RHLeft`
-and `RHRight` are empirically the most-separated pair on every video tested
-(44/44 across cohorts CNT01-CNT04), which is why the paw width proxy uses
+and `RHRight` are empirically the most-separated pair on every video tested,
+which is why the paw width proxy uses
 that pair specifically.
 
 ---

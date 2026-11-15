@@ -30,15 +30,15 @@ def test_only_superseded_folders_are_superseded():
     assert is_superseded_dir("Archive")
     # MouseReach's own pre-modification backups keep original names too.
     assert is_superseded_dir("_archived")
-    for name in ("DLC Model 4", "DLC Model 3", "Connectome", "CNT01", "Multi-Animal", "_x", ".y"):
+    for name in ("DLC Model 4", "DLC Model 3", "Project_A", "CNT01", "Multi-Animal", "_x", ".y"):
         assert not is_superseded_dir(name), name
 
 
 def test_archived_copies_are_never_found(tmp_path):
     an = tmp_path / "Analyzed"
-    live = _touch(an / "Connectome" / "CNT01" / f"{STEM}_features.json")
+    live = _touch(an / "Project_A" / "CNT01" / f"{STEM}_features.json")
     _touch(an / "Archive" / "DLC Model 4.0" / "seg2.2.4_reach8.1.0_out6.1.0_asn2.1.0" / f"{STEM}_features.json")
-    _touch(an / "Connectome" / "CNT01" / "Archive" / f"{STEM}_features.json")
+    _touch(an / "Project_A" / "CNT01" / "Archive" / f"{STEM}_features.json")
     assert list(iter_files(an, "*_features.json")) == [live]
 
 
@@ -48,7 +48,7 @@ def test_backup_copies_under_archived_are_never_found(tmp_path):
     With SUPERSEDED_DIR_NAMES == {"Archive"} (the old set) iter_files yielded
     that copy beside the live manifest, so this assert failed."""
     an = tmp_path / "Analyzed"
-    live = _touch(an / "Connectome" / "CNT01" / f"{STEM}_processing_manifest.json")
+    live = _touch(an / "Project_A" / "CNT01" / f"{STEM}_processing_manifest.json")
     _touch(an / "_archived" / "manifests_pre_version_backfill_20260914_120000"
            / f"{STEM}_processing_manifest.json")
     assert list(iter_files(an, "*_processing_manifest.json")) == [live]
@@ -56,7 +56,7 @@ def test_backup_copies_under_archived_are_never_found(tmp_path):
 
 def test_live_pose_storage_stays_visible(tmp_path):
     an = tmp_path / "Analyzed"
-    pose = _touch(an / "Connectome" / "DLC Model 4" / "CNT01" / POSE)
+    pose = _touch(an / "Project_A" / "DLC Model 4" / "CNT01" / POSE)
     _touch(an / "Archive" / "DLC Model 4.0" / POSE)
     assert list(iter_files(an, f"{STEM}DLC*.h5")) == [pose]
     assert first_file(an, f"{STEM}DLC*.h5") == pose
@@ -98,8 +98,8 @@ def test_network_error_listing_a_subfolder_raises(tmp_path, monkeypatch):
     only the other cohort's file -- a partial answer that looks complete. The
     old iter_files therefore did not raise and this test failed."""
     an = tmp_path / "Analyzed"
-    _touch(an / "Connectome" / "CNT01" / f"{STEM}_features.json")
-    bad = an / "Connectome" / "CNT02"
+    _touch(an / "Project_A" / "CNT01" / f"{STEM}_features.json")
+    bad = an / "Project_A" / "CNT02"
     _touch(bad / "20250101_CNT0201_P1_features.json")
     _fail_listing(monkeypatch, bad, OSError(
         22, "The specified network name is no longer available", str(bad), 59))
@@ -113,8 +113,8 @@ def test_permission_denied_subfolder_is_skipped_like_rglob(tmp_path, monkeypatch
     """Regression guard, not a fix: rglob skipped a folder it had no
     permission to list, and iter_files keeps doing so."""
     an = tmp_path / "Analyzed"
-    live = _touch(an / "Connectome" / "CNT01" / f"{STEM}_features.json")
-    bad = an / "Connectome" / "CNT02"
+    live = _touch(an / "Project_A" / "CNT01" / f"{STEM}_features.json")
+    bad = an / "Project_A" / "CNT02"
     _touch(bad / "20250101_CNT0201_P1_features.json")
     _fail_listing(monkeypatch, bad, PermissionError(13, "Access is denied", str(bad)))
 

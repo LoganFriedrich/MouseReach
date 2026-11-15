@@ -3,7 +3,7 @@
 Pipeline File Watcher for MouseReach
 
 Watches the Processing folder for new/modified _features.json files and
-automatically syncs them to the reach_data table in the connectome database.
+automatically syncs them to the reach_data table in the central database.
 
 Uses watchdog for efficient filesystem monitoring.
 """
@@ -226,7 +226,7 @@ def start_watcher(
 
     Args:
         processing_path: Path to Processing folder (default: from config)
-        db_path: Path to connectome.db
+        db_path: Path to the central database
         blocking: If True, blocks until interrupted. If False, returns watcher.
 
     Returns:

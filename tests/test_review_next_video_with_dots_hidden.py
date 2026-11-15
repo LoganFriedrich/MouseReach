@@ -1,7 +1,7 @@
 """Opening the next video with the tracking dots hidden does not crash.
 
-Colin, 2026-10-29: every next video failed to load with "index 596438 is out of
-bounds for axis 0 with size 564876". The review tool reuses one dots layer for
+A reviewer found every next video failing to load with "index N is out of
+bounds for axis 0 with size M". The review tool reuses one dots layer for
 every video. napari remembers which dots are on the current frame and does not
 re-take that list while the layer is hidden, so after the reviewer hid the dots
 and moved to a video with fewer points, setting the new colours redrew from the

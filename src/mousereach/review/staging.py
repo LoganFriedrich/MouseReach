@@ -6,12 +6,12 @@ video it runs the shipped-best 4.0 algorithms directly, in this order:
     segmentation (v2.2.2)  ->  reach detection (v8.1.0, w=0.7 model4.0)
     ->  outcome cascade (v6.1.0)  ->  reach assignment (v2.0.0 agreement gate)
 
-Design goal (explicit user constraint): **do not duplicate the bulky video /
-pose files, and never write anything to the C: system drive.** The algos are
-called on the video's *canonical* Y: locations in place:
+Design goal: **do not duplicate the bulky video / pose files, and never write
+anything to the local system drive.** The algos are called on the video's
+*canonical* shared-storage locations in place:
 
-    mp4  :  <Connectome>/CNT##/{stem}.mp4
-    pose :  <Connectome>/DLC Model 4/CNT##/{stem}DLC_resnet101_..shuffle3_100000.h5
+    mp4  :  <analyzed root>/<cohort>/{stem}.mp4
+    pose :  <analyzed root>/DLC Model 4/<cohort>/{stem}DLC_resnet101_..shuffle3_100000.h5
 
 The bundle written into ``<pending_dir>/{stem}/`` therefore contains only:
 
@@ -24,13 +24,13 @@ The bundle written into ``<pending_dir>/{stem}/`` therefore contains only:
 The review tool reads the four JSONs from the bundle and loads the mp4/pose
 from the manifest's canonical paths (see ``CausalReviewWidget.load_from_manifest``).
 
-Nothing here writes to the production ``Processing`` dir or to C:. The only new
-bytes are a few hundred KB of JSON per video, on Y:.
+Nothing here writes to the production ``Processing`` dir or to the local system
+drive. The only new bytes are a few hundred KB of JSON per video, on shared
+storage.
 
-NB: this file is run against Y: master code (shipped-best). Because production's
-C: editable install is intentionally frozen at the pre-4.0 versions until the
-coordinated activation flip, invoke with ``PYTHONPATH`` pinned to the Y: master
-``src`` so ``import mousereach`` resolves to the shipped-best tree:
+NB: this file is run against the shipped-best master code. When the production
+editable install is held at older versions, invoke with ``PYTHONPATH`` pinned
+to the master ``src`` so ``import mousereach`` resolves to the shipped-best tree:
 
     $env:PYTHONPATH = "<path to the shipped-best MouseReach src>"
     <mousereach-env-python> -m mousereach.review.staging --cnt CNT01 --limit 3
@@ -91,7 +91,7 @@ def resolve_canonical_paths(
     ``pose_dirs`` are extra directories searched for the 4.0 pose h5 when it is
     not in the standard ``DLC Model 4/<cohort>`` tree. ``mp4_dirs`` are extra
     directories searched for the mp4 when it is not archived in the canonical
-    Connectome tree (e.g. still sitting in a DLC_Queue / Processing/Posed staging
+    analyzed tree (e.g. still sitting in a DLC_Queue / Processing/Posed staging
     dir). Both are used in place -- nothing is copied into the archive.
     """
     cohort = cohort_dir_for_stem(stem)
@@ -169,12 +169,12 @@ def _neutralize_pipeline_side_effects() -> None:
     """Silence the production pipeline's write-side effects for this process.
 
     ``save_segmentation`` and ``ReachDetector.save_results`` each best-effort
-    update the pipeline index (``C:\\...\\pipeline_index.json``) and, for reach,
+    update the pipeline index (the local ``pipeline_index.json``) and, for reach,
     sync to a central DB. During staging those are (a) a violation of the
-    "never write to C:" rule and (b) a correctness hazard under parallel
+    "never write to the local system drive" rule and (b) a correctness hazard under parallel
     staging -- every worker rewrites the same index file, which yields
     ``WinError 32`` + "Corrupt index file, rebuilding". The review bundles are
-    self-contained JSON on Y:, so the index/DB updates are simply not wanted.
+    self-contained JSON on shared storage, so the index/DB updates are simply not wanted.
 
     Idempotent; monkeypatches only this process's imported objects (workers get
     it too because ProcessPoolExecutor re-imports this module on spawn).
@@ -248,10 +248,10 @@ def stage_video(
 ) -> Path:
     """Run the 4.0 algos on a video's canonical files and write a review bundle.
 
-    Returns the bundle directory. Reads only canonical Y: paths; writes only
+    Returns the bundle directory. Reads only canonical shared-storage paths; writes only
     the four small JSONs + manifest into ``pending_dir/{stem}/``. No copies.
     """
-    _neutralize_pipeline_side_effects()  # no C: index / DB writes; parallel-safe
+    _neutralize_pipeline_side_effects()  # no local index / DB writes; parallel-safe
 
     # Imports are local so the module loads even if a dependency is unavailable.
     from mousereach.segmentation.core.segmenter_multi import segment_video_multi
@@ -286,8 +286,8 @@ def stage_video(
     # able to lose one. The bundle is transient -- this function regenerates it,
     # and returning a cleared bundle moves its files away and removes the
     # directory -- so a review that lives only here disappears on the next
-    # reprocess. Measured 2026-08-24: 41 reviewed videos had their only surviving
-    # copy inside a Y: triage bundle.
+    # reprocess, and reviewed videos have been found whose only surviving copy
+    # was inside a triage bundle.
     #
     # So: find the review wherever it survives (this bundle, the durable store,
     # the canonical results dir) and make sure the regenerated bundle has it.
@@ -307,9 +307,7 @@ def stage_video(
     #
     # Carry them forward instead. Passing them back in as boundaries_override
     # takes the manual branch below, which is exactly what the reviewer chose.
-    # (Nothing on disk is in this state today -- checked 2026-08-24, zero manual
-    # re-segmentations across Y: and the review server -- so this is a guard put
-    # in before the first one is lost, not a repair.)
+    # (This is a guard put in before the first one is lost, not a repair.)
     if boundaries_override is None and seg_out.exists():
         try:
             _prev = _load_json(seg_out)
@@ -523,8 +521,9 @@ def _stage_one_result(stem: str, connectome_root: Path, pending_dir: Path,
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Stage 4.0 review bundles (seg->reach->outcome->assignment v2) "
-                    "into Processing/Review/triage. Copy-free: reads canonical Y: paths, "
-                    "writes only small JSONs + manifest. Never touches C:.",
+                    "into Processing/Review/triage. Copy-free: reads canonical shared-storage "
+                    "paths, writes only small JSONs + manifest. Never touches the local "
+                    "system drive.",
     )
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--stems", nargs="+", help="Explicit video stems, e.g. 20250624_CNT0101_P1")

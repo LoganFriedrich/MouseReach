@@ -3,7 +3,7 @@
 Why this exists
 ---------------
 ASPA names an animal ``{cohort letter}{subject:2d}`` -- ``D01``, ``H36``, ``M04``.
-The pipeline (and everything downstream of it: mousedb, connectome.db, the
+The pipeline (and everything downstream of it: mousedb, its database, the
 project-wide ``CNT_XX_YY`` key) requires ``{letters}{cohort:2d}{subject:2d}``, so
 ``AnimalID.parse('D01')`` fails with "Need at least 4 digits" -- the cohort is
 carried by the letter, and the number component is silent.

@@ -46,7 +46,7 @@ walkthroughs of the review tools themselves.
 - [Algorithm Documentation](#algorithm-documentation) -- `mousereach-docs`
 - [Analysis Dashboard](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
-- [Database Sync - Automatic sync to central connectome database](#database-sync-automatic-sync-to-central-connectome-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
+- [Database Sync - Automatic sync to central database](#database-sync-automatic-sync-to-central-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
 - [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`
 - [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-reconcile`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
@@ -154,7 +154,7 @@ Usage:
 
 Machine identification priority:
   1. Local identity file (~/.mousereach/machine_role.json)
-     Set with: mousereach-setup --set-role "NAS / DLC PC"
+     Set with: mousereach-setup --set-role "<role name>"
   2. The lab's profiles file, matched by hostname and drive pattern
   3. Fully manual (user enters all paths)
 
@@ -194,7 +194,7 @@ usage: mousereach-fix-powershell [-h]
 Fix PowerShell execution policy for network drives.
 
 This sets the execution policy to Bypass for the current user,
-which allows conda activate scripts to run from network drives (Y:, etc.)
+which allows conda activate scripts to run from network drives (mapped drive letters)
 
 options:
   -h, --help  show this help message and exit
@@ -469,8 +469,7 @@ Alias of `mousereach-segment-review` (same entry point: `mousereach.segmentation
 
 **Retired (2026-10-23): moves nothing.** It used to move Easy (E) and Flat (F)
 tray videos out of the pipeline into `Unanalyzed/Unsupported_Tray_Type/`, where
-nothing processed them again (772 were found parked there and copied back on
-2026-10-23). Easy and Flat are processed by the watcher now -- after everything
+nothing processed them again. Easy and Flat are processed by the watcher now -- after everything
 else, never segmented or held -- so the command only prints that and exits.
 Its old options (`--dry-run`, `--folder`, `--quiet`) are still accepted so an
 old script calling it does not break.
@@ -736,8 +735,7 @@ What it does, in order:
      "segment_details" ({segment number: words}); each flagged segment's
      reason is then "<reason>: <its words>", and the review tool shows it on
      screen beside that pellet (WHY: all a reviewer sees is the tool, so a
-     pellet sent back must say why -- a reviewer met finished videos coming
-     back with no reason given, 2026-10-23),
+     pellet sent back must say why),
   3. moves the video's bundle into the queue with a routing manifest
      (review_gate.route_to_queue), updating the watcher database.
 
@@ -748,8 +746,8 @@ a person (or ground truth) has already answered -- matched by the FRAMES the
 answer is about, the rule the release check uses -- is dropped from the list
 and reported as "answered". If nothing is left, the video is not routed.
 WHY: the release check counts such a segment answered, so a routed video went
-straight back out with nobody looking, and the next night's scan sent it again
-(2026-10). A caller cannot always know what a person answered; this command
+straight back out with nobody looking, and the next scan would send it again.
+A caller cannot always know what a person answered; this command
 reads the review itself, so the rule holds whoever asks.
 
 The one exception is asked for by name: ``--recheck`` ("are you sure?").
@@ -808,7 +806,7 @@ ASCII-only output. With --json, stdout carries only the JSON results; the
 "[watcher db]" line and any refusal message go to stderr.
 
 positional arguments:
-  video_id              e.g. 20250624_CNT0115_P2
+  video_id              e.g. 20250101_CNT0101_P1
 
 options:
   -h, --help            show this help message and exit
@@ -968,7 +966,7 @@ options:
                         iterations/*/algo_outputs/.
   --video-name VIDEO_NAME
                         Restrict worklist to this video stem (e.g.
-                        20250624_CNT0107_P3).
+                        20250101_CNT0101_P1).
   --include-cleared     Include already-cleared segments in the worklist (for
                         re-review).
   --pre-pad PRE_PAD     Frames to load before each segment's start (context).
@@ -1587,7 +1585,7 @@ options:
   --json                Output as JSON
 ```
 
-## Database Sync - Automatic sync to central connectome database
+## Database Sync - Automatic sync to central database
 
 ### `mousereach-sync`
 
@@ -1907,10 +1905,10 @@ is not in doubt; the dry run lists each one with how it was read, and the
 mapping file (`ASPA_import_mapping.json` beside the imported videos) keeps the
 original name next to the reading:
 
-* a separator typo between ids (`G25.G26,...`, `H40_001,...`) is read as a
+* a separator typo between ids (`A01.A02,...`, `A40_001,...`) is read as a
   comma -- only when that gives exactly eight ids and the name reads only one way;
 * one recording holding two cohorts on different runs of the day
-  (`..._JP3,IP1`: the J animals' run 3, the I animals' run 1) is copied in once
+  (`..._BP3,AP1`: the B animals' run 3, the A animals' run 1) is copied in once
   per run, each copy naming only that run's animals, the others' seats empty.
   Every animal is then cut once, under its own run.
 
@@ -1990,7 +1988,7 @@ Lock archived videos against automatic reprocessing (for publications).
 
   --cohort C    Every archived video of this cohort (e.g. CNT01).
   --videos LIST Comma-separated video ids.
-  --label NAME  Required label naming the lock (e.g. "PNAS_2026").
+  --label NAME  Required label naming the lock (e.g. "PAPER_2026").
   --list        Show what is crystallized, by label.
 ```
 
@@ -2174,8 +2172,8 @@ as long as it (within 5 frames), or, when the surviving recording was trimmed
 after it was cut, one naming another cut exactly as long -- are checked by the
 PICTURE: a few frames of the cut against each of the recording's eight seats
 (unshifted, and shifted by the recording's extra length). Length alone is never
-taken as evidence -- two recordings of one day were found 3 frames apart by
-chance. A cut the picture puts in a seat the recording names for a different
+taken as evidence -- two recordings of one day can be within a few frames of
+each other by chance. A cut the picture puts in a seat the recording names for a different
 animal (or as empty) makes the recording CONTESTED; the record says which seat
 and both names. Headers are read for every cut and recording, pictures only for
 the cuts in doubt, so a whole archive takes a while (a fraction of a second per

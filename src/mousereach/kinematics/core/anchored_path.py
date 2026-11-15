@@ -63,8 +63,7 @@ from typing import Iterable, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-# What "between" means: how far from the nose towards the slit corner. The midpoint,
-# confirmed by Logan 2026-11-02.
+# What "between" means: how far from the nose towards the slit corner. The midpoint.
 ANCHOR_FRACTION_FROM_NOSE = 0.5
 # Below this a landmark's position is not used for an anchor. It is the threshold
 # the rest of the extractor uses for trusting a point.

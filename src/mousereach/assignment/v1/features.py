@@ -155,7 +155,7 @@ def feature_columns() -> List[str]:
 # CAUSAL-ATTRIBUTION FEATURES (additive, 2026-04-30)
 #
 # These layer on top of the baseline features above. They encode the
-# decision rules from `feature_philosophy_event_anchored_walking.md`:
+# event-anchored decision rules:
 # - Reach apex = max nose-to-paw distance (NOT start/end)
 # - Pre-/post-apex 30f windows for state inspection
 # - Per-frame pillar-circle membership using smoothed-SA geometry

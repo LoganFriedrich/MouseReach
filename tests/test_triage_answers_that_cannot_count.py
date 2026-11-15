@@ -1,10 +1,10 @@
 """An answer the pipeline cannot count is never recorded, and the reviewer is told.
 
-WHY (2026-10-23): a reviewer answered a triaged pellet with a reach outside that
+WHY: a reviewer answered a triaged pellet with a reach outside that
 segment's frames; the pipeline dropped the answer (it cannot belong to the
 pellet as the video is cut) without a word on screen, and the video came back
 with the same question -- one segment was answered three times. Another video
-asked about a segment four frames long, which no answer can count for. Logan's
+asked about a segment four frames long, which no answer can count for. The
 rules: everything that holds a video must be visible in the GUI; only what a
 person can fix in the GUI may hold a video; and when the event belongs to a
 different pellet, the reviewer saves nothing and escalates to deep review.

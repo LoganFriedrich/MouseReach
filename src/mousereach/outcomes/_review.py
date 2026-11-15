@@ -4,7 +4,7 @@ review_tool.py - Human review and correction for pellet outcomes
 
 Usage:
     python revise_or_review/review_tool.py --outcomes video_pellet_outcomes.json
-    python revise_or_review/review_tool.py --dir A:\\Processing\\
+    python revise_or_review/review_tool.py --dir <processing_root>/Processing/
 
 Commands:
     s <num>              - Show segment details

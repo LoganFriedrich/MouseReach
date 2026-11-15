@@ -4,7 +4,7 @@ WHY: there is no polite kill available on Windows. psutil's terminate() is
 documented as an alias for kill(), and a watcher started detached -- which is
 how the Restart button starts one -- has no console, so a Ctrl+C event cannot
 reach it either. So the button's only real option was a hard kill, part-way
-through a fourteen-minute pose, which before startup reclaim existed stranded
+through a long pose, which before startup reclaim existed stranded
 the video outright. An earlier version of this fix claimed to "ask before
 insisting" and did not: on Windows both calls are the same call.
 

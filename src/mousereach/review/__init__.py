@@ -129,7 +129,7 @@ from .causal_review_io import (
 # more (about 2,600 modules and several seconds). They used to be imported
 # here, so EVERY import of this package loaded them -- including the
 # watcher's, which only needs causal_review_io / triage_status: a headless
-# daemon loaded a whole GUI stack (measured 4.6 s, 2026-10-24) to call a path
+# daemon loaded a whole GUI stack (several seconds) to call a path
 # helper, and a widget that failed to import took the watcher's review paths
 # down with it. Now a GUI name is imported the first time it is used;
 # ``from mousereach.review import CausalReviewWidget`` works as before.

@@ -269,8 +269,9 @@ the panel's "Recording happens only on" boxes) and an open recording program
 is ignored outside that time -- for a program left open after recording.
 Empty by default (any day, any hour). See INSTALL.md (A2).
 
-The watcher runs on the NAS / DLC PC (the machine with direct NAS access and GPU).
-Set up with `mousereach-setup --set-role "NAS / DLC PC"` then `mousereach-setup`.
+The watcher runs on every pipeline machine (GPU machines that cut and pose, and the
+processing machine that analyses). Set up with `mousereach-setup --set-role "<profile name>"`
+then `mousereach-setup`.
 
 ### Auto-Launch on Login
 
@@ -281,7 +282,7 @@ environment and work on any PC:
 2. **Copy toggle shortcut** → paste `deploy/MouseReach-Toggle.bat` to Desktop
 
 On login, the startup script will:
-1. Wait for the NAS drive (Y:\) to be available
+1. Wait for the shared pipeline folder (`MOUSEREACH_NAS_ROOT`, if set) to be available
 2. Launch the watcher daemon in its own terminal window
 3. Open a live view of the watcher's log
 
@@ -309,15 +310,15 @@ filed before it has been compared:
   goes to the **triage** queue together with any other question it has. In
   the review tool its banner reads, for example, *hand score mismatch (hand:
   retrieved, algo: displaced_sa)*, and the outcome list opens on the
-  algorithm's answer (the same as for the nightly bench check). Answer it as
+  algorithm's answer (the same as for a video sent back by `mousereach-route-to-queue`). Answer it as
   usual; when every flagged pellet is answered the video comes back, finishes
   and is filed. What a person answers is taken as the truth, whatever the
   bench says.
 - **The session has no hand scores**, in a project whose every session is
   scored by hand (`required_projects` below): the video is analysed and then
   **held** -- it stays in the Processing folder, before triage and kinematics
-  -- until the project's sheet is next imported (scores are entered the same
-  day; the import may run only nightly). If that import brings them, the
+  -- until the project's sheet is next imported (a lab that enters scores the
+  same day may still import them only on a schedule). If that import brings them, the
   video is compared as above and carries on by itself. If it does not, the
   session was never scored by hand -- there is nothing to compare, so nothing
   can disagree -- and the video carries on without the comparison. A cohort
@@ -466,7 +467,7 @@ MouseReach requires configuration before first use:
 
 ```bash
 # 1. Declare this PC's role (pre-fills defaults for your lab's setup)
-mousereach-setup --set-role "NAS / DLC PC"
+mousereach-setup --set-role "GPU PC"
 
 # 2. Run the setup wizard (paths pre-filled, just hit Enter)
 mousereach-setup
@@ -475,13 +476,14 @@ mousereach-setup
 ### Machine Roles
 
 Each PC in the lab serves a specific role. Setting the role tells the wizard
-what defaults to use for this machine:
+what defaults to use for this machine. The roles are the profiles in your lab's
+profiles file (below); the template's are:
 
 | Role | Description | Runs Watcher? |
 |------|-------------|---------------|
-| **NAS / DLC PC** | Direct-attached NAS, GPU, DLC model | Yes |
-| **GPU Filming PC** | Filming/cropping workstation with GPU | No |
-| **Processing Server** | Reach detection + kinematics | No |
+| **Recording + GPU PC** | Records videos; outside recording cuts and poses them on its GPU | Yes (`dlc_pc`) |
+| **GPU PC** | Cuts and poses videos on its GPU | Yes (`dlc_pc`) |
+| **Processing Server** | Analyses posed videos (reach detection, outcomes, kinematics) and files them | Yes (`processing_server`) |
 
 ```bash
 mousereach-setup --list-roles      # See available roles

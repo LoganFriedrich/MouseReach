@@ -232,7 +232,7 @@ def annotate_reaches(
 
 
 def main():
-    """Annotate discrepancies for the 0405 video."""
+    """Annotate discrepancies for the example video named below."""
     from mousereach.config import Paths
     processing = Paths.PROCESSING
     video_id = '20251021_CNT0405_P4'

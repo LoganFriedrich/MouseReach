@@ -63,11 +63,11 @@ TRANSITION_ZONE_HALF = 5
 # Pellet lk threshold raised aggressively (from 0.7 default) on
 # 2026-05-02 to filter DLC label-switch cases. Real displaced
 # pellets at rest show very high lk (close to 1.0); label-switch
-# artifacts in problem videos like `20250716_CNT0213_P3` track
-# non-pellet features at moderately high lk (0.7-0.9 range).
+# artifacts in problem videos track non-pellet features at
+# moderately high lk (0.7-0.9 range).
 PELLET_LK_THR = 0.95   # raised from 0.7 to filter DLC label-switch
                        # cases at moderate lk; 0.95 catches abnormal
-                       # cases but `20250716_CNT0213_P3` cases pass
+                       # cases but some label-switch cases pass
 PILLAR_LK_THR = 0.7
 # 4.0 recalibration: raised from 0.5 to 0.95 so the pre-reach
 # on-pillar precondition is not blocked by 4.0's approaching paw
@@ -75,7 +75,7 @@ PILLAR_LK_THR = 0.7
 PAW_LK_THR = 0.95
 
 # Co-detection triage (same as Stage 5). Both lk thresholds are very
-# high (per 2026-05-02 user refinement) and distance very tight, so
+# high and distance very tight, so
 # triage fires only for true DLC label-switch (bodyparts physically
 # overlapping with confident detection on both). Edge-proximity cases
 # where pellet sits near pillar tip do NOT trigger.
@@ -96,9 +96,8 @@ PRE_REACH_ON_PILLAR_SUSTAINED_FRAMES = 5
 #       pillar center) -- pellet is not on the pillar
 #   (2) WITHIN the SA quadrilateral bounds (between SABL/SABR and
 #       SATL/SATR) -- pellet is sitting on the SA tray surface, where
-#       displaced pellets actually land in 2D top-down view (per user
-#       2026-05-02: "gravity pulls in the z plane that we can't see
-#       in. we observe the behavior top down")
+#       displaced pellets actually land in 2D top-down view (gravity
+#       pulls in the z plane, which a top-down view cannot see)
 #   (3) sustained near the median position for >= REST_FRAMES_TOTAL
 #       accumulated frames
 PELLET_OFF_PILLAR_RADII = 1.0          # just outside pillar circle
@@ -279,7 +278,7 @@ class Stage8PelletDisplacedToSA(Stage):
             self.codetection_distance_radii,
             self.codetection_sustained_frames,
         ):
-            # Per 2026-05-02 user reframing: codetection signature
+            # The codetection signature
             # alone doesn't prove triage is needed. Defer instead so
             # the segment can fall through to retrieved / abnormal /
             # dedicated-codetection stages later.
@@ -497,7 +496,7 @@ class Stage8PelletDisplacedToSA(Stage):
         # 92.5% of class-matched commits.
         # The on->off transition test was tried (2026-05-02) but
         # produced same trust % with lower yield -- specifically
-        # didn't fix the `20250716_CNT0213_P3` problem cases where
+        # didn't fix the problem cases where
         # DLC label-switches the pellet to a sustained off-pillar
         # position throughout the segment, defeating the "stays
         # off" check.

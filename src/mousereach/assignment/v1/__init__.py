@@ -15,7 +15,7 @@ Usage:
     out = assign_reaches_v1(
         reaches=algo_reaches,
         segments_with_outcomes=cascade_segments,
-        video_id="20250626_CNT0102_P4",
+        video_id="20250101_CNT0101_P1",
     )
     # out is the standard reach-assignments dict; write to JSON or
     # serialize as needed.

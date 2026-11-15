@@ -1,9 +1,9 @@
 """Recording hours and days: outside them an open recording program does not
 pause the node.
 
-WHY (G12, 2026-10-22): the recording program is routinely left open after the
+WHY: the recording program is routinely left open after the
 day's recording, and a node that pauses whenever it is open then idled until a
-person closed it -- once for two days. The lab knows when recording can happen
+person closed it -- sometimes for days. A lab knows when recording can happen
 at all (in the configuration: watcher.recording_hours, watcher.recording_days);
 outside that, an open program says nothing. Both empty must behave exactly as
 before (an open program pauses at any time).

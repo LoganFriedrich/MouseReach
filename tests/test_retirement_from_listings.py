@@ -1,8 +1,8 @@
 """The collage-retirement check finds its facts from folder listings.
 
-WHY: it read all ~4,600 processing manifests in Analyzed and looked each
-offspring's review up separately every time it ran -- 14 minutes on 2026-10-21
-with a slow share, while the processing server's work loop waited. The answers
+WHY: it read every processing manifest in Analyzed and looked each
+offspring's review up separately every time it ran -- many minutes with a
+slow share, while the processing server's work loop waited. The answers
 must be exactly the ones the per-file checks gave.
 """
 import json
@@ -23,16 +23,16 @@ def _age(p, seconds):
 
 def _tree(tmp_path):
     root = tmp_path / "Analyzed"
-    live = root / "Connectome" / "CNT01"
+    live = root / "Project_A" / "CNT01"
     old = root / "Archive" / "2026-09-01_superseded"
-    for d in (live, old, root / "Connectome" / "DLC Model 4" / "CNT01"):
+    for d in (live, old, root / "Project_A" / "DLC Model 4" / "CNT01"):
         d.mkdir(parents=True)
     return root, live, old
 
 
 def test_the_entry_walk_finds_exactly_the_files_the_path_walk_finds(tmp_path):
     root, live, old = _tree(tmp_path)
-    for d in (live, old, root / "Connectome" / "DLC Model 4" / "CNT01"):
+    for d in (live, old, root / "Project_A" / "DLC Model 4" / "CNT01"):
         (d / "a_processing_manifest.json").write_text("{}", encoding="utf-8")
         (d / "a.mp4").write_bytes(b"v")
     for pattern in ("*", "*_processing_manifest.json", "*.mp4"):

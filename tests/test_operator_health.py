@@ -4,7 +4,7 @@ WHY: recovering a stuck video used to require a terminal; the dashboard now
 says in plain words whether the processor runs and what waits for a person.
 And a routed bundle's manifest claimed self_contained with a null pose
 pointer, which put one video into an every-2-minutes return-refusal loop
-(2026-09-08) -- the manifest now records where the pose actually lives.
+-- the manifest now records where the pose actually lives.
 """
 import json
 from pathlib import Path

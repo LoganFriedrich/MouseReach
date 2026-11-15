@@ -62,7 +62,7 @@ def _close_windows_box(title: str) -> bool:
     WHY: nothing dismisses a message box by itself, so the "Safe to record" box
     stayed up after the recording program was closed and the node went back to
     work -- the last thing the operator saw said the machine was free while it
-    was posing again (seen on the first live test, 2026-09-18). Found by window
+    was posing again (seen on the first live test). Found by window
     title, and only our own titles are ever passed in.
     """
     import ctypes
@@ -97,8 +97,8 @@ def already_on_screen(title: str, find=None) -> bool:
     knows nothing about a box left up by a previous run, by a watcher that was
     restarted, or by a second watcher process on the same machine. Every one of
     those puts another identical box on top of the last, and nothing takes them
-    down, so they stack up until someone closes fifteen of them by hand
-    (reported 2026-09-28). The window itself is the only state all of those
+    down, so they stack up until someone closes them one by one by hand.
+    The window itself is the only state all of those
     share.
     """
     import sys
@@ -211,7 +211,7 @@ class RecordNotices:
         """The pause is over: take our boxes off the screen and arm the next episode.
 
         WHY the boxes are closed: nothing dismisses a message box by itself. On the
-        first live test (2026-09-18) the "Safe to record" box was still on screen
+        first live test the "Safe to record" box was still on screen
         minutes after the recording program was closed and the node had gone back to
         work -- telling the operator the machine was free while it was posing again.
         """

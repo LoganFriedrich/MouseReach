@@ -129,8 +129,8 @@ def test_a_video_already_in_the_archive_is_never_posed_again(node, tmp_path, mon
     """The guard that stops a fresh node re-posing the whole corpus.
 
     Before 'validated' was worked at all, the shared folder was full of
-    finished videos and being ignored was the only thing keeping them quiet.
-    Measured on the lab's own folder: 2,271 of them, ~14 min of GPU each.
+    finished videos and being ignored was the only thing keeping them quiet --
+    each one many GPU-minutes of re-posing.
     """
     import mousereach.archive.core as core
     archive = tmp_path / "Analyzed" / "X"

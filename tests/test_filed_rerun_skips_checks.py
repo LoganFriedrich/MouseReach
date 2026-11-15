@@ -4,11 +4,10 @@ none of the four algorithms, no quality triage and no hand-score comparison
 can only ask about a segment no person has answered -- ground truth beside the
 video counts as an answer (triage_status.gt_resolved_segments).
 
-WHY (Logan, 2026-11-03): "What should happen is that only what calculations
-changed should be recalculated without rerunning the 4 step / triage algo
-parts." And: "Any segment whose boundaries and causal reach and outcome have
-all already been reviewed by a human should never under any condition require
-a human to look at it ever again."
+WHY: only the calculations that changed are recalculated, without re-running
+the four algorithms or triage. And a segment whose boundaries, causal reach
+and outcome have all already been reviewed by a person never requires a
+person to look at it again.
 
 The other side is tested too: a new video, a video back from review, and a
 filed video whose re-run recomputed an upstream stage all still go through

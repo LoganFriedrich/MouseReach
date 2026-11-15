@@ -1,8 +1,8 @@
 """The watcher stands aside while a recording program is running.
 
-WHY: a GPU node in a behaviour room both records videos and poses them. A pose
-saturates the GPU, CPU and disk for ~14 minutes, and a recording that drops
-frames because of it is behaviour that can never be filmed again, while a pose
+WHY: a GPU node may both record videos and pose them. A pose saturates the
+GPU, CPU and disk for many minutes, and a recording that drops frames because
+of it is behavior that can never be filmed again, while a pose
 can always be re-run. A node cannot know a recording schedule, so it watches
 for the recording program itself (watcher.pause_while_running) and pauses
 while it runs. Recording must always win:

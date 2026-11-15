@@ -128,7 +128,7 @@ def _no_real_hand_scores(monkeypatch):
 # level, cohort folders named code+number. Tests written before the filing
 # rules were settings build their fixtures in this shape.
 TEST_FILING_RULES = {
-    "CNT": {"folder": "Connectome", "cohort_folder": "{CODE}{NN}"},
+    "CNT": {"folder": "Project_A", "cohort_folder": "{CODE}{NN}"},
     "ENCR": {"folder": "Enhancer", "cohort_folder": "{CODE}{NN}"},
 }
 

@@ -1,7 +1,7 @@
 """A slot ffmpeg cannot cut says why, and leaves no partial file.
 
-WHY (2026-10-22): the cropper ran ffmpeg through os.system, so ffmpeg's own
-message went to a console nobody reads; eight slots of one collage failed in
+WHY: the cropper ran ffmpeg through os.system, so ffmpeg's own
+message went to a console nobody reads; every slot of one collage could fail in
 the same instant and the log said only "ffmpeg returned 1". A failed run can
 also leave a partial file under the single's name.
 """

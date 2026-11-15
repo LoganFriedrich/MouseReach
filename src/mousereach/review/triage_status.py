@@ -19,7 +19,7 @@ the interactive review tool both ask -- so they can never drift apart:
 The kinematics gate rule the whole project hangs on:
     kinematics run ONLY when segmentation is sound AND every triaged element has
     been specifically addressed by a human. Anything else is held out of the
-    archive + connectome.db.
+    archive + the central database.
 
 All core functions take already-loaded JSON docs (dicts) so they do zero I/O and
 are trivially testable. ``triage_status`` is the dir-based convenience wrapper.
@@ -159,8 +159,8 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
     from the causal-review document alone, so a bundle whose questions GT had
     answered could never satisfy ``fully_resolved`` and never left the queue.
     The review tool skipped it too (``has_gt`` -> nothing to ask), so nobody
-    asked and nobody released. Measured 2026-08-28: 7 bundles stuck exactly
-    there, indefinitely.
+    asked and nobody released, and bundles stuck exactly there,
+    indefinitely.
 
     Returns ``(fully_certified, determined_segment_nums)``, the same shape the
     gate's own ``_gt_certification`` returns, so the two sides cannot drift.
@@ -170,15 +170,14 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
 
     ``extra_dirs``: folders to look in BEFORE the corpus-wide index -- the
     folder the video's files are in (the processing folder of a run, a review
-    bundle). WHY (2026-11-03): ground truth travels with a video's files, but
+    bundle). WHY: ground truth travels with a video's files, but
     the index lists only what was there when it was built, once per process.
     A re-run copies the ground truth into the processing folder AFTER that, so
     the gate could not see it and sent videos whose open segments ground truth
-    had answered back to a person -- 5 of the videos pulled back on
-    2026-11-01..02. Ground truth is a person's answer, and a person's answer
-    is never asked again (Logan, 2026-11-03: "Any segment whose boundaries and
-    causal reach and outcome have all already been reviewed by a human should
-    never under any condition require a human to look at it ever again.").
+    had answered back to a person. Ground truth is a person's answer, and a
+    person's answer is never asked again: a segment whose boundaries, causal
+    reach and outcome have all already been reviewed by a human never requires
+    a human to look at it again.
 
     The segment numbers returned are CURRENT ones: each determined GT outcome
     counts for the current segment its frames cover in the GT's own
@@ -358,11 +357,11 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # Nobody asked, nobody released, and it sat in the queue forever.
     # The release side reads the corpus index only, NOT ground truth inside
     # ``directory`` (the gate reads both, review_gate._gt_certification).
-    # Deliberately, for now (2026-11-03): 16 triage bundles hold ground truth
-    # that answers every open segment and that the index cannot see (it covers
+    # Deliberately, for now: a triage bundle can hold ground truth that
+    # answers every open segment and that the index cannot see (it covers
     # this machine's processing folder, not the shared queues). Reading it here
-    # would release all 16 on the next scan -- a full re-run and filing of each
-    # -- while moving queue items is on hold pending Logan's decision. Pass
+    # would release every such bundle on the next scan -- a full re-run and
+    # filing of each -- so it waits on a decision about moving queue items. Pass
     # extra_dirs=(directory,) once that is decided.
     from .causal_review_io import segments_from_segmentation
     gt_full, gt_segs = gt_resolved_segments(

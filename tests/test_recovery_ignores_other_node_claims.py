@@ -5,7 +5,7 @@ drive, and the shared record's source_path points at it -- so the file EXISTS
 for every node. Recovery used to take "the recorded file exists" as "the file is
 here", adopt the holder's dlc_running row, and the startup reclaim then put it
 back to dlc_queued, so a restarting GPU node posed the video a second time
-(2026-10-28: each GPU restart took the 12 videos the server's CPU pose pool held).
+(each GPU restart took every video another machine's pose pool held).
 """
 from pathlib import Path
 

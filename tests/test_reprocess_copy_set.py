@@ -3,7 +3,7 @@
 WHY: the pose tree can hold scattered analysis jsons from runs whose pose
 path pointed into it, and set-ordered copies let an ALGO segments.json from
 there clobber the results dir's HUMAN one -- a reviewer's hand-set cuts were
-re-segmented away exactly this way (2026-09-08).
+re-segmented away exactly this way.
 """
 from mousereach.watcher.orchestrator import _reprocess_copy_set
 
@@ -39,15 +39,15 @@ def test_single_source_keeps_its_jsons(tmp_path):
 
 
 def test_other_videos_files_are_never_statted(tmp_path, monkeypatch):
-    """WHY (2026-10-22): a cohort folder holds tens of thousands of files and
-    Path.is_file() on every entry cost 175 s per re-run over the share. Only
+    """WHY: a cohort folder can hold tens of thousands of files and
+    Path.is_file() on every entry cost minutes per re-run over the share. Only
     this video's files may be asked anything beyond their name."""
     import pathlib
-    stem = "20250709_CNT0206_P2"
+    stem = "20250101_CNT0206_P2"
     res = tmp_path / "CNT02"
     res.mkdir()
     for i in range(50):
-        (res / f"20250709_CNT0207_P{i}_segments.json").write_text("{}")
+        (res / f"20250101_CNT0207_P{i}_segments.json").write_text("{}")
     (res / f"{stem}.mp4").write_bytes(b"v")
     (res / f"{stem}_segments.json").write_text("{}")
 
@@ -77,7 +77,7 @@ def _held_layout(tmp_path):
 
 
 def test_held_repose_takes_the_video_from_the_posed_folder(tmp_path, monkeypatch):
-    """WHY (2026-11-09): a held video re-run from a staged pose had no video --
+    """WHY: a held video re-run from a staged pose had no video --
     the posed folder contributes only DLC files -- and the triage bundle it
     routed had none for the reviewer to open."""
     from mousereach.watcher import orchestrator as orch

@@ -1,7 +1,7 @@
 """Posed-video intake claims: exclusive, held while the holder runs, let go
 when the video has left the posed folder.
 
-WHY (2026-10-22): the processing server claimed a posed video by writing a
+WHY: the processing server claimed a posed video by writing a
 marker, waiting half a second and reading it back -- two nodes could both
 believe they won -- and deleted every marker after 24 hours whatever its holder
 was doing. A video held for a day in review could then be taken in by another

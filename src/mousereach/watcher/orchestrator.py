@@ -4,7 +4,7 @@ Role-aware orchestrators for the MouseReach watcher.
 Two machines, two roles:
 
   DLCOrchestrator (mode="dlc_pc")
-      NAS/DLC PC with GPU.  Scans NAS for collages -> crop -> DLC -> stage
+      GPU node with NAS access.  Scans NAS for collages -> crop -> DLC -> stage
       video+h5 to NAS Processing/Posed/ folder for the processing server.
 
   ProcessingOrchestrator (mode="processing_server")
@@ -61,7 +61,7 @@ def segmentation_could_not_run(error, dlc_path) -> bool:
     queue means "an algorithm's judgment about this animal's behaviour needs a
     human eye" -- a scientific queue. An unreadable input is not a judgment.
     Routing it there spends the lab's scarcest resource on a file-handle error
-    and, worse, buries the real work: on 2026-08-19, 723 such bundles hid the 21
+    and, worse, buries the real work: hundreds of such bundles once hid the few
     genuine review items sitting in the same folder.
 
     A real seg failure (over-long recording, uniform-fallback boundaries) still
@@ -109,9 +109,9 @@ def archived_pose_candidates(video_id: str, declared, archive_dir) -> list:
     or in the same cohort folder of a per-model tree
     (Analyzed/<project>/DLC Model <N>/<cohort>) -- both computable from the
     video id. Only when no pose from the declared model is there is the whole
-    archive walked, exactly as before. WHY: the walk took 36 s on a quiet
-    server and about 4 minutes on a busy one, for every re-run -- a re-run whose
-    own work takes 3 s (2026-10-22). Never enters Analyzed/Archive/: superseded
+    archive walked, exactly as before. WHY: the walk took from tens of seconds
+    to minutes, for every re-run -- a re-run whose own work takes seconds.
+    Never enters Analyzed/Archive/: superseded
     poses keep their names there (see iter_files).
     """
     from mousereach.archive.core import get_archive_destination
@@ -147,18 +147,16 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
 
     What such a run does NOT do (_run_pipeline): it re-runs no algorithm, no
     quality triage (pipeline.triage.triage_video) and no hand-score comparison
-    (_hand_score_precheck). WHY (Logan, 2026-11-03): "What should happen is
-    that only what calculations changed should be recalculated without
-    rerunning the 4 step / triage algo parts." Those checks judge outputs that
-    were not recomputed, and re-running them is how 8 filed videos came back
-    to a queue when the kinematic extractor went 2.2.0 -> 2.3.0 -> 2.4.0
-    (2026-10-31..11-02).
+    (_hand_score_precheck). WHY: only the calculations that changed are
+    recalculated, without re-running the four algorithm steps or triage.
+    Those checks judge outputs that were not recomputed, and re-running them
+    is how filed videos came back to a queue when only the kinematic extractor
+    changed.
 
     What it still does: the review gate. The gate asks a person only about a
-    segment NO person has answered (Logan, 2026-11-03: "Any segment whose
-    boundaries and causal reach and outcome have all already been reviewed by
-    a human should never under any condition require a human to look at it
-    ever again."). Whether a filed video with a segment no person ever
+    segment NO person has answered: a segment whose boundaries, causal reach
+    and outcome have all already been reviewed by a human never requires a
+    human to look at it again. Whether a filed video with a segment no person ever
     answered should be held at all is an open decision; until it is made the
     gate behaves as it always has for such a segment.
 
@@ -189,7 +187,7 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
         to move (a route that went partly wrong): True; otherwise False.
 
     WHY: the archive step used to adopt the queue's state for ANY folder of
-    that name. Twenty times between 2026-09-10 and 09-29 a return could not
+    that name. Again and again a return could not
     delete a video the review tool still held open, leaving a lone .mp4 in
     the triage folder; the clean re-run that followed (the reviewer's answers
     applied) was then not archived but forced to 'triage', and the return scan
@@ -313,7 +311,7 @@ def _reprocess_copy_set(source_dirs, pose_dir, video_id):
     WHY: the pose tree can hold scattered analysis jsons from runs whose pose
     path pointed into it (pre-b742b58), and set-ordered copies let such an
     ALGO segments.json clobber the results dir's HUMAN one -- which
-    re-segmented away a reviewer's hand-set cuts (2026-09-08). Results jsons
+    re-segmented away a reviewer's hand-set cuts. Results jsons
     come from the results dir alone; the filter is skipped when the pose dir
     is the ONLY source (then its jsons are all we have).
     """
@@ -323,8 +321,8 @@ def _reprocess_copy_set(source_dirs, pose_dir, video_id):
     for d in dirs:
         # The NAME first, then the listing's own file flag. A cohort folder in
         # Analyzed holds tens of thousands of files, and Path.is_file() on every
-        # entry was one network stat each: 175 s of a re-run whose own work
-        # takes 3 s (2026-10-22). DirEntry.is_file() costs no extra round trip
+        # entry was one network stat each: minutes of a re-run whose own work
+        # takes seconds. DirEntry.is_file() costs no extra round trip
         # on Windows, and it is asked only of this video's few files.
         with os.scandir(d) as entries:
             for e in entries:
@@ -374,7 +372,7 @@ class BaseOrchestrator:
     # Whether this role can actually re-run an archived video. Only the
     # processing role has a handler for the 'outdated' state; the DLC role's work
     # loop never selects it. Marking videos outdated on a node that cannot act on
-    # them is not harmless bookkeeping -- the state syncs to connectome.db, other
+    # them is not harmless bookkeeping -- the state syncs to the shared database, other
     # nodes adopt it in recovery, and the video ends up queued on a machine that
     # has no file for it. So the scan is gated on being able to finish the job.
     handles_reprocessing = False
@@ -710,8 +708,8 @@ class BaseOrchestrator:
                 # clock as the scores file's import times. Never created_at or
                 # any other column SQLite fills with CURRENT_TIMESTAMP: that is
                 # UTC, also with no zone, and two zone-less times in different
-                # zones compare wrong by the UTC offset without any error (Beh
-                # PC 1 session, 2026-10-26). processing_started_at, not
+                # zones compare wrong by the UTC offset without any error.
+                # processing_started_at, not
                 # processing_completed_at: a held video is never 'processed'.
                 # The first wait's time is kept, so a re-run of the pipeline
                 # cannot move it later.
@@ -1174,12 +1172,11 @@ class BaseOrchestrator:
         """Move local copies of videos that are already finished out of this
         node's queues, at startup. Returns how many videos were set aside.
 
-        WHY (plan Step 7, 2026-10-22): copies of videos finished long ago --
+        WHY: copies of videos finished long ago --
         their results in Analyzed -- sat in a node's own pose queue and
         processing folder for good: never picked (their rows are finished),
-        never removed. The Lab DLC PC held 34, the oldest from 2025-07; the
-        processing server, where this ran only on GPU nodes at first, held
-        three. A copy moves only when BOTH this node's row says the video is
+        never removed, on GPU nodes and on the processing server alike. A copy
+        moves only when BOTH this node's row says the video is
         finished (in this node type's _FINISHED_STATES) AND
         its processing manifest is in Analyzed where the video belongs. It is
         moved, with every file of that video in the folder, to
@@ -1247,7 +1244,7 @@ class BaseOrchestrator:
     def _work_report(self) -> dict:
         """What this node is doing and has done, for its status report.
 
-        WHY (plan gap G14, 2026-10-22): "working" was written every loop turn
+        WHY: "working" was written every loop turn
         with nothing else, so a node churning on nothing looked exactly like a
         productive one, and a node deep in a 14-minute pose looked like one
         whose report had gone stale. ``doing`` is the item in hand and since
@@ -1298,7 +1295,7 @@ class BaseOrchestrator:
         while not shutdown_event.is_set():
             try:
                 # Asked to stop. Checked here, between work items, so whatever
-                # is in flight has already finished -- a pose is ~14 minutes of
+                # is in flight has already finished -- a pose is many minutes of
                 # GPU and must never be thrown away just to shut down.
                 if self._stop_requested():
                     logger.info("Stop requested (watcher_stop.flag); finishing "
@@ -1351,9 +1348,9 @@ class BaseOrchestrator:
                 # accomplished nothing must NOT count as progress: without
                 # this sleep, one row that fails in milliseconds spins the
                 # loop at full speed and every cycle-cheap assumption
-                # elsewhere collapses (2026-09-04: a stuck priority-1 row +
-                # a cycle-counted scan gate = 15 back-to-back 37-minute
-                # scans overnight, ~6 videos processed in 12 hours).
+                # elsewhere collapses (a stuck priority-1 row + a
+                # cycle-counted scan gate = back-to-back long scans all
+                # night, and almost nothing processed).
                 self._begin_work(work)
                 accomplished = False          # stays False if the dispatch raises
                 try:
@@ -1441,7 +1438,7 @@ class BaseOrchestrator:
                 ReprocessingScanner, local_cache_path)
             # One PERSISTENT scanner instance (shared with any subclass that
             # made its own): its manifest mtime-cache is what turns the
-            # steady-state scan from ~37 minutes of NAS reads into stats.
+            # steady-state scan from a long run of NAS reads into stats.
             if getattr(self, '_reprocess_scanner', None) is None:
                 self._reprocess_scanner = ReprocessingScanner(
                     self.db, nas_root, cache_path=local_cache_path())
@@ -1463,7 +1460,7 @@ class BaseOrchestrator:
         finally:
             # Stamp AFTER the pass: a scan that runs longer than its interval
             # must still leave a full idle gap before the next one, or the
-            # node scans continuously and processes nothing (2026-09-04).
+            # node scans continuously and processes nothing.
             self._last_reprocess_scan = time.monotonic()
 
     # Whether the version scan on this node may register disk-archived videos
@@ -1630,7 +1627,7 @@ class BaseOrchestrator:
         order for the whole lab, so the processing side and the human review
         tools cannot disagree about what matters.
 
-        Re-resolved while running (G1, 2026-10-22): it used to be resolved
+        Re-resolved while running: it used to be resolved
         once per process, so an edit -- including a Save in the priority panel,
         which says machines pick it up within a minute -- reached a watcher
         only when it was restarted. The order is logged at the first resolve
@@ -1760,10 +1757,10 @@ class BaseOrchestrator:
         The name is tested BEFORE asking whether the entry is a file, and the
         listing's own entry answers that (no extra round trip on Windows).
         WHY: intake runs this on the posed-video folder, which holds every
-        posed video waiting for analysis with its pose files -- about 5,000
+        posed video waiting for analysis with its pose files -- thousands of
         entries -- and it used to ask the share "is this a file?" for every
-        one of them before looking at the name: about 120 s per video, of an
-        intake whose copying takes 4 s (2026-10-21)."""
+        one of them before looking at the name: minutes per video, of an
+        intake whose copying takes seconds."""
         files = []
         try:
             with os.scandir(directory) as entries:
@@ -1819,12 +1816,12 @@ class BaseOrchestrator:
 
 
 # =============================================================================
-# DLC ORCHESTRATOR (NAS / DLC PC)
+# DLC ORCHESTRATOR (GPU node)
 # =============================================================================
 
 class DLCOrchestrator(BaseOrchestrator):
     """
-    NAS/DLC PC orchestrator.
+    GPU-node (DLC) orchestrator.
 
     Processes one collage at a time:
     - Scans NAS for new collages
@@ -1988,11 +1985,11 @@ class DLCOrchestrator(BaseOrchestrator):
         a collage another node may cut and pose a second time.
 
         With NO coordinator (the shared database did not answer at startup and
-        has not been reached since) the write is QUEUED, not dropped. WHY
-        (Lab DLC PC, 2026-10-30): this used to return before queuing, so every
+        has not been reached since) the write is QUEUED, not dropped. WHY:
+        this used to return before queuing, so every
         state change between a failed startup connect and the reconnect was
-        lost for good -- a hand-off and the next pose start went unrecorded
-        that morning. The reconnect (_retry_coordinator) then lands the queue
+        lost for good -- a hand-off and the next pose start went unrecorded.
+        The reconnect (_retry_coordinator) then lands the queue
         at the next scan and reconciles this host's rows from the local
         database (_put_missing_on_shared_record), which is the durable copy.
         """
@@ -2057,12 +2054,12 @@ class DLCOrchestrator(BaseOrchestrator):
         touched. Runs at startup and after every reconnect; if the record is
         unavailable, or unavailable part-way, the fill is marked unfinished and
         a later scan resumes it (_finish_shared_record_fill) -- it used to wait
-        for the next restart, and one PC left 668 videos off that way
-        (2026-10-22). Written in batches (insert_video_states_if_absent): one
+        for the next restart, and a node left hundreds of videos off that
+        way. Written in batches (insert_video_states_if_absent): one
         row per connection opened the shared file hundreds of times in seconds.
         Never raises; returns how many rows were added or corrected.
 
-        WHY rows that are behind are corrected too (Lab DLC PC, 2026-10-30):
+        WHY rows that are behind are corrected too:
         a write that fails just before the watcher stops is lost with the
         process, and the old fill only added rows that were missing entirely,
         so a video whose row existed stayed wrong for good -- a video posed and
@@ -2593,9 +2590,8 @@ class DLCOrchestrator(BaseOrchestrator):
         # long since been analysed and filed, and being ignored was the only
         # thing keeping them quiet. Now that the state is live, a node whose
         # database does not know them -- a new GPU machine, or a rebuilt
-        # database -- would queue every one of them for pose. Measured on the
-        # lab's own folder: 2,271 such videos, at about 14 minutes of GPU
-        # each, or roughly 530 GPU-hours of redoing finished work.
+        # database -- would queue every one of them for pose: on a large
+        # archive, hundreds of GPU-hours of redoing finished work.
         #
         # The archive is the authority on what is finished, so ask it, and
         # record the truth instead of burning a card on it. A video held in a
@@ -2954,7 +2950,7 @@ class DLCOrchestrator(BaseOrchestrator):
         node's LOCAL queue. No other machine could see it, so no other machine could
         ever help with it or take it over. If the cropping node then stalled, its
         poses waited for that one machine and nothing else could be done about them:
-        on 2026-09-28 eight videos sat that way for a week on a node that was alive
+        videos sat that way for a week on a node that was alive
         but not progressing, and every other GPU was idle.
 
         That is the one place the design was asymmetric. Singles arriving through the
@@ -3533,7 +3529,7 @@ class DLCOrchestrator(BaseOrchestrator):
         # registers them with the NO_FILE_HERE placeholder. Each such row was
         # still selected, and the handler then spent the whole poll interval
         # discovering there was no file -- one row per poll, so six of them cost
-        # six polls (2 min 41 s measured on a behaviour-room node, 2026-09-18).
+        # six polls (minutes, measured on a GPU node).
         # The retirement itself is right and is left alone; only the cost of
         # rediscovering a fact already written in the row is removed. A row with
         # NO recorded path is NOT skipped: locate_video_file may still find its
@@ -3601,9 +3597,9 @@ class DLCOrchestrator(BaseOrchestrator):
         # (tests/test_adopt_single_offers_rows_with_stale_paths.py)
         #
         # One poll per raced row stopped being small once nodes shared what they
-        # cut (2026-10-21): every node registers every shared video, and each
+        # cut: every node registers every shared video, and each
         # video another node takes first cost every other node one whole work
-        # cycle -- twelve in a row on one node that night while 337 recordings
+        # cycle -- many in a row on one node while hundreds of recordings
         # waited to be cut. So the rows are first checked against a LISTING of
         # the places the handler takes a video from (_split_gone_singles: the
         # same places locate_video_file searches, plus this node's own claim
@@ -3874,7 +3870,7 @@ class DLCOrchestrator(BaseOrchestrator):
             if not source_path.exists():
                 raise FileNotFoundError(f"Collage not found: {source_path}")
 
-            # Copy collage to local working dir (A:)
+            # Copy collage to local working dir
             local_collage = self.working_dir / source_path.name
             logger.info(f"Copying collage to working dir: {source_path} -> {local_collage}")
 
@@ -3963,7 +3959,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 # cropped and registered but the DLC_Queue copy never succeeded --
                 # and the cleanup below deletes the working-dir crop regardless, so
                 # a 'validated' child has no file anywhere. Re-cropping is the only
-                # way to recover it. (Colin's DLC PC had 342 stuck exactly here.)
+                # way to recover it. (One GPU node had hundreds stuck exactly here.)
                 prior_state = (self.db.get_video(video_id) or {}).get('state')
                 if prior_state and prior_state not in ('discovered', 'validated', 'failed'):
                     videos_skipped += 1
@@ -4013,8 +4009,8 @@ class DLCOrchestrator(BaseOrchestrator):
 
             # A slot ffmpeg could not cut is a collage NOT cropped. WHY: it was
             # recorded 'cropped' anyway ("0 singles" when every slot failed), so
-            # nothing ever retried it -- 9 sessions of two collages were never
-            # cut (found 2026-10-22). Clean the working copies here (the failure
+            # nothing ever retried it -- whole sessions were never cut.
+            # Clean the working copies here (the failure
             # path below does not), then fail the collage the usual way: it is
             # retried while its file is still in the intake (state.py, up to
             # max_retries), the singles already cut are skipped on the retry, and
@@ -4458,7 +4454,7 @@ class DLCOrchestrator(BaseOrchestrator):
     def _run_local_pipeline(self, work: dict):
         """Run seg/reach/outcomes locally after DLC, then archive directly.
 
-        When also_process=True, DLC PCs run the full pipeline locally instead
+        When also_process=True, GPU nodes run the full pipeline locally instead
         of staging to NAS for the processing server. Reuses the same pipeline
         functions as ProcessingOrchestrator._run_pipeline().
 
@@ -4478,9 +4474,9 @@ class DLCOrchestrator(BaseOrchestrator):
         video_data = work['data']
 
         # dlc_output_path has bitten this pipeline twice, in opposite directions:
-        # Path(None) raised and failed 950 of 954 videos on the DLC PC, and the
+        # Path(None) raised and failed nearly every video on a GPU node, and the
         # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
-        # missing-pose guard stopped firing and 723 videos were routed to human
+        # missing-pose guard stopped firing and hundreds of videos were routed to human
         # review with "[Errno 13] Permission denied: '.'". locate_pose_file
         # (through resolve_pose_input) returns a real file or None and never a
         # placeholder path.
@@ -4502,9 +4498,9 @@ class DLCOrchestrator(BaseOrchestrator):
         # make the pose's own folder the working directory -- so any video
         # whose pose resolved into the archive's model tree scattered its
         # results there while the review bundle was assembled from stale
-        # copies in Processing (reviewer diagnosis, 2026-09-08: a corrected
-        # video's PERFECT re-detection sat in the pose tree while the queue
-        # showed August data with 120 reaches outside their segments). Same
+        # copies in Processing (found by a reviewer: a corrected video's
+        # PERFECT re-detection sat in the pose tree while the queue showed old
+        # data with reaches outside their segments). Same
         # defect as _run_pipeline's, same cure: stage the pose locally,
         # always, and work in the local processing dir.
         processing_dir = Path(Paths.PROCESSING)
@@ -4521,7 +4517,7 @@ class DLCOrchestrator(BaseOrchestrator):
         # The video must sit beside the pose too: the review gate opens it
         # from here, a deep-review bundle is built from here, and the archive
         # step files from here. Without this copy the gate saw no video and
-        # the archive filed a bundle with no results (2026-09-12).
+        # the archive filed a bundle with no results.
         # search_staging=False, as for the pose above: never Processing/Posed.
         local_mp4 = processing_dir / f"{video_id}.mp4"
         if not local_mp4.exists():
@@ -4686,7 +4682,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 logger.info(f"Local pipeline held for hand scores: {video_id}")
                 return True
 
-            # GATE: nothing reaches kinematics / connectome.db until it is CLEAN.
+            # GATE: nothing reaches kinematics / the central database until it is CLEAN.
             # seg soft-fail / QC-critical -> DEEP_REVIEW; unresolved triage ->
             # TRIAGE. A held video's whole bundle is MOVED out of Processing; STOP.
             decision = run_gate(
@@ -4749,7 +4745,7 @@ class DLCOrchestrator(BaseOrchestrator):
             # stages the pose and the video there, see _run_local_pipeline),
             # so that is where the results are. Archiving from DLC_Queue --
             # which holds only the mp4 and the raw pose -- filed a video
-            # with no manifest, segments, reaches or outcomes (2026-09-12).
+            # with no manifest, segments, reaches or outcomes.
             source_dir = Path(Paths.PROCESSING) if Paths.PROCESSING else dlc_queue
             result = archive_video(
                 video_id,
@@ -4931,8 +4927,8 @@ class DLCOrchestrator(BaseOrchestrator):
         logger.info(f"Staging {video_id} to NAS: {self.staging_dir}")
 
         # A row can reach here with no path at all. Cross-node recovery adopts
-        # another machine's state out of connectome.db, which carries no file
-        # paths, so this node can be told "20251225_CNT0405_P4 is dlc_complete"
+        # another machine's state out of the shared database, which carries no file
+        # paths, so this node can be told "20250101_CNT0101_P1 is dlc_complete"
         # about a video it has never held. Path(None) then raises TypeError, the
         # video is marked failed, and the next cycle picks it up again.
         #
@@ -4997,8 +4993,8 @@ class DLCOrchestrator(BaseOrchestrator):
             # Mark as archived (done on this machine). Record the STAGED pose
             # path too: until 2026-09-12 only current_path was updated and
             # dlc_output_path kept pointing at the local DLC_Queue file the
-            # move above had just removed -- 339 of 458 archived rows on the
-            # lab GPU node named a pose file that no longer existed, and any
+            # move above had just removed -- most archived rows on a GPU node
+            # named a pose file that no longer existed, and any
             # reader that trusts the recorded path (rather than globbing the
             # folder) concluded those videos had no pose. The pose recorded is
             # one THIS call staged, never whatever else sits in staging.
@@ -5142,8 +5138,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # and checks it again -- so nothing that still waits drops off.
         self._score_waits = {}
         self._write_score_attention()
-        # Copies left in Processing after the video was filed into Analyzed
-        # (three on this server from 2026-08-26, found 2026-10-22).
+        # Copies left in Processing after the video was filed into Analyzed.
         self._set_aside_finished_copies()
         return reclaimed
 
@@ -5159,9 +5154,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         WHY: a video's record goes to watcher_central.db right after it is
         archived, and a failed export (a locked, busy or unreachable share) is
-        only a warning -- five archived videos from the August and September
-        outages were missing from the shared record for good, found
-        2026-10-22. This check first ran only at start and only looked for a
+        only a warning -- archived videos from share outages were missing
+        from the shared record for good. This check first ran only at start and only looked for a
         video with no row at all, from any machine. But a video posed on a GPU
         PC already has that machine's row, so a failed export from here was
         never sent again: the comparison is with this machine's own rows, and
@@ -5207,7 +5201,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         super().__init__(config, db)
 
-        # Where the DLC PC stages completed files on NAS
+        # Where the GPU nodes stage completed files on NAS
         self.staging_dir = Paths.DLC_STAGING
         if self.staging_dir:
             logger.info(f"Watching staging directory: {self.staging_dir}")
@@ -5226,11 +5220,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # used to fire a second, cycle-counted copy of the same scan; two
         # schedulers meant double NAS load, and cycle counts made the cadence
         # depend on an assumption about loop speed that nothing enforces.
-        # 2026-09-01: back-to-back scans "fixed" by raising the cycle count.
-        # 2026-09-04: recurred anyway -- a stuck priority-1 row failed in
-        # 50 ms every cycle, cycles became free, and the counter fired the
-        # 37-minute scan 15 times back-to-back overnight (~9.5 of 12 hours
-        # scanning, ~6 videos processed). Seconds cannot be raced.
+        # Back-to-back scans were once "fixed" by raising the cycle count, and
+        # recurred anyway -- a stuck priority-1 row failed in milliseconds
+        # every cycle, cycles became free, and the counter fired the long
+        # scan back-to-back all night (most of the night scanning, almost
+        # nothing processed). Seconds cannot be raced.
         self._reprocess_scanner = None
         # The review-return scan is a cheap listdir over two queue folders and
         # is how human-cleared work re-enters the pipeline: often, on its own
@@ -5239,13 +5233,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Collage retirement does two full pipeline-tree scans; rare on
         # purpose. (Its old expression -- every 6th reprocess scan -- had
         # already silently drifted from ~30 min to ~3 h when the scan cadence
-        # changed on 2026-09-01; 3 h is the deployed behaviour and is kept,
+        # changed; 3 h is the deployed behaviour and is kept,
         # now stated explicitly.)
         self._retire_min_s = 3 * 3600
         self._last_review_return_mono = 0.0
         # The first retirement pass runs one interval after start, not at it.
-        # WHY: it reads every processing manifest in Analyzed (14 minutes on
-        # 2026-10-21 with a busy share), the work loop waits for it, and a
+        # WHY: it reads every processing manifest in Analyzed (many minutes
+        # with a busy share), the work loop waits for it, and a
         # restart is exactly when a backlog is waiting. Retiring a finished
         # recording is housekeeping; nothing waits on it.
         self._last_retire_mono = time.monotonic()
@@ -5296,9 +5290,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
         list the whole folder again for each video in it (once for a pose
         file, once for a half-written file). The folder sits on a shared
         drive and holds every posed video waiting to be analysed with its
-        pose files; with 1,263 videos waiting that was over a thousand
-        listings per cycle, 566 seconds of a 1,094-second cycle whose actual
-        work took 17 (2026-10-21, the first cycle timed by cycle_timer).
+        pose files; with a large backlog waiting that was over a thousand
+        listings per cycle, about half of a cycle whose actual work took
+        seconds (measured with cycle_timer).
         """
         staging = self.staging_dir
         front_door = Paths.SINGLE_ANIMAL_OUTPUT
@@ -5545,12 +5539,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # minutes of the restart, from that position), but depends on the
         # supply, not on the video's own wait being over. A due retry is rare
         # (one per video per hour, three at most) and costs intake one cycle.
-        # WHY this bucket exists (Logan, 2026-10-30, on an algorithm crash: "fail it,
-        # then do it again another time"): a crash in segmentation, reach or
+        # WHY this bucket exists (an algorithm crash: fail it, then do it again
+        # another time): a crash in segmentation, reach or
         # outcome detection marked the video 'failed' and nothing ever looked
-        # at that state again, so a transient fault -- the two failures on the
-        # server on 2026-10-23 were both "[WinError 5] Access is denied" on a
-        # temp file the step had just written -- held a video for ever until a
+        # at that state again, so a transient fault -- e.g. "[WinError 5]
+        # Access is denied" on a temp file the step had just written -- held a video for ever until a
         # person ran mousereach-watch-reprocess. A failed video is retried
         # once its wait is over and while it has retries left
         # (_failed_retry_due); after that it stays failed and is listed by
@@ -5636,9 +5629,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # 'full' means the video needs a genuinely NEW pose, which this node
             # cannot make -- it has no CUDA. It used to be pushed into
             # 'dlc_queued' here, and that went nowhere useful: this node's work
-            # loop never selects dlc_queued, the DLC PC's DLC_Queue is a LOCAL
+            # loop never selects dlc_queued, a GPU node's DLC_Queue is a LOCAL
             # folder it cannot see, and the only thing that crossed machines was
-            # the state itself, through connectome.db -- where cross-node
+            # the state itself, through the shared database -- where cross-node
             # recovery turned it into a pathless row on the GPU node that
             # crashed on Path(None) and came back every cycle.
             #
@@ -5767,7 +5760,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         it goes and once when it is back, not every cycle.
 
         WHY: re-running an outdated video starts from its archived results. When
-        the shared drive dropped (2026-09-09) the re-run step marked each
+        the shared drive dropped, the re-run step marked each
         outdated video FAILED, about one a second -- hundreds of infrastructure
         failures recorded as if they were the videos' fault, the class of error
         a failed state must never mean. With the archive out of reach, nothing
@@ -5802,8 +5795,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
           * neither: nothing here can produce a pose, so the video is marked
             failed, saying plainly that its video is missing too.
 
-        WHY: this used to mark the video failed outright. On 2026-09-01 the
-        bench-disagreement router had moved three videos' bundles -- pose
+        WHY: this used to mark the video failed outright. Once the
+        bench-disagreement router had moved videos' bundles -- pose
         included -- into triage while their rows still said 'archived'; the
         version scan saw empty results, marked them outdated, and this step
         failed them. A missing pose is a pose to make or a file to follow, not
@@ -5882,8 +5875,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         source_h5 = select_pose_file(h5_files, expected_scorer=declared or None)
 
         # The pose file lives in its OWN per-model tree
-        # (Analyzed/Connectome/DLC Model 4/CNT01), not beside the video's results
-        # (Analyzed/Connectome/CNT01). Copying from the pose file's parent
+        # (Analyzed/<project>/DLC Model 4/<cohort>), not beside the video's results
+        # (Analyzed/<project>/<cohort>). Copying from the pose file's parent
         # therefore brought over three files and nothing else, with two
         # consequences that both looked like correct behaviour:
         #
@@ -5926,7 +5919,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # A partial working set must not reach the pipeline: a stale local
             # twin of a file that failed to copy would be silently reused by
             # the stage-reuse checks (a locked _reaches.json nearly caused
-            # exactly that on 2026-09-04). Fail loudly instead; safe_copy has
+            # exactly that). Fail loudly instead; safe_copy has
             # already absorbed transient locks with retries.
             self.db.mark_failed(
                 video_id,
@@ -6189,8 +6182,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 # files while another node is already looking for them, so the set
                 # is briefly incomplete. Marked unresolvable, it costs no retry and
                 # the intake scan drives it again once the files are all there.
-                # (2026-09-19: one video sat 'failed' for nine days after a race of
-                # about one minute, with its files present the whole time.)
+                # (A video once sat 'failed' for days after a race of about one
+                # minute, with its files present the whole time.)
                 self.db.mark_unresolvable(
                     video_id,
                     "no files for it in %s when intake looked" % source_dir)
@@ -6266,9 +6259,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
         video_data = work['data']
 
         # dlc_output_path has bitten this pipeline twice, in opposite directions:
-        # Path(None) raised and failed 950 of 954 videos on the DLC PC, and the
+        # Path(None) raised and failed nearly every video on a GPU node, and the
         # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
-        # missing-pose guard stopped firing and 723 videos were routed to human
+        # missing-pose guard stopped firing and hundreds of videos were routed to human
         # review with "[Errno 13] Permission denied: '.'". resolve_pose_input
         # returns a real file or None and never a placeholder path.
         dlc_path = resolve_pose_input(
@@ -6279,10 +6272,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return
 
         # Stage outputs land BESIDE the pose file, so a pose outside the local
-        # processing dir scatters results into whatever tree holds it -- three
+        # processing dir scatters results into whatever tree holds it --
         # restored videos wrote into the archive's model folder exactly this
-        # way and archived thin bundles (2026-09-08; the staleness net caught
-        # them). Stage the pose locally first, always.
+        # way and archived thin bundles (the staleness net caught them). Stage the pose locally first, always.
         if Path(dlc_path).parent != Path(self.processing_dir):
             local = Path(self.processing_dir) / Path(dlc_path).name
             if not local.exists():
@@ -6481,9 +6473,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self._set_aside_stale_manifest(self.processing_dir, video_id, e)
 
         # --- Filed video, only a downstream calculation changed ---
-        # filed_rerun_reuses_analysis says when and why (Logan, 2026-11-03:
-        # only what changed is recalculated, "without rerunning the 4 step /
-        # triage algo parts"). Such a run skips the quality triage and the
+        # filed_rerun_reuses_analysis says when and why (only what changed is
+        # recalculated, without re-running the four algorithm steps or
+        # triage). Such a run skips the quality triage and the
         # hand-score comparison; the gate still runs and can only ask about a
         # segment no person has answered.
         try:
@@ -6552,7 +6544,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _gate_held(self, video_id, run_gate, DECISION_CLEAN, qc_verdict,
                    pipeline_duration) -> bool:
         """Run the review gate; True when it held the video (moved to a queue)."""
-        # --- GATE: nothing reaches kinematics / connectome.db until it is CLEAN ---
+        # --- GATE: nothing reaches kinematics / the central database until it is CLEAN ---
         # seg soft-fail or QC-critical -> DEEP_REVIEW; any unresolved triaged
         # element -> TRIAGE. A held video's whole bundle is MOVED out of
         # Processing into the queue; STOP here -- no kinematics, no DB sync, no
@@ -6607,7 +6599,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # and by design it cannot write this DB then -- so the state stays
         # 'processed' while the outputs are already in the queue. Archiving the
         # leftovers then entombs a lone mp4 in Analyzed and stamps the video
-        # 'archived' (2026-08-31: 19 videos reconciled by hand). If the bundle
+        # 'archived' (videos then had to be reconciled by hand). If the bundle
         # is in a queue on disk, adopt that as the state and skip the archive --
         # but only if the folder really holds this run (see
         # queue_folder_holds_this_run): a husk from an earlier round is left
@@ -6660,7 +6652,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Let go of the outcome detector's cached video handle first: it keeps
         # the LAST processed mp4 open until the next video replaces it, and the
         # move below then fails with "being used by another process" until it
-        # does (218 videos cycled through archive backoff this way, 2026-08-31).
+        # does (hundreds of videos cycled through archive backoff this way).
         try:
             from mousereach.outcomes.v6_cascade.cv_artifact_gate import release_cap_cache
             release_cap_cache()
@@ -6729,8 +6721,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # skip_ready_check: state='processed' already encodes what the
             # readiness gate re-derives from files on disk -- and a retry
             # after a partially-failed attempt MUST skip it, because the
-            # outputs it checks for are already at the destination (the
-            # 2026-08-30 stuck-retry loop). The DLC-node archive path has
+            # outputs it checks for are already at the destination (a
+            # stuck-retry loop). The DLC-node archive path has
             # always passed it for the same reason.
             result = archive_video(video_id, dry_run=False, verbose=False,
                                    skip_ready_check=True)
@@ -6774,7 +6766,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 # Other errors are retriable -- but not on EVERY cycle: a video
                 # that cannot be archived usually cannot be archived a second
                 # later either, and the loop ran at roughly one attempt per
-                # second from February to August, logging 326,235 failures
+                # second for months, logging hundreds of thousands of failures
                 # against a handful of videos and burying everything else in the
                 # log. Back off, and say so once per escalation rather than once
                 # per attempt.

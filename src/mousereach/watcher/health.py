@@ -168,10 +168,10 @@ def restart_watcher(stop_delay: float = 3.0, verify_wait: float = 12.0,
     # Match BOTH spellings. A watcher started from the console script is
     # 'mousereach-watch.exe' with a python child whose command line says the
     # same; only a watcher started as `python -c "...main_watch()"` contains
-    # 'main_watch'. Matching one spelling meant this stopped nothing on half
-    # the machines in the lab, and then reported success -- the replacement
+    # 'main_watch'. Matching one spelling meant this stopped nothing on some
+    # machines, and then reported success -- the replacement
     # exited on the singleton mutex and the OLD code kept running (found on a
-    # GPU node, 2026-09-13).
+    # GPU node).
     # Same fast lookup as watcher_running (see _watcher_processes for why).
     targets = _watcher_processes()
 

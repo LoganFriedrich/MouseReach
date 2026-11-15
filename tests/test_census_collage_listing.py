@@ -1,8 +1,8 @@
 """The census finds collages by NAME, without asking the share about each file.
 
-WHY (2026-10-23): collect_collages called is_file() on every entry under its
-roots -- one round trip to the share per file, about 164,000 under one archive
-root -- and the nightly census ran past its hour. It now uses the walk's own
+WHY: collect_collages called is_file() on every entry under its
+roots -- one round trip to the share per file, of which an archive root can
+hold a great many -- and the nightly census ran past its hour. It now uses the walk's own
 listing. These tests pin that the result is unchanged: recursive, files only,
 collage-shaped names only. Built under tmp_path.
 """

@@ -73,7 +73,7 @@ review window needs no access to the scores file at all.
 
 WHERE THE SCORES COME FROM
 --------------------------
-A CSV file another tool writes (in this lab's setup, the database tool),
+A CSV file another tool writes (for example a database tool),
 one row per hand-scored pellet with columns video_key (the session as this
 pipeline names its video: 20250709_ABC0207_P1), pellet (1-20) and score
 (0 = not touched, 1 = displaced, 2 = retrieved), and beside it a JSON file
@@ -466,7 +466,7 @@ def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     scored by hand, so there is nothing to compare and the video is filed.
     Before that import it only waits. WHY file rather than hold: a record
     that does not exist cannot disagree with the video, and the video is the
-    only record of that session (Logan, 2026-10-26)."""
+    only record of that session."""
     if verdict.status != WAITING or not ready_since:
         return False
     if verdict.last_import:

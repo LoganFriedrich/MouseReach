@@ -1,7 +1,6 @@
 """Duplicate-boundary repair: a duplicate boundary value becomes a zero-length
 segment downstream (no reaches, nan calibration, automatic residual triage),
-so segmentation must never emit one. 21 videos across the corpus carried one
-as of 2026-09-01, from three producers: SABL double-snap, end-clamp padding,
+so segmentation must never emit one. Three producers were found: SABL double-snap, end-clamp padding,
 tray-gate projection."""
 
 from mousereach.segmentation.core.segmenter_multi import _dedupe_boundaries

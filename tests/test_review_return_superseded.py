@@ -1,9 +1,9 @@
 """A queue bundle of a video that has since been archived is filed away.
 
-WHY (2026-10-22): between 2026-09-10 and 09-29 twenty videos a person had
+WHY: videos a person had
 cleared were sent back to deep review as a bare .mp4 (a file a return could
 not delete while the review tool held it open; see
-orchestrator.queue_folder_holds_this_run). Fifteen were cleared a second time
+orchestrator.queue_folder_holds_this_run). Most were cleared a second time
 by hand; others sat in the queues behind bundles older than their archived
 results. Only an archived video's bundle that no person wrote in qualifies,
 and bundles the bench-disagreement router puts in a queue are never caught.
@@ -73,7 +73,7 @@ def _note():
 
 
 def test_a_results_free_husk_of_an_archived_video_leaves_deep_review(tmp_path, monkeypatch):
-    # 20250808_CNT0113_P2: diverted after its clean run, so it is NEWER than
+    # Diverted after its clean run, so it is NEWER than
     # the archived results -- what marks it is that it holds no results.
     triage, deep, db = _setup(tmp_path, monkeypatch)
     _files(deep / STEM, HUSK, age_s=60)

@@ -37,10 +37,10 @@ def _resolve_db_path():
 
     The daemon honoured the node's config override (db_path in
     ~/.mousereach/config.json, set because SQLite over a network share loses
-    writes); every other command hardcoded the fallback. On this machine that
-    meant seven commands -- status, reprocess, quarantine, process-animal,
+    writes); every other command hardcoded the fallback. That meant seven
+    commands -- status, reprocess, quarantine, process-animal,
     version-check, crystallize, uncrystallize -- silently read a database last
-    written in February while the daemon wrote to a different file.
+    written months earlier while the daemon wrote to a different file.
     Crystallize, the brake that protects published videos from reprocessing,
     would therefore find no videos and protect nothing.
 
@@ -190,7 +190,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     # It takes no words, only the options above. A word such as "stop" or
     # "start" was silently ignored: "mousereach-watch stop" STARTED a watcher
     # (or, with one already running, said so and did nothing) -- an install
-    # script on the lab PC used it meaning to stop one (found 2026-10-22).
+    # script used it meaning to stop one.
     # Refuse, and say how stopping actually works.
     words = [a for a in args if not a.startswith("-")]
     if words:
@@ -231,7 +231,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     if config.mode == 'processing_server':
         mode_label = "Processing Server"
     else:
-        mode_label = "DLC PC"
+        mode_label = "GPU node (DLC)"
 
     print("=" * 70)
     print(f"MouseReach Watcher - {mode_label} Mode")
@@ -316,7 +316,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         if not Paths.PROCESSING:
             problems.append("PROCESSING path not configured")
     else:
-        # DLC PC needs: the shared pipeline root, DLC config, ffmpeg, GPU.
+        # A GPU node needs: the shared pipeline root, DLC config, ffmpeg, GPU.
         # NAS_ROOT is what every shared path hangs off; a lab that configured
         # only nas_root (the documented setting) used to be refused here for
         # lacking the older nas_drive.
@@ -372,7 +372,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 
     # SINGLE-INSTANCE GUARD. Two watchers on one state database is never a
     # valid configuration (interleaved work selection, double-claimed items),
-    # and on 2026-09-01 a day of deploy kill/restart cycles showed how easily
+    # and a day of deploy kill/restart cycles showed how easily
     # a second instance can go unnoticed: process filters based on command
     # lines miss instances whose command line is not visible. A named mutex
     # is per-machine, costs nothing, and the OS releases it on ANY exit,
@@ -1624,7 +1624,7 @@ def main_toggle():
 
     # -h/--help must never ACT. The CLI reference generator runs every command
     # with --help; before this guard, that silently toggled the LIVE watcher
-    # into filming mode (it paused production twice on 2026-08-30). Unknown
+    # into filming mode (it paused production). Unknown
     # flags likewise refuse to toggle instead of toggling by accident.
     if '-h' in args or '--help' in args:
         print(main_toggle.__doc__)
@@ -2149,7 +2149,7 @@ def main_crystallize():
     """Lock archived videos against reprocessing.
 
     Usage:
-        mousereach-crystallize --cohort CNT01 --label "PNAS_2026"
+        mousereach-crystallize --cohort CNT01 --label "PAPER_2026"
         mousereach-crystallize --videos "vid1,vid2" --label "prelim"
         mousereach-crystallize --list                 Show crystallized videos
     """
@@ -2161,7 +2161,7 @@ Lock archived videos against automatic reprocessing (for publications).
 
   --cohort C    Every archived video of this cohort (e.g. CNT01).
   --videos LIST Comma-separated video ids.
-  --label NAME  Required label naming the lock (e.g. "PNAS_2026").
+  --label NAME  Required label naming the lock (e.g. "PAPER_2026").
   --list        Show what is crystallized, by label.
 """)
     args = sys.argv[1:]
@@ -2186,11 +2186,11 @@ Lock archived videos against automatic reprocessing (for publications).
         print("Options:")
         print("  --cohort COHORT   Crystallize all archived videos for cohort")
         print("  --videos V1,V2    Crystallize specific video IDs")
-        print("  --label LABEL     Human-readable label (e.g. 'PNAS_2026_submission')")
+        print("  --label LABEL     Human-readable label (e.g. 'PAPER_2026_submission')")
         print("  --list            Show currently crystallized videos")
         print()
         print("Examples:")
-        print("  mousereach-crystallize --cohort CNT01 --label 'PNAS_2026'")
+        print("  mousereach-crystallize --cohort CNT01 --label 'PAPER_2026'")
         print("  mousereach-crystallize --videos '20250624_CNT0115_P2' --label 'test'")
         print("  mousereach-crystallize --list")
         sys.exit(1)
@@ -2267,7 +2267,7 @@ def main_uncrystallize():
     """Unlock crystallized videos (allows reprocessing again).
 
     Usage:
-        mousereach-uncrystallize --label "PNAS_2026"
+        mousereach-uncrystallize --label "PAPER_2026"
         mousereach-uncrystallize --videos "vid1,vid2"
     """
     _maybe_print_help("""
@@ -2296,7 +2296,7 @@ Unlock crystallized videos so reprocessing can touch them again.
         print("  --videos V1,V2    Uncrystallize specific video IDs")
         print()
         print("Examples:")
-        print("  mousereach-uncrystallize --label 'PNAS_2026'")
+        print("  mousereach-uncrystallize --label 'PAPER_2026'")
         sys.exit(1)
 
     from mousereach.config import require_processing_root
@@ -2335,7 +2335,7 @@ def _pathless_working_rows(db):
     """Rows sitting in a working state with no usable file recorded.
 
     These are the phantoms: videos this node was told about by another node
-    through connectome.db, which carries state but no file paths. The work loop
+    through the shared database, which carries state but no file paths. The work loop
     picks them up every cycle and there is nothing there to work on.
     """
     marker = getattr(db, 'NO_FILE_HERE', '(no file on this node)')

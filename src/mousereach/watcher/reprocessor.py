@@ -50,7 +50,7 @@ def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
     One walk of the archive tree, not one per video. Pose files do NOT live
     beside a video's results -- results are in Analyzed/{project}/{cohort}/ and
     pose is in Analyzed/{project}/DLC Model N/{cohort}/ -- so there is no cheap
-    per-video path to check, and 2,600 separate globs over the NAS is not a scan
+    per-video path to check, and thousands of separate globs over the NAS is not a scan
     anyone would wait for.
 
     The walk never enters Analyzed/Archive/: a superseded pose there keeps its
@@ -97,9 +97,8 @@ class ReprocessingScanner:
         self.db = db
         self.nas_root = Path(nas_root)
         self.archive_dir = self.nas_root / "Analyzed"
-        # Manifest cache keyed by mtime: a steady-state scan re-read ~1,200
-        # unchanged manifests over the NAS every pass (~37 minutes measured
-        # 2026-09-04) to report "0 outdated" every time. A stat is far cheaper
+        # Manifest cache keyed by mtime: a steady-state scan re-read every
+        # unchanged manifest over the NAS every pass (over half an hour) to report "0 outdated" every time. A stat is far cheaper
         # than a read; only changed manifests are re-parsed. The cache only
         # pays off on a PERSISTENT scanner instance -- both orchestrator call
         # sites hold one.
@@ -107,12 +106,12 @@ class ReprocessingScanner:
         # Review fingerprints keyed by (path, size, modified time): the
         # pending-review check compares a review's sha256 with the one the
         # archived kinematics applied, and re-hashing every review every scan
-        # cost ~3 minutes a pass on 2026-10-21. Only a changed file is re-read.
+        # cost minutes a pass. Only a changed file is re-read.
         self._review_sha_cache: dict = {}
         # The in-file reviewed_at of reviews applied before the applied_review
         # stamp existed, keyed the same way. WHY: for those videos the check
-        # opened the review on every pass to read one field -- 1,614 files and
-        # ~107 s of a ~220 s warm pass, measured 2026-10-22.
+        # opened the review on every pass to read one field -- about half of
+        # a warm pass.
         self._reviewed_at_cache: dict = {}
         # Rebuilt at the start of every scan (see _deep_manifest_index): the
         # tree changes between passes, so this one is never persisted.
@@ -122,7 +121,7 @@ class ReprocessingScanner:
 
     # The three caches above, kept on local disk between watcher runs. WHY: the
     # first scan after a start re-read every manifest and review over the share
-    # -- 623 s on 2026-10-22, during which the work loop waits -- although
+    # -- many minutes, during which the work loop waits -- although
     # nearly all of them were unchanged since the last run. Every entry is
     # still checked against the file's current listing (modified time, and
     # path + size for reviews) before use, so a stale entry is never trusted;
@@ -251,8 +250,8 @@ class ReprocessingScanner:
 
         # ONE enumeration for the whole scan instead of a per-video directory
         # walk. WHY: _load_manifest globs the tree per video, and the pending-
-        # review check rglobbed the WHOLE archive per video; at 563 archived +
-        # 1,203 outdated rows a single scan issued ~1,800 directory walks over
+        # review check rglobbed the WHOLE archive per video; with a few
+        # thousand rows a single scan issued thousands of directory walks over
         # the NAS and ran for upwards of half an hour -- and the orchestrator
         # processes nothing while a scan runs, so the stall was total.
         manifest_index: dict = {}
@@ -268,9 +267,8 @@ class ReprocessingScanner:
         # RECONCILE DISK AGAINST DB before scanning: the archive on disk is
         # the ground truth for what exists; this db is one node's ledger.
         # Videos archived by ANOTHER node (also_process GPU machines) have no
-        # row here, so no version scan anywhere ever covered them -- 907
-        # accumulated exactly this way before being adopted by hand
-        # (2026-09-08, reviewer diagnosis). Adopt them automatically so the
+        # row here, so no version scan anywhere ever covered them -- hundreds
+        # accumulated exactly this way before being adopted by hand. Adopt them automatically so the
         # blind spot cannot return on the next version bump. Bounded per scan;
         # the remainder is adopted on subsequent passes, and freshly adopted
         # rows are version-checked on the NEXT pass (this pass's archived
@@ -337,14 +335,12 @@ class ReprocessingScanner:
             summary['scanned'] += 1
 
             # E (Easy) and F (Flat) trays are not re-run for version changes.
-            # They are processed (last, never skipped -- Logan, 2026-10-21), but
+            # They are processed (last, never skipped), but
             # what they need is only the session's reaches and attention: they
             # are not segmented, and neither pellet outcomes nor kinematics are
-            # made for them (Logan, 2026-10-23; config.is_outcome_free_tray). A
+            # made for them (config.is_outcome_free_tray). A
             # newer segmenter, outcome detector or extractor gives them nothing
-            # they use, and re-posing them would spend GPU time on it (all 31
-            # videos in the archive that would genuinely need a new pose are
-            # Easy-tray). They are counted and named, not silently dropped.
+            # they use, and re-posing them would spend GPU time on it. They are counted and named, not silently dropped.
             #
             # ONE exception: a filed one with no features file has never had
             # its session file (FeatureExtractor.extract_session_only) -- every
@@ -412,9 +408,9 @@ class ReprocessingScanner:
                         if comparison['needs_full_reprocess']:
                             # The manifest names an older DLC model. That does
                             # NOT always mean the video has to go back on a GPU.
-                            # The bulk re-pose already ran: 1,233 of the 1,264
-                            # videos whose manifests say shuffle1 have the
-                            # declared shuffle3 pose sitting in the archive. What
+                            # After a bulk re-pose, nearly every video whose
+                            # manifest names the older model has the declared
+                            # model's pose sitting in the archive. What
                             # is stale about them is the ANALYSIS -- segments,
                             # reaches and outcomes were computed from the old
                             # pose -- so every post-DLC stage must re-run, but
@@ -487,9 +483,9 @@ class ReprocessingScanner:
         # TWO-WAY DOOR: rows already marked 'outdated' are re-checked against
         # the declaration and un-marked when they compare current. WHY: the
         # loop above only walks 'archived', so 'outdated' was a one-way door --
-        # two August 2026 declaration edits with no algorithm change behind
-        # them marked 1,255 rows, and no corrective declaration could ever
-        # undo it (roughly 330 phantom marks at the time this was added).
+        # two declaration edits with no algorithm change behind them marked
+        # a large part of the corpus, and no corrective declaration could ever
+        # undo it.
         # With compatible_versions (versions.py) a bugfix bump can declare the
         # old version equivalent; this loop is what lets that declaration
         # actually heal the queue.
@@ -506,7 +502,7 @@ class ReprocessingScanner:
                 # a version-current-outright row lost its hand-mark within one
                 # scan: the dashboard Re-run button's promise self-cancelled
                 # inside 30 minutes for every current video, and a repair
-                # re-mark was wiped mid-repair (2026-09-08). Never un-mark a
+                # re-mark was wiped mid-repair. Never un-mark a
                 # row carrying a reason; only the drain clears it.
                 continue
             try:
@@ -530,10 +526,10 @@ class ReprocessingScanner:
                     # it; the drain re-runs it. Compat-current rows WITHOUT a
                     # reason are declaration-era phantoms (the scanner never
                     # writes a reason) and un-marking them is this door's
-                    # purpose: measured 2026-09-01, 309 of 1,198 outdated rows
-                    # on this node were phantoms frozen by the blanket
-                    # compat-skip this replaces, while current-outright rows
-                    # numbered ZERO -- the door served nothing.
+                    # purpose: a sizable share of outdated rows were phantoms
+                    # frozen by the blanket compat-skip this replaces, while
+                    # current-outright rows numbered ZERO -- the door served
+                    # nothing.
                     continue
                 # A saved human review the archived kinematics have not applied
                 # still owes a re-run -- same identity-first check as the mark
@@ -589,9 +585,9 @@ class ReprocessingScanner:
         stamps. Only when either is missing does the old mtime comparison run.
         WHY the mtime comparison had to go: it mixed the NAS clock (SMB-written
         reviews) with the local clock (archived features keep it via copy2),
-        and a ~20-minute NAS clock skew made every fresh re-run look staler
+        and a NAS clock skew of minutes made every fresh re-run look staler
         than the review it had just applied -- reviewed videos reprocessed in
-        a loop all day (2026-09-09).
+        a loop.
 
         ``feats_mtime`` is the scan's one-walk {video_id: mtime} index; pass it
         to avoid a per-video rglob of the whole archive. ``review_index`` is
@@ -667,8 +663,8 @@ class ReprocessingScanner:
         rather than re-cutting. So the manifest keeps recording the segmenter
         version that originally cut the video, the comparison keeps calling it
         stale, and the scanner re-marked such videos after every single re-run
-        (20251009_CNT0308_P3 was swept into the versioned Archive 53 times
-        before this was added).
+        (one video was swept into the versioned Archive dozens of times before
+        this was added).
 
         SAME RULE in video_prep/core/collage_provenance.py
         ``_drop_human_seg_staleness`` (recording retirement): change both
@@ -771,10 +767,10 @@ class ReprocessingScanner:
         Every manifest and features file at any depth below a project folder,
         never inside a superseded folder (analyzed_tree says why) and never a
         dot-name or anything inside a dot-folder. The modified times come from
-        the listing itself. WHY: separate network stats per file cost ~2
-        minutes a pass on 2026-10-21. WHY any depth: this used to list exactly
+        the listing itself. WHY: separate network stats per file cost
+        minutes a pass. WHY any depth: this used to list exactly
         Analyzed/<project>/<cohort>, and a project folder may now be two levels
-        (grant/project) -- a fixed depth would have dropped every video filed
+        (group/project) -- a fixed depth would have dropped every video filed
         that way from the version scan without a word."""
         from mousereach.pipeline.analyzed_tree import iter_file_entries
         man, man_t, feat_t = {}, {}, {}
@@ -827,9 +823,8 @@ class ReprocessingScanner:
         whose manifest the scan's index does not hold (archived somewhere the
         index does not cover, or simply with no manifest on disk) therefore cost
         a whole-tree walk, and a video with no manifest cost one on EVERY pass
-        because nothing ever satisfies it. Measured on 2026-10-30: 55 such
-        videos out of 5,965 with a supported tray, about 35 s a walk, ~32
-        minutes of a 37-minute pass -- and the work loop does nothing while a
+        because nothing ever satisfies it. A few dozen such videos took most
+        of a pass that ran over half an hour -- and the work loop does nothing while a
         scan runs. The same walk now serves all of them.
 
         Same tree, same exclusions and same first-hit-wins order as the old

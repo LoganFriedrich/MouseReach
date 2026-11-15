@@ -81,10 +81,9 @@ def _change_counter(db: Path) -> Optional[int]:
 def _settled_copy(db: Path, dest: Path, tries: int = 20, pause: float = 30.0) -> Path:
     """Copy the shared record to a local file, taken between two writes.
 
-    WHY a copy (2026-10-29): reading the record in place on the share waits on
-    every other machine's writes. A 10-minute wait was not enough on
-    2026-10-29 05:30 -- something held the file longer -- and the report
-    failed; a long read in place can also make the watchers' own writes fail.
+    WHY a copy: reading the record in place on the share waits on every
+    other machine's writes. A 10-minute wait has not been enough -- something
+    held the file longer -- and the report failed; a long read in place can also make the watchers' own writes fail.
     A file copy is not blocked by SQLite's locks, and the report then reads at
     leisure from the copy.
 

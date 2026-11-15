@@ -16,7 +16,7 @@ Usage::
         dlc_df=dlc,
         segments=[(100, 500), (501, 900), ...],
         reaches=[(150, 200), (520, 580), ...],
-        video_id="20250626_CNT0102_P4",
+        video_id="20250101_CNT0101_P1",
     )
 
 Returns a dict with the standard pellet_outcomes JSON shape::
@@ -219,8 +219,8 @@ def detect_outcomes_v6_cascade(
         # released only on the watcher's ARCHIVE path, so a video the gate
         # ROUTED TO REVIEW kept its mp4 open until the next video evicted it,
         # and the routing move failed with "being used by another process",
-        # leaving the mp4 behind in Processing (43 review bundles missing
-        # their mp4 in one day, 2026-09-10). Idempotent; the watcher's own
+        # leaving the mp4 behind in Processing (review bundles missing their
+        # mp4). Idempotent; the watcher's own
         # pre-archive release remains as a belt-and-braces second call.
         release_cap_cache()
 

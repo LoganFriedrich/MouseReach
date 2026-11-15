@@ -405,7 +405,7 @@ def _validate_and_correct_boundaries(
          and an endpoint gap exceeds ~1.5x cadence, project that endpoint
          backward (B1) or forward (B21) using the cadence.
 
-    Canonical case -- 20250716_CNT0213_P3: detector found 21 candidates
+    Canonical case: detector found 21 candidates
     that included a phantom at frame 12584 (between real 11209 and 13048)
     and missed the true B1 at frame ~180. Step 1 removes 12584; step 2
     then sees a large gap_to_start and projects B1. Result matches GT.
@@ -974,7 +974,7 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
     }
 
     # Absorb a reviewer GUI's brief hold on the output file (a stage write
-    # died on exactly this, 2026-09-05); a persistent hold still raises.
+    # died on exactly this); a persistent hold still raises.
     from mousereach.pipeline.fsutil import dump_json_with_retry
     dump_json_with_retry(output_path, data, indent=2)
 

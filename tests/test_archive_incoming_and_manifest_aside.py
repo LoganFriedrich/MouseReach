@@ -100,9 +100,9 @@ def test_archive_ignores_a_husk_from_an_earlier_round(tmp_path, monkeypatch):
 
 
 def test_archive_ignores_a_husk_diverted_after_the_run(tmp_path, monkeypatch):
-    # 20250808_CNT0113_P2, 2026-09-29: the husk (a lone .mp4 a return could
-    # not delete) was diverted to a queue AFTER the clean re-run, so its
-    # routing record is newer than the run -- but it moved only the video.
+    # The husk (a lone .mp4 a return could not delete) was diverted to a
+    # queue AFTER the clean re-run, so its routing record is newer than the
+    # run -- but it moved only the video.
     stub = _husk_and_run(tmp_path, monkeypatch, routing={
         "after_run_s": 180, "moved_files": [f"{STEM}.mp4"], "failed_files": []})
     assert _archives(stub)

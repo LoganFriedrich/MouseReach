@@ -27,7 +27,7 @@ duplicate the multi-MB h5/csv)::
           figures/   summary/                                        stats + figures
       README.txt                                                     the scheme
 
-Rules honored (from the agreed Y:/X: storage model):
+Rules honored (one live copy of the data, plus an archive of superseded results):
  - GT (``{stem}_unified_ground_truth.json``) and human reviews
    (``{stem}_causal_review.json``) are NEVER archived -- human truth stays with
    the video.
@@ -124,8 +124,7 @@ def _versioned_or_existing(src: Path, dst: Path) -> Path:
     -- unless one of the existing .N copies is already byte-identical to
     ``src``, in which case that copy is returned. WHY: a reprocess loop
     re-sweeps the same bytes every cycle; comparing only against the base name
-    archived another identical multi-MB duplicate per lap (two identical 23 MB
-    .h5 copies found 2026-09-09)."""
+    archived another identical multi-MB duplicate per lap."""
     i = 1
     while True:
         cand = dst.with_name(f"{dst.stem}.{i}{dst.suffix}")
@@ -239,9 +238,9 @@ def supersede_video_outputs(
         # ``only``: sweep nothing the caller is not about to replace. WHY: a
         # RETRY of a partially-failed archive arrives with few local files, and
         # an unscoped sweep then treats the just-archived outputs as a previous
-        # generation and guts the bundle -- observed 2026-08-30, two videos
-        # archived with their fresh outputs swept away (recovered from here,
-        # because this move never clobbers). The manual bring-current tool
+        # generation and guts the bundle -- a video can be archived with its
+        # fresh outputs swept away (recoverable from here only because this move
+        # never clobbers). The manual bring-current tool
         # passes no ``only`` and keeps the sweep-everything behaviour.
         if only is not None and f.name not in only:
             continue

@@ -133,7 +133,7 @@ def main_batch():
                                         review_path=review_path)
 
             # Save results -- absorbing a reviewer GUI's brief hold on the
-            # file (a stage write died on exactly this, 2026-09-05); a
+            # file (a stage write died on exactly this); a
             # persistent hold still raises and fails the stage loudly.
             from mousereach.pipeline.fsutil import dump_json_with_retry
             dump_json_with_retry(output_path, results.to_dict(), indent=2)

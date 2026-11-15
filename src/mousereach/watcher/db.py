@@ -36,10 +36,10 @@ VIDEO_TRANSITIONS = {
     'dlc_queued': ['dlc_running', 'unresolvable'],
     'dlc_running': ['dlc_complete', 'dlc_queued', 'failed', 'unresolvable'],  # dlc_queued = re-queue on interrupt
     # 'archived' here means "this NODE is done with it", not "fully analyzed" --
-    # the same idiom the collage table uses for 'cropped': ['archived']. A DLC PC
+    # the same idiom the collage table uses for 'cropped': ['archived']. A GPU node
     # running with also_process=false finishes DLC, stages the pose to the NAS
     # (_stage_to_nas) and is done; the MouseReach algorithms run on whichever node
-    # claims it next. Without this, every DLC-PC hand-off raised on the transition
+    # claims it next. Without this, every GPU-node hand-off raised on the transition
     # and the video was marked failed even though DLC had succeeded.
     'dlc_complete': ['processing', 'archived', 'unresolvable'],
     'processing': ['processed', 'failed', 'triage', 'deep_review', 'unresolvable'],  # triage/deep_review = human-review holds
@@ -55,7 +55,7 @@ VIDEO_TRANSITIONS = {
     # a one-way door and a declaration accident could never be undone.
     'outdated': ['dlc_queued', 'processing', 'failed', 'archived', 'unresolvable'],  # Re-enters pipeline
     'crystallized': [],  # Locked against reprocessing (use force_state to unlock)
-    # --- Human-review holds: the video is held OUT of the archive + connectome.db
+    # --- Human-review holds: the video is held OUT of the archive + central database
     # until a human clears it. Kinematics NEVER run on a held video. ---
     # 'triage': the algo left per-element questions (which reach / what outcome).
     #   The triage review tool answers them. When EVERY triaged element is
@@ -70,7 +70,7 @@ VIDEO_TRANSITIONS = {
     'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed', 'unresolvable'],  # Retry from any prior state
     # --- 'unresolvable': this NODE has no file for this video. ---
     # Not a failure and not a scientific hold: nothing went wrong with the video,
-    # it simply is not here. Cross-node recovery reads state out of connectome.db,
+    # it simply is not here. Cross-node recovery reads state out of the shared database,
     # which carries no file paths, so it can learn about videos whose files live
     # on another machine entirely. Registering those as 'dlc_complete' or
     # 'dlc_queued' made the work loop pick them up every cycle and crash on
@@ -485,9 +485,9 @@ class WatcherDB:
              'unresolvable' state with the reason in error_message.
 
         This exists because the alternative was tried and it broke the pipeline
-        twice. Cross-node recovery reads pipeline_videos out of connectome.db, a
-        table that carries state but no file paths -- every one of its 2,899 rows
-        has source_path NULL, because sync_video_state writes with INSERT OR
+        twice. Cross-node recovery reads pipeline_videos out of the shared
+        database, a table that carries state but no file paths -- every one of
+        its rows had source_path NULL, because sync_video_state writes with INSERT OR
         REPLACE and only ever passes the columns it knows about. Passing that
         NULL straight through raised "NOT NULL constraint failed:
         videos.source_path" on every scan; substituting a placeholder instead
@@ -579,8 +579,7 @@ class WatcherDB:
 
         Run at watcher start. WHY: until 2026-10-22 reaching 'archived' did not
         clear the previous error, so finished videos kept showing failures from
-        runs that later succeeded (1,249 rows on the processing server, most of
-        them from the 2026-09-09 share outage). The history is in processing_log.
+        runs that later succeeded (e.g. after a share outage). The history is in processing_log.
         """
         with self._lock:
             conn = self._get_connection()
@@ -607,8 +606,8 @@ class WatcherDB:
         """
         # Reaching 'archived' ends whatever went wrong before: the row's
         # error_message is the CURRENT error, and a finished video has none.
-        # WHY: 1,249 archived rows still showed failures from runs that later
-        # succeeded (2026-10-22), and every status view read them as current.
+        # WHY: archived rows still showed failures from runs that later
+        # succeeded, and every status view read them as current.
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
@@ -696,8 +695,8 @@ class WatcherDB:
         """
         # Reaching 'archived' ends whatever went wrong before: the row's
         # error_message is the CURRENT error, and a finished video has none.
-        # WHY: 1,249 archived rows still showed failures from runs that later
-        # succeeded (2026-10-22), and every status view read them as current.
+        # WHY: archived rows still showed failures from runs that later
+        # succeeded, and every status view read them as current.
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
@@ -1281,8 +1280,7 @@ class WatcherDB:
         input. The difference is not cosmetic:
 
           - mark_failed is a RETRY state. Every reset puts the video back in the
-            work loop, where it fails on the same missing file. One video in this
-            pipeline reached 271,199 failures that way.
+            work loop, where it fails on the same missing file, without end.
           - 'failed' is also read by people as "something went wrong with this
             animal's data". A file that lives on another machine is not that.
 

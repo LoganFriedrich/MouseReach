@@ -98,8 +98,8 @@ def _record(path, counter_writes=1):
 
 
 def test_the_record_is_read_from_a_copy_taken_between_writes(tmp_path):
-    """2026-10-29: reading the shared record in place waited 10 minutes on another
-    machine's lock and failed. The report reads a local copy instead."""
+    """Reading the shared record in place could wait minutes on another
+    machine's lock and fail. The report reads a local copy instead."""
     from mousereach.watcher import coverage
     db = tmp_path / "watcher_central.db"
     _record(db)

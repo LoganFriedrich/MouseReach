@@ -1,8 +1,8 @@
 """A node's status report says what it is doing, not just that it is alive.
 
-WHY (plan gap G14, 2026-10-22): the report said "working" every loop turn and
+WHY: the report said "working" every loop turn and
 nothing else, so a node churning on nothing looked exactly like a productive
-one, and a node deep in a 14-minute pose looked like one whose report had gone
+one, and a node deep in a long pose looked like one whose report had gone
 stale. It now carries the item in hand (written as it starts), the last one
 finished, and how many finished in the past hour.
 """

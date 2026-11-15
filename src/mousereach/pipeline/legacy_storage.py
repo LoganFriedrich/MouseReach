@@ -28,7 +28,7 @@ What counts as "the pipeline already has it" -- any one is enough:
     another name on the pipeline root: a person renamed it after it was copied
     (corrected an animal id), and the old copy still carries the old name.
     WHY: those sessions are held only under the CORRECTED ids, so the session
-    test above cannot see it -- the old copy of a corrected typo (CNT1012 for
+    test above cannot see it -- the old copy of a corrected typo (say CNT0211 for
     CNT0112) would have come back in and recreated the fake animal.
 
 What is brought in, and where (``--bring-in``): RECORDINGS ONLY, into
@@ -36,7 +36,7 @@ Unanalyzed/Multi-Animal (the intake), where the pipeline cuts and poses them.
 Every tray goes there; Easy and Flat trays are taken last, as they are
 everywhere (the deferral in the watcher's work selection).
 
-Cut (single-animal) videos are never brought in. WHY (2026-10-23): the input to
+Cut (single-animal) videos are never brought in. WHY: the input to
 MouseReach is the recording; the pipeline's own cut is what records which
 recording and seat each single came from, and a single fed in by hand has none
 of that. A cut video whose recording comes in (or is already on the pipeline
@@ -272,7 +272,7 @@ def inventory(old_root: Path, index: PipelineIndex) -> List[dict]:
     # are noted as that copy. Copies that differ in size need a person to say
     # which is right. WHY: otherwise the second copy is refused at bring-in
     # ("a file of that name is already there") and "only here" never reaches
-    # zero (12 recordings were in two old folders, 2026-10-22).
+    # zero.
     from collections import defaultdict
     by_name = defaultdict(list)
     for r in rows:

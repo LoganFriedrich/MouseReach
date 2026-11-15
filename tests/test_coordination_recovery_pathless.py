@@ -8,9 +8,8 @@ fails, and drops the row back to unresolvable. Unresolvable sorts BELOW the remo
 state, so the next restart advances it again, for ever.
 
 The "video not in the local database" branch already asked "are the files here?".
-The "already in the local database" branch did not, which is the case seen on a
-behaviour-room node on 2026-09-18: 12 pathless rows, one work slot each (about
-32 s), roughly six minutes of every single startup.
+The "already in the local database" branch did not, so every pathless row cost
+a work slot on every single startup.
 """
 import pytest
 
@@ -123,9 +122,9 @@ def test_states_that_live_on_the_share_are_adopted_without_a_file_search(coordin
 
 
 # --- Review holds yield only to a record written after them -----------------
-# WHY (2026-10-22): a hold sits outside the ordered states, so it ranked below
-# every remote state. A pose-only node's 'archived' ("handed off", 09-29)
-# overwrote a behaviour-room node's deep-review hold (10-21) on restart, leaving
+# WHY: a hold sits outside the ordered states, so it ranked below
+# every remote state. A pose-only node's older 'archived' ("handed off")
+# overwrote another node's newer deep-review hold on restart, leaving
 # a video marked finished with no results anywhere.
 
 def _remote_archived(coordinator, monkeypatch, updated_at):

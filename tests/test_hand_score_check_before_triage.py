@@ -1,15 +1,14 @@
 """After analysis and before the review gate, a video's pellets are checked
 against the hand scores (watcher/hand_scores.py, _hand_score_precheck).
 
-WHY (Logan, 2026-10-26): "Videos should be checked to see if they disagree
-with bench immediately as a part of the pipeline. If they do, they should
-move to triage ... They shouldn't move out of the processing phase until
-they have for sure got no issues." Since 2026-10-28 the check runs BEFORE the
+WHY: a video is checked for disagreement with the bench (hand) scores as part
+of the pipeline; if it disagrees it goes to triage, and it does not leave the
+processing phase until it has no open issues. The check runs BEFORE the
 gate, so a disagreeing pellet joins the video's other open questions and the
 gate sends it to triage once. A video whose session's hand scores are not
 there yet is held in 'processing' for the sheet's next import; if that import
-has none, the session was never scored by hand and the video goes on ("If
-can't compare to manual, then can't mismatch manual", Logan, 2026-10-26).
+has none, the session was never scored by hand and the video goes on (with
+nothing to compare against, there is nothing to disagree with).
 """
 import json
 

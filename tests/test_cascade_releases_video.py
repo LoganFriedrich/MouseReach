@@ -4,8 +4,8 @@ WHY: the CV artifact gate keeps a one-entry VideoCapture cache for
 performance, and it used to be released only on the watcher's ARCHIVE path.
 A video the gate ROUTED TO REVIEW kept its mp4 open until the next video
 evicted it, so the routing move failed with "being used by another process"
-and the mp4 silently stayed behind in Processing (43 review bundles missing
-their mp4 in one day, 2026-09-10). The cascade entry now releases the cache
+and the mp4 silently stayed behind in Processing (review bundles missing
+their mp4). The cascade entry now releases the cache
 on every exit -- including the exception path, which this test pins.
 """
 import pytest
@@ -24,7 +24,7 @@ class DummyCap:
 
 def test_cache_released_even_when_the_cascade_raises(monkeypatch):
     cap = DummyCap()
-    monkeypatch.setitem(gate._cap_cache, "path", "X:/somewhere.mp4")
+    monkeypatch.setitem(gate._cap_cache, "path", "D:/somewhere.mp4")
     monkeypatch.setitem(gate._cap_cache, "cap", cap)
 
     with pytest.raises(Exception):

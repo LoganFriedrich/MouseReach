@@ -37,7 +37,7 @@ class StageDecision:
     """Output of one stage for one segment.
 
     A commit MUST emit when-frames per the trust framework
-    (`per_algo_evaluation_toolset.md` + 2026-05-01 cascade design):
+    (see trust_calibrator):
     - committed_class: outcome class
     - whens["outcome_known_frame"]: always required for any commit
     - whens["interaction_frame"]: required when committed_class is

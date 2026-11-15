@@ -23,12 +23,12 @@ from mousereach.aspa import decode_animal, decode_video_stem, lab_animal_id
 class TestLabAnimalId:
 
     @pytest.mark.parametrize("given,expected", [
-        ("20220811_ASPA1011_P3", "J11"),
+        ("20220103_ASPA1011_P3", "J11"),
         ("ASPA1011", "J11"),
         ("ASPA_10_11", "J11"),                      # the database form
-        ("20220811_ASPA0901_P1", "I01"),
-        ("20220811_ASPA1011_P3_features", "J11"),   # an output file stem
-        ("ASPA0401", "D01"),                        # the worked example on record
+        ("20220103_ASPA0901_P1", "I01"),
+        ("20220103_ASPA1011_P3_features", "J11"),   # an output file stem
+        ("ASPA0401", "D01"),                        # a worked example
         ("ASPA1304", "M04"),                        # the other one
     ])
     def test_encoded_names_give_the_lab_id(self, given, expected):
@@ -45,11 +45,11 @@ class TestLabAnimalId:
 class TestDecodeVideoStem:
 
     def test_the_animal_field_is_decoded_in_place(self):
-        assert decode_video_stem("20220811_ASPA1011_P3") == "20220811_J11_P3"
+        assert decode_video_stem("20220103_ASPA1011_P3") == "20220103_J11_P3"
 
     def test_the_date_and_tray_survive(self):
-        out = decode_video_stem("20220811_ASPA0901_P1")
-        assert out.startswith("20220811_") and out.endswith("_P1")
+        out = decode_video_stem("20220103_ASPA0901_P1")
+        assert out.startswith("20220103_") and out.endswith("_P1")
 
     @pytest.mark.parametrize("given", [
         "20250624_CNT0115_P2",     # another project
@@ -71,13 +71,13 @@ class TestExportsCarryTheLabId:
     def test_the_excel_export_adds_animal_and_session(self):
         from mousereach.export.core.exporter import results_to_dataframe
         df = results_to_dataframe([
-            {"video_name": "20220811_ASPA1011_P3",
+            {"video_name": "20220103_ASPA1011_P3",
              "segments": [{"segment_num": 1, "outcome": "retrieved"}]},
         ])
         row = df.iloc[0]
         assert row["animal_id"] == "J11"
-        assert row["session"] == "20220811_J11_P3"
-        assert row["video_name"] == "20220811_ASPA1011_P3", (
+        assert row["session"] == "20220103_J11_P3"
+        assert row["video_name"] == "20220103_ASPA1011_P3", (
             "the pipeline key must survive -- it is what ties this row to its file")
 
     def test_a_non_aspa_video_is_untouched(self):

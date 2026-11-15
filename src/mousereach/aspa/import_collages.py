@@ -63,7 +63,7 @@ listed session, in the order of the list. A session is one animal's tray run,
 (``20220811_J11_P3``) or the pipeline's (``20220811_ASPA1011_P3``); one per line,
 blank lines and ``#`` comments ignored. WHY: a recording holds eight animals,
 and the sessions a question needs are scattered across far fewer recordings than
-a whole cohort -- for one study, 346 recordings instead of 959. The dry run names
+a whole cohort -- often a fraction of them. The dry run names
 every listed session that has no recording, so nothing a list asks for goes
 missing without being said.
 
@@ -382,11 +382,11 @@ def copy_file(src: Path, dst: Path) -> None:
 
     On Windows this is the system copy (``CopyFileW``). WHY: when both paths
     are on the same network share, the file server copies the file itself and
-    no data passes through this machine. Measured on the lab share 2026-10-21:
-    a 1 GB recording took 3 s that way against 41 s read and written back
-    through this machine -- and the read-and-write copy of a large import
-    filled the processing server's network link, slowing its own work tenfold
-    for as long as the import ran. Elsewhere, ``shutil.copy2``.
+    no data passes through this machine -- an order of magnitude faster than
+    reading the file and writing it back through this machine, and the
+    read-and-write copy of a large import can fill a processing node's network
+    link, slowing its own work for as long as the import runs. Elsewhere,
+    ``shutil.copy2``.
     """
     import os
     if os.name == "nt":

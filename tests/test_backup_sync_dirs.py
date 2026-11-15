@@ -1,7 +1,7 @@
 """backup.sync_dirs config override reaches the BackupWatcher.
 
-WHY: the default three-tree scope can exceed the backup volume's free space
-(7.0 TB of sources vs 6.3 TB free, measured 2026-09-10). A lab must be able
+WHY: the default three-tree scope can exceed the backup volume's free space.
+A lab must be able
 to protect the trees that fit rather than have robocopy fill the disk and
 fail partway with no complete tree. main() used to ignore the constructor's
 sync_dirs parameter entirely.

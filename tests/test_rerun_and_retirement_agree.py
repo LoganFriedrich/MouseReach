@@ -1,6 +1,6 @@
 """The re-run scan and recording retirement must answer two questions the same
 way, or a video the scan will never re-run is never "complete" for retirement
-and its recording sits in the intake for good (196 did, until 2026-10-24):
+and its recording sits in the intake for good:
 
   * has this video's human review been applied?
       watcher/reprocessor.py  ReprocessingScanner._pending_review_path

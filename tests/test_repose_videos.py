@@ -267,7 +267,7 @@ def test_the_round_trip_then_waits_for_a_gpu_pose_and_adopts_it(env):
 # ---------------------------------------------------------------- the queue never sees a half-moved bundle
 
 def test_held_bundle_leaves_the_queue_whole_before_anything_is_moved(env, monkeypatch):
-    """WHY (2026-11-09): pose and outputs were moved out of the bundle while it
+    """WHY: pose and outputs were once moved out of the bundle while it
     still sat in the triage queue; the watcher's review-return scan read the
     half-emptied bundle as "segmentation failed" and diverted the rest of it to
     deep review mid-move. The queue must hold the whole bundle or nothing."""

@@ -6,7 +6,7 @@ The dry run is the step the install guide has every new machine run before its
 watcher starts. It used to build the full watcher -- whose start-up runs
 recovery -- and then call the real scans, which register new files and move
 videos between states, so "dry run" changed the local database and touched the
-shared one (found 2026-08-30: 104 recordings advanced on one machine).
+shared one (recordings were found advanced on a machine after its dry run).
 
 This preview only reads. The watcher database is opened read-only, folders are
 listed, and the next pick is worked out by the watcher's own selection code on

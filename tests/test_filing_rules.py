@@ -2,8 +2,8 @@
 lookup of a filed video finds it there, however many levels the folder has.
 
 WHY: the project folders were written into the code (one map of codes to
-folder names, per-cohort folders for two codes only). A second project of the
-same grant therefore filed beside the grant instead of inside it, with no
+folder names, per-cohort folders for two codes only). A project meant to sit
+inside a parent folder therefore filed beside the parent instead of inside it, with no
 folder per cohort, and the layout could not be changed without a code change.
 The rules now live in the shared lab settings file ("filing"). Lookups that
 assumed Analyzed/<project>/<cohort> was exactly two levels deep would have

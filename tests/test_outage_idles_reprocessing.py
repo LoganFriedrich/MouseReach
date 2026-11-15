@@ -1,6 +1,6 @@
 """A shared-drive outage idles re-running; it never marks videos failed.
 
-WHY: when the shared drive dropped on 2026-09-09, the re-run step marked each
+WHY: when the shared drive dropped, the re-run step marked each
 outdated video FAILED ("Archive directory not found for reprocessing"), about
 one a second -- infrastructure failures recorded as the videos' fault. With
 the archive out of reach nothing is offered for re-running and nothing is

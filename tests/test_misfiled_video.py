@@ -160,8 +160,8 @@ def test_several_at_once(server):
 def test_the_folder_is_listed_once_per_pass_not_once_per_video(server, monkeypatch):
     """WHY: this check runs every cycle, and the folder is on a shared drive
     holding every posed video waiting to be analysed. Listing it again for each
-    video (to look for its pose, then for a half-written file) cost 566 s of a
-    1,094 s cycle with 1,263 videos waiting. One listing, then lookups."""
+    video (to look for its pose, then for a half-written file) cost about half of
+    every cycle with many videos waiting. One listing, then lookups."""
     for i in range(40):
         vid = f"20240101_ABC01{i:02d}_P1"
         _settled(_drop(server, name=f"{vid}.mp4"))

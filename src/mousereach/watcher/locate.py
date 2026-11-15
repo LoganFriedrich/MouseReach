@@ -6,10 +6,10 @@ a file is there. Three separate ways of getting that wrong have each taken the
 pipeline down:
 
   ``Path(None)``      raised ``TypeError: expected str, bytes or os.PathLike``
-                      and failed 950 of 954 videos on the DLC PC.
+                      and failed nearly every video on a GPU node.
   ``Path(x or '')``   is ``Path('.')``, the current directory, which *exists* --
                       so the obvious guard never fires, the algorithms are handed
-                      a directory as their HDF5 file, and 723 videos went to the
+                      a directory as their HDF5 file, and hundreds of videos went to the
                       human review queue as "[Errno 13] Permission denied: '.'".
   a placeholder       ``source_path='recovered'`` let cross-node recovery mint
                       rows for videos this node has no files for. They sit in a

@@ -2,15 +2,15 @@
 identity, never by cross-clock mtimes.
 
 WHY: SMB-written review files carry the NAS server's clock; archived features
-keep the local clock (copy2 preserves it). A ~20-minute NAS clock skew made
+keep the local clock (copy2 preserves it). A NAS clock skew made
 every fresh re-run's features compare OLDER than the review it had just
-applied, so reviewed videos reprocessed in a loop all day (2026-09-09). The
+applied, so reviewed videos reprocessed in a loop. The
 manifest now records which review the kinematics applied (reviewed_at +
 sha256, written by record_kinematic_version) and the scanner compares that.
 
 Also: human-authored segmentation (boundary_source == 'human') is
 version-exempt -- a human's cuts cannot go stale with a segmenter release
-(20251009_CNT0308_P3 was swept into the Archive 53 times before this).
+(a human-segmented video was swept into the Archive over and over before this).
 """
 import json
 from pathlib import Path

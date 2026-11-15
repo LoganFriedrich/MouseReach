@@ -57,13 +57,12 @@ STOPPING = "stopping"    # shutting down cleanly
 #
 # NINETY MINUTES, not the obvious few. A node writes its report once per turn of its
 # work loop, and one turn includes a scan of the shared drive that has been measured at
-# 37 minutes. So a perfectly healthy node goes quiet for that long every cycle, and a
+# over half an hour. So a perfectly healthy node goes quiet for that long every cycle, and a
 # threshold near the poll interval would report it dead -- manufacturing precisely the
 # false alarm this module exists to prevent, on the machines that are working hardest.
-# Measured on the processing server 2026-09-29: a live node's report was already six
-# minutes old mid-scan.
+# A live node's report has been measured several minutes old mid-scan.
 #
-# The cost of the generous bound is small. The outage this is for ran sixty hours; the
+# The cost of the generous bound is small. The outage this is for ran for days; the
 # question is never "is it late by a minute" but "has it been gone since yesterday".
 STALE_AFTER = timedelta(minutes=90)
 
@@ -133,7 +132,7 @@ def read_all(nas_root) -> List[dict]:
 
     Age comes from the ``at`` field the node wrote, NEVER from the file's modification
     time. They are not interchangeable: the shared drive stamps files with its own
-    clock, measured 21 minutes ahead of every machine's on 2026-09-29, so an mtime
+    clock, which can run many minutes ahead of every machine's, so an mtime
     reading would call a live node's report stale, or a dead one fresh, by whatever
     that difference happens to be that day. ``at`` is written by the node itself, so
     this only assumes the machines roughly agree with each other -- which is a far
@@ -198,7 +197,7 @@ def describe(nas_root) -> str:
             doing = r.get("doing") or {}
             # One node's odd report must cost only its own line: a list here
             # (the CPU pose pool's first version) used to raise and blank the
-            # whole overview (2026-10-24).
+            # whole overview.
             if isinstance(doing, dict):
                 now = ("%s %s since %s" % (doing.get("type"), doing.get("id"),
                                            doing.get("since")) if doing else "idle")

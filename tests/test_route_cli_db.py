@@ -271,7 +271,7 @@ def _answer_segment_3(results):
 
 def test_a_segment_a_person_answered_is_not_flagged_again(site, monkeypatch, capsys):
     """WHY: the release check counts it answered, so the video went straight back
-    out with nobody looking and the next night's scan sent it again (2026-10)."""
+    out with nobody looking and the next night's scan sent it again."""
     live = _live_db(site["proc"] / "watcher.db", site["results"])
     _set_config(monkeypatch, site["proc"])
     _answer_segment_3(site["results"])

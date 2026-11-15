@@ -7,7 +7,7 @@ gap, just DLC dropout). Preserves all high-confidence detections
 exactly. Never smooths across position discontinuities (= real
 displacement events).
 
-Design constraints (per user 2026-05-03):
+Design constraints:
   - Don't touch high-conf detections (lk >= confident_threshold)
   - Don't smooth across position discontinuities (gap-pre vs gap-post
     distance must be small)

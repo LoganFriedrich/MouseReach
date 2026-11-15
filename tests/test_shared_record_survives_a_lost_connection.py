@@ -1,11 +1,11 @@
 """A GPU node's shared-record writes survive an unreachable shared database.
 
-WHY (Lab DLC PC, 2026-10-30): the node restarted while watcher_central.db was
+WHY: a GPU node restarted while watcher_central.db was
 locked. Its connect failed, so coordinator was None; a hand-off and the next
 pose start were then DROPPED (the write returned before queuing), the write that
 failed just before the stop was lost with the process, and the startup fill
-only ever added rows that were missing entirely -- so a video handed off at
-10:59 was still on record as "posing" an hour later.
+only ever added rows that were missing entirely -- so a video handed off
+was still on record as "posing" an hour later.
 """
 from mousereach.watcher.orchestrator import DLCOrchestrator
 

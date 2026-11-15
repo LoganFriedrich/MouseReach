@@ -4,7 +4,7 @@ Reach detection v8 trainer.
 Single-fold trainer + cross-validation wrapper. Training data is
 filtered to exhaustive=True videos by default (gold-standard
 negatives). Predictions are converted to reaches via post-processing
-and evaluated per the user-mandated reach-detection metric standard
+and evaluated per the project's reach-detection metric standard
 (TP iff start within +/- 2f of GT AND span match; report start delta
 + span delta distributions for TPs).
 """

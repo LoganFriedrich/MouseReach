@@ -13,10 +13,10 @@ Operates at the WHOLE-VIDEO level (no segment knowledge). Each detected
 reach is a (start_frame, end_frame) pair; reach assignment to segments
 and pellets is the responsibility of the separate `assignment` algo.
 
-See `four_algo_decomposition.md` in cross-session memory and
-`Improvement_Snapshots/reach_detection/v8.0.0_holdout_generalization_BSW_w0.8/`
-for the holdout test result. The calibration corpus + CV-fold
-definition is at `Improvement_Snapshots/_corpus/2026-04-30_restart_inventory/`.
+The pipeline splits into four separate algorithms (segmentation, reach
+detection, outcome, assignment); this is the reach detector. The holdout
+test result and the calibration corpus + CV-fold definition are kept with
+the calibration records, not in this repository.
 
 Usage:
     from mousereach.reach.v8 import detect_reaches_v8
@@ -38,7 +38,7 @@ VERSION = "8.1.0"
 # package ships with the artifact and a custom path can be passed at
 # runtime if needed.
 # v8.1.0 (2026-06-30): recalibrated to the w=0.7 GBM retrained on DLC Model 4.0
-# features (recalib_4.0_sandbox; Colin's locked 4.0 reach config). Reproduces his
+# features (the locked 4.0 reach config). Reproduces its
 # gen-20 scorecard exactly: classic [3693,48,63], topology 3688/37/16/17/3/8.
 # 4.0-trained -> ships WITH the Model-4.0 DLC flip; the prior 3.1 model
 # (v8.0.0_bsw_w0.8.joblib) stays in models/ for 3.1 inference.
@@ -53,8 +53,8 @@ DEFAULT_MIN_SPAN = 3
 # v8.0.2 leading-trim postprocess defaults (calibrated 2026-05-21 for DLC Model 3.1).
 # v8.1.0 (2026-06-30): recalibrated for DLC Model 4.0 (resnet101). Model 4.0's steadier
 # tracking saturates the paw likelihood, so the 3.1-tuned floor (0.60/N3) under-trimmed
-# reach edges on 4.0. Raised to 0.90/N2 per Colin's gen-20 sandbox sweep
-# (recalib_4.0_sandbox/RESULTS.md). On 4.0 this lifts causal recall 90.5% -> 97.0% and
+# reach edges on 4.0. Raised to 0.90/N2 per a gen-20 calibration sweep.
+# On 4.0 this lifts causal recall 90.5% -> 97.0% and
 # cuts false reaches 631 -> 183; on 3.1 it is causal-neutral but over-trims non-causal
 # reaches, so this config ships WITH the Model-4.0 DLC flip, not before it.
 # See postprocess.trim_leading_sustained_lk for the calibration evidence.

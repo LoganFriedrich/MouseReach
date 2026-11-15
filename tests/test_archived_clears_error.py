@@ -1,7 +1,7 @@
 """Reaching 'archived' clears the row's error message.
 
-WHY (2026-10-22): error_message is the CURRENT error. Reaching 'archived' did
-not clear the previous one, so 1,249 finished videos on the processing server
+WHY: error_message is the CURRENT error. Reaching 'archived' did
+not clear the previous one, so finished videos
 still showed failures from runs that later succeeded, and every status view read
 them as current. The history stays in processing_log.
 """

@@ -67,7 +67,7 @@ def wait_for_stable(path: Path, check_interval: float = 5.0,
 # Transient Windows sharing violations -- a reviewer GUI, an indexer or a
 # backup pass briefly holding the DESTINATION file -- surface as
 # PermissionError winerror 5/32 (errno 13). One such hold failed a reprocess
-# work item on 2026-09-04 and the file was free again minutes later; worse,
+# work item and the file was free again minutes later; worse,
 # the cleanup unlink below hit the same lock and raised OUT of the except
 # block, which is what actually killed the work item. Bounded retries absorb
 # the transient; the cleanup is best-effort and never raises.

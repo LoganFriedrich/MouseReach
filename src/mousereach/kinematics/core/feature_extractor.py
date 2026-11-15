@@ -186,7 +186,7 @@ def split_reaches_by_ignore_windows(reaches, ignore_windows):
     ``abnormal_ranges`` ([{"start_frame", "end_frame", "reason"}, ...]).
 
     WHY a reach that OVERLAPS a window is left out entirely rather than kept
-    and marked (Logan, 2026-10-30: "leave it out"): the window says the
+    and marked: the window says the
     footage there is not the behaviour being studied, and a reach whose frames
     include any of it would have its velocity, path and extent computed over
     frames that are not the reach. The cardinal rule -- every frame boundary
@@ -395,9 +395,9 @@ class FeatureExtractor:
                 # No assignment for this segment. Legal for pre-algo-4 files,
                 # but when it happens on a TOUCHED segment the causal reach is
                 # about to be absent from the output -- and this skip used to
-                # be silent, which is how 9,280 touched segments shipped with
-                # an outcome and no causal reach before anyone noticed
-                # (census 2026-09-01). Count it and say so below.
+                # be silent, which is how touched segments shipped with an
+                # outcome and no causal reach before anyone noticed. Count it
+                # and say so below.
                 if _seg.get('outcome') in ('retrieved', 'displaced_sa', 'displaced_outside'):
                     _unmerged_touched += 1
                 continue
@@ -508,8 +508,8 @@ class FeatureExtractor:
                 seg_features.reaches.append(reach_features)
 
             # Invariant: a segment has at most ONE causal reach -- the pellet
-            # moved once. Cross-generation files violated this 7 times in the
-            # 2026-08-31 snapshot; enforce at write time (first wins, extras
+            # moved once. Cross-generation files have violated this; enforce
+            # at write time (first wins, extras
             # cleared loudly) so it can never ship again.
             _causal = [r for r in seg_features.reaches if getattr(r, 'causal_reach', False)]
             if len(_causal) > 1:
@@ -542,8 +542,8 @@ class FeatureExtractor:
         identity and frames, and each span's attention -- no kinematics, no
         outcomes.
 
-        WHY (Logan, 2026-10-23): these trays "don't need kinematics" and their
-        pellet outcomes "don't matter", but "we do want attention" from them.
+        WHY: these trays need no kinematics and their pellet outcomes do not
+        matter, but their attention is wanted.
         The database takes reaches only from a features file, and the
         session's reach count and mean attention are worked out from those
         rows, so the file is still written -- with every per-reach measurement

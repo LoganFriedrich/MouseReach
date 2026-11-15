@@ -2,7 +2,7 @@
 
 WHY: deeplabcut.analyze_videos runs in-process and cannot be interrupted, so a
 pose started just before somebody begins recording would take the GPU, CPU and
-disk for about fourteen more minutes. Recording must always win, so the pose
+disk for many more minutes. Recording must always win, so the pose
 runs in a child process the parent can kill. These tests pin what makes that
 safe:
   * a normal run returns exactly what the worker reported,

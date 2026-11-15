@@ -6,8 +6,8 @@ FRAMES. After a person re-cut a video, an old answer for "segment 7" -- about
 other footage -- counted as answering today's segment 7: the video left review,
 the results step correctly ignored the answer, and today's segment 7 reached the
 data with nobody having watched it. A nightly check then sent the same videos
-back every night (2026-10-21). And a segmentation a person made is logged as
-made, however short its segments (Logan, 2026-10-21).
+back every night. And a segmentation a person made is logged as
+made, however short its segments.
 """
 import json
 

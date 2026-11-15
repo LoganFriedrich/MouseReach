@@ -94,8 +94,7 @@ VERSION = "7.2.0"
 HAND_BODYPARTS = ('RightHand', 'RHLeft', 'RHOut', 'RHRight')
 
 # v7.2.0: pose-alignment computation for per-reach feature emission.
-# See feedback_data_driven_rule_design.md and the v4.0.0 outcome
-# walkthrough's case-39 thread for context. Not gated on currently;
+# Not gated on currently;
 # emitted as a per-reach feature for downstream analysis.
 POSE_LK_THRESHOLD = 0.7
 POSE_CONTEXT_PRE = 60

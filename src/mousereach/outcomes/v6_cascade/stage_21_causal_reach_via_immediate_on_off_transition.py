@@ -1,6 +1,5 @@
 """
-Stage 21: Causal reach via immediate on->off pillar transition (per
-user's 2026-05-03 physics walkthrough).
+Stage 21: Causal reach via immediate on->off pillar transition.
 
 Question this stage answers:
     "Is there ONE reach where the pellet was confidently on the
@@ -9,7 +8,7 @@ Question this stage answers:
     whether the pellet appears later in the SA (displaced) or never
     appears stably (retrieved)."
 
-Physics (per user, 2026-05-03):
+Physics:
     - Same bout vs same reach are different. Paw-past-slit bouts
       are kinematic. Reaches are behavioral. The CAUSAL reach is
       uniquely identifiable: pellet on-pillar immediately pre,
@@ -33,8 +32,8 @@ Class determination after causal reach identified:
 Whittling logic:
     - This stage targets cases where prior stages couldn't pick the
       right causal reach. Stages 7/8/16/17 use longer windows or
-      max-displacement; this stage uses the user's exact physics
-      criterion.
+      max-displacement; this stage uses the exact physics
+      criterion above.
     - Restricts to cases where exactly ONE reach has the on->off
       transition (= unambiguous causal). Cases where multiple reaches
       show the transition (= DLC noise) defer.
@@ -332,8 +331,8 @@ class Stage21CausalReachViaImmediateOnOffTransition(Stage):
             )
 
         # Defense: pellet must NEVER return to confident on-pillar
-        # after the causal reach. Per the memory rule "pellet cannot
-        # return to pillar", any sustained on-pillar observation post-
+        # after the causal reach. A pellet cannot return to the
+        # pillar, so any sustained on-pillar observation post-
         # causal-reach contradicts displacement/retrieval -- our
         # causal pick is wrong, defer.
         post_on_pillar_run_max = 0
@@ -347,7 +346,7 @@ class Stage21CausalReachViaImmediateOnOffTransition(Stage):
                 run = 0
         feats["post_causal_on_pillar_max_run"] = int(post_on_pillar_run_max)
         # Sustained 3+ frame on-pillar post-causal-reach contradicts
-        # the displacement (per "pellet cannot return to pillar" memory).
+        # the displacement (a pellet cannot return to the pillar).
         # Tighter threshold (1 frame) loses too many true commits to
         # single-frame DLC blips. 3 frames is the empirical sweet spot.
         if post_on_pillar_run_max >= 3:

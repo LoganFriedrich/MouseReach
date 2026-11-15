@@ -38,7 +38,7 @@ corpus snapshot), re-run validation and update the empirical result.
 mode — evaluates outcome detection in isolation from upstream
 segmentation/reach errors).
 
-**Trust definition (user-mandated):**
+**Trust definition:**
 - untouched: class match + OKF±3
 - touched: class match + same GT reach (algo's IFR falls in the same
   reach window as GT's IFR)
@@ -177,8 +177,8 @@ Confounded cases are moved into Stage 2 for further examination.
 - **Trust calibrator code version:**
   `mousereach.outcomes.v6_cascade.trust_calibrator` (commit on master at
   validation time)
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from project
-  `<improvement root>/validation_runs/DLC_2026_03_27/dlc_project`, run
+- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+  validation DLC project, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
 - **Reach detector version used to produce reach windows:** v7.1.0 (GT
@@ -197,15 +197,13 @@ Confounded cases are moved into Stage 2 for further examination.
     2.0 × pillar_radius (with RightHand_lk ≥ 0.7)
   - Transition zone half-width: 5 frames either side of segment boundary
   - Cascade OKF emit: `seg_end − 5` (last clean-zone frame)
-- **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot at
-  `<improvement root>/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
-  created 2026-04-28
+- **Ground-truth corpus:** a frozen snapshot of human-annotated outcome
+  ground truth
 - **GT corrections incorporated since corpus creation:**
   - 7 segments migrated from displaced/retrieved to abnormal_exception
-    (2026-04-29, walkthrough cases 6, 8, 9, 10, 11, 14, 15)
-  - 6 untouched-segment GT files patched 2026-05-01 to clear
+    (after a review pass)
+  - 6 untouched-segment GT files patched to clear
     interaction_frame fields the GT tool would not let the GT-er nullify
-    (audit trail: `gt_patch_2026-05-01_untouched_interaction_frame.md`)
 - **GT correction applied at runtime by trust calibrator:** for any
   untouched segment whose GT outcome_known_frame is greater than
   `seg_end − 5`, the GT outcome_known_frame is "walked back" to
@@ -216,24 +214,9 @@ Confounded cases are moved into Stage 2 for further examination.
   holdout (10 videos, 200 segments) was NOT used in this validation; it
   remains frozen until Phase E.
 - **Train pool video IDs (37 videos, 290 GT untouched segments among them):**
-  `20250624_CNT0107_P3, 20250624_CNT0115_P2, 20250627_CNT0105_P1,
-  20250630_CNT0104_P3, 20250701_CNT0110_P2, 20250701_CNT0111_P1,
-  20250709_CNT0216_P3, 20250710_CNT0215_P4, 20250716_CNT0213_P3,
-  20250806_CNT0311_P2, 20250806_CNT0312_P2, 20250807_CNT0307_P2,
-  20250808_CNT0302_P3, 20250811_CNT0305_P2, 20250812_CNT0301_P3,
-  20250813_CNT0314_P4, 20250820_CNT0103_P2, 20250820_CNT0103_P3,
-  20250821_CNT0102_P2, 20250821_CNT0110_P4, 20250909_CNT0209_P4,
-  20250910_CNT0216_P1, 20250912_CNT0209_P3, 20251007_CNT0316_P2,
-  20251008_CNT0301_P4, 20251009_CNT0309_P1, 20251009_CNT0310_P2,
-  20251010_CNT0305_P2, 20251010_CNT0308_P2, 20251021_CNT0401_P4,
-  20251022_CNT0413_P4, 20251023_CNT0401_P4, 20251028_CNT0404_P4,
-  20251029_CNT0408_P1, 20251030_CNT0403_P1, 20251031_CNT0407_P1,
-  20251031_CNT0415_P1`
+  kept with the validation corpus (real recording names are not listed here)
 - **Test holdout video IDs (NOT used in this validation):**
-  `20250626_CNT0102_P4, 20250708_CNT0210_P3, 20250711_CNT0210_P2,
-  20250811_CNT0303_P4, 20250820_CNT0104_P2, 20250905_CNT0306_P2,
-  20251007_CNT0314_P3, 20251009_CNT0307_P4, 20251024_CNT0402_P4,
-  20251031_CNT0413_P2`
+  kept with the validation corpus
 
 ### Empirical result
 
@@ -291,8 +274,8 @@ Confounded cases are moved into Stage 3 for further examination.
 - **Trust calibrator code version:**
   `mousereach.outcomes.v6_cascade.trust_calibrator` (commit on master at
   validation time)
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from project
-  `<improvement root>/validation_runs/DLC_2026_03_27/dlc_project`, run
+- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+  validation DLC project, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
 - **Reach detector version used to produce reach windows:** v7.1.0 (GT
@@ -327,9 +310,8 @@ Confounded cases are moved into Stage 3 for further examination.
   - Transition zone half-width: 5 frames either side of segment
     boundary (clean zone for Stage 2 = `[seg_start, seg_end - 5]`)
   - Cascade OKF emit on commit: `seg_end − 5` (last clean-zone frame)
-- **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot at
-  `<improvement root>/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
-  created 2026-04-28
+- **Ground-truth corpus:** a frozen snapshot of human-annotated outcome
+  ground truth
 - **Empirical-floor derivation corpus:** all 381 GT-confirmed causal
   contact reaches in the train-pool 37 videos (the same train-pool
   GT-confirmed reaches whose contact frames sit by definition in the
@@ -340,10 +322,9 @@ Confounded cases are moved into Stage 3 for further examination.
   absolute minimum across all 381 reaches was 0.22.
 - **GT corrections incorporated since corpus creation:**
   - 7 segments migrated from displaced/retrieved to abnormal_exception
-    (2026-04-29, walkthrough cases 6, 8, 9, 10, 11, 14, 15)
-  - 6 untouched-segment GT files patched 2026-05-01 to clear
+    (after a review pass)
+  - 6 untouched-segment GT files patched to clear
     interaction_frame fields the GT tool would not let the GT-er nullify
-    (audit trail: `gt_patch_2026-05-01_untouched_interaction_frame.md`)
 - **GT correction applied at runtime by trust calibrator:** for any
   untouched segment whose GT outcome_known_frame is greater than
   `seg_end − 5`, the GT outcome_known_frame is "walked back" to
@@ -354,24 +335,9 @@ Confounded cases are moved into Stage 3 for further examination.
   holdout (10 videos, 200 segments) was NOT used in this validation; it
   remains frozen until Phase E.
 - **Train pool video IDs (37 videos, 290 GT untouched segments among them):**
-  `20250624_CNT0107_P3, 20250624_CNT0115_P2, 20250627_CNT0105_P1,
-  20250630_CNT0104_P3, 20250701_CNT0110_P2, 20250701_CNT0111_P1,
-  20250709_CNT0216_P3, 20250710_CNT0215_P4, 20250716_CNT0213_P3,
-  20250806_CNT0311_P2, 20250806_CNT0312_P2, 20250807_CNT0307_P2,
-  20250808_CNT0302_P3, 20250811_CNT0305_P2, 20250812_CNT0301_P3,
-  20250813_CNT0314_P4, 20250820_CNT0103_P2, 20250820_CNT0103_P3,
-  20250821_CNT0102_P2, 20250821_CNT0110_P4, 20250909_CNT0209_P4,
-  20250910_CNT0216_P1, 20250912_CNT0209_P3, 20251007_CNT0316_P2,
-  20251008_CNT0301_P4, 20251009_CNT0309_P1, 20251009_CNT0310_P2,
-  20251010_CNT0305_P2, 20251010_CNT0308_P2, 20251021_CNT0401_P4,
-  20251022_CNT0413_P4, 20251023_CNT0401_P4, 20251028_CNT0404_P4,
-  20251029_CNT0408_P1, 20251030_CNT0403_P1, 20251031_CNT0407_P1,
-  20251031_CNT0415_P1`
+  kept with the validation corpus (real recording names are not listed here)
 - **Test holdout video IDs (NOT used in this validation):**
-  `20250626_CNT0102_P4, 20250708_CNT0210_P3, 20250711_CNT0210_P2,
-  20250811_CNT0303_P4, 20250820_CNT0104_P2, 20250905_CNT0306_P2,
-  20251007_CNT0314_P3, 20251009_CNT0307_P4, 20251024_CNT0402_P4,
-  20251031_CNT0413_P2`
+  kept with the validation corpus
 - **Cascade ordering at validation:** Stage 1 ran first; Stage 2 was
   evaluated only on the 643 segments that Stage 1 deferred. Stage 2's
   empirical numbers are therefore conditional on Stage-1-deferred input
@@ -466,8 +432,8 @@ Confounded cases are moved into Stage 4 for further examination.
   bodyparts before computing the per-frame pillar geometry, so
   single-frame DLC failures on SA do not contaminate per-frame pillar
   position/radius.
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from project
-  `<improvement root>/validation_runs/DLC_2026_03_27/dlc_project`, run
+- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+  validation DLC project, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
 - **Reach detector version used to produce reach windows:** v7.1.0 (GT
@@ -517,17 +483,14 @@ Confounded cases are moved into Stage 4 for further examination.
     a small mis-tracking tail). The 9.8% of untouched that sit on
     the wrong side of the threshold defer to Stage 4 -- they are not
     falsely committed.
-- **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot
-  at
-  `<improvement root>/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
-  created 2026-04-28
+- **Ground-truth corpus:** a frozen snapshot of human-annotated outcome
+  ground truth
 - **GT corrections incorporated since corpus creation:**
   - 7 segments migrated from displaced/retrieved to abnormal_exception
-    (2026-04-29, walkthrough cases 6, 8, 9, 10, 11, 14, 15)
-  - 6 untouched-segment GT files patched 2026-05-01 to clear
+    (after a review pass)
+  - 6 untouched-segment GT files patched to clear
     interaction_frame fields the GT tool would not let the GT-er
-    nullify (audit trail:
-    `gt_patch_2026-05-01_untouched_interaction_frame.md`)
+    nullify
 - **GT correction applied at runtime by trust calibrator:** for any
   untouched segment whose GT outcome_known_frame is greater than
   `seg_end − 5`, the GT outcome_known_frame is "walked back" to
@@ -536,24 +499,9 @@ Confounded cases are moved into Stage 4 for further examination.
   holdout (10 videos, 200 segments) was NOT used in this validation;
   it remains frozen until Phase E.
 - **Train pool video IDs (37 videos, 290 GT untouched segments among them):**
-  `20250624_CNT0107_P3, 20250624_CNT0115_P2, 20250627_CNT0105_P1,
-  20250630_CNT0104_P3, 20250701_CNT0110_P2, 20250701_CNT0111_P1,
-  20250709_CNT0216_P3, 20250710_CNT0215_P4, 20250716_CNT0213_P3,
-  20250806_CNT0311_P2, 20250806_CNT0312_P2, 20250807_CNT0307_P2,
-  20250808_CNT0302_P3, 20250811_CNT0305_P2, 20250812_CNT0301_P3,
-  20250813_CNT0314_P4, 20250820_CNT0103_P2, 20250820_CNT0103_P3,
-  20250821_CNT0102_P2, 20250821_CNT0110_P4, 20250909_CNT0209_P4,
-  20250910_CNT0216_P1, 20250912_CNT0209_P3, 20251007_CNT0316_P2,
-  20251008_CNT0301_P4, 20251009_CNT0309_P1, 20251009_CNT0310_P2,
-  20251010_CNT0305_P2, 20251010_CNT0308_P2, 20251021_CNT0401_P4,
-  20251022_CNT0413_P4, 20251023_CNT0401_P4, 20251028_CNT0404_P4,
-  20251029_CNT0408_P1, 20251030_CNT0403_P1, 20251031_CNT0407_P1,
-  20251031_CNT0415_P1`
+  kept with the validation corpus (real recording names are not listed here)
 - **Test holdout video IDs (NOT used in this validation):**
-  `20250626_CNT0102_P4, 20250708_CNT0210_P3, 20250711_CNT0210_P2,
-  20250811_CNT0303_P4, 20250820_CNT0104_P2, 20250905_CNT0306_P2,
-  20251007_CNT0314_P3, 20251009_CNT0307_P4, 20251024_CNT0402_P4,
-  20251031_CNT0413_P2`
+  kept with the validation corpus
 - **Cascade ordering at validation:** Stage 1 → Stage 2 → Stage 3.
   Stage 3 was evaluated only on the 633 segments that Stage 2
   deferred (after Stage 1 committed 97 and Stage 2 committed 10).
@@ -599,8 +547,8 @@ returned to the pillar throughout the segment. The reasoning: a
 segment is GT untouched if no reach IN THAT SEGMENT caused
 interaction. A pellet that came in already displaced is fair game
 for a Stage-3-deferring untouched commit as long as nothing in the
-current segment moves it back onto the pillar (physically impossible
-per the existing memory rule) and nothing apparent-retrieves it (also
+current segment moves it back onto the pillar (physically impossible:
+a pellet off the pillar cannot climb back onto it) and nothing apparent-retrieves it (also
 impossible from the off-pillar starting state). The mouse is
 allowed to move the pellet around within the SA -- that's still
 untouched in the GT sense. Two artifact patterns are also caught
@@ -662,9 +610,8 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
 - **Pillar geometry function:**
   `mousereach.lib.pillar_geometry.compute_pillar_geometry_series_cleaned`
   (cleans SA bodyparts before computing per-frame geometry).
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from
-  project `<improvement root>/validation_runs/DLC_2026_03_27/dlc_project`,
-  run completed 2026-02-19 21:13:08+00:00.
+- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+  validation DLC project, run completed 2026-02-19 21:13:08+00:00.
 - **Segmenter version:** v2.1.2.
 - **Reach detector version:** v7.1.0 (GT reach windows used; Stage 4
   itself derives reach attempts from the per-frame paw-past-y-line
@@ -715,16 +662,14 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
   9.44 radii. Off-pillar threshold of 3.0 catches >=p5 of GT
   displaced (95% sensitivity) while excluding pillar-edge calibration
   artifacts.
-- **Co-detection triage empirical derivation:** documented in memory
-  rule `pellet_pillar_cooccurrence_is_artifact.md` (2026-05-01).
+- **Co-detection triage derivation:** Pellet and Pillar detected at the
+  same location is an artifact, not a pellet position.
   Threshold of 1.0 pillar-radius for "Pellet and Pillar at the same
-  location" is the user-mandated value reflecting the physical
+  location" is the value reflecting the physical
   occlusion constraint (pellet sits ON pillar; both can't be visible
   at the same image position simultaneously).
-- **Ground-truth corpus:** v4.0.0_dev_walkthrough quarantine snapshot
-  at
-  `<improvement root>/validation_runs/DLC_2026_03_27/iterations/2026-04-28_outcome_v4.0.0_dev_walkthrough/`,
-  created 2026-04-28.
+- **Ground-truth corpus:** a frozen snapshot of human-annotated outcome
+  ground truth.
 - **GT corrections incorporated since corpus creation:** same as
   Stages 1-3 (no additional corrections specific to Stage 4).
 - **GT correction applied at runtime by trust calibrator:** for any
@@ -775,7 +720,7 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
   doesn't satisfy the 3.0-radii off-pillar threshold but far enough
   that Stage 1/Stage 3 didn't commit; (b) per-video DLC pellet
   tracking offsets put the pellet in the calibration grey zone
-  systematically (e.g., `20250710_CNT0215_P4` segment 7 -- pellet
+  systematically (e.g., a segment whose pellet is
   visually on pillar but tracked at 1.5 radii sustained throughout).
   These cases are deferred rather than committed, preserving 100%
   trust at the cost of yield. Future cascade work could add a

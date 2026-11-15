@@ -3,7 +3,7 @@ it physically lives in.
 
 The dashboard's source of truth is the pipeline folders themselves: a video's
 stage is simply *where it sits*. This walks every known pipeline folder (across
-the Y: canonical side and the C: working side), finds every video, and -- when a
+the shared nas_root side and the local processing_root side), finds every video, and -- when a
 video appears in more than one folder -- keeps the furthest-along one.
 
 It is intentionally coarse + fast-ish: it identifies videos by cheap markers

@@ -13,7 +13,7 @@ requires-python = ">=3.9,<3.11"
 dependencies = [
     # Core ML/DL dependencies
     # TF 2.10.x is the last version with native Windows GPU support.
-    # TF 2.11+ requires WSL2 for GPU on Windows — not viable for lab PCs.
+    # TF 2.11+ requires WSL2 for GPU on Windows — not viable for a native Windows install.
     "tensorflow>=2.10,<2.11",
     "deeplabcut",
     # NOTE: deeplabcut[gui] requires wxpython which needs Visual Studio to build
@@ -189,7 +189,7 @@ mousereach-build-database = "mousereach.analysis.cli:main_build_database"
 mousereach-build-explorer = "mousereach.analysis.explorer_cli:main_build"
 mousereach-explore = "mousereach.analysis.explorer_cli:main_explore"
 
-# Database Sync - Automatic sync to central connectome database
+# Database Sync - Automatic sync to central database
 mousereach-sync = "mousereach.sync.cli:main_sync"
 mousereach-sync-watch = "mousereach.sync.cli:main_watch"
 mousereach-sync-status = "mousereach.sync.cli:main_status"
@@ -252,11 +252,11 @@ where = ["src"]
 # -p no:cacheprovider: pytest's cache plugin makes a pytest-cache-files-*
 # temporary folder and renames it to .pytest_cache. When the repo sits on a
 # network share the rename can fail, leaving the folder behind with permissions
-# only an administrator can clear (dozens accumulated). The suite needs no cache.
+# only an administrator can clear (they accumulate). The suite needs no cache.
 # --ignore-glob: the folders already left behind must be skipped BEFORE pytest
 # looks inside them -- norecursedirs (below) is checked only after pytest has
 # asked whether the path is a folder, and that question itself fails with
-# "Access is denied" on a leftover this account cannot read (2026-10-26).
+# "Access is denied" on a leftover this account cannot read.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider --ignore-glob=*pytest-cache-files-*"

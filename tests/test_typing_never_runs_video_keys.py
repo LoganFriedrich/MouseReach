@@ -1,8 +1,8 @@
 """Typing in a review panel never runs the video's keys, and the video's keys
 are the review tool's.
 
-Logan, 2026-10-24: "when I type numbers into text fields in the widgets ...
-sometimes keybinds go off". A number box keeps what is typed into it, but the
+WHY: typing numbers into text fields in the review widgets sometimes set off
+the video's key bindings. A number box keeps what is typed into it, but the
 keyboard was often on the control clicked last (the manual-entry choice, a
 button, the outcome list), and napari's dock handed the digits to the video's
 shortcuts -- which were napari's dot-editing keys (1 deleted dots, 2-5 changed
@@ -37,8 +37,8 @@ def test_what_counts_as_typing():
 def viewer():
     # One viewer whose layers are never removed (each test adds its own), and
     # which is not closed: removing a layer -- closing does -- makes napari
-    # draw, and a machine without an OpenGL screen (the processing server's
-    # remote session) cannot. The hidden window goes with the test process.
+    # draw, and a machine without an OpenGL screen (a remote desktop
+    # session) cannot. The hidden window goes with the test process.
     yield napari.Viewer(show=False)
 
 

@@ -60,8 +60,8 @@ def _dedupe_boundaries(boundaries: List[int], n_expected: int,
 
     A duplicate boundary becomes a zero-length segment downstream: no reaches,
     nan ruler calibration, and an automatic residual-triage flag -- review work
-    about footage that does not exist (21 videos across the corpus as of
-    2026-09-01; e.g. boundary 35108 emitted twice). Three producers can emit
+    about footage that does not exist (e.g. one boundary frame emitted
+    twice). Three producers can emit
     one: two SABL slots snapping to the same merged cluster, the invented-
     boundary padding clamping at the final frame (which duplicates it on every
     further iteration), and a tray-gate projection landing on an existing
@@ -134,8 +134,8 @@ class MultiProposerConfig:
     # setup and post-session shutdown -- periods where NO pellet is ever on the
     # pillar. Those phantoms push a proposer above n_expected, knocking it out
     # of the reliable SABL-primary path into the fragile consensus/grid-fit,
-    # which phase-shifts the whole segment numbering (canonical: CNT0312_P2,
-    # an 8376-frame B1 miss). Gate a proposer's candidates to the pellet-active
+    # which phase-shifts the whole segment numbering (canonical case: a B1
+    # missed by thousands of frames). Gate a proposer's candidates to the pellet-active
     # window. CONSERVATIVE by design:
     #   - acts only on a proposer with > n_expected candidates (a real surplus),
     #     never an already-clean count;
@@ -366,8 +366,7 @@ def segment_video_multi(dlc_path: Path,
     # Reject boundaries that don't show a real ASPA cycle signature
     # (SA corner excursion + pillar lk drop). Replace each rejection
     # with a median-cadence projection from valid neighbors. See
-    # tray_motion.py and the tray_motion_segment_boundary_test memory
-    # entry.
+    # tray_motion.py.
     if config.tray_motion_gate_enabled:
         boundaries, tray_rejections = apply_tray_motion_gate(
             df, boundaries, total_frames, config.expected_interval,

@@ -1,7 +1,7 @@
 """
 Stage 9: Pellet vanished after reach (retrieved).
 
-Reframe (2026-05-03, user-directed): by the time a segment reaches
+Reframe: by the time a segment reaches
 this stage, the upstream cascade has already excluded `untouched`. By
 apparatus physics the pellet was on the pillar at segment start (ASPA
 loads it before each segment). So Stage 9 does NOT need to re-prove

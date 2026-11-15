@@ -89,12 +89,11 @@ def check_archive_ready(video_id: str, source_dir: Path = None) -> Tuple[bool, D
     Reads the verdict out of the stage output files. It used to ask the pipeline
     index -- a cache whose whole purpose is to save a folder scan for the
     dashboard -- and that cache is allowed to be stale. It was, comprehensively:
-    on 2026-08-24 this node had 1,084 videos held in 'processed' of which 1,083
-    were marked approved by every stage ON DISK, while the index said otherwise
-    for the large majority (segmentation reading 'auto_review', a spelling only
-    the index ever uses, and reach and outcome missing entirely for 39 of every
-    60 sampled). Nothing had archived since February and the retry loop had
-    logged 326,235 failures.
+    a node held videos in 'processed' that were marked approved by every stage
+    ON DISK, while the index said otherwise for the large majority (segmentation
+    reading 'auto_review', a spelling only the index ever uses, and reach and
+    outcome missing entirely for most). Nothing archived for months and the
+    retry loop failed on every pass.
 
     A cache is the wrong authority for an irreversible decision. The files carry
     validation_status; that is the fact. The index stays what it is good at --
@@ -261,8 +260,8 @@ def archive_video(
     # A file identical to the one already archived is not a new generation --
     # a re-run copies the video and pose down from here and hands them back
     # unchanged. Sweeping them into the versioned Archive and moving them back
-    # stored a duplicate pose for every re-run and cost 60-100 s of copying
-    # (2026-10-22). They are left in place and the local copy dropped.
+    # stored a duplicate pose for every re-run and cost a minute or more of
+    # copying. They are left in place and the local copy dropped.
     identical = {f.name for f in files
                  if (dest / f.name).exists() and _same_file(f, dest / f.name)}
     superseded = None
@@ -271,7 +270,7 @@ def archive_video(
             from mousereach.archive.supersede import supersede_video_outputs
             # only=: sweep just the destination files this archive is about to
             # replace. Without the scope, a retry after a partial move sweeps
-            # the files its own first attempt archived (2026-08-30).
+            # the files its own first attempt archived.
             superseded = supersede_video_outputs(
                 video_id, dest, only={f.name for f in files} - identical)
             if superseded.get("failed"):
@@ -297,8 +296,8 @@ def archive_video(
     #  - A file already at the destination with identical content counts as
     #    moved (the local copy is dropped). WHY: a partially-failed attempt
     #    leaves most files already archived, so without this a retry can
-    #    never converge -- observed 2026-08-30, when one silent per-file
-    #    failure left a video's retry loop failing forever.
+    #    never converge -- one silent per-file failure can leave a video's
+    #    retry loop failing forever.
     #  - A per-file failure is named in result["error"], never swallowed
     #    into a bare success=False with error=None.
     moved = []
@@ -380,9 +379,9 @@ def record_archived(video_id: str) -> bool:
         from mousereach.watcher.db import WatcherDB
         from mousereach.config import WatcherConfig
         # The node's db_path override, not the default. Getting this wrong is
-        # how seven commands spent months reading a database last written in
-        # February while the daemon wrote to a different file (fixed 2026-08-23);
-        # writing to the wrong one would be worse than reading it.
+        # how commands can spend months reading a stale database while the
+        # daemon writes to a different file; writing to the wrong one would be
+        # worse than reading it.
         try:
             override = WatcherConfig.load().db_path
         except Exception:

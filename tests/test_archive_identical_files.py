@@ -1,9 +1,9 @@
 """Re-archiving leaves files identical to the archived ones where they are.
 
-WHY (2026-10-22): a re-run copies the video and pose down from the archive and
+WHY: a re-run copies the video and pose down from the archive and
 hands them back unchanged. They were swept into the versioned Archive as a
 "previous generation" and moved back -- a duplicate pose stored for every
-re-run and 60-100 s of copying. Only files that actually changed are a new
+re-run and needless copying. Only files that actually changed are a new
 generation.
 """
 import os

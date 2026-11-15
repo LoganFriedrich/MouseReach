@@ -3,9 +3,8 @@
 WHY: cross-node recovery learns about videos another machine holds and registers
 them with the NO_FILE_HERE placeholder. The staging bucket still selected them, and
 the handler then spent the whole poll interval finding out what the row already
-said -- one row per poll. Measured on a behaviour-room node on 2026-09-18: six such
-rows cost 2 min 41 s of work slots after every unpause (18:14:56 -> 18:17:38, one
-every ~32 s, matching poll_interval_seconds 30).
+said -- one row per poll. A handful of such rows cost minutes of work slots
+after every unpause, one per poll interval.
 
 The retirement behaviour itself is correct and untouched; what is removed is paying
 a poll to rediscover a fact already recorded. A row with no recorded path at all is

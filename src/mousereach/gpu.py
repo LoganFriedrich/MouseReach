@@ -340,8 +340,8 @@ def print_gpu_info():
     Runs setup_gpu_env() first. WHY: the watcher always sets the environment up
     before checking (cuDNN lives in the env's Library/bin; TF_USE_LEGACY_KERAS
     must be set), so a bare diagnostic run from a shell that has not activated
-    the env reported "TensorFlow GPU: No" on a perfectly healthy node
-    (2026-08-30). The diagnostic must see the same environment the watcher does.
+    the env reported "TensorFlow GPU: No" on a perfectly healthy node.
+    The diagnostic must see the same environment the watcher does.
     """
     setup_gpu_env()
     status = check_gpu()

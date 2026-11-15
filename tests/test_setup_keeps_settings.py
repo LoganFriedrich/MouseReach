@@ -1,12 +1,12 @@
 """Setup never loses a setting, and an unset pipeline root stops rather than guesses.
 
-WHY (2026-10-22): two defects compounded.
+WHY: two defects compounded.
   * Saving from mousereach-setup or the in-app Setup panel rewrote
     ~/.mousereach/config.json with three keys only (processing_root, nas_drive,
     watcher). Every other setting was silently deleted -- the shared pipeline
     root (nas_root), the nightly backup's folders, the shared database path.
-  * With nas_root gone, the pipeline root was GUESSED as <nas_drive>/! DLC
-    Output, the layout retired in 2026. Every shared folder -- intake, posed
+  * With nas_root gone, the pipeline root was GUESSED from nas_drive, using
+    a retired folder layout. Every shared folder -- intake, posed
     videos, review queues, Analyzed -- then pointed at the old place, and the
     review tools and intake commands (which, unlike the watcher, make no check)
     would have read and written there as if nothing were wrong.

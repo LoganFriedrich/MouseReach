@@ -22,8 +22,8 @@ Whittling logic:
 Defenses against false-commit:
     - Require valid calibration (>= 10 confident pre-first-bout
       pellet observations).
-    - Strict 1.0 calibrated radius for "on pillar" (per user's
-      wariness about widening this zone -- pellet cannot return to
+    - Strict 1.0 calibrated radius for "on pillar" (widening this
+      zone is risky -- pellet cannot return to
       pillar once off, so a tight zone protects against masking).
     - Off-pillar threshold strict (>= 2.5 calibrated radii) to
       filter pillar-edge DLC noise.
@@ -56,7 +56,7 @@ PAW_LK_THR = 0.5
 
 ON_PILLAR_RADII = 1.0      # strict: pellet within 1.0 radius of
                            # per-segment calibrated pellet-on-pillar
-                           # median (per user 2026-05-03: don't widen
+                           # median (don't widen
                            # zone -- pellet cannot return to pillar
                            # once off)
 OFF_PILLAR_RADII_MIN = 2.5  # strict: pellet at >= 2.5 radii is

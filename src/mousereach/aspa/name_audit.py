@@ -7,11 +7,11 @@ An archive that kept its own single-animal cuts beside its recordings (ASPA's:
 ``{cohort}/Multi-Animal`` and ``{cohort}/Single_Animal``) names every animal
 TWICE: once in the recording's name, once in each cut's. The two were typed
 separately, and where they disagree, the pipeline -- which trusts the
-recording's name -- files one animal's video under another animal's id. Found
-2026-10-23: a recording named for one group of eight held the other group (its
-seats are, pixel for pixel, the cuts named for that group), and a run of
-recordings named one animal in the seat that the cuts -- and the lab's own score
-sheet -- give to another.
+recording's name -- files one animal's video under another animal's id. Both
+happen: a recording named for one group of eight can hold the other group (its
+seats are, pixel for pixel, the cuts named for that group), and a recording can
+name one animal in the seat that the cuts -- and the lab's own score sheet --
+give to another.
 
 HOW A CUT IS TRACED TO ITS RECORDING
 ------------------------------------
@@ -81,8 +81,8 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 LENGTH_TOLERANCE = 5
 SIBLING_TOLERANCE = 1
-# Mean absolute difference per pixel (0-255) between a cut and a seat. Measured
-# 2026-10-23: a cut against its own seat ~1-2, against any other seat 20 and up.
+# Mean absolute difference per pixel (0-255) between a cut and a seat. Measured:
+# a cut against its own seat ~1-2, against any other seat 20 and up.
 PIXEL_SAME = 4.0
 PIXEL_OTHER = 12.0
 # Frames compared (the first that exist in both).

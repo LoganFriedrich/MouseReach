@@ -55,7 +55,7 @@ from .locate_sessions import ELEMENT_ORDER, resolve_elements, tray_from_stem
 from .review_completeness import scan_queue, summarise
 
 # A session is DONE (filesystem sense) when the four algorithms have all
-# produced output. Verified against the live corpus 2026-09-01.
+# produced output.
 REQUIRED = ("_reaches.json", "_pellet_outcomes.json", "_reach_assignments.json",
             "_features.json")
 # On outcome-free trays (pellet level with the scoring area; a displaced
@@ -113,12 +113,11 @@ def walk_analyzed(root) -> tuple:
     # that cannot be listed (a NAS hiccup) raises instead of being skipped, so
     # the census never reports a partial count as complete.
     #
-    # WHY scandir and not os.walk (2026-10-23): each result file's modified
+    # WHY scandir and not os.walk: each result file's modified
     # time comes from the folder listing itself (DirEntry.stat() needs no
     # extra call on Windows). os.walk hands back names only, and a separate
     # stat per file -- tens of thousands of NAS round trips -- was most of the
-    # census: 13 of its 22 minutes by day, and past its hour under the night's
-    # other jobs, so the 00:00 refresh could not retake it (2026-10-23).
+    # census's run time, enough to push a nightly census past its time slot.
     stack = [root]
     while stack:
         base = stack.pop()
@@ -178,7 +177,7 @@ def ids_in_dir(d, exts=(".mp4", ".mkv")) -> Set[str]:
         return set()
     # scandir, not iterdir + is_file(): the listing already says which entries
     # are files, where is_file() asked the NAS again for each one -- about a
-    # minute on a queue of ~2,000 videos (2026-10-23).
+    # minute on a queue of a few thousand videos.
     out = set()
     with os.scandir(d) as it:
         for e in it:

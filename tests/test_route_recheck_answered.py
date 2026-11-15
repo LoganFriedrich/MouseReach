@@ -1,8 +1,8 @@
 """An answered pellet can be asked again on purpose ("are you sure?").
 
-WHY (Logan, 2026-10-26): answers of "retrieved" where the frames show the
-pellet lying in the scoring area afterwards -- "toss these cases back at the
-review queue and be like - are you sure". The answer is kept, the pellet is
+WHY: answers of "retrieved" where the frames show the pellet lying in the
+scoring area afterwards go back to the review queue with an "are you sure?".
+The answer is kept, the pellet is
 open again until a person answers it, and without --recheck an answered
 pellet is still never sent back.
 """
@@ -16,7 +16,7 @@ VID = "20250715_ABC0212_P4"
 
 
 def _bundle(tmp_path):
-    a = tmp_path / "Analyzed" / "Connectome" / "ABC02"
+    a = tmp_path / "Analyzed" / "Project_A" / "ABC02"
     a.mkdir(parents=True)
     segs = [{"segment_num": n, "start_frame": 100 * n, "end_frame": 100 * n + 90} for n in (1, 2)]
     (a / f"{VID}_segments.json").write_text(json.dumps({"segments": segs, "boundaries": [100, 190, 200, 290]}))
@@ -61,6 +61,6 @@ def test_route_without_recheck_never_sends_an_answered_pellet_back(tmp_path, mon
     r = rc.route_video(VID, "triage", "test", [1], recheck=True,
                        segment_details={1: "are you sure?"})
     assert r["reopened"] == [1] and r["flagged"] == [1] and r["routed"]
-    seg = json.loads((tmp_path / "Analyzed" / "Connectome" / "ABC02" /
+    seg = json.loads((tmp_path / "Analyzed" / "Project_A" / "ABC02" /
                       f"{VID}_pellet_outcomes.json").read_text())["segments"][0]
     assert seg["flagged_for_review"] and seg["flag_reason"] == "test: are you sure?"

@@ -51,7 +51,7 @@ def session_key(date, ids, trailer):
     """Identity of a SESSION, independent of which file describes it.
 
     WHY: the clean file and its "uncropped" twin are the same session. Collapsing on
-    (date, animal set, tray position) is what makes "1,421 files -> 1,342 sessions"
+    (date, animal set, tray position) is what makes the files -> sessions count
     correct rather than a guess.
 
     The position is the clean tray+number PREFIX of the trailer when one exists
@@ -88,9 +88,9 @@ def collect_collages(roots, exts=(".mkv", ".mp4")):
     WHY os.walk on names, not ``rglob("*")`` with ``is_file()``: the walk's own
     listing already says which entries are files, so no file is asked about
     one by one. ``is_file()`` on every entry was a round trip to the share per
-    file; one archive root holds about 164,000 files, of which about 5,000 are
-    collage-shaped, and the nightly census ran past its hour (2026-10-23: the
-    same scan took 656 s in the afternoon). The same rule as
+    file; an archive root can hold well over a hundred thousand files, of which
+    only a few percent are collage-shaped, and a nightly census can run past its
+    hour that way. The same rule as
     ``runner.walk_analyzed``. ``walk_onerror`` keeps rglob's rule for a folder
     that cannot be listed: a PermissionError is skipped, anything else raises,
     so a share hiccup never yields a partial count that looks complete.
@@ -160,8 +160,8 @@ def expected_sessions(collage_roots, offspring_fn, found_sessions=None,
 
     WHY parse failures are returned rather than swallowed:
     the underlying parser requires exactly 8 comma-separated ids and raises otherwise;
-    ``expected_offspring`` catches that and returns an empty list. On one real corpus
-    47 collages (~330 sessions) vanished silently. A session that cannot be parsed
+    ``expected_offspring`` catches that and returns an empty list, so whole
+    collages (and every session in them) vanished silently. A session that cannot be parsed
     must surface as a PROBLEM, never as an absence.
     """
     collages = collect_collages(collage_roots) + [Path(p) for p in (extra_collages or ())]

@@ -2,8 +2,8 @@
 mousereach.archive.migrate - One-time migration from Sort/ to project/cohort structure.
 
 Moves:
-    Analyzed/Sort/CNT/*  ->  Analyzed/Connectome/CNT01/, CNT02/, CNT03/, CNT04/
-    Analyzed/Sort/Multi-Animal/*.mkv  ->  Analyzed/Connectome/{cohort}/Multi-Animal/
+    Analyzed/Sort/CNT/*  ->  Analyzed/<project folder>/<cohort folder>/
+    Analyzed/Sort/Multi-Animal/*.mkv  ->  Analyzed/<project folder>/<cohort folder>/Multi-Animal/
 
 Usage:
     mousereach-migrate-archive              # Dry run (show what would happen)
@@ -454,9 +454,8 @@ def main():
             "  Analyzed/Sort/CNT/             (all CNT videos flat)\n"
             "  Analyzed/Sort/Multi-Animal/    (collage MKVs)\n\n"
             "New structure:\n"
-            "  Analyzed/Connectome/CNT01/\n"
-            "  Analyzed/Connectome/CNT01/Multi-Animal/\n"
-            "  Analyzed/Connectome/CNT02/\n"
+            "  Analyzed/<project folder>/<cohort folder>/\n"
+            "  Analyzed/<project folder>/<cohort folder>/Multi-Animal/\n"
             "  ...\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -464,7 +463,7 @@ def main():
             "Examples:\n"
             "  mousereach-migrate-archive              # Dry run - show plan\n"
             "  mousereach-migrate-archive --execute    # Actually move files\n"
-            "  mousereach-migrate-archive --nas-root X:/DLC_Output\n"
+            "  mousereach-migrate-archive --nas-root <nas_root>\n"
         ),
     )
 

@@ -39,7 +39,7 @@ For a person, never rebuilt:
 
 WHERE each animal sat: the order of a recorded group (same tray kind, the
 nearest day) that holds every animal of the rebuilt recording; with none, id
-order -- the order the lab filled recordings in. Which of the two applies is
+order -- the order recordings are usually filled in. Which of the two applies is
 written into the rebuild's record. A position nobody's cut fills is empty, so
 the pipeline's cut never produces a video of an animal that is not there.
 Every rebuild is recorded under ``<NAS root>/pipeline_records/rebuilt_recordings/``.
@@ -114,7 +114,7 @@ def cuts_folder(cohort_dir: Path) -> Optional[Path]:
     """The cohort's single-animal cut folder however it is spelled --
     ``Single_Animal``, ``Single Animal``, ``Single_animal``: the archive's cohort
     folders were made by hand, and a cohort whose folder is spelled otherwise
-    was silently never looked at (found 2026-10-23). None when there is none."""
+    was silently never looked at. None when there is none."""
     cohort_dir = Path(cohort_dir)
     exact = cohort_dir / "Single_Animal"
     if exact.is_dir():

@@ -1,6 +1,6 @@
 """Every module in the package imports, and none uses a name it never defines.
 
-WHY: two review-tool faults on 2026-10-24 sat in code no test exercised -- a
+WHY: two review-tool faults sat in code no test exercised -- a
 plugin hook naming something napari no longer has (the whole module failed to
 import) and a ``logger`` the module never defined (an error handler raised
 NameError instead of reporting). Neither needed the code to run to be found:
@@ -26,8 +26,7 @@ def _modules():
             continue
         # Test files that live inside the package (e.g. segmentation/core/
         # test_tray_motion.py) import pytest, which a runtime machine does not
-        # have: on a GPU node they "failed" for a reason that is not a fault
-        # (found by Beh PC 1, 2026-10-24).
+        # have: on a GPU node they "failed" for a reason that is not a fault.
         if m.name.rsplit(".", 1)[-1].startswith("test_"):
             continue
         yield m.name

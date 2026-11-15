@@ -1,7 +1,7 @@
 """Routing takes a video's files by name from the folder listing.
 
 The listing answers "is this a file?" itself; asking the share again for every
-entry of a cohort's Analyzed folder cost minutes per video (2026-10-24).
+entry of a cohort's Analyzed folder cost minutes per video.
 """
 from mousereach.watcher.review_routing import _bundle_files
 

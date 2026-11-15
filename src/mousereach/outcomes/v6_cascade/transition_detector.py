@@ -1,7 +1,7 @@
 """
 Pellet transition moment detector.
 
-Stage X of the residuals-targeted approach (per user 2026-05-03):
+Stage X of the residuals-targeted approach:
 scan a segment for moments where SOMETHING happened to the pellet,
 without yet trying to attribute the cause to a specific reach. Outputs
 candidate transition frames + the signal that flagged them.

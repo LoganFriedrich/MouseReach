@@ -79,8 +79,8 @@ def test_words_say_what_the_operator_needs():
 
 
 # ---------------------------------------------------------------------------
-# Only one box per message, whatever else is running (reported 2026-09-28:
-# about fifteen identical windows waiting for the operator).
+# Only one box per message, whatever else is running (reported: many
+# identical windows waiting for the operator).
 # ---------------------------------------------------------------------------
 
 def test_a_second_box_is_not_opened_when_one_is_already_up():

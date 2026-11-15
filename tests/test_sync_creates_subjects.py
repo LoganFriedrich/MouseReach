@@ -1,9 +1,9 @@
 """The database sync creates an animal from its first video, never drops data.
 
 WHY: videos arrive daily; the tracking sheet that names the animals arrives
-"eventually". Until 2026-08-28 the sync silently skipped any video whose
-animal the sheet import had not created yet -- 1,666 sessions across CNT_05
-and ASPA went missing from connectome.db that way. Now the animal (and its
+"eventually". The sync used to silently skip any video whose animal the
+sheet import had not created yet, so whole cohorts' sessions went missing from
+the database that way. Now the animal (and its
 cohort and project) is created from the video name and the sheet enriches
 it later.
 """
@@ -54,7 +54,7 @@ def test_unknown_animal_is_created_with_cohort_and_project(tmp_path):
 def test_existing_records_are_left_alone(tmp_path):
     p = _db(tmp_path)
     con = sqlite3.connect(p)
-    con.execute("INSERT INTO projects VALUES ('CNT','Connectome',NULL,NULL)")
+    con.execute("INSERT INTO projects VALUES ('CNT','Project A',NULL,NULL)")
     con.execute("INSERT INTO cohorts (cohort_id, project_code, start_date, notes) "
                 "VALUES ('CNT_07','CNT','2026-08-15','Imported from sheet')")
     con.execute("INSERT INTO subjects (subject_id, cohort_id, notes) VALUES ('CNT_07_03','CNT_07','from sheet')")
@@ -65,16 +65,16 @@ def test_existing_records_are_left_alone(tmp_path):
     con = sqlite3.connect(p)
     assert con.execute("SELECT start_date, notes FROM cohorts").fetchone() == ("2026-08-15", "Imported from sheet")
     assert con.execute("SELECT notes FROM subjects").fetchone()[0] == "from sheet"
-    assert con.execute("SELECT project_name FROM projects").fetchone()[0] == "Connectome"
+    assert con.execute("SELECT project_name FROM projects").fetchone()[0] == "Project A"
     con.close()
 
 
 def test_aspa_animal_is_created_the_same_way(tmp_path):
     p = _db(tmp_path)
     s = DatabaseSyncer(db_path=p, processing_path=tmp_path)
-    assert s.ensure_subject_exists("ASPA_10_11", "20220811_ASPA1011_P3")
+    assert s.ensure_subject_exists("ASPA_10_11", "20220103_ASPA1011_P3")
     con = sqlite3.connect(p)
-    assert con.execute("SELECT cohort_id, start_date FROM cohorts").fetchone() == ("ASPA_10", "2022-08-11")
+    assert con.execute("SELECT cohort_id, start_date FROM cohorts").fetchone() == ("ASPA_10", "2022-01-03")
     con.close()
 
 

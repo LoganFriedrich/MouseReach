@@ -4,8 +4,7 @@ The case these exist for: a node pauses whenever a recording program is open, an
 recording program is routinely left open after the day's recording is finished. So a
 machine doing nothing for days is usually CORRECT. A dead watcher looks exactly the
 same from every other machine. Treating those alike either raises a false alarm most
-weeks -- which teaches everyone to ignore the alarm -- or hides a real outage, which
-has already cost about sixty hours once.
+weeks -- which teaches everyone to ignore the alarm -- or hides a real outage for days.
 """
 import json
 from datetime import datetime, timedelta
@@ -86,12 +85,12 @@ def test_nothing_reported_yet_says_so_plainly(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Clock and cadence realities, measured on the live share 2026-09-29.
+# Clock and cadence realities of a shared drive.
 # ---------------------------------------------------------------------------
 
 def test_a_node_mid_scan_is_not_called_dead(tmp_path):
-    """One turn of the work loop includes a share scan measured at 37 minutes, so a
-    healthy node goes quiet for that long every cycle. Calling it dead is the false
+    """One turn of the work loop can include a share scan of more than half an hour, so
+    a healthy node goes quiet for that long every cycle. Calling it dead is the false
     alarm this module exists to prevent."""
     ns.write(tmp_path, ns.WORKING, hostname="NODE-SCANNING")
     f = ns.status_dir(tmp_path) / "NODE-SCANNING.json"
@@ -103,7 +102,7 @@ def test_a_node_mid_scan_is_not_called_dead(tmp_path):
 
 
 def test_staleness_ignores_the_file_timestamp(tmp_path):
-    """The share stamps files with its own clock, measured 21 minutes ahead of every
+    """The share may stamp files with its own clock, minutes ahead of every
     machine. An mtime reading would be wrong by whatever that gap is that day."""
     import os
     ns.write(tmp_path, ns.WORKING, hostname="NODE-SKEWED")

@@ -3,7 +3,7 @@
 Cropping used to publish only the fact that a single existed -- the row went to the
 shared table while the file went to this node's LOCAL queue, which no other machine
 can see. So a node that stalled took its poses down with it and no other GPU could
-help, which is what stranded eight videos for a week while three machines sat idle.
+help, which is what stranded videos for days while other machines sat idle.
 
 The rest of the design already solves this: a claim is held by a heartbeat and returned
 automatically when the holder goes quiet. These pin that the crop path now joins it.

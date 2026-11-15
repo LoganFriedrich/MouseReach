@@ -17,10 +17,9 @@ spurious source). The boundary is rejected and replaced with a
 median-cadence projection from a valid neighbor.
 
 This is the canonical physical test for whether a segment boundary is
-real -- see ``tray_motion_segment_boundary_test.md`` memory entry and
-case 36 (``20251009_CNT0307_P4 segment 18``) of the v4.0.0_dev outcome
-walkthrough where the gate would have rejected a spurious boundary at
-frame 30995.
+real: a real tray advance moves the tray, so a boundary with no tray
+motion behind it is spurious. In a reviewed case the gate would have
+rejected exactly such a spurious boundary.
 
 Initial implementation (v2.2.x): the simple two-test gate (excursion +
 pillar lk drop). Iterate-and-evaluate principle applies -- additional
@@ -42,9 +41,9 @@ DEFAULT_WINDOW = 50                   # frames each side of boundary
 DEFAULT_SA_BODYPARTS = ("SABL", "SABR", "SATL", "SATR")
 
 # v2.2.1 initial release: the pillar-lk-drop test is HARD-DISABLED by
-# default after smoke-testing on the 47-video quarantine corpus showed
-# it rejected real boundaries on many videos. The memory entry
-# tray_motion_segment_boundary_test.md asserts pillar lk drops sharply
+# default after smoke-testing on a 47-video corpus showed
+# it rejected real boundaries on many videos. The original design
+# assumed pillar lk drops sharply
 # after every cycle, but the corpus doesn't bear that out -- the drop
 # is observable only on a subset of post-retrieval boundaries where the
 # new pellet rapidly settles on the pillar AND DLC tracks the pillar

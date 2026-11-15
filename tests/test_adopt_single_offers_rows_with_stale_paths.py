@@ -8,7 +8,7 @@ rather than announcing itself.
 WHY a path-existence test must NOT be added here: a 'validated' row's recorded path
 is frequently ANOTHER node's local path. Cross-node recovery copies
 ``videos.current_path`` from the shared record as a breadcrumb, so a row can read
-``A:\\...\\DLC_Queue\\x.mp4`` -- a path that has never existed on this machine -- while
+``D:\\...\\DLC_Queue\\x.mp4`` -- a path that has never existed on this machine -- while
 the file itself sits in the shared singles folder, ready to be adopted. Dropping the
 row because its recorded path does not resolve would refuse work that is genuinely
 here. Only ``locate_video_file`` (which searches the shared folder, not just the
@@ -87,8 +87,8 @@ def test_a_validated_row_whose_recorded_path_is_another_nodes_is_still_offered(s
     (shared / "20240101_ABC0101_P1.mp4").write_bytes(b"v")
     node = _node([
         {"video_id": "20240101_ABC0101_P1", "state": "validated",
-         "source_path": r"A:\Behavior\MouseReach_Pipeline\DLC_Queue\20240101_ABC0101_P1.mp4",
-         "current_path": r"A:\Behavior\MouseReach_Pipeline\DLC_Queue\20240101_ABC0101_P1.mp4",
+         "source_path": r"D:\MouseReach_Pipeline\DLC_Queue\20240101_ABC0101_P1.mp4",
+         "current_path": r"D:\MouseReach_Pipeline\DLC_Queue\20240101_ABC0101_P1.mp4",
          "animal_id": "ABC0101"},
     ])
     work = node._select_work_item()

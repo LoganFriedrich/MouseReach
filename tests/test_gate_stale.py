@@ -6,7 +6,7 @@ outcomes/assignments/features kept describing the OLD cuts, kinematics-scope
 reruns reused them through the stage-reuse check, and the gate re-routed
 corrected videos to triage on stale outcomes -- reviewers re-reviewed work
 that was already right, and a causal reach could have been attributed to the
-wrong pellet (2026-09-08, reviewer diagnosis).
+wrong pellet (a reviewer's diagnosis).
 """
 import json
 import os

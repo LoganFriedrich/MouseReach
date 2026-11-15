@@ -586,7 +586,7 @@ def triage_results(
     dest_auto: Path = None,
     dest_needs: Path = None,
     dest_failed: Path = None,
-    reject_unsupported: bool = False,   # Easy/Flat are processed, never parked (2026-10-23)
+    reject_unsupported: bool = False,   # Easy/Flat are processed, never parked
     verbose: bool = True
 ) -> Dict:
     """
@@ -801,8 +801,8 @@ def cli_reject_unsupported():
     """``mousereach-reject-tray`` -- retired: moves nothing.
 
     It used to move Easy and Flat videos out of the pipeline into
-    Unanalyzed/Unsupported_Tray_Type, where nothing processed them again --
-    772 videos were found parked there on 2026-10-23 and copied back. Easy and
+    Unanalyzed/Unsupported_Tray_Type, where nothing processed them again, so
+    videos sat parked there unprocessed. Easy and
     Flat are processed now (last, by the work order; never segmented or held),
     so this command only says so. The options are still accepted so an old
     script calling it does not break.

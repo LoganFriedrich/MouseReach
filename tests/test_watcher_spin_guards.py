@@ -1,10 +1,10 @@
 """The main loop cannot spin: dispatch verdicts, terminal archive failures,
 and the manifest cache.
 
-WHY: overnight 2026-09-04 the processing loop spun -- a work item that
+WHY: the processing loop once spun overnight -- a work item that
 failed in milliseconds counted as progress, cycles became free, and the
-cycle-counted scan gate fired the 37-minute version scan 15 times
-back-to-back (~9.5 of 12 hours scanning, ~6 videos processed). These tests
+cycle-counted scan gate fired the long version scan again and again
+back-to-back, so almost nothing was processed. These tests
 pin the guards that make that impossible: a dispatch that did nothing says
 so, an archive with nothing on disk is terminal rather than silently
 retried forever, and a steady-state scan does not re-read unchanged
@@ -97,7 +97,7 @@ def _proc_for_archive(monkeypatch, error, tmp_path):
 
 def test_no_files_on_disk_is_terminal(monkeypatch, tmp_path):
     """'No files found in Processing/' cannot be fixed by waiting; retrying
-    it forever under backoff kept a gone-files row invisible for three days."""
+    it forever under backoff kept a gone-files row invisible for days."""
     o = _proc_for_archive(monkeypatch, "No files found in Processing/", tmp_path)
     assert o._archive_to_nas({"id": "20240101_ABC0101_P1"}) is False
     assert o.db.called("mark_failed")

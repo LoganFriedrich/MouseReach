@@ -34,13 +34,13 @@ def _list(tmp_path, *lines):
 
 
 def test_a_session_may_be_written_the_labs_way_or_the_pipelines():
-    assert ic.normalise_session("20220811_J11_P3") == "20220811_ASPA1011_P3"
-    assert ic.normalise_session("20220811_ASPA1011_P3") == "20220811_ASPA1011_P3"
+    assert ic.normalise_session("20220103_J11_P3") == "20220103_ASPA1011_P3"
+    assert ic.normalise_session("20220103_ASPA1011_P3") == "20220103_ASPA1011_P3"
     assert ic.normalise_session("not a session") is None
 
 
 def test_the_list_keeps_its_order_once_and_names_bad_lines(tmp_path):
-    f = _list(tmp_path, "# UCSF sets", "20220218_D03_P2", "", "20220217_D10_P1",
+    f = _list(tmp_path, "# list A", "20220218_D03_P2", "", "20220217_D10_P1",
               "20220218_ASPA0403_P2", "garbage line")
     sessions, bad = ic.read_sessions_file(f)
     assert sessions == ["20220218_ASPA0403_P2", "20220217_ASPA0410_P1"]
@@ -112,16 +112,16 @@ def test_the_copy_replaces_a_half_written_file_from_a_stopped_run(tmp_path):
 
 # -- Names written slightly wrong ------------------------------------------------
 # WHY: the import exists to copy recordings in under names the pipeline can read
-# (Logan, 2026-10-23: "copying and renaming the copies of multis to be compliant
-# with the formatting restrictions"). A recording whose name has a separator typo
+# (copies of the multi-animal recordings, renamed to meet the naming rules).
+# A recording whose name has a separator typo
 # was left out, and its animals' cuts then looked lost.
 
 def test_a_separator_typo_between_ids_is_read_as_a_comma():
     for stem, want in (
-            ("20220503_G25.G26,G27,G28,G29,G30,G31,G32_P1",
-             "20220503_G25,G26,G27,G28,G29,G30,G31,G32_P1"),
-            ("20220727_H36,H38,H39,H40_001,002,003,004_F1",
-             "20220727_H36,H38,H39,H40,001,002,003,004_F1")):
+            ("20220105_G25.G26,G27,G28,G29,G30,G31,G32_P1",
+             "20220105_G25,G26,G27,G28,G29,G30,G31,G32_P1"),
+            ("20220106_H36,H38,H39,H40_001,002,003,004_F1",
+             "20220106_H36,H38,H39,H40,001,002,003,004_F1")):
         (sessions, trailing) = ic.read_recording_stem(stem)
         assert sessions == [(want, "separator typo between ids read as a comma")]
         assert trailing == ""
@@ -133,9 +133,9 @@ def test_a_standard_name_reads_unchanged_with_its_trailing_text():
 
 
 def test_one_recording_with_two_cohorts_on_different_runs_is_read_once_per_run():
-    (sessions, _) = ic.read_recording_stem("20220812_J15,J16,I11,I13,I14,I15,I16,I17_JP3,IP1")
-    assert [s for s, _ in sessions] == ["20220812_J15,J16,003,004,005,006,007,008_P3",
-                                        "20220812_001,002,I11,I13,I14,I15,I16,I17_P1"]
+    (sessions, _) = ic.read_recording_stem("20220107_J15,J16,I11,I13,I14,I15,I16,I17_JP3,IP1")
+    assert [s for s, _ in sessions] == ["20220107_J15,J16,003,004,005,006,007,008_P3",
+                                        "20220107_001,002,I11,I13,I14,I15,I16,I17_P1"]
 
 
 def test_a_name_with_commas_reads_as_it_always_did_whatever_its_count_of_ids():
@@ -144,8 +144,8 @@ def test_a_name_with_commas_reads_as_it_always_did_whatever_its_count_of_ids():
 
 
 def test_names_that_do_not_read_one_way_are_not_read():
-    assert ic.read_recording_stem("20210924_ABS2_13-15_f") is None           # a range
-    assert ic.read_recording_stem("20220503_G25.G26,G27_P1") is None         # not eight ids
+    assert ic.read_recording_stem("20210101_ABS2_13-15_f") is None           # a range
+    assert ic.read_recording_stem("20220105_G25.G26,G27_P1") is None         # not eight ids
     # a run named for a cohort none of the animals belong to
     assert ic.read_recording_stem(f"20220217_{A}_JP3,IP1") is None
 
@@ -155,8 +155,8 @@ def test_repaired_names_are_imported_and_recorded_with_the_original(tmp_path, mo
     for cohort in ("I", "J"):                    # the shared recording is filed in both
         multi = src / cohort / "Multi-Animal"
         multi.mkdir(parents=True)
-        (multi / "20220812_J15,J16,I11,I13,I14,I15,I16,I17_JP3,IP1.mkv").write_bytes(b"rec")
-    (src / "J" / "Multi-Animal" / "20220813_J01.J02,J03,J04,J05,J06,J07,J08_P1.mkv"
+        (multi / "20220107_J15,J16,I11,I13,I14,I15,I16,I17_JP3,IP1.mkv").write_bytes(b"rec")
+    (src / "J" / "Multi-Animal" / "20220108_J01.J02,J03,J04,J05,J06,J07,J08_P1.mkv"
      ).write_bytes(b"rec")
     dest = tmp_path / "Unanalyzed" / "Multi-Animal"
     monkeypatch.setattr(ic, "default_retired_dir", lambda: None)
@@ -167,11 +167,11 @@ def test_repaired_names_are_imported_and_recorded_with_the_original(tmp_path, mo
     assert ic.main(args + ["--apply"]) == 0
     got = sorted(x.stem for x in dest.glob("*.mkv"))
     assert got == [
-        "20220812_ASPA0001,ASPA0002,ASPA0911,ASPA0913,ASPA0914,ASPA0915,ASPA0916,ASPA0917_P1",
-        "20220812_ASPA1015,ASPA1016,ASPA0003,ASPA0004,ASPA0005,ASPA0006,ASPA0007,ASPA0008_P3",
-        "20220813_ASPA1001,ASPA1002,ASPA1003,ASPA1004,ASPA1005,ASPA1006,ASPA1007,ASPA1008_P1"]
+        "20220107_ASPA0001,ASPA0002,ASPA0911,ASPA0913,ASPA0914,ASPA0915,ASPA0916,ASPA0917_P1",
+        "20220107_ASPA1015,ASPA1016,ASPA0003,ASPA0004,ASPA0005,ASPA0006,ASPA0007,ASPA0008_P3",
+        "20220108_ASPA1001,ASPA1002,ASPA1003,ASPA1004,ASPA1005,ASPA1006,ASPA1007,ASPA1008_P1"]
     mapping = json.loads((dest / "ASPA_import_mapping.json").read_text(encoding="utf-8"))
-    e = mapping["entries"]["20220813_ASPA1001,ASPA1002,ASPA1003,ASPA1004,ASPA1005,ASPA1006,"
+    e = mapping["entries"]["20220108_ASPA1001,ASPA1002,ASPA1003,ASPA1004,ASPA1005,ASPA1006,"
                            "ASPA1007,ASPA1008_P1"]
-    assert e["source_stem"] == "20220813_J01.J02,J03,J04,J05,J06,J07,J08_P1"
-    assert e["name_read_as"] == "20220813_J01,J02,J03,J04,J05,J06,J07,J08_P1"
+    assert e["source_stem"] == "20220108_J01.J02,J03,J04,J05,J06,J07,J08_P1"
+    assert e["name_read_as"] == "20220108_J01,J02,J03,J04,J05,J06,J07,J08_P1"

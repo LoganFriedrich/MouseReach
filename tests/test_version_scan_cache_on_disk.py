@@ -1,7 +1,7 @@
 """The version scan's caches survive a watcher restart.
 
 WHY: the first scan after a start re-read every manifest and review over the
-share -- 623 s on 2026-10-22, with the work loop waiting -- although nearly
+share -- minutes, with the work loop waiting -- although nearly
 all of them were unchanged since the previous run. The caches now live in a
 local file; every entry is still checked against the file's current listing
 before use, so what changed is read again and nothing stale is trusted.
@@ -22,7 +22,7 @@ STEM_B = "20240101_ABC0102_P1"
 
 
 def _set_up(tmp_path, monkeypatch, stems=(STEM,)):
-    coh = tmp_path / "Analyzed" / "Connectome" / "CNT01"
+    coh = tmp_path / "Analyzed" / "Project_A" / "CNT01"
     coh.mkdir(parents=True)
     reviews = tmp_path / "reviews"
     reviews.mkdir()

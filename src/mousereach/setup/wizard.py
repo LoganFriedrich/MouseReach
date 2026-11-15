@@ -25,10 +25,10 @@ each PC that says what role it plays. The wizard reads it and pre-fills
 defaults from the matching lab profile.
 
 To set up a machine's identity:
-    mousereach-setup --set-role "NAS / DLC PC"
+    mousereach-setup --set-role "GPU PC"
 
 Or create ~/.mousereach/machine_role.json manually:
-    {"role": "NAS / DLC PC"}
+    {"role": "GPU PC"}
 
 Copy lab_profiles.json.example, edit it for your lab and put it in one of
 those places; with none, the wizard has no pre-filled defaults.
@@ -58,7 +58,7 @@ _WIZARD_PROMPTED_KEYS = frozenset({
 # ~/.mousereach/lab_profiles.json (beside this machine's other lab settings),
 # then lab_profiles.json beside this module (the original location). WHY the
 # first two: the third is git-ignored, so no pull ever brings it and every
-# re-clone loses it -- on 2026-10-22 none of the lab's GPU PCs had one.
+# re-clone loses it, so machines can end up with none.
 #
 # The shipped lab_profiles.json.example is a TEMPLATE to copy and edit. It is
 # never matched against a machine. WHY: it used to be the fallback, and its
@@ -307,8 +307,7 @@ def cli_main():
                 print(f"   template to copy: {LAB_PROFILES_EXAMPLE})")
                 return
             # Say which file was read and which role this machine would get,
-            # so running this on a PC is enough to check it (asked for by a
-            # GPU node's session, 2026-10-22).
+            # so running this on a PC is enough to check it.
             print(f"\nLab profiles file: {lab_profiles_path()}")
             current_role = _load_machine_role()
             mine, _, how = detect_lab_profile()
@@ -352,7 +351,7 @@ Usage:
 
 Machine identification priority:
   1. Local identity file (~/.mousereach/machine_role.json)
-     Set with: mousereach-setup --set-role "NAS / DLC PC"
+     Set with: mousereach-setup --set-role "GPU PC"
   2. Drive-pattern auto-detection (lab_profiles.json)
   3. Fully manual (user enters all paths)
 
@@ -394,7 +393,7 @@ def _carry_unprompted(watcher_config: dict, existing_watcher: dict,
     WHY the profile's: only the five prompted settings were ever taken from
     a profile, so a machine set up from scratch lost the rest of its role --
     mode, also_process, and the pause for the recording program with its
-    recording days and hours. A behaviour PC rebuilt that way would pose on
+    recording days and hours. A GPU node that also records, rebuilt that way, would pose on
     top of a recording (found 2026-10-22).
     """
     for source in (existing_watcher or {}, profile_watcher or {}):

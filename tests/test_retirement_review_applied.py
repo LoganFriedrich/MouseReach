@@ -1,8 +1,8 @@
 """A recording retires when its videos' reviews have been APPLIED, judged the
 way the re-run scan judges it (content first, file times last).
 
-Until 2026-10-24 retirement compared modified times: a review saved seconds
-after the run that applied it looked unapplied forever, and 196 recordings sat
+Retirement used to compare modified times: a review saved seconds
+after the run that applied it looked unapplied forever, and recordings sat
 in the intake with every review applied.
 """
 import json

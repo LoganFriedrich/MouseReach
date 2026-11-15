@@ -20,7 +20,7 @@ Predicate (commit retrieved iff all true):
   P1. Exactly one reach in segment has vanish=True.
   P2. No reach chronologically BEFORE the vanish reach has
       displacement >= MIN_PRIOR_DISPLACEMENT_PX (12 px).
-      Rationale: per the user-mandated rule "a pellet cannot return to
+      Rationale: per the physical rule "a pellet cannot return to
       the pillar," once an earlier reach has visibly displaced the
       pellet off-pillar, any subsequent vanish-signal reach is the
       next reach disturbing already-displaced pellet, not a
@@ -28,7 +28,7 @@ Predicate (commit retrieved iff all true):
   P3. After the vanish reach end through seg_end - transition_zone,
       no sustained run of >= MIN_BOUNCE_RUN_STRICT (10) frames where
       pellet at lk>=0.85 is off-pillar (>1.5 radii from pillar
-      center). Rationale: per the user-mandated rule "a pellet
+      center). Rationale: per the physical rule "a pellet
       bouncing in the SA cannot be retrieved," sustained off-pillar
       high-confidence pellet observations after the vanish reach
       mean the pellet is in the SA, not in the mouse.

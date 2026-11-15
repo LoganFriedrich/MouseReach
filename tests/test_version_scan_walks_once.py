@@ -1,13 +1,12 @@
 """The version scan walks the archive a bounded number of times, never once
 per video.
 
-WHY (2026-10-30): a video whose manifest the scan's index does not hold fell
+WHY: a video whose manifest the scan's index does not hold fell
 back to ``iter_files(archive_dir, "<stem>_processing_manifest.json")`` -- a full
 recursive walk of Analyzed to look for ONE file name. A video with no manifest
 on disk never stops costing that, so it paid a whole-tree walk on every pass.
-Measured on the live archive: 55 such videos of 5,965 with a supported tray, at
-about 35 s a walk -- roughly 32 minutes of a 37-minute pass, during which the
-watcher's work loop does nothing. The scans had been 6-50 s a week earlier.
+A few such videos on a large archive made a pass spend most of its time in
+those walks, during which the watcher's work loop does nothing.
 
 What matters is the WALK COUNT, so that is what these tests assert: it must not
 grow with the number of videos the index missed.
@@ -48,9 +47,9 @@ def counted_walks(monkeypatch):
 def _scanner(tmp_path, stems_with_manifests, all_stems, monkeypatch):
     import mousereach.config as config
     monkeypatch.setattr(config, "filing_rules", lambda: {
-        "CNT": {"folder": "Connectome", "cohort_folder": "{CODE}{NN}"}})
+        "CNT": {"folder": "Project_A", "cohort_folder": "{CODE}{NN}"}})
     nas = tmp_path / "nas"
-    cohort = nas / "Analyzed" / "Connectome" / "CNT01"
+    cohort = nas / "Analyzed" / "Project_A" / "CNT01"
     cohort.mkdir(parents=True)          # the tree exists even with no manifests in it
     for stem in stems_with_manifests:
         _manifest(cohort, stem)
@@ -96,7 +95,7 @@ def test_a_manifest_outside_the_filed_folder_is_still_found(tmp_path, monkeypatc
     somewhere the index does not cover is found by the one deep walk."""
     stem = "20260101_CNT0199_P1"
     sc = _scanner(tmp_path, [], [stem], monkeypatch)
-    _manifest(sc.archive_dir / "Connectome" / "SomewhereElse" / "deeper", stem)
+    _manifest(sc.archive_dir / "Project_A" / "SomewhereElse" / "deeper", stem)
     found = sc._load_manifest(stem)
     assert found["video_stem"] == stem
     # and the scan does not report it missing (whether it then judges it
@@ -120,5 +119,5 @@ def test_the_deep_index_is_rebuilt_each_scan(tmp_path, monkeypatch):
     stem = "20260101_CNT0177_P1"
     sc = _scanner(tmp_path, [], [stem], monkeypatch)
     assert sc.scan(mark_outdated=False, adopt_orphans=False)["no_manifest"] == 1
-    _manifest(sc.archive_dir / "Connectome" / "Elsewhere", stem)
+    _manifest(sc.archive_dir / "Project_A" / "Elsewhere", stem)
     assert sc.scan(mark_outdated=False, adopt_orphans=False)["no_manifest"] == 0

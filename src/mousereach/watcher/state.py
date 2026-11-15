@@ -111,8 +111,7 @@ class WatcherStateManager:
                     # machine's own retry edge, but nothing ever took it: this
                     # skip block dropped the file because the row existed, so
                     # one transient failure (an old state-machine bug, a blip
-                    # mid-crop) parked the collage permanently (148 on one
-                    # node when this was added, 132 of them Pillar). The retry
+                    # mid-crop) parked the collage permanently. The retry
                     # counter keeps a deterministically broken file from
                     # retrying forever.
                     if known.get('state') == 'failed':
@@ -386,7 +385,7 @@ class WatcherStateManager:
         """
         Scan DLC staging directory for new DLC-complete video+h5 pairs.
 
-        Used by the Processing Server to discover videos that the DLC PC
+        Used by the Processing Server to discover videos that a GPU node
         has staged to the NAS after running DLC inference.
 
         Args:
@@ -442,7 +441,7 @@ class WatcherStateManager:
                     **metadata
                 )
 
-                # Set directly to dlc_complete — DLC already done by DLC PC.
+                # Set directly to dlc_complete — DLC already done by a GPU node.
                 # Bypass normal transition chain (validated→dlc_queued→...→dlc_complete)
                 self.db.force_state(
                     video_id, 'dlc_complete',

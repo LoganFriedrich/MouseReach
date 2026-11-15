@@ -20,7 +20,7 @@ def main_sync():
     Usage: mousereach-sync [--force] [--dry-run]
     """
     parser = argparse.ArgumentParser(
-        description="Sync MouseReach features to reach_data table in connectome database"
+        description="Sync MouseReach features to reach_data table in the central database"
     )
     parser.add_argument(
         "--force", "-f",

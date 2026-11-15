@@ -2,7 +2,7 @@
 
 Called AFTER algo-4 (reach assignment), BEFORE kinematics. Decides a freshly
 (re)processed video's fate and, when it cannot proceed on its own, MOVES the
-whole bundle into the right review queue so kinematics + connectome.db never
+whole bundle into the right review queue so kinematics + the central database never
 touch it:
 
     segmentation failed (hard or soft) OR QC-critical -> DEEP_REVIEW
@@ -91,11 +91,10 @@ def evaluate_gate(
     gt_full, gt_segs = _gt_certification(video_id, processing_dir)
     if gt_full:
         return DECISION_CLEAN, "ground_truth_exhaustive", st
-    # Easy and Flat trays are never held for a person (Logan, 2026-10-23:
-    # "Easy and flat should never get triaged"; "Pellet outcomes don't matter
-    # for easy and flats"; "They also don't get segmented"; pellets ARE
-    # presented, "we just don't care about it"; "Easy and flat don't need
-    # kinematics"). What they need is the session's reaches: no outcome is
+    # Easy and Flat trays are never held for a person: they are never
+    # triaged, their pellet outcomes do not matter (pellets ARE presented, but
+    # nothing is concluded from them), they are not segmented, and they need
+    # no kinematics. What they need is the session's reaches: no outcome is
     # computed, so there is nothing a reviewer could answer. A machine problem
     # is still recorded in _triage.json; held in a queue the video would only
     # wait for nobody. The stale-output checks below still run: they send a
@@ -117,8 +116,8 @@ def evaluate_gate(
     # outcomes file PREDATES the segments file, downstream was computed
     # against cuts that no longer exist: the video is mid-flight, not
     # reviewable. Judging it routed reviewers to data describing the OLD
-    # cuts, repeatedly (hand-fixed segmentations re-circulating to triage,
-    # 2026-09-08). A healthy pipeline always writes segments before
+    # cuts, repeatedly (hand-fixed segmentations re-circulating to triage).
+    # A healthy pipeline always writes segments before
     # outcomes, so this never fires on an ordinary run.
     seg_p = processing_dir / f"{video_id}_segments.json"
     out_p = processing_dir / f"{video_id}_pellet_outcomes.json"
@@ -133,7 +132,7 @@ def evaluate_gate(
     # The mtime test alone is defeated whenever something rewrites all the
     # files after the fact -- the unified-triage validation_status rewrite
     # touches segments, reaches AND outcomes seconds before this gate runs,
-    # so outcomes always look newer (reviewer diagnosis, 2026-09-08). The
+    # so outcomes always look newer (found by a reviewer). The
     # IN-FILE dates cannot be defeated that way: a human correction stamp
     # (segments corrected_at) newer than the reach detector's own run stamp
     # (reaches detected_at) means the reaches were computed against
@@ -175,12 +174,11 @@ def evaluate_gate(
         return DECISION_CLEAN, "outcome-free tray (Easy/Flat): never held", st
     if qc_verdict == "needs_review":
         # A human's completed deep review outranks the machine's self-check
-        # (Logan's rule, 2026-08-31: "if a human completed all that needed to
-        # be reviewed, then it moves on"). Without this, a deterministic QC
+        # (if a human completed all that needed to be reviewed, then it moves
+        # on). Without this, a deterministic QC
         # flag -- e.g. an unstable landmark ruler, a property of the tracking
         # that every re-run re-raises identically -- ping-ponged cleared
-        # videos between deep review and reprocessing forever (one video
-        # cycled 16 times). The flag still travels with the outputs in
+        # videos between deep review and reprocessing forever. The flag still travels with the outputs in
         # _triage.json, so flagged kinematics stay identifiable downstream.
         if _deep_review_cleared(video_id, processing_dir):
             logger.info(
@@ -210,7 +208,7 @@ def evaluate_gate(
     # A triaged segment too short to be a pellet presentation cannot be answered
     # in triage (answer_problem refuses it there): it is a question about the
     # cuts, and only something a person can fix in the GUI may hold a video
-    # (Logan, 2026-10-23) -- so deep review, where the cuts are fixed. If a person
+    # -- so deep review, where the cuts are fixed. If a person
     # has already cleared the video there and kept these cuts, there is no pellet
     # in such a segment to ask about.
     short = sorted(s for s in unresolved if s in st.too_short)
@@ -341,7 +339,7 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
         # No pose in the bundle: record where the canonical pose LIVES, so
         # the return path and the review tools can load it. A manifest
         # claiming self_contained with a null pose pointer put one video into
-        # an every-2-minutes return-refusal loop (2026-09-08). Reuse the
+        # an every-2-minutes return-refusal loop. Reuse the
         # return path's own resolver (Analyzed model trees, then
         # declared-scorer staging) so the two can never disagree.
         try:
@@ -383,15 +381,14 @@ def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Pat
     """Set aside an earlier deep-review clear when a reviewer escalates.
 
     Pressing "Escalate: bad segmentation -> re-segmentation" means the reviewer has
-    found a new problem with the cuts (Logan, 2026-10-27: "If you click the
-    button it should remove any deep review clearing ... Basically means you
-    found a new issue"). Only the button does this: the automatic routes into
+    found a new problem with the cuts, so the button removes any earlier deep
+    review clearing. Only the button does this: the automatic routes into
     deep review fire only when no clear exists. Left in place, it travelled with
     the bundle, and the return scan -- which reads "cleared" from the marker
     alone -- released the video from deep review within seconds of the
     escalation, re-ran it on the same cuts and put it back in triage: the
-    reviewer's "Escalate: bad segmentation" button did nothing visible
-    (20250627_CNT0107_P3, 2026-10-27, cleared 2026-09-08). The marker is
+    reviewer's "Escalate: bad segmentation" button did nothing visible.
+    The marker is
     renamed, never deleted, so the earlier clear stays on record and goes on
     travelling with the bundle under a name nothing reads as a clear. Done
     BEFORE the move, so no scan can see the old marker in the new queue. A
@@ -502,7 +499,7 @@ def route_to_queue(
     # If the SOURCE was a per-video bundle dir (a queue-to-queue divert) and
     # the move emptied it, remove it: an empty date-named dir left behind in
     # a queue reads as a seg-failed bundle and re-diverts "(0 files)" forever
-    # -- the phantom that re-flipped a parked video (2026-09-08). The shared
+    # -- the phantom that re-flipped a parked video. The shared
     # Processing dir is never named like a video stem, so it never matches.
     processing_dir = Path(processing_dir)
     try:

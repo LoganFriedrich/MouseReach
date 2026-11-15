@@ -1,9 +1,9 @@
 """The kinematics extractor knows when a person set the segmentation.
 
-WHY (2026-10-23): the check read ``reach_path``, a name that does not exist in
+WHY: the check read ``reach_path``, a name that does not exist in
 FeatureExtractor.extract (the parameter is ``reaches_path``). The NameError was
 swallowed by the surrounding try, so ``human_segmentation`` was always False:
-since f3cae91 (2026-10-21) a person's short segments were meant to count when
+since f3cae91 a person's short segments were meant to count when
 their review answers are applied, and in the kinematics they never did.
 """
 import json

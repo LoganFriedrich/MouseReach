@@ -3,7 +3,7 @@ last, and declared-scorer only.
 
 WHY: a GPU node's freshly staged pose lives in staging before intake pulls it.
 A human-cleared video whose only pose was the staged copy refused to return in
-a loop every ~2-3 minutes (2026-09-08); and 8 videos whose Analyzed trees hold
+a loop every few minutes; and videos whose Analyzed trees hold
 only OLD-model poses were one bundle-omission away from silently re-running on
 the wrong pose. Staging closes both -- but an old-model pose in staging is
 stale by definition and must be refused.
@@ -62,7 +62,7 @@ def test_manifest_pose_path_through_a_guard_file_reads_as_not_found(tmp_path, mo
     guard.write_text("retired folder", encoding="ascii")
     stem = "20240101_ABC0101_P1"
     name = stem + "DLC_newmodel.h5"
-    leftovers = nas / "Processing" / "_leftovers_pending_cleanup_2026-09-14" / "DLC_Complete"
+    leftovers = nas / "Processing" / "_leftovers_pending_cleanup_2025-01-01" / "DLC_Complete"
     leftovers.mkdir(parents=True)
     (leftovers / name).write_text("x", encoding="utf-8")
     bundle = nas / "Processing" / "Review" / "triage" / stem

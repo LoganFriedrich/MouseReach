@@ -1,7 +1,7 @@
 """Gate precedence: a human's completed deep review outranks the QC self-check.
 
-Logan's rule (2026-08-31): "if a human completed all that needed to be
-reviewed, then it moves on." Without it, a deterministic QC critical (e.g. an
+The rule: if a human completed all that needed to be
+reviewed, the video moves on. Without it, a deterministic QC critical (e.g. an
 unstable landmark ruler, re-raised identically by every re-run) ping-ponged
 cleared videos between deep review and reprocessing forever.
 """

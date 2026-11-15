@@ -248,7 +248,7 @@ All spatial measurements use ruler units (1 ruler = SABL-to-SABR distance = 9mm)
 <!-- AUTO-GENERATED PERFORMANCE SECTION START -->
 ## Current Performance
 
-Evaluated 2026-01-30 against 19 ground truth videos with human-verified annotations. Run `python -m mousereach.eval.report_cli` to regenerate these numbers and produce plots.
+Evaluated 2026-01-30 against 19 ground truth videos with human-verified annotations. Run `python -m mousereach.eval.report_cli` to regenerate these numbers and produce plots. In this copy the ground-truth video names are replaced with placeholders (`GT_VIDEO_01` ...); a regenerated section prints your own video names.
 
 ### Aggregate Metrics
 
@@ -260,7 +260,7 @@ Evaluated 2026-01-30 against 19 ground truth videos with human-verified annotati
 | Reach detection F1 | 85.2% | 16 videos |
 | Outcome classification accuracy | 95.8% | 19 videos (380 outcomes) |
 
-Three videos were excluded from reach evaluation because they lack reach ground truth annotations (CNT0216_P3, CNT0213_P3, CNT0306_P2).
+Three videos were excluded from reach evaluation because they lack reach ground truth annotations (GT_VIDEO_01, GT_VIDEO_02, GT_VIDEO_03).
 
 ### Segmentation: Per-Video Boundary Recall
 
@@ -268,10 +268,10 @@ Three videos were excluded from reach evaluation because they lack reach ground 
 
 | Video | Recall | Matched/Total |
 |-------|--------|---------------|
-| CNT0115_P2 | 95.2% | 20/21 |
-| CNT0104_P2 | 95.2% | 20/21 |
-| CNT0408_P1 | 95.2% | 20/21 |
-| CNT0415_P1 | 95.2% | 20/21 |
+| GT_VIDEO_04 | 95.2% | 20/21 |
+| GT_VIDEO_05 | 95.2% | 20/21 |
+| GT_VIDEO_06 | 95.2% | 20/21 |
+| GT_VIDEO_07 | 95.2% | 20/21 |
 | All others (15 videos) | 100% | 21/21 |
 
 **Boundary timing accuracy** (394 matched boundaries):
@@ -292,24 +292,24 @@ Performance varies substantially across videos. Some videos achieve perfect dete
 
 | Video | Precision | Recall | F1 | True Positives | False Positives | False Negatives |
 |-------|-----------|--------|-----|----------------|-----------------|-----------------|
-| CNT0104_P2 | 100% | 100% | 100% | 5 | 0 | 0 |
-| CNT0102_P2 | 100% | 100% | 100% | 6 | 0 | 0 |
-| CNT0216_P1 | 100% | 100% | 100% | 21 | 0 | 0 |
-| CNT0301_P4 | 100% | 100% | 100% | 1 | 0 | 0 |
-| CNT0305_P2 | 98% | 98% | 98% | 83 | 2 | 2 |
-| CNT0401_P4 | 98% | 93% | 95% | 50 | 1 | 4 |
-| CNT0415_P1 | 94% | 100% | 97% | 29 | 2 | 0 |
-| CNT0103_P2 | 97% | 91% | 94% | 84 | 3 | 8 |
-| CNT0408_P1 | 92% | 91% | 92% | 220 | 19 | 21 |
-| CNT0115_P2 | 78% | 100% | 88% | 7 | 2 | 0 |
-| CNT0413_P2 | 88% | 82% | 85% | 165 | 22 | 35 |
-| CNT0309_P1 | 75% | 95% | 84% | 18 | 6 | 1 |
-| CNT0312_P2 | 52% | 100% | 68% | 126 | 118 | 0 |
-| CNT0307_P4 | 50% | 83% | 62% | 124 | 126 | 26 |
-| CNT0110_P2 | 41% | 79% | 54% | 57 | 83 | 15 |
-| CNT0311_P2 | 34% | 78% | 48% | 75 | 143 | 21 |
+| GT_VIDEO_05 | 100% | 100% | 100% | 5 | 0 | 0 |
+| GT_VIDEO_08 | 100% | 100% | 100% | 6 | 0 | 0 |
+| GT_VIDEO_09 | 100% | 100% | 100% | 21 | 0 | 0 |
+| GT_VIDEO_10 | 100% | 100% | 100% | 1 | 0 | 0 |
+| GT_VIDEO_11 | 98% | 98% | 98% | 83 | 2 | 2 |
+| GT_VIDEO_12 | 98% | 93% | 95% | 50 | 1 | 4 |
+| GT_VIDEO_07 | 94% | 100% | 97% | 29 | 2 | 0 |
+| GT_VIDEO_13 | 97% | 91% | 94% | 84 | 3 | 8 |
+| GT_VIDEO_06 | 92% | 91% | 92% | 220 | 19 | 21 |
+| GT_VIDEO_04 | 78% | 100% | 88% | 7 | 2 | 0 |
+| GT_VIDEO_14 | 88% | 82% | 85% | 165 | 22 | 35 |
+| GT_VIDEO_15 | 75% | 95% | 84% | 18 | 6 | 1 |
+| GT_VIDEO_16 | 52% | 100% | 68% | 126 | 118 | 0 |
+| GT_VIDEO_17 | 50% | 83% | 62% | 124 | 126 | 26 |
+| GT_VIDEO_18 | 41% | 79% | 54% | 57 | 83 | 15 |
+| GT_VIDEO_19 | 34% | 78% | 48% | 75 | 143 | 21 |
 
-**Three problematic videos** (CNT0311_P2, CNT0110_P2, CNT0307_P4) have precision below 50%, meaning the algorithm detects more false reaches than real ones. These videos likely have challenging DLC tracking conditions (hand flicker, frequent paw-at-slit without reaching).
+**Three problematic videos** (GT_VIDEO_19, GT_VIDEO_18, GT_VIDEO_17) have precision below 50%, meaning the algorithm detects more false reaches than real ones. These videos likely have challenging DLC tracking conditions (hand flicker, frequent paw-at-slit without reaching).
 
 **Reach timing accuracy** (1,071 matched reaches):
 
@@ -330,13 +330,13 @@ Performance varies substantially across videos. Some videos achieve perfect dete
 
 | Video | Accuracy | Errors | Error Details |
 |-------|----------|--------|---------------|
-| CNT0311_P2 | 80% | 4 | 3 retrieved misclassified (2 as displaced_sa, 1 as uncertain), 1 displaced_outside as untouched |
-| CNT0216_P3 | 80% | 4 | Mixed: displaced_sa/untouched confusion in both directions |
-| CNT0408_P1 | 80% | 4 | 4 retrieved misclassified as displaced_sa |
-| CNT0312_P2 | 95% | 1 | 1 retrieved as untouched |
-| CNT0103_P2 | 95% | 1 | 1 untouched as displaced_sa |
-| CNT0401_P4 | 95% | 1 | 1 untouched as displaced_sa |
-| CNT0413_P2 | 95% | 1 | 1 displaced_outside as displaced_sa |
+| GT_VIDEO_19 | 80% | 4 | 3 retrieved misclassified (2 as displaced_sa, 1 as uncertain), 1 displaced_outside as untouched |
+| GT_VIDEO_01 | 80% | 4 | Mixed: displaced_sa/untouched confusion in both directions |
+| GT_VIDEO_06 | 80% | 4 | 4 retrieved misclassified as displaced_sa |
+| GT_VIDEO_16 | 95% | 1 | 1 retrieved as untouched |
+| GT_VIDEO_13 | 95% | 1 | 1 untouched as displaced_sa |
+| GT_VIDEO_12 | 95% | 1 | 1 untouched as displaced_sa |
+| GT_VIDEO_14 | 95% | 1 | 1 displaced_outside as displaced_sa |
 
 **Confusion matrix** (380 total classifications):
 
@@ -369,7 +369,7 @@ This section documents why the current algorithm versions are what they are — 
 
 ### Reach Detection: From Naive to Data-Driven
 
-Reach detection underwent the most significant evolution, driven by a ground truth analysis of 321 manually-labeled reaches from video 20251021_CNT0405_P4 (37,109 frames, analyzed 2026-01-12).
+Reach detection underwent the most significant evolution, driven by a ground truth analysis of a few hundred manually-labeled reaches from a single exhaustively labeled video.
 
 **Version progression and measured performance:**
 
@@ -390,7 +390,7 @@ The three core detection rules were empirically derived:
 
 1. **Nose Engagement Gate** — 95th percentile of nose-to-slit distance at labeled reach starts was 21.3 pixels. Threshold set to 25px for margin. This rule ensures the mouse is actively oriented toward the slit, not grooming or exploring elsewhere.
 
-2. **Reach Start = Hand Appearance** — 100% of 321 ground truth reaches had at least one hand point visible at start (RightHand: 99.7%, RHRight: 99.7%, RHLeft: 99.1%, RHOut: 91.9%). This justified the "any hand point above threshold" rule.
+2. **Reach Start = Hand Appearance** — 100% of the ground truth reaches had at least one hand point visible at start (RightHand: 99.7%, RHRight: 99.7%, RHLeft: 99.1%, RHOut: 91.9%). This justified the "any hand point above threshold" rule.
 
 3. **Reach End: Two Modes** — 94.6% of reaches ended with hand disappearance (mean 1.6 frames after marked end). The remaining 5.4% ended with hand retraction (leftward movement) into the next reach. 90.5% of inter-reach gaps showed leftward hand motion.
 
@@ -425,7 +425,7 @@ Outcome classification evolved through iterative refinement of the pellet tracki
 - **v2.3:** Added tray-relative motion filtering (Stage 3) to distinguish real displacement from tray wobble. Added causal reach attribution using the interaction frame.
 - **v2.4.4 (current):** Improved handling of pellet start/end position for cases where the pellet starts slightly off-pillar (operator error) or is retrieved very quickly. Fixed edge cases with pellets that disappear immediately on contact.
 
-The remaining failure mode is over-calling `displaced_sa` on videos with unusual tray dynamics (notably CNT0311_P2 at 70% accuracy, vs. 95-100% for other videos).
+The remaining failure mode is over-calling `displaced_sa` on videos with unusual tray dynamics (notably one ground-truth video at 70% accuracy, vs. 95-100% for the others).
 
 ### Version Simulator Tool
 
@@ -444,7 +444,7 @@ This produces a table showing precision, recall, and F1 for each historical vers
 | Component | Version | Key Changes |
 |-----------|---------|-------------|
 | Segmentation | v2.1.0 | SABL-centered crossing with multi-strategy fallback |
-| Reach Detection | v3.5.0 | Data-driven thresholds from 321 ground truth reaches |
+| Reach Detection | v3.5.0 | Data-driven thresholds from ground truth reaches |
 | Outcome Classification | v2.4.4 | Improved pellet start/end position handling |
 
 ---

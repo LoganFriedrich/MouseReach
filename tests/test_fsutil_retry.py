@@ -1,8 +1,8 @@
 """fsutil: transient holds are absorbed; real failures still raise.
 
 WHY: a stage's own output write died on a reviewer GUI's brief hold of the
-file (2026-09-05, reach save_results) -- the third transient-lock casualty
-in three days, each at a different unguarded site. This is the shared
+file (reach save_results) -- one of several transient-lock casualties,
+each at a different unguarded site. This is the shared
 primitive; these tests pin its contract: retry ONLY transient locks, and
 after the retries the LAST error raises so a stuck file still fails the
 stage loudly instead of stranding it silently.

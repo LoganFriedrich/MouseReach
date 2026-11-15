@@ -128,7 +128,7 @@ def test_saved_review_applied_by_content_is_done(env):
 
 
 def test_analysis_in_another_cohort_folder_is_wrong_place(env):
-    wrong = env.ANALYZED_OUTPUT / "Connectome" / "CNT09"
+    wrong = env.ANALYZED_OUTPUT / "Project_A" / "CNT09"
     put_analyzed(VID, folder=wrong)
     row = verdict_of(VID)
     assert row["verdict"] == rc.WRONG_PLACE
@@ -137,7 +137,7 @@ def test_analysis_in_another_cohort_folder_is_wrong_place(env):
 
 def test_second_copy_elsewhere_is_wrong_place_even_when_current(env):
     put_analyzed(VID)
-    put_analyzed(VID, folder=env.ANALYZED_OUTPUT / "Connectome" / "CNT09")
+    put_analyzed(VID, folder=env.ANALYZED_OUTPUT / "Project_A" / "CNT09")
     assert verdict_of(VID)["verdict"] == rc.WRONG_PLACE
 
 
@@ -224,7 +224,7 @@ def test_failed_and_quarantined_need_a_person(env):
     assert verdict_of(VID2)["verdict"] == rc.NEEDS_PERSON
 
 
-LEFTOVERS = "Processing/_leftovers_pending_cleanup_2026-09-14"
+LEFTOVERS = "Processing/_leftovers_pending_cleanup_2025-01-01"
 
 
 def leftovers(env, name):
@@ -382,7 +382,7 @@ def test_video_without_manifest_names_its_folder(env):
     (folder / f"{VID}.mp4").write_bytes(b"v")
     row = verdict_of(VID)
     assert row["verdict"] == rc.NOT_CURRENT
-    assert "Analyzed/Connectome/CNT01" in row["detail"]
+    assert "Analyzed/Project_A/CNT01" in row["detail"]
 
 
 def test_nothing_is_written(env):
@@ -424,7 +424,7 @@ def test_superseded_analysis_under_archive_is_not_read(env):
     live = put_analyzed(VID)
     archive = env.ANALYZED_OUTPUT / "Archive"
     put_analyzed(VID, seg="1.0", folder=archive / "superseded_processing_root_3.1")
-    put_analyzed(VID, seg="1.0", folder=archive / "Connectome" / "CNT01")
+    put_analyzed(VID, seg="1.0", folder=archive / "Project_A" / "CNT01")
     put_analyzed(VID2, folder=archive / "superseded_processing_root_3.1")
 
     walked = rc.walk_analyzed(env.ANALYZED_OUTPUT)

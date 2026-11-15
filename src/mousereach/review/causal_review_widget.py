@@ -114,7 +114,7 @@ def reaches_in_frames(reaches, start_frame, end_frame):
 # Why the pipeline flagged a pellet, as a label of two or three words. The
 # codes are the outcome step's own (pellet_outcomes.json flag_reason); the
 # segment line already says WHAT is open (outcome / causal reach), so this only
-# adds the reason when there is one (Logan, 2026-10-23: "far too many words").
+# adds the reason when there is one (anything longer is far too many words).
 _FLAG_REASON_LABELS = {
     "fell_through_all_committing_stages": "",
     "cv_artifact_landing_no_pellet_arrival": "possible tracking artifact",
@@ -130,9 +130,8 @@ def segment_answered(seg, records) -> bool:
     since: a person's answer is what happened in those frames. Until
     2026-10-24 a changed algorithm call re-opened it, and reviewers were asked
     again about pellets they had answered -- e.g. answered "displaced_sa", then
-    a newer detector could not decide and the pellet came back (Logan: "the
-    thing that was unsure has already been answered by a human reviewer.
-    That's wrong.").
+    a newer detector could not decide and the pellet came back, although the
+    thing that was unsure had already been answered by a human reviewer.
 
     A record counts only when it is an answer (is_answered, the one
     definition): a pellet saved with no outcome picked stays open."""
@@ -192,8 +191,8 @@ def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
 
 def open_triaged_indices(indices, segments, records) -> list:
     """The triaged segments a person has NOT already answered -- the only ones
-    triage walks (Logan, 2026-10-24: answered pellets kept being shown when a
-    video came back for new ones)."""
+    triage walks (answered pellets kept being shown when a video came back
+    for new ones)."""
     return [i for i in indices if not segment_answered(segments[i], records)]
 
 
@@ -648,7 +647,7 @@ The notes box travels with the video.
 
         # --- Footer: save + status ---
         # Two rows of buttons and the status line under them, so the panel
-        # fits a small screen (one row ran off a 1366-pixel screen, 2026-10-23).
+        # fits a small screen (one row ran off a small laptop screen).
         footer = QFrame()
         footer_outer = QVBoxLayout()
         footer_outer.setContentsMargins(0, 0, 0, 0)
@@ -759,7 +758,7 @@ The notes box travels with the video.
         """Load a copy-free review bundle.
 
         The bundle dir holds only the four algo JSONs + manifest.json; the mp4
-        and DLC pose are loaded from the manifest's canonical Y: paths (they live
+        and DLC pose are loaded from the manifest's canonical paths (they live
         in different dirs and are never copied). See mousereach.review.staging
         for how bundles are produced.
 
@@ -852,10 +851,9 @@ The notes box travels with the video.
     def _update_triage_banner(self, banner) -> None:
         """Say what is open on the segment on screen, and why it was flagged
         when there is a reason beyond that -- nothing else. Only that segment
-        (Logan, 2026-10-23: "i only need the note for the one I'm looking at to
-        show"). Nothing about earlier answers or re-cut segments: a reviewer
-        answers what is open, and those words only made it unclear what to do
-        (Logan, 2026-10-24).
+        (a reviewer needs only the note for the segment being looked at).
+        Nothing about earlier answers or re-cut segments: a reviewer answers
+        what is open, and those words only made it unclear what to do.
         """
         if not self._video_stem or not self._segment_list:
             banner.setVisible(False)
@@ -933,7 +931,7 @@ The notes box travels with the video.
             # Lazy, decode-on-demand video layer. Navigation never touches it.
             # On the next video the SAME layer gets the new video: deleting it
             # and adding a new one made napari rebuild its display objects,
-            # about half of a next-video load (2026-10-23).
+            # about half of a next-video load.
             lazy = self._make_lazy_video(self._actual_video, self.n_frames, h, w)
             if self.video_layer is not None and self.video_layer in self.viewer.layers:
                 self.video_layer.data = lazy
@@ -1042,8 +1040,7 @@ The notes box travels with the video.
         WHY: an untouched call with no reaches already opened at the end, but
         one with reaches (every hand-score mismatch the algorithm called
         untouched) opened on its last reach, often hundreds of frames earlier,
-        and the reviewer had to skip forward to see the pellet (Logan,
-        2026-10-24: "Why aren't they the same?"). A reach the reviewer has
+        and the reviewer had to skip forward to see the pellet. A reach the reviewer has
         chosen for it still comes first (_relevant_reach)."""
         if seg.get("outcome") not in OUTCOMES_WITHOUT_A_REACH:
             return False
@@ -1201,7 +1198,7 @@ The notes box travels with the video.
         # Name labels in deep review only. Building a label for every point
         # costs load time and every frame, and triage does not need them; in
         # deep review the labels jumping is what tells a reviewer it is time to
-        # call a new segment (Logan, 2026-10-23).
+        # call a new segment.
         labels = bool(self._deep_review)
         # On the next video the SAME layer gets the new points (see the video
         # layer in _load_video) -- and a video with no points empties it, where
@@ -1213,8 +1210,8 @@ The notes box travels with the video.
             # skips re-taking it while the layer is hidden. A reviewer who hid the
             # dots and moved to a video with fewer points then crashed the load:
             # setting the colours redraws, the redraw read the previous video's
-            # list, and that list pointed past the end of the new points (Colin,
-            # 2026-10-29: "index 596438 is out of bounds ... size 564876").
+            # list, and that list pointed past the end of the new points
+            # ("index ... is out of bounds").
             # force=True re-takes it even while hidden.
             self.points_layer.refresh(force=True)
             if len(points_data):
@@ -1318,7 +1315,7 @@ The notes box travels with the video.
                 logger.debug("review restore %s: %s", self._video_stem, n)
             # Shown to the reviewer in the triage banner: an earlier answer that
             # was not used must say so on screen, or the reviewer meets the same
-            # question again with no idea why (2026-10-23).
+            # question again with no idea why.
             self._restore_notes = list(notes)
             self._review_records = restored
             self._unmatched_answers = unmatched
@@ -1330,7 +1327,7 @@ The notes box travels with the video.
         # comes back (the nightly hand-score check) for new pellets, but its
         # pellet file still flags the ones a person answered before, and "Next"
         # used to walk those too, showing the earlier answers -- "the thing that
-        # was unsure has already been answered" (Logan, 2026-10-24). A pellet
+        # was unsure has already been answered". A pellet
         # answered in this session stays in the walk (it was open at load), so
         # Prev reaches it; one whose algorithm call changed since its answer is
         # open again (_done says so).
@@ -1481,7 +1478,7 @@ The notes box travels with the video.
             # inside the segment's own frames. WHY: the reach file's grouping
             # puts reaches made before the first pellet arrived into segment 1,
             # and the picker offered them as answers for pellet 1 -- answers the
-            # tool then refuses (answer_problem), 2026-10-23.
+            # tool then refuses (answer_problem).
             all_reaches = []
             for r in reaches_in_frames(raw_reaches_by_seg.get(seg_num, []),
                                        start_frame, end_frame):
@@ -1674,9 +1671,8 @@ The notes box travels with the video.
         banner_layout.addWidget(QLabel(seg_info))
 
         # Nothing on screen says a segment was answered before or re-cut: a
-        # reviewer answers what is open, and those words only confused it
-        # (Logan, 2026-10-24: "Don't tell me it was resegmented or previously
-        # answered by a human"). Earlier answers are still filled in below.
+        # reviewer answers what is open, and those words only confused it.
+        # Earlier answers are still filled in below.
 
         if seg.get("causal_reach"):
             cr = seg["causal_reach"]
@@ -1709,7 +1705,7 @@ The notes box travels with the video.
         # triaged element, driven by WHY it was triaged. The pellet is shown in
         # the banner above (not a question); a wrong pellet is a segmentation
         # issue: the reviewer answers nothing and presses "Escalate: bad
-        # segmentation -> deep review" (Logan, 2026-10-23).
+        # segmentation -> deep review".
         #   reach_uncertain   -> outcome is algo-known; pick the causal reach.
         #   outcome_uncertain -> the causal reach is pinned (1 candidate); pick
         #                        what it did to the pellet.
@@ -2297,7 +2293,7 @@ The notes box travels with the video.
         current = seg.get("outcome", "")
         # A hand-score mismatch (the bench check sent a finished pellet back
         # because the hand-scored sheet disagrees): the algorithm did commit an
-        # outcome, and it is usually the one that is right (Logan, 2026-10-24).
+        # outcome, and it is usually the one that is right.
         # So its outcome is pre-selected instead of the sentinel -- "Save
         # Segment + Next" then means "the algorithm was right" -- and every
         # other outcome stays in the list. A pellet the algorithm itself could
@@ -2459,7 +2455,7 @@ The notes box travels with the video.
         segment too short to be a pellet presentation). Such an answer is never
         recorded: the pipeline would drop it later without a word, and when the
         event belongs to another pellet the right action is Escalate, not an
-        answer (Logan, 2026-10-23).
+        answer.
         """
         self._answer_problem = None
         rec = self._collect_answers_unchecked()
@@ -3070,10 +3066,9 @@ The notes box travels with the video.
     def _review_pool_paths_unfiltered(self, pending_dir, root):
         """Every bundle folder in the queue folder, by name only.
 
-        WHY a plain listing (2026-10-23): this used to read the queue index and,
-        when that was empty, open every bundle's files to decide which still
-        need review -- about 6 minutes over the NAS for ~800 bundles, at every
-        launch. The index was stale (one entry, for a bundle long gone; only a
+        WHY a plain listing: this used to read the queue index and, when that
+        was empty, open every bundle's files to decide which still need review
+        -- minutes over the NAS for a deep queue, at every launch. The index was stale (one entry, for a bundle long gone; only a
         one-off catch-up job ever pushed to it), and a partly filled index would
         have hidden the rest of the queue. A video is in the queue because its
         bundle is in this folder; whether the one about to be shown still needs
@@ -3112,7 +3107,7 @@ The notes box travels with the video.
 
         Without a worklist this is every bundle in the queue. With one, the
         reviewer only ever sees the videos the worklist names -- which is how a
-        targeted question ("check these 160 segments") gets asked without
+        targeted question ("check these segments") gets asked without
         editing anyone's data to make the tool walk them.
         """
         if self._worklist:
@@ -3646,7 +3641,7 @@ def main():
     viewer = napari.Viewer(title=f"MouseReach {tool_name} ({mode})")
     # napari's layer panels take a third of a small screen and a reviewer
     # does not need them; Window menu -> layer controls / layer list brings
-    # them back (2026-10-23).
+    # them back.
     try:
         qv = getattr(viewer.window, "_qt_viewer", None) or viewer.window.qt_viewer
         qv.dockLayerControls.setVisible(False)

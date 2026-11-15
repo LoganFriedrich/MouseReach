@@ -2,7 +2,7 @@
 
 Overlap is normalised by the SHORTER span, so a 1-frame segment inside any
 review span scores 100%, ties the true target, and the tie drops the human's
-answer. Seen live 2026-09-01: a review spanning a full real segment was
+answer. For example, a review spanning a full real segment was
 dropped because a phantom segment (frames 35108-35108) tied it at 100% vs
 100%. Degenerate spans must be excluded on both sides of the match."""
 

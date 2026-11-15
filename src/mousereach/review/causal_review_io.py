@@ -13,9 +13,8 @@ long time, the only copy. A review is written into a triage bundle; the bundle
 is transient -- reprocessing regenerates it, and returning a cleared bundle
 MOVES its files onto one node's local disk and removes the bundle. A review only
 reached shared storage that survives when its video was archived, so whether a
-reviewer's work outlived a reprocess came down to timing. Measured on
-2026-08-24: of 1,686 reviewed videos, 662 had a durable copy, 983 existed only
-on one machine's local disk, and 41 existed only inside a Y: triage bundle -- one
+reviewer's work outlived a reprocess came down to timing: many reviews existed
+only on one machine's local disk, and some only inside a triage bundle -- one
 reprocess away from gone, and not reconstructable from the index.
 
 So the durable copy is written FIRST and never depends on the bundle's
@@ -69,7 +68,7 @@ def durable_review_dir() -> Optional[Path]:
     """The directory that holds the copy of record for every review.
 
     Beside the corpus index, on shared storage: the index is already the one
-    place every node agrees to look, and the X: backup mirrors the NAS. Returns
+    place every node agrees to look, and a backup of the NAS covers it. Returns
     None only when neither a NAS nor a processing root is configured, in which
     case the caller keeps its working copy and says so.
     """
@@ -142,9 +141,8 @@ def review_path_index(stems) -> Dict[str, tuple]:
     the earlier place): the routine Pending bundle, next to the canonical video
     (only where ``resolve_canonical_paths`` resolves), the durable store.
     WHY: the archive's version scan asks this for every archived video every
-    half hour; per video it cost several missed lookups on the share -- about
-    5 minutes of every scan for 4,597 videos on 2026-10-21, while the work
-    loop waited. Stems with no review are absent. Never raises; a place that
+    half hour; per video it cost several missed lookups on the share --
+    minutes of every scan on a large archive, while the work loop waited. Stems with no review are absent. Never raises; a place that
     cannot be listed contributes nothing, exactly as a failed check does.
     """
     suffix = "_causal_review.json"
@@ -174,7 +172,7 @@ def review_path_index(stems) -> Dict[str, tuple]:
         for stem in stems & bundles:
             add(stem, Path(DEFAULT_PENDING_DIR) / stem / f"{stem}{suffix}")
     # 2. beside the canonical video. resolve_canonical_paths needs the video in
-    # <connectome root>/<cohort folder>; a cohort folder that does not exist
+    # <analyzed root>/<cohort folder>; a cohort folder that does not exist
     # cannot resolve for any of its stems, so it is checked once per cohort,
     # and the per-stem resolution runs only where the folder exists.
     if DEFAULT_CONNECTOME_ROOT:
@@ -624,17 +622,16 @@ _TOUCHED_OUTCOMES = ("retrieved", "displaced_sa", "displaced_outside")
 # the window used to swap a typed reach for any detected reach touching it by a
 # single frame, while the results step matched by half the frames; a typed
 # reach between the two rules was recorded as one reach and resolved to another
-# (2026-10-25: of 199 typed reaches, 14 lost the causal reach and 6 pointed to
-# another reach). Both now call typed_reach_match.
+# (the causal reach was lost, or pointed to another reach). Both now call typed_reach_match.
 TYPED_REACH_COVER = 0.5
 
 # The longest a TYPED reach may be. A typed reach the detector missed is added
 # to the reach list with exactly these frames and measured over them, so a typo
 # in a frame number becomes a "reach" of hundreds of frames with nonsense
-# kinematics. Real reaches: median 13 frames, 99.9% at most 94 (799,201
-# detected reaches, 2026-10-26); typed ones: median 14, all but one at most 60.
-# The one outlier, 35183-35914 (732 frames), reads like a slip of the keys.
-# 300 frames is far past any real reach and still catches that.
+# kinematics. Real reaches, detected or typed, are short (a median of roughly
+# a dozen frames, almost all under a hundred); a typed span of many hundreds of
+# frames reads like a slip of the keys. 300 frames is far past any real reach
+# and still catches that.
 MAX_TYPED_REACH_FRAMES = 300
 
 
@@ -703,8 +700,8 @@ MIN_MARGIN = 0.15
 # segment) and a review recorded against one. Such a span must never be a
 # matching target OR a matchable review: overlap is normalised by the SHORTER
 # span, so a 1-frame segment inside any review span scores 100%, ties the true
-# target, and the tie then drops the human's answer (seen live 2026-09-01 on a
-# segment spanning frames 35108-35108).
+# target, and the tie then drops the human's answer (e.g. a segment whose
+# start and end are the same frame).
 MIN_REAL_SEGMENT_FRAMES = 5
 
 
@@ -728,7 +725,7 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
     an answer failing them is dropped there. WHY the review tool asks this at
     the moment of answering: until 2026-10-23 it recorded such an answer, the
     pipeline dropped it without a word, and the video came back asking the same
-    question -- one reviewer had answered one segment three times. Part of
+    question -- a reviewer could answer one segment again and again. Part of
     triage is checking the event happened to the pellet shown; when it did
     not, the answer is not saved and the video goes to deep review (the
     Escalate button), where the cuts are fixed."""
@@ -758,8 +755,8 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
 
 # Each matching note (index_review_by_segment), in a reviewer's words, and
 # which of its numbers are the frames the note is about -- so the triage banner
-# can show a note only on the segment it concerns (Logan, 2026-10-23: "i only
-# need the note for the one I'm looking at"). Words None: nothing to act on.
+# can show a note only on the segment it concerns: a reviewer needs only the
+# note for the segment being looked at. Words None: nothing to act on.
 _PLAIN_NOTES = [
     (re.compile(r"^segment (\S+) review names causal reach (\d+)-(\d+), outside the frames "
                 r"it records \((\d+)-(\d+)\)"),
@@ -838,8 +835,8 @@ def answered_segments(review_doc, current_segments=None,
     an old answer for "segment 7" -- about other footage -- counted as answering
     today's segment 7: the video left review, the results step correctly ignored
     the answer, and today's segment 7 reached the data with nobody having
-    watched it. A nightly check then sent the same videos back, every night
-    (2026-10-21). Without ``current_segments`` this falls back to numbers, the
+    watched it. A nightly check then sent the same videos back, every night.
+    Without ``current_segments`` this falls back to numbers, the
     only handle a video without a segmentation file has.
     """
     mapping, _ = index_review_by_segment(review_doc, current_segments,
@@ -870,8 +867,8 @@ def index_review_by_segment(review_doc, current_segments=None,
     A segment shorter than MIN_REAL_SEGMENT_FRAMES is treated as a segmenter
     artifact -- unless ``human_segmentation`` is set: a person who cut the video
     decided where its segments are, and their cuts are logged as made, however
-    short (Logan, 2026-10-21: "if a human segmented the video then that's what
-    the algo needs to log even if the range was short").
+    short: if a human segmented the video, that is what the algorithm logs,
+    even when the range is short.
 
     Args:
         review_doc: a loaded causal review document
@@ -934,8 +931,7 @@ def index_review_by_segment(review_doc, current_segments=None,
         # An answer whose causal reach lies wholly outside the frames it records
         # is about other footage: the review tool once put an old answer back on
         # the wrong segment and the next save stamped that segment's frames on
-        # it (239 answers, mostly saved 2026-09, typically shifted by one
-        # segment). Applied, it would make a neighbouring segment's reach this
+        # it (typically shifted by one segment). Applied, it would make a neighbouring segment's reach this
         # segment's causal reach. Not guessed at: dropped, and the segment goes
         # back to a person.
         cr = _decided_reach(rec)
@@ -978,7 +974,7 @@ def index_review_by_segment(review_doc, current_segments=None,
         # Two records for the SAME frames: the review tool used to restore a
         # saved answer by segment number, so after a re-cut it filed an old
         # answer under the wrong number and the person's new answer for those
-        # frames beside it (59 files, 2026-10-22). File order is not time order,
+        # frames beside it. File order is not time order,
         # so "first wins" could apply the older answer -- or a left-blank
         # 'triaged' record over the person's real one. A decision beats a
         # placeholder or a blank; two decisions that agree are one; two that
@@ -1083,8 +1079,8 @@ def is_answered(rec) -> bool:
     review window saves a pellet whose outcome question was left on
     "-- select outcome --" with the algorithm's "triaged" still in it; until
     2026-10-26 that counted as an answer, so a video with a pellet nobody
-    decided left triage and was FILED (125 such records in filed videos and 121
-    in the queues that day, reaching the exports as "Undetermined"). A
+    decided left triage and was FILED (reaching the exports as
+    "Undetermined"). A
     boundary record carries no pellet and needs no outcome.
 
     The ONE definition: every check of whether a person answered a segment --
@@ -1155,7 +1151,7 @@ def restore_review_for_segments(review_doc, current_segments,
     answer about other footage sat on today's segment N, the tool counted N as
     done and never showed it, while the release check -- which matches by
     frames -- counted N unanswered and kept the video held: a video nobody
-    could finish (2026-10-22). Both now use index_review_by_segment.
+    could finish. Both now use index_review_by_segment.
     """
     mapping, notes = index_review_by_segment(
         review_doc, current_segments, human_segmentation=human_segmentation)

@@ -1,7 +1,7 @@
 """The stale-bundle guard: a queue husk must never flip a healthy video.
 
-WHY: on 2026-09-04 two videos re-completed CLEAN (review applied, features
-extracted, state 'processed') and 1.5 s later the return scan diverted their
+WHY: videos re-completed CLEAN (review applied, features
+extracted, state 'processed') and seconds later the return scan diverted their
 STALE seg-failed triage husks to deep_review -- flipping the healthy videos'
 state and blocking their archive. The guard checks the video's live state:
 an actively-handled video's bundle is a leftover, retired to _Problematic
@@ -83,9 +83,9 @@ def test_stale_bundle_is_retired_not_diverted(tmp_path, monkeypatch):
 def test_empty_dir_is_retired_not_routed(tmp_path, monkeypatch):
     """An OLD empty dir is residue, not a bundle: routing zero files while
     flipping db state is phantom action (it re-flipped a parked video the
-    moment its twin side cleared, 2026-09-08). Retired regardless of state.
+    moment its twin side cleared). Retired regardless of state.
     Only once it is older than EMPTY_DIR_GRACE_SECONDS: a young empty dir may
-    be a route still filling it (retired mid-route on 2026-09-14)."""
+    be a route still filling it (one was once retired mid-route)."""
     triage, deep = _wire_paths(monkeypatch, tmp_path)
     stem = "20240101_ABC0103_P1"
     (triage / stem).mkdir()
@@ -149,7 +149,7 @@ def _split_escalation(triage, deep, stem, triage_mp4=b"video"):
 def test_byte_identical_leftover_in_triage_is_retired(tmp_path, monkeypatch):
     """A triage copy holding only byte-identical copies of deep-review files
     carries nothing the reviewer's copy lacks: archived, never routed, and the
-    deep-review bundle is untouched (20250808_CNT0113_P1, 2026-10-22)."""
+    deep-review bundle is untouched."""
     triage, deep = _wire_paths(monkeypatch, tmp_path)
     stem = "20240101_ABC0105_P1"
     t, d = _split_escalation(triage, deep, stem)

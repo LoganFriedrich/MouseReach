@@ -1,6 +1,6 @@
 """Watcher Control panel: the "pause while a recording program runs" settings.
 
-WHY these tests: a GPU node in the behaviour room must stop pipeline work
+WHY these tests: a GPU node that also records videos must stop pipeline work
 while somebody records, and the operator configures and watches that from this
 panel. A list that saves wrong, a key the Save button silently drops, or a
 status line that says STOPPED while a watcher runs all fail silently -- the

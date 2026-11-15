@@ -6,9 +6,8 @@ displaced_sa / untouched / abnormal_exception). Single-fold trainer +
 LOOCV wrapper. Headline reporting via Sankey + directional confusion.
 
 abnormal_exception is included as a real predict-able class -- the
-model is asked to predict it, and we measure how often it does. Per
-the user's clarification: we still TRY to call those cases correctly,
-just acknowledge they're hard.
+model is asked to predict it, and we measure how often it does. We
+still TRY to call those cases correctly, just acknowledge they're hard.
 """
 from __future__ import annotations
 

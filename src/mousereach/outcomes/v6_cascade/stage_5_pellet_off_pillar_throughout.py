@@ -38,8 +38,7 @@ Co-detection triage (pre-check):
     -- the pellet sits ON the pillar and 3D-occludes it. Sustained
     co-detection indicates a DLC tracking artifact (e.g. plexiglass
     over the SA causing reflection/refraction issues). Such
-    segments are TRIAGED, not committed by this stage. See memory
-    `pellet_pillar_cooccurrence_is_artifact.md`.
+    segments are TRIAGED, not committed by this stage.
 
 Cascade order:
     Runs after Stages 1, 2, 3 (which together commit the
@@ -77,8 +76,8 @@ TRANSITION_ZONE_HALF = 5
 
 # Likelihood thresholds.
 # Codetection triage uses VERY HIGH likelihood thresholds for BOTH
-# pellet and pillar AND very tight distance, per 2026-05-02 user
-# refinement. Rationale: the codetection triage should only fire when
+# pellet and pillar AND very tight distance. Rationale: the codetection
+# triage should only fire when
 # the algo is confident the bodyparts are physically overlapping
 # (true DLC label-switch). Loose thresholds were over-triaging
 # legitimate edge-proximity cases (pellet sitting near pillar tip).
@@ -124,8 +123,8 @@ SEGMENT_START_OFF_PILLAR_SUSTAINED_FRAMES = 5
 # threshold)" must fire NOWHERE in the rest of the clean zone for
 # this many consecutive frames. If the pellet IS observed sustained
 # on-pillar later in the segment, either our segment-start detection
-# was wrong or the pellet "returned" to the pillar (impossible per
-# `pellet_cannot_return_to_pillar.md`). Either way Stage 4's case
+# was wrong or the pellet "returned" to the pillar (physically
+# impossible). Either way Stage 4's case
 # doesn't apply -- defer.
 RETURN_TO_PILLAR_SUSTAINED_FRAMES = 5
 ON_PILLAR_THRESHOLD_RADII = 1.2  # buffered: matches Stage 3's
@@ -304,7 +303,7 @@ class Stage5PelletOffPillarThroughout(Stage):
             self.codetection_sustained_frames,
         )
         if codetection:
-            # Per 2026-05-02 user reframing: the codetection signature
+            # The codetection signature
             # at THIS stage doesn't prove triage is needed; it just
             # proves the pellet wasn't untouched. Defer rather than
             # triage; downstream stages (or a future dedicated

@@ -1,8 +1,8 @@
 """
-mousereach.watcher.coordination - Cross-PC pipeline coordination via connectome.db.
+mousereach.watcher.coordination - Cross-PC pipeline coordination via the shared database.
 
 Uses MouseReach's own shared database (<NAS root>/watcher_central.db) as a
-shared coordination layer. Each DLC PC syncs its pipeline state here so that:
+shared coordination layer. Each node syncs its pipeline state here so that:
 
 1. On startup, any PC can recover its local watcher.db from shared state
 2. At runtime, collage claims prevent duplicate cropping across PCs
@@ -44,9 +44,9 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Cross-node coordination lives in MouseReach's OWN shared database on the NAS
-# root (watcher_central.db), never inside another tool's database. Until
-# 2026-08-28 these tables were created inside the lab database file of a
-# separate tool at a hardcoded lab path -- the tool owned tables in a database
+# root (watcher_central.db), never inside another tool's database. These
+# tables used to be created inside the database file of a separate tool at a
+# hardcoded path -- the tool owned tables in a database
 # it did not own, and could not run anywhere else.
 def _coordination_db_path():
     try:
@@ -89,8 +89,8 @@ def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[P
     claimed copy in ``<Single_Animal>/.inflight/<that host>/`` -- on the shared
     drive, so it exists for EVERY node. Taking that as "the file is here" made
     a restarting GPU node adopt the other machine's dlc_running row, reclaim it
-    to dlc_queued and pose the video a second time (2026-10-28: every GPU
-    restart took the 12 videos the server's CPU pose pool was posing). A file
+    to dlc_queued and pose the video a second time (every GPU restart took
+    the videos the server's CPU pose pool was posing). A file
     in another host's claim folder is that host's, so it counts as not here;
     the row is then recorded as elsewhere, as for any video whose files sit on
     another machine. This node's own claim folder is still its own.
@@ -110,7 +110,7 @@ def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[P
 # Holds sit outside VIDEO_STATE_ORDER, so _state_index ranks them -1 and EVERY
 # remote state used to compare as "ahead" of them: a pose-only node's 'archived'
 # (which means "this node handed it off", not "analysed") overwrote a newer hold
-# on the next restart. Seen on a behaviour-room node 2026-10-21: a deep-review
+# on the next restart. Seen on a GPU node: a deep-review
 # hold became 'archived' with no results anywhere, from a remote record written
 # three weeks BEFORE the hold.
 REVIEW_HOLD_STATES = ('triage', 'deep_review')
@@ -139,7 +139,7 @@ def _is_live_local_work(local_row) -> bool:
     its name in the reach table) says 'archived'. Recovery used to advance
     the local row to match, which turned a video queued for a new pose back
     into 'archived' on the first restart, with its copied mp4 orphaned in
-    DLC_Queue (2026-09-12). Disk truth wins, as it does in the archive step.
+    DLC_Queue. Disk truth wins, as it does in the archive step.
     """
     try:
         state = (local_row or {}).get('state')
@@ -268,7 +268,7 @@ def backup_db(db_path: Path, nas_root: Path, hostname: str):
 
     Args:
         db_path: Local watcher.db path
-        nas_root: NAS root (e.g. Y:/.../MouseReach_Pipeline)
+        nas_root: NAS root (e.g. <drive>:/.../MouseReach_Pipeline)
         hostname: This PC's hostname
     """
     if not nas_root or not db_path.exists():
@@ -331,7 +331,7 @@ def restore_db(db_path: Path, nas_root: Path, hostname: str) -> bool:
 # =============================================================================
 
 class PipelineCoordinator:
-    """Syncs pipeline state to/from connectome.db for cross-PC coordination.
+    """Syncs pipeline state to/from the shared database for cross-PC coordination.
 
     Uses the same sqlalchemy pattern as mousereach.sync.database.DatabaseSyncer.
     Database and driver errors RAISE from every method; it is the caller that
@@ -382,7 +382,7 @@ class PipelineCoordinator:
     # -----------------------------------------------------------------
 
     def sync_video_state(self, video_id: str, hostname: str, state: str, **kwargs):
-        """Upsert video state to connectome.db.
+        """Upsert video state to the shared database.
 
         Called after each local DB state change. Last writer wins, which is
         correct since only one PC works a video at a time -- but only for the
@@ -391,7 +391,7 @@ class PipelineCoordinator:
         This used to be INSERT OR REPLACE, which is a DELETE followed by an
         INSERT: every column the caller did not name was reset to NULL. Callers
         name state and a timestamp, never source_path, so every sync erased the
-        path again. The result was a coordination table where all 2,899 rows had
+        path again. The result was a coordination table where every row had
         source_path NULL -- and cross-node recovery, which reads exactly this
         table, could therefore never give a recovered video a real file to work
         on. UPSERT updates the named columns and leaves the rest alone.
@@ -472,8 +472,8 @@ class PipelineCoordinator:
         database error, and what was committed before it stays.
 
         WHY batches: a node filling hundreds of gaps one row per connection
-        opened the shared database ~470 times in 12 s and hit "unable to open
-        database file" on the share (2026-10-22).
+        opened the shared database hundreds of times in seconds and hit "unable
+        to open database file" on the share.
         """
         self.ensure_tables()
         cols = ('video_id', 'hostname', 'state', 'updated_at', 'collage_id', 'source_path')
@@ -758,7 +758,7 @@ class PipelineCoordinator:
     # -----------------------------------------------------------------
 
     def recover_local_db(self, local_db: "WatcherDB", hostname: str) -> dict:
-        """Sync connectome.db state into local watcher.db on startup.
+        """Sync the shared database state into local watcher.db on startup.
 
         For each video in pipeline_videos:
           - If not in local DB: register + force_state
@@ -818,8 +818,8 @@ class PipelineCoordinator:
                 try:
                     # The search costs a handful of network stats per video, so it
                     # is done only where its answer changes something: an in-flight
-                    # state. For 'archived' and the review holds -- 2,886 of the
-                    # 2,899 rows -- the file lives on the NAS, every node can reach
+                    # state. For 'archived' and the review holds -- nearly
+                    # every row -- the file lives on the NAS, every node can reach
                     # it, and the row exists only to stop this node redoing
                     # finished work, so searching would add minutes to startup and
                     # decide nothing.
@@ -889,8 +889,7 @@ class PipelineCoordinator:
                     # up by the work loop, failed to stage ("no video file for it
                     # on this node"), and dropped back to unresolvable -- which is
                     # BELOW the remote state, so the next restart did it again.
-                    # Measured on a behaviour-room node 2026-09-18: 12 rows, one
-                    # work slot each (~32 s), about six minutes of every startup,
+                    # Each such row cost a work slot, minutes of every startup,
                     # for ever. Recorded once as unresolvable instead.
                     if remote_state in NODE_LOCAL_STATES:
                         local_file = _file_on_this_node(video_id, remote, hostname)
@@ -984,7 +983,7 @@ class PipelineCoordinator:
                     # say "finished, do not redo"; nothing reads its path, and the
                     # reprocess route finds a video's files by searching the
                     # archive itself. Searching here would cost a few network
-                    # stats for each of ~2,600 videos on a cold node's first
+                    # stats for each of thousands of videos on a cold node's first
                     # start, to fill in a column no code consults.
                     local_db.register_video(
                         video_id=video_name,
@@ -992,7 +991,7 @@ class PipelineCoordinator:
                     )
                     local_db.force_state(
                         video_name, 'archived',
-                        reason="reach data already in connectome.db")
+                        reason="reach data already in the central database")
                     stats['mousedb_confirmed'] += 1
                 except Exception as e:
                     logger.debug(f"Could not register mousedb video {video_name}: {e}")

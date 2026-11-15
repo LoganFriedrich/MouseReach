@@ -2,14 +2,13 @@
 
 Deep review is where a video's cuts are fixed. A video may leave it only once
 a person has called every boundary -- confirmed or moved, in the segmentation
-fixer or a ground-truth file -- AFTER the video last entered the queue (Logan,
-2026-10-27: "if it wasn't resegmented (if there isn't a human called boundary
-for every boundary somewhere) it can't leave deep review"). Calls made before
+fixer or a ground-truth file -- AFTER the video last entered the queue: a video that was not re-segmented
+(no human-called boundary for every boundary somewhere) cannot leave deep
+review. Calls made before
 it entered do not count: a video sent back to deep review is there because
 those very cuts were found wrong. Without this rule a clear marker alone
 released a video, and an old clear from an earlier deep review sent an
-escalated video straight back to triage on the same cuts
-(20250627_CNT0107_P3, 2026-10-27).
+escalated video straight back to triage on the same cuts.
 
 Where a person's boundary calls are recorded:
   - ``{stem}_segments.json`` saved by the segmentation fixer:
@@ -26,7 +25,7 @@ When the video entered the queue is ``routed_at`` in ``{stem}_routing.json``,
 written by every route into a queue. A bundle without one (older routes) is
 judged on the boundary calls alone.
 
-Easy and Flat trays are never segmented (Logan, 2026-10-23) and are not
+Easy and Flat trays are never segmented and are not
 subject to this rule; callers check ``is_outcome_free_tray`` first.
 """
 import json

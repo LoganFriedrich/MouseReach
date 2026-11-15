@@ -2,8 +2,8 @@
 
 WHY: every half hour it checked every archived video separately -- its
 manifest's modified time, several places its review might be, and the
-review's fingerprint -- about 10 minutes a pass for 4,597 videos on 2026-10-21,
-while the processing server's work loop waited. The listings must give
+review's fingerprint -- minutes a pass on a large archive, while the
+processing server's work loop waited. The listings must give
 EXACTLY the answers the per-video checks gave.
 """
 import json
@@ -72,7 +72,7 @@ def test_the_index_gives_exactly_what_the_per_video_lookup_gives(tmp_path, monke
 
 def test_the_listing_walk_finds_what_the_globs_found_and_skips_the_archive(tmp_path):
     root = tmp_path / "Analyzed"
-    live = root / "Connectome" / "CNT01"
+    live = root / "Project_A" / "CNT01"
     old = root / "Archive" / "2026-09-01_superseded"
     live.mkdir(parents=True)
     old.mkdir(parents=True)
@@ -108,7 +108,7 @@ def test_an_unchanged_review_is_fingerprinted_once(tmp_path, monkeypatch):
 def test_a_legacy_reviews_date_is_read_once_until_it_changes(tmp_path, monkeypatch):
     """Reviews applied before the fingerprint stamp are compared by their in-file
     reviewed_at; that one field was re-read from every such review every pass
-    (1,614 files, ~107 s of a ~220 s warm pass on 2026-10-22)."""
+    (about half of a warm pass)."""
     review = tmp_path / f"X{SUFFIX}"
     review.write_text(json.dumps({"reviewed_at": "2026-09-01T10:00:00"}), encoding="utf-8")
     _age(review, 10)

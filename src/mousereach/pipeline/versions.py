@@ -75,7 +75,7 @@ def declaration_drift(declared: dict) -> list:
     WHY: this drift has gone invisible twice -- the declaration said segmenter
     2.1.3 while 2.2.3 ran (so the pellet-window gate never marked one video
     outdated), and kinematic_extractor stayed declared 2.0.0 until 2026-08-29
-    (so 1,700+ videos kept causal-reach-less features and nobody was told).
+    (so videos kept causal-reach-less features and nobody was told).
     Both times a human census found it months later. A machine can find it in
     milliseconds, so it does."""
     code = code_stamped_versions()
@@ -255,8 +255,8 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
     # WHY: a version bump whose output is identical for non-pathological
     # videos (a bugfix that only changes broken cases, with the few affected
     # videos re-marked by hand) must not mark the whole corpus outdated. That
-    # exact accident happened twice in August 2026 -- two declaration edits
-    # with no algorithm change behind them marked 1,255 rows stale -- and
+    # exact accident happened twice -- two declaration edits with no
+    # algorithm change behind them marked a large part of the corpus stale -- and
     # 'outdated' was a one-way door, so no corrective declaration could undo
     # it. Declare compatibility in pipeline_versions.json beside 'versions':
     #   "compatible_versions": {"segmenter": ["2.2.3"]}
@@ -301,7 +301,7 @@ def crystallize_videos(
         db: WatcherDB instance
         video_ids: Specific videos to lock (or use cohort filter)
         cohort: Lock all archived videos matching this cohort string
-        label: Human-readable label (e.g. "PNAS_2026_submission")
+        label: Human-readable label (e.g. "PAPER_2026_submission")
         crystallized_by: Username (defaults to hostname)
 
     Returns:

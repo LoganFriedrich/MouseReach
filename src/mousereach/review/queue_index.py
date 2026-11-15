@@ -1,8 +1,8 @@
 """Triage-review queue index -- a push/pop list of the videos currently needing
 review, so the review tool READS the next video instead of SCANNING every bundle.
 
-The model (per Logan, 2026-08)
-------------------------------
+The model
+---------
 - PRESENCE in the triage folder == needs review. A video's bundle is in the folder
   iff it still has triaged elements a human has not addressed. The tool MOVES a
   fully-reviewed video OUT of the folder, so nothing in the folder is "done".

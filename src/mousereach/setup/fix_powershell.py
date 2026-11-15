@@ -3,7 +3,7 @@
 Fix PowerShell execution policy for network drives.
 
 This sets the execution policy to Bypass for the current user,
-which allows conda activate scripts to run from network drives (Y:, etc.)
+which allows conda activate scripts to run from network drives (mapped drive letters)
 """
 
 import subprocess

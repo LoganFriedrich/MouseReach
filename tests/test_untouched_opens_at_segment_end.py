@@ -3,9 +3,8 @@
 An untouched call is judged by where the pellet is when the segment ends. The
 review tool opened one with no reaches 30 frames before the end, but one with
 reaches (every hand-score mismatch the algorithm called untouched) on its
-reach -- in triage, a median of 172 frames and up to 1,825 frames before the
-end -- so the reviewer had to skip forward to see the pellet (Logan,
-2026-10-24: "Why aren't they the same?").
+reach -- often hundreds of frames before the end -- so the reviewer had to
+skip forward to see the pellet, and the two kinds opened inconsistently.
 """
 from mousereach.review.causal_review_widget import CausalReviewWidget as W
 

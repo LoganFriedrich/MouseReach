@@ -38,9 +38,7 @@ high-confidence neighbors. Likelihood values are NOT modified, so
 downstream code can still apply lk-based filtering if desired.
 
 Default thresholds were derived empirically across the 37 train-pool
-videos (1.4M frames) of the v4.0.0_dev_walkthrough quarantine corpus
-on 2026-05-01. See `apparatus_motion_physics.md` memory for the
-diagnostic motion-pattern model.
+videos (1.4M frames) of the outcome ground-truth corpus.
 """
 from __future__ import annotations
 

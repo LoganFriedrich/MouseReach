@@ -3,8 +3,8 @@
 WHY: move_video_bundle used to create the empty ``{stem}`` folder in the queue
 first and then fill it file by file (cross-volume copies take seconds). The
 running watcher's return scan saw the empty folder, retired it to _Problematic
-mid-route, and every remaining move failed with "No such file or directory"
-(2026-09-14). A new bundle is now assembled in the hidden
+mid-route, and every remaining move failed with "No such file or directory".
+A new bundle is now assembled in the hidden
 ``<queue>/.incoming/{stem}/`` and published with one directory rename.
 """
 import json

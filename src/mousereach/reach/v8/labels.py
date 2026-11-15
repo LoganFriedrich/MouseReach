@@ -7,7 +7,7 @@ Labels are binary: 1 if the frame falls within any GT reach span,
 
 For exhaustive=True videos, label-0 frames are real true negatives.
 For exhaustive=False videos, label-0 frames are NOT reliable negatives
-(see `feedback_exhaustive_is_gold_standard.md`). Trainers should
+(exhaustive annotation is the gold standard). Trainers should
 respect this distinction and either weight or filter accordingly.
 """
 from __future__ import annotations

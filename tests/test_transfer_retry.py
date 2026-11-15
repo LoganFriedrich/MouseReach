@@ -2,7 +2,7 @@
 cleanup.
 
 WHY: a reviewer GUI (or indexer/backup pass) briefly holding a destination
-file surfaces as PermissionError winerror 5/32. On 2026-09-04 one such hold
+file surfaces as PermissionError winerror 5/32. One such hold once
 failed a reprocess work item twice over -- the copy failed, and then the
 cleanup unlink hit the SAME lock and raised out of the except block. The
 file was free again minutes later. These tests pin the absorbing behaviour.
@@ -71,7 +71,7 @@ def test_non_transient_error_fails_immediately(tmp_path, monkeypatch, fast):
 
 
 def test_locked_destination_cleanup_never_raises(tmp_path, monkeypatch, fast):
-    """The 2026-09-04 killer: cleanup unlink hitting the same lock. With an
+    """The original failure: cleanup unlink hitting the same lock. With an
     open handle on the destination (unlink refuses on Windows), safe_copy
     must still return False rather than raise."""
     src = tmp_path / "a.json"

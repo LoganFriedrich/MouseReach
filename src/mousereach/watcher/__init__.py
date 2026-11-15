@@ -3,7 +3,7 @@ mousereach.watcher - Automated pipeline orchestration for MouseReach.
 
 Two-machine architecture with role-aware orchestrators:
 
-  DLC PC (mode="dlc_pc")
+  GPU node (mode="dlc_pc")
       GPU machine with direct-attached NAS.  Scans NAS for new collage
       videos, crops them to single-animal videos, runs DLC inference,
       and stages video+h5 to NAS Processing/Posed/ for the processing server.
@@ -19,7 +19,7 @@ mousereach-setup based on the machine's role profile.
 
 Requirements
 ============
-DLC PC:
+GPU node:
     1. Fast access to the NAS (direct-attached or wired connection)
     2. A GPU for DLC inference
     3. Access to the DLC model config.yaml
@@ -34,7 +34,7 @@ All paths are configured via ~/.mousereach/config.json (run mousereach-setup).
 
 Folder Structure
 ================
-DLC PC (PROCESSING_ROOT on local drive, e.g. <drive>:\\...\\MouseReach_Pipeline):
+GPU node (PROCESSING_ROOT on local drive, e.g. <drive>:\\...\\MouseReach_Pipeline):
 
     <PROCESSING_ROOT>/
     ├── DLC_Queue/             ← single-animal videos waiting for DLC
@@ -55,14 +55,14 @@ NAS (shared between both):
     │   ├── Multi-Animal/      ← collage videos arrive here (from filming PCs)
     │   └── Single_Animal/     ← single-animal videos waiting for a pose
     ├── Processing/
-    │   ├── Posed/             ← posed videos waiting for the algorithms (DLC PC stages here)
+    │   ├── Posed/             ← posed videos waiting for the algorithms (GPU node stages here)
     │   ├── Repose_Queue/      ← re-pose request files (see repose.py)
     │   ├── Review/
     │   │   ├── triage/        ← held for a person: per-element questions
     │   │   └── deep_review/   ← held for a person: failed segmentation / QC
     │   ├── Quarantine/
     │   └── Failed/
-    ├── Analyzed/{project}/{cohort}/  ← finished output (e.g. Connectome/CNT03/)
+    ├── Analyzed/{project}/{cohort}/  ← finished output (e.g. PROJECT_A/<cohort>/)
     ├── Analyzed/Archive/      ← superseded outputs (every walk of Analyzed skips it)
     └── Archive/historical/    ← read-only source material
 
@@ -73,11 +73,11 @@ NAS (shared between both):
     quietly rebuilding the old folder and working there.
 
 Configuration (in ~/.mousereach/config.json):
-    nas_drive:                     root of NAS mount (e.g. "X:\\")
+    nas_drive:                     root of NAS mount (e.g. "<drive>:\\")
     processing_root:               parent of DLC_Queue/Processing/etc.
     watcher.mode:                  "dlc_pc" or "processing_server"
-    watcher.dlc_config_path:       path to DLC model config.yaml (DLC PC only)
-    watcher.dlc_gpu_device:        GPU index (DLC PC only, default 0)
+    watcher.dlc_config_path:       path to DLC model config.yaml (GPU node only)
+    watcher.dlc_gpu_device:        GPU index (GPU node only, default 0)
     watcher.poll_interval_seconds: how often to scan for new files
     watcher.stability_wait_seconds: how long a file must be unchanged before processing
     watcher.max_local_pending:     posed videos kept in local Processing/ waiting for the

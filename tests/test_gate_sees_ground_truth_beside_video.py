@@ -3,13 +3,12 @@ decides whether to ask a person sees it: the review gate and
 mousereach-route-to-queue, through triage_status.gt_resolved_segments. (The
 release check of bundles already in a queue does not yet -- see the last test.)
 
-WHY (2026-11-03): only the corpus-wide ground-truth index was read, and it is
+WHY: only the corpus-wide ground-truth index was read, and it is
 built once per process -- a re-run copies the ground truth into the processing
 folder after that, so the gate could not see it and sent videos whose open
-segments ground truth had answered back to a person. Logan, 2026-11-03: "Any
-segment whose boundaries and causal reach and outcome have all already been
-reviewed by a human should never under any condition require a human to look
-at it ever again."
+segments ground truth had answered back to a person. A segment whose
+boundaries, causal reach and outcome have all already been reviewed by a
+person never requires a person to look at it again.
 """
 import json
 

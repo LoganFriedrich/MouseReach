@@ -136,7 +136,7 @@ def test_reprocess_refuses_a_video_whose_only_pose_is_archived(server, analyzed)
 
     assert server.ran == []
     assert not (server.processing_dir / f"{VID}{NEW}.h5").exists()
-    # Not failed (since 2026-10-22): its video is in Analyzed, so it is marked
+    # Not failed: its video is in Analyzed, so it is marked
     # as needing a new pose, which the GPU nodes are asked for.
     assert server.db.failed == []
     assert server.db.fields == [(VID, {"reprocess_scope": "full"})]

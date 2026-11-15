@@ -105,7 +105,7 @@ def _manifest(folder, stem, seg="2.0", scorer="NEW"):
 
 def test_census_walk_ignores_archive_but_keeps_live_and_collages(env):
     A = env.ANALYZED_OUTPUT
-    cohort = A / "Connectome" / "CNT01"
+    cohort = A / "Project_A" / "CNT01"
     for suf in ("_reaches.json", "_pellet_outcomes.json"):
         _write(cohort / f"{LIVE}{suf}")
     # Collages living inside Analyzed: a cohort straggler and a retired one.
@@ -132,7 +132,7 @@ def test_census_walk_keeps_matching_directory_names(env):
     """rglob("*") yielded directories too and the walk tests NAMES only; a
     non-archive folder named like an output still contributes its name."""
     A = env.ANALYZED_OUTPUT
-    (A / "Connectome" / f"{LIVE}_segments.json").mkdir(parents=True)
+    (A / "Project_A" / f"{LIVE}_segments.json").mkdir(parents=True)
     (A / "Archive" / f"{GHOST}_segments.json").mkdir(parents=True)
     index, _, _ = walk_analyzed(A)
     assert index == {LIVE: {"_segments.json"}}
@@ -144,8 +144,8 @@ def test_census_walk_raises_when_a_folder_cannot_be_listed(env, monkeypatch):
     silently and returned a census index missing that cohort, so this test
     failed against it."""
     A = env.ANALYZED_OUTPUT
-    _write(A / "Connectome" / "CNT01" / f"{LIVE}_reaches.json")
-    bad = A / "Connectome" / "CNT02"
+    _write(A / "Project_A" / "CNT01" / f"{LIVE}_reaches.json")
+    bad = A / "Project_A" / "CNT02"
     _write(bad / f"{GHOST}_reaches.json")
     real = os.scandir
     target = os.path.normcase(os.path.normpath(str(bad)))
@@ -168,7 +168,7 @@ def test_census_walk_raises_when_a_folder_cannot_be_listed(env, monkeypatch):
 
 def test_dashboard_scan_does_not_mark_archived_outputs_analyzed(env):
     A = env.ANALYZED_OUTPUT
-    _write(A / "Connectome" / "CNT01" / f"{LIVE}_reaches.json")
+    _write(A / "Project_A" / "CNT01" / f"{LIVE}_reaches.json")
     arch = A / "Archive" / "superseded_processing_root_3.1"
     _write(arch / f"{GHOST}_reaches.json")
     # REDO is back in Processing; its old generation was superseded into the
@@ -191,7 +191,7 @@ def test_dashboard_scan_does_not_mark_archived_outputs_analyzed(env):
 
 def test_manifest_index_never_picks_an_archived_manifest(env):
     A = env.ANALYZED_OUTPUT
-    live = _manifest(A / "Connectome" / "CNT01", LIVE)
+    live = _manifest(A / "Project_A" / "CNT01", LIVE)
     _age(live, 3600)
     # The archived copy is NEWER (the supersede move touched it), so
     # newest-mtime-wins picked it in the old code.
@@ -215,9 +215,9 @@ def test_manifest_index_never_picks_an_archived_manifest(env):
 
 def test_downstream_index_ignores_archive_keeps_dlc_model_poses(env):
     A = env.ANALYZED_OUTPUT
-    _write(A / "Connectome" / "CNT01" / f"{LIVE}.mp4", "v")
+    _write(A / "Project_A" / "CNT01" / f"{LIVE}.mp4", "v")
     # Live pose storage: DLC Model <N>/ must stay visible.
-    _write(A / "Connectome" / "DLC Model 4" / "CNT01" / f"{POSE}{H5_TAIL}", "h5")
+    _write(A / "Project_A" / "DLC Model 4" / "CNT01" / f"{POSE}{H5_TAIL}", "h5")
     arch = A / "Archive"
     _write(arch / "DLC Model 4.0" / "CNT01" / f"{GHOST}{H5_TAIL}", "h5")
     _write(arch / "superseded_processing_root_3.1" / f"{REDO}.mp4", "v")
@@ -237,14 +237,14 @@ def test_downstream_index_ignores_archive_keeps_dlc_model_poses(env):
 
 def test_complete_stems_ignores_archived_current_manifest(env):
     A = env.ANALYZED_OUTPUT
-    _manifest(A / "Connectome" / "CNT01", LIVE)
+    _manifest(A / "Project_A" / "CNT01", LIVE)
     # An archived manifest that happens to compare current: only the archive
     # has GHOST, so the old code called a stem with no live output complete
     # and let its collage retire.
     _manifest(A / "Archive" / "superseded_processing_root_3.1", GHOST)
     # Live REDO is outdated; its archived twin is current. Either way REDO
     # must not count (old code: added it via the archived twin).
-    _manifest(A / "Connectome" / "CNT01", REDO, seg="1.0")
+    _manifest(A / "Project_A" / "CNT01", REDO, seg="1.0")
     _manifest(A / "Archive" / "superseded_processing_root_3.1", REDO)
 
     complete = cp.build_complete_stems()

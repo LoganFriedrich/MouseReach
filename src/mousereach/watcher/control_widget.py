@@ -21,7 +21,7 @@ Design notes (from the daemon's own contract):
     independent of start/stop, and visible to a daemon in any process/node.
   * The watcher ALSO pauses itself while any program listed in
     ``pause_while_running`` is open (mousereach.watcher.recording_guard). WHY: a
-    GPU node in the behaviour room poses videos whenever nobody is filming, but
+    GPU node in a behavior room poses videos whenever nobody is filming, but
     it cannot know the filming schedule -- the open recording program is the
     only reliable signal, and recording must always win. The Pause/Resume
     button cannot override it; closing the recording program is what resumes.
@@ -497,9 +497,9 @@ class WatcherControlWidget(QWidget):
         pri = QGroupBox("Work priority (whole lab -- processing AND human review)")
         pform = QFormLayout(pri)
         self._pri_projects = QLineEdit()
-        self._pri_projects.setPlaceholderText("most important first, e.g.  CNT, ASPA")
+        self._pri_projects.setPlaceholderText("most important first, e.g.  PROJECT_A, PROJECT_B")
         self._pri_cohorts = QLineEdit()
-        self._pri_cohorts.setPlaceholderText("per project, e.g.  CNT: 01, 02, 03, 04")
+        self._pri_cohorts.setPlaceholderText("per project, e.g.  PROJECT_A: 01, 02, 03, 04")
         # Lists of sessions a study needs, led within their project (before its
         # cohorts). Each is a text file of sessions, one per line, in the shared
         # pipeline folder.
@@ -1008,7 +1008,7 @@ class WatcherControlWidget(QWidget):
     # ------------------------------------------------------------- priority
     @staticmethod
     def _parse_cohort_text(text: str) -> dict:
-        """"CNT: 01, 02; ASPA: 05" -> {"CNT": ["01","02"], "ASPA": ["05"]}.
+        """"PROJECT_A: 01, 02; PROJECT_B: 05" -> {"PROJECT_A": ["01","02"], "PROJECT_B": ["05"]}.
 
         Commas and spaces both separate, so nobody has to remember which.
         A chunk with no project prefix is skipped rather than guessed at.
@@ -1027,7 +1027,7 @@ class WatcherControlWidget(QWidget):
 
     @staticmethod
     def _parse_lists_text(text: str) -> dict:
-        """"ASPA: priority_lists/a.txt, priority_lists/b.txt" -> {"ASPA": [...]}.
+        """"PROJECT_B: priority_lists/a.txt, priority_lists/b.txt" -> {"PROJECT_B": [...]}.
 
         Projects separated by ';', files by ',' only -- a file name may hold
         spaces, and a path its own ':' (only the first ':' ends the project).

@@ -1,11 +1,11 @@
 """The review tool restores saved answers by the frames they cover.
 
-WHY (2026-10-22): the tool restored a saved answer by segment NUMBER. After a
+WHY: the tool restored a saved answer by segment NUMBER. After a
 re-cut renumbered the segments, an answer about other footage sat on today's
 segment N: the tool counted N as done and never showed it, while the release
 check, which matches by frames, counted N unanswered and kept the video held.
 Nobody could finish such a video. The person's fresh answer for the old frames
-was saved beside the old one, so 59 review files carried two records for the
+was saved beside the old one, so review files carried two records for the
 same frames, and the results step used whichever came first in the file.
 """
 from mousereach.review import causal_review_io as io

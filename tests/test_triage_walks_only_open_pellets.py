@@ -2,7 +2,7 @@
 
 A video comes back (the nightly hand-score check) for new pellets while its
 pellet file still flags the ones a person answered before; "Next" used to walk
-those too and show the earlier answers (Logan, 2026-10-24).
+those too and show the earlier answers.
 """
 from mousereach.review.causal_review_widget import open_triaged_indices, segment_answered
 

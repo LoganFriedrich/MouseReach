@@ -91,8 +91,7 @@ def _review_doc(stem: str, base) -> Optional[dict]:
     Until 2026-10-30 only the two directory forms were tried, so a review that
     existed ONLY in the processing folder -- not yet in a queue bundle or the
     durable store -- was never read by the truth layering, and the extractor
-    quietly fell back to the algorithm's answers (ISSUES.md 2026-10-27, item
-    2). A file is accepted only when it is this video's review by name, so a
+    quietly fell back to the algorithm's answers. A file is accepted only when it is this video's review by name, so a
     path to some other video's file cannot be applied to this one."""
     if not base or not stem:
         return None
@@ -185,7 +184,7 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         # renumbered on every run, so a review written against an earlier
         # reach list names an id this run does not have -- the id-only match
         # then found nothing and the human's answer silently vanished from the
-        # reach rows (612 reviewed segments in the 2026-08-31 snapshot; e.g. a
+        # reach rows (e.g. a
         # pick stored as id 42 at frames 3989-4004 while this run's reach at
         # those frames is id 36). Older reviews store frames only. So: resolve
         # by frames whenever they exist, and fall back to the stored id only

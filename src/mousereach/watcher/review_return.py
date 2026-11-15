@@ -1,7 +1,7 @@
 """Return path: re-inject a human-cleared held video into the pipeline.
 
 The forward gate (review_gate) MOVES un-committable videos into the TRIAGE or
-DEEP_REVIEW queue and holds them out of kinematics + connectome.db. This module
+DEEP_REVIEW queue and holds them out of kinematics + the central database. This module
 is the other half: it scans those queues for bundles a human has cleared and
 moves them back into the local Processing dir, set to ``processing`` state, so
 the pipeline re-runs them (Priority-2 'pipeline' work). On the re-run the review
@@ -85,8 +85,8 @@ def _resolve_inputs(bundle: Path, stem: str, processing_dir=None,
     bundle-local ``{stem}_manifest.json``. Only LEGACY staged bundles carry the
     algo JSONs alone, with a ``{stem}_manifest.json`` pointing at the mp4 and
     pose in Analyzed. Returning a bundle without resolving the inputs means the
-    pipeline re-runs the video with no pose at all -- which is how 723 videos
-    ended up in the deep-review queue as "segmentation_failed" on 2026-08-19.
+    pipeline re-runs the video with no pose at all -- which is how hundreds of
+    videos ended up in the deep-review queue as "segmentation_failed".
 
     Note this must run BEFORE the bundle is emptied: ``{stem}_manifest.json`` is
     queue metadata (_is_queue_metadata), so the move loop deletes the very file
@@ -143,7 +143,7 @@ def _resolve_inputs(bundle: Path, stem: str, processing_dir=None,
     # Fourth and last: the Processing/Posed staging area. A GPU node's freshly
     # staged pose sits there before any intake pulls it; a video routed to a
     # queue in that window (or whose bundle omitted its h5) otherwise refuses
-    # to return in a loop -- one did, every ~2-3 minutes, 2026-09-08. Only a
+    # to return in a loop, every few minutes. Only a
     # DECLARED-scorer pose is accepted from staging: an old-model pose here
     # is stale by definition, and silently posing with it is the wrong-pose
     # failure this resolver exists to prevent.
@@ -171,7 +171,7 @@ def _resolve_inputs(bundle: Path, stem: str, processing_dir=None,
     # result in the processing folder of the node that ran the video. Two
     # human-cleared videos could then never return: each scan searched the
     # bundle, its manifest, Analyzed and staging, found nothing, and tried
-    # again two minutes later -- thousands of times from 2026-09-28 -- while
+    # again two minutes later -- thousands of times -- while
     # the pose sat in the folder the return delivers to. Declared-scorer only,
     # the staging rule: an old-model pose left behind here is stale.
     if pose is None and (processing_dir or recorded_pose):
@@ -215,8 +215,8 @@ def _return_failed(stem: str) -> None:
 
 
 def _bundles(queue_root: Optional[Path]) -> List[Path]:
-    # Dot-directories are never bundles (a stray .omc/ in both queues was
-    # iterated as a phantom video every scan on 2026-09-01, and -- having no
+    # Dot-directories are never bundles (a stray dot-folder in both queues was
+    # iterated as a phantom video every scan, and -- having no
     # segments file -- read as seg_failed and got divert-retried forever).
     if not queue_root or not Path(queue_root).exists():
         return []
@@ -235,8 +235,8 @@ def _bundles(queue_root: Optional[Path]) -> List[Path]:
 
 
 # Each scan read every triage bundle's segments, outcomes, assignments and
-# review files to decide whether it was cleared: 7-8 s of every scan, every two
-# minutes, for a queue that mostly does not change between scans (2026-10-21).
+# review files to decide whether it was cleared: seconds of every scan, every two
+# minutes, for a queue that mostly does not change between scans.
 # A bundle's verdict depends only on its own files and on the video's ground
 # truth (triage_status), so it is reused until either changes: the bundle's
 # files are listed with their sizes and modified times (one listing per bundle,
@@ -278,8 +278,8 @@ def _is_leftover_copy(bundle: Path, twin: Path, signature: tuple) -> bool:
     and pose moved to deep review, the mp4 stayed in triage. What remains in
     triage then holds nothing the deep-review copy lacks, so archiving it loses
     nothing, while leaving it made every return scan log the same "exists in
-    BOTH queues" line for weeks (20250808_CNT0113_P1, 231 times from
-    2026-10-19) with nobody ever doing the "deliberate cleanup" it asked for.
+    BOTH queues" line for weeks (hundreds of times for one video) with
+    nobody ever doing the "deliberate cleanup" it asked for.
     Sizes are compared before any content is read; a copy that differs in
     anything stays for a person. Raises OSError.
     """
@@ -332,8 +332,8 @@ def _ensure_registered(db, stem: str, source_path: Path) -> bool:
     -- and the return used to move the bundle's files out, delete the bundle,
     and only then discover it could not record the state. The clearance was
     consumed, the files landed in Processing with nothing referencing them, and
-    the function returned True. 274 bundles went that way in one run before it
-    was caught."""
+    the function returned True. Hundreds of bundles went that way in one run
+    before it was caught."""
     try:
         if db.get_video(stem) is None:
             # Parse the stem's own metadata into the row. Rows registered here
@@ -675,9 +675,9 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
 # ---------------------------------------------------------------------------
 # A deep-review bundle routed "qc_needs_review" is held by the machine's own
 # quality check, not by a person. When that check is corrected, a hold it
-# would no longer make is a machine error sitting in a person's queue. WHY
-# (2026-10-22): the check demanded an outcomes file Easy and Flat trays never
-# get, and 469 Easy/Flat bundles were held in deep review for that alone.
+# would no longer make is a machine error sitting in a person's queue. WHY:
+# the check demanded an outcomes file Easy and Flat trays never get, and
+# Easy/Flat bundles were held in deep review for that alone.
 #
 # So a bundle with that reason and no file a person wrote has the check re-run
 # on it. The pose-tracking layer is NOT re-run (it would read every pose file
@@ -732,9 +732,9 @@ def _superseded_by_archive(bundle: Path, stem: str, row: Optional[tuple],
     every file in it is older than the video's archived results.
 
     WHY: such a bundle sat in a person's queue and asked for work already
-    done. 2026-09-10..29 twenty videos a person had cleared were sent back to
-    deep review as a bare .mp4 (see orchestrator.queue_folder_holds_this_run);
-    fifteen were cleared a second time by hand. Bundles the bench-disagreement
+    done: videos a person had cleared were sent back to deep review as a bare
+    .mp4 (see orchestrator.queue_folder_holds_this_run), and were cleared a
+    second time by hand. Bundles the bench-disagreement
     router puts in a queue are never caught: their results leave Analyzed, and
     their routing record is written after the archive.
     """
@@ -780,7 +780,7 @@ def _qc_hold_lifted(bundle: Path, stem: str, signature: tuple) -> Optional[bool]
         stored = json.loads((bundle / f"{stem}_triage.json").read_text(encoding="utf-8"))
         # A stored tracking hold still stands -- except a ruler-variation
         # hold, which the current check no longer makes (triage.
-        # RULER_UNSTABLE_DESC, 2026-10-23): those videos go back for a run.
+        # RULER_UNSTABLE_DESC): those videos go back for a run.
         from mousereach.pipeline.triage import RULER_UNSTABLE_DESC
         if any(f.get("category") == "dlc_coherence" and f.get("severity") == "critical"
                and not str(f.get("description", "")).startswith(RULER_UNSTABLE_DESC)
@@ -830,16 +830,16 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
         # is archived, and a held video is not archived. The same file there
         # is the one live copy -- the bundle's own is a duplicate, set aside
         # with the outputs and removed once the release has succeeded. A copy
-        # that differs is for a person. WHY: without this, 67 of the first 74
-        # releases were refused on 2026-10-22.
+        # that differs is for a person. WHY: without this, most releases were
+        # refused.
         #
         # "The same file": same size and same modified time -- the quick check
         # rsync and robocopy use; every copy in this chain (posed folder ->
-        # processing -> review bundle) keeps the modified time, and 1,558 of
-        # 1,559 real pairs matched that way. Same size with a different time
+        # processing -> review bundle) keeps the modified time, and nearly
+        # every real pair matches that way. Same size with a different time
         # is settled by comparing SHA-256. WHY not always hash: reading both
-        # copies (~160 MB a video over the share) made each release take ~10 s
-        # and the backlog of 469 a half-day trickle.
+        # copies (a large video over the share) made each release take seconds
+        # and a backlog a half-day trickle.
         twins, clash = [], []
         for f in inputs:
             there = posed / f.name
@@ -926,7 +926,7 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
 
 # How many bundles one scan may re-inject before yielding back to the work loop.
 # Unbounded, this starves everything else: each return moves 6 files across the
-# NAS (~10 s), so a 748-deep queue occupied the loop for ~2 hours while
+# NAS (seconds each), so a deep queue occupied the loop for hours while
 # 'processing' climbed and not one pipeline ran. Returning is not more important
 # than running -- interleave them.
 MAX_RETURNS_PER_SCAN = 10
@@ -934,7 +934,7 @@ MAX_RETURNS_PER_SCAN = 10
 # An EMPTY queue folder is only treated as residue once it is this old. WHY: a
 # router may have just created it and still be copying files in (cross-volume
 # copies take seconds) -- the return scan retired exactly such a folder
-# mid-route on 2026-09-14 and every remaining move failed. Age is judged
+# mid-route and every remaining move failed. Age is judged
 # conservatively because the share's clock can run ahead of this machine's by
 # many minutes: an mtime in the future counts as young, and so does a folder
 # whose age cannot be read. Real residue just waits for a later scan.
@@ -1031,9 +1031,9 @@ def scan_review_queues(db, processing_dir: Path,
             if not signature:
                 # An EMPTY dir is not a bundle -- it is residue of an earlier
                 # divert/return that moved the files and left the folder.
-                # Sep-04 left several; one hid behind the both-queues skip all
-                # weekend, then diverted "(0 files)" and re-flipped a parked
-                # video the moment its twin side cleared (2026-09-08).
+                # One such folder hid behind the both-queues skip for days,
+                # then diverted "(0 files)" and re-flipped a parked video the
+                # moment its twin side cleared.
                 # Routing zero files while flipping db state is pure phantom
                 # action; retire the folder instead, whatever the video's
                 # state -- but only once it is past EMPTY_DIR_GRACE_SECONDS:
@@ -1067,7 +1067,7 @@ def scan_review_queues(db, processing_dir: Path,
         # segments ping-pongs forever: gate honors the clear and routes to
         # triage, this scan sees raw seg_failed and diverts to deep review,
         # the clear marker instantly releases it, the pipeline re-runs, repeat
-        # (20250708_CNT0210_P4 made 43 laps on 2026-09-09).
+        # (one video made dozens of laps).
         cleared = _deep_review_cleared(bundle, stem)
         # DEEP REVIEW SUPERSEDES TRIAGE (review_routing): whatever this triage
         # copy's status, a video that is in deep review is never returned,
@@ -1083,7 +1083,7 @@ def scan_review_queues(db, processing_dir: Path,
                 # left behind). Diverting would merge blindly into the
                 # reviewer's copy, and retrying the impossible move every
                 # scan consumed the whole return budget -- the queue
-                # live-locked on 2026-09-01 with human-cleared releases
+                # live-locked with human-cleared releases
                 # starved behind it. A triage copy that is only a byte-identical
                 # leftover of the deep-review bundle is archived (it holds
                 # nothing the reviewer's copy lacks); any other duplicate is
@@ -1118,7 +1118,7 @@ def scan_review_queues(db, processing_dir: Path,
             # (re-segmented clean, review applied, finished or filed), the
             # bundle is a leftover from the earlier failed era -- diverting it
             # would flip a healthy video into deep_review and block its
-            # archive. That happened twice on 2026-09-04: videos re-completed
+            # archive. That has happened: videos re-completed
             # CLEAN seconds earlier were dragged back by their own stale
             # triage husks. Retire the husk to the _Problematic archive
             # (never delete) and leave the video alone.
@@ -1128,7 +1128,7 @@ def scan_review_queues(db, processing_dir: Path,
             except Exception:
                 cur_state = None
             # 'unresolvable' guards too: a person parked that video with a
-            # reason, and a husk must never un-park it (one did, 2026-09-08).
+            # reason, and a husk must never un-park it.
             if cur_state in ('processing', 'processed', 'archiving',
                              'archived', 'unresolvable'):
                 if _retire_stale_bundle(bundle, stem, cur_state):
@@ -1145,8 +1145,7 @@ def scan_review_queues(db, processing_dir: Path,
             if not cleared:
                 # A seg-failed bundle can NEVER satisfy the triage release
                 # condition below, and nothing else moves it -- it sat in the
-                # triage queue with no route out (40 bundles at the time this
-                # was added). A failed segmentation makes the whole video
+                # triage queue with no route out. A failed segmentation makes the whole video
                 # untrustworthy, which is deep review's definition, so send it
                 # there. The deep-review release path honors the human clear
                 # marker, so a cleared bundle would come straight back --
@@ -1237,8 +1236,8 @@ def scan_review_queues(db, processing_dir: Path,
         _status_cache.pop(gone, None)
 
     # DEEP_REVIEW: an explicit clear marker or in-bundle GT.
-    # Own budget, NOT shared with the triage loop's: on 2026-09-01 the triage
-    # loop's diverts consumed the whole shared budget every scan and 46
+    # Own budget, NOT shared with the triage loop's: the triage loop's
+    # diverts once consumed the whole shared budget every scan and
     # human-released deep bundles were starved indefinitely. Releases of
     # finished human work must never queue behind machine-initiated moves.
     recheck_deadline = time.monotonic() + QC_RECHECK_BUDGET_S
@@ -1289,7 +1288,7 @@ def scan_review_queues(db, processing_dir: Path,
             signature = _bundle_signature(bundle)
         except OSError:
             continue
-        # An Easy or Flat video is never held (review_gate, 2026-10-23), so a
+        # An Easy or Flat video is never held (review_gate), so a
         # machine-made hold on one -- a quality flag or a failed segmentation
         # -- is released even when a person's file sits in the bundle: what a
         # person can answer there is a pellet outcome, and outcomes do not

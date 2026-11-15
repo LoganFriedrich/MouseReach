@@ -37,7 +37,7 @@ def add_validation_status(json_path: Path, status: str):
     data['validation_timestamp'] = datetime.now().isoformat()
 
     # This rewrites a JSON a reviewer may have open; absorb a brief hold
-    # (a stage write died on exactly that, 2026-09-05). A persistent hold
+    # (a stage write died on exactly that). A persistent hold
     # still raises.
     from mousereach.pipeline.fsutil import dump_json_with_retry
     dump_json_with_retry(json_path, data, indent=2)
@@ -121,9 +121,9 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
     video_id = dlc_path.stem.split("DLC")[0]
     output_path = output_dir / f"{video_id}_segments.json"
 
-    # Easy and Flat trays are not segmented (Logan, 2026-10-23: "They also
-    # don't get segmented"; pellets are presented on them, but which pellet a
-    # reach went to does not matter). The whole video is ONE span: a single
+    # Easy and Flat trays are not segmented (pellets are presented on them,
+    # but which pellet a reach went to does not matter). The whole video is
+    # ONE span: a single
     # boundary at frame 0, which every reach detector reads as one segment
     # running to the end of the video -- so reaches are found across the whole
     # session, and the ruler is one estimate over the whole video. Running the

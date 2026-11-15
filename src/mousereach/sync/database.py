@@ -2,8 +2,7 @@
 """
 Database Syncer for MouseReach Pipeline
 
-Syncs _features.json (Step 5) outputs to the central connectome database
-at the OPTIONAL configured central database (central_db in ~/.mousereach/config.json)
+Syncs _features.json (Step 5) outputs to the OPTIONAL configured central database (central_db in ~/.mousereach/config.json)
 as flattened per-reach records. No central database configured = no sync.
 
 Each reach becomes one row in the reach_data table with:
@@ -66,7 +65,7 @@ CSV_DUMP_PATH = (DB_PATH.parent / "database_dump" / "reach_data.csv") if DB_PATH
 # NOTE: segment_num is deliberately NOT here. The extractor leaves it 0 on every
 # reach (see feature_extractor._extract_reach_features, "Will be set by caller"),
 # so reading it from the reach writes 0 for every row -- which is what happened to
-# all 160,141 rows imported from 2026-08-03 onward. It is taken from the enclosing
+# every row imported while it was read that way. It is taken from the enclosing
 # segment instead, where it has always been correct.
 REACH_JSON_COLUMNS = [
     'reach_id', 'reach_num',
@@ -101,7 +100,7 @@ BOOL_COLUMNS = {'causal_reach', 'is_first_reach', 'is_last_reach', 'flagged_for_
 #     sqlite3.IntegrityError: NOT NULL constraint failed: reach_data.segment_num
 # The failure was swallowed at three levels (RuntimeError -> return False ->
 # logged at debug as "subject not in DB or DB unavailable"), so nothing reached
-# reach_data between 2026-08-20T14:25:47 and this fix, silently.
+# reach_data until this fix, silently.
 ALL_COLUMNS = (
     ['subject_id', 'video_name', 'session_date', 'tray_type', 'run_number']
     + ['segment_num']
@@ -547,14 +546,14 @@ class DatabaseSyncer:
 
         WHY THE PIPELINE CREATES ANIMALS
         --------------------------------
-        In the lab, videos are recorded and shipped every day; the tracking
+        Videos may be recorded and shipped every day while the tracking
         spreadsheet that names the animals is filled in "eventually" -- days
         or weeks later. Until 2026-08-28 this sync refused any video whose
         animal the spreadsheet import had not yet created, and dropped the
         results SILENTLY (a debug-level "subject not in DB"). One failing
-        sheet import made an entire cohort's processed data vanish for weeks
-        (CNT_05, 179 sessions), and every ASPA session ever processed had
-        nowhere to land. The machine data must never wait on the hand data.
+        sheet import could make an entire cohort's processed data vanish for
+        weeks, and sessions of a project with no sheet import had nowhere to
+        land. The machine data must never wait on the hand data.
         The video filename already says who the animal is, so the animal is
         created from its first mention here, and the sheet import ENRICHES
         the record later (weights, surgery, real start date). Rows created
@@ -889,12 +888,12 @@ class DatabaseSyncer:
                     ORDER BY subject_id, session_date, video_name, segment_num, reach_num
                 """))
                 # Take the header from the query itself. These used to be two
-                # independent lists -- the SELECT above and ALL_COLUMNS -- and on
-                # 2026-08-20 they drifted: segment_num was dropped from
+                # independent lists -- the SELECT above and ALL_COLUMNS -- and
+                # they drifted: segment_num was dropped from
                 # ALL_COLUMNS while the SELECT kept it, so the written header had
                 # 61 names over 57-value rows and every column from index 5 on
                 # was mislabelled. The column headed causal_reach held outcome
-                # strings. Every mousedb recipe reads this file.
+                # strings. Downstream analyses read this file.
                 header = list(result.keys())
                 rows = result.fetchall()
 
@@ -966,6 +965,6 @@ def sync_file_to_database(output_path: Path) -> bool:
 
     except Exception as e:
         # Never break the pipeline -- but never be silent about it either.
-        # "Silently does nothing" is how 1,666 videos went unsynced for weeks.
+        # "Silently does nothing" is how videos went unsynced for weeks.
         logger.warning("Sync of %s failed: %s", output_path, e)
         return False

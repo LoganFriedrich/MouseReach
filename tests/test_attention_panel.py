@@ -1,8 +1,7 @@
 """What needs a person is shown in red at the top of the Pipeline Dashboard.
 
-WHY (Logan, 2026-10-26): "There needs to be a way to alert a human to an
-issue of the kind you are hunting down" -- and all a person sees is the
-screen. The watchers list such issues in <NAS root>/attention/; the
+WHY: an issue only a person can fix must reach a person, and all a person
+sees is the screen. The watchers list such issues in <NAS root>/attention/; the
 dashboard shows the ones a person must fix in red, and the ones that are
 only waiting as a grey line.
 """

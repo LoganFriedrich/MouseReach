@@ -2,7 +2,7 @@
 mousereach.aspa.importer - Import old ASPA Post-Processing xlsx files into ASPA.db.
 
 Old xlsx files live in:
-    Analyzed/{cohort}/Post-Processing/*.xlsx   (on NAS, e.g. X:/! DLC Output/Analyzed/H/Post-Processing/)
+    Analyzed/{cohort}/Post-Processing/*.xlsx   (on NAS, e.g. <nas drive>/! DLC Output/Analyzed/<cohort>/Post-Processing/)
 
 Each xlsx has columns:
     Swipe_num, Timestamp, Swipe Duration, Pellet #, Reach Outcome,

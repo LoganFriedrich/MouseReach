@@ -1,6 +1,6 @@
 """Rebuilding a lost multi-animal recording from its singles.
 
-WHY (2026-10-23): the input to MouseReach is the recording; a single fed in by
+WHY: the input to MouseReach is the recording; a single fed in by
 hand has no link to the recording it came from. Where only singles survive,
 the recording is rebuilt (each single back in its grid cell) and goes in like
 any other. Built under tmp_path with tiny synthetic videos.

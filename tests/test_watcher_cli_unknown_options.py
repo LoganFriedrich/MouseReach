@@ -1,6 +1,6 @@
 """Hand-parsed watcher commands refuse an option their usage does not list.
 
-WHY (2026-10-22): an unknown option was silently ignored, so a typo such as
+WHY: an unknown option was silently ignored, so a typo such as
 ``mousereach-watch --dryrun`` started the REAL watcher instead of the read-only
 preview. The usage text each command already prints for --help is the list of
 options it accepts; anything else stops the command before it does anything.
@@ -58,7 +58,7 @@ def test_every_hand_parsed_command_refuses_before_acting(monkeypatch, capsys, en
 @pytest.mark.parametrize("word", ["stop", "start"])
 def test_the_watcher_refuses_a_word_and_says_how_to_stop(monkeypatch, capsys, word):
     """An install script ran "mousereach-watch stop" meaning to stop it; the
-    word was ignored and the command started the watcher (2026-10-22)."""
+    word was ignored and the command started the watcher."""
     monkeypatch.setattr(sys, "argv", ["mousereach-watch", word])
     with pytest.raises(SystemExit) as e:
         cli.main_watch()

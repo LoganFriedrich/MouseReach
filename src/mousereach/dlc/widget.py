@@ -311,7 +311,7 @@ deeplabcut.launch_dlc()
 
     def _select_config(self):
         # Start from default AIs folder if it exists
-        # DLC model stays on A: drive (too large to copy)
+        # DLC model stays where it is (too large to copy)
         start_dir = ""  # User selects their DLC model location
 
         file_path, _ = QFileDialog.getOpenFileName(
@@ -326,7 +326,7 @@ deeplabcut.launch_dlc()
             self._update_run_button()
 
     def _select_project(self):
-        # DLC model stays on A: drive (too large to copy)
+        # DLC model stays where it is (too large to copy)
         start_dir = ""  # User selects their DLC model location
 
         folder = QFileDialog.getExistingDirectory(

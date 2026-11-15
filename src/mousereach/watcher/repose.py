@@ -95,8 +95,7 @@ def _claim(req: Path, infl: Path) -> None:
 
     WHY: the claim was os.replace, which overwrites. A request published again
     while another node's claim for the same video was still in flight was then
-    claimed a second time, and two GPUs posed one video (plan Section 0 item 8,
-    2026-10-22). Raises FileNotFoundError when another node took the request
+    claimed a second time, and two GPUs posed one video. Raises FileNotFoundError when another node took the request
     first, FileExistsError when a claim for the video already exists. Both are
     atomic: os.rename refuses an existing target on Windows; elsewhere a hard
     link does, then the request is unlinked.
@@ -749,9 +748,9 @@ def _in_lab_order(video_ids) -> list:
     """Re-pose requests in the lab's work order: everything not idle-only
     first, then by tier, then oldest first (the date leads the name).
 
-    WHY (plan gap G2, 2026-10-22): requests were taken alphabetically, so 2022
-    ASPA videos went to the GPUs ahead of 2025 CNT ones whatever the lab's
-    order said. An unreadable order falls back to the old name order."""
+    WHY: requests were taken alphabetically, so one project's older videos
+    went to the GPUs ahead of another's newer ones whatever the lab's order
+    said. An unreadable order falls back to the old name order."""
     try:
         from mousereach.watcher.work_priority import load_lab_policy
         policy = load_lab_policy()

@@ -10,8 +10,8 @@ Verified against: b65fcf0 (2026-08-23)
 
 > **Status 2026-09-01:** the watcher no longer calls this path at all. The
 > in-pipeline `db_sync` step was removed -- it had been left behind after
-> the 2026-08-28 move to mousedb PULLING features files from the Analyzed
-> tree, always failed on configuration, and logged a failed step on every
+> the integration moved to an external database tool PULLING features files
+> from the Analyzed tree, always failed on configuration, and logged a failed step on every
 > video. `sync_file_to_database` and the tools below still exist for a lab
 > that configures `central_db` deliberately; nothing in the watcher invokes
 > them.
@@ -29,11 +29,11 @@ Both destination paths are hard-coded module constants (`database.py:44`, `datab
 `'segment_num'` is back in `ALL_COLUMNS`, so the `INSERT` no longer omits a
 `NOT NULL` column. Verified against a scratch table built from the source's own
 `CREATE_REACH_DATA_SQL`, driving the real `sync_features_file` with a shipped
-features file (20 segments / 105 reaches): 105 rows inserted, 15 distinct
-`segment_num`, 0 rows with `segment_num = 0`.
+features file: one row inserted per reach, `segment_num` filled from the
+enclosing segment, no row with `segment_num = 0`.
 
-**The gap in the data is still there and has to be filled by hand.** Nothing
-reached `reach_data` between `2026-08-20T14:25:47` and this fix. Every video
+**A gap left by the defect has to be filled by hand.** Nothing
+reached `reach_data` while the defect stood. Every video
 processed in that window wrote a correct `{video}_features.json` to disk but no
 database row. Those files are the recovery path -- `sync_file_to_database`
 accepts any path, so they can be re-synced from wherever they were archived to,
@@ -59,7 +59,7 @@ The code builds `segment_num` into each row correctly, taking it from the enclos
 sqlite3.IntegrityError: NOT NULL constraint failed: reach_data.segment_num
 ```
 
-Reproduced twice at this commit, both times with a real features file (`20250624_CNT0102_P1_features.json`) and a scratch database: once against a table built from the source's own `CREATE_REACH_DATA_SQL`, and once against a replica of the live table's schema. In both cases the first `INSERT` raises and no row is written.
+Reproduced twice at this commit, both times with a real features file and a scratch database: once against a table built from the source's own `CREATE_REACH_DATA_SQL`, and once against a replica of the live table's schema. In both cases the first `INSERT` raises and no row is written.
 
 The error then disappears through three layers:
 
@@ -69,7 +69,7 @@ The error then disappears through three layers:
 
 Consequences when reading the current data:
 
-- The `reach_data` table is frozen. Its newest row was imported `2026-08-20T14:25:47`, about twenty seconds after commit `5bac3b0` landed. Nothing since.
+- The `reach_data` table is frozen: no row is imported after commit `5bac3b0`.
 - The flat CSV is frozen too, because the export only runs after a sync that did not raise. (One narrow exception: see "The flat CSV dump" below.)
 - The record of which files have been synced (`.mousereach_sync_state.json`) is not updated, because the hash is recorded only after a successful commit (`database.py:641-645`). So `mousereach-sync-status` keeps reporting the same files as pending forever.
 - **No data was lost.** The `DELETE` and the `INSERT`s share one transaction; the first `INSERT` raises, the connection closes without committing, and the delete is rolled back. Verified: a pre-existing row for the video being re-synced was still present after the failed sync.
@@ -125,13 +125,13 @@ The underlying `PipelineWatcher` class works if driven from Python, but note two
 A file is skipped, silently, unless all of these hold:
 
 1. The name ends in `_features.json` (`database.py:832`, `database.py:511`).
-2. The video name contains `CNT` followed by four digits, or the form `CNT_##_##` (`parse_subject_id`, `database.py:229`). This is how the subject identifier is derived: `CNT0115` becomes `CNT_01_15`. **Anything not named `CNT` is dropped.** On this machine today that is 38 of the 1,146 features files in `Processing`, all of them ASPA videos. (These counts are local to one machine and drift; re-measure before quoting them.)
-3. ~~The subject already exists in the `subjects` table.~~ **Changed 2026-08-28.** A subject the database has never heard of is now CREATED from the video name -- with its cohort and project if those are missing too -- by `DatabaseSyncer.ensure_subject_exists`, called on both the per-video and the batch path. The reason is the lab's actual order of events: videos are recorded and shipped every day, while the tracking sheet that names the animals is filled in "eventually". Gating the machine data on the hand data meant one failing sheet import silently dropped an entire cohort's results (CNT_05, 179 sessions, for weeks) and every ASPA session ever processed. The created cohort gets the video's date as a placeholder `start_date` (the column is NOT NULL) and `notes` beginning `auto-created from video`; mousedb's sheet import recognises that marker and replaces the placeholder with the real start date when the sheet is finally imported. A subject or cohort that already exists is never touched. (Also as of 2026-08-27, non-`CNT` names such as ASPA are parsed via `AnimalID.parse`, so item 2's "anything not named CNT is dropped" is no longer true either.)
+2. The video name contains `CNT` followed by four digits, or the form `CNT_##_##` (`parse_subject_id`, `database.py:229`). This is how the subject identifier is derived: `CNT0115` becomes `CNT_01_15`. **Anything not named `CNT` is dropped** -- ASPA-named videos, for example.
+3. ~~The subject already exists in the `subjects` table.~~ **Changed 2026-08-28.** A subject the database has never heard of is now CREATED from the video name -- with its cohort and project if those are missing too -- by `DatabaseSyncer.ensure_subject_exists`, called on both the per-video and the batch path. The reason is the usual order of events in a lab: videos are recorded and shipped every day, while the tracking sheet that names the animals may be filled in much later. Gating the machine data on the hand data meant one failing sheet import could silently drop an entire cohort's results. The created cohort gets the video's date as a placeholder `start_date` (the column is NOT NULL) and `notes` beginning `auto-created from video`; mousedb's sheet import recognises that marker and replaces the placeholder with the real start date when the sheet is finally imported. A subject or cohort that already exists is never touched. (Also as of 2026-08-27, non-`CNT` names such as ASPA are parsed via `AnimalID.parse`, so item 2's "anything not named CNT is dropped" is no longer true either.)
 4. For the batch path only: the file's contents changed since last time. `needs_sync` (`database.py:520`) compares the first 16 hex characters of the file's SHA-256 against `.mousereach_sync_state.json`, which lives inside the `Processing` folder. Delete that file and everything re-syncs.
 
 `check_database` (`database.py:466`) additionally refuses to do anything if the database file has no `subjects` table (`database.py:479-480`), and the engine refuses if the database file does not exist (`database.py:370-371`).
 
-All 1,108 `CNT`-named features files in `Processing` today match both the date pattern and the tray/run pattern described below.
+The `CNT`-named features files checked all match both the date pattern and the tray/run pattern described below.
 
 ---
 
@@ -171,7 +171,7 @@ Three consequences worth stating explicitly:
 
 - **Fewer reaches means orphan rows vanish.** If a re-run detects 40 reaches where the old run found 55, the extra 15 rows are deleted and not replaced. This is intended — it is how reprocessing avoids blending two algorithm versions (see the comment at `reprocess_to_current.py:309-312`) — but it means row counts drop with no message.
 - **Zero reaches means the old rows survive.** The early return at `database.py:610-611` happens before the delete. A video that reprocesses down to no reaches at all keeps its previous rows in the table forever, now attributed to a run that no longer produces them. This is the one case where the table and the files on disk can disagree without anything being wrong upstream.
-- **Columns filled by anything other than this code are wiped.** `test_phase` and `phase_group` are columns in the live table that MouseReach never writes. The delete removes the row that held them and the insert does not put them back. This has already happened: across a 400-video sample, every row still stamped with the old kinematics extractor (`extractor_version` 1.0.0, imported April 2026) carries a `test_phase`, and every row re-synced in August 2026 under extractor 2.0.0 has `test_phase` null — 15,048 rows with a value, 40,812 without.
+- **Columns filled by anything other than this code are wiped.** `test_phase` and `phase_group` are columns in the live table that MouseReach never writes. The delete removes the row that held them and the insert does not put them back. This has already happened in a live table: every row still stamped with the old kinematics extractor (`extractor_version` 1.0.0) carried a `test_phase`, and every row re-synced under extractor 2.0.0 had `test_phase` null.
 
 `sync_file_to_database` never consults the sync-state file, so it always deletes and re-inserts, even for a file it just wrote a moment ago.
 
@@ -191,7 +191,7 @@ A reach on the wrong side of a boundary is therefore labelled with the wrong pel
 
 **Copied from the reach, but computed upstream from its position inside its segment:**
 
-`reach_num`, `is_first_reach`, `is_last_reach`, `n_reaches_in_segment`. Checked against 25 features files (3,600 reaches): `reach_num` is always the reach's 1-based index inside its segment, `is_first_reach` is true exactly for index 0, and `n_reaches_in_segment` always equals the length of that segment's reach list. Move one boundary and all four change for the reaches on both sides of it.
+`reach_num`, `is_first_reach`, `is_last_reach`, `n_reaches_in_segment`. Checked against a sample of features files: `reach_num` is always the reach's 1-based index inside its segment, `is_first_reach` is true exactly for index 0, and `n_reaches_in_segment` always equals the length of that segment's reach list. Move one boundary and all four change for the reaches on both sides of it.
 
 **Derived downstream inside SQLite:** `segment_contact_group` is a generated column computed from `segment_outcome`, so it carries the same error onward.
 
@@ -199,7 +199,7 @@ A reach on the wrong side of a boundary is therefore labelled with the wrong pel
 
 Three further things this layer does not do:
 
-- **No validation of the grouping.** Nothing checks that `segment_num` falls in 1..20, that segment numbers are contiguous, or that there are twenty of them. The table currently holds 4,302 rows with `segment_num = 0`, a value no pellet has.
+- **No validation of the grouping.** Nothing checks that `segment_num` falls in 1..20, that segment numbers are contiguous, or that there are twenty of them. A live table was found holding rows with `segment_num = 0`, a value no pellet has.
 - **Pellets with no reaches are absent, not zero.** A segment with an empty reach list contributes no row at all. You cannot count "pellets the mouse never reached for" from `reach_data`; those pellets are simply missing.
 - **Re-segmentation leaves no trace.** Because the replace is keyed on `video_name` alone, re-syncing a re-segmented video silently rewrites every row's pellet number with no record of what it was before.
 
@@ -223,7 +223,7 @@ The insert list is `ALL_COLUMNS` (`database.py:84-92`), 61 names — 62 if `segm
 
 `segment_num` is read from the enclosing segment, never from the reach (`database.py:568`). This is deliberate: reaches used to carry a copy that was always `0`. As noted above, at this commit the column is built and then dropped before the insert.
 
-The comment at `database.py:56-60` states that all 160,141 rows imported from 2026-08-03 onward were written with `segment_num = 0`. **The table does not show that.** Of the 165,642 rows imported on or after 2026-08-03, 746 have `segment_num = 0`; across all 361,284 rows only 4,302 do, and 3,556 of those were imported in February 2026. Whatever happened, do not carry the 160,141 figure forward — it does not describe the table anyone will query.
+The comment at `database.py:56-60` states a count of rows written with `segment_num = 0`. **A live table did not bear that count out.** Do not carry the comment's figure forward -- query the table.
 
 **The reach measurements (41 columns)**
 
@@ -258,16 +258,16 @@ Six columns, all read from `{video}_processing_manifest.json` sitting next to th
 |---|---|---|
 | `processed_by` | `processed_by` | hostname of the machine that ran the pipeline (`manifest.py:242`) — **not** the machine that ran the sync |
 | `mousereach_version` | `pipeline_versions.mousereach` | version of the MouseReach package when the manifest was written |
-| `dlc_scorer` | `dlc_model.dlc_scorer` | the pose-estimation model suffix, e.g. `DLC_resnet101_MPSAOct27shuffle3_100000`, taken from the pose file's own name (`manifest.py:56-60`) |
+| `dlc_scorer` | `dlc_model.dlc_scorer` | the pose-estimation model suffix, e.g. `DLC_resnet101_<project><date>shuffle1_100000`, taken from the pose file's own name (`manifest.py:56-60`) |
 | `segmenter_version` | `pipeline_versions.segmenter` | read out of `{video}_segments.json` when the manifest was written |
 | `reach_detector_version` | `pipeline_versions.reach_detector` | read out of `{video}_reaches.json` |
 | `outcome_detector_version` | `pipeline_versions.outcome_detector` | read out of `{video}_pellet_outcomes.json` |
 
 Each version is whatever that stage stamped into its own output file (`manifest.py:152-158`, `manifest.py:233-236`), so these columns record what each stage *claimed*, which is only as good as the stage's stamp.
 
-That distinction is not academic. Until commit `61d98b9` the segmenter stamped a constant belonging to a different module than the one that actually cut the boundaries, so `segmenter_version` records the writing module's number rather than the running segmenter's. What the column actually contains today: `2.1.0` on 191,828 rows (53%), `2.1.3` on 165,642 rows (46%), and empty on 3,814 rows. The same split appears in the manifests the column is read from — of 1,146 manifests in `Processing`, 947 say `2.1.3` and 199 say `2.1.0`. So the shorthand "the corpus reads 2.1.3" is wrong; it is a two-way split, and the backfill script (`scripts/backfill_segmenter_version.py`) only rewrites files that currently claim `2.1.3` and postdate 2026-07-08. It corrects files, not database rows.
+That distinction is not academic. Until commit `61d98b9` the segmenter stamped a constant belonging to a different module than the one that actually cut the boundaries, so `segmenter_version` records the writing module's number rather than the running segmenter's. In a live table the column held a two-way split between `2.1.0` and `2.1.3` (plus some empty rows), and the manifests the column is read from showed the same split. So the shorthand "the corpus reads 2.1.3" is wrong; it is a two-way split, and the backfill script (`scripts/backfill_segmenter_version.py`) only rewrites files that currently claim `2.1.3` and postdate 2026-07-08. It corrects files, not database rows.
 
-**If the manifest is missing or unreadable, all six columns are `NULL` and nothing is logged** (`database.py:437-438`, `database.py:463-464`). A null here is indistinguishable from a manifest that genuinely recorded nothing. 3,814 rows are in that state.
+**If the manifest is missing or unreadable, all six columns are `NULL` and nothing is logged** (`database.py:437-438`, `database.py:463-464`). A null here is indistinguishable from a manifest that genuinely recorded nothing.
 
 Things the manifest holds that are **not** copied into the database: the reach-assignment stage's version, the kinematics extractor version under `pipeline_versions` (the `extractor_version` column carries the same number, but read from the features file instead), the per-stage validation statuses, and the per-step timestamps.
 
@@ -275,21 +275,21 @@ Things the manifest holds that are **not** copied into the database: the reach-a
 
 ## Columns that are declared and never filled
 
-Measured over all 361,284 rows of the table, split by which kinematics extractor produced the features file (`1.0.0`: 195,642 rows, imported through April 2026; `2.0.0`, the current one: 165,642 rows, imported August 2026).
+Measured over a live table, split by which kinematics extractor produced the features file (`1.0.0`, the old one; `2.0.0`, the current one).
 
 **Empty on every row, both extractors.** `distance_to_interaction`, `grasp_aperture_max_mm`, `grasp_aperture_at_contact_mm`, `apex_distance_to_pellet_mm`, `lateral_deviation_mm`, `tracking_quality_score`, `flag_reason`. The keys exist in the features file and carry no value on any reach. `flagged_for_review` is present on every row but is `0` on every row, which tells you nothing.
 
-**Filled by the old extractor, empty under the current one.** `max_extent_pixels`, `max_extent_ruler` and `max_extent_mm` carry a value on all 195,642 extractor-1.0.0 rows and on none of the 165,642 extractor-2.0.0 rows — a clean split, no partial cases. The same pattern holds in the files: across 120 sampled features files, extractor-1.0.0 reaches always carry extent and extractor-2.0.0 reaches never do. So reach extent is not "always null", but the current pipeline stopped producing it, and every new row will lack it. `segment_outcome_confidence` behaves identically: 100% present on extractor-1.0.0 rows, absent on every extractor-2.0.0 row (the key is present in the features file and its value is `null`).
+**Filled by the old extractor, empty under the current one.** `max_extent_pixels`, `max_extent_ruler` and `max_extent_mm` carry a value on every extractor-1.0.0 row and on no extractor-2.0.0 row — a clean split, no partial cases. The same pattern holds in the files: across sampled features files, extractor-1.0.0 reaches always carry extent and extractor-2.0.0 reaches never do. So reach extent is not "always null", but the current pipeline stopped producing it, and every new row will lack it. `segment_outcome_confidence` behaves identically: 100% present on extractor-1.0.0 rows, absent on every extractor-2.0.0 row (the key is present in the features file and its value is `null`).
 
-**Mostly empty by nature.** The per-reach `outcome` and `interaction_frame` carry a value on about 4% of rows — they are populated only for the reach the outcome stage tied to the pellet. `segment_outcome` is on 100% of rows.
+**Mostly empty by nature.** The per-reach `outcome` and `interaction_frame` carry a value on a small minority of rows — they are populated only for the reach the outcome stage tied to the pellet. `segment_outcome` is on 100% of rows.
 
-`docs/FIELD_AUDIT.md` (generated by `python -m mousereach.pipeline.field_audit --markdown`) is the right tool for the file-by-file view, but do not use it as the authority on the table: it reads a 1,377-video subset of videos judged "finished and current at every stage" and takes the database side from a parquet snapshot. It reports `max_extent_*` at 0.5% of the database; the table is at 54%. Query the table when you want to know what is in the table.
+`docs/FIELD_AUDIT.md` (generated by `python -m mousereach.pipeline.field_audit --markdown`) is the right tool for the file-by-file view, but do not use it as the authority on the table: it reads only the videos judged "finished and current at every stage" and takes the database side from a parquet snapshot, so its database figures can differ widely from the table's (they did for `max_extent_*`). Query the table when you want to know what is in the table.
 
 **Present in the live table, never written by this code.** `test_phase` and `phase_group` were added to the database by something outside MouseReach. Sync neither writes nor clears them, so a re-synced video loses them (see above).
 
 **Computed by the database itself.** `contact_group` and `segment_contact_group` are generated columns in the live table, derived from `interaction_frame` and `segment_outcome`. The string `contact_group` does not appear anywhere in `database.py`. This is a general caution: the `CREATE TABLE` in the source runs only `IF NOT EXISTS`, so the live table has drifted ahead of it — different column types, extra columns, a differently-named unique constraint. Read the schema from the database, not from the source.
 
-**Uniqueness.** The live table carries `UNIQUE (video_name, reach_id)`; the source writes it as `UNIQUE(video_name, reach_id)` (`database.py:203`). Reach identifiers are unique per video across all segments — checked against 80 features files, no duplicates — so this constraint does not currently bite.
+**Uniqueness.** The live table carries `UNIQUE (video_name, reach_id)`; the source writes it as `UNIQUE(video_name, reach_id)` (`database.py:203`). Reach identifiers are unique per video across all segments — checked against sampled features files, no duplicates — so this constraint does not currently bite.
 
 ---
 
@@ -305,11 +305,11 @@ Path: `<central_db's folder>/database_dump/reach_data.csv` -- beside the configu
 - After every single-video call through `sync_file_to_database` (`database.py:854`) — so once per video, every video.
 - Never by the folder watcher.
 
-It is a full dump of the whole table each time, ordered by subject, date, video, pellet and reach (`database.py:783`). The file is 198 MB at 361,284 rows, so the per-video path rewrites 198 MB of network storage for every video processed.
+It is a full dump of the whole table each time, ordered by subject, date, video, pellet and reach (`database.py:783`). The file grows with the table (hundreds of MB for a large one), so the per-video path rewrites the whole file on network storage for every video processed.
 
 **What it contains:** 57 columns, listed explicitly in the query at `database.py:760-781`. Seven ordinary columns of the table are **not** exported: `outcome_source`, `reviewed_by`, `algo_outcome`, `algo_causal_reach_id`, `extended_features`, `test_phase` and `phase_group`. Anyone working from the CSV cannot see whether a reach's outcome came from the algorithm or from a human reviewer, and cannot see any per-paw measurement. The row `id` and the two generated columns are also absent.
 
-**Header alignment.** The header now comes from the query's own column names (`database.py:792`). It used to be a separately maintained list, and on 2026-08-20 the two drifted: the header was written from `ALL_COLUMNS` while the rows came from the `SELECT`, so 61 names sat over 57-value rows and every column from the sixth onward was mislabelled. **The file currently on disk is that broken one** (written 2026-08-20 20:18, before the fix): the header has 61 names, every one of the 361,284 rows has 57 values, and the column headed `causal_reach` holds outcome strings such as `displaced_sa`. Treat the current `reach_data.csv` as unusable for anything keyed on column name.
+**Header alignment.** The header now comes from the query's own column names (`database.py:792`). It used to be a separately maintained list, and on 2026-08-20 the two drifted: the header was written from `ALL_COLUMNS` while the rows came from the `SELECT`, so 61 names sat over 57-value rows and every column from the sixth onward was mislabelled. **A dump written before the fix is that broken one**: the header has 61 names, every row has 57 values, and the column headed `causal_reach` holds outcome strings such as `displaced_sa`. Treat such a `reach_data.csv` as unusable for anything keyed on column name.
 
 It will not regenerate through the normal path while the `segment_num` defect stands, because the export only runs after a sync that did not raise. There is one exception: a features file containing no reaches at all returns early without inserting anything, which counts as success, so syncing such a file would rewrite the dump with the corrected header.
 
@@ -321,7 +321,7 @@ It will not regenerate through the normal path while the `segment_num` defect st
 
 | Setting | Where | Effect |
 |---|---|---|
-| `processing_root` | `~/.mousereach/config.json`, or the environment variable `MouseReach_PROCESSING_ROOT` (`config.py:56`) | the folder scanned and watched is `<processing_root>/Processing` (`config.py:152`). On this machine `<nas_root>`. If unset, the syncer's `processing_path` is `None`, the batch scan finds nothing, and the sync-state file is neither read nor written — but the per-video path still works, because it is handed an explicit file. |
+| `processing_root` | `~/.mousereach/config.json`, or the environment variable `MouseReach_PROCESSING_ROOT` (`config.py:56`) | the folder scanned and watched is `<processing_root>/Processing` (`config.py:152`). If unset, the syncer's `processing_path` is `None`, the batch scan finds nothing, and the sync-state file is neither read nor written — but the per-video path still works, because it is handed an explicit file. |
 | database location | `central_db` in `~/.mousereach/config.json`, or `MOUSEREACH_CENTRAL_DB`, or the constructor argument `db_path` | no default. Unset = `check_database()` returns (False, "no central database configured ...") and every sync command reports that and exits cleanly. |
 | CSV location | none | derived from the configured central database's folder; not affected by a constructor-passed `db_path`. |
 | `dry_run` | constructor argument, `mousereach-sync --dry-run` | builds and counts rows, inserts nothing, does not save sync state (`database.py:355-356`). Can still create the table and add columns. |
@@ -349,7 +349,7 @@ Collected in one place, because these are the reasons a write can produce nothin
 
 `watcher.py:89-90` and `watcher.py:113-114` log sync failures at error level, which is the one path that says anything useful.
 
-`sqlalchemy` and `watchdog` are optional dependencies, declared under the `sync` extra in `pyproject.toml:56-58`. Without `sqlalchemy` the engine raises `ImportError` (`database.py:368-369`) and the per-video path swallows it. Both are installed in the `mousereach` environment on this machine, so they are not the current cause of anything.
+`sqlalchemy` and `watchdog` are optional dependencies, declared under the `sync` extra in `pyproject.toml:56-58`. Without `sqlalchemy` the engine raises `ImportError` (`database.py:368-369`) and the per-video path swallows it.
 
 ---
 
@@ -377,7 +377,7 @@ opening the code yourself.** Everything not listed survived two passes.
 - **"**Two stages do not clean.** `stage_1` and `stage_2` compute pillar geometry straight from raw positions."**
   - disputed because: Three untouched stages, not two, compute pillar geometry from uncleaned data. Stage 6 also never cleans: it does not import `clean_dlc_bodyparts` at all and passes the raw slice straight into the geometry function. This matters for the paragraph's own argument, which uses the count to bound how much of the output rests on uncleaned tray corners.
 - **"**The analysis window is the boundary.** Every stage slices the pose data positionally as `dlc_df.iloc[seg_start : seg_end - 5 + 1]`."**
-  - disputed because: Four committing stages -- 26, 27, 28 and 29 -- never take that slice. They slice per-reach pre/post windows bounded by the neighbouring reaches and capped at `seg_end + 1`, so they can read the last 5 frames the clean zone excludes. Stages 0, 22 and 99 slice nothing at all. Together stages 26-29 account for 3,031 of the 43,180 archived decisions, so this is not a corner case.
+  - disputed because: Four committing stages -- 26, 27, 28 and 29 -- never take that slice. They slice per-reach pre/post windows bounded by the neighbouring reaches and capped at `seg_end + 1`, so they can read the last 5 frames the clean zone excludes. Stages 0, 22 and 99 slice nothing at all. Together stages 26-29 account for a substantial share of archived decisions, so this is not a corner case.
 - **"The flag's only real effects are the misleading message and a different progress format." (about `mousereach-detect-outcomes --legacy`)**
   - disputed because: `--legacy` has a large substantive effect the document denies, and it is the opposite of what the flag's name suggests: it is the only CLI path that loads reaches correctly. The `--legacy` branch goes through `process_batch` -> `process_single`, which uses `core/batch.py`'s nested-format-aware `_extract_reaches`; the default v6 branch uses `cli.py`'s flat-only copy, which the document itself shows
 - **"The confidence of SABL and SABR is never checked. **No function in `pillar_geometry.py` reads a likelihood column.**"**
@@ -396,8 +396,8 @@ opening the code yourself.** Everything not listed survived two passes.
 
 `sync_file_to_database` returning False -- the video's results did NOT reach
 connectome.db -- was logged at debug level and treated as a normal skip; the
-audit table showed 65 successes against 1,229 completed extractions before
+audit table showed far fewer successes than completed extractions before
 anyone noticed. Both watcher paths now write a `db_sync` `failed` row to the
-step audit table and log a warning naming the video. The DLC-machine local
+step audit table and log a warning naming the video. The GPU node's local
 path, which never even checked the return value, checks it now. Feature
 extraction failures on that path also write a `failed` audit row.

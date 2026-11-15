@@ -1,8 +1,8 @@
 """A re-run that finds no pose does not fail the video.
 
-WHY (2026-10-22): the re-run step marked a video failed whenever it found no
-pose. On 2026-09-01 three videos failed that way because their bundles -- pose
-included -- had been moved into triage. A missing pose is a pose to make or a
+WHY: the re-run step marked a video failed whenever it found no pose. Videos
+failed that way because their bundles -- pose included -- had been moved into
+triage. A missing pose is a pose to make or a
 file to follow: the video is held where its pose is, or marked as needing a new
 pose (which the GPU nodes are asked for), and fails only when its video is
 missing too.

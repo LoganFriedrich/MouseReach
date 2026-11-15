@@ -3,7 +3,7 @@ Pause the watcher while a recording program is running.
 
 WHY THIS EXISTS
 ---------------
-A GPU node in a behaviour room does two jobs on one machine: it RECORDS
+A GPU node in a behavior room does two jobs on one machine: it RECORDS
 videos of animals, and when nobody is recording it POSES videos (DeepLabCut,
 ~14 minutes of GPU per video). The two cannot share the machine: a pose
 saturates the GPU, the CPU and the disk, and a recording that drops frames

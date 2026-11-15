@@ -68,7 +68,7 @@ Before starting, ensure you have:
 ### Input
 Multi-animal collage video with filename format:
 ```
-20250704_CNT0101,CNT0205,CNT0305,CNT0306,CNT0102,CNT0605,CNT0309,CNT0906_P1.mkv
+20250101_CNT0101,CNT0102,CNT0103,CNT0104,CNT0105,CNT0106,CNT0107,CNT0108_P1.mkv
 ├─────── ───────────────────────────────────────────────────────────── ──┤
   Date              8 Animal IDs (positions 1-8)                      Session
 ```
@@ -102,9 +102,9 @@ mousereach-crop -i input_folder/ -o output_folder/ --queue
 ### Output
 Individual .mp4 files for each animal:
 ```
-20250704_CNT0101_P1.mp4
-20250704_CNT0205_P1.mp4
-20250704_CNT0305_P1.mp4
+20250101_CNT0101_P1.mp4
+20250101_CNT0102_P1.mp4
+20250101_CNT0103_P1.mp4
 ... (8 files per collage)
 ```
 
@@ -156,7 +156,7 @@ This checks:
 ### Output
 DLC tracking files:
 ```
-20250704_CNT0101_P1DLC_resnet50_YourModelMar15shuffle1_500000.h5
+20250101_CNT0101_P1DLC_resnet50_YourModelMar15shuffle1_500000.h5
 ```
 
 ### Notes
@@ -217,7 +217,7 @@ mousereach-advance -i Processing/
 ### Output
 Segmentation JSON files:
 ```
-20250704_CNT0101_P1_segments.json
+20250101_CNT0101_P1_segments.json
 ```
 
 Contains:
@@ -290,7 +290,7 @@ mousereach-advance-reaches -i Processing/
 ### Output
 Reach detection JSON files:
 ```
-20250704_CNT0101_P1_reaches.json
+20250101_CNT0101_P1_reaches.json
 ```
 
 Contains per-segment:
@@ -376,7 +376,7 @@ mousereach-advance-outcomes -i Processing/
 ### Output
 Outcome JSON files:
 ```
-20250704_CNT0101_P1_pellet_outcomes.json
+20250101_CNT0101_P1_pellet_outcomes.json
 ```
 
 Contains per-segment:
@@ -416,7 +416,7 @@ mousereach-grasp-review
 ### Output
 Feature files:
 ```
-20250704_CNT0101_P1_features.json
+20250101_CNT0101_P1_features.json
 ```
 
 Contains per-reach:

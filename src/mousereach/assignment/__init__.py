@@ -2,8 +2,8 @@
 Reach assignment -- joins reaches to segments and pellets, identifies
 the causal reach for each touched segment's outcome.
 
-This is the 4th algo of the MouseReach pipeline. See
-`four_algo_decomposition.md` in cross-session memory for context.
+This is the 4th algo of the MouseReach pipeline (after segmentation,
+reach detection and outcome).
 
 v1 -- cascade-trusted IFR-join (single signal).
 v2 -- two-signal agreement gate (IFR + displacement). Commits only

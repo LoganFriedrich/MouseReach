@@ -41,19 +41,20 @@ Set it once, in the MouseReach window: **Watcher Control -> Work priority
 
 | Box | Means | Example |
 |-----|-------|---------|
-| projects, best first | which projects matter most | `CNT, ASPA` |
+| projects, best first | which projects matter most | `PROJECT_A, PROJECT_B` |
 | session lists within a project | files of sessions a study needs, which lead within their project | `PROJECT_B: priority_lists/study_a.txt` |
-| cohorts within a project | which groups inside a project come first | `CNT: 01, 02, 03, 04` |
+| cohorts within a project | which groups inside a project come first | `PROJECT_A: 01, 02, 03, 04` |
 | tray types first | which tray letters lead | `P` |
 
-That example says, in order: pillar videos from CNT cohorts 01 to 04 first, then
-the rest of CNT, then ASPA, then everything else. Easy and Flat trays are left
+That example says, in order: pillar videos from PROJECT_A cohorts 01 to 04 first, then
+the rest of PROJECT_A, then PROJECT_B, then everything else. (`PROJECT_A` and
+`PROJECT_B` are placeholders for your own project codes.) Easy and Flat trays are left
 until a machine has nothing else to do.
 
 **Session lists (since 2026-10-22).** A study usually needs particular sessions --
 one animal's tray run on one day -- spread over many cohorts and recordings. Put
 them in a text file in the shared pipeline folder, one session per line
-(`20220811_J11_P3` or the pipeline's `20220811_ASPA1011_P3`; lines starting with
+(`20220101_A01_P3` or the pipeline's `20220101_ASPA0101_P3`; lines starting with
 `#` are notes), and name the file in the second box under its project. Within that
 project, those sessions come first, before its cohorts. A recording counts as
 listed when any one of its animals' sessions is listed, because it has to be cut

@@ -88,7 +88,7 @@ TRAY_FIXED_POINTS = ['BOXL', 'BOXR', 'SABL', 'SABR']
 RULER_POINTS = ('SABL', 'SABR')
 
 # A ruler whose length varies within a video is RECORDED (a warning in
-# _triage.json), never a reason to hold the video. WHY (Logan, 2026-10-23):
+# _triage.json), never a reason to hold the video. WHY:
 # the millimetre scale is an estimate (one median per pellet segment), every
 # kinematic also exists in pixels, and no conclusion is drawn from one reach --
 # everything passes through data preparation and statistics that average such
@@ -371,8 +371,8 @@ def check_structural(
     # detection runs: Easy and Flat trays skip it by design (the per-tray step
     # table, watcher/router.SKIP_STEPS). WHY: requiring it anyway made every
     # Easy/Flat video fail this check as CRITICAL, and the gate sent each one
-    # to deep review on that false alarm -- 100 Flat-tray videos in three hours
-    # on 2026-10-22, a person's queue filled with videos nothing was wrong with.
+    # to deep review on that false alarm, filling a person's queue with videos
+    # nothing was wrong with.
     from mousereach.config import parse_tray_type
     from mousereach.watcher.router import TrayRouter
     tray = parse_tray_type(f"{video_id}.mp4").get("tray_type")

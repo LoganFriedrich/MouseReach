@@ -27,7 +27,7 @@ There are two implementations in the tree and they are not both live.
 | `assignment/v2/assign.py` → `assign_reaches_v2` | `2.1.0` (`v2/assign.py:40`) | **Everything in production.** |
 | `assignment/v1/assign.py` → `assign_reaches_v1` | `1.0.0` (`v1/__init__.py:25`) | Nothing. Retained for provenance; the command line tool stopped calling it in 2026-08. |
 
-The command line tool `mousereach-assign-reaches` (declared in `pyproject.toml`, implemented at `assignment/cli.py` `main_batch`) calls the same `assign_reaches_for_video` the pipeline calls, so it also runs **v2** — verified 2026-08-29 by re-running it on an archived video and getting the identical per-reach table. Until 2026-08 it called **v1** instead: running it over a processing folder by hand overwrote the v2 file at the same path with a v1 file carrying `"detector": "assignment_v1"` and a weaker set of decisions — v1 has no agreement test, commits whichever reach contains the interaction frame, and labels every reach in a triaged segment `triaged`. Any `_reach_assignments.json` stamped `1.0.0` dates from that.
+The command line tool `mousereach-assign-reaches` (declared in `pyproject.toml`, implemented at `assignment/cli.py` `main_batch`) calls the same `assign_reaches_for_video` the pipeline calls, so it also runs **v2** — verified by re-running it on an archived video and getting the identical per-reach table. Until 2026-08 it called **v1** instead: running it over a processing folder by hand overwrote the v2 file at the same path with a v1 file carrying `"detector": "assignment_v1"` and a weaker set of decisions — v1 has no agreement test, commits whichever reach contains the interaction frame, and labels every reach in a triaged segment `triaged`. Any `_reach_assignments.json` stamped `1.0.0` dates from that.
 
 Nothing warned about that overwrite at the time, and version tracking would not have caught it either: the processing manifest records each stage's version when the manifest is written (`pipeline/manifest.py:233-236`), and the repair pass that reads versions back off disk only fills in blanks — it never corrects a version already recorded (`manifest.py:376-391`). A manifest saying `2.1.0` can therefore sit next to a file saying `1.0.0`.
 
@@ -36,7 +36,7 @@ Production entry points, all of which run v2:
 - `assignment/run.py:32` `assign_reaches_for_video(...)` — the importable one-video step. Called from the watcher (`watcher/orchestrator.py:1080` and `:2010`), the manual full run (`pipeline/run_all.py:93`), and the version-driven reprocess (`pipeline/reprocess_to_current.py:215-216`).
 - `review/staging.py:327` calls `assign_reaches_v2` directly when building a review bundle, and writes the same filename at `staging.py:333`.
 
-`v1/features.py`, `v1/train.py` and `v1/overrides.py` are a machine-learning classifier from an old development effort. Apart from `v1/train.py` importing `v1/features.py`, nothing in `src/` imports them; five one-off scripts under `scripts/` do (`restart_phase_d_build_dataset.py`, `restart_phase_d_loocv_gt_reaches.py`, `restart_phase_d_per_reach_sankey.py`, `restart_phase_d_v2_causal_features.py`, `restart_phase_d_v3_overrides.py`). They do not run in any pipeline.
+`v1/features.py`, `v1/train.py` and `v1/overrides.py` are a machine-learning classifier from an old development effort. Apart from `v1/train.py` importing `v1/features.py`, nothing in `src/` imports them; only one-off development scripts outside this repository did. They do not run in any pipeline.
 
 ## What it reads
 
@@ -72,7 +72,7 @@ This stage never recomputes boundaries. It re-derives segment spans from the bou
 Specific consequences of a boundary in the wrong place:
 
 - **Pellet number is passed through, right or wrong.** The `segment_num` written into every output row is the segmenter's ordinal position — its claim about which pellet presentation this is. If the boundaries are offset by one presentation, everything downstream keyed to pellet number inherits the error, and this stage has no means of noticing.
-- **Reaches past the last boundary are dropped from the analysis entirely.** The merge builds pairs of consecutive boundaries, so the stretch before the first boundary and the stretch after the last are not segments. The reach detector *does* emit a trailing block: for a 21-boundary file it produces 21 reach blocks while the merge builds 20 segments, and the block-21 reaches match no segment. Checked on 400 paired videos: the set of `unassigned` reaches is exactly the set of reaches in the reach detector's trailing block, every time (101 reaches across those 400). Corpus-wide, 364 of 222,679 reaches (0.16%) are `unassigned`.
+- **Reaches past the last boundary are dropped from the analysis entirely.** The merge builds pairs of consecutive boundaries, so the stretch before the first boundary and the stretch after the last are not segments. The reach detector *does* emit a trailing block: for a 21-boundary file it produces 21 reach blocks while the merge builds 20 segments, and the block-21 reaches match no segment. Checked on a sample of paired videos: the set of `unassigned` reaches is exactly the set of reaches in the reach detector's trailing block, every time. Corpus-wide, `unassigned` reaches are a small fraction of the total.
 - **Signal A can be moved out of reach.** It needs the outcome stage's interaction frame to fall inside a reach that is in this segment. A misplaced boundary can put the real causal reach in the neighbouring segment; Signal A then finds nothing and the segment is triaged.
 - **Signal B's windows change.** The before/after windows are bounded by the neighbouring reaches in the same segment and clamped to the segment's own start and end (`v2/assign.py:133-137`, `:148-152`). Adding a reach to a segment or removing one changes its neighbours' windows and can change which reach wins.
 - **The triage-reduction pass assumes one pellet per segment.** It reads pellet state only over `[seg_start, seg_end]` (`triage_reduction.py:95`) and anchors on the first confident on-pillar-to-off-pillar departure inside those bounds. The code comment at `triage_reduction.py:231-242` states the assumption outright: a later on-pillar run is the *next* pellet arriving, not this one. A late boundary pulls the next pellet's arrival into the window; an early one cuts the departure out of it.
@@ -129,7 +129,7 @@ A segment is left with no causal reach in every one of these cases:
 | Signal B could not score any reach | `v2/assign.py:347-350` |
 | Both signals fired but picked non-overlapping reaches | `v2/assign.py:344-346` |
 
-There is no confidence score and no threshold. `assignment/AGENTS.md:65-70` describes triage as firing when `max(P(causal))` falls below a default of `0.40`, and describes a `would_be_causal_reach_id` field. Neither exists in this code: v2 computes no probabilities and never writes that field.
+There is no confidence score and no threshold. Triage does not fire on a probability falling below a cut-off, and there is no `would_be_causal_reach_id` field: v2 computes no probabilities and never writes that field.
 
 ## Cleaning up inside a triaged segment
 
@@ -161,7 +161,7 @@ If this pass somehow labels every reach a miss, the whole segment is reverted to
 
 **The whole reduction pass is wrapped in a bare `except Exception: pass`** (`v2/assign.py:381-382`). If it raises for any reason, the segment stays fully triaged and nothing is logged.
 
-You can nevertheless tell from the output file whether it ran. On a non-empty segment, `reduce_triaged_segment` always returns a reason string (`triage_reduction.py:313-315` and `:348`; the only `None` return is for an empty reach list at `:307-308`, which the caller has already skipped at `v2/assign.py:373-374`), and that string is stamped onto every reach that stays `triaged` (`v2/assign.py:448-449`). So **a `triaged` reach with no `triage_reason`, in a file stamped version 2.1.0, means the pass raised for that segment.** Across the corpus this never happens: of 20,507 `triaged` reaches in 2.1.0 files, all 20,507 carry a reason. The 2,012 reasonless triaged reaches on disk are all in older 2.0.0 files, written before the pass existed.
+You can nevertheless tell from the output file whether it ran. On a non-empty segment, `reduce_triaged_segment` always returns a reason string (`triage_reduction.py:313-315` and `:348`; the only `None` return is for an empty reach list at `:307-308`, which the caller has already skipped at `v2/assign.py:373-374`), and that string is stamped onto every reach that stays `triaged` (`v2/assign.py:448-449`). So **a `triaged` reach with no `triage_reason`, in a file stamped version 2.1.0, means the pass raised for that segment.** Across the corpus this never happens: every `triaged` reach in a 2.1.0 file carries a reason. The reasonless triaged reaches on disk are all in older 2.0.0 files, written before the pass existed.
 
 ## What each per-reach label means
 
@@ -176,19 +176,19 @@ You can nevertheless tell from the output file whether it ran. On a non-empty se
 
 `causal_abnormal_exception` is listed in the v2 module docstring (`v2/assign.py:21`) and is genuinely produced by v1 (`v1/assign.py:54-55`). In v2 it cannot occur: `abnormal_exception` is not in `TOUCHED_OUTCOMES` (`v2/assign.py:298`), so such a segment gets no decision and all its reaches fall through to `miss` (`v2/assign.py:429-432`). This is currently harmless because the live outcome detector never emits that outcome either — grepping `committed_class=` across `outcomes/v6_cascade/` yields only `untouched`, `retrieved` and `displaced_sa` (the three variable-class stages resolve to `displaced_sa` or `retrieved` at `stage_21_...py:414,478` and `stage_24_transition_triangulation.py:253,255`). But the docstring is wrong about what the code can output.
 
-`displaced_outside` is in the same position. `_collapse` (`v2/assign.py:47-50`) folds it into `displaced_sa`, and it is listed in `TOUCHED_OUTCOMES`, but the v6 cascade cannot emit it. It exists on disk only in files written by the older, legacy outcome detector (16 segments across 2,703 legacy-format `_pellet_outcomes.json` files). No assignment file in the corpus was built from one: the only `segment_outcome` values that appear across all 2,015 assignment files are `retrieved`, `displaced_sa`, `untouched`, `triaged` and null.
+`displaced_outside` is in the same position. `_collapse` (`v2/assign.py:47-50`) folds it into `displaced_sa`, and it is listed in `TOUCHED_OUTCOMES`, but the v6 cascade cannot emit it. It exists on disk only in files written by the older, legacy outcome detector (a handful of segments in legacy-format `_pellet_outcomes.json` files). No assignment file in the corpus was built from one: the only `segment_outcome` values that appear across every assignment file are `retrieved`, `displaced_sa`, `untouched`, `triaged` and null.
 
 `v2/assign.py:429-430`'s check for a triaged segment is unreachable, because a segment with `outcome == "triaged"` or `flagged_for_review` always already has a decision recorded at `:305-307`, so control never reaches the `else` branch for it.
 
 ## What the corpus actually contains
 
-Measured 2026-08-23 over 2,015 `*_reach_assignments.json` files (222,679 reaches) under `MouseReach_Pipeline`. 1,651 files are at the current version 2.1.0; 364 are older 2.0.0 files.
+Measured over every `*_reach_assignments.json` file under the pipeline root when this document was verified. Most files are at the current version 2.1.0; the rest are older 2.0.0 files.
 
-Labels, all files: `miss` 182,379 · `triaged` 22,519 · `causal_displaced_sa` 14,534 · `causal_retrieved` 2,883 · `unassigned` 364. That is 17,417 causal reaches, 7.8% of the total, consistent with the 7.9% in `docs/FIELD_AUDIT.md`.
+Labels, all files, most frequent first: `miss`, `triaged`, `causal_displaced_sa`, `causal_retrieved`, `unassigned`. Causal reaches are a small minority of all reaches, consistent with the share in `docs/FIELD_AUDIT.md`.
 
-Triage reasons, 2.1.0 files only: `both_uncertain` 14,758 · `reach_uncertain` 5,362 · `outcome_uncertain` 387.
+Triage reasons, 2.1.0 files only, most frequent first: `both_uncertain`, `reach_uncertain`, `outcome_uncertain`.
 
-Per segment, restricted to the 1,651 current-version files and to segments that have at least one reach in them: 13,329 `displaced_sa`, 2,793 `retrieved`, 3,621 `untouched`, 1,991 already triaged by the outcome stage. Of the 16,122 touched segments, **15,448 (95.8%) got a committed causal reach and 674 (4.2%) did not** — the two signals disagreed, or one of them produced nothing.
+Per segment, restricted to the current-version files and to segments that have at least one reach in them: **the large majority of touched segments got a committed causal reach, and a small remainder did not** — the two signals disagreed, or one of them produced nothing.
 
 ## Exactly what lands in `{video}_reach_assignments.json`
 
@@ -196,7 +196,7 @@ Written by `run.py:72-73` (and `staging.py:333`), pretty-printed with a trailing
 
 ```json
 {
-  "video_id": "20250624_CNT0110_P3",
+  "video_id": "20250101_CNT0101_P1",
   "detector": "assignment_v2",
   "version": "2.1.0",
   "n_reaches": 385,
@@ -237,14 +237,14 @@ One optional key:
 
 The per-reach feature table and the database never see this file. `pipeline/run_all.py:121-125` shows the handoff: the kinematic extractor is given the pose file, the reaches file, the outcomes file and the human review file. The assignment file is not passed and is not opened. Grepping `kinematics/`, `export/`, `analysis/` and `sync/` for `reach_assignments` or `ASSIGN_SUFFIX` returns nothing.
 
-`docs/FIELD_AUDIT.md` records the consequence in its "Lost In Transit" table (heading at line 41; at this commit the `is_causal` row is line 49): `is_causal` carries information on 7.9% of reaches at the stage that computes it, and the features and database columns both show `-`. In that table `-` means the field does not exist in that layer at all — as distinct from the explicit `0.0%` used for fields that do exist and are always empty (e.g. `flag_reason`, line 47). The same table lists `label`, `segment_ifr` and `triage_reason` in the same position.
+`docs/FIELD_AUDIT.md` records the consequence in its "Lost In Transit" table (heading at line 41; at this commit the `is_causal` row is line 49): `is_causal` carries information on a small share of reaches at the stage that computes it, and the features and database columns both show `-`. In that table `-` means the field does not exist in that layer at all — as distinct from the explicit `0.0%` used for fields that do exist and are always empty (e.g. `flag_reason`, line 47). The same table lists `label`, `segment_ifr` and `triage_reason` in the same position.
 
 `segment_outcome` is the one exception, and it is a name collision rather than a hand-off. The audit shows its database column at 100.0%, but that column is filled by `sync/database.py:569` from the segment outcome carried in the *features* file, not from this file.
 
 Where analysis code does use the word "causal", it gets its answer from somewhere else:
 
 - `analysis/data.py:419` reads a field called `causal_reach` and calls the resulting column `is_causal`. That line is inside `load_features_from_json` (`data.py:354`), so it comes from the **features** file. The reaches loader (`data.py:280-353`) never touches it.
-- That `causal_reach` field is set by the kinematics stage, not here: `kinematics/core/feature_extractor.py:379-382` sets it on the reach whose id equals the outcome document's `causal_reach_id`. The v6 cascade never writes `causal_reach_id` (`outcomes/v6_cascade/detector.py:247-268` has no such key). It arrives from a human causal review applied in memory at extraction time (`review/causal_review_io.py:496-499`, reached via `feature_extractor.py:222-237`, with the review path supplied by `run_all.py:120`), or from a ground-truth overlay (`review/truth_resolver.py:173-175`). A separate offline napari widget also writes it (`kinematics/_reach_outcome_validator.py:579-584`). `docs/FIELD_AUDIT.md` shows `causal_reach` populated on 1.6% of rows, which is roughly the share of segments a human has reviewed.
+- That `causal_reach` field is set by the kinematics stage, not here: `kinematics/core/feature_extractor.py:379-382` sets it on the reach whose id equals the outcome document's `causal_reach_id`. The v6 cascade never writes `causal_reach_id` (`outcomes/v6_cascade/detector.py:247-268` has no such key). It arrives from a human causal review applied in memory at extraction time (`review/causal_review_io.py:496-499`, reached via `feature_extractor.py:222-237`, with the review path supplied by `run_all.py:120`), or from a ground-truth overlay (`review/truth_resolver.py:173-175`). A separate offline napari widget also writes it (`kinematics/_reach_outcome_validator.py:579-584`). `docs/FIELD_AUDIT.md` shows `causal_reach` populated on only a small share of rows, roughly the share of segments a person has reviewed.
 - `analysis/data.py:1249` `derive_reach_outcomes` re-implements causal attribution from scratch: it takes the reach containing `interaction_frame`, and if none contains it, falls back to the last reach ending before it (`:1286-1296`). That is Signal A alone, with an extra fallback this stage deliberately does not have, and with no agreement test. It is called from `analysis/cli.py:188`. Its answers can differ from this file's, and nothing reconciles the two.
 
 So the two-signal agreement gate — the thing this stage exists to provide — currently influences nothing downstream of the review queue.
@@ -254,7 +254,7 @@ So the two-signal agreement gate — the thing this stage exists to provide — 
 - **Triage routing.** `review/triage_status.py:59-67` collects the segment numbers that have a committed causal reach, using `is_causal` and `segment_num` only — it never looks at `label`. `triaged_segments` (`:70-95`) then treats a touched segment with no committed causal reach as triaged, which sends the video to human review through the gate (`watcher/review_gate.py:83`).
 - **The worklist builder.** `review/triage_queue.py:96-111` `_causal_segments` accepts either `is_causal` or a `label` starting with `causal`, so it is a slightly wider test than `triage_status`'s. It flags any touched segment not in that set (`:203-205`, `:213`). `review/qc_pool.py:106-112` uses the same wider test to build the quality-control pool.
 - **The review tool.** `review/causal_review_widget.py:878` loads the file, `:996-999` indexes it by segment, `:1059-1068` picks out the committed reach for display; `:2580-2581` and `:2639-2641` use it to decide whether a bundle still has anything to review. `review/queue_index.py:156-158` does the same for the queue listing.
-- **Version tracking.** `pipeline/manifest.py:156` reads the top-level `version` key into the processing manifest, so a video can be marked stale when this stage's version changes. The declared current value lives in `MouseReach_Pipeline/pipeline_versions.json` (`"assignment": "2.1.0"`).
+- **Version tracking.** `pipeline/manifest.py:156` reads the top-level `version` key into the processing manifest, so a video can be marked stale when this stage's version changes. The declared current value lives in `<nas_root>/pipeline_versions.json` (`"assignment": "2.1.0"`).
 - **Archiving.** `archive/supersede.py:49-52` moves the file aside on reprocess rather than overwriting it.
 - **Auditing and evaluation.** `pipeline/field_audit.py:61`. (Per-reach Sankey evaluation lives in the improvement accessory tool, outside this repo.)
 
@@ -311,9 +311,9 @@ database), beneath the human-review and ground-truth layers. An assignment
 failure in the watcher now also writes a `failed` row to the step audit table
 on both machine roles, so it is countable; it previously left only a
 started/completed count mismatch. The gate still does not hold a video whose
-assignment never ran -- deliberately, because 1,233 older videos have no
-assignment file and would flood triage on their next re-gate. That decision is
-recorded in UNFINISHED.md.
+assignment never ran -- deliberately, because videos processed before this
+stage existed have no assignment file and would flood triage on their next
+re-gate.
 
 ---
 

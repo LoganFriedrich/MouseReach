@@ -4,7 +4,7 @@ WHY THIS EXISTS
 ---------------
 A reviewer GUI (or an indexer/backup pass) briefly holding a pipeline file
 surfaces as PermissionError winerror 5/32 (errno 13) and clears within
-seconds. Three work items died on exactly this in three days (2026-09-02..05):
+seconds. Work items died on exactly this, three ways:
 a copy's destination, a copy's cleanup unlink, and finally a stage's own
 OUTPUT WRITE (reach save_results, with the file open in a review tool). The
 copy paths were hardened in watcher.transfer; this module is the shared

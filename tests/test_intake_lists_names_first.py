@@ -1,10 +1,10 @@
 """Finding a video's files in a big shared folder asks the share about names first.
 
 WHY: intake finds a posed video's files in the posed-video folder, which holds
-every posed video waiting for analysis with its pose files (about 5,000
+every posed video waiting for analysis with its pose files (thousands of
 entries). It used to ask the share "is this a file?" for every entry before
-looking at the name: about 120 s per video, of an intake whose copying takes
-4 s (2026-10-21). The result must be exactly what it was.
+looking at the name: far longer per video than the intake's copying itself.
+The result must be exactly what it was.
 """
 from types import SimpleNamespace
 

@@ -48,7 +48,7 @@ def nas(tmp_path, monkeypatch):
 
 def _save(**kw):
     kw.setdefault("projects", ["CNT", "ASPA"])
-    kw.setdefault("cohorts", {"CNT": ["01", "02", "03", "04"]})
+    kw.setdefault("cohorts", {"CNT": ["01", "02"]})
     kw.setdefault("tray_types", ["P"])
     kw.setdefault("idle_only_tray_types", ["E", "F"])
     return wp.save_lab_priority(**kw)
@@ -101,7 +101,7 @@ def test_save_then_read_round_trip(nas):
     path = _save()
     body = json.loads(path.read_text(encoding="utf-8"))
     assert body["projects"] == ["CNT", "ASPA"]
-    assert body["cohorts"] == {"CNT": ["01", "02", "03", "04"]}
+    assert body["cohorts"] == {"CNT": ["01", "02"]}
     assert body["schema_version"] == wp.LAB_PRIORITY_SCHEMA
     assert body["updated_at"] and body["updated_by"]
     assert wp.read_lab_priority()["projects"] == ["CNT", "ASPA"]
@@ -180,10 +180,10 @@ def test_saving_invalidates_the_cache(nas):
     assert _tier(second, ASPA) < _tier(second, CNT01)
 
 
-# ---------------------------------------------------------------- the lab's ask
+# ---------------------------------------------------------------- a two-list policy
 
-def test_the_order_the_lab_asked_for(nas):
-    """Pillar first, CNT first, CNT cohorts 01-04 before anything else."""
+def test_named_cohorts_then_projects_then_the_rest(nas):
+    """Pillar first, the first project first, its named cohorts before anything else."""
     _save()
     p = wp.load_lab_policy(max_age_s=0)
     assert _tier(p, CNT01) < _tier(p, CNT05) < _tier(p, ASPA) < _tier(p, OTHER)

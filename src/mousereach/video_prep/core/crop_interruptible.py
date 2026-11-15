@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS
 ---------------
-A GPU node in a behaviour room records videos and, when nobody is recording,
+A GPU node that also records videos, when nobody is recording,
 prepares and poses them. Posing already stops the moment a recording program
 appears (dlc/core/interruptible.py). Cropping did not: it runs ffmpeg once per
 animal inside the watcher, for minutes, with no way to interrupt it -- so an

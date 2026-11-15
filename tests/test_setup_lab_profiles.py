@@ -1,6 +1,6 @@
 """Where setup finds a lab's machine profiles, and what a profile may change.
 
-WHY (2026-10-22): the lab's profiles file sat beside the code, git-ignored, so
+WHY: a lab's profiles file sat beside the code, git-ignored, so
 no machine that pulls the code ever had one, and setup fell back to the shipped
 template, whose drive patterns matched real machines and offered them a retired
 folder layout. A profile's hostname rule was documented but never checked, and

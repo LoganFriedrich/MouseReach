@@ -4,7 +4,7 @@ WHY: a node sets 'dlc_running' while it poses, 'archiving' while it files, and
 'cropping' while it cuts a collage -- and NOTHING selects those states as work.
 Kill the watcher at the wrong second (a stop, a reboot, a crash) and the row
 stopped moving for good, silently, because the queue looked busy rather than
-broken. Found 2026-09-13 when a GPU node had to be told to wait before
+broken. Found when a GPU node had to be told to wait before
 restarting, which is the same defect wearing a polite face: if that machine had
 simply crashed instead, nobody would have been told anything.
 

@@ -1,10 +1,10 @@
 """A pellet saved with no outcome picked is not an answer.
 
-WHY (2026-10-26): the review window saves a pellet whose outcome question was
+WHY: the review window saves a pellet whose outcome question was
 left on "-- select outcome --" with the algorithm's "triaged" still in it, and
 nothing marking it open. Every check counted that as answered, so the video left
-triage and was FILED with a pellet nobody decided -- 125 such records in filed
-videos and 121 in the queues -- and the apply step stamped "triaged" onto the
+triage and was FILED with a pellet nobody decided -- in filed videos and in
+the queues alike -- and the apply step stamped "triaged" onto the
 result as a human review. One rule (is_answered) now says what an answer is, and
 every check uses it.
 """
@@ -54,7 +54,7 @@ def test_a_left_open_pellet_is_never_applied_as_a_human_answer():
 
 
 def test_routing_sends_a_left_open_pellet_back(tmp_path, monkeypatch):
-    a = tmp_path / "Analyzed" / "Connectome" / "ABC02"
+    a = tmp_path / "Analyzed" / "Project_A" / "ABC02"
     a.mkdir(parents=True)
     segs = [{"segment_num": n, "start_frame": 100 * n, "end_frame": 100 * n + 90} for n in (1, 2)]
     (a / f"{VID}_segments.json").write_text(json.dumps({"segments": segs, "boundaries": [100, 200, 300]}))

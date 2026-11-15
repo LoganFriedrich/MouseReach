@@ -165,8 +165,8 @@ def crop_collage(
         
         # subprocess, not os.system: ffmpeg's own error text is the only clue to
         # why a slot failed, and os.system sent it to a console nobody reads --
-        # eight slots of one collage failed in the same instant on 2026-09-20
-        # and the log said only "ffmpeg returned 1" (cause never known).
+        # all eight slots of one collage can fail in the same instant with
+        # the log saying only "ffmpeg returned 1" (cause never known).
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True,
                               errors='replace')
         ret = proc.returncode

@@ -309,7 +309,7 @@ class ManualScoreLoader:
         Initialize loader for manual score Excel file.
 
         Args:
-            excel_path: Path to Excel file (e.g., Connectome_01_Animal_Tracking.xlsx)
+            excel_path: Path to Excel file (e.g., a cohort's animal tracking workbook)
             sheet_name: Sheet name containing manual scores (default: '3b_Manual_Tray')
         """
         self.excel_path = Path(excel_path)

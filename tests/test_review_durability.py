@@ -12,10 +12,10 @@ MOVES its files onto one node's local disk and deletes the directory. A review
 only reached storage that survives when its video was archived, so whether a
 reviewer's work outlived a reprocess came down to timing.
 
-Measured on 2026-08-24 across 1,686 reviewed videos:
-    662  had a durable copy (their video had been archived)
-    983  existed only on one machine's local disk
-     41  existed only inside a Y: triage bundle -- one reprocess from gone
+Reviewed videos fell into three groups:
+    some had a durable copy (their video had been archived)
+    many existed only on one machine's local disk
+    some existed only inside a triage bundle on the NAS -- one reprocess from gone
 and the corpus index could not rebuild any of them, because it stored a file
 path plus two summary fields and neither the frames the reviewer looked at nor
 the reach they picked.
@@ -124,7 +124,7 @@ class TestDurableCopy:
 
         With the review written ONLY into the bundle -- which is what
         save_causal_review used to do -- wiping the bundle leaves nothing to
-        find, and the corpus index cannot rebuild it. This is the 41-video case.
+        find, and the corpus index cannot rebuild it. This is the bundle-only case.
         """
         import shutil
         stem = "19990101_TEST0001_P1"
@@ -227,7 +227,7 @@ class TestReturnToProcessing:
         stem = "19990101_TEST0001_P1"
         bundle = tmp_path / "triage" / stem
         bundle.mkdir(parents=True)
-        # a review that exists ONLY in the bundle -- the 41-video case
+        # a review that exists ONLY in the bundle -- the bundle-only case
         (bundle / f"{stem}_causal_review.json").write_text(json.dumps(
             {"type": "causal_review", "video_stem": stem, "segments": a_review}))
 

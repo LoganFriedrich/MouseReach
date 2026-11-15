@@ -1,8 +1,8 @@
 """The version scan reconciles disk against db, and diverts leave no husks.
 
 WHY: videos archived by another node had no row on this server, so no
-version scan anywhere covered them -- 907 accumulated invisibly and were
-adopted by hand once (2026-09-08). The scan now adopts them itself. And
+version scan anywhere covered them -- they accumulated invisibly and had to
+be adopted by hand. The scan now adopts them itself. And
 route_to_queue used to leave the emptied per-video source dir behind, which
 read as a seg-failed bundle and re-diverted "(0 files)" forever.
 """
@@ -35,7 +35,7 @@ class StubDB:
 
 
 def test_scan_adopts_disk_archived_videos_without_rows(tmp_path, monkeypatch):
-    coh = tmp_path / "Analyzed" / "Connectome" / "CNT99"
+    coh = tmp_path / "Analyzed" / "Project_A" / "CNT99"
     coh.mkdir(parents=True)
     a = "20240101_ABC0101_P1"
     b = "20240101_ABC0102_P1"
@@ -95,8 +95,8 @@ def test_unmark_never_clears_a_hand_mark(tmp_path, monkeypatch):
     precisely that the current-version outputs are wrong. The protection used
     to live only in the compat branch, so the dashboard Re-run button's
     promise self-cancelled within one scan for every version-current video
-    (2026-09-08, caught when a repair re-mark was wiped mid-repair)."""
-    coh = tmp_path / "Analyzed" / "Connectome" / "CNT99"
+    (caught when a repair re-mark was wiped mid-repair)."""
+    coh = tmp_path / "Analyzed" / "Project_A" / "CNT99"
     coh.mkdir(parents=True)
     stem = "20240101_ABC0101_P1"
     (coh / (stem + "_processing_manifest.json")).write_text("{}", encoding="utf-8")

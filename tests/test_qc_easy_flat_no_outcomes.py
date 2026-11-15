@@ -3,8 +3,7 @@
 WHY: outcome detection is skipped for Easy (E) and Flat (F) trays by design
 (watcher/router.SKIP_STEPS), but the quality check's structural layer still
 demanded the outcomes file and called its absence CRITICAL -- so the gate sent
-every Easy/Flat video to deep review on a false alarm (100 Flat-tray videos in
-three hours on 2026-10-22). A Pillar video without its outcomes file is still
+every Easy/Flat video to deep review on a false alarm. A Pillar video without its outcomes file is still
 a critical failure.
 """
 import json

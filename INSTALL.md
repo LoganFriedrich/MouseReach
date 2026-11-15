@@ -20,27 +20,27 @@ pip install -e .
 mousereach-setup
 ```
 
-This choice is important because:
-1. **Network/Remote Drive Support:** Y: drive can be a remote network location (even accessed through a server)
-2. **Multi-Machine Setup:** Both analysis PC and GPU machine access the same Y: drive for pipeline folders
+Where you put the code and the shared pipeline folder matters because:
+1. **Network/Remote Drive Support:** the shared drive can be a remote network location (even accessed through a server)
+2. **Multi-Machine Setup:** every machine that takes part (analysis PC, GPU machine) reaches the same shared pipeline folder
 3. **Data Organization:** Keeping code and working folders on the same drive simplifies path management
 4. **Future Scalability:** Works with mapped drives, UNC paths, and institutional storage systems
 
-**You can install elsewhere if needed** (e.g., local C: drive for testing), but Y: is the production default. If you use a different drive, update the environment variable configuration accordingly (see "Part 6: Configure Pipeline Paths").
+**You can install anywhere** (e.g., a local drive for testing). Below, `<shared drive>` stands for whatever drive or share your lab uses. If you use a different location, update the configuration accordingly (see "Part 6: Configure Pipeline Paths").
 
 ---
 
-## Quick Install (TL;DR) - Default Y: Drive Setup
+## Quick Install (TL;DR) - Shared Drive Setup
 
-If you just want to get running fast on the Y: drive:
+If you just want to get running fast on a shared drive:
 
 ```bash
-# 1. Copy MouseReach folder to Y: drive
-Copy from:  Y:\Behavior\MouseReach\MouseReach\  (or wherever you're reading this from)
-To:         Y:\Behavior\MouseReach\MouseReach\  (on target machine)
+# 1. Copy MouseReach folder to the shared drive
+Copy from:  <wherever you're reading this from>\MouseReach\
+To:         <shared drive>\MouseReach\  (on target machine)
 
 # 2. Open Anaconda Prompt and run:
-cd Y:\Behavior\MouseReach\MouseReach
+cd <shared drive>\MouseReach
 install.bat
 
 # 3. Run configuration wizard
@@ -53,23 +53,23 @@ That's it! Then type `mousereach` to launch.
 
 ## Copying MouseReach to a New Machine
 
-### Default: Install on Y: Drive
+### Example: Install on a Shared Drive
 
-The recommended installation location is:
+One possible installation location is:
 
 ```
-Y:\Behavior\MouseReach\MouseReach\
+<shared drive>\MouseReach\
 ```
 
-This keeps code, environment, and pipeline folders on the same Y: drive.
+This keeps code, environment, and pipeline folders on the same shared drive.
 
 ### What to Copy
 
 Copy the entire `MouseReach` folder to the target machine:
 
 ```
-From: Y:\Behavior\MouseReach\MouseReach\  (source machine)
-To:   Y:\Behavior\MouseReach\MouseReach\  (target machine)
+From: <shared drive>\MouseReach\  (source machine)
+To:   <shared drive>\MouseReach\  (target machine)
 ```
 
 **Required contents:**
@@ -96,31 +96,31 @@ MouseReach/
 ### How to Copy
 
 **Option A: USB Drive (Default)**
-1. Copy `Y:\Behavior\MouseReach\MouseReach\` to USB
+1. Copy `<shared drive>\MouseReach\` to USB
 2. Plug into new machine
-3. Copy to `Y:\Behavior\MouseReach\MouseReach\`
+3. Copy to `<shared drive>\MouseReach\`
 
 **Option B: Network Share**
-1. Map the Y: network drive on new machine
+1. Map the shared network drive on new machine
 2. Copy folder directly
 
 **Option C: Zip and Transfer**
 1. Right-click MouseReach folder → Send to → Compressed folder
 2. Transfer zip file
-3. Extract to `Y:\Behavior\MouseReach\MouseReach\`
+3. Extract to `<shared drive>\MouseReach\`
 
-### Alternative: Install on Different Drive
+### Alternative: Install on a Local Drive
 
-If you need to install on a different drive (C:, D:, or local path):
+If you need to install on a local drive:
 
 ```
-To:   C:\MouseReach\  (or D:\MouseReach\, or local path)
+To:   C:\MouseReach\  (or any local path)
 ```
 
 This works fine for testing, but remember:
-- Update environment variable configuration after install (Part 6)
-- GPU machine must use the SAME drive path for pipeline folders
-- NAS/archive paths (X: drive) can be different
+- Update the configuration after install (Part 6)
+- GPU machine must reach the SAME shared pipeline folder
+- NAS/archive paths can be different
 
 ---
 
@@ -131,21 +131,21 @@ MouseReach is designed for a **2-machine workflow**:
 1. **Analysis PC** (main development machine) - Where you'll run this installation
 2. **GPU Machine** (optional, for fast DLC processing) - Separate machine with NVIDIA GPU
 
-The Y: drive location you choose here affects the GPU machine:
+The shared location you choose here affects the GPU machine:
 
 | Component | Machine | Location |
 |-----------|---------|----------|
-| MouseReach Code | Analysis PC | `Y:\Behavior\MouseReach\MouseReach\` |
-| Conda Environment | Analysis PC | `Y:\conda_envs\mousereach\` |
-| Pipeline Folders (DLC_Queue, Processing, Failed) | **Both** (shared) | `Y:\Behavior\MouseReach_Pipeline\` |
-| NAS Archive (raw videos) | Both (shared) | X: drive (configurable) |
+| MouseReach Code | Analysis PC | `<shared drive>\MouseReach\` |
+| Conda Environment | Analysis PC | `<shared drive>\conda_envs\mousereach\` |
+| Pipeline Folders (DLC_Queue, Processing, Failed) | **Both** (shared) | `<nas_root>` |
+| NAS Archive (raw videos) | Both (shared) | configurable |
 
-**Key Point:** The GPU machine must be able to reach the SAME `Y:\Behavior\MouseReach_Pipeline\` folder. This means:
-- Both machines need network access to Y: drive
-- Or Y: drive is actually a mapped network location (UNC path)
-- Set environment variables identically on both machines (Part 6)
+**Key Point:** The GPU machine must be able to reach the SAME `<nas_root>` folder. This means:
+- Both machines need network access to the shared drive
+- Or the shared drive is a mapped network location (UNC path)
+- Configure the paths identically on both machines (Part 6)
 
-If you're setting this up for a single machine only, you can use any drive. But if you plan to use a GPU machine later, use the Y: drive recommendation to keep things consistent.
+If you're setting this up for a single machine only, you can use any drive. But if you plan to use a GPU machine later, put the pipeline folder on shared storage to keep things consistent.
 
 ---
 
@@ -168,26 +168,26 @@ Before installing, the new machine needs:
 
 ---
 
-## Part 1: Create Conda Environment (on Y: Drive)
+## Part 1: Create Conda Environment (on the Shared Drive)
 
-**Important:** Create the conda environment ON the same Y: drive where MouseReach code lives. This keeps everything together and works with the default configuration.
+**Important:** In a shared-drive setup, create the conda environment ON the same drive where MouseReach code lives. This keeps everything together. (If napari starts slowly from a network drive, see "Slow Startup on Network Drives" under Troubleshooting.)
 
 ### Step 1a: Choose Your Environment Location
 
-The default location is:
+For example:
 ```
-Y:\conda_envs\mousereach\
+<shared drive>\conda_envs\mousereach\
 ```
 
 Or if you prefer a different structure:
 ```
-Y:\Behavior\conda_envs\mousereach\
+<shared drive>\<any folder>\conda_envs\mousereach\
 ```
 
 ### Step 1b: Open a Terminal and Set Environment Path
 
 Open a terminal with conda access:
-- **VS Code:** Open Y:\Behavior\MouseReach\MouseReach\ → Terminal → New Terminal
+- **VS Code:** Open `<shared drive>\MouseReach\` → Terminal → New Terminal
 - **Or:** Open Anaconda Prompt from Start Menu
 
 If using VS Code and conda isn't recognized, run this once in Anaconda Prompt first:
@@ -196,28 +196,22 @@ conda init powershell
 ```
 Then restart VS Code.
 
-### Step 1c: Create Environment on Y: Drive
+### Step 1c: Create Environment on the Shared Drive
 
-Create the environment on the Y: drive with an explicit prefix:
+Create the environment on the shared drive with an explicit prefix:
 
 ```bash
-# Use -p (prefix) to specify the exact location on Y: drive
-conda create -p Y:\conda_envs\mousereach python=3.10 -y
+# Use -p (prefix) to specify the exact location on the shared drive
+conda create -p <shared drive>\conda_envs\mousereach python=3.10 -y
 
 # Activate the environment
-conda activate Y:\conda_envs\mousereach
-```
-
-Alternatively, if you prefer a different Y: location:
-```bash
-conda create -p Y:\Behavior\conda_envs\mousereach python=3.10 -y
-conda activate Y:\Behavior\conda_envs\mousereach
+conda activate <shared drive>\conda_envs\mousereach
 ```
 
 > ⚠️ **Important:**
-> - You must run `conda activate Y:\conda_envs\mousereach` (or your chosen path) every time you open a new terminal
+> - You must run `conda activate <shared drive>\conda_envs\mousereach` (or your chosen path) every time you open a new terminal
 > - Using `-p` (prefix) instead of `-n` (named environment) lets you control the exact location
-> - This keeps the environment on the same Y: drive as your code
+> - This keeps the environment on the same drive as your code
 
 ---
 
@@ -299,7 +293,7 @@ conda install -c conda-forge deeplabcut -y --force-reinstall
 Navigate to the MouseReach folder:
 
 ```bash
-cd Y:\Behavior\MouseReach\MouseReach
+cd <shared drive>\MouseReach
 ```
 
 ### Install MouseReach (Single Unified Package)
@@ -353,16 +347,18 @@ napari  # Once Napari loads, click on plugins in toolbar. Should see: Plugins �
 ### Step 1: Set Your Machine Role
 
 Each PC in the lab plays a specific role. Setting the role tells the setup
-wizard what defaults to use:
+wizard what defaults to use. The roles are the profile names in your lab
+profiles file (see Step 6 of the appendix); the names below are the
+template's:
 
 ```bash
 # See available roles
 mousereach-setup --list-roles
 
 # Set this PC's role (pick one)
-mousereach-setup --set-role "NAS / DLC PC"        # Direct-attached NAS + GPU
-mousereach-setup --set-role "GPU Filming PC"       # Filming/cropping workstation
-mousereach-setup --set-role "Processing Server"    # Reach detection + kinematics
+mousereach-setup --set-role "Recording + GPU PC"  # Records videos, cuts + poses on its GPU
+mousereach-setup --set-role "GPU PC"              # Cuts + poses on its GPU
+mousereach-setup --set-role "Processing Server"   # Reach detection + kinematics
 ```
 
 This saves a small file (`~/.mousereach/machine_role.json`) that the wizard
@@ -383,7 +379,7 @@ The wizard prompts for:
    shared folders (watcher, intake, review queues) will run: each says
    "nas_root is not configured" and names this command.
 3. **Processing Root** (REQUIRED) - Parent folder for DLC_Queue, Processing, Failed, on a fast local disk
-4. **Watcher** (optional) - Automated pipeline for the NAS/DLC PC
+4. **Watcher** (optional) - Automated pipeline for a pipeline PC
 
 If you set a machine role, defaults are pre-filled — just hit Enter through.
 
@@ -496,10 +492,10 @@ Every time you start working:
 # 1. Open Anaconda Prompt (or terminal)
 
 # 2. Activate environment (using your chosen path from Part 1)
-conda activate Y:\conda_envs\mousereach
+conda activate <shared drive>\conda_envs\mousereach
 
 # 3. Navigate to MouseReach (optional but recommended)
-cd Y:\Behavior\MouseReach\MouseReach
+cd <shared drive>\MouseReach
 
 # 4. Launch MouseReach (unified interface with all tools)
 mousereach
@@ -543,7 +539,7 @@ mousereach-detect-outcomes     # Step 4 batch outcome detection
 
 ### Slow Startup on Network Drives (napari takes 2-3 minutes)
 
-If your conda environment is on a network drive (Y:, mapped drive, UNC path), **napari will be extremely slow** (2-3 minutes) because it scans all installed packages over the network during plugin discovery.
+If your conda environment is on a network drive (mapped drive, UNC path), **napari will be extremely slow** (2-3 minutes) because it scans all installed packages over the network during plugin discovery.
 
 **THE FIX: Move conda environment to local C: drive:**
 ```bash
@@ -551,13 +547,13 @@ If your conda environment is on a network drive (Y:, mapped drive, UNC path), **
 conda create -p C:\conda_envs\mousereach python=3.10 -y
 conda activate C:\conda_envs\mousereach
 
-# Install MouseReach (code stays on Y:, packages on C:)
-cd Y:\Behavior\MouseReach\MouseReach
+# Install MouseReach (code stays on the shared drive, packages on C:)
+cd <shared drive>\MouseReach
 pip install -e .
 ```
 
 This keeps:
-- **Code on Y:** (for multi-machine access, version control)
+- **Code on the shared drive** (for multi-machine access, version control)
 - **Packages on C:** (fast local storage for napari startup)
 
 After this change, `mousereach` should start in 30-60 seconds instead of 3 minutes.
@@ -589,10 +585,10 @@ pip install "napari[all]"
 ### Napari plugin not showing
 ```bash
 # First activate your conda environment
-conda activate Y:\conda_envs\mousereach
+conda activate <shared drive>\conda_envs\mousereach
 
 # Navigate to MouseReach
-cd Y:\Behavior\MouseReach\MouseReach
+cd <shared drive>\MouseReach
 
 # Reinstall with force
 pip install -e . --force-reinstall
@@ -714,23 +710,14 @@ Now try `git --version` again. You should see a version number.
 
 **3a.** First, go to the drive where you want to put MouseReach.
 
-> **Which drive?** Pick any drive with enough space. Each lab is different.
->
-> *Lab setup:*
->
-> | PC | MouseReach lives on |
-> |----|---------------------|
-> | Processing Server | **Y:** drive |
-> | NAS / Watcher PC | **A:** drive |
-> | GPU Filming PCs | **A:** drive |
->
-> *Other labs:* Use whatever drive makes sense for your setup.
+> **Which drive?** Pick any drive with enough space. Each lab is different:
+> use whatever drive makes sense for your setup.
 > Ask your lab manager if you're not sure.
 
 Type your drive letter and press **Enter**. For example:
 
 ```
-A:
+D:
 ```
 
 Then go to the root of that drive:
@@ -755,7 +742,7 @@ cd MouseReach
 ```
 
 You can verify where you are by typing `cd` by itself — it will print the
-full path (e.g. `A:\MouseReach` or `Y:\MouseReach`).
+full path (e.g. `D:\MouseReach`).
 
 Now skip to Step 5 (you already have the latest code since you just downloaded it).
 
@@ -765,11 +752,11 @@ Now skip to Step 5 (you already have the latest code since you just downloaded i
 
 If MouseReach was already on this PC from a previous install, update it:
 
-**4a.** Go to the MouseReach folder (use your PC's drive letter — see the
-table in Step 3):
+**4a.** Go to the MouseReach folder (use your PC's drive letter — see
+Step 3):
 
 ```
-cd A:\MouseReach
+cd D:\MouseReach
 ```
 
 **4b.** Download the latest changes:
@@ -947,7 +934,7 @@ The watcher is now running. It will:
 **To check status without stopping:** Open any terminal and run:
 
 ```
-A:\envs\MouseReach\Scripts\mousereach-watch-status.exe
+<env folder>\Scripts\mousereach-watch-status.exe
 ```
 
 Or activate the environment first:
@@ -1056,10 +1043,13 @@ To install:
    Startup folder (`Win+R` → `shell:startup`)
 2. **Toggle shortcut:** Copy `deploy/MouseReach-Toggle.bat` to your Desktop
 
-The scripts auto-detect the MouseReach environment on A:\, Y:\, or C:\ drives.
+The startup script finds the MouseReach environment from the
+`MOUSEREACH_ENV` user environment variable, or in the default conda
+environment locations; the toggle script searches a fixed list of
+environment folders (see the script).
 
 On login, the startup script automatically:
-1. Waits for the NAS drive (Y:\) to be available
+1. Waits for the shared pipeline folder (`MOUSEREACH_NAS_ROOT`, if set) to be available
 2. Launches the watcher daemon in its own terminal window
 3. Launches a status monitor that refreshes every 60 seconds
 
@@ -1084,17 +1074,15 @@ mousereach-watch
 Or just log in — the watcher starts automatically if the startup script is installed.
 
 Useful commands (no environment activation needed):
-- `A:\envs\MouseReach\Scripts\mousereach-watch-status.exe` — check progress
-- `A:\envs\MouseReach\Scripts\mousereach-watch-toggle.exe` — pause/resume
+- `<env folder>\Scripts\mousereach-watch-status.exe` — check progress
+- `<env folder>\Scripts\mousereach-watch-toggle.exe` — pause/resume
+
+(`<env folder>` is the folder of the mousereach conda environment.)
 
 ---
 
 *MouseReach v2.3.0 - Last updated: 2025-01-21*
 
 **Changes in this version:**
-- Clarified default installation on Y: drive as the recommended setup
-- Updated Part 1 to explicitly create conda environment on Y: drive
-- Added "Multi-Machine Considerations" section explaining Y: drive importance
-- Updated all path examples to use Y: drive as primary with C: as alternative
-- Fixed all references from A: drive to Y: drive
+- Added "Multi-Machine Considerations" section explaining the shared pipeline folder
 - Added Appendix: Deploy the Watcher on the NAS PC

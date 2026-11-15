@@ -5,7 +5,7 @@ WHY: the gate honors {stem}_deep_review_cleared.json when segmentation
 self-reports failure, but the return scan re-derived seg_failed raw and
 diverted the triage bundle to deep review, where the very same marker
 instantly released it -- processing -> triage -> deep_review -> processing,
-forever (20250708_CNT0210_P4 made 43 laps on 2026-09-09). A cleared bundle is
+forever. A cleared bundle is
 an ordinary triage bundle: it sits until its triaged segments are answered,
 then releases.
 """

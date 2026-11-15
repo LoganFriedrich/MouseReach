@@ -2,8 +2,8 @@
 
 WHY: _checksummed_move compared the incoming file only against the UNVERSIONED
 archive name, so a reprocess loop that re-swept identical content every cycle
-added another byte-identical .N copy per lap (two identical 23 MB .h5 copies
-found 2026-09-09; one video had accumulated versions .1 through .52).
+added another byte-identical .N copy per lap (a video could accumulate dozens
+of identical versions).
 """
 from mousereach.archive.supersede import _checksummed_move
 

@@ -209,7 +209,7 @@ class ReachDetector:
     # v2.5.1-dev: reverted from 3 back to 2.
     # Rationale (2026-04-23): scoring against the full 23-video reach-GT
     # corpus (unified-aware eval harness) shows the v6.0 raise was net
-    # negative under the user's recall-first priority framing:
+    # negative under a recall-first priority framing:
     # raised from 2 to 3 reduced FP by ~58 but increased FN by ~71.
     # v6.0 numbers were measured on a 22-video subset, which under-counted
     # the real-reach loss from tightening.
@@ -1116,7 +1116,7 @@ class ReachDetector:
         data["validation_timestamp"] = datetime.now().isoformat()
 
         # Absorb a reviewer GUI's brief hold on the output file (a reach
-        # save died on exactly this, 2026-09-05); a persistent hold still
+        # save died on exactly this); a persistent hold still
         # raises and fails the stage loudly.
         from mousereach.pipeline.fsutil import dump_json_with_retry
         dump_json_with_retry(output_path, data, indent=2)

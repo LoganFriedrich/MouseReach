@@ -6,7 +6,7 @@ People drop cut single-animal videos into Unanalyzed/Single_Animal
 (``Paths.SINGLE_ANIMAL_OUTPUT``) whenever they like -- the point is to get them
 off the recording PCs at once -- while several GPU nodes poll that folder.
 Every node that saw a video used to copy it into its own DLC queue and pose
-it. Two nodes, one video: two ~14-minute GPU runs, two staged poses, and
+it. Two nodes, one video: two GPU runs, two staged poses, and
 duplicate processing downstream. Nothing in the folder said "taken".
 
 THE CLAIM IS A RENAME
@@ -66,8 +66,8 @@ node to take when EITHER
   * nobody has touched the claimed file for ``STALE_S`` (a day, the re-pose
     request rule), by the same file-server clock.
 The first is what returns a stopped node's work in hours rather than a day
-(2026-10-21: videos waited on a node that had stopped working them while every
-other GPU node was idle). The second is kept for a node still running older
+(videos had waited on a node that had stopped working them while every other
+GPU node was idle). The second is kept for a node still running older
 code, which stops touching a claim it has given up on instead of releasing it.
 Nothing here ever deletes a video. The trade-off is the re-pose queue's: a node
 that comes back after its claims were returned may find another node has taken

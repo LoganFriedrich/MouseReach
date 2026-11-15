@@ -3,13 +3,12 @@
 WHY THIS EXISTS
 ---------------
 Posing is the slow step of the pipeline, and only the GPU nodes did it. A
-processing server with many idle cores can add to that: measured 2026-10-24 on
-a 104-thread server, one DeepLabCut process on the CPU poses ~2 frames/s using
-about three cores whatever thread count it is given, so throughput comes from
-running MANY small processes side by side -- 12 of them made ~22 frames/s
-(~2 videos/h) at 28% of the machine; 24 made ~28 frames/s at 80%, each one
-slowing the others. The GPU nodes together supplied ~5-10 videos/h, so a dozen
-CPU processes is worth about a fifth more.
+processing server with many idle cores can add to that: one DeepLabCut process
+on the CPU is slow and uses only about three cores whatever thread count it is
+given, so throughput comes from running MANY small processes side by side --
+up to the point where they start slowing each other. On a server with many
+cores, a dozen such processes add a useful fraction to what the GPU nodes
+supply.
 
 The watcher on such a machine (ProcessingOrchestrator) analyses; it does not
 pose and handles one item at a time. This pool runs BESIDE it as its own
@@ -173,7 +172,7 @@ class CpuPosePool:
         self.done_times = [t for t in self.done_times if now - t < 3600]
         # "doing" in the shape every node reports -- one {type, id, since}, or
         # None -- because readers take it as one item (node_status.describe
-        # failed on a list and lost every node's line, 2026-10-24). The full
+        # failed on a list and lost every node's line). The full
         # list of videos in hand is "poses".
         doing = None
         if self.active:

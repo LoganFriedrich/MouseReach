@@ -216,7 +216,7 @@ def project_labels(item: dict) -> set:
         except Exception:
             continue
         if project and project != "UNKNOWN":
-            # A project folder may be several levels (grant/project); each
+            # A project folder may be several levels (group/project); each
             # level is a name a lab may order by.
             labels.add(_text(project))
             for part in str(project).replace("\\", "/").split("/"):
@@ -311,7 +311,7 @@ def _aspa_lab_forms(labels: set, decode: str) -> set:
     """The lab's own spelling of every encoded ASPA id among ``labels``
     (ASPA0401 -> D01; 20220217_ASPA0401_P1 -> 20220217_D01_P1), upper case.
 
-    WHY (plan gap G5): ASPA videos carry encoded ids in the pipeline, while the
+    WHY: ASPA videos carry encoded ids in the pipeline, while the
     lab names its animals and sessions by the lab id. Session lists already
     accept either; an animal_id or session selector written with the lab id
     matched nothing. Non-ASPA labels add nothing."""
@@ -401,7 +401,7 @@ class WorkPriority:
     def rank(self, item: dict, is_collage: bool = False) -> tuple:
         """Sort key for anything that orders work by the lab's order: idle-only
         work (Easy/Flat by default) after everything else, whatever its tier,
-        then the tier. WHY (plan gap G7): listings and the review tools sorted by
+        then the tier. WHY: listings and the review tools sorted by
         tier alone, so an Easy video in a preferred project came ahead of Pillar
         videos from the next one -- the opposite of "only when nothing else is
         waiting"."""
@@ -556,7 +556,7 @@ def load_and_announce(raw) -> WorkPriority:
 
 LAB_PRIORITY_SCHEMA = "1.1"      # 1.1 adds session_lists
 # Every key the lab file may hold. Anything else is named in a complaint,
-# never silently ignored (plan gap G8).
+# never silently ignored.
 LAB_PRIORITY_KEYS = ("schema_version", "updated_at", "updated_by", "projects",
                      "cohorts", "session_lists", "tray_types",
                      "idle_only_tray_types", "notes", "order", "idle_only")
@@ -662,7 +662,7 @@ def save_lab_priority(projects=None, cohorts=None, tray_types=None,
     way). Returns the path written.
 
     Keys this call does not set are KEPT from the file (notes, raw selectors,
-    anything written by hand). WHY (plan gap G4): a Save from the priority
+    anything written by hand). WHY: a Save from the priority
     panel used to rewrite the file from the form alone and wiped them."""
     path = lab_priority_path(nas_root)
     if not path:

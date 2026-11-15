@@ -60,8 +60,8 @@ def filed_media_dirs(stem: str) -> list:
     [] when Analyzed is not configured or the stem cannot be placed.
 
     WHY: a copy-free review bundle records ABSOLUTE paths into Analyzed when it
-    is made. Moving the finished-work folders (2026-10-30: project folders
-    regrouped by grant) left those paths pointing at folders that no longer
+    is made. Moving the finished-work folders (e.g. regrouping project
+    folders) left those paths pointing at folders that no longer
     exist, and every such bundle unopenable. Asking the filing rule finds the
     files wherever they are filed today."""
     if not stem:

@@ -1,7 +1,7 @@
 """Bringing in ASPA sessions whose recording is lost: rebuild the recording from
 ASPA's own cuts, into the recording intake -- never feed the cuts themselves.
 
-WHY (2026-10-23): the input to MouseReach is the multi-animal recording; a cut
+WHY: the input to MouseReach is the multi-animal recording; a cut
 fed into the singles intake has no link to its recording, and the recording
 never enters the pipeline. A session whose recording survives comes in through
 the recording import; one whose recording is lost is rebuilt (each cut back in
@@ -101,8 +101,8 @@ def test_an_animal_without_a_cut_that_day_leaves_its_position_empty(tmp_path, mo
 
 def test_cuts_of_different_lengths_are_different_recordings(tmp_path, monkeypatch, capsys):
     # The day's groups are not the recorded day's: lengths split the eight
-    # cuts into 6 + 2 (as on real days, where copying another day's groups
-    # had left one animal alone that had shared its recording).
+    # cuts into 6 + 2 (as can happen when copying another day's groups
+    # leaves one animal alone that had shared its recording).
     env = _env(tmp_path, monkeypatch)
     for a in ("H15", "H16"):
         env.lengths[f"20220602_{a}_P1.mp4"] = 39000

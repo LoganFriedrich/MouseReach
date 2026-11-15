@@ -6,9 +6,9 @@ WHY: an older divert between queues moved only the mp4 into deep review and left
 the pose and every result in the processing folder of the node that ran the
 video. Two human-cleared videos could then never return; each scan searched the
 bundle, its manifest, Analyzed and staging, found nothing, logged an ERROR and
-tried again two minutes later -- thousands of times from 2026-09-28 -- at about
-5 s a try. Separately, each scan re-read every triage bundle's files (7-8 s of
-every two-minute scan) although almost none had changed.
+tried again two minutes later -- over and over -- at seconds a try.
+Separately, each scan re-read every triage bundle's files (seconds of every
+two-minute scan) although almost none had changed.
 """
 import json
 
@@ -51,7 +51,7 @@ def _hand_cuts(bundle):
 
 
 def _split_bundle(deep, proc):
-    """The September shape: the bundle holds the mp4 and the human's clear
+    """The old divert's shape: the bundle holds the mp4 and the human's clear
     marker; pose and results stayed in the processing folder."""
     b = deep / STEM
     b.mkdir()

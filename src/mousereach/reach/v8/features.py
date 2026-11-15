@@ -25,8 +25,8 @@ Total: 18 * 14 + 153 = 405 features per frame.
 
 Design notes
 ------------
-- All 18 bodyparts are included. Per `feedback_use_all_dlc_features.md`:
-  the model decides what's informative; we do not pre-filter by anatomy.
+- All 18 bodyparts are included: the model decides what's informative;
+  we do not pre-filter by anatomy.
 - Pairwise distances span all (a, b) combinations including constant-pair
   references (e.g. BOXL <-> BOXR). Tree models will assign zero
   importance to constant features at no cost.
@@ -42,7 +42,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-# 18 bodyparts in DLC output for the Connectome MPSA model.
+# 18 bodyparts in DLC output for the MPSA model.
 BODYPARTS = [
     "Reference",
     "SATL", "SABL", "SABR", "SATR",

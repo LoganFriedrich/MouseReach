@@ -1,11 +1,11 @@
 """The re-pose round trip over shared storage (watcher/repose.py).
 
 WHY: a video marked outdated with scope 'full' needs a NEW pose from a GPU,
-and until 2026-09-12 nothing carried it to one, nor took the new pose back
+and nothing carried it to one, nor took the new pose back
 when a GPU node staged it (every discovery scan skipped ids that already
-had a row). Three videos each cost one hand step on each machine. These
+had a row). Each such video cost a hand step on each machine. These
 tests pin the three steps -- publish, consume, adopt -- and the invariants
-the design critique demanded: a request is claimed by an atomic rename and
+the design requires: a request is claimed by an atomic rename and
 outstanding until the round trip closes, consumption is capped and never
 touches locked or human-held rows, adoption narrows the reprocess scope
 instead of forcing the state machine, and staging never leaves a
@@ -822,7 +822,7 @@ def test_local_pipeline_fails_the_row_when_the_video_is_missing(env, monkeypatch
 def test_scan_full_only_marks_only_rows_that_need_a_new_pose(tmp_path, monkeypatch):
     import mousereach.pipeline.versions as versions_mod
     from mousereach.watcher.reprocessor import ReprocessingScanner
-    coh = tmp_path / "Analyzed" / "Connectome" / "CNT99"
+    coh = tmp_path / "Analyzed" / "Project_A" / "CNT99"
     coh.mkdir(parents=True)
     a, b = "20240101_ABC0101_P1", "20240101_ABC0102_P1"
     current = {"versions": {"dlc_scorer": NEW, "segmenter": "2.0.0", "reach_detector": "1.0.0",
@@ -951,7 +951,7 @@ def test_declared_scorer_expires_instead_of_lasting_the_process(monkeypatch):
 
 
 def test_consume_takes_requests_in_the_lab_order(env, monkeypatch):
-    """Plan gap G2: requests were taken alphabetically, whatever the lab's
+    """Requests were taken alphabetically, whatever the lab's
     order said. With one slot, the video the order puts first is taken."""
     from mousereach.watcher import work_priority as wp
     policy = wp.load_policy({"order": [{"animal_id": ["ABC0103"]}],
@@ -971,7 +971,7 @@ def test_consume_takes_requests_in_the_lab_order(env, monkeypatch):
 
 
 def test_consume_never_overwrites_a_claim_already_in_flight(env):
-    """Plan Section 0 item 8: a request published again while another node's
+    """A request published again while another node's
     claim was in flight was claimed a second time (os.replace overwrites), and
     two GPUs posed one video."""
     _row(env.db, VID, "archived")

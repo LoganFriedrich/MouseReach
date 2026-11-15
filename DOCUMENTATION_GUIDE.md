@@ -24,18 +24,16 @@ MouseReach/
 ├── USER_GUIDE.md            # Full user workflow guide
 ├── INSTALL.md               # Installation instructions
 ├── DOCUMENTATION_GUIDE.md   # This file (developer reference)
-├── AGENTS.md                # AI-navigable codebase index
-├── CLAUDE.md                # AI development context
+├── docs/                    # How each stage and tool behaves (see docs/DOC_COVERAGE.json)
 │
-└── src/mousereach/          # Module-level documentation (AGENTS.md files)
-    ├── AGENTS.md            # Main package index
-    ├── video_prep/AGENTS.md     # Step 0 - Video cropping
-    ├── dlc/AGENTS.md            # Step 1 - DeepLabCut integration
-    ├── segmentation/AGENTS.md   # Step 2 - Trial boundaries
-    ├── reach/AGENTS.md          # Step 3 - Reach detection
-    ├── outcomes/AGENTS.md       # Step 4 - Pellet outcomes
-    ├── kinematics/AGENTS.md     # Step 5 - Grasp features
-    └── export/AGENTS.md         # Step 6 - Export to Excel
+└── src/mousereach/          # Module-level documentation (docstrings)
+    ├── video_prep/          # Step 0 - Video cropping
+    ├── dlc/                 # Step 1 - DeepLabCut integration
+    ├── segmentation/        # Step 2 - Trial boundaries
+    ├── reach/               # Step 3 - Reach detection
+    ├── outcomes/            # Step 4 - Pellet outcomes
+    ├── kinematics/          # Step 5 - Grasp features
+    └── export/              # Step 6 - Export to Excel
 ```
 
 ---

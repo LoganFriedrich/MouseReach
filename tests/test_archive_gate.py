@@ -2,22 +2,20 @@
 """Filing a finished video asks the files, not a cache -- and stops asking so often.
 
 `Analyzed` is where a finished video is supposed to end up: the pipeline's final
-output, the thing the X: backup mirrors, and the only state the version checker
-looks at. Filing is the last step, and on the processing server it had not
-succeeded once since February.
+output, the thing a backup mirrors, and the only state the version checker
+looks at. Filing is the last step, and it had stopped succeeding at all.
 
 The reason was not the videos. `check_archive_ready` asked the pipeline index --
 a cache that exists to save the dashboard a folder scan, and which is allowed to
-go stale. It had. Measured 2026-08-24 on this node: 1,084 videos held in
-'processed', of which 1,083 were marked approved by every stage ON DISK. The
-index disagreed for the large majority: segmentation reading 'auto_review' (a
-spelling only the index ever writes), and reach and outcome missing entirely for
-39 of every 60 sampled. Nothing filed, so nothing reached 'archived', so the
+go stale. It had: videos held in 'processed' were marked approved by every
+stage ON DISK while the index disagreed -- segmentation reading 'auto_review' (a
+spelling only the index ever writes), and reach and outcome missing entirely.
+Nothing filed, so nothing reached 'archived', so the
 version checker saw zero videos and had never run.
 
 Two properties, pinned here: the verdict comes from the stage output files, and
 a video that genuinely cannot be filed is not retried once a second forever
-(the old loop logged 326,235 failures).
+(the old loop logged a failure every second).
 """
 
 import json
@@ -90,7 +88,7 @@ class TestReadinessComesFromTheFiles:
 
         The index reports what it last scanned. If it is asked at all, a video
         whose files are approved can be held indefinitely -- which is what
-        happened to 1,083 videos for six months.
+        happened before this fix.
         """
         vid, d, _ = outputs
 
@@ -151,8 +149,7 @@ class TestArchivedStateTransition:
     through 'archiving'. Both roles jumped it, which raised. That had never
     mattered because filing had never actually succeeded; the moment it did, the
     files moved and the row stayed in 'processed' with nothing left in Processing,
-    so the next pass read 'not ready' forever. Ten videos went that way in the
-    first 45 seconds.
+    so the next pass read 'not ready' forever.
     """
 
     def test_the_route_to_archived_is_legal(self):
@@ -245,8 +242,7 @@ class TestFilingIsRecorded:
 
     def test_it_writes_to_the_configured_database(self, node_db, tmp_path):
         """Not the default path -- this node overrides db_path, and writing to
-        the wrong file would be worse than the read-the-wrong-file bug of
-        2026-08-23."""
+        the wrong file would be worse than reading the wrong file."""
         import inspect
         from mousereach.archive import core
         src = inspect.getsource(core.record_archived)

@@ -906,28 +906,28 @@ class TestMachineIdentity:
             MACHINE_ROLE_FILE, _find_profile_by_name,
         )
 
-        # Mock: identity file says "Processing Server"
-        with patch('mousereach.setup.wizard._load_machine_role', return_value="Processing Server"):
+        # Mock: identity file says "Analysis Node"
+        with patch('mousereach.setup.wizard._load_machine_role', return_value="Analysis Node"):
             with patch('mousereach.setup.wizard._find_profile_by_name') as mock_find:
                 mock_find.return_value = {
-                    "name": "Processing Server",
-                    "defaults": {"nas_drive": "X:\\"}
+                    "name": "Analysis Node",
+                    "defaults": {"nas_drive": "M:\\"}
                 }
                 with patch('mousereach.setup.wizard._get_current_drives', return_value={}):
                     profile, drives, method = detect_lab_profile()
 
                     assert profile is not None
-                    assert profile["name"] == "Processing Server"
+                    assert profile["name"] == "Analysis Node"
                     assert method == "identity_file"
 
     def test_drive_match_fallback_when_no_identity_file(self):
         """Falls back to drive matching when no identity file exists."""
         from mousereach.setup.wizard import detect_lab_profile
 
-        mock_drives = {"D": True, "A": True, "X": False, "Y": False}
+        mock_drives = {"D": True, "E": True, "M": False, "N": False}
         mock_profiles = [{
-            "name": "NAS / DLC PC",
-            "match": {"drives_present": ["D", "A", "X", "Y"], "drives_local": ["D"]},
+            "name": "Storage Node",
+            "match": {"drives_present": ["D", "E", "M", "N"], "drives_local": ["D"]},
             "defaults": {"nas_drive": "D:\\"}
         }]
 
@@ -958,24 +958,24 @@ class TestMachineIdentity:
         role_file = tmp_path / "machine_role.json"
         with patch('mousereach.setup.wizard.MACHINE_ROLE_FILE', role_file):
             with patch('mousereach.setup.wizard.CONFIG_DIR', tmp_path):
-                set_machine_role("NAS / DLC PC")
+                set_machine_role("Storage Node")
 
                 assert role_file.exists()
                 data = json.loads(role_file.read_text())
-                assert data["role"] == "NAS / DLC PC"
+                assert data["role"] == "Storage Node"
 
     def test_list_available_roles_returns_profile_names(self):
         """list_available_roles returns all profile names."""
         from mousereach.setup.wizard import list_available_roles
 
         mock_profiles = [
-            {"name": "NAS / DLC PC"},
-            {"name": "GPU Filming PC"},
-            {"name": "Processing Server"},
+            {"name": "Storage Node"},
+            {"name": "Recording Node"},
+            {"name": "Analysis Node"},
         ]
         with patch('mousereach.setup.wizard._load_lab_profiles', return_value=mock_profiles):
             roles = list_available_roles()
-            assert roles == ["NAS / DLC PC", "GPU Filming PC", "Processing Server"]
+            assert roles == ["Storage Node", "Recording Node", "Analysis Node"]
 
     def test_identity_file_with_unknown_role_falls_back(self):
         """Identity file with unknown role name falls back to drive matching."""
@@ -995,10 +995,10 @@ class TestMachineIdentity:
 # PATHLESS ROWS: videos and collages this node has no file for
 # =============================================================================
 #
-# One root cause behind three reported failures on the DLC node (2026-08-24):
+# One root cause behind three reported failures on a GPU node:
 #
 #   _stage_to_nas crashed with TypeError on Path(None)
-#   42 rows sat in a working state with no file and churned forever
+#   rows sat in a working state with no file and churned forever
 #   collages could not enter the pipeline at all
 #
 # All three come from cross-node recovery inventing rows out of connectome.db's
@@ -1086,7 +1086,7 @@ class TestLocateHelpers:
     def test_archive_copy_is_hidden_from_handlers_that_move_files(self, scratch_paths):
         """Staging MOVES what it finds; an archive hit would empty the archive."""
         from mousereach.watcher.locate import locate_video_file
-        arch = scratch_paths["ANALYZED_OUTPUT"] / "Connectome" / "CNT01"
+        arch = scratch_paths["ANALYZED_OUTPUT"] / "Project_A" / "CNT01"
         arch.mkdir(parents=True, exist_ok=True)
         (arch / "20250101_CNT0101_P9.mp4").write_bytes(b"x")
         assert locate_video_file("20250101_CNT0101_P9") is not None
@@ -1170,7 +1170,7 @@ class TestDLCStaleScope:
 
     def _archived_video(self, temp_db, scratch_paths, video_id, manifest_scorer,
                         pose_scorer=None):
-        results = scratch_paths["ANALYZED_OUTPUT"] / "Connectome" / "CNT01"
+        results = scratch_paths["ANALYZED_OUTPUT"] / "Project_A" / "CNT01"
         results.mkdir(parents=True, exist_ok=True)
         (results / f"{video_id}_processing_manifest.json").write_text(json.dumps({
             "video_id": video_id,
@@ -1178,7 +1178,7 @@ class TestDLCStaleScope:
             "pipeline_versions": {"segmenter": "2.2.3"},
         }))
         if pose_scorer:
-            pose_dir = (scratch_paths["ANALYZED_OUTPUT"] / "Connectome"
+            pose_dir = (scratch_paths["ANALYZED_OUTPUT"] / "Project_A"
                         / "DLC Model 4" / "CNT01")
             pose_dir.mkdir(parents=True, exist_ok=True)
             (pose_dir / f"{video_id}{pose_scorer}.h5").write_bytes(b"x")
@@ -1223,9 +1223,8 @@ class TestDLCStaleScope:
         """Easy/Flat are not re-run for version changes, so never GPU work.
 
         They need only the session's reaches -- not segmented, no outcomes, no
-        kinematics (2026-10-23) -- so a newer version gives them nothing they
-        use. Every video in the archive that would genuinely need a new pose is
-        Easy-tray -- 31 of them.
+        kinematics -- so a newer version gives them nothing they use, and
+        scheduling them would spend GPU time on poses nobody reads.
         """
         self._archived_video(
             temp_db, scratch_paths, "20251211_CNT0406_E2",
@@ -1233,7 +1232,7 @@ class TestDLCStaleScope:
             pose_scorer="DLC_resnet50_MPSAOct27shuffle1_100000")
         # It already has its session file; one without it is re-run once from
         # segmentation (tests/test_easy_flat_session_only.py), never re-posed.
-        (scratch_paths["ANALYZED_OUTPUT"] / "Connectome" / "CNT01"
+        (scratch_paths["ANALYZED_OUTPUT"] / "Project_A" / "CNT01"
          / "20251211_CNT0406_E2_features.json").write_text("{}")
         summary = self._scan(temp_db, scratch_paths, monkeypatch)
         assert summary["unsupported_tray"] == 1

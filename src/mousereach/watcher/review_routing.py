@@ -1,7 +1,7 @@
 """Whole-video bundle routing for the human-review holds.
 
 A video the algo cannot commit -- segmentation FAILED, or ANY element was left
-triaged / flagged -- is held OUT of the archive and connectome.db until a human
+triaged / flagged -- is held OUT of the archive and the central database until a human
 clears it. This module MOVES the whole video bundle (the mp4, the DLC pose h5,
 and every algo output JSON) out of the local Processing dir into a
 self-contained review bundle under the Triage or Deep_Review queue on the NAS,
@@ -22,7 +22,7 @@ queue reader sees either no bundle or the whole bundle. WHY: the move used to
 create the empty ``{stem}`` folder first and then fill it file by file
 (cross-volume copies take seconds); the running watcher's return scan saw the
 empty folder, retired it to _Problematic mid-route, and every remaining move
-failed with "No such file or directory" (2026-09-14).
+failed with "No such file or directory".
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
@@ -139,8 +139,8 @@ def _bundle_files(source_dir: Path, video_id: str) -> List[Path]:
     # listing's own entry answers that (no extra round trip on Windows). WHY:
     # routing a finished video takes its files from the cohort's Analyzed
     # folder -- tens of thousands of entries -- and asking the share "is this a
-    # file?" for every one cost 4-5 minutes per video; the nightly bench check
-    # ran out of its 3 hours after 34 of 162 videos (2026-10-24).
+    # file?" for every one cost minutes per video; a nightly check ran out of
+    # its time limit with most of its videos left.
     with os.scandir(source_dir) as entries:
         for e in entries:
             name = e.name
@@ -157,15 +157,15 @@ def _bundle_files(source_dir: Path, video_id: str) -> List[Path]:
 def _safe_move(src: Path, dst: Path) -> None:
     """shutil.move that overwrites an existing destination file.
 
-    Cross-filesystem moves (C: Processing -> Y: NAS) are copy+delete under the
+    Cross-filesystem moves (local Processing -> NAS) are copy+delete under the
     hood; that is intended -- the bundle must live on the NAS so any node / the
     GUI can review it.
 
     Retries transient Windows sharing violations (WinError 32/5): the pipeline
     routes a bundle seconds after its own readers finish with the mp4, and the
     handle is sometimes still closing. Without the retry the mp4 silently
-    stayed behind in Processing while the rest of the bundle moved -- 81 such
-    part-moved bundles on 2026-09-09 alone. A genuinely stuck file still
+    stayed behind in Processing while the rest of the bundle moved, leaving
+    part-moved bundles. A genuinely stuck file still
     raises to the caller after the retries.
     """
     from mousereach.pipeline.fsutil import retry_transient

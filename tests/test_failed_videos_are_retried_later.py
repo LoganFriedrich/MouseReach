@@ -1,8 +1,8 @@
 """A video that failed on the processing server is run again later, while it
 has retries left, and only when its files are still here.
 
-WHY (Logan, 2026-10-30, on an algorithm crash): "fail it, then do it again
-another time". Until this, nothing ever selected a 'failed' row again.
+WHY: a video an algorithm crashed on is failed, then tried again another
+time. Until this, nothing ever selected a 'failed' row again.
 """
 from datetime import datetime, timedelta
 from pathlib import Path

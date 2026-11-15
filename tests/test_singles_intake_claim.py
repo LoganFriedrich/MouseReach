@@ -760,7 +760,7 @@ def _report(env, host, age_s=0):
 
 def test_a_stopped_nodes_claims_come_back_in_hours_not_a_day(env):
     """WHY: videos waited on a node that had stopped working them while every
-    other GPU node was idle (2026-10-21). A holder whose status report and
+    other GPU node was idle. A holder whose status report and
     claims have both gone quiet for 3 hours is gone."""
     from mousereach.watcher import claim_marker
     claimed = _age(single_claim.claim_single(_drop(env), OTHER), claim_marker.GONE_AFTER_S + 60)
@@ -899,8 +899,8 @@ def test_a_database_error_never_gives_back_on_pausing(env):
 
 def test_a_shared_video_another_node_took_is_set_aside_without_a_work_slot(env):
     """Every node registers every shared video; each one another node takes
-    first used to cost every other node a whole work cycle (twelve in a row on
-    one node on 2026-10-21 while recordings waited to be cut)."""
+    first used to cost every other node a whole work cycle (many in a row,
+    while recordings waited to be cut)."""
     a = _as(env, _node(env, HOST))
     taken = single_claim.claim_single(_drop(env), OTHER)          # OTHER took it
     _row(a, VID, "validated", env.door / f"{VID}.mp4")

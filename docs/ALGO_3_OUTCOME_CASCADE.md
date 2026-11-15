@@ -71,7 +71,7 @@ So the effect is a systematic shift toward `untouched` and toward triage, not un
 
 `core/batch.py:107-142` `_extract_reaches()` reads the current reach-file format, where reaches are nested per segment under `segments[].reaches`, and falls back to an older flat top-level `reaches` list. It is now the only reader: `mousereach-detect-outcomes` calls `process_batch`, which calls `process_single`, which calls it.
 
-**Until 2026-08 `outcomes/cli.py` carried a second, private copy of `_extract_reaches` that read only the flat top-level `reaches` key.** Current reach files have no top-level `reaches` key at all — a scan of 200 `_reaches.json` files under `MouseReach_Pipeline/Analyzed` found the key absent from all 200, and per-segment nested reaches present in 172. So that copy returned `[]` on every real reach file, and `mousereach-detect-outcomes` produced materially different (and worse) outcomes than the pipeline did on the same inputs: on one archived video re-run 2026-08-29, 14 of 20 segments differed and 11 of them fell through to `triaged`. It also used `r.get("start_frame") or r.get("start")`, so a reach starting at frame 0 would have been dropped even if the format had matched. The copy is gone; after the fix the same re-run reproduced every per-segment field of the archived file exactly.
+**Until 2026-08 `outcomes/cli.py` carried a second, private copy of `_extract_reaches` that read only the flat top-level `reaches` key.** Current reach files have no top-level `reaches` key at all — a scan of archived `_reaches.json` files under `Analyzed` found the key absent from every one, with reaches nested per segment instead. So that copy returned `[]` on every real reach file, and `mousereach-detect-outcomes` produced materially different (and worse) outcomes than the pipeline did on the same inputs: on an archived video re-run through it, most segments differed and many of them fell through to `triaged`. It also used `r.get("start_frame") or r.get("start")`, so a reach starting at frame 0 would have been dropped even if the format had matched. The copy is gone; after the fix the same re-run reproduced every per-segment field of the archived file exactly.
 
 ---
 
@@ -125,7 +125,7 @@ Three things follow, and all three matter:
 
 **Cleaning.** Most stages pass the pose data through `mousereach.lib.dlc_cleaning.clean_dlc_bodyparts` first, which replaces implausible tray-corner and pellet *positions* with a rolling median of nearby confident frames. It does **not** touch likelihood columns (stated at `dlc_cleaning.py:37-38`, and the code only assigns `_x`/`_y` at `:239-250`). So it makes no difference whether a stage reads confidence from the cleaned or the raw frame — they are the same numbers. Where cleaning does matter is the pillar circle, because that is computed from corner positions with no confidence filter at all.
 
-**Two stages do not clean.** `stage_1` and `stage_2` compute pillar geometry straight from raw positions. `pillar_geometry.py:125-129` says this is on purpose — their validation provenance is locked in. Stage 1 is the second-largest committer in the archive (14,649 of 43,180 segments), so a meaningful share of all outcomes rests on uncleaned tray corners. (Stage 1's *guard* does clean, because `guards.pellet_displaced_or_vanished` cleans internally.)
+**Two stages do not clean.** `stage_1` and `stage_2` compute pillar geometry straight from raw positions. `pillar_geometry.py:125-129` says this is on purpose — their validation provenance is locked in. Stage 1 is the second-largest committer in the archive, so a meaningful share of all outcomes rests on uncleaned tray corners. (Stage 1's *guard* does clean, because `guards.pellet_displaced_or_vanished` cleans internally.)
 
 ---
 
@@ -165,7 +165,7 @@ A commit must supply `whens["outcome_known_frame"]`, and (for `retrieved` and `d
 - **`outcome_known_frame`** — the earliest frame from which the outcome is determinable. For every `untouched` stage this is exactly `seg_end - 5`, the last clean frame (verified at all eight untouched commit sites). For touched outcomes it is anchored to the event — the reach end plus a small settling offset, or the frame the pellet first appears at its resting place.
 - **`interaction_frame`** — when the paw was over the pellet. Always `null` for `untouched`. For touched outcomes it is a point inside the causal reach window: the middle of the reach in most stages, 40% of the way in for stages 7 and 8 (`IFR_POSITION_IN_BOUT = 0.4`).
 
-`stage_base.py:39-44` states this contract. It is not enforced anywhere — a stage that committed without setting `outcome_known_frame` would emit `null` and nothing would complain (`detector.py:251-252`, `.get()` with no default). In practice no stage has ever done so: across all 43,180 archived v6 segments, all 40,275 committed segments carry a non-null `outcome_known_frame`, and all 24,882 touched ones carry a non-null `interaction_frame`.
+`stage_base.py:39-44` states this contract. It is not enforced anywhere — a stage that committed without setting `outcome_known_frame` would emit `null` and nothing would complain (`detector.py:251-252`, `.get()` with no default). In practice no stage has ever done so: across the archived v6 segments, every committed segment carries a non-null `outcome_known_frame`, and every touched one carries a non-null `interaction_frame`.
 
 ---
 
@@ -175,7 +175,7 @@ After the stage list is built, `detector.py:154-163` wraps three extra checks ar
 
 **1. Vanish guard** (`guards.py:123-138`, test at `guards.py:62-73`). If the pellet's confidence drops below 0.5 for 60 or more consecutive frames in the clean zone, a `displaced_sa` commit is converted to **continue**. A displaced pellet stays visible in the tray; a pellet that disappears for two seconds was retrieved.
 
-`guards.py:106-111` defines `DISPLACED_VANISH_GUARD_CLASSES`, a set naming exactly four stage classes — Stage16, Stage17, Stage27, Stage29 — and the module docstring (`guards.py:10`) says the guard applies only to those. `detector.py:88` imports the set and **never uses it**; the wrapping at `detector.py:159` is unconditional. So the guard is on all 33 stages. The stages that get it against the design note's intent, and that actually commit `displaced_sa`, are **7, 8, 10, 21 and the two retry stages 22 and 25** (plus 14, 18, 20 and 24, which are disabled and never commit anything). Stage 7 alone accounts for 16,212 of 43,180 archived decisions, so this is not a marginal difference.
+`guards.py:106-111` defines `DISPLACED_VANISH_GUARD_CLASSES`, a set naming exactly four stage classes — Stage16, Stage17, Stage27, Stage29 — and the module docstring (`guards.py:10`) says the guard applies only to those. `detector.py:88` imports the set and **never uses it**; the wrapping at `detector.py:159` is unconditional. So the guard is on all 33 stages. The stages that get it against the design note's intent, and that actually commit `displaced_sa`, are **7, 8, 10, 21 and the two retry stages 22 and 25** (plus 14, 18, 20 and 24, which are disabled and never commit anything). Stage 7 alone is the largest single source of archived decisions, so this is not a marginal difference.
 
 **2. Scoring-area presence guard** (`guards.py:141-158`, test at `guards.py:76-99`). If the pellet was never held at more than 3 pillar-radii from the pillar, at confidence ≥ 0.7, for 30 or more consecutive frames, a `displaced_sa` commit is converted to **continue**. "Displaced" means the pellet ended up somewhere, and somewhere is a place it stays. The guards docstring correctly says this one applies to all stages.
 
@@ -183,7 +183,7 @@ After the stage list is built, `detector.py:154-163` wraps three extra checks ar
 
 This guard is a no-op if `video_dir` is `None`, if the file is not found, if `cv2` will not import, if the segment is shorter than 20 clean frames, if there are fewer than three confident off-pillar sightings, or if any of the sampled brightness measurements come back unusable — every one of those returns `None` and the commit stands. It accepts `.mp4` and `.avi` (`cv_artifact_gate.py:164`).
 
-**4. Paw-confidence override.** `detector.py:157-158` raises `paw_lk_threshold` from 0.5 to 0.9 on exactly two stages, `Stage16DisplacedViaMaxDisplacement` and `Stage17DisplacedViaDominantMaxDisplacement` (`guards.py:114-117`), because DeepLabCut 4.0 detects an approaching paw past the slit far more often than 3.x did. The override is applied only to the objects in the top-level list. Stages 22 and 25 construct **their own private copies** of stages 16 and 17 inside `__init__` (`stage_22_retry_with_stabilized_dlc.py:48-53`, `stage_25_retry_with_strict_pellet_confidence.py:46-51`), and those copies keep the 0.5 threshold. The three wrapping guards still apply to 22 and 25, because they wrap the outer object's `decide` — confirmed in the archive, where stage 22 appears 9 times with a `cv_artifact` triage reason.
+**4. Paw-confidence override.** `detector.py:157-158` raises `paw_lk_threshold` from 0.5 to 0.9 on exactly two stages, `Stage16DisplacedViaMaxDisplacement` and `Stage17DisplacedViaDominantMaxDisplacement` (`guards.py:114-117`), because DeepLabCut 4.0 detects an approaching paw past the slit far more often than 3.x did. The override is applied only to the objects in the top-level list. Stages 22 and 25 construct **their own private copies** of stages 16 and 17 inside `__init__` (`stage_22_retry_with_stabilized_dlc.py:48-53`, `stage_25_retry_with_strict_pellet_confidence.py:46-51`), and those copies keep the 0.5 threshold. The three wrapping guards still apply to 22 and 25, because they wrap the outer object's `decide` — confirmed in the archive, where stage 22 appears with a `cv_artifact` triage reason.
 
 ---
 
@@ -208,7 +208,7 @@ Stages **1, 3 and 4** carry a "(4.0 recalibration)" note in their docstrings exp
 
 Only stages **1 and 6** use the shared safety net `guards.pellet_displaced_or_vanished` (`guards.py:36-59`), which requires that the pellet was neither sustained beyond 3 radii for 15+ frames nor absent (confidence < 0.5) for 60+ frames. Stage 3 implements the sustained-in-tray half inline and has no vanish test; stage 4 implements the vanish half inline and has no sustained-in-tray test. They are three different guards, not one shared one.
 
-Stage 5 is the only untouched stage that can triage: if the pellet started off-pillar and then apparently vanished, that is physically impossible (nothing can be retrieved out of the tray), so the segment goes to a human with reason `pellet_appears_retrieved_from_off_pillar_state` (`stage_5_pellet_off_pillar_throughout.py:506-518`). Across 2,159 archived files this path fired zero times.
+Stage 5 is the only untouched stage that can triage: if the pellet started off-pillar and then apparently vanished, that is physically impossible (nothing can be retrieved out of the tray), so the segment goes to a human with reason `pellet_appears_retrieved_from_off_pillar_state` (`stage_5_pellet_off_pillar_throughout.py:506-518`). In the archive this path has never fired.
 
 ### Touched stages (7–29)
 
@@ -240,22 +240,14 @@ The touched half has a clear shape: 7–17 are the broad rules, 21–25 are care
 
 ### What actually fires
 
-Over the 2,159 archived files carrying `detector_version: 6.1.0` in `MouseReach_Pipeline/Analyzed` (43,180 segments), the stage field breaks down as:
+Over the archived files carrying `detector_version: 6.1.0` in `Analyzed`, the stage field breaks down, most frequent first, roughly as:
 
-```
-16212  stage_7_settled_off_pillar_late          2137  stage_99_residual_triage
-14649  stage_1_position_never_changed            427  stage_3_paw_never_in_pellet_area
- 2361  stage_8_pellet_displaced_to_sa            247  stage_25_retry_with_strict_pellet_confidence
- 1569  stage_9_pellet_vanished_after_reach       215  stage_22_retry_with_stabilized_dlc
- 1137  stage_21_causal_reach_via_on_off_...      139  stage_4_pellet_returns_to_pillar
- 1104  stage_26_retrieved_via_unique_vanish      100  stage_6b_never_entered_sa
-  790  stage_28_retrieved_via_pillar_vis...       72  stage_13, 59 stage_5, 42 stage_12
-  777  stage_27_displaced_sa_via_unique_...       37  stage_11, 26 stage_10, 14 stage_17
-  684  stage_16_displaced_via_max_disp            13  stage_2, 6 stage_6, 3 stage_98
-  360  stage_29_displaced_sa_pillar_disamb...
-```
+- **The bulk:** `stage_7_settled_off_pillar_late`, then `stage_1_position_never_changed`. Together these two make most of all decisions.
+- **A clear second tier:** `stage_8`, `stage_99_residual_triage`, `stage_9`, `stage_21`, `stage_26`, `stage_28`, `stage_27`, `stage_16`.
+- **A small share each:** `stage_3`, `stage_29`, `stage_25`, `stage_22`, `stage_4`, `stage_6b`, `stage_13`, `stage_5`, `stage_12`.
+- **Almost never:** `stage_11`, `stage_10`, `stage_17`, `stage_2`, `stage_6`, `stage_98`.
 
-Labels: `displaced_sa` 20,548, `untouched` 15,393, `retrieved` 4,334, `triaged` 2,905. Two stages account for 71% of all decisions. Six stages (2, 6, 10, 11, 17, 98) each account for well under a tenth of a percent, and the eight disabled stages account for none. This is an observation of the archive, not a property of the code, but it is the fastest way to see which parts of this subsystem matter.
+Labels, most frequent first: `displaced_sa`, `untouched`, `retrieved`, `triaged`. Six stages (2, 6, 10, 11, 17, 98) each account for well under a tenth of a percent, and the eight disabled stages account for none. This is an observation of the archive, not a property of the code, but it is the fastest way to see which parts of this subsystem matter.
 
 ---
 
@@ -276,21 +268,21 @@ Eight of the 33 stages cannot produce any decision. They defer 100% of the time.
 
 Each of the seven threshold-disabled ones carries a dated comment explaining what was tried and why it did not reach acceptable accuracy, and says the file is kept for documentation. That is a defensible choice, but it means the docstrings at the top of those files describe behaviour that does not happen, and the archive above confirms none of them has ever committed anything.
 
-Two helper modules are reachable only from dead code: `pellet_calibration.py` is imported only by stage 20, and `transition_detector.py` only by stage 24. A third, `trust_calibrator.py` (225 lines, computes per-stage agreement with ground truth), is imported by no code under `src/` — but it *is* imported by eight one-off calibration scripts under `scripts/`. Its docstring says "the trust score is what determines triage at runtime"; that is wrong about runtime. No runtime code reads a trust score. Triage is decided entirely by the ordering and the hard-coded thresholds.
+Two helper modules are reachable only from dead code: `pellet_calibration.py` is imported only by stage 20, and `transition_detector.py` only by stage 24. A third, `trust_calibrator.py` (225 lines, computes per-stage agreement with ground truth), is imported by no code under `src/` — but it *is* imported by one-off calibration scripts outside this repository. Its docstring says "the trust score is what determines triage at runtime"; that is wrong about runtime. No runtime code reads a trust score. Triage is decided entirely by the ordering and the hard-coded thresholds.
 
 ---
 
 ## When it declines to decide
 
-A segment comes out as `"outcome": "triaged"` with `"flagged_for_review": true` and a `flag_reason` string. Five modules can emit a triage (`grep 'decision="triage"'` in `v6_cascade/` returns `cv_artifact_gate.py:187`, `stage_27...py:249` and `:260`, `stage_5...py:508`, `stage_98...py:400`, `stage_99...py:35`). Archive counts:
+A segment comes out as `"outcome": "triaged"` with `"flagged_for_review": true` and a `flag_reason` string. Five modules can emit a triage (`grep 'decision="triage"'` in `v6_cascade/` returns `cv_artifact_gate.py:187`, `stage_27...py:249` and `:260`, `stage_5...py:508`, `stage_98...py:400`, `stage_99...py:35`). In the archive, from most to least frequent:
 
-1. **`stage_99_residual_triage`** — nothing committed. Reason `fell_through_all_committing_stages`. By far the largest source: **2,137** of 2,905.
-2. **The pixel guard on displaced commits** — `cv_artifact_landing_no_pellet_arrival`. A stage was willing to say "displaced", but the video shows nothing arrived at the landing spot. **408**, attributed to whichever stage tried to commit (134 stage 7, 85 stage 16, 75 stage 27, 51 stage 21, 26 stage 29, 24 stage 8, 9 stage 22, 3 stage 10, 1 stage 17).
-3. **`stage_27`, causal reach too near a segment edge** — `causal_reach_too_near_segment_start` (**256**) / `..._end` (**101**).
-4. **`stage_98_lost_in_shadow_triage`** — the deliberate "this is unscorable and here is why" case. **3**.
-5. **`stage_5`**, when a pellet that started in the tray appears to vanish. **0**.
+1. **`stage_99_residual_triage`** — nothing committed. Reason `fell_through_all_committing_stages`. By far the largest source.
+2. **The pixel guard on displaced commits** — `cv_artifact_landing_no_pellet_arrival`. A stage was willing to say "displaced", but the video shows nothing arrived at the landing spot. Attributed to whichever stage tried to commit (most often stage 7, then stages 16, 27 and 21).
+3. **`stage_27`, causal reach too near a segment edge** — `causal_reach_too_near_segment_start` (the more common) / `..._end`.
+4. **`stage_98_lost_in_shadow_triage`** — the deliberate "this is unscorable and here is why" case. Rare.
+5. **`stage_5`**, when a pellet that started in the tray appears to vanish. Never seen in the archive.
 
-2137 + 408 + 256 + 101 + 3 = 2,905, which matches the label total exactly.
+Together these account for every triaged segment in the archive.
 
 `detector.py:256-268` also has a fallback for a segment where every stage returned `continue`, producing `stage: "residual (auto-triage)"` and reason `fell_through_all_stages`. Since stage 99 always triages, this cannot happen, and it does not appear in any archived file.
 
@@ -314,11 +306,11 @@ Every failure inside stage 98 becomes a `continue`: `cv2` not installed (`:336-3
 
 ## Exactly what lands in `{video}_pellet_outcomes.json`
 
-Written by `core/batch.py:210-211` (pipeline) or `cli.py:189-191` (command line). Built at `detector.py:246-275`. Here is a real file, unedited:
+Written by `core/batch.py:210-211` (pipeline) or `cli.py:189-191` (command line). Built at `detector.py:246-275`. Here is a real file, unedited except for the video name:
 
 ```json
 {
-  "video_id": "20250624_CNT0103_P1",
+  "video_id": "20250101_CNT0101_P1",
   "detector": "v6_cascade",
   "detector_version": "6.1.0",
   "segments": [
@@ -334,7 +326,7 @@ Written by `core/batch.py:210-211` (pipeline) or `cli.py:189-191` (command line)
 }
 ```
 
-Top level — exactly four keys, no more. All 2,159 archived v6 files have exactly this key set.
+Top level — exactly four keys, no more. Every archived v6 file has exactly this key set.
 
 | Key | Value |
 |---|---|
@@ -343,7 +335,7 @@ Top level — exactly four keys, no more. All 2,159 archived v6 files have exact
 | `detector_version` | `"6.1.0"`. Read by `pipeline/manifest.py:152-158` to decide whether a video needs reprocessing |
 | `segments` | the list |
 
-Per segment, committed case — exactly six keys (40,275 archived segments, all with this key set):
+Per segment, committed case — exactly six keys (every archived committed segment has this key set):
 
 | Key | Value |
 |---|---|
@@ -354,7 +346,7 @@ Per segment, committed case — exactly six keys (40,275 archived segments, all 
 | `stage` | the build label of the deciding stage |
 | `flagged_for_review` | always `false` here |
 
-Per segment, triaged case — the same six keys plus `flag_reason`, with `outcome` set to `"triaged"` and both frame fields set to `null` (2,905 archived segments). The human-readable reason string is the **only** surviving trace of why the cascade behaved as it did.
+Per segment, triaged case — the same six keys plus `flag_reason`, with `outcome` set to `"triaged"` and both frame fields set to `null`. The human-readable reason string is the **only** surviving trace of why the cascade behaved as it did.
 
 ### What is not in the file
 
@@ -364,20 +356,20 @@ Per segment, triaged case — the same six keys plus `flag_reason`, with `outcom
 
 **Documented but never produced by v6:**
 - `confidence` — advertised per segment in `outcomes/core/__init__.py:77`, implied by `cli.py:31-33`, and used as the triage gate in `core/triage.py:128-135`. v6 has no notion of confidence at all.
-- `causal_reach_id` — advertised at `outcomes/core/__init__.py:76`. v6 identifies a causal reach internally in most touched stages and does not record which one it was. Causal reach attribution is a **separate step** (algorithm 4) that writes `{video}_reach_assignments.json` (`assignment/run.py:71-73`). It never writes back into the outcomes file. (`outcomes/AGENTS.md` does not name this field — it only says the step "requires reach detection results (`_reaches.json`) for causal reach attribution".)
+- `causal_reach_id` — advertised at `outcomes/core/__init__.py:76`. v6 identifies a causal reach internally in most touched stages and does not record which one it was. Causal reach attribution is a **separate step** (algorithm 4) that writes `{video}_reach_assignments.json` (`assignment/run.py:71-73`). It never writes back into the outcomes file.
 - `causal_reach_frame` — exists only as a field of the legacy dataclass (`core/pellet_outcome.py:135`) and in evaluation code that reads legacy files.
 - `summary` — the per-video counts block, in the documented schema at `core/__init__.py:84-92`. Not written. `core/triage.py:81` and `_review.py:84` both index it directly.
 - `n_segments`, `video_name`, `total_frames`, `detected_at`, `validated`, `validated_by`, `corrections_made`, `segments_flagged` — all fields of the legacy `VideoOutcomes` dataclass (`core/pellet_outcome.py:144-161`). v6 writes none of them. Note `video_name` vs `video_id`: the key changed, so `_review.py:83`'s `data.get('video_name')` prints `None`.
 - `validation_status` — documented at `cli.py:26-58` as the field that drives the whole review workflow (`auto_approved` / `needs_review` / `validated`). v6 never writes it. The legacy detector does, at detection time (`core/pellet_outcome.py:1771-1772`), so files from the napari batch-pipeline path carry it. `pipeline/manifest.py:229` reads it and, per `manifest.py:167-177`, records `"unknown"` for every v6 video.
 - `pellet_visible_start` / `pellet_visible_end` / `distance_from_pillar_start` / `distance_from_pillar_end` — legacy-only.
 
-**Present only in the legacy detector's output.** All 1,233 archived files with `detector_version: 2.4.4` carry `confidence`, `causal_reach_id`, `causal_reach_frame`, `summary`, `n_segments`, `distance_from_pillar_*`, `pellet_visible_*`, `human_verified` and `original_outcome`. They carry **no `stage` key at all** (0 of 24,660 segments), and `"outcome_known_frame": null` on every single segment (24,660 of 24,660) — the legacy detector documents that field as set by an annotator and never fills it. So a consumer reading a mixed corpus sees the *older* files carrying more fields than the newer ones, and one important field carrying less.
+**Present only in the legacy detector's output.** Every archived file with `detector_version: 2.4.4` carries `confidence`, `causal_reach_id`, `causal_reach_frame`, `summary`, `n_segments`, `distance_from_pillar_*`, `pellet_visible_*`, `human_verified` and `original_outcome`. They carry **no `stage` key at all** (on no segment), and `"outcome_known_frame": null` on every single segment — the legacy detector documents that field as set by an annotator and never fills it. So a consumer reading a mixed corpus sees the *older* files carrying more fields than the newer ones, and one important field carrying less.
 
 ### What later steps add
 
 The napari triage-clearing tool writes back into this file when a human resolves a segment (`review/triage_clearing.py:564-595`). It sets, on that segment only: `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` (only if the human changed the outcome), and `causal_reach_id`; it overwrites `outcome` always, and `interaction_frame` / `outcome_known_frame` only when the human supplied a non-null value. So `causal_reach_id` would appear in an outcomes file **only** for human-cleared segments.
 
-In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `Analyzed` (3,392 files) and `Processing` (637 files) found **zero** v6 segments carrying `triage_cleared`, `human_verified`, `cleared_by`, `original_triage_reason` or `causal_reach_id`. Every v6 file in the pipeline is exactly as the detector wrote it.
+In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `Analyzed` and `Processing` found **zero** v6 segments carrying `triage_cleared`, `human_verified`, `cleared_by`, `original_triage_reason` or `causal_reach_id`. Every v6 file in the pipeline is exactly as the detector wrote it.
 
 `flagged_for_review` is what routes a segment into the human worklist (`review/triage_queue.py:196`). That module also independently triggers on any segment whose outcome is touched but for which algorithm 4 committed no causal reach, even though `flagged_for_review` is false (`triage_queue.py:203-213`) — so the file's own flag is not the complete picture of what needs review.
 
@@ -406,7 +398,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `guards.py:10` says the vanish guard applies to four named stage classes; it applies to all 33.
 - `lib/pillar_geometry.py:14` describes the pillar offset as "perpendicular" to the tray front edge; the code offsets straight up in image y (`:104`).
 - `v6_cascade/STAGE_DESCRIPTIONS.md` (854 lines) is headed "v6.0.0_dev" and its stage table still says stage 0 triages abnormally short segments.
-- `outcomes/AGENTS.md` and `outcomes/core/__init__.py` describe the legacy geometric algorithm, ruler units, `displaced_outside`, confidence scores and the `validation_status` workflow. Neither mentions the v6 cascade at all.
+- `outcomes/core/__init__.py` describes the legacy geometric algorithm, ruler units, `displaced_outside`, confidence scores and the `validation_status` workflow. It does not mention the v6 cascade at all.
 
 **Parameters and imports that have no effect.**
 - `Stage2PelletStableUntouched` is constructed with `commit_distance_radii=1.5` (`detector.py:115`). The attribute is stored (`stage_2:85`) and never read. `start_end_window` is likewise stored (`:86`) and never read, and the feature its docstring names as an input, `pellet_position_start_end_distance_in_radii`, is only ever set to `None` in one early-return branch (`:116`) — it is never computed.
@@ -443,18 +435,18 @@ that were not resolved. Neither side is authoritative: spot-checking found the
 checker wrong at least once. **Do not rely on anything listed here without
 opening the code yourself.** Everything not listed survived two passes.
 
-- **Section 3 (Units): "15 segments fall outside 25-50 px, with a minimum of 2.3 and a maximum of 230.2."**
-  - disputed because: The count is 11, not 15. The minimum (2.3) and maximum (230.2) are both correct, so only the count is wrong. Everything else in that paragraph checks out: median ruler_pixels 34.5, 5th-95th percentile 34.3 to 38.4, over exactly 22,920 segments.
-- **Section 5.10 (outcome_source, "Filled today"): "On every reach whose features file was written by the current extractor (92% of Processing; older files predate the field)."**
-  - disputed because: The share is 89.7%, not 92%. The qualitative claim is right -- outcome_source is non-null on every reach written by extractor 2.0.0 and null on every reach from the older 1.0.0 files -- but the number is off, and it contradicts the document's own arithmetic elsewhere: section 5.3 states that 10.3% of Processing reaches carry a legacy max_extent value, which puts the current-extractor share at 89.7
-- **Section 5.7 (Head and body at the apex): all four rows -- head_width_at_apex_mm, nose_to_slit_at_apex_mm, head_angle_at_apex_deg, head_angle_change_deg -- are listed as "99.9%" filled.**
-  - disputed because: Only nose_to_slit_at_apex_mm is 99.9%. The other three are lower: head_width_at_apex_mm 99.7%, head_angle_at_apex_deg 99.7%, head_angle_change_deg 99.5%. The difference is small but it is a stated measurement, and head_angle_change_deg is lower than the other two for a reason the table hides -- it needs both ears tracked above likelihood 0.7 at the reach START frame as well as at the apex (feature
+- **Section 3 (Units): the stated number of segments whose ruler falls outside 25-50 px, and its minimum and maximum.**
+  - disputed because: The count was overstated. The minimum and maximum are both correct, so only the count is wrong. Everything else in that paragraph checks out.
+- **Section 5.10 (outcome_source, "Filled today"): "On every reach whose features file was written by the current extractor (the stated share of Processing; older files predate the field)."**
+  - disputed because: The stated share is slightly too high. The qualitative claim is right -- outcome_source is non-null on every reach written by extractor 2.0.0 and null on every reach from the older 1.0.0 files -- but the number is off, and it contradicts the document's own arithmetic elsewhere: section 5.3's share of Processing reaches carrying a legacy max_extent value puts the current-extractor share lower
+- **Section 5.7 (Head and body at the apex): all four rows -- head_width_at_apex_mm, nose_to_slit_at_apex_mm, head_angle_at_apex_deg, head_angle_change_deg -- are listed with the same fill rate.**
+  - disputed because: Only nose_to_slit_at_apex_mm has that rate. The other three are slightly lower, head_angle_change_deg lowest. The difference is small but it is a stated measurement, and head_angle_change_deg is lower than the other two for a reason the table hides -- it needs both ears tracked above likelihood 0.7 at the reach START frame as well as at the apex (feature
 - **Section 3 and the section 11 failure table: "If ruler_pixels is 0 or negative the conversion factor is set to 0.0 and every millimetre value in that segment reads exactly 0, not null."**
   - disputed because: True for a negative ruler_pixels, but not for exactly 0. The five cited guard sites (:606, :689, :884, :1048, :1246) all read `RULER_MM / ruler_pixels if ruler_pixels > 0 else 0`, but there is a sixth conversion at feature_extractor.py:406 that has no guard: `px_to_mm = self.RULER_MM / ruler_pixels`. With ruler_pixels == 0 that raises ZeroDivisionError inside _extract_reach_features, outside the t
 - **Section 8 (reach_data.csv): "from position 6 onward every column is labelled with the name of the column before it."**
   - disputed because: The shift runs the other way. The SELECT has one extra column (segment_num) inserted at index 5 relative to ALL_COLUMNS, so from index 5 on, the data sitting under a given header name actually belongs to the column BEFORE that name -- equivalently, each data column is labelled with the name of the column AFTER it. The three concrete examples the document gives immediately afterwards are all correc
 - **Section 4, parenthetical: "grep -rn \"reach_detector_v8\\|ReachDetectorV8\" src/ returns only the file itself and one docstring mention."**
-  - disputed because: That grep returns five hits, not four: three inside reach_detector_v8.py itself, the docstring mention in span_to_reaches.py:279, and a fifth in src/mousereach/improvement/reach_detection/README.md:13. The substantive claim the parenthetical supports -- that nothing imports the class -- is correct; only the stated grep result is incomplete.
+  - disputed because: That grep returns five hits, not four: three inside reach_detector_v8.py itself, the docstring mention in span_to_reaches.py:279, and a fifth in the improvement subsystem's README (since moved out of this repository). The substantive claim the parenthetical supports -- that nothing imports the class -- is correct; only the stated grep result is incomplete.
 
 ---
 

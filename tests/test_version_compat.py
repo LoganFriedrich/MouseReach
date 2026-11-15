@@ -1,6 +1,6 @@
 """compatible_versions: a declared-compatible manifest version must not stale
-a video. WHY: two August 2026 declaration edits with no algorithm change
-behind them marked 1,255 rows outdated, and 'outdated' was a one-way door.
+a video. WHY: declaration edits with no algorithm change behind them marked
+many rows outdated, and 'outdated' was a one-way door.
 A bugfix bump whose output only changes for pathological videos (which are
 re-marked by hand) must not re-run the whole corpus."""
 

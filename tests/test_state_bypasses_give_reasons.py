@@ -2,9 +2,9 @@
 
 WHY: force_state is the escape hatch from the state machine, and it logs each
 use at WARNING with the reason it is given -- so the log is the only record of
-why a video skipped its normal transitions. Seven call sites passed none, and
-the server's log carried "reason: not given" 150 times on 2026-10-22 alone,
-which tells a person reading it nothing. This test reads the source: a new
+why a video skipped its normal transitions. Several call sites passed none, and
+the log filled with "reason: not given", which tells a person reading it
+nothing. This test reads the source: a new
 call without a reason fails here, not in a log nobody can interpret.
 """
 import re

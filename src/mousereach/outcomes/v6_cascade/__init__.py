@@ -6,8 +6,8 @@ Each stage either COMMITS a class (if a high-confidence signal fires),
 CONTINUES to the next stage, or TRIAGES (final stages only).
 First stage to commit wins. Deterministic -- no model artifact required.
 
-Design notes in `feature_philosophy_event_anchored_walking.md` and the
-2026-04-30 conversation.
+Design: each stage walks the segment anchored on events (the pellet on
+the pillar, a reach, the pellet at rest) rather than on fixed windows.
 
 Production entry point::
 

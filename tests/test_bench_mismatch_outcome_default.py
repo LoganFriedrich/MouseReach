@@ -1,8 +1,8 @@
 """A hand-score mismatch opens with the algorithm's outcome selected.
 
 The bench check sends a finished pellet back when the hand-scored sheet
-disagrees with the algorithm; the algorithm is usually right (Logan,
-2026-10-24), so its outcome is pre-selected and "Save Segment + Next" means
+disagrees with the algorithm; the algorithm is usually right, so its outcome
+is pre-selected and "Save Segment + Next" means
 "the algorithm was right". A pellet the algorithm could not decide still opens
 on "-- select outcome --".
 """

@@ -1,5 +1,5 @@
 """
-Reach detection evaluation, per the user-mandated reporting standard.
+Reach detection evaluation, per the project's reporting standard.
 
 A detected reach is TP iff:
     abs(algo.start_frame - gt.start_frame) <= START_TOL  (default 2)
@@ -17,9 +17,6 @@ For matched (TP) pairs, we additionally collect:
 Reports go into snapshot/figures/ as the canonical reach-eval artifact.
 NOT precision/recall/F1 leading; numerical TP/FP/FN counts + delta
 distributions only.
-
-See `feedback_no_f1.md` and `reach_outcome_evaluation_format.md` in
-cross-session memory.
 """
 from __future__ import annotations
 

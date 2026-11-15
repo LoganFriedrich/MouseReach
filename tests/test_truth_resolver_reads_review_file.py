@@ -1,10 +1,9 @@
 """The truth layering reads a review it is handed as a FILE.
 
-WHY (2026-10-30): the kinematics extractor passes its ``review_path`` -- the
+WHY: the kinematics extractor passes its ``review_path`` -- the
 review file itself -- to resolve_truth_layers as ``primary_dir``, and the lookup
 only tried ``<dir>/<stem>/<file>`` and ``<dir>/<file>``. A review that existed
-only in the processing folder was therefore never read by the layering
-(ISSUES.md 2026-10-27, item 2).
+only in the processing folder was therefore never read by the layering.
 """
 import json
 

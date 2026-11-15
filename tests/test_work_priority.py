@@ -624,9 +624,8 @@ class TestTakeInOnlyWhatIsNext:
     """The processing node holds only what it is about to start.
 
     WHY: intake is visited before the pipeline. With the old default of 200
-    the server took posed videos in for hours before analysing any (about 8
-    hours on 2026-10-21), and every video it held was one no other node
-    could take.
+    the processing node took posed videos in for hours before analyzing any,
+    and every video it held was one no other node could take.
     """
 
     def test_the_default_is_a_small_buffer(self):
@@ -648,7 +647,7 @@ class TestTakeInOnlyWhatIsNext:
 
 
 class TestRunningWatcherFollowsEdits:
-    """G1 (2026-10-22): a running watcher kept the order it started with until
+    """A running watcher kept the order it started with until
     it was restarted, while the priority panel said a Save reaches every
     machine within a minute. It now re-resolves at most once a minute."""
 
@@ -689,7 +688,7 @@ class TestRunningWatcherFollowsEdits:
 
 
 class TestAspaLabIds:
-    """G5 (2026-10-22): an ASPA video carries an encoded id (ASPA0401); the lab
+    """An ASPA video carries an encoded id (ASPA0401); the lab
     names the animal D01. Session lists accepted both; animal_id and session
     selectors matched the encoded id only."""
 

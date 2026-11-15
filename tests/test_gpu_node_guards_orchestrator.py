@@ -7,7 +7,7 @@ join, three defects had to go.
 
   Finished work  Cropping and posing never asked whether a video was already
                  finished. A node with a fresh or partial database re-cropped
-                 and re-posed finished children (~14 GPU-minutes each) and
+                 and re-posed finished children (many GPU-minutes each) and
                  duplicated everything downstream. A video whose bundle sits
                  in a review queue is held for a person and is not posed
                  again either.
@@ -762,8 +762,8 @@ def _crop_failing(monkeypatch, failing):
 
 
 def test_a_slot_ffmpeg_could_not_cut_fails_the_collage(env, monkeypatch):
-    # WHY (2026-10-22): such a collage was recorded 'cropped' and never
-    # retried; 9 sessions of two collages were never cut.
+    # WHY: such a collage was recorded 'cropped' and never
+    # retried, so its failed slots were never cut.
     _crop_failing(monkeypatch, {"CNT0102"})
 
     with pytest.raises(RuntimeError, match="could not be cut"):

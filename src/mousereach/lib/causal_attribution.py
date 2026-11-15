@@ -2,8 +2,7 @@
 Causal attribution primitives -- end-state classification, off-pillar
 transition back-walk, displaced-signature search.
 
-These follow the decision rules in
-`feature_philosophy_event_anchored_walking.md`:
+These follow the event-anchored decision rules:
 - Displaced signature is segment-scoped (no off-paw filter)
 - Retrieved signature is "displaced never fires + pellet absent + pillar
   jointly revealed"
@@ -56,7 +55,7 @@ def compute_reach_apex(
     """Return the apex frame within [reach_start, reach_end].
 
     Apex = argmax over reach window of cartesian distance(nose, paw).
-    The user-mandated definition: it is the moment of peak paw extension
+    The definition: it is the moment of peak paw extension
     away from the head, regardless of where the pellet is.
     """
     if reach_end < reach_start:

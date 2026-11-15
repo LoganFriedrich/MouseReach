@@ -25,7 +25,7 @@ from typing import Callable, Dict, List, Optional
 from .stage_base import SegmentInput, Stage, StageDecision
 
 
-# Default tolerances per the user's 2026-05-01 specification:
+# Default tolerances:
 # Stage 1 commits at +/-3 frames; we adopt that as the default for all
 # stages until per-stage tolerances are explicitly set.
 DEFAULT_OKF_TOLERANCE = 3
@@ -79,13 +79,13 @@ def calibrate_stage(
 ) -> StageCalibration:
     """Run `stage` on every SegmentInput, compare to GT, compute trust.
 
-    Trust framework (`cascade_trust_framework.md`):
+    Trust framework:
     - Class match against GT outcome class is always required.
     - For UNTOUCHED commits: GT OKF lives in the new-segment /
       transition-zone semantic space; we walk it back into the
       current segment's clean zone via
       `walked_back_gt_okf = min(gt_okf, seg_end - transition_zone_half)`.
-      Per the user's logic: if outcome was knowable at GT_OKF, it was
+      The logic: if outcome was knowable at GT_OKF, it was
       knowable at every earlier frame in the current segment too. The
       walked-back value sits in clean territory and CAN be compared
       frame-for-frame to the cascade OKF.

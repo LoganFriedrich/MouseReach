@@ -2,8 +2,8 @@
 
 WHY: recordings that exist only in a retired pipeline folder are invisible to
 every machine that could process them, and the old storage cannot be retired
-while they are there (found 2026-10-21: a cohort's Flat-tray sessions, cut and
-uncut, existed nowhere else). The inventory must never bring in what the
+while they are there (e.g. a cohort's Flat-tray sessions, cut and uncut, that
+exist nowhere else). The inventory must never bring in what the
 pipeline already has under another name or in another form, and a copy must be
 verified before the pipeline can see it.
 """
@@ -50,7 +50,7 @@ def test_names_are_read_as_recordings_cut_videos_or_neither():
     assert rec["sessions"] == ["20260716_CNT0501_F1", "20260716_CNT0502_F1"]  # blanks skipped
     assert ls.classify("20260716_CNT0501_F1")["kind"] == "cut"
     assert ls.classify(REC + "_P4(LONG)")["kind"] == "other"
-    assert ls.classify("20251222_CNT0401,CNT407,CNT0000_P1")["bad_ids"] == ["CNT407"]
+    assert ls.classify("20250108_CNT0101,CNT105,CNT0000_P1")["bad_ids"] == ["CNT105"]
 
 
 def test_what_the_pipeline_already_has_is_never_missing(tmp_path, monkeypatch):
@@ -92,18 +92,18 @@ def test_what_the_pipeline_already_has_is_never_missing(tmp_path, monkeypatch):
 def test_names_a_person_must_look_at_are_left_alone(tmp_path, monkeypatch):
     old, nas, _ = _setup(tmp_path, monkeypatch)
     _put(old / "x" / (REC + "_P4(LONG).mkv"))
-    _put(old / "x" / "20251222_CNT0401,CNT407,CNT0000_P1.mkv")
+    _put(old / "x" / "20250108_CNT0101,CNT105,CNT0000_P1.mkv")
     _put(old / "x" / "20210924_ABS2_13-15_f.mp4")
     rows = _rows(old, nas)
     assert rows[REC + "_P4(LONG).mkv"]["status"] == ls.NOT_PIPELINE_NAME
-    assert rows["20251222_CNT0401,CNT407,CNT0000_P1.mkv"]["status"] == ls.BAD_ID
+    assert rows["20250108_CNT0101,CNT105,CNT0000_P1.mkv"]["status"] == ls.BAD_ID
     assert rows["20210924_ABS2_13-15_f.mp4"]["status"] == ls.NOT_PIPELINE_NAME
     assert not any(r["destination"] for r in rows.values())
 
 
 def test_recordings_come_in_and_cut_videos_never_do(tmp_path, monkeypatch):
     # WHY: the input to MouseReach is the recording; the pipeline's own cut
-    # records which recording each single came from (2026-10-23).
+    # records which recording each single came from.
     old, nas, d = _setup(tmp_path, monkeypatch)
     # Pillar recording, nothing cut: the intake
     _put(old / "a" / "20250102_CNT0101,CNT0102,CNT0000_P1.mkv")
@@ -188,7 +188,7 @@ def test_overlapping_roots_are_refused(tmp_path, monkeypatch):
 
 
 def test_copies_in_several_old_folders_are_brought_in_once(tmp_path, monkeypatch):
-    """12 recordings sat in two old folders at once (2026-10-22). Same size:
+    """Recordings can sit in two old folders at once. Same size:
     one video, brought in once, and "only here" reaches zero. Different
     sizes: a person decides which is right."""
     old, nas, d = _setup(tmp_path, monkeypatch)
@@ -216,18 +216,18 @@ def test_copies_in_several_old_folders_are_brought_in_once(tmp_path, monkeypatch
 
 
 def test_a_recording_renamed_since_it_was_copied_is_not_brought_in(tmp_path, monkeypatch):
-    """A person corrected an animal id on the pipeline's copy (CNT1012 -> CNT0112,
-    2026-10-16); the old storage still has the file under the old name. Same
+    """A person corrected an animal id on the pipeline's copy (CNT0801 -> CNT0108);
+    the old storage still has the file under the old name. Same
     day, tray and size: it is the same recording, and bringing it in would
     recreate the animal the correction removed."""
     old, nas, d = _setup(tmp_path, monkeypatch)
-    fixed = "20250804_CNT0102,CNT0103,CNT0110,CNT0112_E1.mkv"
+    fixed = "20250107_CNT0102,CNT0103,CNT0110,CNT0108_E1.mkv"
     _put(d["MULTI_ANIMAL_SOURCE"] / fixed, b"same bytes")
-    _put(old / "a" / "20250804_CNT0102,CNT0103,CNT0110,CNT1012_E1.mkv", b"same bytes")
+    _put(old / "a" / "20250107_CNT0102,CNT0103,CNT0110,CNT0801_E1.mkv", b"same bytes")
     # same day and tray but another size: a different recording, brought in
-    _put(old / "a" / "20250804_CNT0102,CNT0103,CNT0110,CNT1012_E2.mkv", b"other")
+    _put(old / "a" / "20250107_CNT0102,CNT0103,CNT0110,CNT0801_E2.mkv", b"other")
     rows = _rows(old, nas)
-    r = rows["20250804_CNT0102,CNT0103,CNT0110,CNT1012_E1.mkv"]
+    r = rows["20250107_CNT0102,CNT0103,CNT0110,CNT0801_E1.mkv"]
     assert r["status"] == ls.RENAMED_ON_PIPELINE and r["destination"] == ""
     assert r["same_as"] == fixed
-    assert rows["20250804_CNT0102,CNT0103,CNT0110,CNT1012_E2.mkv"]["status"] == ls.ONLY_HERE
+    assert rows["20250107_CNT0102,CNT0103,CNT0110,CNT0801_E2.mkv"]["status"] == ls.ONLY_HERE

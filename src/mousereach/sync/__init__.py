@@ -2,7 +2,7 @@
 """
 MouseReach Database Sync Module
 
-Automatically syncs pipeline results to the central connectome database.
+Automatically syncs pipeline results to the (optional) central database.
 
 Usage:
     # One-time sync

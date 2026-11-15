@@ -9,7 +9,7 @@ Question this stage answers:
 If yes -> COMMIT displaced_sa. The pellet was demonstrably off the
 pillar and at rest in the SA at the end of the segment, regardless of
 what happened pre-reach. Mirror of Stage 1's "position-never-changed"
-applied to the END of the segment (the user's 2026-05-02 framing).
+applied to the END of the segment.
 
 Why this stage exists:
     Stage 8 (formerly the only displaced_sa stage) requires the pellet
@@ -85,7 +85,7 @@ ON_PILLAR_RADII = 1.0           # within 1 radius = on pillar
 MIN_ON_PILLAR_FRAMES = 5        # need at least this many on-pillar frames
                                 # somewhere in clean zone
 
-# Causal bout selection (user 2026-05-02 algorithm):
+# Causal bout selection:
 #   "For a reach to have displaced a pellet from the pillar, the
 #    pellet has to have been on the pillar BEFORE that reach and off
 #    AFTER it."
@@ -393,7 +393,7 @@ class Stage7PelletSettledOffPillarLate(Stage):
                 features=feats,
             )
 
-        # CAUSAL BOUT (user 2026-05-02): "for a reach to have displaced
+        # CAUSAL BOUT: "for a reach to have displaced
         # the pellet, the pellet has to have been on the pillar BEFORE
         # the reach and off AFTER it." For each bout, check pre-bout
         # on-pillar AND post-bout off-pillar windows. First bout (in
@@ -445,7 +445,7 @@ class Stage7PelletSettledOffPillarLate(Stage):
         px_conf = np.where(confident_pellet, pellet_x, np.nan)
         py_conf = np.where(confident_pellet, pellet_y, np.nan)
 
-        # CAUSAL REACH (user 2026-05-03): the right anchor is the FIRST
+        # CAUSAL REACH: the right anchor is the FIRST
         # frame where the pellet is observably off-pillar AND no paw
         # is past the y-line. If pellet is off-pillar between reaches,
         # the displacement has happened -- walk back to the most

@@ -1,6 +1,6 @@
 """A backup run says what failed, skips test residue, and fails loudly.
 
-WHY: from 2026-10-13 one folder failed to back up every night. The log said
+WHY: one folder could fail to back up every night. The log said
 only "exit code 11" (robocopy ran with its file listing off and its error
 lines were never logged), and `--once` exited 0 anyway, so the scheduled task
 showed success to every check that reads it. The failures were pytest's
@@ -13,9 +13,9 @@ from types import SimpleNamespace
 import mousereach.watcher.backup as b
 
 ROBOCOPY_OUT = """
-2026/10/22 04:20:57 ERROR 5 (0x00000005) Copying File Y:\\src\\locked.db
+2026/10/22 04:20:57 ERROR 5 (0x00000005) Copying File S:\\src\\locked.db
 Access is denied.
-2026/10/22 04:20:58 ERROR 32 (0x00000020) Copying File Y:\\src\\busy.csv
+2026/10/22 04:20:58 ERROR 32 (0x00000020) Copying File S:\\src\\busy.csv
 The process cannot access the file because it is being used by another process.
 """
 
@@ -23,9 +23,9 @@ The process cannot access the file because it is being used by another process.
 def test_a_failed_copy_is_named_in_the_log(monkeypatch, caplog):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(
         returncode=11, stdout=ROBOCOPY_OUT, stderr=""))
-    w = b.BackupWatcher("Y:/src", "X:/dst", sync_dirs=["src"])
+    w = b.BackupWatcher("S:/src", "B:/dst", sync_dirs=["src"])
     with caplog.at_level(logging.WARNING, logger=b.logger.name):
-        assert w._sync_dir("Y:/src", "X:/dst") == (0, 1)
+        assert w._sync_dir("S:/src", "B:/dst") == (0, 1)
     text = caplog.text
     assert "locked.db" in text and "Access is denied." in text
     assert "busy.csv" in text and "being used by another process" in text
@@ -35,17 +35,17 @@ def test_test_residue_is_never_copied(monkeypatch):
     seen = {}
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: seen.setdefault("cmd", cmd)
                         and SimpleNamespace(returncode=1, stdout="", stderr=""))
-    b.BackupWatcher("Y:/src", "X:/dst")._sync_dir("Y:/src", "X:/dst")
+    b.BackupWatcher("S:/src", "B:/dst")._sync_dir("S:/src", "B:/dst")
     xd = seen["cmd"][seen["cmd"].index("/XD") + 1: seen["cmd"].index("/XF")]
     assert "pytest-cache-files-*" in xd and ".pytest_cache" in xd
 
 def test_a_file_still_being_written_is_never_copied(monkeypatch):
-    # The nightly export writes each CSV as .tmp and renames it; copying one
-    # mid-rename failed the sync on 2026-11-03.
+    # An export may write each CSV as .tmp and rename it; copying one
+    # mid-rename failed the sync.
     seen = {}
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: seen.setdefault("cmd", cmd)
                         and SimpleNamespace(returncode=1, stdout="", stderr=""))
-    b.BackupWatcher("Y:/src", "X:/dst")._sync_dir("Y:/src", "X:/dst")
+    b.BackupWatcher("S:/src", "B:/dst")._sync_dir("S:/src", "B:/dst")
     assert "*.tmp" in seen["cmd"][seen["cmd"].index("/XF") + 1:]
 
 

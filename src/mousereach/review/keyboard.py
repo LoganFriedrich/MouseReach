@@ -1,8 +1,8 @@
 """Keys in the review windows: what you type stays in the panel, and the
 video's keys are the review tool's keys.
 
-WHY (Logan, 2026-10-24: "when I type numbers into text fields in the widgets
-... sometimes keybinds go off"). Two things sent typed keys to the wrong place:
+WHY: typing numbers into text fields in the widgets sometimes set off key
+bindings. Two things sent typed keys to the wrong place:
 
 1. **A key a panel control does not use went to the video.** napari's dock
    hands every key the docked panel leaves unused to the viewer's shortcuts

@@ -1067,7 +1067,7 @@ class PipelineDashboard(QWidget):
         row.addWidget(self._lock_cohort_edit)
         row.addWidget(QLabel("Label:"))
         self._lock_label_edit = QLineEdit()
-        self._lock_label_edit.setPlaceholderText("e.g. PNAS_2026")
+        self._lock_label_edit.setPlaceholderText("e.g. PAPER_2026")
         row.addWidget(self._lock_label_edit)
         lay.addLayout(row)
 

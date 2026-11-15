@@ -1,11 +1,11 @@
 """A reviewer's ignore window takes the reaches it touches out of the
 kinematics.
 
-WHY (2026-10-30): the review tool's "Ignore windows" box marks frame ranges
+WHY: the review tool's "Ignore windows" box marks frame ranges
 where something other than a reach moved the pellet. The answer was saved and
 carried onto the segment as ``abnormal_ranges`` -- and read by nothing, so the
-windows changed no measurement (ISSUES.md 2026-10-27, item 2). Logan,
-2026-10-30: a reach overlapping a window is LEFT OUT of the measurements.
+windows changed no measurement. Now a reach overlapping a window is LEFT OUT
+of the measurements.
 """
 from mousereach.kinematics.core.feature_extractor import split_reaches_by_ignore_windows
 

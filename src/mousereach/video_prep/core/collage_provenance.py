@@ -156,8 +156,8 @@ def review_applied(manifest: Optional[dict], review_path, review_mtime=None,
     module compared the review file's modified time with the features file's,
     while the re-run scan had moved to content: a review saved seconds after
     the run that applied it looked unapplied here forever, so its video never
-    counted as complete and its recording was never retired (196 recordings
-    sat in the intake, every one of their reviews applied).
+    counted as complete and its recording was never retired (recordings sat
+    in the intake with every one of their reviews applied).
 
       1. the manifest's ``applied_review`` stamp -- the sha256 of the review
          the run applied -- against the review file's content: no clock;
@@ -215,8 +215,8 @@ def _review_pending(stem: str, manifest_dir: Path, manifest: Optional[dict] = No
 
 # Parsed processing manifests, kept for the life of the process and reused
 # while a manifest's modified time is unchanged. WHY: the retirement pass read
-# all ~4,600 manifests in Analyzed every time it ran -- 14 minutes on 2026-10-21
-# with a slow share, while the processing server's work loop waited.
+# every manifest in Analyzed every time it ran -- many minutes with a slow
+# share, while the processing node's work loop waited.
 _MANIFEST_CACHE: Dict[str, tuple] = {}
 
 
@@ -305,8 +305,8 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
             _MANIFEST_CACHE[str(mp)] = (mtime, manifest)
         # The re-run scan's version rules (watcher/reprocessor.py), so that a
         # video it will never re-run counts as complete here -- the two used to
-        # disagree, and 135 recordings whose videos were all analysed never
-        # retired (2026-10-24):
+        # disagree, and recordings whose videos were all analysed never
+        # retired:
         #   * Easy/Flat trays are never re-run for a version change; they need
         #     only their session file (reaches + attention), so they are done
         #     once it exists;

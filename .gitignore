@@ -113,7 +113,7 @@ historical_manual_data/figures/recovery_M.png
 historical_manual_data/figures/recovery_OptD.png
 historical_manual_data/figures/learner_criterion_analysis.png
 
-# Agent/personal notes -- never published. See CLAUDE.md on notes placement.
+# Agent/personal notes -- never published.
 .notes/
 
 # Machine-specific profiles: hostnames + drive layout. Never published.

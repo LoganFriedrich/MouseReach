@@ -330,9 +330,9 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
         # applied yet?" used to be answered by comparing two mtimes stamped by
         # two different clocks -- SMB-written reviews carry the NAS server's
         # clock while archived features keep the local clock (copy2 preserves
-        # it) -- and a ~20-minute NAS clock skew made every fresh re-run look
+        # it) -- and a NAS clock skew of minutes made every fresh re-run look
         # staler than the review it had just applied, reprocessing reviewed
-        # videos in a loop all day (2026-09-09). No clock can break a content
+        # videos in a loop. No clock can break a content
         # stamp. An absent stamp means this run applied no review.
         if review_path is not None:
             try:

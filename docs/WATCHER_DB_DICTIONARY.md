@@ -7,9 +7,8 @@ PIPELINE_AS_BUILT.md, "Update 2026-09-15")
 WHY THIS EXISTS
 
 Knowing how the pipeline works should never require reading the source or
-asking a person. It did. A check of whether roughly 1,100 finished CNT videos
-needed re-posing went wrong for most of a night because three things were
-written down nowhere: which file on disk is live state, what `reprocess_scope`
+asking a person. It did. A check of whether finished videos needed re-posing
+once went wrong because three things were written down nowhere: which file on disk is live state, what `reprocess_scope`
 means, and that `archived` does not mean "fully analyzed". All three are
 one-line facts. This file is those lines.
 
@@ -68,7 +67,7 @@ state it set was lost).
       "Update 2026-09-15"):
         * No claim, no crop. A node that cannot reach this table crops nothing.
           WHY: without a claim two GPU nodes crop the same collage and pose
-          every child twice (~14 GPU-minutes each).
+          every child twice.
         * A 'cropping' row another host has held for more than 24 h
           (COLLAGE_CLAIM_STALE_S) is taken over -- but NOT while any child of
           that collage has a row in pipeline_videos. WHY: a stale claim does not
@@ -102,7 +101,7 @@ For reprocessing questions the processing server's live database decides. It is
 the only role with `reprocesses_partial` true (orchestrator.py:433); GPU nodes
 set it false (:728), pass `full_only=True`, and therefore mark only the scope
 they can drain. `handles_reprocessing` does NOT separate the roles: the GPU
-role sets it from `also_process` (:756), true on all three lab GPU machines.
+role sets it from `also_process` (:756).
 
 
 ## 2. TABLE: videos
@@ -111,7 +110,7 @@ Identity and provenance
 
   id                      autoincrement row id; not the video's identity
   video_id                the identity: YYYYMMDD_ANIMALID_TRAY, for example
-                          20250316_CNT0315_P3. UNIQUE. Two files with this same
+                          20250101_CNT0101_P1. UNIQUE. Two files with this same
                           stem are the same video.
   collage_id              filename of the multi-animal video this was cut from
   date, animal_id, experiment, cohort, subject, tray_type, tray_position

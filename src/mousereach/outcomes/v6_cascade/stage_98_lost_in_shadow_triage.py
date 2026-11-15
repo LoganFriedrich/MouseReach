@@ -8,7 +8,7 @@ Question this stage answers:
     specific reason (instead of generic catch-all triage in Stage 99)."
 
 Why:
-    Per GT-er hand annotations on the v4.0.0 walkthrough abnormal
+    Per GT-er hand annotations on reviewed abnormal
     cases: "no algorithm in the outcome layer can reasonably classify
     them correctly given the DLC tracking limitations (dirty tray
     artifacts, dark SA / DLC visibility floor, video artifacts)...
@@ -235,9 +235,8 @@ class Stage98LostInShadowTriage(Stage):
         # Retrieval-plausibility check: defer if any in-mouth track
         # signal (pellet briefly observed ABOVE slit-y-line) is
         # present. In-mouth tracks indicate retrieval, not shadow-
-        # loss. Per user 2026-05-03: "for retrievals we would actually
-        # expect that the pellet disappear so this triager catching
-        # retrieved is bad".
+        # loss. For retrievals the pellet is expected to disappear, so
+        # this triager catching retrieved is bad.
         above_slit_arr = (
             (pellet_lk >= PELLET_LK_OFF_PILLAR)
             & (pellet_y_arr < slit_y_line_arr - 5)
