@@ -1661,15 +1661,35 @@ def session_key(video_stem: str) -> str:
 # INDEX_LOCK_STALE_S old, measured by the file server's own clock: its age is
 # the modified time of a probe file written now minus the lock's modified time,
 # both stamped by the server, so machines whose clocks disagree cannot break a
-# live lock early. A writer that cannot get the lock within INDEX_LOCK_WAIT_S
-# gives up with IndexLockBusy. For the index, the review itself is already
-# saved by then (both copies are written before the index) and the window says
-# the index was not updated; the video's index entries are rewritten on its
-# next save.
+# live lock early. A waiter does not write a probe file on every poll: it
+# probes once to learn how far its own clock is from the server's, estimates
+# from that, and probes again only when the estimate says the lock is stale or
+# the last probe is SHARE_CLOCK_REFRESH_S old (_ShareClock).
+#
+# Breaking a stale lock must never remove a LIVE one. Between looking at the
+# stale lock and removing it, another waiter may break it too and a new
+# holder take a fresh lock under the same name. So the breaker reads the
+# lock's token BEFORE looking at its age, moves the lock aside under a name of
+# its own (one rename: only one breaker can win it), and then checks that what
+# it moved is still the file it judged stale -- same token, same modified
+# time, same size. If not, it moved a fresh holder's lock and renames it back.
+# Residual limit, accepted: if in that instant a THIRD writer has created a
+# new lock, the rename back is refused, the fresh holder has lost its lock and
+# two writers can be inside at once (logged at ERROR). That needs a lock left
+# by a dead window, two windows breaking it at the same instant and a third
+# arriving within the same few milliseconds.
+#
+# A writer that cannot get the lock within INDEX_LOCK_WAIT_S gives up with
+# IndexLockBusy. For the index, the review itself is already saved by then
+# (both copies are written before the index) and the window says the index
+# was not updated; the video's index entries are rewritten on its next save.
 
 INDEX_LOCK_WAIT_S = 60.0
 INDEX_LOCK_STALE_S = 600.0
 INDEX_LOCK_POLL_S = 0.25
+# How often (seconds) a waiter re-learns the server clock's offset even when
+# its estimate says the lock is still fresh.
+SHARE_CLOCK_REFRESH_S = 30.0
 
 
 class IndexLockBusy(RuntimeError):
@@ -1709,19 +1729,60 @@ def _share_now(folder: Path) -> Optional[float]:
             pass
 
 
-def _break_if_stale(lock: Path, stale_s: float) -> bool:
+class _ShareClock:
+    """The file server's 'now', without a probe file on every poll.
+
+    One probe (_share_now) gives the offset between this machine's clock and
+    the server's; later readings are this machine's clock plus that offset.
+    A decision to break a lock is always made on a FRESH probe (confirm), so
+    a drifting offset can delay a break but never cause an early one."""
+
+    def __init__(self, folder: Path):
+        self.folder = Path(folder)
+        self.offset: Optional[float] = None
+        self.probed_at: Optional[float] = None   # time.monotonic() of last probe
+
+    def confirm(self) -> Optional[float]:
+        now = _share_now(self.folder)
+        if now is not None:
+            self.offset = now - time.time()
+            self.probed_at = time.monotonic()
+        return now
+
+    def just_probed(self) -> bool:
+        return (self.probed_at is not None
+                and time.monotonic() - self.probed_at < 1.0)
+
+    def estimate(self) -> Optional[float]:
+        if (self.offset is None or self.probed_at is None
+                or time.monotonic() - self.probed_at > SHARE_CLOCK_REFRESH_S):
+            return self.confirm()
+        return time.time() + self.offset
+
+
+def _break_if_stale(lock: Path, stale_s: float,
+                    clock: Optional[_ShareClock] = None) -> bool:
     """Remove ``lock`` if its holder is gone (see the block comment above).
     True when the lock is gone afterwards, so the caller may try again."""
+    # The token is read BEFORE the age. Read after it, a fresh holder's token
+    # (taken in the gap) would be compared with itself below and its live
+    # lock removed.
+    stale_token = _lock_token(lock)
     try:
         st = os.stat(str(lock))
     except FileNotFoundError:
         return True
     except OSError:
         return False
-    now = _share_now(lock.parent)
+    clock = clock or _ShareClock(lock.parent)
+    est = clock.estimate()
+    if est is None or est - st.st_mtime < stale_s:
+        return False
+    # Judged stale on an estimate: decide on a fresh reading of the server
+    # clock (the estimate itself, when it was just probed).
+    now = est if clock.just_probed() else clock.confirm()
     if now is None or now - st.st_mtime < stale_s:
         return False
-    stale_token = _lock_token(lock)
     aside = lock.with_name(".%s.broken.%s.tmp" % (lock.name, uuid.uuid4().hex))
     try:
         os.rename(str(lock), str(aside))
@@ -1729,14 +1790,29 @@ def _break_if_stale(lock: Path, stale_s: float) -> bool:
         return True
     except OSError:
         return False
-    if _lock_token(aside) != stale_token:
-        # Another writer broke the stale lock and took a fresh one between our
-        # look and our rename: put theirs back.
+    try:
+        ast = os.stat(str(aside))
+        same = (ast.st_mtime == st.st_mtime and ast.st_size == st.st_size
+                and _lock_token(aside) == stale_token)
+    except OSError:
+        same = False
+    if not same:
+        # What we moved is not the lock we judged stale: another waiter broke
+        # that one and a new holder took a fresh lock in between. Put it back.
         try:
             os.rename(str(aside), str(lock))
         except OSError as e:
-            logger.warning("Could not restore the lock %s taken by another "
-                           "writer (%s)", lock, e)
+            # The residual limit in the block comment: a third writer already
+            # holds a new lock, and the holder whose lock we moved cannot be
+            # told. Its moved lock is deleted (it guards nothing now).
+            logger.error("Lock on %s: moved a live lock aside while breaking a "
+                         "stale one and could not put it back (%s); two writers "
+                         "may be updating it at once",
+                         lock.name[:-len(".lock")], e)
+            try:
+                os.unlink(str(aside))
+            except OSError:
+                pass
         return False
     try:
         os.unlink(str(aside))
@@ -1749,13 +1825,14 @@ def _break_if_stale(lock: Path, stale_s: float) -> bool:
 
 def _take_lock(lock: Path, token: str) -> None:
     deadline = time.monotonic() + INDEX_LOCK_WAIT_S
+    clock = _ShareClock(lock.parent)
     body = json.dumps({"token": token, "host": socket.gethostname(),
                        "pid": os.getpid(), "taken_at": _get_timestamp()}).encode("utf-8")
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            if _break_if_stale(lock, INDEX_LOCK_STALE_S):
+            if _break_if_stale(lock, INDEX_LOCK_STALE_S, clock):
                 continue
             if time.monotonic() >= deadline:
                 raise IndexLockBusy(

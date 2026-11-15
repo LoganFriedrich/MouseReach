@@ -600,3 +600,65 @@ def test_leftover_temps_are_removed_even_when_read_only(tmp_path):
     finally:
         if left.exists():
             os.chmod(left, stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_breaking_a_stale_lock_never_removes_a_fresh_holders_lock(tmp_path, monkeypatch):
+    """Interleaving: this waiter judges the lock stale; while it reads the
+    server clock, another waiter breaks the same stale lock and a new holder
+    takes a fresh one under the same name. The fresh holder's lock must
+    survive -- removing it lets two writers in at once."""
+    from mousereach.review import causal_review_io as cio
+    lock = tmp_path / "causal_review_index.json.lock"
+    lock.write_text(json.dumps({"token": "dead-holder"}), encoding="utf-8")
+    old = time.time() - cio.INDEX_LOCK_STALE_S - 60
+    os.utime(lock, (old, old))
+    real_now = cio._share_now
+    swapped = []
+
+    def share_now_with_a_racing_breaker(folder):
+        if not swapped:
+            swapped.append(True)
+            lock.unlink()                                   # the other breaker
+            lock.write_text(json.dumps({"token": "fresh-holder"}),
+                            encoding="utf-8")               # the new holder
+        return real_now(folder)
+
+    monkeypatch.setattr(cio, "_share_now", share_now_with_a_racing_breaker)
+    assert cio._break_if_stale(lock, cio.INDEX_LOCK_STALE_S) is False
+    assert swapped
+    assert lock.exists()
+    assert json.loads(lock.read_text(encoding="utf-8"))["token"] == "fresh-holder"
+    assert [p.name for p in tmp_path.iterdir()] == [lock.name]
+
+
+def test_a_waiter_does_not_probe_the_share_on_every_poll(tmp_path, monkeypatch):
+    """Waiting on a live lock reads the server clock once (then estimates),
+    not by creating and deleting a probe file every 0.25 s."""
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_WAIT_S", 0.6)
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    lock = tmp_path / "causal_review_index.json.lock"
+    lock.write_text(json.dumps({"token": "live"}), encoding="utf-8")
+    calls = []
+    real_now = cio._share_now
+    monkeypatch.setattr(cio, "_share_now", lambda f: (calls.append(1), real_now(f))[1])
+    with pytest.raises(cio.IndexLockBusy):
+        cio._locked_update(tmp_path / "causal_review_index.json", lambda d: None)
+    assert 1 <= len(calls) <= 2
+    assert lock.exists()
+
+
+def test_a_lock_stale_only_by_the_local_clock_is_kept(tmp_path, monkeypatch):
+    """The estimate never breaks on its own: a lock that only LOOKS stale
+    by this machine's clock, but is fresh by the server's, is kept."""
+    from mousereach.review import causal_review_io as cio
+    lock = tmp_path / "x.json.lock"
+    lock.write_text(json.dumps({"token": "t"}), encoding="utf-8")
+    # This machine's clock runs far ahead of the server's: by the local clock
+    # the lock is stale, by the server's it was made just now.
+    real_now = cio._share_now
+    monkeypatch.setattr(cio, "_share_now", lambda f: real_now(f))
+    monkeypatch.setattr(cio.time, "time", lambda: os.stat(lock).st_mtime + 10 * cio.INDEX_LOCK_STALE_S)
+    clock = cio._ShareClock(tmp_path)
+    assert cio._break_if_stale(lock, cio.INDEX_LOCK_STALE_S, clock) is False
+    assert lock.exists()
