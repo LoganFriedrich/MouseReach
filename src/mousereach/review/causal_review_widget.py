@@ -3323,6 +3323,7 @@ The notes box travels with the video.
         timestamp = _get_timestamp()
 
         # Save per-video file
+        save_problems: List[str] = []
         mb = getattr(self, "_manual_boundaries", None)
         manual_seg = ({"boundaries": list(mb), "by": reviewer, "at": timestamp,
                        "n_segments": max(0, len(mb) - 1)} if mb else None)
@@ -3335,7 +3336,12 @@ The notes box travels with the video.
             manual_segmentation=manual_seg,
             unmatched_answers=getattr(self, "_unmatched_answers", None),
             other_copies=[self.video_path.parent] if self.video_path else (),
+            problems=save_problems,
         )
+        # A durable-copy failure does not stop the save (refusing would lose
+        # the answers outright), but the reviewer must see it, not only the log.
+        for msg in save_problems:
+            show_warning(msg)
 
         # Update corpus index
         try:

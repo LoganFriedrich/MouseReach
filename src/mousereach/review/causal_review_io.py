@@ -507,6 +507,7 @@ def save_causal_review(
     manual_segmentation: Optional[Dict[str, Any]] = None,
     unmatched_answers: Optional[List[Dict[str, Any]]] = None,
     other_copies=(),
+    problems: Optional[List[str]] = None,
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
 
@@ -543,6 +544,12 @@ def save_causal_review(
         Earlier answers whose frames match no current segment
         (``restore_review_for_segments``). Kept under ``UNMATCHED_ANSWERS_KEY``
         so a re-cut never deletes what a person decided; nothing applies them.
+    problems : list, optional
+        A failure this save survives -- the durable copy could not be
+        written, so the review is saved only in ``output_dir`` -- is appended
+        here as a sentence for the person, besides being logged. WHY: the
+        review window shows these; a log line alone was never seen, and the
+        reviewer went on believing the review was safely kept.
 
     Returns
     -------
@@ -596,6 +603,12 @@ def save_causal_review(
                 "%s: DURABLE review copy could not be written to %s (%s). The "
                 "review is saved only at %s, which a reprocess can destroy. "
                 "Copy it somewhere safe.", video_stem, durable, e, output_dir)
+            if problems is not None:
+                problems.append(
+                    "The lasting copy of this review could not be written (%s: "
+                    "%s). It is saved only in %s, which reprocessing can "
+                    "replace. Save again; if this keeps happening, tell whoever "
+                    "looks after the pipeline." % (durable.parent, e, output_dir))
 
     out_path = output_dir / f"{video_stem}_causal_review.json"
     _write_json(out_path, doc)

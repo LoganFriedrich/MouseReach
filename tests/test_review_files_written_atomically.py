@@ -703,3 +703,24 @@ def test_a_short_wait_gives_up_on_the_index_quickly_and_names_the_lock(
                                 lock_wait_s=0.2)
     assert time.monotonic() - t0 < 5
     assert str(lock) in str(e.value)
+
+
+def test_a_failed_durable_copy_is_reported_for_the_window(review_roots, monkeypatch):
+    """The durable copy failing does not stop the save, but it must reach the
+    person (the window shows ``problems``), not only a log nobody reads."""
+    from mousereach.review import causal_review_io as cio
+    durable = cio.durable_review_path(VID)
+    real_write = cio._write_json
+
+    def refuse_durable(path, data):
+        if Path(path) == durable:
+            raise OSError(5, "share unavailable (simulated)")
+        return real_write(path, data)
+
+    monkeypatch.setattr(cio, "_write_json", refuse_durable)
+    problems = []
+    out = cio.save_causal_review(VID, review_roots.bundle, [_seg_record(1)], {},
+                                 problems=problems)
+    assert out.exists() and not durable.exists()
+    assert len(problems) == 1
+    assert str(review_roots.bundle) in problems[0]
