@@ -699,7 +699,10 @@ class BaseOrchestrator:
         prev = self._score_waits.get(video_id) or {}
         stamp = hand_scores.scores_file_stamp()
         try:
-            v = hand_scores.check(video_id, folder)
+            try:
+                v = hand_scores.check(video_id, folder)
+            except hand_scores.PelletNumbersUnknown as e:
+                return self._route_pellet_numbers_unknown(video_id, folder, e, prev)
             if v.status == hand_scores.WAITING:
                 row = self.db.get_video(video_id) or {}
                 # The ready time MUST be a column this program writes itself
@@ -750,6 +753,35 @@ class BaseOrchestrator:
         if self._score_waits.pop(video_id, None) is not None:
             self._write_score_attention()
         return True
+
+    def _route_pellet_numbers_unknown(self, video_id: str, folder: Path, err,
+                                      prev: dict) -> bool:
+        """The hand-score check found that a person said a segment is another
+        pellet and the current cuts still number it otherwise
+        (hand_scores.PelletNumbersUnknown). Send the video to manual
+        segmentation -- the re-segmentation queue -- with that reason, and stop
+        this run (returns False, like a hold).
+
+        WHY route and not hold: a problem goes to the review queue of the step
+        that has it, and this one is in the cuts. Held here in Processing, the
+        video waited for the next scores file, where no review tool could
+        reach it and nothing could change the answer. In the queue the
+        segmentation fixer lists it (its cuts were not set since it arrived),
+        a person sets or confirms them, and the video re-runs from there."""
+        from mousereach.watcher.review_gate import route_deep_review
+        reason = "segmentation: %s" % err
+        mp4 = Path(folder) / f"{video_id}.mp4"
+        route_deep_review(video_id, folder, reason, db=self.db,
+                          extra_sources=[mp4] if mp4.is_file() else None)
+        self.db.log_step(video_id, 'hand_score_check', 'routed', message=reason)
+        logger.info(f"{video_id}: pellet numbers in doubt -- sent to manual "
+                    f"segmentation ({err})")
+        if not hasattr(self, "_routed_at_precheck"):
+            self._routed_at_precheck = set()
+        self._routed_at_precheck.add(video_id)
+        if self._score_waits.pop(video_id, None) is not None or prev:
+            self._write_score_attention()
+        return False
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         self.config = config
@@ -4647,6 +4679,10 @@ class DLCOrchestrator(BaseOrchestrator):
             # with every other open question; a session whose scores have not
             # come is held here, in Processing, until they do.
             if not self._hand_score_precheck(video_id, processing_dir):
+                if video_id in getattr(self, "_routed_at_precheck", ()):
+                    # Sent to manual segmentation: the bundle took the mp4.
+                    self._retire_claim_after_hold(video_id)
+                    return True
                 logger.info(f"Local pipeline held for hand scores: {video_id}")
                 return True
 
@@ -6504,6 +6540,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # have not come is held here -- 'processing', files in place -- and
         # this run stops: no gate, no kinematics, no filing until it goes on.
         if not self._hand_score_precheck(video_id, self.processing_dir):
+            if video_id in getattr(self, "_routed_at_precheck", ()):
+                return True     # sent to manual segmentation (logged there)
             logger.info(f"Pipeline held for hand scores: {video_id} "
                         f"({pipeline_duration:.1f}s; triage and kinematics wait)")
             return True

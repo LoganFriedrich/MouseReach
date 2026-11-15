@@ -2321,10 +2321,15 @@ What each answer does now:
   (`true_segment_num` with `segmentation_wrong`, written by the review tool's old mislabel box) and
   the current cuts still number that stretch of frames otherwise. Segment N is then not known to be
   hand pellet N for ANY segment, so nothing is compared: the check raises `PelletNumbersUnknown` and
-  the video is held exactly as for a check that cannot run (red, with the reason in the attention
-  list). The record is matched to the current cuts by its frames (`hand_scores.unresolved_mislabels`):
-  once a person's re-cut puts those frames in the segment carrying the number they gave, the
-  correction is resolved and the check compares again. Pellets a person answered are never compared,
+  the watcher sends the video to MANUAL SEGMENTATION -- the re-segmentation queue -- with the reason
+  "segmentation: a reviewer said segment(s) N show a different pellet ..." and stops the run
+  (`_route_pellet_numbers_unknown`; the database row becomes `deep_review`). The problem is in the
+  cuts, so that is the step's review queue; it used to hold the video in Processing, where no review
+  tool could reach it. In the queue the segmentation fixer lists it, and saving the cuts releases it
+  (the reason names segmentation). The record is matched to the current cuts by its frames
+  (`hand_scores.unresolved_mislabels`): once a person's re-cut puts those frames in the segment
+  carrying the number they gave -- or a person saves cuts AFTER the record was written, the newest
+  human statement about the cuts -- the correction is settled and the check compares again. Pellets a person answered are never compared,
   so a video whose every pellet is answered is not held. WHY: the check paired segment N with hand
   pellet N and never read `true_segment_num`, so after a mislabel it could compare a pellet with
   another pellet's hand score and flag, or pass, the wrong one.

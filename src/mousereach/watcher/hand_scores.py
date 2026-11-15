@@ -44,9 +44,11 @@ Segment N is compared with hand pellet N only while nothing says the cuts
 number the pellets wrongly. When a review record says a segment is really
 another pellet (true_segment_num) and the current cuts, matched by frames,
 still number it otherwise, the numbering of every segment is in doubt: the
-check raises PelletNumbersUnknown and the video is held for a person, as for
-any check that cannot run, instead of comparing a pellet with another
-pellet's score. Easy and Flat trays have no pellet
+check raises PelletNumbersUnknown instead of comparing a pellet with another
+pellet's score, and the caller sends the video to manual segmentation (the
+re-segmentation queue): the problem is in the cuts, so that is the step a
+person has to fix. A person's re-cut saved after the mislabel record settles
+it -- the newest human statement about the cuts wins. Easy and Flat trays have no pellet
 outcomes and are never checked.
 
 EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO
@@ -181,9 +183,10 @@ def load(path: Path):
 class PelletNumbersUnknown(Exception):
     """A person said this video's cuts number a pellet wrongly, and the
     current cuts still disagree with them: which hand score belongs to which
-    segment is not known. Raised by check(), so the caller holds the video
-    and lists it for a person (a check that cannot run) instead of comparing
-    a pellet with another pellet's hand score."""
+    segment is not known. Raised by check() instead of comparing a pellet with
+    another pellet's hand score; the watcher then sends the video to manual
+    segmentation (the re-segmentation queue) with this message as the reason,
+    because the problem is in the cuts."""
 
 
 def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
@@ -196,7 +199,10 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     Matched by frames (causal_review_io.index_review_by_segment): after a
     person re-cut the video, the record's frames fall in the segment that now
     carries the number they gave, and the correction is resolved. A record
-    whose frames match no current segment cannot be resolved either way."""
+    whose frames match no current segment cannot be resolved either way --
+    unless a person cut the video AFTER the record was written: the newest
+    human statement about the cuts wins, so their cuts settle it (otherwise a
+    video re-cut in manual segmentation could be sent back there forever)."""
     from mousereach.review.causal_review_io import (index_review_by_segment,
                                                     segmentation_is_human,
                                                     segments_from_segmentation)
@@ -206,8 +212,14 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     if not records:
         return {}
     current = segments_from_segmentation(seg_doc) if seg_doc else None
+    from mousereach.review.causal_review_io import _when, segment_reviewer
+    cut_at = (_when((seg_doc or {}).get("corrected_at"))
+              if segmentation_is_human(seg_doc) else None)
     out: Dict[int, Optional[int]] = {}
     for rec in records:
+        said_at = _when(segment_reviewer(rec, review_doc)[1])
+        if cut_at is not None and said_at is not None and cut_at > said_at:
+            continue
         mapping, _ = index_review_by_segment(
             {"segments": [rec]}, current or None,
             human_segmentation=segmentation_is_human(seg_doc))
@@ -293,8 +305,9 @@ def check(video_id: str, folder: Path) -> Verdict:
             raise PelletNumbersUnknown(
                 "a reviewer said segment(s) %s show a different pellet, and the "
                 "current cuts still number them otherwise, so which hand score "
-                "belongs to which segment is not known; fix the cuts in the "
-                "segmentation fixer before the hand scores are compared"
+                "belongs to which segment is not known; the cuts must be set "
+                "or confirmed in manual segmentation before the hand scores are "
+                "compared"
                 % ", ".join(str(k) for k in sorted(wrong)))
     disagree = {}
     for seg in out.get("segments", []):
