@@ -18,8 +18,12 @@ So: completeness = answered segments, over total segments.
 
 A review document can exist in two places -- inside the queue bundle, and in the
 durable review store. They can disagree, because a bundle can be re-staged after a
-review was saved. Take the MORE COMPLETE of the two; a reviewer's work is not undone
-by the bundle being rebuilt.
+review was saved, and a recheck ("are you sure?") reopens a pellet in one copy only.
+Each segment is judged on the NEWEST statement a person made about it in either
+copy (``causal_review_io.merge_review_copies``, the rule the review window uses):
+an answer in one copy is not undone by a placeholder in the other, and a later
+recheck reopens it. (This used to take the copy with MORE answers, so a reopened
+pellet still counted as answered here while the release check held it.)
 
 No lab paths appear in this module. All roots are parameters.
 """
@@ -66,32 +70,36 @@ def completeness_for_stem(stem, bundle_dir=None, durable_dir=None):
     ``durable_dir`` is the shared review store directory (may not exist).
     Returns a dict, or None when no review document exists anywhere.
     """
+    from mousereach.review.causal_review_io import is_answered, merge_review_copies
     candidates = []
     if bundle_dir:
         candidates.append(Path(bundle_dir) / (stem + REVIEW_SUFFIX))
     if durable_dir:
         candidates.append(Path(durable_dir) / (stem + REVIEW_SUFFIX))
 
-    best = None
+    found = []
     for path in candidates:
         if not path.exists():
             continue
-        result = completeness_of_document(_read(path))
-        if result is None:
+        doc = _read(path)
+        if completeness_of_document(doc) is None:
             continue
-        answered, total, reviewer, when = result
-        if best is None or answered > best["answered"]:
-            best = {
-                "stem": stem,
-                "answered": answered,
-                "total": total,
-                "reviewer": reviewer,
-                "reviewed_at": when,
-                "source": str(path),
-            }
-    if best is not None:
-        best["complete"] = best["total"] > 0 and best["answered"] == best["total"]
-    return best
+        found.append((path, doc))
+    if not found:
+        return None
+    merged, _ = merge_review_copies([doc for _, doc in found])
+    newest_path, newest = max(found, key=lambda f: str(f[1].get("reviewed_at") or ""))
+    total = max(len(doc.get("segments") or []) for _, doc in found)
+    answered = sum(1 for r in (merged or {}).get("segments") or [] if is_answered(r))
+    return {
+        "stem": stem,
+        "answered": answered,
+        "total": total,
+        "reviewer": newest.get("reviewer"),
+        "reviewed_at": newest.get("reviewed_at"),
+        "source": str(newest_path),
+        "complete": total > 0 and answered == total,
+    }
 
 
 def scan_queue(queue_dir, durable_dir=None):

@@ -51,6 +51,8 @@ from .causal_review_io import (
     save_causal_review,
     load_causal_review,
     restore_review_for_segments,
+    merge_review_copies,
+    review_copies,
     segmentation_is_human,
     answer_problem,
     plain_review_note,
@@ -1245,28 +1247,29 @@ The notes box travels with the video.
             candidates.append(self.video_path.parent)
         self._unmatched_answers = []
         self._restore_notes = []
-        doc = None
-        for d in candidates:
-            try:
-                doc_d, bs = load_causal_review(self._video_stem, d)
-            except Exception:
-                doc_d, bs = None, {}
-            if bs:
-                doc = doc_d
-                break
+        # EVERY copy -- the bundle's, the one beside the video, and the
+        # durable copy -- and for each segment the newest statement a person
+        # made about its frames (merge_review_copies). WHY: this used to take
+        # the first copy that had any records and never read the durable one.
+        # A bundle opened without a working copy then started empty, and the
+        # save overwrote the durable copy's earlier answers with "not
+        # reviewed" placeholders.
+        copies = review_copies(self._video_stem, candidates)
+        current = [{"segment_num": s["segment_num"],
+                    "start_frame": s.get("start_frame"),
+                    "end_frame": s.get("end_frame")} for s in self._segment_list]
+        human = (bool(getattr(self, "_manual_boundaries", None))
+                 or segmentation_is_human(getattr(self, "_segments_data", None)))
+        doc, merge_notes = merge_review_copies(copies, current, human_segmentation=human)
         # Each saved answer goes back on the CURRENT segment whose frames it
         # covers, as the release check and the results step match it -- never
         # by segment number, which a re-cut reassigns (restore_review_for_segments
         # says what went wrong). Placeholders (reviewed: False) do not count as
         # done; answers that match no segment are carried, never applied.
         if doc is not None:
-            current = [{"segment_num": s["segment_num"],
-                        "start_frame": s.get("start_frame"),
-                        "end_frame": s.get("end_frame")} for s in self._segment_list]
-            human = (bool(getattr(self, "_manual_boundaries", None))
-                     or segmentation_is_human(getattr(self, "_segments_data", None)))
             restored, unmatched, notes = restore_review_for_segments(
                 doc, current, human_segmentation=human)
+            notes = list(dict.fromkeys(list(merge_notes) + list(notes)))
             for n in notes:
                 logger.debug("review restore %s: %s", self._video_stem, n)
             # Shown to the reviewer in the triage banner: an earlier answer that
@@ -3303,6 +3306,7 @@ The notes box travels with the video.
             reviewer=reviewer,
             manual_segmentation=manual_seg,
             unmatched_answers=getattr(self, "_unmatched_answers", None),
+            other_copies=[self.video_path.parent] if self.video_path else (),
         )
 
         # Update corpus index
@@ -3336,7 +3340,16 @@ The notes box travels with the video.
             bundle = getattr(self, "_bundle_dir", None)
             if self._deep_review and bundle:
                 marker = Path(bundle) / f"{self._video_stem}_deep_review_cleared.json"
-                complete = review_complete(segments)
+                # Judged on the file as saved: the save keeps earlier answers
+                # this window did not hold (save_causal_review).
+                try:
+                    saved = json.loads(Path(out_path).read_text(encoding="utf-8"))
+                    complete = review_complete(saved.get("segments") or [])
+                except Exception as err:
+                    logger.warning("%s: could not read back the saved review, so "
+                                   "it is judged on this window's answers: %s",
+                                   self._video_stem, err)
+                    complete = review_complete(segments)
                 from mousereach.config import is_outcome_free_tray
                 from .resegmented import resegmented_since_entry
                 reseg_ok, reseg_why = (

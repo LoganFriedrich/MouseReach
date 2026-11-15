@@ -404,6 +404,20 @@ def _previous_review(video_stem: str, output_dir: Path) -> Optional[Dict[str, An
     return None
 
 
+def _previous_reviews(docs) -> Optional[Dict[str, Any]]:
+    """Every earlier copy's records in one document, each carrying its own
+    reviewer and time, for stamp_segment_reviewers: an answer kept from ANY
+    copy keeps the name and time of the person who gave it. None when there
+    is no earlier copy."""
+    docs = [d for d in (docs or []) if isinstance(d, dict)]
+    if not docs:
+        return None
+    recs = [_with_own_reviewer(r, d) for d in docs
+            for r in (d.get("segments") or []) if isinstance(r, dict)]
+    return {"reviewer": docs[0].get("reviewer"),
+            "reviewed_at": docs[0].get("reviewed_at"), "segments": recs}
+
+
 def segment_reviewer(rec: Dict[str, Any], doc: Optional[Dict[str, Any]] = None):
     """(reviewer, reviewed_at) of ONE segment's answer: the record's own
     values, or -- for a file saved before records carried them -- the
@@ -432,13 +446,13 @@ def stamp_segment_reviewers(
 
     Returns new record dicts; the caller's are not changed."""
     prev_doc = previous or {}
-    by_num: Dict[int, Dict[str, Any]] = {}
-    by_span: Dict[str, Dict[str, Any]] = {}
+    by_num: Dict[int, List[Dict[str, Any]]] = {}
+    by_span: Dict[str, List[Dict[str, Any]]] = {}
     for p in prev_doc.get("segments") or []:
         if p.get("segment_num") is not None:
-            by_num[int(p["segment_num"])] = p
+            by_num.setdefault(int(p["segment_num"]), []).append(p)
         if p.get("segment_span"):
-            by_span[json.dumps(p["segment_span"], sort_keys=True)] = p
+            by_span.setdefault(json.dumps(p["segment_span"], sort_keys=True), []).append(p)
     out = []
     for rec in segments:
         rec = dict(rec)
@@ -450,9 +464,9 @@ def stamp_segment_reviewers(
         sig = _answer_signature(rec)
         cands = []
         if rec.get("segment_num") is not None:
-            cands.append(by_num.get(int(rec["segment_num"])))
+            cands.extend(by_num.get(int(rec["segment_num"])) or [])
         if rec.get("segment_span"):
-            cands.append(by_span.get(json.dumps(rec["segment_span"], sort_keys=True)))
+            cands.extend(by_span.get(json.dumps(rec["segment_span"], sort_keys=True)) or [])
         same = next((p for p in cands if p is not None
                      and (p.get("answers") or {}).get("reviewed") is not False
                      and _answer_signature(p) == sig), None)
@@ -479,8 +493,19 @@ def save_causal_review(
     reviewer: Optional[str] = None,
     manual_segmentation: Optional[Dict[str, Any]] = None,
     unmatched_answers: Optional[List[Dict[str, Any]]] = None,
+    other_copies=(),
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
+
+    A save can add or change answers; it never drops one. Before writing, every
+    existing copy is read -- the working copy about to be replaced, the durable
+    copy, and any folder in ``other_copies`` -- and for each segment this save
+    does not answer, the newest answer (or recheck) an earlier copy holds for
+    its frames is kept in its place; an earlier answer matching no current
+    segment is kept in ``unmatched_answers`` (carry_earlier_answers). WHY: the
+    durable copy used to be overwritten with whatever the window held, so an
+    answer the window had not loaded was replaced by a "not reviewed"
+    placeholder and lost from every copy.
 
     Parameters
     ----------
@@ -513,8 +538,16 @@ def save_causal_review(
     """
     reviewer = reviewer or _get_username()
     timestamp = _get_timestamp()
+    earlier = review_copies(video_stem, [output_dir] + [d for d in (other_copies or ()) if d])
+    segments, unmatched_answers, kept = carry_earlier_answers(
+        segments, earlier, unmatched_answers)
+    if kept:
+        logger.warning(
+            "%s: segment(s) %s were not answered in this save, but an earlier "
+            "copy holds a person's answer for their frames; that answer is kept",
+            video_stem, ", ".join(str(k) for k in kept))
     segments = stamp_segment_reviewers(
-        segments, _previous_review(video_stem, output_dir), reviewer, timestamp)
+        segments, _previous_reviews(earlier), reviewer, timestamp)
 
     doc: Dict[str, Any] = {
         "type": "causal_review",
@@ -1096,6 +1129,213 @@ def restore_review_for_segments(review_doc, current_segments,
         unmatched.append(r)
     unmatched.extend((review_doc or {}).get(UNMATCHED_ANSWERS_KEY) or [])
     return restored, unmatched, notes
+
+
+# ---------------------------------------------------------------------------
+# Several copies of one review: the newest statement per pellet
+# ---------------------------------------------------------------------------
+# A video's review exists in more than one place: the durable copy, the copy
+# in the bundle being reviewed, a copy beside the video. They can differ: a
+# copy can be older (written before a later save elsewhere), and a recheck
+# ("are you sure?") reopens a pellet in one copy only. The review window used
+# to read the FIRST copy that had any records and never the durable one, and
+# a save wrote only what the window held over every copy. When the window
+# opened a bundle without a working copy, the reviewer answered what was open
+# and the save overwrote the durable copy's earlier answers with "not
+# reviewed" placeholders: answers a person gave were gone from every live
+# copy. So both the window and the save now read every copy and, for each
+# current segment, take the NEWEST statement a person made about its frames.
+
+def _when(value) -> Optional[datetime]:
+    """An ISO time as a comparable local time, or None when unreadable."""
+    try:
+        t = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is not None:
+        t = t.astimezone().replace(tzinfo=None)
+    return t
+
+
+def _statement(rec, doc) -> Optional[tuple]:
+    """("answer" | "recheck", when) for a record that is a person's statement
+    about its pellet, else None. An answer (is_answered) was given at its own
+    ``reviewed_at`` (the file's for records saved before records carried one).
+    A recheck -- a pellet sent back with "are you sure?" -- is a statement too:
+    it reopened an answer at ``answers.recheck.asked_at``. A placeholder or a
+    pellet left undecided says nothing and never replaces an answer."""
+    if is_answered(rec):
+        return "answer", _when(segment_reviewer(rec, doc)[1])
+    recheck = ((rec or {}).get("answers") or {}).get("recheck")
+    if isinstance(recheck, dict):
+        return "recheck", _when(recheck.get("asked_at"))
+    return None
+
+
+def _with_own_reviewer(rec, doc) -> Dict[str, Any]:
+    """A copy of ``rec`` carrying its own reviewer and time, so they survive
+    being moved out of the file that held them at file level."""
+    out = dict(rec)
+    if is_answered(rec):
+        who, when = segment_reviewer(rec, doc)
+        if who and not out.get("reviewer"):
+            out["reviewer"] = who
+        if when and not out.get("reviewed_at"):
+            out["reviewed_at"] = when
+    return out
+
+
+def newest_statements(docs, current_segments=None, human_segmentation: bool = False):
+    """For each CURRENT segment, the newest statement a person made about its
+    frames in ANY of ``docs`` (several copies of one video's review).
+
+    Returns ``(chosen, unmatched, notes)``: ``chosen`` maps a current segment
+    number to the newest answer or recheck matched to it by frames
+    (index_review_by_segment, the one matching rule); ``unmatched`` holds the
+    answers that match no current segment, from every copy, each once, plus
+    every copy's carried ``unmatched_answers``. A newer answer replaces an
+    older one, a newer recheck reopens an older answer, a newer answer ends an
+    older recheck. Placeholders and undecided records are never chosen: they
+    say nothing, so they can never replace an answer. On equal times the copy
+    earlier in ``docs`` wins; a time that cannot be read counts as oldest.
+
+    ``docs`` without ``current_segments`` match by segment number."""
+    best: Dict[int, tuple] = {}
+    unmatched: List[Dict[str, Any]] = []
+    notes: List[str] = []
+    seen_unmatched = set()
+
+    def keep_unmatched(rec):
+        key = (json.dumps(rec.get("segment_span"), sort_keys=True, default=str),
+               json.dumps(_applied_call(rec), sort_keys=True, default=str))
+        if key not in seen_unmatched:
+            seen_unmatched.add(key)
+            unmatched.append(rec)
+
+    for rank, doc in enumerate(d for d in (docs or []) if isinstance(d, dict)):
+        stated = [r for r in doc.get("segments") or []
+                  if isinstance(r, dict) and _statement(r, doc) is not None]
+        mapping, n = index_review_by_segment(
+            {"segments": stated}, current_segments, human_segmentation=human_segmentation)
+        notes.extend(n)
+        used = set()
+        for sn, rec in mapping.items():
+            used.add(id(rec))
+            kind, when = _statement(rec, doc)
+            order = (when or datetime.min, -rank)
+            held = best.get(int(sn))
+            if held is None or order > held[0]:
+                best[int(sn)] = (order, _with_own_reviewer(rec, doc))
+        for rec in stated:
+            if id(rec) not in used and is_answered(rec):
+                keep_unmatched(_with_own_reviewer(rec, doc))
+        for rec in doc.get(UNMATCHED_ANSWERS_KEY) or []:
+            if isinstance(rec, dict):
+                keep_unmatched(rec)
+    chosen = {sn: rec for sn, (_, rec) in best.items()}
+    # An answer that lost to a newer statement about the same frames in one
+    # copy can be "unmatched" in another copy only by accident of numbering;
+    # drop any unmatched entry that IS a chosen record.
+    chosen_keys = {(json.dumps(r.get("segment_span"), sort_keys=True, default=str),
+                    json.dumps(_applied_call(r), sort_keys=True, default=str))
+                   for r in chosen.values()}
+    unmatched = [r for r in unmatched
+                 if (json.dumps(r.get("segment_span"), sort_keys=True, default=str),
+                     json.dumps(_applied_call(r), sort_keys=True, default=str))
+                 not in chosen_keys]
+    return chosen, unmatched, notes
+
+
+def merge_review_copies(docs, current_segments=None, human_segmentation: bool = False):
+    """One review document built from several copies of the same video's
+    review (newest_statements says which record wins). Returns
+    ``(doc, notes)``; ``doc`` is None when no copy was given. The result
+    holds only statements (answers and rechecks) and the carried unmatched
+    answers -- what restoring, releasing and counting need."""
+    docs = [d for d in (docs or []) if isinstance(d, dict)]
+    if not docs:
+        return None, []
+    chosen, unmatched, notes = newest_statements(docs, current_segments, human_segmentation)
+    merged: Dict[str, Any] = {k: v for k, v in docs[0].items()
+                              if k not in ("segments", UNMATCHED_ANSWERS_KEY)}
+    merged["segments"] = [chosen[sn] for sn in sorted(chosen)]
+    if unmatched:
+        merged[UNMATCHED_ANSWERS_KEY] = unmatched
+    return merged, notes
+
+
+def review_copies(video_stem: str, dirs=(), include_durable: bool = True) -> List[Dict[str, Any]]:
+    """Every readable copy of a video's review: ``{stem}_causal_review.json``
+    in each of ``dirs`` (in that order), then the durable copy. A copy that
+    cannot be read is logged and skipped -- never treated as "no answers"
+    silently."""
+    paths: List[Path] = [Path(d) / f"{video_stem}_causal_review.json" for d in dirs if d]
+    if include_durable:
+        try:
+            dp = durable_review_path(video_stem)
+        except Exception:
+            dp = None
+        if dp is not None:
+            paths.append(Path(dp))
+    out, seen = [], set()
+    for p in paths:
+        key = os.path.normcase(str(p))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if p.is_file():
+                out.append(_read_json(p))
+        except Exception as err:
+            logger.warning("Could not read the review copy %s: %s", p, err)
+    return out
+
+
+def carry_earlier_answers(segments, earlier_docs, unmatched_answers=None):
+    """What a save must still hold of the earlier copies it is about to
+    replace. Returns ``(segments, unmatched_answers, kept)``.
+
+    For each current segment whose new record is NOT an answer (a placeholder
+    or a pellet left open) while an earlier copy's newest statement about its
+    frames is an answer or a recheck, that earlier record takes its place: a
+    save can add or change answers, never drop one. An earlier answer whose
+    frames match no current segment is added to ``unmatched_answers`` unless it
+    is there already. ``kept`` lists the segment numbers whose earlier answer
+    was put back, for the log. The current segments are read from the new
+    records' own ``segment_span``; records without one match by number."""
+    current = []
+    for rec in segments:
+        sp = _span_of(rec)
+        if sp is not None and rec.get("segment_num") is not None:
+            current.append({"segment_num": int(rec["segment_num"]),
+                            "start_frame": sp[0], "end_frame": sp[1]})
+    if len(current) != len(segments):
+        current = None
+    chosen, unmatched, _ = newest_statements(earlier_docs, current,
+                                             human_segmentation=True)
+    out, kept = [], []
+    for rec in segments:
+        sn = rec.get("segment_num")
+        prior = chosen.get(int(sn)) if sn is not None else None
+        if prior is not None and not is_answered(rec):
+            prior = dict(prior)
+            prior["segment_num"] = int(sn)
+            if is_answered(prior):
+                kept.append(int(sn))
+            out.append(prior)
+            continue
+        out.append(rec)
+    carried = list(unmatched_answers or [])
+    have = {(json.dumps(r.get("segment_span"), sort_keys=True, default=str),
+             json.dumps(_applied_call(r), sort_keys=True, default=str))
+            for r in list(carried) + out if isinstance(r, dict)}
+    for rec in unmatched:
+        key = (json.dumps(rec.get("segment_span"), sort_keys=True, default=str),
+               json.dumps(_applied_call(rec), sort_keys=True, default=str))
+        if key not in have:
+            have.add(key)
+            carried.append(rec)
+    return out, carried, kept
 
 
 def apply_review_overrides(

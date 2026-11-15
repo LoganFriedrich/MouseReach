@@ -140,10 +140,9 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
                 from mousereach.review.triage_status import triage_status
                 st = triage_status(bundle, stem)
                 asked = set(st.triaged)
-                doc = json.loads((bundle / f"{stem}_causal_review.json")
-                                 .read_text(encoding="utf-8"))
                 from mousereach.review.triage_status import resolved_segments
-                got = resolved_segments(doc, _segments_doc(bundle, stem))
+                seg_doc = _segments_doc(bundle, stem)
+                got = resolved_segments(_effective_review(bundle, stem, seg_doc), seg_doc)
                 if asked and asked <= got:
                     out["partial_walk"].append((stem, answered, total, len(asked)))
                     continue
@@ -205,22 +204,40 @@ def _segments_doc(bundle: Path, stem: str) -> Optional[dict]:
         return None
 
 
+def _effective_review(bundle: Path, stem: str, seg_doc: Optional[dict]) -> Optional[dict]:
+    """The bundle's review as the review window sees it: every copy (the
+    bundle's and the durable one), and for each current segment the newest
+    answer or recheck a person gave about its frames
+    (causal_review_io.merge_review_copies). WHY: the bundle copy alone can
+    lack an answer only the durable copy still holds, or still show an answer
+    a later recheck reopened. None when no copy exists."""
+    from mousereach.review.causal_review_io import (merge_review_copies, review_copies,
+                                                    segmentation_is_human,
+                                                    segments_from_segmentation)
+    current = segments_from_segmentation(seg_doc) if seg_doc else None
+    doc, _ = merge_review_copies(review_copies(stem, [bundle]), current or None,
+                                 human_segmentation=segmentation_is_human(seg_doc))
+    return doc
+
+
 def _completeness(bundle: Path, stem: str) -> Tuple[int, int]:
-    """(answered, total) segments for the bundle's causal review: answered by
-    ``is_answered``, matched to the CURRENT segments by frames when the bundle
-    has a segments file (total = its segments), else by number (total = the
-    review's records). (0, 0) when no review file exists."""
+    """(answered, total) segments for the bundle's review (_effective_review):
+    answered by ``is_answered``, matched to the CURRENT segments by frames
+    when the bundle has a segments file (total = its segments), else by
+    number (total = the bundle copy's records). (0, 0) when the bundle holds
+    no readable review file."""
     from mousereach.review.causal_review_io import segments_from_segmentation
     from mousereach.review.triage_status import resolved_segments
     p = bundle / f"{stem}_causal_review.json"
     if not p.is_file():
         return 0, 0
     try:
-        doc = json.loads(p.read_text(encoding="utf-8"))
+        own = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return 0, 0
-    segs = [r for r in (doc.get("segments") or []) if isinstance(r, dict)]
+    segs = [r for r in (own.get("segments") or []) if isinstance(r, dict)]
     seg_doc = _segments_doc(bundle, stem)
+    doc = _effective_review(bundle, stem, seg_doc) or own
     current = segments_from_segmentation(seg_doc) if seg_doc else []
     if current:
         return len(resolved_segments(doc, seg_doc)), len(current)
