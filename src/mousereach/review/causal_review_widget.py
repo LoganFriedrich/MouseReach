@@ -2880,11 +2880,30 @@ The notes box travels with the video.
                        f"was NOT moved: {e}")
             logger.exception("flag session: could not set aside the earlier clear")
             return
+        from mousereach.config import Paths
+        from mousereach.watcher.review_routing import same_path
+        deep_root = getattr(Paths, "DEEP_REVIEW", None)
+        if deep_root and same_path(Path(bundle).parent, deep_root):
+            # Already in the re-segmentation queue, which is where this button
+            # sends a video: nothing to move. The session flag is recorded and
+            # an earlier clear is set aside (above), so the video stays here
+            # until its cuts are set again. WHY not route: routing a bundle
+            # onto its own folder used to delete its files (review_routing.
+            # _safe_move); and saying "moved" would not be true. Judged by the
+            # folder the bundle is in, not by the window's mode -- a window can
+            # be opened on this queue without re-segmentation mode.
+            show_info(f"Session {key} flagged. {self._video_stem} is already in the "
+                      f"re-segmentation queue, so it stays there; any earlier clear "
+                      f"was set aside, so it waits until its cuts are set again.")
+            self._status_label.setText(
+                f"[FLAG] Session {key} flagged -- {self._video_stem} already in "
+                f"re-segmentation.")
+            self._load_next_video()
+            return
         # The move is recorded in the watcher database as 'deep_review', so
         # the folder and the database agree (_watcher_db_for_move says why).
         db, db_note = self._watcher_db_for_move()
         try:
-            from mousereach.config import Paths
             from mousereach.watcher.review_gate import route_to_queue
             route_to_queue(
                 self._video_stem, Path(bundle), Paths.DEEP_REVIEW,

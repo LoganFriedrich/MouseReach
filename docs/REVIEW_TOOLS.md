@@ -951,6 +951,15 @@ error says so -- press the button again once the file is free. In the re-segment
 a flagged video waits until its cuts are set or confirmed in the re-segmentation tool, which
 lists it (see "Every video that needs this is listed in the re-segmentation tool").
 
+**Flag Session on a video that is already in the re-segmentation queue does not move it.** If the
+window is showing a bundle that sits in the re-segmentation queue (whether or not the window was
+opened in re-segmentation mode), the button records the session flag and sets aside any earlier
+clear as above, and then says "<video> is already in the re-segmentation queue, so it stays
+there". Nothing is moved and nothing in the bundle changes apart from the renamed clear; the video
+waits until its cuts are set again. **Why:** the button used to route the bundle into the queue it
+was already in, and that deleted its files (see "Moving a video into or out of a queue never
+deletes or overwrites a person's file").
+
 **What it used to do.** The button is labelled "Flag Session (needs review)", its tooltip
 said it marks every video of that mouse+day as must-be-human-reviewed, and the toast said
 "all its videos need human review". `flag_session` wrote the session key to

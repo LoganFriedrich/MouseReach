@@ -3332,4 +3332,7 @@ queue never deletes or overwrites a person's file".
   `move_video_bundle` returns at once in that case too, and `_safe_move` does nothing when source
   and destination are the same file. Before, each file was "moved" onto itself and the overwrite
   step deleted it. Tests: `tests/test_route_onto_itself_moves_nothing.py`.
-
+- **Flag Session in the re-segmentation queue.** `CausalReviewWidget._flag_session` checks the
+  folder the bundle is in (not the window's mode); when that is the deep-review queue it records
+  the flag, sets aside any earlier clear and does not route. Test:
+  `test_flag_session_in_the_resegmentation_queue_keeps_every_file`.

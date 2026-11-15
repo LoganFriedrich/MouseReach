@@ -72,3 +72,41 @@ def test_move_video_bundle_onto_itself_moves_nothing(deep_bundle):
     out, moved = move_video_bundle(VID, bundle, deep, "again")
     assert out == bundle and moved == []
     assert _contents(bundle) == before
+
+
+# --- Flag Session pressed on a bundle that is already in deep review ----------
+
+def _window(bundle, tmp_path, said):
+    """The parts of a review window _flag_session uses."""
+    return SimpleNamespace(
+        _video_stem=VID, _bundle_dir=bundle,
+        _review_root=lambda: tmp_path / "root",
+        _save_review=lambda: None,
+        _status_label=SimpleNamespace(setText=lambda text: said.append(text)),
+        _load_next_video=lambda: None,
+        _watcher_db_for_move=lambda: (None, ""),
+    )
+
+
+def test_flag_session_in_the_resegmentation_queue_keeps_every_file(
+        deep_bundle, tmp_path, monkeypatch):
+    import mousereach.review.causal_review_widget as crw
+    bundle, deep, _ = deep_bundle
+    clear = bundle / f"{VID}_deep_review_cleared.json"
+    clear.write_text("{}", encoding="utf-8")
+    before = {k: v for k, v in _contents(bundle).items() if k != clear.name}
+    said, errors = [], []
+    monkeypatch.setattr(crw, "flag_session", lambda stem, root, reason="", **kw: "session-key")
+    monkeypatch.setattr(crw, "show_info", lambda msg, *a, **k: said.append(msg))
+    monkeypatch.setattr(crw, "show_error", lambda msg, *a, **k: errors.append(msg))
+
+    crw.CausalReviewWidget._flag_session(_window(bundle, tmp_path, said))
+
+    after = _contents(bundle)
+    assert not errors
+    # Every file still there, byte for byte; the earlier clear is set aside
+    # (renamed, kept), so the video waits for its cuts to be set again.
+    assert {k: v for k, v in after.items() if "_deep_review_cleared" not in k} == before
+    assert not clear.exists()
+    assert any("_deep_review_cleared_superseded_" in k for k in after)
+    assert any("already in the re-segmentation queue" in m for m in said)
