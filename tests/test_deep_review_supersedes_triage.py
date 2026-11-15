@@ -125,6 +125,8 @@ def test_the_return_scan_never_returns_a_superseded_triage_copy(queues, monkeypa
     # A triage copy that looks fully answered -- it would normally go back.
     _bundle(triage / VID, f"{VID}.mp4", f"{VID}_extra.json")
     returned = []
+    # No backoff left over from another test: only the rule may stop the return.
+    monkeypatch.setattr(review_return, "_return_retry_after", {})
     monkeypatch.setattr(review_return, "_return_to_processing",
                         lambda *a, **k: returned.append(a[1]) or True)
     monkeypatch.setattr(review_return, "_cached_triage_status",
