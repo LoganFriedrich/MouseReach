@@ -734,6 +734,14 @@ class ReprocessingScanner:
         try:
             from mousereach.pipeline.analyzed_tree import first_file
             from mousereach.watcher.review_gate import route_deep_review
+            from mousereach.watcher.db import crystallized_refusal
+            # A crystallized (publication-locked) video is never moved out of
+            # its filed folder (db.crystallized_refusal); route_deep_review
+            # would refuse too, this says so before looking for its files.
+            locked = crystallized_refusal(self.db, video_id, "diverted to deep review")
+            if locked:
+                logger.warning("%s", locked)
+                return
             # Never Analyzed/Archive/: the hit's PARENT is what gets moved into
             # the deep review queue, so an archived copy would route an
             # archive folder (and strip superseded outputs out of the archive).

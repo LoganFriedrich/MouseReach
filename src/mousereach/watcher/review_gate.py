@@ -420,7 +420,14 @@ def route_to_queue(
     extra_sources: Optional[Iterable[Path]] = None,
 ) -> Path:
     """Move a video bundle into a review queue, write the review manifest, and
-    set the DB hold state. Returns the bundle dir."""
+    set the DB hold state. Returns the bundle dir.
+
+    Raises CrystallizedError, before anything moves, when ``db`` says the
+    video is crystallized (publication-locked; db.crystallized_refusal)."""
+    from .db import CrystallizedError, crystallized_refusal
+    locked = crystallized_refusal(db, video_id, "routed to a review queue")
+    if locked:
+        raise CrystallizedError(locked)
     bundle, moved = move_video_bundle(
         video_id, processing_dir, dest_root, reason,
         extra_sources=extra_sources,

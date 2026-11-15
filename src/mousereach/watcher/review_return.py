@@ -489,6 +489,17 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         _return_failed(stem)
         return False
 
+    # A crystallized (publication-locked) video is never moved back to
+    # Processing: its filed results must stay as published. This used to be
+    # forced through (force_state below), lock and all.
+    from .db import crystallized_refusal
+    locked = crystallized_refusal(db, stem, "returned to Processing")
+    if locked:
+        logger.error(f"Return {stem}: {locked} The bundle stays in the queue. "
+                     f"(Tried again in {RETURN_RETRY_S // 60} min.)")
+        _return_failed(stem)
+        return False
+
     processing_dir = Path(processing_dir)
     processing_dir.mkdir(parents=True, exist_ok=True)
 
@@ -793,6 +804,13 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
     posed = getattr(Paths, "DLC_STAGING", None)
     root = getattr(Paths, "REVIEW_ROOT", None)
     if not posed or not root or db is None:
+        return False
+    # A crystallized (publication-locked) video is never moved
+    # (db.crystallized_refusal).
+    from .db import crystallized_refusal
+    locked = crystallized_refusal(db, stem, "released to the posed folder")
+    if locked:
+        logger.error(f"Release {stem}: {locked} The bundle stays in its queue.")
         return False
     posed = Path(posed)
     try:

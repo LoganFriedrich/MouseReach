@@ -74,6 +74,15 @@ in the queue; a processed or archiving video's Analyzed copy is older than the
 outputs the daemon is about to archive, so a reviewer would judge stale data.
 A deferral is not a failure: offer the video again on a later run.
 
+A CRYSTALLIZED VIDEO IS NEVER MOVED
+-----------------------------------
+A video locked for a publication (mousereach-crystallize; watcher state
+'crystallized') is not flagged and not moved; it is reported as "lock"
+(locked: true with --json) with a message naming the lock. Its filed results
+must stay exactly as published. Unlock it first (mousereach-uncrystallize) if
+it really is to be reviewed again. Not a failure for the exit code: the
+command did what the lock asks.
+
 Usage:
     mousereach-route-to-queue VIDEO_ID --queue triage --reason "bench disagreement" --flag-segments 3,7
     mousereach-route-to-queue VIDEO_ID --queue deep_review --reason "segmentation wrong"
@@ -83,7 +92,8 @@ Usage:
 Exit codes:
     0  every requested video was routed, was already not in Analyzed, or was
        deferred because the watcher is working on it, or had
-       every requested segment already answered by a person ("done")
+       every requested segment already answered by a person ("done"), or is
+       crystallized ("lock")
     1  some video could not be routed, OR routing was refused because the
        watcher database could not be resolved, does not exist, or cannot be
        opened (then no video was touched)
@@ -246,7 +256,8 @@ def route_video(video_id: str, queue: str, reason: str,
     from mousereach.watcher.review_gate import route_to_queue
 
     res = {"video_id": video_id, "queue": queue, "flagged": [], "answered": [],
-           "routed": False, "deferred": False, "error": None, "reopened": []}
+           "routed": False, "deferred": False, "error": None, "reopened": [],
+           "locked": False}
     try:
         analyzed = Paths.ANALYZED_OUTPUT
         if not analyzed or not Path(analyzed).exists():
@@ -261,6 +272,14 @@ def route_video(video_id: str, queue: str, reason: str,
             # says why). A database that cannot be read raises into the except
             # below and is reported as a failure, never routed blind.
             state = (db.get_video(video_id) or {}).get("state")
+            if state == "crystallized":
+                # Locked for a publication: never moved, never flagged
+                # (db.crystallized_refusal says why). Refused, not deferred --
+                # offering it again changes nothing until a person unlocks it.
+                from mousereach.watcher.db import crystallized_refusal
+                res["locked"] = True
+                res["error"] = crystallized_refusal(db, video_id, "routed")
+                return res
             if state in IN_FLIGHT_STATES:
                 res["deferred"] = True
                 res["error"] = ("in flight on the watcher (state '%s'); not "
@@ -378,6 +397,7 @@ def main(argv=None) -> int:
         results.append(r)
         if not args.json:
             tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
+                   else "lock" if r.get("locked")
                    else "done" if (r["answered"] and not r["error"])
                    else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
             print("%s %s -> %s  flagged=%s  %s%s%s  (%.0f s)" % (
@@ -388,6 +408,7 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps(results, indent=1))
     bad = [r for r in results if not r["routed"] and not r["deferred"]
+           and not r.get("locked")
            and not (r["answered"] and not r["error"])
            and not (r["error"] and "not found" in r["error"])]
     return 1 if bad else 0

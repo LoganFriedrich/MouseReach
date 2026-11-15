@@ -86,6 +86,36 @@ VIDEO_TRANSITIONS = {
 }
 
 
+class CrystallizedError(ValueError):
+    """A crystallized (publication-locked) video was asked to move or change
+    state. Raised before anything is moved; the message says how to unlock."""
+
+
+def crystallized_refusal(db, video_id: str, action: str):
+    """The refusal message when ``video_id`` is crystallized on ``db``, else
+    None.
+
+    A crystallized video is locked for a publication (mousereach-crystallize):
+    its filed results must stay exactly as they are until a person unlocks it
+    (mousereach-uncrystallize). Every path that would move its files into a
+    review queue, back to Processing or to a new pose asks this first and
+    refuses. WHY: routing to a queue, the review return and the version
+    scan's divert used to force their way through the lock (force_state), so
+    a locked video's results could leave the filed folder.
+    ``db`` None, or a row that cannot be read, is not a lock (None)."""
+    if db is None:
+        return None
+    try:
+        row = db.get_video(video_id) or {}
+    except Exception:
+        return None
+    if row.get('state') != 'crystallized':
+        return None
+    label = row.get('crystallized_label') or '?'
+    return (f"{video_id} is crystallized (locked for '{label}'); not {action}. "
+            f"Unlock it first with mousereach-uncrystallize if this is intended.")
+
+
 def _retry_network_errors(method):
     """Retry DB methods on transient network drive errors (readonly, locked, busy)."""
     @functools.wraps(method)
@@ -640,7 +670,8 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
-    def force_state(self, video_id: str, new_state: str, reason: str = None, **kwargs):
+    def force_state(self, video_id: str, new_state: str, reason: str = None,
+                    unlock_crystallized: bool = False, **kwargs):
         """
         Set video state directly, bypassing transition validation.
 
@@ -658,6 +689,9 @@ class WatcherDB:
             video_id: Video identifier
             new_state: State to set
             reason: Why validation is being bypassed (recorded in the log)
+            unlock_crystallized: True only for the unlock command
+                (pipeline.versions.uncrystallize). Without it a crystallized
+                row is never moved to another state: CrystallizedError.
             **kwargs: Additional fields to update
         """
         # Reaching 'archived' ends whatever went wrong before: the row's
@@ -679,6 +713,16 @@ class WatcherDB:
                     raise ValueError(f"Video {video_id} not found")
 
                 current_state = row['state']
+
+                # A crystallized video is locked for a publication. The bypass
+                # does not reach through the lock: only the unlock command
+                # passes unlock_crystallized (crystallized_refusal says why).
+                if (current_state == 'crystallized' and new_state != 'crystallized'
+                        and not unlock_crystallized):
+                    raise CrystallizedError(
+                        f"{video_id} is crystallized; force_state to '{new_state}' "
+                        f"refused (reason given: {reason or 'none'}). Unlock it "
+                        f"with mousereach-uncrystallize first.")
 
                 # Make the bypass visible. If this transition would have been legal
                 # anyway, say so -- that distinguishes "force_state used where

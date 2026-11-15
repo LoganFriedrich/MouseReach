@@ -385,6 +385,7 @@ def uncrystallize_videos(
             db.force_state(
                 vid, 'archived',
                 reason="uncrystallized: lock removed, back to archived",
+                unlock_crystallized=True,   # the one caller allowed to
                 crystallized_at=None,
                 crystallized_by=None,
                 crystallized_label=None,

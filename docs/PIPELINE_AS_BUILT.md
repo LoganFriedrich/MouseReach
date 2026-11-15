@@ -3224,3 +3224,35 @@ If the database cannot be opened, the move still happens, the tool says the reco
 updated, and the row catches up when the video returns. Tests:
 `tests/test_escalate_records_deep_review.py`.
 
+
+## Update 2026-11-15: a crystallized video is never moved
+
+`mousereach-crystallize` locks filed videos for a publication (watcher state `crystallized`). Their
+filed results must stay exactly as published. Before, several paths forced their way through the
+lock: `mousereach-route-to-queue` (its "in flight" check did not include the lock), the gate's
+`route_to_queue` (it forced the queue state when the normal transition was refused), the review
+return (it forced `processing` on any row) and the version scan's mislabel divert.
+
+**Now every one of them refuses before anything moves:**
+- `route_to_queue` raises `CrystallizedError` when the watcher database says the video is
+  crystallized; nothing is moved or written.
+- `mousereach-route-to-queue` reports such a video as `lock` (`"locked": true` with `--json`),
+  with a message naming the lock. It is not counted as a failure in the exit code.
+- The review return and the release of a lifted quality hold leave the bundle where it is and log
+  the refusal (the return is tried again hourly, so it shows in the log until a person acts).
+- The version scan's mislabel divert logs the refusal and leaves the filed results.
+- `mousereach-watch-process-animal` skips a crystallized video ("already crystallized").
+- `force_state` itself will not take a row out of `crystallized`; only the unlock command
+  (`mousereach-uncrystallize`) may, and it says so explicitly (`unlock_crystallized=True`). A
+  dashboard "Re-run" on a locked video shows "Could not mark it: ... is crystallized".
+- `mousereach-repose-videos` already refused anything not archived or held.
+
+**What a person does** to put a locked video through review again: unlock it with
+`mousereach-uncrystallize`, then route it. **Limit:** the lock lives in the watcher database of the
+machine where `mousereach-crystallize` ran; a command run against another machine's database does
+not see it.
+
+**Where it lives.** `watcher/db.py` (`CrystallizedError`, `crystallized_refusal`, `force_state`),
+`watcher/review_gate.py` `route_to_queue`, `watcher/route_cli.py`, `watcher/review_return.py`,
+`watcher/reprocessor.py`, `watcher/cli.py` (process-animal); tests in
+`tests/test_crystallized_never_moved.py`.

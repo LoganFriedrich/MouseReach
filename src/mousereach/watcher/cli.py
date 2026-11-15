@@ -1274,8 +1274,10 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
         existing = db.get_video(video_id)
         if existing:
             state = existing['state']
+            # 'crystallized': locked for a publication, never posed again
+            # (db.crystallized_refusal).
             if state in ('processed', 'archived', 'dlc_complete', 'dlc_running',
-                         'dlc_queued', 'processing'):
+                         'dlc_queued', 'processing', 'crystallized'):
                 print(f"  SKIP {video_id} (already {state})")
                 skipped += 1
                 continue
