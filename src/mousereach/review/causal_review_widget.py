@@ -2993,6 +2993,23 @@ The notes box travels with the video.
 
         return bundle_review_complete(bundle_dir, stem, dirs, self._triage_only)
 
+    def _bundle_needs_review(self, bundle_dir: Path, root: Path) -> bool:
+        """A bundle needs review iff it is NOT already ground-truthed (ground
+        truth IS the answer -- it stands in for a review) and NOT already
+        reviewed (_bundle_reviewed, which reads every copy of the review,
+        durable included, through effective_review).
+
+        A session flag suppresses nothing here: flagging diverts the video to
+        the re-segmentation queue (_flag_session), and the flag record is kept
+        as provenance only. (It used to hide every flagged session's videos,
+        so the queue read as empty.)"""
+        stem = bundle_dir.name
+        if has_gt(stem, extra_dirs=[bundle_dir]):
+            return False  # already ground-truthed -> GT is the correct answer
+        if self._bundle_reviewed(bundle_dir):
+            return False
+        return True
+
     def _segmentation_failed(self, b: Path) -> bool:
         """True if the segmenter FAILED on this video (overall_confidence 0 / bad
         reference quality -> uniform-fallback boundaries -- e.g. an over-long
