@@ -401,10 +401,34 @@ def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict) -> dict:
     return out
 
 
+def _segment_of_reach(r: dict, spans: Dict[int, Tuple[int, int]]) -> Optional[int]:
+    """The CURRENT segment a ground-truth reach lies in, by its frames: the
+    segment holding most of the reach's frames (on a tie, the one holding its
+    start). None when the reach has no frames or lies in no current segment;
+    the caller then falls back to the number the reach was labelled with."""
+    s, e = r.get("start_frame"), r.get("end_frame")
+    if s is None or not spans:
+        return None
+    s = int(s)
+    e = int(e) if e is not None else s
+    best, best_ov = None, 0
+    for sn, (a, b) in sorted(spans.items()):
+        ov = max(0, min(e, b) - max(s, a) + 1)
+        if ov > best_ov or (ov == best_ov and ov and a <= s <= b):
+            best, best_ov = sn, ov
+    return best
+
+
 def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
     """Resolve per-segment reaches against GT. Exhaustive -> GT reach set is the
     complete truth for every segment; non-exhaustive -> overlap-merge only where
-    GT labeled reaches. Non-destructive."""
+    GT labeled reaches. Non-destructive.
+
+    Each GT reach goes to the CURRENT segment its frames lie in, not to the
+    segment NUMBER it was labelled with: a re-cut renumbers segments, and a
+    reach placed by number would join (or, exhaustive, replace) the reaches of
+    other footage. The number is used only when the current segments carry no
+    frames, or no current segment holds the reach."""
     rr = (gt or {}).get("reaches") or {}
     exhaustive = bool(rr.get("exhaustive"))
     gt_reaches = [r for r in (rr.get("reaches") or []) if not r.get("exclude_from_analysis")]
@@ -412,9 +436,22 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
         return reaches_data  # nothing GT can say about reaches
 
     out = copy.deepcopy(reaches_data)
+    spans: Dict[int, Tuple[int, int]] = {}
+    for seg in out.get("segments", []):
+        try:
+            sn = int(seg.get("segment_num"))
+            spans[sn] = (int(seg["start_frame"]), int(seg["end_frame"]))
+        except (TypeError, ValueError, KeyError):
+            continue
     by_seg: Dict[int, List[dict]] = {}
     for r in gt_reaches:
-        sn = r.get("segment_num")
+        sn = _segment_of_reach(r, spans)
+        if sn is None:
+            sn = r.get("segment_num")
+        elif r.get("segment_num") is not None and int(r["segment_num"]) != sn:
+            logger.info("ground-truth reach %s-%s labelled segment %s lies in current "
+                        "segment %s; placed there", r.get("start_frame"),
+                        r.get("end_frame"), r.get("segment_num"), sn)
         by_seg.setdefault(int(sn) if sn is not None else -1, []).append(r)
     for lst in by_seg.values():
         lst.sort(key=lambda r: (r.get("start_frame") or 0))
