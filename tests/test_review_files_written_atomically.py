@@ -384,3 +384,60 @@ def test_hand_score_record_leaves_no_file_named_after_the_video(tmp_path, failin
     assert hs.record(tmp_path, VID, v, 1.0) is True
     doc = json.loads(p.read_text(encoding="utf-8"))
     assert doc["hand_scores"]["pellets"] == {"1": 2} and doc["segments"]
+
+
+# ---------------------------------------------------------------------------
+# MRR-14c: the quality verdict stamped into the three stage files
+# ---------------------------------------------------------------------------
+
+STAGES = ("_segments.json", "_reaches.json", "_pellet_outcomes.json")
+
+
+def _triage_orch():
+    from unittest import mock
+    from mousereach.watcher.orchestrator import BaseOrchestrator
+    o = BaseOrchestrator.__new__(BaseOrchestrator)
+    o.db = mock.Mock()
+    return o
+
+
+def _fake_triage(**kw):
+    return SimpleNamespace(
+        verdict="auto_approved", flags=[], n_critical=0, n_warnings=0,
+        save=lambda path: Path(path).write_text("{}", encoding="utf-8"))
+
+
+def _stage_files(folder):
+    out = {}
+    for s in STAGES:
+        p = folder / f"{VID}{s}"
+        _write(p, {"stage": s, "rows": list(range(500))})
+        out[p] = p.read_text(encoding="utf-8")
+    return out
+
+
+def test_quality_verdict_stamp_never_tears_a_stage_output(tmp_path, failing_disk):
+    before = _stage_files(tmp_path)
+    failing_disk["on"] = True
+    failing_disk["spare"] = ("_triage.json",)
+    _triage_orch()._run_quality_triage(VID, tmp_path, tmp_path / "p.h5", _fake_triage)
+    failing_disk["on"] = False
+
+    for p, text in before.items():
+        assert p.read_text(encoding="utf-8") == text, p.name
+    assert _stray(tmp_path, {p.name for p in before} | {f"{VID}_triage.json"}) == []
+
+
+def test_quality_verdict_stamp_clears_leftover_temps_and_stamps(tmp_path):
+    before = _stage_files(tmp_path)
+    leftovers = [tmp_path / f".{VID}{s}.dead01.tmp" for s in STAGES]
+    for p in leftovers:
+        p.write_text("{", encoding="utf-8")
+    verdict = _triage_orch()._run_quality_triage(VID, tmp_path, tmp_path / "p.h5",
+                                                 _fake_triage)
+    assert verdict == "auto_approved"
+    assert not any(p.exists() for p in leftovers)
+    for p in before:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        assert doc["validation_status"] == "auto_approved"
+        assert doc["rows"] == list(range(500))

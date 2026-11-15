@@ -548,9 +548,21 @@ class BaseOrchestrator:
         them this changes nothing.)
 
         Any ``<stem>_triage.json`` from an earlier run is removed first, so a
-        crash can never leave an old verdict sitting beside new outputs."""
+        crash can never leave an old verdict sitting beside new outputs.
+
+        The verdict is stamped into the three stage files by replacing each in
+        one step (fsutil.write_json_atomic), never by rewriting it in place.
+        WHY: opening a stage output for writing empties it first, so a crash
+        mid-stamp left a cut-off segmentation, reach or outcome file -- the
+        video's actual results. Temporary files a crash left from an earlier
+        stamp are removed first; this step is the only writer of these files
+        while it runs."""
+        from mousereach.pipeline.fsutil import remove_leftover_temps, write_json_atomic
         from mousereach.watcher.review_gate import QC_TRIAGE_FAILED
         processing_dir = Path(processing_dir)
+        stage_suffixes = ['_segments.json', '_reaches.json', '_pellet_outcomes.json']
+        for suffix in stage_suffixes:
+            remove_leftover_temps(processing_dir / f"{video_id}{suffix}")
         old = processing_dir / f"{video_id}_triage.json"
         try:
             old.unlink()
@@ -565,7 +577,7 @@ class BaseOrchestrator:
                 processing_dir=processing_dir,
                 h5_path=dlc_path,
             )
-            for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
+            for suffix in stage_suffixes:
                 json_path = processing_dir / f"{video_id}{suffix}"
                 if json_path.exists():
                     try:
@@ -577,8 +589,7 @@ class BaseOrchestrator:
                             if triage_result.verdict == 'needs_review'
                             else 'Unified triage: all checks passed'
                         )
-                        with open(json_path, 'w') as f:
-                            json.dump(data, f, indent=2)
+                        write_json_atomic(json_path, data, indent=2)
                     except Exception as err:
                         logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
             triage_result.save(processing_dir / f"{video_id}_triage.json")
