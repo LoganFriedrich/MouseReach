@@ -1784,9 +1784,25 @@ def _break_if_stale(lock: Path, stale_s: float,
                     clock: Optional[_ShareClock] = None) -> bool:
     """Remove ``lock`` if its holder is gone (see the block comment above).
     True when the lock is gone afterwards, so the caller may try again."""
-    # The token is read BEFORE the age. Read after it, a fresh holder's token
-    # (taken in the gap) would be compared with itself below and its live
-    # lock removed.
+    # First a look at the lock's age from its metadata only, WITHOUT opening
+    # it. WHY: on Windows a file opened for reading (read_text) cannot be
+    # deleted while it is open, so a waiter that read the lock on every poll
+    # made the holder's release fail whenever the two met -- and the released
+    # lock then stood for INDEX_LOCK_STALE_S. A live lock is never opened by
+    # a waiter now; only one old enough to be stale is.
+    try:
+        st0 = os.stat(str(lock))
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    clock = clock or _ShareClock(lock.parent)
+    est = clock.estimate()
+    if est is None or est - st0.st_mtime < stale_s:
+        return False
+    # It may be stale. The token is read BEFORE the age that decides. Read
+    # after it, a fresh holder's token (taken in the gap) would be compared
+    # with itself below and its live lock removed.
     stale_token = _lock_token(lock)
     try:
         st = os.stat(str(lock))
@@ -1794,12 +1810,8 @@ def _break_if_stale(lock: Path, stale_s: float,
         return True
     except OSError:
         return False
-    clock = clock or _ShareClock(lock.parent)
-    est = clock.estimate()
-    if est is None or est - st.st_mtime < stale_s:
-        return False
-    # Judged stale on an estimate: decide on a fresh reading of the server
-    # clock (the estimate itself, when it was just probed).
+    # Decide on a fresh reading of the server clock (the estimate itself,
+    # when it was just probed).
     now = est if clock.just_probed() else clock.confirm()
     if now is None or now - st.st_mtime < stale_s:
         return False
@@ -1829,18 +1841,45 @@ def _break_if_stale(lock: Path, stale_s: float,
                          "stale one and could not put it back (%s); two writers "
                          "may be updating it at once",
                          lock.name[:-len(".lock")], e)
-            try:
-                os.unlink(str(aside))
-            except OSError:
-                pass
+            if not _unlink_lock_file(aside):
+                logger.error("Could not delete the moved-aside lock %s", aside)
         return False
-    try:
-        os.unlink(str(aside))
-    except OSError:
-        pass
+    if not _unlink_lock_file(aside):
+        # It no longer guards anything (its name is not the lock's), so it is
+        # only clutter -- but said, so a stray file is explicable.
+        logger.warning("Could not delete the moved-aside stale lock %s", aside)
     logger.warning("Broke a stale lock on %s (held %.0f s; its holder is gone)",
                    lock.name[:-len(".lock")], now - st.st_mtime)
     return True
+
+
+# How long (seconds) removing a lock file keeps retrying while something has
+# it open for a moment (Windows refuses to delete an open file).
+LOCK_UNLINK_RETRY_S = 2.0
+
+
+def _unlink_lock_file(path: Path, retry_s: Optional[float] = None) -> bool:
+    """Delete a lock file; True when it is gone.
+
+    WHY the retry: on Windows (and over an SMB share) a delete is refused
+    with a sharing violation while any other handle has the file open -- a
+    waiter reading a possibly-stale lock's token, a virus scanner, an indexer.
+    Those holds last milliseconds. Giving up on the first refusal left a
+    released lock standing for INDEX_LOCK_STALE_S, and for those ten minutes
+    every save skipped the index and every Flag Session failed."""
+    from mousereach.pipeline.fsutil import is_transient_lock
+    retry_s = LOCK_UNLINK_RETRY_S if retry_s is None else retry_s
+    deadline = time.monotonic() + retry_s
+    while True:
+        try:
+            os.unlink(str(path))
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as e:
+            if not is_transient_lock(e) or time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
 
 
 def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
@@ -1876,11 +1915,15 @@ def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
 def _release_lock(lock: Path, token: str) -> None:
     held = _lock_token(lock)
     if held == token:
-        try:
-            os.unlink(str(lock))
-        except OSError as e:
-            logger.warning("Could not remove the lock %s (%s); it is broken "
-                           "once stale", lock, e)
+        # Retried for a moment: something (a scanner, an indexer, a waiter
+        # judging a stale lock) may have the lock open for reading at this
+        # instant, and Windows refuses to delete an open file
+        # (_unlink_lock_file).
+        if not _unlink_lock_file(lock):
+            logger.error("Could not remove the lock %s after %.0f s of "
+                         "retrying; until it is %d minutes old every review "
+                         "save skips the index and Flag Session fails",
+                         lock, LOCK_UNLINK_RETRY_S, int(INDEX_LOCK_STALE_S // 60))
     elif held is None and lock.exists():
         # Our own lock could not be read back: left in place (it may not be
         # ours), and broken once stale. Said, so a slow index is explicable.

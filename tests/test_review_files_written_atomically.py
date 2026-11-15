@@ -724,3 +724,55 @@ def test_a_failed_durable_copy_is_reported_for_the_window(review_roots, monkeypa
     assert out.exists() and not durable.exists()
     assert len(problems) == 1
     assert str(review_roots.bundle) in problems[0]
+
+
+# ---------------------------------------------------------------------------
+# The shared-file lock: a release must not leave the lock behind
+# ---------------------------------------------------------------------------
+
+def test_a_released_lock_is_gone_even_while_someone_is_reading_it(tmp_path):
+    """On Windows a file open for reading cannot be deleted. A waiter (or a
+    scanner) reading the lock at the moment the holder lets go used to make
+    the release fail once and give up, leaving the lock standing for ten
+    minutes: every save skipped the index and Flag Session failed. The
+    release must outlast a short hold and the lock must be gone afterwards."""
+    from mousereach.review import causal_review_io as cio
+    target = tmp_path / "causal_review_index.json"
+    lock = cio._lock_path(target)
+    handles = []
+
+    def change(doc):
+        doc["x"] = 1
+        # Someone opens the lock for reading while we hold it, and keeps it
+        # open across our release for a fraction of a second.
+        f = open(lock, "rb")
+        handles.append(f)
+        threading.Timer(0.3, f.close).start()
+
+    cio._locked_update(target, change, wait_s=1.0)
+    time.sleep(0.4)          # let the reader close before the assert either way
+    assert handles
+    assert not lock.exists(), "the released lock was left behind"
+    # ...and the next writer gets straight in.
+    t0 = time.monotonic()
+    cio._locked_update(target, lambda d: d.update(y=2), wait_s=1.0)
+    assert time.monotonic() - t0 < 1.0
+    assert json.loads(target.read_text(encoding="utf-8")) == {"x": 1, "y": 2}
+
+
+def test_a_waiter_does_not_open_a_live_lock(tmp_path, monkeypatch):
+    """Waiting on a fresh lock looks at its age only (metadata), never opens
+    it: an open handle is what made the holder's release fail on Windows."""
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    target = tmp_path / "causal_review_index.json"
+    lock = cio._lock_path(target)
+    lock.write_text(json.dumps({"token": "live"}), encoding="utf-8")
+    reads = []
+    real = cio._lock_token
+    monkeypatch.setattr(cio, "_lock_token", lambda p: (reads.append(p), real(p))[1])
+    with pytest.raises(cio.IndexLockBusy):
+        cio._locked_update(target, lambda d: None, wait_s=0.3)
+    assert reads == []
+    assert lock.exists()
+
