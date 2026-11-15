@@ -1290,6 +1290,11 @@ class WatcherDB:
         nothing failed. The row keeps whatever it already knows, and
         _recover_local_dlc_queue puts it straight back into the pipeline if the
         file ever turns up here.
+
+        Raises CrystallizedError for a crystallized row, as mark_failed and
+        force_state do (crystallized_refusal says why): a publication-locked
+        video keeps its state, and 'unresolvable' can be re-driven into the
+        pipeline when a file turns up.
         """
         with self._lock:
             conn = self._get_connection()
@@ -1299,6 +1304,10 @@ class WatcherDB:
                 ).fetchone()
                 if not row:
                     raise ValueError(f"Video {video_id} not found")
+                if row['state'] == 'crystallized':
+                    raise CrystallizedError(
+                        f"{video_id} is crystallized; not marked unresolvable ({reason}). "
+                        f"Unlock it with mousereach-uncrystallize first if this is intended.")
 
                 conn.execute("""
                     UPDATE videos

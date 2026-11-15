@@ -37,3 +37,19 @@ def test_any_other_row_is_still_marked_failed(tmp_path):
     db.mark_failed(VID, "something went wrong")
     row = db.get_video(VID)
     assert row["state"] == "failed" and row["error_count"] == 1
+
+
+def test_a_crystallized_row_is_not_marked_unresolvable(tmp_path):
+    db = _db(tmp_path, "crystallized")
+    with pytest.raises(CrystallizedError):
+        db.mark_unresolvable(VID, "no file on this node")
+    row = db.get_video(VID)
+    assert row["state"] == "crystallized"
+    assert row["error_message"] != "no file on this node"
+
+
+def test_any_other_row_is_still_marked_unresolvable(tmp_path):
+    db = _db(tmp_path, "dlc_queued")
+    db.mark_unresolvable(VID, "no file on this node")
+    assert db.get_video(VID)["state"] == "unresolvable"
+
