@@ -3359,13 +3359,18 @@ The notes box travels with the video.
         except Exception as e:
             # Shown in the window, not printed to a console nobody watches.
             # The review itself is already saved (both copies are written
-            # before the index); only the shared summary is behind, and this
-            # video's entries are rewritten on its next save.
+            # before the index), and the pipeline reads the review copies,
+            # never the index. Only the shared summary is behind: this video's
+            # entries are written again only when it is SAVED again -- nothing
+            # retries on its own, and a video that leaves the queue after this
+            # save is never saved again. So the message asks for one more
+            # Save rather than promising a catch-up that may never come.
             logger.warning("%s: corpus index not updated: %s", self._video_stem, e)
             show_warning(
                 f"Your answers are saved. The shared review index was not "
-                f"updated ({e}); it is brought up to date the next time this "
-                f"video is saved.")
+                f"updated ({e}). Press Save again in a few seconds: until this "
+                f"video is saved once more, its answers are missing from the "
+                f"shared index (the pipeline itself does not need the index).")
 
         n_reviewed = sum(1 for s in segments if is_answered(s))
         show_info(

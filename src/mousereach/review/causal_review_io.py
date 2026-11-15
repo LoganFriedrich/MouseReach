@@ -1700,8 +1700,8 @@ def session_key(video_stem: str) -> str:
 # INDEX_LOCK_STALE_S -- and a frozen window invites being killed, which is how
 # stale locks are made. For the index, the review itself is already saved by
 # then (both copies are written before the index) and the window says the
-# index was not updated; the video's index entries are rewritten on its next
-# save.
+# index was not updated and asks for one more Save: the video's index
+# entries are written again only when it is saved again (nothing retries).
 
 INDEX_LOCK_WAIT_S = 60.0
 GUI_LOCK_WAIT_S = 3.0

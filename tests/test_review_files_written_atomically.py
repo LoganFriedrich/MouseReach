@@ -820,3 +820,42 @@ def test_a_passing_sharing_refusal_on_the_lock_is_waited_out(tmp_path, monkeypat
     cio._locked_update(target, lambda d: d.update(x=1), wait_s=2.0)
     assert len(refusals) == 3
     assert json.loads(target.read_text(encoding="utf-8")) == {"x": 1}
+
+
+def test_a_skipped_index_update_asks_for_another_save(review_roots, monkeypatch):
+    """When the index cannot be updated the window must not promise that it
+    catches up by itself: nothing retries, and a video that leaves the queue
+    after this save is never saved again. The warning asks for one more Save,
+    and that Save does write the video's index entries."""
+    import mousereach.review.causal_review_widget as crw
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    review_roots.records.mkdir(parents=True, exist_ok=True)
+    lock = review_roots.records / "causal_review_index.json.lock"
+    lock.write_text(json.dumps({"token": "another-window"}), encoding="utf-8")
+    monkeypatch.setattr(crw, "GUI_LOCK_WAIT_S", 0.2)
+    warnings = []
+    monkeypatch.setattr(crw, "show_warning", lambda msg, *a, **k: warnings.append(msg))
+    monkeypatch.setattr(crw, "show_info", lambda *a, **k: None)
+    rec = _seg_record(1)
+    window = SimpleNamespace(
+        video_path=review_roots.bundle / f"{VID}.mp4", _video_stem=VID,
+        _review_records={1: rec}, _segment_list=[{"segment_num": 1, "pellet_num": 1}],
+        _collect_answers=lambda: None, _answer_problem=None,
+        _algo_dir=lambda: review_roots.bundle, _review_dir=lambda: review_roots.bundle,
+        _manual_boundaries=None, _unmatched_answers=None, _deep_review=False,
+        _bundle_dir=None, _status_label=SimpleNamespace(setText=lambda text: None),
+        data_saved=SimpleNamespace(emit=lambda *a: None))
+    crw.CausalReviewWidget._save_review(window)
+    assert len(warnings) == 1
+    assert "Save again" in warnings[0]
+    assert "next time" not in warnings[0]          # no promise of a catch-up
+    index_path = review_roots.records / "causal_review_index.json"
+    assert not index_path.exists()
+
+    # The lock clears; the Save the warning asks for writes the entries.
+    lock.unlink()
+    warnings.clear()
+    crw.CausalReviewWidget._save_review(window)
+    assert warnings == []
+    assert VID in index_path.read_text(encoding="utf-8")
