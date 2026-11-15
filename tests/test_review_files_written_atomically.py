@@ -74,6 +74,12 @@ def failing_disk(monkeypatch):
 
     monkeypatch.setattr(io, "open", fake_open)
     monkeypatch.setattr(builtins, "open", fake_open)
+    # Python 3.10's pathlib bound io.open at import time (Path.open goes
+    # through an accessor), so Path.write_text needs its own patch.
+    import pathlib
+    accessor = getattr(pathlib, "_NormalAccessor", None)
+    if accessor is not None and hasattr(accessor, "open"):
+        monkeypatch.setattr(accessor, "open", staticmethod(fake_open))
     # retries of a refused rename must not really sleep
     import mousereach.pipeline.fsutil as fsutil
     monkeypatch.setattr(fsutil.time, "sleep", lambda s: None, raising=False)
@@ -203,3 +209,67 @@ def test_temporary_name_never_starts_with_the_video_name(tmp_path, monkeypatch):
     other.write_text("{", encoding="utf-8")
     assert fsutil.remove_leftover_temps(target) == 1
     assert not left.exists() and other.exists()
+
+
+# ---------------------------------------------------------------------------
+# MRR-02b: review copies, clear markers, flagged sessions (causal_review_io)
+# ---------------------------------------------------------------------------
+
+def _seg_record(n, outcome="retrieved"):
+    return {"segment_num": n, "segment_span": [n * 100, n * 100 + 99],
+            "human": {"outcome": outcome, "agreed": True},
+            "answers": {"reviewed": True, "outcome": outcome}}
+
+
+@pytest.fixture
+def review_roots(tmp_path, monkeypatch):
+    from mousereach.review import causal_review_io as cio
+    records = tmp_path / "review_records"
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: records)
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    return SimpleNamespace(records=records, bundle=bundle)
+
+
+def test_review_copies_survive_a_failed_save(review_roots, failing_disk):
+    from mousereach.review import causal_review_io as cio
+    out = cio.save_causal_review(VID, review_roots.bundle, [_seg_record(1)], {})
+    durable = cio.durable_review_path(VID)
+    working_before = out.read_text(encoding="utf-8")
+    durable_before = durable.read_text(encoding="utf-8")
+
+    failing_disk["on"] = True
+    with pytest.raises(OSError):
+        cio.save_causal_review(VID, review_roots.bundle,
+                               [_seg_record(1), _seg_record(2, "displaced")], {})
+    failing_disk["on"] = False
+
+    # both copies still hold the earlier answers, complete
+    assert out.read_text(encoding="utf-8") == working_before
+    assert durable.read_text(encoding="utf-8") == durable_before
+    docs = cio.review_copies(VID, [review_roots.bundle])
+    assert len(docs) == 2
+    assert all(d["segments"][0]["human"]["outcome"] == "retrieved" for d in docs)
+    assert _stray(review_roots.bundle, {out.name}) == []
+    assert _stray(durable.parent, {durable.name}) == []
+
+
+def test_clear_marker_and_session_flag_never_torn(review_roots, failing_disk):
+    from mousereach.review import causal_review_io as cio
+    marker = review_roots.bundle / f"{VID}_deep_review_cleared.json"
+    cio._write_json(marker, {"cleared_by": "someone"})
+    before = marker.read_text(encoding="utf-8")
+    cio.flag_session(VID, review_roots.records, reason="first")
+    flags = review_roots.records / "flagged_sessions.json"
+    flags_before = flags.read_text(encoding="utf-8")
+
+    failing_disk["on"] = True
+    with pytest.raises(OSError):
+        cio._write_json(marker, {"cleared_by": "someone else"})
+    with pytest.raises(OSError):
+        cio.flag_session("PRJ0102_20990101_P1", review_roots.records, reason="x")
+    failing_disk["on"] = False
+
+    assert marker.read_text(encoding="utf-8") == before
+    assert flags.read_text(encoding="utf-8") == flags_before
+    assert _stray(review_roots.bundle, {marker.name}) == []

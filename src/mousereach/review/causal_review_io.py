@@ -225,8 +225,20 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
+    """Replace ``path`` with ``data`` in one step (fsutil.write_json_atomic).
+
+    Every review copy, clear marker, the corpus index and flagged_sessions.json
+    go through here. WHY not ``write_text``: that empties the file before
+    writing it, so a crash mid-save left a truncated review, and
+    ``review_copies`` skips an unreadable copy -- the next save then had nothing
+    to carry forward from it and the person's answers were gone. Now the old
+    file stays complete until the new one is swapped in; a write that still
+    fails after the retries raises, with the old file unchanged.
+    """
+    from mousereach.pipeline.fsutil import write_json_atomic
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+    write_json_atomic(path, data, indent=2, default=str, trailing_newline=True)
 
 
 # ---------------------------------------------------------------------------
