@@ -3256,3 +3256,31 @@ not see it.
 `watcher/review_gate.py` `route_to_queue`, `watcher/route_cli.py`, `watcher/review_return.py`,
 `watcher/reprocessor.py`, `watcher/cli.py` (process-animal); tests in
 `tests/test_crystallized_never_moved.py`.
+
+## Update 2026-11-15: a GPU node poses only a file it holds; process-animal claims what it copies
+
+**Pose step.** A GPU node finds the video for a `dlc_queued` row by name, and that search also
+looks at the top of the shared singles folder (`Unanalyzed/Single_Animal`). DeepLabCut writes its
+pose beside its input, so a row with no copy in the node's own DLC queue (after cross-node
+recovery, or a hand retry) was posed in place in the shared folder, unclaimed: another node could
+claim and pose the same video at the same time. The pose step (`_process_single_dlc`) now poses
+only a copy in this node's DLC queue or in its own claim folder
+(`Single_Animal/.inflight/<this node>/`). Otherwise nothing is posed and the row becomes
+`unresolvable` with a reason saying where the copy was:
+- an unclaimed copy at the top of the shared folder: the reason starts "in the shared singles
+  folder for any node to take", which the singles intake re-drives -- the next scan claims the
+  file properly (moves it into the node's claim folder) and copies it into the DLC queue;
+- a copy in another node's claim folder, or anywhere else: refused with the reason; a person
+  looks (`mousereach-watch-unresolvable --list`).
+
+**`mousereach-watch-process-animal`.** It used to copy singles from the shared folder into the DLC
+queue without claiming them, so two nodes could pose one video. It now claims each single for this
+machine first (the same claim the watcher's own intake takes) and copies from the claimed file. A
+single it cannot claim -- another machine took it meanwhile, or a program has it open -- is skipped
+("could not claim it in the singles folder"). A copy that fails gives the single back to the
+shared folder. The watcher on the same machine keeps the claim alive and removes the claimed copy
+once the video has moved on, as for its own claims.
+
+**Where it lives.** `watcher/orchestrator.py` `DLCOrchestrator._not_held_for_pose`,
+`_process_single_dlc`; `watcher/cli.py` `main_process_animal`; tests in
+`tests/test_pose_only_claimed_files.py`.

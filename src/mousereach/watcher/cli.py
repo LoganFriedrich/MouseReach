@@ -1085,7 +1085,7 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
         print("  mousereach-watch-process-animal CNT0107 --tray P")
         print()
         print("Searches both Single_Animal and Multi-Animal folders.")
-        print("Singles are copied to DLC_Queue directly.")
+        print("Singles are claimed for this machine and copied to DLC_Queue.")
         print("Collages are registered so the watcher crops + processes them.")
         sys.exit(1)
 
@@ -1100,6 +1100,8 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
         validate_single_filename, validate_collage_filename
     )
     from mousereach.watcher.transfer import safe_copy
+    import socket
+    from mousereach.watcher import single_claim
     from mousereach.video_prep.core.cropper import parse_collage_filename
 
     # Validate animal ID
@@ -1302,26 +1304,41 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
             )
             db.update_state(video_id, 'validated', current_path=str(f))
 
-        # Copy to DLC_Queue
+        # Claim, then copy to DLC_Queue. WHY the claim: the watcher's own
+        # intake claims a shared single (renames it into
+        # Single_Animal/.inflight/<this machine>/) before copying it, so no
+        # other GPU node can take the same video. This command used to copy
+        # without claiming, so two nodes could pose one video. The watcher on
+        # this machine keeps the claim alive and removes the claimed copy once
+        # the video has moved on, exactly as for its own claims.
         if dlc_queue:
             dest = dlc_queue / f.name
+            claimed = single_claim.claim_single(f, socket.gethostname())
+            if claimed is None:
+                print(f"  SKIP {video_id} (could not claim it in the singles folder -- "
+                      f"another machine took it meanwhile, or a program has it open)")
+                skipped += 1
+                continue
             if dest.exists():
                 db.update_state(video_id, 'dlc_queued', current_path=str(dest))
                 queued_singles += 1
                 print(f"  QUEUED {video_id} (already in DLC_Queue)")
             else:
                 try:
-                    if safe_copy(f, dest, verify=True):
+                    if safe_copy(claimed, dest, verify=True):
                         db.update_state(video_id, 'dlc_queued', current_path=str(dest))
                         db.log_step(video_id, 'process_animal', 'queued',
                                     message=f"Queued by process-animal for {animal_id}")
                         queued_singles += 1
                         print(f"  QUEUED {video_id}")
                     else:
-                        print(f"  ERROR {video_id} (copy failed)")
+                        single_claim.release_single(claimed)
+                        print(f"  ERROR {video_id} (copy failed; given back to the "
+                              f"singles folder)")
                         errors += 1
                 except Exception as e:
-                    print(f"  ERROR {video_id}: {e}")
+                    single_claim.release_single(claimed)
+                    print(f"  ERROR {video_id}: {e} (given back to the singles folder)")
                     errors += 1
 
     # --- Queue collages: register so watcher crops them ---

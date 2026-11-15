@@ -4079,6 +4079,34 @@ class DLCOrchestrator(BaseOrchestrator):
     # DLC INFERENCE
     # =========================================================================
 
+    def _not_held_for_pose(self, path) -> Optional[str]:
+        """None when ``path`` is a copy this node may pose -- in its own DLC
+        queue, or in its own claim folder -- else the reason it may not
+        (words for a person). See _process_single_dlc for why."""
+        def _same_dir(a, b) -> bool:
+            try:
+                return (os.path.normcase(os.path.abspath(str(a)))
+                        == os.path.normcase(os.path.abspath(str(b))))
+            except (TypeError, ValueError):
+                return False
+        try:
+            parent = Path(path).parent
+        except TypeError:
+            return f"not posed: no usable path ({path!r})"
+        if Paths.DLC_QUEUE and _same_dir(parent, Paths.DLC_QUEUE):
+            return None
+        if single_claim.claim_holder(path) == self.hostname:
+            return None
+        if single_claim.in_front_door(path):
+            return (f"not posed in place: the copy found is unclaimed in the shared "
+                    f"singles folder ({path}); left for the intake to claim it")
+        holder = single_claim.claim_holder(path)
+        if holder:
+            return (f"not posed: the copy found ({path}) is claimed by {holder}, "
+                    f"not this node")
+        return (f"not posed: the copy found ({path}) is outside this node's DLC "
+                f"queue and its own claim folder")
+
     def _process_single_dlc(self, work: dict):
         """Run DLC inference on a single video.
 
@@ -4142,6 +4170,25 @@ class DLCOrchestrator(BaseOrchestrator):
                 "queued for DLC but no video file for it on this node "
                 "(recorded path: %r)" % (video_data.get('current_path'),))
             self._release_claim_given_up(video_id, "no local copy left to pose")
+            return False
+
+        # Pose only a file this node holds: its own DLC queue, or its own
+        # claim folder (<Single_Animal>/.inflight/<this host>/). WHY: the
+        # search above also looks at the top of the shared singles folder, and
+        # DLC writes its pose beside its input -- so a 'dlc_queued' row with no
+        # queue copy (cross-node recovery, a hand retry) was posed IN PLACE in
+        # the shared folder, unclaimed, where another node could take and pose
+        # the same video. A copy found anywhere else is not posed here.
+        refusal = self._not_held_for_pose(current_path)
+        if refusal:
+            if single_claim.in_front_door(current_path):
+                # Back to the shared folder's intake, which claims it properly
+                # (claim, copy into this node's queue) -- REDRIVE_REASONS.
+                self.db.mark_unresolvable(
+                    video_id, f"{single_claim.SHARED_REASON}: {refusal}")
+            else:
+                self.db.mark_unresolvable(video_id, refusal)
+            logger.warning(f"{video_id}: {refusal}")
             return False
 
         logger.info(f"Running DLC on {video_id}")
