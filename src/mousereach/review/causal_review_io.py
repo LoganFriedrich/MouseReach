@@ -1772,12 +1772,18 @@ def _take_lock(lock: Path, token: str) -> None:
 
 
 def _release_lock(lock: Path, token: str) -> None:
-    if _lock_token(lock) == token:
+    held = _lock_token(lock)
+    if held == token:
         try:
             os.unlink(str(lock))
         except OSError as e:
             logger.warning("Could not remove the lock %s (%s); it is broken "
                            "once stale", lock, e)
+    elif held is None and lock.exists():
+        # Our own lock could not be read back: left in place (it may not be
+        # ours), and broken once stale. Said, so a slow index is explicable.
+        logger.warning("Could not read back the lock %s to remove it; it is "
+                       "broken once stale", lock)
 
 
 def _locked_update(path: Path, change: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:

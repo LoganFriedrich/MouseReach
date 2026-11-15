@@ -123,8 +123,10 @@ def _fsync_file(p) -> None:
     """Flush a closed file's content to disk (best effort on shares that do
     not support it -- the replace is still atomic)."""
     import os
+    # Read-write, not read-only: on Windows flushing a file needs write access
+    # (a read-only handle's flush fails and would be silently skipped).
     try:
-        fd = os.open(str(p), os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        fd = os.open(str(p), os.O_RDWR | getattr(os, "O_BINARY", 0))
     except OSError:
         return
     try:
@@ -135,9 +137,28 @@ def _fsync_file(p) -> None:
         os.close(fd)
 
 
+def _keep_mode(tmp: Path, path: Path) -> None:
+    """Give the temporary file the permissions the replaced file had (or the
+    usual 0644 for a new file). WHY: mkstemp creates its file readable by its
+    owner only, and after the rename that would be the real file's mode -- on a
+    POSIX share other users could no longer read a review or ground truth. (On
+    Windows chmod only sets or clears read-only; this leaves it writable.)"""
+    import os
+    import stat
+    try:
+        mode = stat.S_IMODE(os.stat(str(path)).st_mode)
+    except OSError:
+        mode = 0o644
+    try:
+        os.chmod(str(tmp), mode)
+    except OSError:
+        pass
+
+
 def _replace_into_place(tmp: Path, path: Path, attempts: int,
                         base_delay: float) -> None:
     import os
+    _keep_mode(tmp, path)
     try:
         retry_transient(lambda: os.replace(str(tmp), str(path)),
                         attempts=attempts, base_delay=base_delay,

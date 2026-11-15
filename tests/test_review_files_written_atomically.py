@@ -543,3 +543,18 @@ def test_a_dead_holders_lock_is_broken_by_its_age(review_roots, monkeypatch):
                          .read_text(encoding="utf-8"))["entries"]
     assert f"{VID}__seg1" in entries
     assert _stray(review_roots.records, {"causal_review_index.json"}) == []
+
+
+def test_replaced_file_keeps_its_permissions(tmp_path, monkeypatch):
+    """mkstemp makes an owner-only file; the replaced file must keep the
+    permissions it had, or other users on a share lose read access."""
+    from mousereach.pipeline import fsutil
+    target = tmp_path / f"{VID}_x.json"
+    _write(target, {"v": 1})
+    modes = []
+    real_chmod = os.chmod
+    monkeypatch.setattr(os, "chmod", lambda p, m: (modes.append(m), real_chmod(p, m))[1])
+    fsutil.write_json_atomic(target, {"v": 2})
+    import stat
+    assert modes == [stat.S_IMODE(os.stat(target).st_mode)] or modes == [
+        stat.S_IMODE(target.stat().st_mode)]
