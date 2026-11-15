@@ -1030,6 +1030,76 @@ def _warn_stale_incoming() -> None:
                 d, EMPTY_DIR_GRACE_SECONDS // 60)
 
 
+# ---------------------------------------------------------------------------
+# Finishing routes that did not finish
+# ---------------------------------------------------------------------------
+# A route publishes the bundle, records the hold in the database, and only then
+# writes the review manifest -- the file the review tools list a bundle by. If
+# that last write fails, the bundle is in the queue, the row says so, and no
+# review tool offers it. The scan writes such a missing manifest again from the
+# routing record. Checked at most every ROUTE_REPAIR_INTERVAL_S, not on every
+# scan: it costs one listing per bundle on the share, and the case is rare.
+ROUTE_REPAIR_INTERVAL_S = 600
+_route_repair_due = [0.0]
+
+
+def _repair_missing_manifest(bundle: Path, stem: str) -> bool:
+    """Write ``{stem}_manifest.json`` into a published bundle that has a
+    routing record but no manifest. True when one was written. Never raises.
+
+    Only a bundle that still holds a file of the video besides its routing
+    record is repaired -- a return empties a bundle by removing the queue
+    records last, and a folder down to its records is on its way out, not a
+    bundle missing its manifest. Done under the return claim, so a return on
+    another node never has a manifest written back into a folder it is
+    emptying."""
+    try:
+        names = {p.name for p in bundle.iterdir() if p.is_file()}
+    except OSError:
+        return False
+    if f"{stem}_routing.json" not in names or f"{stem}_manifest.json" in names:
+        return False
+    if not any(n for n in names if not _is_queue_metadata(n, stem)):
+        return False
+    if not _claim_return(stem):
+        return False
+    try:
+        from .review_gate import _write_review_manifest
+        from .review_routing import read_routing_manifest
+        reason = (read_routing_manifest(bundle, stem) or {}).get("routed_reason") or ""
+        _write_review_manifest(bundle, stem, reason)
+        logger.warning("Return scan: %s had no review manifest (its route could not "
+                       "write it); written again so the review tools list it", stem)
+        return True
+    except Exception as e:
+        logger.error("Return scan: %s has no review manifest and it could not be "
+                     "written (%s); the review tools do not list it until it is", stem, e)
+        return False
+    finally:
+        _release_return_claim(stem)
+
+
+def repair_unfinished_routes(force: bool = False) -> Dict[str, int]:
+    """Finish what an interrupted route left undone, in both queues (see the
+    block comment above). Runs at most every ROUTE_REPAIR_INTERVAL_S unless
+    ``force``. Never raises."""
+    out = {"manifests_written": 0}
+    now = time.monotonic()
+    if not force and now < _route_repair_due[0]:
+        return out
+    _route_repair_due[0] = now + ROUTE_REPAIR_INTERVAL_S
+    for queue_root in (getattr(Paths, "TRIAGE_REVIEW", None),
+                       getattr(Paths, "DEEP_REVIEW", None)):
+        try:
+            bundles = _bundles(queue_root)
+        except OSError:
+            continue
+        for bundle in bundles:
+            if _repair_missing_manifest(bundle, bundle.name):
+                out["manifests_written"] += 1
+    return out
+
+
 def scan_review_queues(db, processing_dir: Path,
                        limit: int = MAX_RETURNS_PER_SCAN) -> Dict[str, int]:
     """Re-inject human-cleared held bundles, at most ``limit`` per scan.
@@ -1045,6 +1115,10 @@ def scan_review_queues(db, processing_dir: Path,
                 + summary["diverted_to_deep"]) < limit
 
     _warn_stale_incoming()
+    try:
+        summary.update(repair_unfinished_routes())
+    except Exception as e:      # never stops the returns
+        logger.warning("Return scan: could not check for unfinished routes: %s", e)
 
     def _states(bundles):
         # One query for the whole queue (_superseded_by_archive needs each

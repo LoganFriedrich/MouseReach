@@ -840,6 +840,17 @@ these rules:
   deleted the file first -- every file of the bundle except the video the window had open was
   lost.
 
+- **A route records the hold as soon as the video is in the queue.** The order is: move the
+  bundle in, set the watcher state (`triage` / `deep_review`), then write the review manifest (the
+  `<video>_manifest.json` the review tools list a bundle by). If that last write fails, the error
+  is logged and the video is still correctly held. The watcher's return scan looks for such a
+  bundle every ten minutes (a bundle with a routing record, some of the video's files and no
+  manifest) and writes the manifest again from the routing record; the log says "had no review
+  manifest ... written again so the review tools list it". Until then the bundle is in the queue
+  folder but not offered in the review tools. **Why:** the manifest used to be written before the
+  state, with a plain write; a passing hold on the share made the route fail with the files
+  already moved, the row never said "held", and no tool offered the bundle.
+
 ### Where they are
 
 Set in `config.py:164-166`, derived from `NAS_ROOT`:

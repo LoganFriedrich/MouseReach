@@ -374,7 +374,11 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
             "self_contained": self_contained,
         },
     }
-    (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    # One-step write retried while the share holds the file (pipeline/fsutil):
+    # a plain write_text failed on a passing hold, and a cut-off manifest is
+    # unreadable to the review tools.
+    from mousereach.pipeline.fsutil import write_json_atomic
+    write_json_atomic(bundle / f"{video_id}_manifest.json", manifest, indent=2)
 
 
 def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Path]:
@@ -507,7 +511,23 @@ def route_to_queue(
         extra_sources=extra_sources,
         extra_manifest={"db_state": db_state} if db_state else None,
     )
-    _write_review_manifest(bundle, video_id, reason)
+    # The hold is recorded the moment the bundle is in the queue, BEFORE the
+    # review manifest is written. WHY this order: a manifest write that failed
+    # (a passing hold on the share) used to raise out of here with the files
+    # already in the queue and the row never set -- the dispatcher then
+    # marked the video failed, and its retry needed an mp4 that had moved.
+    _record_state(db_state, f"review gate moved bundle to '{reason}'")
+    try:
+        _write_review_manifest(bundle, video_id, reason)
+    except Exception as e:
+        # The bundle is published and the row says so; only the file the
+        # review tools list a bundle by is missing. The return scan rebuilds
+        # it from the routing record (review_return.repair_unfinished_routes),
+        # so this is logged, not raised.
+        logger.error(
+            f"Routing {video_id}: the bundle is in {bundle} and its state is "
+            f"recorded, but its review manifest could not be written ({e}); "
+            f"the return scan writes it again shortly")
     # If the SOURCE was a per-video bundle dir (a queue-to-queue divert) and
     # the move emptied it, remove it: an empty date-named dir left behind in
     # a queue reads as a seg-failed bundle and re-diverts "(0 files)" forever
@@ -519,7 +539,6 @@ def route_to_queue(
             processing_dir.rmdir()
     except OSError:
         pass
-    _record_state(db_state, f"review gate moved bundle to '{reason}'")
     if _same_folder(dest_root, getattr(Paths, "DEEP_REVIEW", None)):
         _drop_triage_copy(video_id, bundle)
     return bundle

@@ -3336,3 +3336,11 @@ queue never deletes or overwrites a person's file".
   folder the bundle is in (not the window's mode); when that is the deep-review queue it records
   the flag, sets aside any earlier clear and does not route. Test:
   `test_flag_session_in_the_resegmentation_queue_keeps_every_file`.
+- **Hold recorded before the manifest.** `route_to_queue` sets the database state right after
+  `move_video_bundle`, then writes the review manifest with the one-step writer
+  (`fsutil.write_json_atomic`, retried on a passing hold); a failure there is logged, not raised.
+  `review_return.repair_unfinished_routes` (called by every return scan, acting at most every
+  `ROUTE_REPAIR_INTERVAL_S` = 10 minutes) writes a missing manifest again for any bundle in either
+  queue that has a routing record and some file of the video, under the return claim. Tests:
+  `tests/test_route_records_hold_before_manifest.py`.
+
