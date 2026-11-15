@@ -64,12 +64,16 @@ def failing_disk(monkeypatch):
     its first write. Covers open(), Path.write_text, os.fdopen and
     shutil.copy* (all of which go through io.open)."""
     real_open = io.open
-    state = {"on": False}
+    # "spare": substrings of paths whose writes still succeed (a backup the
+    # writer makes first, so the failure reaches the write under test).
+    state = {"on": False, "spare": ()}
 
     def fake_open(file, mode="r", *a, **kw):
         f = real_open(file, mode, *a, **kw)
         if state["on"] and any(c in mode for c in "wax+"):
-            return _HalfWriter(f)
+            name = "" if isinstance(file, int) else os.fspath(file)
+            if not (name and any(s in str(name) for s in state["spare"])):
+                return _HalfWriter(f)
         return f
 
     monkeypatch.setattr(io, "open", fake_open)
@@ -301,3 +305,58 @@ def test_durable_copy_at_return_survives_a_failed_copy(review_roots, failing_dis
     rr._ensure_durable_review(review_roots.bundle, VID)
     assert json.loads(durable.read_text(encoding="utf-8"))["segments"][1]["segment_num"] == 2
     assert abs(durable.stat().st_mtime - src.stat().st_mtime) < 2
+
+
+# ---------------------------------------------------------------------------
+# MRR-09e: routing records (route_cli.flag_segments / reopen_answered)
+# ---------------------------------------------------------------------------
+
+def test_flag_segments_never_tears_the_outcomes_file(tmp_path, failing_disk):
+    from mousereach.watcher import route_cli
+    p = tmp_path / f"{VID}_pellet_outcomes.json"
+    _write(p, {"segments": [{"segment_num": n, "outcome": "retrieved"}
+                            for n in range(1, 21)]})
+    before = p.read_text(encoding="utf-8")
+
+    failing_disk["on"] = True
+    with pytest.raises(OSError):
+        route_cli.flag_segments(p, [3], "checked again")
+    failing_disk["on"] = False
+
+    assert p.read_text(encoding="utf-8") == before
+    assert _stray(tmp_path, {p.name}) == []
+    # healthy disk: the flag lands
+    assert route_cli.flag_segments(p, [3], "checked again") == [3]
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    assert doc["segments"][2]["flagged_for_review"] is True
+
+
+def test_reopen_answered_never_tears_the_review(tmp_path, monkeypatch, failing_disk):
+    from mousereach.config import Paths
+    from mousereach.review import causal_review_io as cio
+    from mousereach.watcher import route_cli
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: None)
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "analyzed", raising=False)
+    folder = tmp_path / "work"
+    rp = folder / f"{VID}_causal_review.json"
+    _write(rp, {"type": "causal_review", "video_stem": VID, "reviewer": "r1",
+                "reviewed_at": "2099-01-01T00:00:00",
+                "segments": [_seg_record(1), _seg_record(2)]})
+    before = rp.read_text(encoding="utf-8")
+
+    failing_disk["on"] = True
+    failing_disk["spare"] = ("manual_corrections",)   # the backup is made
+    with pytest.raises(OSError):
+        route_cli.reopen_answered(VID, folder, [1], {1: "are you sure?"})
+    failing_disk["on"] = False
+
+    assert rp.read_text(encoding="utf-8") == before
+    assert _stray(folder, {rp.name}) == []
+    backups = list((tmp_path / "analyzed" / "Archive" / "manual_corrections").iterdir())
+    assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == before
+
+    # healthy disk: the answer is reopened, and kept under recheck.previous
+    assert route_cli.reopen_answered(VID, folder, [1], {1: "are you sure?"}) == [1]
+    rec = json.loads(rp.read_text(encoding="utf-8"))["segments"][0]
+    assert rec["answers"]["reviewed"] is False
+    assert rec["answers"]["recheck"]["previous"]["human"]["outcome"] == "retrieved"

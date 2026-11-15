@@ -3314,3 +3314,4 @@ The temporary name starts with a dot on purpose: the router and the archiver tak
 Where this applies on the watcher side:
 
 - **Returning a cleared review bundle.** Before the bundle is emptied, its review is copied over the durable copy in `review_records/reviews/` when the bundle's is newer (`review_return._ensure_durable_review`). A copy that fails is logged and the return goes ahead; the earlier durable copy stays complete.
+- **Routing a filed video back to a queue** (`mousereach-route-to-queue`). Flagging segments rewrites the video's `<video>_pellet_outcomes.json`, and `--recheck` rewrites its review file after copying it to `Archive/manual_corrections/<name>.before_recheck_<time>` (`route_cli.flag_segments`, `route_cli.reopen_answered`). Both replace the file in one step. If the write fails, the command stops with an error, the file is exactly as it was, and the command can simply be run again.

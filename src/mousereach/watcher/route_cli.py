@@ -171,7 +171,11 @@ def flag_segments(outcomes_path: Path, segment_nums: Iterable[int], reason: str,
             s["triage_cleared"] = None
             flagged.append(int(s["segment_num"]))
     if flagged:
-        outcomes_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # One-step replacement, never in place: the outcomes file is a stage
+        # output every later step reads, and write_text empties it before
+        # writing -- a crash here used to leave it cut off.
+        from mousereach.pipeline.fsutil import write_json_atomic
+        write_json_atomic(outcomes_path, data, indent=2)
     return sorted(flagged)
 
 
@@ -256,7 +260,11 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
         backup_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(rp, backup_dir / ("%s.before_recheck_%s" % (
             rp.name, now.replace("-", "").replace(":", "").replace("T", "_"))))
-        rp.write_text(json.dumps(review, indent=2), encoding="utf-8")
+        # The backup above first, then a one-step replacement of the review:
+        # write_text empties the file before writing, so a crash used to leave
+        # a cut-off review, which every reader takes for "no answers".
+        from mousereach.pipeline.fsutil import write_json_atomic
+        write_json_atomic(rp, review, indent=2)
     return reopened
 
 
