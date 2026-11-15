@@ -776,3 +776,47 @@ def test_a_waiter_does_not_open_a_live_lock(tmp_path, monkeypatch):
     assert reads == []
     assert lock.exists()
 
+
+def test_a_lock_whose_body_could_not_be_written_is_removed(tmp_path, monkeypatch):
+    """The lock is created first and its token written after. If that write
+    fails, an empty lock left behind blocks every writer for ten minutes."""
+    from mousereach.review import causal_review_io as cio
+    target = tmp_path / "causal_review_index.json"
+    real_write = os.write
+
+    def failing_write(fd, data):
+        if bytes(data).startswith(b'{"token"'):
+            raise OSError(28, "No space left on device (simulated)")
+        return real_write(fd, data)
+
+    monkeypatch.setattr(cio.os, "write", failing_write)
+    with pytest.raises(OSError):
+        cio._locked_update(target, lambda d: d.update(x=1), wait_s=0.5)
+    monkeypatch.setattr(cio.os, "write", real_write)
+    assert not cio._lock_path(target).exists()
+    cio._locked_update(target, lambda d: d.update(x=1), wait_s=0.5)
+    assert json.loads(target.read_text(encoding="utf-8")) == {"x": 1}
+
+
+def test_a_passing_sharing_refusal_on_the_lock_is_waited_out(tmp_path, monkeypatch):
+    """Windows refuses to create a file whose previous copy is being deleted
+    at that instant (and the share can refuse for a moment): that is a busy
+    lock, waited out like a held one -- not an error in the window."""
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    target = tmp_path / "causal_review_index.json"
+    lock = str(cio._lock_path(target))
+    real_open = os.open
+    refusals = []
+
+    def refusing_open(path, flags, *a, **k):
+        if str(path) == lock and len(refusals) < 3:
+            refusals.append(1)
+            err = PermissionError(13, "Access is denied (simulated)")
+            raise err
+        return real_open(path, flags, *a, **k)
+
+    monkeypatch.setattr(cio.os, "open", refusing_open)
+    cio._locked_update(target, lambda d: d.update(x=1), wait_s=2.0)
+    assert len(refusals) == 3
+    assert json.loads(target.read_text(encoding="utf-8")) == {"x": 1}

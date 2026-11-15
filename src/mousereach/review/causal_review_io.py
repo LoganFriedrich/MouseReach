@@ -1888,10 +1888,17 @@ def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
     clock = _ShareClock(lock.parent)
     body = json.dumps({"token": token, "host": socket.gethostname(),
                        "pid": os.getpid(), "taken_at": _get_timestamp()}).encode("utf-8")
+    from mousereach.pipeline.fsutil import is_transient_lock
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
+        except (FileExistsError, PermissionError) as e:
+            # A PermissionError here is Windows' answer for a lock file that
+            # is being deleted at this instant (a holder releasing it) or a
+            # passing sharing violation on the share: the lock is busy for a
+            # moment, so it is waited out like a held lock, not raised.
+            if not isinstance(e, FileExistsError) and not is_transient_lock(e):
+                raise
             if _break_if_stale(lock, INDEX_LOCK_STALE_S, clock):
                 continue
             if time.monotonic() >= deadline:
@@ -1907,8 +1914,15 @@ def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
             continue
         try:
             os.write(fd, body)
-        finally:
+        except BaseException:
+            # The lock exists but says nothing (no token): left standing it
+            # would block every writer for INDEX_LOCK_STALE_S. Nobody else
+            # can hold it (we created it), so it is removed before the error
+            # goes on.
             os.close(fd)
+            _unlink_lock_file(lock)
+            raise
+        os.close(fd)
         return
 
 
