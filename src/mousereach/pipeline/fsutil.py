@@ -155,6 +155,33 @@ def _keep_mode(tmp: Path, path: Path) -> None:
         pass
 
 
+def _unlink_temp(p) -> bool:
+    """Delete one of our temporary files; True when it is gone.
+
+    WHY the second try: _keep_mode gives the temporary file the replaced
+    file's permissions, so when that file is read-only (and the replace is
+    therefore refused) the temporary file is read-only too, and on Windows a
+    read-only file cannot be deleted. It is made writable and deleted again,
+    so a refused write never leaves a temporary file behind."""
+    import os
+    import stat
+    try:
+        os.unlink(str(p))
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    try:
+        os.chmod(str(p), stat.S_IREAD | stat.S_IWRITE)
+        os.unlink(str(p))
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def _replace_into_place(tmp: Path, path: Path, attempts: int,
                         base_delay: float) -> None:
     import os
@@ -164,10 +191,7 @@ def _replace_into_place(tmp: Path, path: Path, attempts: int,
                         attempts=attempts, base_delay=base_delay,
                         what=str(path))
     except BaseException:
-        try:
-            os.unlink(str(tmp))
-        except OSError:
-            pass
+        _unlink_temp(tmp)
         raise
 
 
@@ -193,10 +217,7 @@ def write_text_atomic(path, text: str, encoding: str = "utf-8",
             except OSError:
                 pass
     except BaseException:
-        try:
-            os.unlink(str(tmp))
-        except OSError:
-            pass
+        _unlink_temp(tmp)
         raise
     _replace_into_place(tmp, path, attempts, base_delay)
     return path
@@ -233,10 +254,7 @@ def copy_file_atomic(src, dest, attempts: int = REPLACE_ATTEMPTS,
         shutil.copy2(str(src), str(tmp))
         _fsync_file(tmp)
     except BaseException:
-        try:
-            os.unlink(str(tmp))
-        except OSError:
-            pass
+        _unlink_temp(tmp)
         raise
     _replace_into_place(tmp, dest, attempts, base_delay)
     return dest
@@ -252,14 +270,18 @@ def remove_leftover_temps(path) -> int:
     n = 0
     try:
         for p in path.parent.glob(_glob_escape(_temp_prefix(path)) + "*.tmp"):
-            try:
-                p.unlink()
+            if _unlink_temp(p):
                 n += 1
-            except OSError:
-                pass
     except OSError:
         pass
     return n
+
+
+def is_leftover_temp(name: str) -> bool:
+    """True for a file name this module's writers use for a temporary file
+    (".<name>.<random>.tmp"). A mover that takes a whole folder (the review
+    return) uses it to leave such a crash leftover out of what it carries."""
+    return name.startswith(".") and name.endswith(".tmp")
 
 
 def _glob_escape(s: str) -> str:

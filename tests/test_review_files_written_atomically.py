@@ -558,3 +558,45 @@ def test_replaced_file_keeps_its_permissions(tmp_path, monkeypatch):
     import stat
     assert modes == [stat.S_IMODE(os.stat(target).st_mode)] or modes == [
         stat.S_IMODE(target.stat().st_mode)]
+
+
+def test_a_refused_write_over_a_read_only_file_leaves_no_temporary_file(
+        tmp_path, monkeypatch):
+    """The temporary file takes the replaced file's permissions; when that
+    file is read-only the replace is refused, and the (read-only) temporary
+    file must still be removed rather than left beside it for good."""
+    import stat
+    from mousereach.pipeline import fsutil
+    monkeypatch.setattr(fsutil.time, "sleep", lambda s: None)
+    target = tmp_path / f"{VID}_x.json"
+    _write(target, {"v": 1})
+    os.chmod(target, stat.S_IREAD)
+    # The replace is refused as it is for a read-only destination on Windows
+    # (POSIX would allow it, so the refusal is made explicit here).
+    def refuse(src, dst):
+        raise PermissionError(13, "Access is denied")
+    monkeypatch.setattr(os, "replace", refuse)
+    try:
+        with pytest.raises(PermissionError):
+            fsutil.write_json_atomic(target, {"v": 2})
+        assert json.loads(target.read_text(encoding="utf-8")) == {"v": 1}
+        assert _stray(tmp_path, {target.name}) == []
+    finally:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+        for p in tmp_path.iterdir():
+            os.chmod(p, stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_leftover_temps_are_removed_even_when_read_only(tmp_path):
+    import stat
+    from mousereach.pipeline import fsutil
+    target = tmp_path / f"{VID}_segments.json"
+    left = tmp_path / f".{target.name}.abc123.tmp"
+    left.write_text("{", encoding="utf-8")
+    os.chmod(left, stat.S_IREAD)
+    try:
+        assert fsutil.remove_leftover_temps(target) == 1
+        assert not left.exists()
+    finally:
+        if left.exists():
+            os.chmod(left, stat.S_IREAD | stat.S_IWRITE)
