@@ -1882,13 +1882,27 @@ def _unlink_lock_file(path: Path, retry_s: Optional[float] = None) -> bool:
             time.sleep(0.02)
 
 
+# How many times a refused create of a lock that does NOT exist is retried
+# (LOCK_CREATE_REFUSED_SLEEP_S apart) before the refusal is raised.
+LOCK_CREATE_REFUSED_TRIES = 8
+LOCK_CREATE_REFUSED_SLEEP_S = 0.05
+
+
 def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
+    """Create ``lock`` holding ``token``; wait at most ``wait_s`` for it.
+
+    Every pass of the loop ends at the deadline -- including a pass where
+    the lock vanished (a stale break, a holder's release) -- so a caller's
+    wait is always honoured. WHY: the review window takes this lock on its
+    own thread; a loop that could go round without looking at the clock
+    froze the window for good."""
     wait_s = INDEX_LOCK_WAIT_S if wait_s is None else wait_s
     deadline = time.monotonic() + wait_s
     clock = _ShareClock(lock.parent)
     body = json.dumps({"token": token, "host": socket.gethostname(),
                        "pid": os.getpid(), "taken_at": _get_timestamp()}).encode("utf-8")
     from mousereach.pipeline.fsutil import is_transient_lock
+    refused = 0
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -1899,7 +1913,23 @@ def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
             # moment, so it is waited out like a held lock, not raised.
             if not isinstance(e, FileExistsError) and not is_transient_lock(e):
                 raise
-            if _break_if_stale(lock, INDEX_LOCK_STALE_S, clock):
+            if isinstance(e, PermissionError) and not os.path.lexists(str(lock)):
+                # The create was refused and there is no lock to wait for:
+                # most likely this account may not create files in the
+                # folder at all. A delete-pending lock clears within
+                # milliseconds, so a few short retries cover that case; past
+                # them the refusal is the answer and is raised (the window
+                # shows it), never retried for the whole wait.
+                refused += 1
+                if (refused >= LOCK_CREATE_REFUSED_TRIES
+                        or time.monotonic() >= deadline):
+                    raise
+                time.sleep(LOCK_CREATE_REFUSED_SLEEP_S)
+                continue
+            if (_break_if_stale(lock, INDEX_LOCK_STALE_S, clock)
+                    and time.monotonic() < deadline):
+                # The lock is gone: try again at once -- but only inside the
+                # wait, so this branch can never loop past the deadline.
                 continue
             if time.monotonic() >= deadline:
                 raise IndexLockBusy(

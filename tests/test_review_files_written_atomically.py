@@ -859,3 +859,77 @@ def test_a_skipped_index_update_asks_for_another_save(review_roots, monkeypatch)
     crw.CausalReviewWidget._save_review(window)
     assert warnings == []
     assert VID in index_path.read_text(encoding="utf-8")
+
+
+def _run_bounded(fn, limit_s):
+    """Run ``fn`` in a daemon thread; return (finished, exception). A call
+    that never returns must fail the test, not hang the suite."""
+    box = {}
+
+    def body():
+        try:
+            fn()
+        except BaseException as e:      # noqa: BLE001 -- reported to the test
+            box["exc"] = e
+
+    t = threading.Thread(target=body, daemon=True)
+    t.start()
+    t.join(limit_s)
+    return (not t.is_alive()), box.get("exc")
+
+
+def test_a_lock_that_can_never_be_created_raises_within_the_wait(
+        review_roots, monkeypatch):
+    """An account that may not create files in the folder gets a refusal on
+    every create of the lock. That must reach the window as an error at
+    once, not spin forever on the window's thread (the refusal is not a
+    busy lock: there is no lock to wait for)."""
+    from mousereach.review import causal_review_io as cio
+    real_open = os.open
+    attempts = []
+
+    def refusing_open(path, flags, *a, **k):
+        if str(path).endswith(".lock"):
+            attempts.append(1)
+            raise PermissionError(13, "Access is denied (simulated)")
+        return real_open(path, flags, *a, **k)
+
+    monkeypatch.setattr(cio.os, "open", refusing_open)
+    root = review_roots.records
+    root.mkdir(parents=True, exist_ok=True)
+    for call in (
+            lambda: cio.flag_session(VID, root, reason="x",
+                                     lock_wait_s=cio.GUI_LOCK_WAIT_S),
+            lambda: cio.update_corpus_index(VID, Path("x"), [_seg_record(1)],
+                                            "r", "t",
+                                            lock_wait_s=cio.GUI_LOCK_WAIT_S)):
+        attempts.clear()
+        t0 = time.monotonic()
+        finished, exc = _run_bounded(call, cio.GUI_LOCK_WAIT_S + 3)
+        assert finished, "taking the lock never returned (%d attempts)" % len(attempts)
+        assert isinstance(exc, PermissionError)
+        assert time.monotonic() - t0 <= cio.GUI_LOCK_WAIT_S + 1
+        assert len(attempts) <= cio.LOCK_CREATE_REFUSED_TRIES
+    assert not (root / "flagged_sessions.json").exists()
+
+
+def test_a_lock_that_keeps_vanishing_still_ends_at_the_deadline(tmp_path, monkeypatch):
+    """Even when every look finds the lock gone (a stale break, a release),
+    the wait ends at its deadline: no pass of the loop skips the clock."""
+    from mousereach.review import causal_review_io as cio
+    target = tmp_path / "causal_review_index.json"
+    lock = str(cio._lock_path(target))
+    real_open = os.open
+
+    def exists_open(path, flags, *a, **k):
+        if str(path) == lock:
+            raise FileExistsError(17, "File exists (simulated)")
+        return real_open(path, flags, *a, **k)
+
+    monkeypatch.setattr(cio.os, "open", exists_open)
+    monkeypatch.setattr(cio, "_break_if_stale", lambda *a, **k: True)
+    finished, exc = _run_bounded(
+        lambda: cio._locked_update(target, lambda d: d.update(x=1), wait_s=0.3), 5)
+    assert finished
+    assert isinstance(exc, cio.IndexLockBusy)
+    assert not target.exists()
