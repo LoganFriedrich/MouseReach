@@ -392,9 +392,13 @@ def record(folder: Path, video_id: str, verdict: Verdict, stamp: Optional[float]
         "cohort_last_import": verdict.last_import,
         "read_at": datetime.now().isoformat(timespec="seconds"),
     }
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    # fsutil.write_json_atomic, not a "<name>.tmp" of our own. WHY: that
+    # temporary name starts with the video's name, so one left by a crash was
+    # taken by the router and the archiver as one of the video's files; it
+    # was also never flushed to disk before the rename, and a rename refused
+    # while a reader held the file failed at once.
+    from mousereach.pipeline.fsutil import write_json_atomic
+    write_json_atomic(path, data, indent=2)
     return True
 
 

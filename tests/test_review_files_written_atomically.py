@@ -360,3 +360,27 @@ def test_reopen_answered_never_tears_the_review(tmp_path, monkeypatch, failing_d
     rec = json.loads(rp.read_text(encoding="utf-8"))["segments"][0]
     assert rec["answers"]["reviewed"] is False
     assert rec["answers"]["recheck"]["previous"]["human"]["outcome"] == "retrieved"
+
+
+def test_hand_score_record_leaves_no_file_named_after_the_video(tmp_path, failing_disk):
+    """The hand-score record used its own "<video>_pellet_outcomes.json.tmp";
+    one left by a failed write starts with the video's name, so the router
+    and the archiver carried it along as one of the video's files."""
+    from mousereach.watcher import hand_scores as hs
+    p = tmp_path / f"{VID}_pellet_outcomes.json"
+    _write(p, {"segments": [{"segment_num": 1}]})
+    before = p.read_text(encoding="utf-8")
+    v = hs.Verdict(status=hs.AGREES, reason="", hand={1: 2})
+
+    failing_disk["on"] = True
+    with pytest.raises(OSError):
+        hs.record(tmp_path, VID, v, 1.0)
+    failing_disk["on"] = False
+
+    assert p.read_text(encoding="utf-8") == before
+    assert [n for n in os.listdir(tmp_path) if n.startswith(VID) and n != p.name] == []
+    assert _stray(tmp_path, {p.name}) == []
+
+    assert hs.record(tmp_path, VID, v, 1.0) is True
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    assert doc["hand_scores"]["pellets"] == {"1": 2} and doc["segments"]
