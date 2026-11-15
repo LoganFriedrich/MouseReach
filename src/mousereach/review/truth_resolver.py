@@ -229,14 +229,23 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
     return out
 
 
-def _seg_overrides_from_gt(gt: Optional[dict]) -> Tuple[Dict[int, dict], bool]:
-    """(overrides, exhaustive) for the per-segment OUTCOME layer from GT."""
+def _seg_overrides_from_gt(gt: Optional[dict], current_segments=None,
+                           human_segmentation: bool = False) -> Tuple[Dict[int, dict], bool]:
+    """(overrides, exhaustive) for the per-segment OUTCOME layer from GT.
+
+    Keys are numbers in the CURRENT segmentation: each GT outcome is matched
+    to the current segment its frames cover, in the GT's own segmentation
+    (causal_review_io.index_gt_outcomes_by_segment) -- never by bare number,
+    which a re-cut reassigns. Without ``current_segments``, or for a GT file
+    without its own segmentation, the number is used."""
+    from mousereach.review.causal_review_io import index_gt_outcomes_by_segment
     oc = (gt or {}).get("outcomes") or {}
     out: Dict[int, dict] = {}
-    for seg in oc.get("segments", []):
-        sn = seg.get("segment_num")
-        if sn is None:
-            continue
+    by_seg, notes = index_gt_outcomes_by_segment(gt, current_segments,
+                                                 human_segmentation=human_segmentation)
+    for n in notes:
+        logger.warning("ground-truth re-anchoring: %s", n)
+    for sn, seg in sorted(by_seg.items()):
         if seg.get("determined") is False:
             continue
         ho = seg.get("outcome")
@@ -474,7 +483,7 @@ def resolve_truth_layers(
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None
     gt = _read_json(gt_path) if gt_path else None
     if gt:
-        gt_out, _exhaustive_out = _seg_overrides_from_gt(gt)
+        gt_out, _exhaustive_out = _seg_overrides_from_gt(gt, _cur_segs, human_segmentation)
         layers.append(gt_out)                                     # GT tier (top)
 
     outcomes_out = _apply_outcome_layers(outcomes_data, layers)

@@ -1019,6 +1019,57 @@ def index_review_by_segment(review_doc, current_segments=None,
     return mapping, notes
 
 
+# ---------------------------------------------------------------------------
+# Ground truth matched to the CURRENT cuts by frames
+# ---------------------------------------------------------------------------
+
+def gt_segments(gt) -> List[Dict[str, Any]]:
+    """The segments a ground-truth file was made on, ``[{segment_num,
+    start_frame, end_frame}]``, from its own ``segmentation.boundaries``
+    (segment N runs from boundary N-1 to the frame before boundary N, the
+    rule every other reader uses). Empty when the file records no usable
+    boundaries."""
+    return segments_from_segmentation((gt or {}).get("segmentation") or {})
+
+
+def index_gt_outcomes_by_segment(gt, current_segments=None,
+                                 human_segmentation: bool = False):
+    """Map each CURRENT segment number to the ground-truth outcome entry about
+    its frames. Returns ``(mapping, notes)``.
+
+    WHY by frames: ground truth was applied by segment NUMBER, while every
+    review answer is matched by the frames it was given for
+    (index_review_by_segment). After a re-cut renumbers the segments, the
+    ground truth's "segment 7" is other footage than today's segment 7, and
+    its outcome would be stamped on a pellet nobody judged. Each outcome entry
+    takes the frames of its segment in the ground truth's OWN segmentation and
+    goes through the same matching as a review answer: an entry whose frames
+    match no current segment, or split across two, is dropped and said so.
+    A file without its own segmentation, or a call without
+    ``current_segments``, falls back to the number -- the only handle there is.
+    """
+    spans = {s["segment_num"]: s for s in gt_segments(gt)}
+    records = []
+    for seg in (((gt or {}).get("outcomes") or {}).get("segments") or []):
+        sn = seg.get("segment_num") if isinstance(seg, dict) else None
+        if sn is None:
+            continue
+        own = spans.get(int(sn))
+        records.append({
+            "segment_num": int(sn),
+            "segment_span": ({"start": own["start_frame"], "end": own["end_frame"]}
+                             if own else None),
+            "human": {"outcome": seg.get("outcome")},
+            "answers": {},
+            "_gt": seg,
+        })
+    mapping, notes = index_review_by_segment(
+        {"segments": records}, current_segments if spans else None,
+        human_segmentation=human_segmentation)
+    return {int(sn): rec["_gt"] for sn, rec in mapping.items()}, \
+        ["ground truth " + n for n in notes]
+
+
 # Outcomes that are not a decision: the algorithm's own "triaged", an older
 # tool's "uncertain", and none at all.
 UNDECIDED_OUTCOMES = (None, "triaged", "uncertain")

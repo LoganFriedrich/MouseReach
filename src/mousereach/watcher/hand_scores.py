@@ -38,7 +38,15 @@ Checked before the gate, a person sees every question about a video in one
 visit, and a video that disagrees never gets kinematics first.
 
 What a person answered is never compared: a person's answer is the truth
-for that pellet, whatever the bench says. Easy and Flat trays have no pellet
+for that pellet, whatever the bench says.
+
+Segment N is compared with hand pellet N only while nothing says the cuts
+number the pellets wrongly. When a review record says a segment is really
+another pellet (true_segment_num) and the current cuts, matched by frames,
+still number it otherwise, the numbering of every segment is in doubt: the
+check raises PelletNumbersUnknown and the video is held for a person, as for
+any check that cannot run, instead of comparing a pellet with another
+pellet's score. Easy and Flat trays have no pellet
 outcomes and are never checked.
 
 EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO
@@ -170,6 +178,58 @@ def load(path: Path):
     return _CACHE["scores"], _CACHE["manifest"]
 
 
+class PelletNumbersUnknown(Exception):
+    """A person said this video's cuts number a pellet wrongly, and the
+    current cuts still disagree with them: which hand score belongs to which
+    segment is not known. Raised by check(), so the caller holds the video
+    and lists it for a person (a check that cannot run) instead of comparing
+    a pellet with another pellet's hand score."""
+
+
+def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
+    """{segment number as the record wrote it: current segment its frames
+    match (None when none)} for every review record in which a person said
+    the segment is really another pellet (``true_segment_num`` with
+    ``segmentation_wrong``) and the CURRENT cuts do not number that stretch
+    as they said. Empty when there is none.
+
+    Matched by frames (causal_review_io.index_review_by_segment): after a
+    person re-cut the video, the record's frames fall in the segment that now
+    carries the number they gave, and the correction is resolved. A record
+    whose frames match no current segment cannot be resolved either way."""
+    from mousereach.review.causal_review_io import (index_review_by_segment,
+                                                    segmentation_is_human,
+                                                    segments_from_segmentation)
+    records = [r for r in (review_doc or {}).get("segments") or []
+               if isinstance(r, dict) and r.get("segmentation_wrong")
+               and r.get("true_segment_num") is not None]
+    if not records:
+        return {}
+    current = segments_from_segmentation(seg_doc) if seg_doc else None
+    out: Dict[int, Optional[int]] = {}
+    for rec in records:
+        mapping, _ = index_review_by_segment(
+            {"segments": [rec]}, current or None,
+            human_segmentation=segmentation_is_human(seg_doc))
+        now = next(iter(mapping), None)
+        if now is None or int(rec["true_segment_num"]) != int(now):
+            out[int(rec.get("segment_num") or 0)] = now
+    return out
+
+
+def _review_and_segments(video_id: str, folder: Path):
+    """(review document or None, segments document or None) for the video, the
+    review found where the answered-segment check finds it."""
+    from mousereach.review.causal_review_io import resolve_review_path
+    review = None
+    rp = resolve_review_path(video_id, primary_dir=folder)
+    if rp is not None:
+        review = json.loads(Path(rp).read_text(encoding="utf-8"))
+    sp = Path(folder) / f"{video_id}_segments.json"
+    seg_doc = json.loads(sp.read_text(encoding="utf-8")) if sp.is_file() else None
+    return review, seg_doc
+
+
 def scores_file_stamp() -> Optional[float]:
     """Modification time of the configured scores file, or None."""
     p = settings().get("path")
@@ -219,6 +279,23 @@ def check(video_id: str, folder: Path) -> Verdict:
         return Verdict(AGREES, "every pellet answered by a person", cohort_id=cohort_id,
                        last_import=last, hand=hand)
     out = json.loads((Path(folder) / f"{video_id}_pellet_outcomes.json").read_text(encoding="utf-8"))
+    # Segment N is compared with hand pellet N only while nothing says the
+    # cuts number the pellets wrongly. A person's mislabel that the current
+    # cuts still contradict means the numbering of every other segment is in
+    # doubt: hold the video rather than compare a pellet with another
+    # pellet's score (unresolved_mislabels says how it is decided).
+    open_segs = [s.get("segment_num") for s in out.get("segments", [])
+                 if s.get("segment_num") is not None and s.get("segment_num") not in answered]
+    if open_segs:
+        review, seg_doc = _review_and_segments(video_id, folder)
+        wrong = unresolved_mislabels(review, seg_doc)
+        if wrong:
+            raise PelletNumbersUnknown(
+                "a reviewer said segment(s) %s show a different pellet, and the "
+                "current cuts still number them otherwise, so which hand score "
+                "belongs to which segment is not known; fix the cuts in the "
+                "segmentation fixer before the hand scores are compared"
+                % ", ".join(str(k) for k in sorted(wrong)))
     disagree = {}
     for seg in out.get("segments", []):
         n = seg.get("segment_num")
@@ -308,6 +385,30 @@ def record(folder: Path, video_id: str, verdict: Verdict, stamp: Optional[float]
     return True
 
 
+def pellet_of_record(record, records=None):
+    """(pellet number, "") for the hand score a review record's answer is
+    checked against, or (None, why not).
+
+    The record's own ``true_segment_num`` when a person said this segment is
+    really another pellet; else its segment number -- unless another record
+    of the same video says the cuts number a pellet wrongly
+    (``segmentation_wrong`` with a different ``true_segment_num``): then the
+    numbering of every segment is in doubt and no score is compared."""
+    rec = record or {}
+    if rec.get("segmentation_wrong") and rec.get("true_segment_num") is not None:
+        return int(rec["true_segment_num"]), ""
+    for other in (records or {}).values() if isinstance(records, dict) else (records or []):
+        if (isinstance(other, dict) and other is not record and other.get("segmentation_wrong")
+                and other.get("true_segment_num") is not None
+                and other.get("segment_num") is not None
+                and int(other["true_segment_num"]) != int(other["segment_num"])):
+            return None, ("a reviewer said segment %s shows pellet %s, so which "
+                          "hand score belongs to which segment is not known"
+                          % (other["segment_num"], other["true_segment_num"]))
+    n = rec.get("segment_num")
+    return (int(n), "") if n is not None else (None, "no segment number")
+
+
 def score_from_outcomes(outcomes_doc, pellet):
     """(score, "") for one pellet's hand score (0/1/2, see HAND_WORDS) as
     record() kept it in the video's outcomes file, or (None, why not) when
@@ -317,8 +418,9 @@ def score_from_outcomes(outcomes_doc, pellet):
     (review/double_disagreement.py). WHY from the outcomes file and not the
     scores file: it is the score the pipeline compared this pellet with, it
     travels inside the review bundle, and the review window then needs no
-    setting or access to the scores file. Keyed by segment number, exactly
-    as check() keys it."""
+    setting or access to the scores file. Keyed by pellet number, as check()
+    keys it; the caller passes the pellet the record is about
+    (pellet_of_record), not a bare segment number."""
     try:
         kept = (outcomes_doc or {}).get(RECORD_KEY)
         if not isinstance(kept, dict):

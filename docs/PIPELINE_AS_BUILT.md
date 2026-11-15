@@ -2317,6 +2317,17 @@ What each answer does now:
   the session was never scored by hand and the video goes on to the gate.
 - **The check cannot run**: held the same way, listed in red (`needs_person`, kind
   `hand_score_check_failed`), and tried again when the scores file changes.
+- **The pellet numbers are in doubt**: a review record says a segment is really another pellet
+  (`true_segment_num` with `segmentation_wrong`, written by the review tool's old mislabel box) and
+  the current cuts still number that stretch of frames otherwise. Segment N is then not known to be
+  hand pellet N for ANY segment, so nothing is compared: the check raises `PelletNumbersUnknown` and
+  the video is held exactly as for a check that cannot run (red, with the reason in the attention
+  list). The record is matched to the current cuts by its frames (`hand_scores.unresolved_mislabels`):
+  once a person's re-cut puts those frames in the segment carrying the number they gave, the
+  correction is resolved and the check compares again. Pellets a person answered are never compared,
+  so a video whose every pellet is answered is not held. WHY: the check paired segment N with hand
+  pellet N and never read `true_segment_num`, so after a mislabel it could compare a pellet with
+  another pellet's hand score and flag, or pass, the wrong one.
 
 Held videos do not count against `max_local_pending` (`_held_for_hand_scores`): they are analysed
 already, and a night of them would otherwise stop all intake until the next sheet import. They

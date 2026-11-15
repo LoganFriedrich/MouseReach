@@ -333,6 +333,14 @@ other side can see:
   the SA"). "Retrieved" against the algorithm's "displaced (in SA)" is still a
   disagreement: the algorithm saw the pellet land in the SA.
 
+**Which pellet's hand score.** The score looked up is the one for the pellet the
+answer is about: the segment's number, or -- in an older record where a person said
+the segment is really another pellet (`true_segment_num`) -- that pellet. If any
+other record of the same video says the cuts number a pellet wrongly, which score
+belongs to which segment is not known, and the box does not appear (the console
+says why) rather than compare the answer with another pellet's score
+(`hand_scores.pellet_of_record`).
+
 The hand score shown is the one the pipeline itself compared the pellet with:
 when the watcher checks a video against the tray sheet it keeps every pellet's
 hand score inside the video's own outcomes file (`<video>_pellet_outcomes.json`,
@@ -985,6 +993,8 @@ Two things to be precise about:
 - **Both review tiers are stamped the same.** Triage-queue and re-segmentation-queue reviews are both labelled `"human_review"` (`:320-322`); the data does not record which tool produced the answer.
 
 Ground truth only overrides segments it marks determined (`:138-139`). Provenance is stamped per segment as `outcome_source` (`algo` / `human_review` / `ground_truth`) and per reach as `reach_source` (`algo` / `ground_truth` / `human_review`), with the algorithm's originals preserved as `algo_outcome` and `algo_causal_reach_id` (`:172-176`). Reviews never change the boundaries of a detected reach. A review adds a reach only when the reviewer typed one the detector missed (`_add_reviewed_reaches`, since 2026-10-26; see "A reach the list does not have" above). Ground truth changes boundaries and existence, and only where `reaches.exhaustive` is set does it also delete algorithm reaches it never labelled (`:275-279`). Only real answers are applied (`is_answered`): until 2026-10-26 this step applied a pellet left on "-- select outcome --" as a human answer of "triaged".
+
+**Ground truth is matched by frames, like a review answer.** Each ground-truth outcome is about the frames of its segment in the ground truth's OWN segmentation (`segmentation.boundaries` in the file); it applies to, and counts as answering, the current segment those frames fall in (`causal_review_io.index_gt_outcomes_by_segment`, used by the results step and by `triage_status.gt_resolved_segments`, which the gate, the return scan and `mousereach-route-to-queue` use). An outcome whose frames match no current segment, or split across two, is not applied and is logged. A ground-truth file with no segmentation of its own is matched by number, the only handle it has. Why: ground truth was applied by segment number, so after a re-cut renumbered the segments its outcome would land on a different pellet's footage. Ground-truth REACHES are still placed by their segment number (`_apply_gt_reaches`).
 
 The processing-dir layer is the one that does not work — see [Reviews mostly do not reach the numbers](#reviews-mostly-do-not-reach-the-numbers).
 

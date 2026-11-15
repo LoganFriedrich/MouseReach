@@ -2732,8 +2732,14 @@ The notes box travels with the video.
             return True
         if not dd.disagrees_with_algorithm(human, algo):
             return True                # agrees with the algorithm (or it has none)
-        from mousereach.watcher.hand_scores import score_from_outcomes
-        hand, why_not = score_from_outcomes(getattr(self, "_outcomes_data", None), seg_num)
+        from mousereach.watcher.hand_scores import pellet_of_record, score_from_outcomes
+        # The pellet this answer is about: the record's own true_segment_num
+        # when a person said the cuts number it wrongly; none at all when
+        # another record of this video says so (pellet_of_record).
+        pellet, why_not = pellet_of_record(record, self._review_records)
+        hand = None
+        if pellet is not None:
+            hand, why_not = score_from_outcomes(getattr(self, "_outcomes_data", None), pellet)
         if hand is None:
             print(f"[!] Algorithm-and-sheet check not run for {self._video_stem} "
                   f"segment {seg_num}: {why_not}")

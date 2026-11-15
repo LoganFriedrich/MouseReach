@@ -149,7 +149,8 @@ def resolved_segments(review_doc: Optional[Dict[str, Any]],
     return out
 
 
-def gt_resolved_segments(video_id: str, extra_dirs=()) -> "tuple[bool, Set[int]]":
+def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
+                         human_segmentation: Optional[bool] = None) -> "tuple[bool, Set[int]]":
     """What ground truth has already determined for this video.
 
     GROUND TRUTH IS AN ANSWER. ``evaluate_gate`` has always known that -- it
@@ -179,25 +180,40 @@ def gt_resolved_segments(video_id: str, extra_dirs=()) -> "tuple[bool, Set[int]]
     causal reach and outcome have all already been reviewed by a human should
     never under any condition require a human to look at it ever again.").
 
+    The segment numbers returned are CURRENT ones: each determined GT outcome
+    counts for the current segment its frames cover in the GT's own
+    segmentation (causal_review_io.index_gt_outcomes_by_segment), the rule
+    review answers follow -- never its bare number, which a re-cut reassigns.
+    The current segments come from ``current_segments``, else from the first
+    ``{video_id}_segments.json`` found in ``extra_dirs``; with neither, or for a
+    GT file without its own segmentation, the number is used.
+
     Never raises: no GT, unreadable GT, or a missing index all yield
     ``(False, set())``, which leaves the previous behaviour exactly as it was."""
     try:
-        from .causal_review_io import find_gt
+        from .causal_review_io import (find_gt, index_gt_outcomes_by_segment,
+                                       segmentation_is_human, segments_from_segmentation)
         p = find_gt(video_id, extra_dirs=tuple(d for d in extra_dirs if d))
         if not p:
             return False, set()
         gt = json.loads(Path(p).read_text(encoding="utf-8"))
     except Exception:
         return False, set()
+    if current_segments is None:
+        for d in extra_dirs:
+            seg_doc = _load(Path(d), f"{video_id}_segments.json") if d else None
+            if seg_doc:
+                current_segments = segments_from_segmentation(seg_doc) or None
+                if human_segmentation is None:
+                    human_segmentation = segmentation_is_human(seg_doc)
+                break
     cs = gt.get("completion_status") or {}
     rr = (gt.get("reaches") or {}).get("exhaustive")
     oo = (gt.get("outcomes") or {}).get("exhaustive")
     full = bool(cs.get("all_complete")) or bool(rr and oo)
-    out: Set[int] = set()
-    for seg in ((gt.get("outcomes") or {}).get("segments") or []):
-        sn = seg.get("segment_num")
-        if sn is not None and seg.get("determined") is not False:
-            out.add(int(sn))
+    by_seg, _ = index_gt_outcomes_by_segment(gt, current_segments,
+                                             human_segmentation=bool(human_segmentation))
+    out: Set[int] = {sn for sn, seg in by_seg.items() if seg.get("determined") is not False}
     return full, out
 
 
@@ -348,7 +364,10 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # would release all 16 on the next scan -- a full re-run and filing of each
     # -- while moving queue items is on hold pending Logan's decision. Pass
     # extra_dirs=(directory,) once that is decided.
-    gt_full, gt_segs = gt_resolved_segments(video_id)
+    from .causal_review_io import segments_from_segmentation
+    gt_full, gt_segs = gt_resolved_segments(
+        video_id, current_segments=segments_from_segmentation(seg) or None,
+        human_segmentation=(seg or {}).get("boundary_source") == "human")
     res = tri if gt_full else (res | gt_segs)
 
     return TriageStatus(
