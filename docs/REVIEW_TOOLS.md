@@ -453,6 +453,8 @@ Every file a review tool or the watcher writes about a person's answers -- the r
 2. it is flushed to disk;
 3. it is swapped in with one rename.
 
+The same holds when the watcher returns a cleared bundle: before the bundle is emptied it copies the bundle's review over the durable copy in `review_records/reviews/` if the bundle's is newer, and that copy also goes to a temporary file first and is swapped in with one rename (keeping the bundle copy's modified time). A copy that fails is logged and the return goes ahead; the earlier durable copy stays complete.
+
 What this means for a person:
 
 - **A crash cannot cut a file in half.** Anyone reading the file sees either the old complete version or the new complete version. Before, a crash mid-save left a truncated file, and a truncated review was read as "no answers" -- the next save then had nothing to carry forward from it.

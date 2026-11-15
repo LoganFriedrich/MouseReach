@@ -273,3 +273,31 @@ def test_clear_marker_and_session_flag_never_torn(review_roots, failing_disk):
     assert marker.read_text(encoding="utf-8") == before
     assert flags.read_text(encoding="utf-8") == flags_before
     assert _stray(review_roots.bundle, {marker.name}) == []
+
+
+def test_durable_copy_at_return_survives_a_failed_copy(review_roots, failing_disk):
+    """review_return copies the bundle's review over the durable copy before
+    the bundle is emptied; a copy that fails part-way must leave the earlier
+    durable copy complete."""
+    from mousereach.review import causal_review_io as cio
+    from mousereach.watcher import review_return as rr
+    durable = cio.durable_review_path(VID)
+    _write(durable, {"type": "causal_review", "segments": [_seg_record(1)]})
+    before = durable.read_text(encoding="utf-8")
+    src = review_roots.bundle / f"{VID}_causal_review.json"
+    _write(src, {"type": "causal_review",
+                 "segments": [_seg_record(1), _seg_record(2, "displaced")]})
+    old = time.time() - 3600
+    os.utime(durable, (old, old))
+
+    failing_disk["on"] = True
+    rr._ensure_durable_review(review_roots.bundle, VID)   # never raises
+    failing_disk["on"] = False
+
+    assert durable.read_text(encoding="utf-8") == before
+    assert _stray(durable.parent, {durable.name}) == []
+
+    # and when the disk is healthy the copy is made, with the source's time
+    rr._ensure_durable_review(review_roots.bundle, VID)
+    assert json.loads(durable.read_text(encoding="utf-8"))["segments"][1]["segment_num"] == 2
+    assert abs(durable.stat().st_mtime - src.stat().st_mtime) < 2

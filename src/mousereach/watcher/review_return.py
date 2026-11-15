@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import functools
 import os
-import shutil
 import logging
 import socket
 import time
@@ -397,7 +396,13 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
         if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        # One-step replacement (temporary file, then one rename), keeping the
+        # source's modified time as copy2 did -- the newer-than test above
+        # relies on it. WHY not copy2 straight onto dest: that empties the
+        # durable copy first, so a failure part-way left the copy of record
+        # truncated, and a truncated review is read as "no answers".
+        from mousereach.pipeline.fsutil import copy_file_atomic
+        copy_file_atomic(src, dest)
         logger.info(f"Return {stem}: human review copied to the durable store")
     except Exception as e:
         logger.error(

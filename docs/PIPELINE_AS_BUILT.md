@@ -3305,3 +3305,12 @@ placeholder file cannot be written, the video is marked failed instead (never pa
 `watcher/review_gate.py` `ASSIGNMENT_FAILED_KEY`, `evaluate_gate`; tests in
 `tests/test_assignment_failure_holds_video.py`.
 
+## Update: files holding answers, routing records and stage outputs are replaced in one step
+
+Several watcher steps rewrite a JSON file that already exists. They used to open the file for writing, which empties it first, so a crash or a lost share connection part-way through left a cut-off file. A cut-off review is read as "no answers"; a cut-off stage output fails the next step. Each of these writes now goes to a hidden temporary file beside the real one (`.<file name>.<random>.tmp`), is flushed to disk, and is swapped in with one rename (`pipeline/fsutil.py`: `write_json_atomic`, `copy_file_atomic`). Anyone reading the file sees the old complete version or the new complete version, never a mix. If Windows refuses the rename because another program has the file open, it is tried again for about ten seconds and then the step fails loudly with the old file unchanged.
+
+The temporary name starts with a dot on purpose: the router and the archiver take every file whose name starts with the video's name, and a dot-name never matches, so a temporary file left by a crash is never carried along as one of the video's outputs. Such a leftover can be deleted by hand.
+
+Where this applies on the watcher side:
+
+- **Returning a cleared review bundle.** Before the bundle is emptied, its review is copied over the durable copy in `review_records/reviews/` when the bundle's is newer (`review_return._ensure_durable_review`). A copy that fails is logged and the return goes ahead; the earlier durable copy stays complete.
