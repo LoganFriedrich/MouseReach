@@ -314,3 +314,21 @@ started/completed count mismatch. The gate still does not hold a video whose
 assignment never ran -- deliberately, because 1,233 older videos have no
 assignment file and would flood triage on their next re-gate. That decision is
 recorded in UNFINISHED.md.
+
+---
+
+## Update 2026-11-15: a failed assignment holds the video in triage
+
+The watcher now holds a video whose assignment fails in the run (raises, or cannot read its
+inputs). It replaces `<video>_reach_assignments.json` with a file that names no causal reach and
+carries `"assignment_failed": "<the error>"`. Because that document is not `None`, the "touched
+outcome with no committed causal reach" rule applies, and every touched pellet is triaged. The
+gate's reason names the failure, and a person picks each causal reach in the triage review tool
+(`orchestrator._hold_for_failed_assignment`, `review_gate.ASSIGNMENT_FAILED_KEY`). A video whose
+pellets were all untouched is not held.
+
+What did not change: a video with NO assignment file at all (one processed before this stage
+joined the pipeline) still contributes no triage from this stage, so older videos do not flood
+triage on a re-gate. A re-run of such a video runs assignment, and then either has a real file or
+is held as above. The "How failure behaves" section above describes the behaviour before this
+change.

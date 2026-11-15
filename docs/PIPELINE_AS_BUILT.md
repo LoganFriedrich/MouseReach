@@ -3315,3 +3315,27 @@ not "held in triage") and `mousereach-repose-videos` (parks the deep-review bund
 `superseded_by_deep_review`, and the block comment above them), `watcher/review_gate.py`
 `route_to_queue`, `_drop_triage_copy`; tests in `tests/test_deep_review_supersedes_triage.py`.
 
+## Update 2026-11-15: a reach assignment that fails holds the video in triage
+
+**Before.** When reach assignment (which reach caused each touched pellet) raised, the watcher
+logged a warning and went on. No assignment file was written, which switched off the gate's
+"touched pellet with no credited reach" hold, so the video could reach kinematics and filing with
+no causal reach anywhere.
+
+**Now (both machine roles).** A problem holds the video at the step that has it. When assignment
+raises, or cannot read its inputs, the step is recorded as failed and
+`<video>_reach_assignments.json` is replaced by one that names no causal reach and carries
+`"assignment_failed": "<the error>"`. Every reader then sees each touched pellet without a causal
+reach:
+- the gate holds the video in **triage** with the reason `reach assignment could not run (<error>)
+  -- choose the causal reach for segment(s) ...`;
+- the triage review tool asks a person for the causal reach of exactly those pellets;
+- the return scan releases the video once they are answered, and the re-run applies the answers.
+A video whose pellets were all untouched needs no causal reach and is not held. An earlier run's
+assignment file is replaced as well, because it describes outcomes this run recomputed. If the
+placeholder file cannot be written, the video is marked failed instead (never passed through).
+
+**Where it lives.** `watcher/orchestrator.py` `BaseOrchestrator._hold_for_failed_assignment`;
+`watcher/review_gate.py` `ASSIGNMENT_FAILED_KEY`, `evaluate_gate`; tests in
+`tests/test_assignment_failure_holds_video.py`.
+

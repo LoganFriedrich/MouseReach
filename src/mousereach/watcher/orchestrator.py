@@ -495,6 +495,46 @@ class BaseOrchestrator:
         self.db.log_step(video_id, 'pipeline', 'failed', message=message)
         logger.error(f"{video_id}: {message} -- held as failed, not filed")
 
+    def _hold_for_failed_assignment(self, video_id: str, processing_dir: Path,
+                                    why: str) -> None:
+        """Reach assignment (which reach caused each touched pellet) did not
+        run: hold the video for a person at this step.
+
+        The assignment file is replaced by one that names no causal reach and
+        says why (review_gate.ASSIGNMENT_FAILED_KEY). Every reader then sees
+        each touched pellet without a causal reach -- the gate holds the video
+        in TRIAGE with a reason saying the reach assignment could not run, the
+        triage review tool asks a person for the causal reach of exactly those
+        pellets, and the return scan releases the video once they are answered.
+        A pellet nobody touched needs no causal reach and is not asked about.
+        WHY: a failed assignment used to write no file, which silently switched
+        off the gate's "touched pellet with no credited reach" hold, so the
+        video could be filed with no causal reach anywhere. An earlier
+        generation's file is replaced too: it describes outcomes this run
+        recomputed."""
+        from mousereach.watcher.review_gate import ASSIGNMENT_FAILED_KEY
+        self.db.log_step(video_id, 'assignment', 'failed', message=why)
+        out = Path(processing_dir) / f"{video_id}_reach_assignments.json"
+        doc = {
+            "video_id": video_id,
+            "reaches": [],
+            ASSIGNMENT_FAILED_KEY: why,
+            "note": ("Reach assignment could not run on this video, so no reach "
+                     "is credited here; a person chooses the causal reach of "
+                     "each touched pellet in triage."),
+        }
+        try:
+            with open(out, 'w') as f:
+                json.dump(doc, f, indent=2)
+        except OSError as e:
+            # Without the file the gate cannot see the problem: fail the video
+            # rather than let it pass with no causal reach.
+            self.db.mark_failed(video_id, f"reach assignment failed ({why}) and its "
+                                          f"placeholder could not be written ({e})")
+            raise
+        logger.warning(f"Assignment (algo-4) failed for {video_id}: {why} -- every "
+                       f"touched pellet goes to a person in triage")
+
     def _run_quality_triage(self, video_id: str, processing_dir: Path, dlc_path,
                             triage_video) -> str:
         """Run the unified quality triage (pipeline.triage.triage_video) and
@@ -4574,15 +4614,13 @@ class DLCOrchestrator(BaseOrchestrator):
                     resume_outcomes
                     and (processing_dir / f"{video_id}_reach_assignments.json").exists()):
                 try:
-                    assign_reaches_for_video(processing_dir, video_id, dlc_path)
+                    if assign_reaches_for_video(processing_dir, video_id, dlc_path) is None:
+                        self._hold_for_failed_assignment(
+                            video_id, processing_dir, "its inputs could not be read")
                 except Exception as e:
-                    # Countable, like every other stage. Without this row the only trace of a
-                    # failure was a started/completed count mismatch -- and a failed assignment
-                    # writes no file, which silently switches off the gate's "touched pellet
-                    # with no credited reach" hold. State deliberately NOT changed here; see
-                    # docs/UNFINISHED.md before making this fail-closed.
-                    self.db.log_step(video_id, 'assignment', 'failed', message=str(e))
-                    logger.warning(f"Assignment (algo-4) failed for {video_id}: {e}")
+                    # A failure holds the video for a person at this step
+                    # (_hold_for_failed_assignment says how).
+                    self._hold_for_failed_assignment(video_id, processing_dir, str(e))
 
             # Generate provenance manifest (travels with the bundle if held)
             pipeline_duration = time.time() - pipeline_start
@@ -6375,19 +6413,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
             try:
                 if _run_outcome or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists():
                     _recomputed.append('assignment')
-                    assign_reaches_for_video(self.processing_dir, video_id, dlc_path)
+                    if assign_reaches_for_video(self.processing_dir, video_id, dlc_path) is None:
+                        raise RuntimeError("its inputs could not be read")
                 else:
                     logger.info(f"Reusing assignment for {video_id} (dependency-aware reprocess)")
                 self.db.log_step(video_id, 'assignment', 'completed',
                                  duration=time.time() - step_start)
             except Exception as e:
-                # Countable, like every other stage. Without this row the only trace of a
-                # failure was a started/completed count mismatch -- and a failed assignment
-                # writes no file, which silently switches off the gate's "touched pellet
-                # with no credited reach" hold. State deliberately NOT changed here; see
-                # docs/UNFINISHED.md before making this fail-closed.
-                self.db.log_step(video_id, 'assignment', 'failed', message=str(e))
-                logger.warning(f"Assignment (algo-4) failed for {video_id}: {e}")
+                # A failure holds the video for a person at this step
+                # (_hold_for_failed_assignment says how).
+                self._hold_for_failed_assignment(video_id, self.processing_dir, str(e))
 
         # --- Provenance manifest (travels with the bundle if the video is held) ---
         pipeline_duration = time.time() - pipeline_start

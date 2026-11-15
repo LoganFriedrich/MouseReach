@@ -40,6 +40,12 @@ DECISION_DEEP = "deep_review"
 # Outputs predate the segments file: mid-flight, not reviewable, not routable.
 DECISION_STALE = "stale_outputs"
 
+# Key the watcher writes into <video>_reach_assignments.json when reach
+# assignment could not run (orchestrator._hold_for_failed_assignment). The file
+# then names no causal reach, so every touched pellet is triaged; the gate's
+# reason says why, so a person knows what to answer.
+ASSIGNMENT_FAILED_KEY = "assignment_failed"
+
 # The quality verdict the watcher passes when the unified quality triage could
 # not run at all (it raised). The gate HOLDS such a video in deep review: an
 # unchecked video must not pass as clean (it used to -- the verdict stayed
@@ -219,8 +225,23 @@ def evaluate_gate(
             return DECISION_DEEP, short_segment_reason(st, short), st
     if unresolved:
         segs = ", ".join(str(s) for s in sorted(unresolved))
+        failed = _assignment_failure(video_id, processing_dir)
+        if failed:
+            return (DECISION_TRIAGE,
+                    f"reach assignment could not run ({failed}) -- choose the "
+                    f"causal reach for segment(s) {segs}", st)
         return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
     return DECISION_CLEAN, "clean", st
+
+
+def _assignment_failure(video_id: str, processing_dir: Path) -> str:
+    """The recorded reason reach assignment could not run, or "". Never raises."""
+    try:
+        doc = json.loads((Path(processing_dir) / f"{video_id}_reach_assignments.json")
+                         .read_text(encoding="utf-8"))
+        return str(doc.get(ASSIGNMENT_FAILED_KEY) or "")
+    except Exception:
+        return ""
 
 
 def _deep_review_cleared(video_id: str, processing_dir: Path) -> bool:
