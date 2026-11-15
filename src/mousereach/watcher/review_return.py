@@ -533,6 +533,41 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         _return_failed(stem)
         return False
 
+    # Delete crash leftovers BEFORE moving anything. A one-step write's
+    # temporary file (".<name>.<random>.tmp", see pipeline/fsutil.py) left by a
+    # crash between writing it and the rename is not one of the video's files:
+    # carried into Processing it would sit there for good (nothing sweeps
+    # dot-names there). The bundle's real files are complete, and a review's
+    # content is in the durable copy, written before the bundle copy.
+    # WHY before the moves, and refuse on failure: a leftover that cannot be
+    # deleted is held open by something -- most likely a review window writing
+    # into this bundle at this moment. Finding that out half-way through the
+    # moves left the video set to 'processing' with a bundle folder still in
+    # the queue (bundle.rmdir() fails on the leftover) and nothing said. Now
+    # nothing is moved, the refusal is logged, and the return is tried again.
+    from mousereach.pipeline.fsutil import is_leftover_temp, remove_temp_file
+    try:
+        leftovers = [f for f in bundle.iterdir()
+                     if f.is_file() and is_leftover_temp(f.name)]
+    except OSError:
+        leftovers = []
+    stuck_temps = []
+    for f in leftovers:
+        if remove_temp_file(f):
+            logger.warning(f"Return {stem}: deleted a leftover temporary "
+                           f"file {f.name} instead of moving it")
+        else:
+            stuck_temps.append(f.name)
+    if stuck_temps:
+        logger.error(
+            f"Return {stem}: could not delete the temporary file(s) "
+            f"{', '.join(stuck_temps)} in {bundle} -- something has them open "
+            f"(a review window saving into this bundle?). Nothing was moved; "
+            f"the bundle stays in the queue. (Tried again in "
+            f"{RETURN_RETRY_S // 60} min.)")
+        _return_failed(stem)
+        return False
+
     # This function is where a review leaves shared storage: every bundle file is
     # MOVED onto this node's local processing dir and the bundle directory is then
     # removed. That is the moment a reviewer's answers stop being visible to any
@@ -552,7 +587,6 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # Analyzed, staging) is used in place, so pose_src stands.
     h5_dest: Optional[Path] = pose_src
     moved = 0
-    from mousereach.pipeline.fsutil import is_leftover_temp, remove_temp_file
     for f in list(bundle.iterdir()):
         if not f.is_file():
             continue
@@ -563,15 +597,13 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                 pass
             continue
         if is_leftover_temp(f.name):
-            # A one-step write's temporary file (".<name>.<random>.tmp", see
-            # pipeline/fsutil.py) left by a crash between writing it and the
-            # rename. It is not one of the video's files: carried into
-            # Processing it would sit there for good (nothing sweeps dot-names
-            # there). The bundle's real files are complete, and a review's
-            # content is in the durable copy, written before the bundle copy.
-            if remove_temp_file(f):
-                logger.warning(f"Return {stem}: deleted a leftover temporary "
-                               f"file {f.name} instead of moving it")
+            # One that appeared after the check above (a save that started in
+            # between): never carried along. Deleted if it can be; if not, it
+            # keeps the bundle folder in the queue below, which is logged.
+            if not remove_temp_file(f):
+                logger.warning(f"Return {stem}: a temporary file {f.name} "
+                               f"appeared during the return and could not be "
+                               f"deleted; it is left in {bundle}")
             continue
         dest = processing_dir / f.name
         try:
@@ -634,8 +666,12 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # Remove the now-empty bundle dir so it leaves the queue.
     try:
         bundle.rmdir()
-    except OSError:
-        pass
+    except OSError as e:
+        # Said, not swallowed: an emptied-but-present bundle folder stays in
+        # the queue listing although the video is now 'processing'.
+        logger.warning(f"Return {stem}: the video is back in Processing but "
+                       f"its bundle folder {bundle} could not be removed "
+                       f"({e}); it is left in the queue")
 
     _return_retry_after.pop(stem, None)
     logger.info(f"Returned {stem} to Processing ({moved} files) reason={reason}")

@@ -327,3 +327,37 @@ def test_a_leftover_temporary_file_is_not_carried_into_processing(tmp_path, monk
     assert (proc / f"{stem}_causal_review.json").is_file()
     assert not (proc / leftover).exists()
     assert not bundle.exists()
+
+
+def test_an_undeletable_leftover_stops_the_return_before_anything_moves(
+        tmp_path, monkeypatch, caplog):
+    """A leftover temporary file that cannot be deleted is held open by
+    something (a review window saving into the bundle at that moment). Found
+    half-way through the moves, it left the video set to 'processing' with a
+    bundle folder still in the queue, and nothing was said. The return must
+    refuse before moving anything, say so, and leave the bundle whole."""
+    from mousereach.pipeline import fsutil
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    stem = "20990101_PRJ0112_P1"
+    bundle = triage / stem
+    bundle.mkdir()
+    (bundle / f"{stem}.mp4").write_bytes(b"x")
+    (bundle / _pose_name(stem, "ModelA", 100)).write_bytes(b"pose")
+    (bundle / f"{stem}_causal_review.json").write_text("{}", encoding="utf-8")
+    leftover = f".{stem}_causal_review.json.a1b2c3.tmp"
+    (bundle / leftover).write_text("{", encoding="utf-8")
+    proc = tmp_path / "proc"
+    # Held open: the delete is refused (as Windows refuses an open file).
+    monkeypatch.setattr(fsutil, "remove_temp_file", lambda p: False)
+
+    db = FakeDB()
+    with caplog.at_level(logging.WARNING):
+        assert not rr._return_to_processing(bundle, stem, proc, db, "triage_cleared")
+
+    assert db.state_writes == []                       # not set to processing
+    assert (bundle / f"{stem}.mp4").is_file()          # nothing moved
+    assert (bundle / f"{stem}_causal_review.json").is_file()
+    assert not proc.exists() or not any(proc.iterdir())
+    assert leftover in caplog.text and str(bundle) in caplog.text
