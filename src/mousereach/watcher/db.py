@@ -1229,18 +1229,27 @@ class WatcherDB:
         Args:
             video_id: Video identifier
             error_message: Error description
+
+        Raises CrystallizedError for a crystallized row: a publication-locked
+        video is never re-labelled failed (the same rule force_state keeps;
+        crystallized_refusal says why). Its filed results are untouched by
+        whatever went wrong, and 'failed' would put it back in the retry work.
         """
         with self._lock:
             conn = self._get_connection()
             try:
                 # Get current error count
                 row = conn.execute(
-                    "SELECT error_count FROM videos WHERE video_id = ?",
+                    "SELECT error_count, state FROM videos WHERE video_id = ?",
                     (video_id,)
                 ).fetchone()
 
                 if not row:
                     raise ValueError(f"Video {video_id} not found")
+                if row['state'] == 'crystallized':
+                    raise CrystallizedError(
+                        f"{video_id} is crystallized; not marked failed ({error_message}). "
+                        f"Unlock it with mousereach-uncrystallize first if this is intended.")
 
                 error_count = (row['error_count'] or 0) + 1
 

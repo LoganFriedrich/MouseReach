@@ -3242,6 +3242,9 @@ return (it forced `processing` on any row) and the version scan's mislabel diver
   the refusal (the return is tried again hourly, so it shows in the log until a person acts).
 - The version scan's mislabel divert logs the refusal and leaves the filed results.
 - `mousereach-watch-process-animal` skips a crystallized video ("already crystallized").
+- `mark_failed` refuses a crystallized row too (it raises `CrystallizedError`; the row and its
+  error count are unchanged), so an error in any handler cannot turn a locked video into a failed
+  one that the retry work would pick up.
 - `force_state` itself will not take a row out of `crystallized`; only the unlock command
   (`mousereach-uncrystallize`) may, and it says so explicitly (`unlock_crystallized=True`). A
   dashboard "Re-run" on a locked video shows "Could not mark it: ... is crystallized".

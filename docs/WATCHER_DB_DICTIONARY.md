@@ -216,7 +216,7 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
   archived      -> outdated, crystallized, unresolvable
   outdated      -> dlc_queued, processing, failed, archived, unresolvable
   crystallized  -> nothing; only mousereach-uncrystallize unlocks it (since
-                   2026-11-15 force_state refuses everything else, and no
+                   2026-11-15 force_state and mark_failed refuse it, and no
                    route, return or divert moves a crystallized video)
   triage        -> outdated, processing, deep_review, failed
   deep_review   -> outdated, processing, dlc_queued, failed
