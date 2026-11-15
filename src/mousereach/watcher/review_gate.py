@@ -40,6 +40,15 @@ DECISION_DEEP = "deep_review"
 # Outputs predate the segments file: mid-flight, not reviewable, not routable.
 DECISION_STALE = "stale_outputs"
 
+# The quality verdict the watcher passes when the unified quality triage could
+# not run at all (it raised). The gate HOLDS such a video in deep review: an
+# unchecked video must not pass as clean (it used to -- the verdict stayed
+# 'auto_approved' when triage crashed). The reason below is what the review
+# tools show as the routed reason.
+QC_TRIAGE_FAILED = "triage_failed"
+TRIAGE_FAILED_REASON = ("triage_failed: the automatic quality check could not run "
+                        "on this video -- a person checks it")
+
 
 def _gt_certification(video_id: str, processing_dir=None) -> Tuple[bool, set]:
     """``(fully_exhaustive, gt_determined_outcome_segnums)`` for a video's GT.
@@ -173,6 +182,18 @@ def evaluate_gate(
                 f"deep-review clear exists -- honoring the clear.")
         else:
             return DECISION_DEEP, "qc_needs_review", st
+    if qc_verdict == QC_TRIAGE_FAILED:
+        # Fail closed: the quality checks never ran, so nothing says the video
+        # is sound. Held for a person -- unless a person already cleared it in
+        # deep review (same honour rule as above: without it a triage that
+        # crashes the same way on every run would bounce a cleared video
+        # between deep review and reprocessing for ever).
+        if _deep_review_cleared(video_id, processing_dir):
+            logger.info(
+                f"Gate: {video_id} quality triage could not run but a human's "
+                f"deep-review clear exists -- honoring the clear.")
+        else:
+            return DECISION_DEEP, TRIAGE_FAILED_REASON, st
     # GT-determined segments are resolved; so are segments a human addressed in a
     # review saved ANYWHERE the resolver looks (the Pending bundle, or next to the
     # canonical video) -- not just the fresh work dir triage_status read. Honoring

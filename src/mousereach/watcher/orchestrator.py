@@ -495,6 +495,66 @@ class BaseOrchestrator:
         self.db.log_step(video_id, 'pipeline', 'failed', message=message)
         logger.error(f"{video_id}: {message} -- held as failed, not filed")
 
+    def _run_quality_triage(self, video_id: str, processing_dir: Path, dlc_path,
+                            triage_video) -> str:
+        """Run the unified quality triage (pipeline.triage.triage_video) and
+        return the verdict the review gate is given.
+
+        It FAILS CLOSED. When triage_video raises, the verdict is
+        review_gate.QC_TRIAGE_FAILED, which the gate treats like a failed
+        quality check: the video is held in the deep-review queue for a person,
+        with the routed reason saying the quality triage could not run.
+        WHY: the verdict used to stay 'auto_approved' when triage raised, so a
+        crash in the checks let the video through the gate unchecked and be
+        filed. (Easy and Flat trays are never held -- the gate's rule -- so for
+        them this changes nothing.)
+
+        Any ``<stem>_triage.json`` from an earlier run is removed first, so a
+        crash can never leave an old verdict sitting beside new outputs."""
+        from mousereach.watcher.review_gate import QC_TRIAGE_FAILED
+        processing_dir = Path(processing_dir)
+        old = processing_dir / f"{video_id}_triage.json"
+        try:
+            old.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning(f"{video_id}: could not remove the earlier {old.name} "
+                           f"({e}); it is replaced if this triage runs")
+        try:
+            triage_result = triage_video(
+                video_id=video_id,
+                processing_dir=processing_dir,
+                h5_path=dlc_path,
+            )
+            for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
+                json_path = processing_dir / f"{video_id}{suffix}"
+                if json_path.exists():
+                    try:
+                        with open(json_path) as f:
+                            data = json.load(f)
+                        data['validation_status'] = triage_result.verdict
+                        data['triage_reason'] = (
+                            '; '.join(f.description for f in triage_result.flags if f.severity == 'critical')
+                            if triage_result.verdict == 'needs_review'
+                            else 'Unified triage: all checks passed'
+                        )
+                        with open(json_path, 'w') as f:
+                            json.dump(data, f, indent=2)
+                    except Exception as err:
+                        logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
+            triage_result.save(processing_dir / f"{video_id}_triage.json")
+            logger.info(
+                f"Triage: {video_id} -> {triage_result.verdict} "
+                f"({triage_result.n_critical} critical, {triage_result.n_warnings} warnings)"
+            )
+            return triage_result.verdict
+        except Exception as e:
+            self.db.log_step(video_id, 'triage', 'failed', message=str(e))
+            logger.error(f"Unified triage failed for {video_id}: {e} -- the review "
+                         f"gate holds the video for a person")
+            return QC_TRIAGE_FAILED
+
     def _note_archive_failure(self, video_id: str) -> int:
         """Record a failed archive attempt and return the delay before the next."""
         if not hasattr(self, "_archive_backoff"):
@@ -4492,35 +4552,9 @@ class DLCOrchestrator(BaseOrchestrator):
             except Exception as e:
                 self._set_aside_stale_manifest(processing_dir, video_id, e)
 
-            # Unified QC triage
-            qc_verdict = 'auto_approved'
-            try:
-                triage_result = triage_video(
-                    video_id=video_id,
-                    processing_dir=processing_dir,
-                    h5_path=dlc_path,
-                )
-                qc_verdict = triage_result.verdict
-                for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
-                    json_path = processing_dir / f"{video_id}{suffix}"
-                    if json_path.exists():
-                        try:
-                            with open(json_path) as f:
-                                data = json.load(f)
-                            data['validation_status'] = triage_result.verdict
-                            data['triage_reason'] = (
-                                '; '.join(f.description for f in triage_result.flags if f.severity == 'critical')
-                                if triage_result.verdict == 'needs_review'
-                                else 'Unified triage: all checks passed'
-                            )
-                            with open(json_path, 'w') as f:
-                                json.dump(data, f, indent=2)
-                        except Exception as err:
-                            logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
-                            pass
-                triage_result.save(processing_dir / f"{video_id}_triage.json")
-            except Exception as e:
-                logger.warning(f"Unified triage failed for {video_id}: {e}")
+            # Unified QC triage -- fails closed (_run_quality_triage)
+            qc_verdict = self._run_quality_triage(video_id, processing_dir,
+                                                  dlc_path, triage_video)
 
             # Hand scores, before the gate (_hand_score_precheck): a
             # disagreeing pellet is flagged so the gate sends it to triage
@@ -6375,37 +6409,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not rerun_triage_and_hand_scores:
             return self._gate_held(video_id, run_gate, DECISION_CLEAN, qc_verdict,
                                    pipeline_duration)
-        try:
-            triage_result = triage_video(
-                video_id=video_id,
-                processing_dir=self.processing_dir,
-                h5_path=dlc_path,
-            )
-            qc_verdict = triage_result.verdict
-            for suffix in ['_segments.json', '_reaches.json', '_pellet_outcomes.json']:
-                json_path = self.processing_dir / f"{video_id}{suffix}"
-                if json_path.exists():
-                    try:
-                        with open(json_path) as f:
-                            data = json.load(f)
-                        data['validation_status'] = triage_result.verdict
-                        data['triage_reason'] = (
-                            '; '.join(f.description for f in triage_result.flags if f.severity == 'critical')
-                            if triage_result.verdict == 'needs_review'
-                            else 'Unified triage: all checks passed'
-                        )
-                        with open(json_path, 'w') as f:
-                            json.dump(data, f, indent=2)
-                    except Exception as err:
-                        logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
-                        pass
-            triage_result.save(self.processing_dir / f"{video_id}_triage.json")
-            logger.info(
-                f"Triage: {video_id} -> {triage_result.verdict} "
-                f"({triage_result.n_critical} critical, {triage_result.n_warnings} warnings)"
-            )
-        except Exception as e:
-            logger.warning(f"Unified triage failed for {video_id}: {e}")
+        # Fails closed: a triage that cannot run holds the video for a person
+        # (_run_quality_triage says why).
+        qc_verdict = self._run_quality_triage(video_id, self.processing_dir,
+                                              dlc_path, triage_video)
 
         # --- Hand scores, before the gate (_hand_score_precheck) ---
         # A disagreeing pellet is flagged, so the gate below sends the video to

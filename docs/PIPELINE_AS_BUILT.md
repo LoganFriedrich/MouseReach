@@ -3188,3 +3188,26 @@ started is older than the stamp and does not count. Anything unreadable counts a
 `_archive_locally_processed`; `watcher/db.py` `VIDEO_TRANSITIONS['archiving']`; tests in
 `tests/test_filing_state_recorded.py`.
 
+
+## Update 2026-11-15: a quality triage that cannot run holds the video
+
+**Before.** The automatic quality check (the unified triage, `pipeline/triage.py`) gives the review
+gate its quality verdict. When the check itself raised an error, the verdict stayed "auto
+approved": the video passed the gate unchecked, went on to kinematics and was filed.
+
+**Now (both machine roles).** When the check raises, the error is logged and recorded as a failed
+`triage` step, and the gate is given the verdict `triage_failed`. The gate holds the video in the
+**deep-review queue** with the routed reason `triage_failed: the automatic quality check could not
+run on this video -- a person checks it`. What a person does: open it in the re-segmentation (deep
+review) tools, check the video, and clear it as for any deep-review hold. Once a person has cleared
+it, the gate honours that clear on later runs (the same rule as a failed quality check), so a check
+that crashes the same way every time cannot bounce the video back. The return scan does not release
+such a hold on its own (it only releases holds the quality check made and would no longer make).
+Easy and Flat trays are never held, as before.
+
+**No old verdict beside new outputs.** Any `<video>_triage.json` from an earlier run is removed
+before the check runs, so a crash cannot leave an earlier verdict sitting with the new outputs.
+
+**Where it lives.** `watcher/orchestrator.py` `BaseOrchestrator._run_quality_triage` (one step for
+both roles); `watcher/review_gate.py` `QC_TRIAGE_FAILED`, `evaluate_gate`; tests in
+`tests/test_triage_fails_closed.py`.
