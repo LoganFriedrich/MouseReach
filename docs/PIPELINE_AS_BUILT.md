@@ -3297,8 +3297,13 @@ Deep review always wins; a triage copy of such a video is deleted, not kept.
 - into triage while the video has a deep-review bundle (published, or being built in
   `deep_review/.incoming/`): nothing is moved or created, the row is set to `deep_review`, the
   refusal is logged, and the deep-review bundle is returned. When the gate itself asked (a re-run
-  of a video that is in deep review), that run's outputs stay in the local Processing folder and
-  the log says so;
+  of a video that is in deep review), that run's files are then taken out of the local Processing
+  folder so the video is in one place only (`review_gate.discard_run_outputs`): the run's outputs
+  are deleted (they are made again when the video leaves deep review), the video or a pose file is
+  deleted only when the deep-review bundle holds the same file, and one that could be the only
+  copy is set aside, never deleted, to `<processing root>/_finished_elsewhere/<date>/Processing/`.
+  The log says what was deleted and what was set aside. A route from anywhere else (a filed
+  folder, a queue) never deletes anything;
 - into deep review: after the bundle is complete (its routing record lists no file that failed to
   move), the video's triage bundle is deleted (`_drop_triage_copy`). With a failed file the triage
   folder is kept and the log names it for a person.

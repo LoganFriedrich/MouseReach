@@ -526,6 +526,64 @@ def _same_folder(a, b) -> bool:
         return False
 
 
+# Files of a video that are its INPUTS (the video and the pose, with the pose
+# step's side files); everything else of the video in a processing folder is an
+# output of the run, made again whenever the video is analysed again.
+def _is_input_file(video_id: str, name: str) -> bool:
+    return name == f"{video_id}.mp4" or name.startswith(f"{video_id}DLC")
+
+
+def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) -> dict:
+    """Take a run's files out of ``processing_dir`` when the gate could not
+    route the video to triage because it is in deep review.
+
+    A video is in one place at a time, and the deep-review bundle is its live
+    copy. So, for each of the video's files in ``processing_dir`` (only there:
+    a file elsewhere, e.g. a filed copy, is never touched):
+      * an output of this run (segments, reaches, outcomes, assignment,
+        manifest, triage record ...) is deleted -- it is made again when the
+        video leaves deep review and is analysed again;
+      * an input (the video or a pose file) is deleted only when the
+        deep-review bundle holds the same file (same name and content); one
+        that could be the only copy is set aside, never deleted, to
+        ``<processing root>/_finished_elsewhere/<date>/<folder>/`` -- the set-
+        aside folder the watcher already uses for local copies of videos held
+        or finished elsewhere.
+    Returns ``{"deleted": [...], "set_aside": [...], "failed": [...]}`` and
+    logs what it did. Never raises."""
+    import shutil
+    from datetime import date as _date
+    from mousereach.archive.core import _same_file
+    from .review_routing import _bundle_files
+    out = {"deleted": [], "set_aside": [], "failed": []}
+    try:
+        files = list(_bundle_files(Path(processing_dir), video_id))
+    except OSError:
+        files = []
+    root = getattr(Paths, "PROCESSING_ROOT", None) or Path(processing_dir).parent
+    aside = Path(root) / "_finished_elsewhere" / _date.today().isoformat()
+    for f in files:
+        try:
+            twin = Path(deep_bundle) / f.name
+            if not _is_input_file(video_id, f.name) or (twin.is_file() and _same_file(f, twin)):
+                f.unlink()
+                out["deleted"].append(f.name)
+            else:
+                target = aside / f.parent.name
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(f), str(target / f.name))
+                out["set_aside"].append(str(target / f.name))
+        except OSError as e:
+            out["failed"].append(f"{f.name} ({e})")
+    logger.warning(
+        f"{video_id}: in deep review, so this run's files were taken out of "
+        f"{processing_dir}: {len(out['deleted'])} deleted (outputs, or inputs the "
+        f"deep-review bundle holds identically), {len(out['set_aside'])} set aside "
+        f"to {aside} (inputs that could be the only copy)"
+        + (f"; could not remove: {', '.join(out['failed'])}" if out["failed"] else ""))
+    return out
+
+
 def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
     """Delete ``<triage>/<video>`` once the video's deep-review bundle is
     complete. Deep review supersedes triage: the triage copy is deleted, not
@@ -598,9 +656,17 @@ def run_gate(
                        db=db, db_state="deep_review", extra_sources=extra)
         logger.info(f"Gate: {video_id} -> DEEP_REVIEW ({reason})")
     elif decision == DECISION_TRIAGE:
-        route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
-                       db=db, db_state="triage", extra_sources=extra)
-        logger.info(f"Gate: {video_id} -> TRIAGE ({reason})")
+        bundle = route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
+                                db=db, db_state="triage", extra_sources=extra)
+        if _same_folder(Path(bundle).parent, getattr(Paths, "DEEP_REVIEW", None)):
+            # Refused: the video is in deep review, which supersedes triage.
+            # This run's files must not stay here as a second place the video
+            # is in (discard_run_outputs).
+            logger.info(f"Gate: {video_id} -> stays in DEEP_REVIEW (triage refused: "
+                        f"the video is in deep review)")
+            discard_run_outputs(video_id, Path(processing_dir), Path(bundle))
+        else:
+            logger.info(f"Gate: {video_id} -> TRIAGE ({reason})")
     elif decision == DECISION_STALE:
         # Do NOT route -- a reviewer must not judge data describing old cuts
         # -- and do NOT touch state or files. The video stays 'processing'
