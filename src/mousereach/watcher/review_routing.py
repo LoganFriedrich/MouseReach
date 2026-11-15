@@ -154,8 +154,25 @@ def _bundle_files(source_dir: Path, video_id: str) -> List[Path]:
     return out
 
 
+def same_path(a, b) -> bool:
+    """True when ``a`` and ``b`` name the same file or folder (case and
+    separators normalised, as Windows compares them). Never raises."""
+    try:
+        if os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b))):
+            return True
+        return os.path.samefile(str(a), str(b))
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _safe_move(src: Path, dst: Path) -> None:
     """shutil.move that overwrites an existing destination file.
+
+    A move of a file onto ITSELF does nothing. WHY: the overwrite below deletes
+    the destination first, and when source and destination are the same file
+    that deleted the file itself -- a route of a bundle onto its own folder
+    (Flag Session pressed in the re-segmentation window) deleted every file of
+    the bundle except the one the window still had open.
 
     Cross-filesystem moves (local Processing -> NAS) are copy+delete under the
     hood; that is intended -- the bundle must live on the NAS so any node / the
@@ -169,6 +186,9 @@ def _safe_move(src: Path, dst: Path) -> None:
     raises to the caller after the retries.
     """
     from mousereach.pipeline.fsutil import retry_transient
+
+    if same_path(src, dst):
+        return
 
     def _mv():
         if dst.exists():
@@ -324,6 +344,15 @@ def move_video_bundle(
     source_dir = Path(source_dir)
     dest_root = Path(dest_root)
     bundle = dest_root / video_id
+    if same_path(source_dir, bundle):
+        # The video is already where it is being sent: nothing to move, and
+        # the routing record is NOT rewritten (it would list every file as
+        # "failed" and replace the record of the route that brought it here).
+        # WHY a guard here as well as in review_gate.route_to_queue: moving
+        # each file onto itself deleted it (see _safe_move).
+        logger.warning(f"Routing {video_id}: {source_dir} already is the bundle "
+                       f"in {dest_root}; nothing moved")
+        return bundle, []
     staged = not bundle.is_dir()
     if staged:
         build = dest_root / INCOMING_DIR_NAME / video_id

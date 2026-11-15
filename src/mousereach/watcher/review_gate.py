@@ -479,6 +479,18 @@ def route_to_queue(
                     f"DB state could not be set ({e2}). Disk and DB now disagree.")
 
     dest_root = Path(dest_root)
+    if _same_folder(processing_dir, dest_root / video_id):
+        # The video is ALREADY in this queue: the source folder is the bundle
+        # itself (e.g. Flag Session pressed in the re-segmentation window).
+        # Nothing is moved and neither the routing record nor the review
+        # manifest is rewritten -- the bundle is already where the caller
+        # wants it. Only the database is brought in line. WHY: moving each
+        # file onto itself used to delete it (review_routing._safe_move).
+        logger.warning(
+            f"Routing {video_id}: already in {dest_root} ({reason}); nothing "
+            f"moved")
+        _record_state(db_state, "routed onto its own bundle: already in this queue")
+        return dest_root / video_id
     if (_same_folder(dest_root, getattr(Paths, "TRIAGE_REVIEW", None))
             and in_deep_review(video_id)):
         deep_bundle = Path(Paths.DEEP_REVIEW) / video_id

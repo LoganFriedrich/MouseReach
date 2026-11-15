@@ -826,6 +826,20 @@ well.** Deep review is the stronger hold: the whole video, cuts included, is in 
 filed results. The triage copy held older results than the deep-review copy, and a reviewer could
 answer the wrong one.
 
+### Moving a video into or out of a queue never deletes or overwrites a person's file
+
+A queue bundle holds what a person did (a review, ground truth, a clear marker, cuts set by
+hand) as well as what the machine made. Every move into, out of or between the queues follows
+these rules:
+
+- **A video sent to the queue it is already in is left exactly as it is.** If a button or
+  command routes a bundle into its own queue (for example **Flag Session** pressed in the
+  re-segmentation window, where the video already is), nothing is moved and the bundle's
+  routing record and manifest are not rewritten; only the watcher database is set to that
+  queue's state. **Why:** the move used to "move" each file onto itself, and the overwrite step
+  deleted the file first -- every file of the bundle except the video the window had open was
+  lost.
+
 ### Where they are
 
 Set in `config.py:164-166`, derived from `NAS_ROOT`:

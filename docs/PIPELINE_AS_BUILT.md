@@ -3317,3 +3317,19 @@ Where this applies on the watcher side:
 - **Routing a filed video back to a queue** (`mousereach-route-to-queue`). Flagging segments rewrites the video's `<video>_pellet_outcomes.json`, and `--recheck` rewrites its review file after copying it to `Archive/manual_corrections/<name>.before_recheck_<time>` (`route_cli.flag_segments`, `route_cli.reopen_answered`). Both replace the file in one step. If the write fails, the command stops with an error, the file is exactly as it was, and the command can simply be run again.
 - **Stamping the quality verdict.** After the automatic quality check, its verdict (`validation_status`, `triage_reason`) is written into `<video>_segments.json`, `<video>_reaches.json` and `<video>_pellet_outcomes.json` (`orchestrator._run_quality_triage`). Each of the three is replaced in one step; a crash mid-stamp used to leave a cut-off stage output -- the video's actual results. Before stamping, any temporary file an earlier crashed stamp left beside these three is deleted. A stamp that fails is logged and the file keeps its earlier content, as before.
 - **Keeping the hand scores with the video.** The sheet's scores for the session are written into `<video>_pellet_outcomes.json` under `hand_scores` (`hand_scores.record`). This already went through a temporary file, but one named `<video>_pellet_outcomes.json.tmp` -- a name that starts with the video's, so a leftover was carried along by the router and the archiver. It now uses the shared writer: dot-named temporary file, flushed, rename retried while the file is held. A failure holds the video, as before.
+
+## Update: routing into and out of the review queues is all-or-nothing and never deletes a person's file
+
+Every route into a queue goes through `review_gate.route_to_queue` (which calls
+`review_routing.move_video_bundle`), and every return out of one through
+`review_return._return_to_processing`. The rules below are what those functions do; the
+operator-level description is in `docs/REVIEW_TOOLS.md`, "Moving a video into or out of a
+queue never deletes or overwrites a person's file".
+
+- **Routing onto itself.** When the source folder IS the destination bundle (a video already in
+  the queue it is sent to), `route_to_queue` moves nothing, rewrites neither the routing record
+  nor the review manifest, and only records the queue's state in the watcher database.
+  `move_video_bundle` returns at once in that case too, and `_safe_move` does nothing when source
+  and destination are the same file. Before, each file was "moved" onto itself and the overwrite
+  step deleted it. Tests: `tests/test_route_onto_itself_moves_nothing.py`.
+
