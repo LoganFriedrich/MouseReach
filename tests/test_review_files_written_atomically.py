@@ -441,3 +441,105 @@ def test_quality_verdict_stamp_clears_leftover_temps_and_stamps(tmp_path):
         doc = json.loads(p.read_text(encoding="utf-8"))
         assert doc["validation_status"] == "auto_approved"
         assert doc["rows"] == list(range(500))
+
+
+# ---------------------------------------------------------------------------
+# MRR-02c: the corpus index and flagged_sessions.json, one writer at a time
+# ---------------------------------------------------------------------------
+
+def _race(monkeypatch, file_name, first, second, hold_s=1.5):
+    """Run ``first`` in one thread and, while it sits between reading
+    ``file_name`` and writing it back, run ``second`` in another thread --
+    two review windows saving at the same moment."""
+    from mousereach.review import causal_review_io as cio
+    real_read = cio._read_json
+    read_done, go = threading.Event(), threading.Event()
+    errors = []
+
+    def slow_read(path):
+        doc = real_read(path)
+        if (Path(path).name == file_name
+                and threading.current_thread().name == "first"
+                and not read_done.is_set()):
+            read_done.set()
+            go.wait(hold_s)           # the other window saves meanwhile
+        return doc
+
+    monkeypatch.setattr(cio, "_read_json", slow_read)
+
+    def run(fn, after=None):
+        try:
+            if after is not None:
+                after.wait(10)
+            fn()
+        except Exception as e:      # pragma: no cover - reported below
+            errors.append(e)
+        finally:
+            go.set()
+
+    t1 = threading.Thread(target=run, args=(first,), name="first")
+    t2 = threading.Thread(target=run, args=(second, read_done), name="second")
+    t1.start(); t2.start()
+    t1.join(30); t2.join(30)
+    assert not errors, errors
+
+
+def test_two_saves_at_once_keep_both_index_entries(review_roots, monkeypatch):
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02, raising=False)
+    other = "PRJ0102_20990101_P1"
+
+    def save(stem):
+        return lambda: cio.update_corpus_index(
+            stem, review_roots.bundle / f"{stem}_causal_review.json",
+            [_seg_record(1)], "r", "2099-01-01T00:00:00")
+
+    _race(monkeypatch, "causal_review_index.json", save(VID), save(other))
+    entries = json.loads((review_roots.records / "causal_review_index.json")
+                         .read_text(encoding="utf-8"))["entries"]
+    assert set(entries) == {f"{VID}__seg1", f"{other}__seg1"}
+    assert _stray(review_roots.records, {"causal_review_index.json"}) == []
+
+
+def test_two_session_flags_at_once_keep_both(review_roots, monkeypatch):
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02, raising=False)
+    root = review_roots.records
+    cio.flag_session("PRJ0109_20990101_P1", root, reason="earlier")
+    _race(monkeypatch, "flagged_sessions.json",
+          lambda: cio.flag_session(VID, root, reason="a"),
+          lambda: cio.flag_session("PRJ0102_20990101_P1", root, reason="b"))
+    doc = json.loads((root / "flagged_sessions.json").read_text(encoding="utf-8"))
+    assert set(doc["sessions"]) == {cio.session_key(VID),
+                                    cio.session_key("PRJ0102_20990101_P1"),
+                                    cio.session_key("PRJ0109_20990101_P1")}
+
+
+def test_a_live_lock_is_waited_for_then_given_up_loudly(review_roots, monkeypatch):
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_WAIT_S", 0.2)
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    review_roots.records.mkdir(parents=True, exist_ok=True)
+    lock = review_roots.records / "causal_review_index.json.lock"
+    lock.write_text(json.dumps({"token": "someone-else"}), encoding="utf-8")
+    with pytest.raises(cio.IndexLockBusy):
+        cio.update_corpus_index(VID, Path("x"), [_seg_record(1)], "r", "t")
+    assert lock.exists()                      # never broken while live
+    assert not (review_roots.records / "causal_review_index.json").exists()
+
+
+def test_a_dead_holders_lock_is_broken_by_its_age(review_roots, monkeypatch):
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_WAIT_S", 0.2)
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    review_roots.records.mkdir(parents=True, exist_ok=True)
+    lock = review_roots.records / "causal_review_index.json.lock"
+    lock.write_text(json.dumps({"token": "dead"}), encoding="utf-8")
+    old = time.time() - cio.INDEX_LOCK_STALE_S - 60
+    os.utime(lock, (old, old))
+    cio.update_corpus_index(VID, Path("x"), [_seg_record(1)], "r", "t")
+    assert not lock.exists()
+    entries = json.loads((review_roots.records / "causal_review_index.json")
+                         .read_text(encoding="utf-8"))["entries"]
+    assert f"{VID}__seg1" in entries
+    assert _stray(review_roots.records, {"causal_review_index.json"}) == []

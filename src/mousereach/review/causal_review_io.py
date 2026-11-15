@@ -30,9 +30,12 @@ import json
 import logging
 import os
 import re
+import socket
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -1630,6 +1633,172 @@ def session_key(video_stem: str) -> str:
     return "_".join(parts[:2]) if len(parts) >= 2 else str(video_stem)
 
 
+# ---------------------------------------------------------------------------
+# Shared corpus files: one writer at a time
+# ---------------------------------------------------------------------------
+#
+# The corpus index (review_records/causal_review_index.json) and
+# flagged_sessions.json are each ONE file that every review window on every
+# machine reads, changes and writes back. Two reviewers saving at the same
+# moment both read the old file, each added their own entries, and the second
+# write threw away the first one's. So the read-change-write is done while
+# holding a lock file beside the shared file:
+#
+#   <file>.lock   created with O_CREAT | O_EXCL -- the file server creates it
+#                 only if it does not exist, so exactly one window holds it;
+#                 it records a random token, the host and the process.
+#
+# Inside the lock the file is read AGAIN (never a copy read before waiting),
+# changed, and replaced in one step (_write_json). The lock is removed only by
+# the holder whose token it carries.
+#
+# WHY not watcher.claim_marker: a claim there is held per HOST, and a host that
+# already holds a claim "wins" again -- two windows on the same machine (two
+# reviewers logged on to one server) would both get in. WHY not one index file
+# per video: readers outside this package read the single file.
+#
+# A lock whose holder died (a window killed mid-save) is broken once it is
+# INDEX_LOCK_STALE_S old, measured by the file server's own clock: its age is
+# the modified time of a probe file written now minus the lock's modified time,
+# both stamped by the server, so machines whose clocks disagree cannot break a
+# live lock early. A writer that cannot get the lock within INDEX_LOCK_WAIT_S
+# gives up with IndexLockBusy. For the index, the review itself is already
+# saved by then (both copies are written before the index) and the window says
+# the index was not updated; the video's index entries are rewritten on its
+# next save.
+
+INDEX_LOCK_WAIT_S = 60.0
+INDEX_LOCK_STALE_S = 600.0
+INDEX_LOCK_POLL_S = 0.25
+
+
+class IndexLockBusy(RuntimeError):
+    """Another writer held a shared corpus file's lock for longer than
+    INDEX_LOCK_WAIT_S (and it was not stale)."""
+
+
+def _lock_path(path: Path) -> Path:
+    return Path(path).with_name(Path(path).name + ".lock")
+
+
+def _lock_token(lock: Path) -> Optional[str]:
+    try:
+        return json.loads(Path(lock).read_text(encoding="utf-8")).get("token")
+    except Exception:
+        return None
+
+
+def _share_now(folder: Path) -> Optional[float]:
+    """'Now' by the file server's clock: the modified time of a probe file
+    written in ``folder``. None when it cannot be written."""
+    import tempfile
+    try:
+        fd, name = tempfile.mkstemp(prefix=".clock.", suffix=".tmp", dir=str(folder))
+    except OSError:
+        return None
+    try:
+        os.write(fd, b"0")
+        os.close(fd)
+        return os.stat(name).st_mtime
+    except OSError:
+        return None
+    finally:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+
+
+def _break_if_stale(lock: Path, stale_s: float) -> bool:
+    """Remove ``lock`` if its holder is gone (see the block comment above).
+    True when the lock is gone afterwards, so the caller may try again."""
+    try:
+        st = os.stat(str(lock))
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    now = _share_now(lock.parent)
+    if now is None or now - st.st_mtime < stale_s:
+        return False
+    stale_token = _lock_token(lock)
+    aside = lock.with_name(".%s.broken.%s.tmp" % (lock.name, uuid.uuid4().hex))
+    try:
+        os.rename(str(lock), str(aside))
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if _lock_token(aside) != stale_token:
+        # Another writer broke the stale lock and took a fresh one between our
+        # look and our rename: put theirs back.
+        try:
+            os.rename(str(aside), str(lock))
+        except OSError as e:
+            logger.warning("Could not restore the lock %s taken by another "
+                           "writer (%s)", lock, e)
+        return False
+    try:
+        os.unlink(str(aside))
+    except OSError:
+        pass
+    logger.warning("Broke a stale lock on %s (held %.0f s; its holder is gone)",
+                   lock.name[:-len(".lock")], now - st.st_mtime)
+    return True
+
+
+def _take_lock(lock: Path, token: str) -> None:
+    deadline = time.monotonic() + INDEX_LOCK_WAIT_S
+    body = json.dumps({"token": token, "host": socket.gethostname(),
+                       "pid": os.getpid(), "taken_at": _get_timestamp()}).encode("utf-8")
+    while True:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if _break_if_stale(lock, INDEX_LOCK_STALE_S):
+                continue
+            if time.monotonic() >= deadline:
+                raise IndexLockBusy(
+                    "%s is being written by another review window (lock %s); "
+                    "gave up after %.0f s" % (lock.name[:-len(".lock")], lock,
+                                              INDEX_LOCK_WAIT_S))
+            time.sleep(INDEX_LOCK_POLL_S)
+            continue
+        try:
+            os.write(fd, body)
+        finally:
+            os.close(fd)
+        return
+
+
+def _release_lock(lock: Path, token: str) -> None:
+    if _lock_token(lock) == token:
+        try:
+            os.unlink(str(lock))
+        except OSError as e:
+            logger.warning("Could not remove the lock %s (%s); it is broken "
+                           "once stale", lock, e)
+
+
+def _locked_update(path: Path, change: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
+    """Read ``path`` (a JSON object, {} when absent), apply ``change`` to it,
+    and write it back, all while holding ``<path>.lock``. Returns the document
+    written. Raises IndexLockBusy when the lock cannot be had, and whatever the
+    read or the write raises (an unreadable file is never overwritten)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = _lock_path(path)
+    token = uuid.uuid4().hex
+    _take_lock(lock, token)
+    try:
+        doc = _read_json(path)
+        change(doc)
+        _write_json(path, doc)
+        return doc
+    finally:
+        _release_lock(lock, token)
+
+
 def _flagged_sessions_path(review_root: Path) -> Path:
     return Path(review_root) / "flagged_sessions.json"
 
@@ -1667,19 +1836,23 @@ def flag_session(video_stem: str, review_root: Path, reason: str = "",
     """
     key = session_key(video_stem)
     p = _flagged_sessions_path(review_root)
-    doc = _read_json(p) if p.exists() else {}
-    doc.setdefault("type", "flagged_sessions")
-    doc.setdefault("schema_version", "1.0")
-    sessions = doc.setdefault("sessions", {})
-    sessions[key] = {
+    record = {
         "session_key": key,
         "reason": reason,
         "flagged_by": flagged_by or _get_username(),
         "flagged_at": _get_timestamp(),
         "requires_human_review": True,
     }
-    doc["last_updated"] = _get_timestamp()
-    _write_json(p, doc)
+
+    def change(doc):
+        doc.setdefault("type", "flagged_sessions")
+        doc.setdefault("schema_version", "1.0")
+        doc.setdefault("sessions", {})[key] = record
+        doc["last_updated"] = _get_timestamp()
+
+    # Under the shared-file lock (block comment above _lock_path): two windows
+    # flagging at once must not drop each other's session.
+    _locked_update(p, change)
     _FLAGGED_SESSIONS_CACHE.pop(str(review_root), None)  # invalidate read cache
     return key
 
@@ -1744,21 +1917,12 @@ def update_corpus_index(
         # No NAS or PROCESSING configured -- skip silently
         return Path("(no index directory configured)")
 
-    index_path = index_dir / "causal_review_index.json"
-    index = _read_json(index_path)
+    index_path = Path(index_dir) / "causal_review_index.json"
+    new_entries: Dict[str, Dict[str, Any]] = {}
 
-    # Ensure top-level structure
-    if "type" not in index:
-        index["type"] = "causal_review_index"
     # 1.1 carries the full per-segment payload, not just a pointer plus two
     # summary fields. Entries written under 1.0 keep their shape until the
     # segment is reviewed again; read them defensively.
-    index["schema_version"] = "1.1"
-    if "entries" not in index:
-        index["entries"] = {}
-
-    entries = index["entries"]
-
     for seg in segments:
         seg_num = seg.get("segment_num")
         key = f"{video_stem}__seg{seg_num}"
@@ -1792,8 +1956,18 @@ def update_corpus_index(
         if seg.get("true_segment_num") is not None:
             entry["true_segment_num"] = seg["true_segment_num"]
             entry["segmentation_wrong"] = True
-        entries[key] = entry
+        new_entries[key] = entry
 
-    index["last_updated"] = _get_timestamp()
-    _write_json(index_path, index)
+    def change(index):
+        if "type" not in index:
+            index["type"] = "causal_review_index"
+        # 1.1 carries the full per-segment payload (comment above).
+        index["schema_version"] = "1.1"
+        index.setdefault("entries", {}).update(new_entries)
+        index["last_updated"] = _get_timestamp()
+
+    # Read, change and write under the shared-file lock (block comment above
+    # _lock_path). WHY: two reviewers saving at once used to read the same old
+    # index, and the second write dropped the first one's entries.
+    _locked_update(index_path, change)
     return index_path

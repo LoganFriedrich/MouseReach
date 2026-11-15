@@ -3342,7 +3342,15 @@ The notes box travels with the video.
                 reviewed_at=timestamp,
             )
         except Exception as e:
-            print(f"Warning: could not update corpus index: {e}")
+            # Shown in the window, not printed to a console nobody watches.
+            # The review itself is already saved (both copies are written
+            # before the index); only the shared summary is behind, and this
+            # video's entries are rewritten on its next save.
+            logger.warning("%s: corpus index not updated: %s", self._video_stem, e)
+            show_warning(
+                f"Your answers are saved. The shared review index was not "
+                f"updated ({e}); it is brought up to date the next time this "
+                f"video is saved.")
 
         n_reviewed = sum(1 for s in segments if is_answered(s))
         show_info(
