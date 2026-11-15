@@ -1342,6 +1342,25 @@ def review_copies(video_stem: str, dirs=(), include_durable: bool = True) -> Lis
     return out
 
 
+def effective_review(video_stem: str, dirs=(), seg_doc=None):
+    """THE way to read a video's review: every copy (``{stem}_causal_review.json``
+    in each of ``dirs``, then the durable copy -- review_copies), merged per
+    current segment to the newest answer or recheck a person gave about its
+    frames (merge_review_copies), matched against the segmentation in
+    ``seg_doc`` when given. Returns the merged document, or None when no copy
+    exists.
+
+    WHY one function: the review window's restore, its "already reviewed"
+    check and the bulk release check each picked their own copies -- the
+    first copy with records, a union over two folders, the bundle copy alone
+    -- so one could call a pellet answered that another called open, or miss
+    an answer only the durable copy still held."""
+    current = segments_from_segmentation(seg_doc) if seg_doc else None
+    doc, _ = merge_review_copies(review_copies(video_stem, dirs), current or None,
+                                 human_segmentation=segmentation_is_human(seg_doc))
+    return doc
+
+
 def carry_earlier_answers(segments, earlier_docs, unmatched_answers=None):
     """What a save must still hold of the earlier copies it is about to
     replace. Returns ``(segments, unmatched_answers, kept)``.

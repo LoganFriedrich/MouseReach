@@ -211,13 +211,8 @@ def _effective_review(bundle: Path, stem: str, seg_doc: Optional[dict]) -> Optio
     (causal_review_io.merge_review_copies). WHY: the bundle copy alone can
     lack an answer only the durable copy still holds, or still show an answer
     a later recheck reopened. None when no copy exists."""
-    from mousereach.review.causal_review_io import (merge_review_copies, review_copies,
-                                                    segmentation_is_human,
-                                                    segments_from_segmentation)
-    current = segments_from_segmentation(seg_doc) if seg_doc else None
-    doc, _ = merge_review_copies(review_copies(stem, [bundle]), current or None,
-                                 human_segmentation=segmentation_is_human(seg_doc))
-    return doc
+    from mousereach.review.causal_review_io import effective_review
+    return effective_review(stem, [bundle], seg_doc)
 
 
 def _completeness(bundle: Path, stem: str) -> Tuple[int, int]:

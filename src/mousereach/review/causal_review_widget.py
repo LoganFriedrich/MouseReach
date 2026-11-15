@@ -53,6 +53,8 @@ from .causal_review_io import (
     restore_review_for_segments,
     merge_review_copies,
     review_copies,
+    effective_review,
+    segments_from_segmentation,
     segmentation_is_human,
     answer_problem,
     plain_review_note,
@@ -144,6 +146,48 @@ def review_complete(records) -> bool:
     algorithm's "triaged" in its outcome, and the old test released videos
     that still held such a pellet."""
     return bool(records) and all(is_answered(r) for r in records)
+
+
+def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
+    """Is this bundle's review finished, as the review window judges it when
+    choosing what to show? Read through effective_review: every copy in
+    ``dirs`` AND the durable copy, newest statement per segment, matched to
+    the bundle's segments by frames.
+
+    Triage-only: every triaged segment is answered (triage_status's rule).
+    Full review: every current segment is answered -- or, with no segments
+    file, every segment number any copy holds.
+
+    WHY the durable copy too: this check read only the bundle and the filed
+    folder. A pellet reopened ("are you sure?") in the durable copy, or an
+    answer only the durable copy held, was judged differently here than by
+    the window's own restore and the release check."""
+    from .triage_status import resolved_segments, triaged_segments
+    from mousereach.review.queue_index import _seg_doc
+    bundle_dir = Path(bundle_dir)
+    seg_doc = _seg_doc(bundle_dir, stem)
+    doc = effective_review(stem, dirs, seg_doc)
+    resolved = resolved_segments(doc, seg_doc) if doc else set()
+    if triage_only:
+        def _rj(p):
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+        od = _rj(bundle_dir / f"{stem}_pellet_outcomes.json")
+        ad = _rj(bundle_dir / f"{stem}_reach_assignments.json")
+        # An empty triaged set is trivially done; such bundles are filtered
+        # out earlier by _bundle_has_triage.
+        return triaged_segments(od, ad).issubset(resolved)
+    current = segments_from_segmentation(seg_doc) if seg_doc else []
+    if current:
+        wanted = {s["segment_num"] for s in current}
+    else:
+        wanted = set()
+        for c in review_copies(stem, dirs):
+            wanted |= {int(r["segment_num"]) for r in c.get("segments") or []
+                       if isinstance(r, dict) and r.get("segment_num") is not None}
+    return bool(wanted) and wanted.issubset(resolved)
 
 
 def open_triaged_indices(indices, segments, records) -> list:
@@ -2932,8 +2976,11 @@ The notes box travels with the video.
         kept re-surfacing already-reviewed videos. In full-review mode, every
         segment must be reviewed. The review may live in the bundle or next to
         the canonical video, so we gather resolved segments from both.
+
+        Every copy is read through effective_review (bundle_review_complete),
+        the durable copy included, so this agrees with the window's restore
+        and the release check.
         """
-        from .triage_status import triaged_segments, resolved_segments
         stem = bundle_dir.name
         dirs = [bundle_dir]
         try:
@@ -2948,63 +2995,7 @@ The notes box travels with the video.
         from mousereach.review.bundle_media import filed_media_dirs
         dirs += [d for d in filed_media_dirs(stem)[:1] if d not in dirs]
 
-        # Human-resolved segment set, from wherever the review was saved.
-        resolved: set = set()
-        for d in dirs:
-            try:
-                doc, by_seg = load_causal_review(stem, d)
-            except Exception:
-                doc, by_seg = None, {}
-            if by_seg:
-                from mousereach.review.queue_index import _seg_doc
-                resolved |= resolved_segments(doc or {"segments": list(by_seg.values())},
-                                              _seg_doc(bundle_dir, stem))
-
-        if self._triage_only:
-            def _rj(p):
-                try:
-                    return json.loads(p.read_text(encoding="utf-8"))
-                except Exception:
-                    return None
-            od = _rj(bundle_dir / f"{stem}_pellet_outcomes.json")
-            ad = _rj(bundle_dir / f"{stem}_reach_assignments.json")
-            triaged = triaged_segments(od, ad)
-            # Done iff every triaged element is resolved (an empty triaged set is
-            # trivially done; such bundles are already filtered out earlier by
-            # _bundle_has_triage, but this keeps the predicate honest).
-            return triaged.issubset(resolved)
-
-        # Full-review mode: every segment must carry a real review.
-        for d in dirs:
-            try:
-                _, by_seg = load_causal_review(stem, d)
-            except Exception:
-                by_seg = {}
-            if by_seg and all(is_answered(r) for r in by_seg.values()):
-                return True
-        return False
-
-    def _bundle_needs_review(self, bundle_dir: Path, root: Path) -> bool:
-        """A bundle needs review iff it is NOT already ground-truthed (GT IS the
-        answer -- it stands in for a review) and NOT already reviewed.
-
-        A SESSION FLAG NO LONGER SUPPRESSES ANYTHING. It used to: the button says
-        "Flag Session (needs review)", the toast said every video in the session
-        needs review, and this method then returned False for exactly those
-        videos -- so pressing it removed them from the queue. Measured 2026-08-28:
-        33 of the 40 reviewable bundles were invisible for that reason, across 18
-        sessions, 14 of them flagged in a single afternoon. The queue read as
-        empty and the flag was the cause.
-
-        Flagging now DIVERTS the video to the deep-review queue (see
-        ``_flag_session``), which is a real action with a real destination. The
-        flag record is kept as provenance; nothing filters on it."""
-        stem = bundle_dir.name
-        if has_gt(stem, extra_dirs=[bundle_dir]):
-            return False  # already ground-truthed -> GT is the correct answer
-        if self._bundle_reviewed(bundle_dir):
-            return False
-        return True
+        return bundle_review_complete(bundle_dir, stem, dirs, self._triage_only)
 
     def _segmentation_failed(self, b: Path) -> bool:
         """True if the segmenter FAILED on this video (overall_confidence 0 / bad
