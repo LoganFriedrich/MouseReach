@@ -216,6 +216,90 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
     return routed >= run_time and manifest_name in failed
 
 
+# The start of the reason a video gets when it cannot be filed because it has
+# no kinematics. Read by people (mousereach-watch-status, the dashboard) and by
+# the tests; keep it plain words.
+NO_KINEMATICS_REASON = "not filed: no kinematics"
+
+
+def filed_this_run(video_id, processing_started_at, dest=None):
+    """The filed folder when it already holds THIS run's results, else None.
+
+    "This run" is told by the features file: every run writes a fresh
+    ``<stem>_features.json`` after the row entered 'processing' (the stamp in
+    ``processing_started_at``), and filing keeps a file's modified time. So a
+    filed features file at least as new as that stamp, with the video beside
+    it, was filed by this run -- by an attempt that moved the files and then
+    did not get to record it (a crash, or a move that stopped part-way).
+
+    WHY: without this, a run whose files were already filed was marked
+    'failed' ("No files found in Processing/") and the next attempt after a
+    part-way move refused for want of a features file that was already filed.
+    Anything that cannot be read answers None -- "not shown to be filed" --
+    so the cautious path (refuse, or mark failed for a person) is taken.
+    """
+    from datetime import datetime
+    try:
+        started = datetime.fromisoformat(str(processing_started_at)).timestamp()
+    except (TypeError, ValueError):
+        return None
+    try:
+        if dest is None:
+            from mousereach.archive.core import get_archive_destination
+            dest = get_archive_destination(video_id)
+        dest = Path(dest)
+        feats = (dest / f"{video_id}_features.json").stat().st_mtime
+        if not (dest / f"{video_id}.mp4").is_file():
+            return None
+    except Exception:
+        return None
+    # 2 s: the coarsest modified-time step of the file systems involved.
+    return dest if feats >= started - 2 else None
+
+
+def _has_files_of(directory, video_id) -> bool:
+    """Whether ``directory`` holds any file named for ``video_id``. Never
+    raises (an unreadable folder counts as holding nothing)."""
+    try:
+        with os.scandir(directory) as entries:
+            return any(e.name.startswith(video_id) and e.is_file() for e in entries)
+    except (OSError, TypeError):
+        return False
+
+
+def refuse_filing_without_features(db, video_id, results_dir) -> bool:
+    """The archive step's own check that a video has its kinematics: True
+    (and the row marked failed, nothing moved) when ``results_dir`` holds the
+    video's files but no ``<stem>_features.json``.
+
+    WHY a second check after _make_features: 'processed' means "file it", and
+    a row can reach 'processed' by other ways than a fresh run (a person
+    resetting it, startup reclaim of an interrupted filing). Filing means done
+    for good, so the step that files checks for itself.
+
+    Not refused: a run whose features file is already filed (an earlier
+    attempt moved part of the files -- filed_this_run), and a folder with
+    nothing of the video in it (the archive step reports that itself).
+    """
+    folder = Path(results_dir) if results_dir else None
+    if folder is None or (folder / f"{video_id}_features.json").is_file():
+        return False
+    if not _has_files_of(folder, video_id):
+        return False
+    try:
+        started = (db.get_video(video_id) or {}).get('processing_started_at')
+    except Exception:
+        started = None
+    if filed_this_run(video_id, started) is not None:
+        return False
+    message = (f"{NO_KINEMATICS_REASON} (no {video_id}_features.json in "
+               f"{folder}; the archive step does not file a video without it)")
+    db.mark_failed(video_id, message)
+    db.log_step(video_id, 'archive', 'failed', message=message)
+    logger.error(f"{video_id}: {message} -- held as failed, not filed")
+    return True
+
+
 def _reprocess_copy_set(source_dirs, pose_dir, video_id):
     """The files a reprocess stages locally, with the pose tree contributing
     ONLY pose artifacts.
@@ -325,6 +409,85 @@ class BaseOrchestrator:
                              duration=time.time() - t0)
             logger.warning(f"Session file failed for {video_id}: {e}")
             return False
+
+    def _make_features(self, video_id: str, processing_dir: Path, dlc_path,
+                       skip_outcomes: bool) -> Optional[str]:
+        """Write the video's ``<stem>_features.json``: kinematics for a Pillar
+        tray, the session file for Easy and Flat. Returns None when it was
+        written, else the reason it was not (words for a person).
+
+        Both roles call this (the processing server's _extract_features_and_finish
+        and a GPU node's _run_local_pipeline), so the rule below is one rule.
+        WHY it returns a reason instead of carrying on: filing means done for
+        good, and the features file is what the database takes from the filed
+        folder. A video whose kinematics failed, or whose reaches or outcomes
+        file was missing so kinematics never ran, used to go on to 'processed'
+        and be filed with no features file; the caller now holds it instead
+        (_hold_without_kinematics)."""
+        processing_dir = Path(processing_dir)
+        if skip_outcomes:
+            if self._write_session_only_features(video_id, processing_dir, dlc_path):
+                return None
+            if not (processing_dir / f"{video_id}_reaches.json").exists():
+                return "no reaches file, so the session file could not be written"
+            return "the session file could not be written (see the log)"
+
+        reach_path = processing_dir / f"{video_id}_reaches.json"
+        outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
+        missing = [p.name for p in (reach_path, outcome_path) if not p.exists()]
+        if missing:
+            why = "missing " + ", ".join(missing)
+            self.db.log_step(video_id, 'feature_extraction', 'failed', message=why)
+            return why
+
+        self.db.log_step(video_id, 'feature_extraction', 'started')
+        step_start = time.time()
+        try:
+            from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+            from mousereach.review.causal_review_io import resolve_review_path
+            extractor = FeatureExtractor()
+            # Apply the reviewer's resolution if one exists (reprocess-after-
+            # review path). Safe: None when unreviewed -> raw algo outcome.
+            review_path = resolve_review_path(video_id, processing_dir)
+            if review_path is not None:
+                logger.info(f"Applying human review corrections: {review_path.name}")
+            features = extractor.extract(dlc_path, reach_path, outcome_path,
+                                         review_path=review_path)
+            with open(processing_dir / f"{video_id}_features.json", 'w') as f:
+                json.dump(features.to_dict(), f, indent=2)
+
+            # The manifest was composed before this ran, so it still says
+            # kinematics never happened. Stamp the truth -- including WHICH
+            # review was applied (content identity; the staleness scanner
+            # reads it back).
+            from mousereach.pipeline.manifest import record_kinematic_version
+            record_kinematic_version(video_id, processing_dir, extractor.VERSION,
+                                     review_path=review_path)
+
+            feat_duration = time.time() - step_start
+            self.db.log_step(video_id, 'feature_extraction', 'completed',
+                             message=f"segments={features.n_segments}",
+                             duration=feat_duration)
+            logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
+            # No database push here: a database integrator pulls features
+            # files from the Analyzed tree (the tool stands alone).
+            return None
+        except Exception as e:
+            self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e),
+                             duration=time.time() - step_start)
+            logger.warning(f"Feature extraction failed for {video_id}: {e}")
+            return f"feature extraction failed: {e}"
+
+    def _hold_without_kinematics(self, video_id: str, why: str) -> None:
+        """Mark a video failed because it has no features file, so it is not
+        filed. Its files stay in Processing; on the processing server the
+        failed-video retry (_failed_retry_due) runs it again later, and after
+        the last retry it stays failed, listed by mousereach-watch-status with
+        this reason, for a person."""
+        message = f"{NO_KINEMATICS_REASON} ({why})"
+        self.db.mark_failed(video_id, message)
+        self.db.log_step(video_id, 'pipeline', 'failed', message=message)
+        logger.error(f"{video_id}: {message} -- held as failed, not filed")
 
     def _note_archive_failure(self, video_id: str) -> int:
         """Record a failed archive attempt and return the delay before the next."""
@@ -4375,44 +4538,13 @@ class DLCOrchestrator(BaseOrchestrator):
                 self._retire_claim_after_hold(video_id)
                 return True
 
-            # Step 4: Feature Extraction + DB sync (CLEAN videos ONLY)
-            if not skip_outcomes:
-                reach_path = processing_dir / f"{video_id}_reaches.json"
-                outcome_path = processing_dir / f"{video_id}_pellet_outcomes.json"
-                if reach_path.exists() and outcome_path.exists():
-                    try:
-                        from mousereach.kinematics.core.feature_extractor import FeatureExtractor
-                        from mousereach.review.causal_review_io import resolve_review_path
-                        extractor = FeatureExtractor()
-                        review_path = resolve_review_path(video_id, processing_dir)
-                        if review_path is not None:
-                            logger.info(f"Applying human review corrections: {review_path.name}")
-                        features = extractor.extract(dlc_path, reach_path, outcome_path,
-                                                     review_path=review_path)
-                        features_path = processing_dir / f"{video_id}_features.json"
-                        with open(features_path, 'w') as f:
-                            json.dump(features.to_dict(), f, indent=2)
-                        logger.info(f"Feature extraction complete: {video_id}")
-
-                        # The manifest was composed before this ran, so it still
-                        # says kinematics never happened. Stamp the truth --
-                        # including WHICH review was applied (content identity;
-                        # the staleness scanner reads it back).
-                        from mousereach.pipeline.manifest import record_kinematic_version
-                        record_kinematic_version(video_id, processing_dir,
-                                                 extractor.VERSION,
-                                                 review_path=review_path)
-                        # No database push here: mousedb PULLS features files
-                        # from the Analyzed tree (tool independence, 2026-08-28).
-                        # The old sync call stayed behind and logged a failed
-                        # 'db_sync' step on every video (1,539 times) -- removed.
-                    except Exception as e:
-                        self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e))
-                        logger.warning(f"Feature extraction failed for {video_id}: {e}")
-
-            # Easy and Flat: the session file (as on the processing server).
-            if skip_outcomes:
-                self._write_session_only_features(video_id, processing_dir, dlc_path)
+            # Step 4: Feature Extraction (CLEAN videos ONLY); Easy and Flat get
+            # the session file. No features file -> held as failed, not filed
+            # (_make_features; the same step the processing server runs).
+            why = self._make_features(video_id, processing_dir, dlc_path, skip_outcomes)
+            if why:
+                self._hold_without_kinematics(video_id, why)
+                return True
 
             self.db.update_state(video_id, 'processed')
             self.db.log_step(video_id, 'local_pipeline', 'completed',
@@ -4440,6 +4572,10 @@ class DLCOrchestrator(BaseOrchestrator):
         video_id = work['id']
         # No hand-score check here: it runs before the gate
         # (_hand_score_precheck), so a 'processed' video has passed it.
+        local_results = Path(Paths.PROCESSING) if Paths.PROCESSING else Paths.DLC_QUEUE
+        if refuse_filing_without_features(self.db, video_id, local_results):
+            self._clear_archive_backoff(video_id)
+            return False
         logger.info(f"Archiving locally processed {video_id} to NAS")
         self.db.update_state(video_id, 'archiving')
         self.db.log_step(video_id, 'archive', 'started')
@@ -6276,62 +6412,18 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _extract_features_and_finish(self, video_id, dlc_path, skip_outcomes,
                                      pipeline_duration):
         """Feature extraction (kinematics), then 'processed' so the archive
-        step files the video. Reached only by a video the gate passed CLEAN."""
-        # --- Step 4/5: Feature Extraction + DB sync (CLEAN videos ONLY) ---
-        if not skip_outcomes:
-            reach_path = self.processing_dir / f"{video_id}_reaches.json"
-            outcome_path = self.processing_dir / f"{video_id}_pellet_outcomes.json"
+        step files the video. Reached only by a video the gate passed CLEAN.
 
-            if reach_path.exists() and outcome_path.exists():
-                self.db.log_step(video_id, 'feature_extraction', 'started')
-                step_start = time.time()
-                try:
-                    from mousereach.kinematics.core.feature_extractor import FeatureExtractor
-                    from mousereach.review.causal_review_io import resolve_review_path
-                    extractor = FeatureExtractor()
-                    # Apply the reviewer's resolution if one exists (reprocess-after-
-                    # review path). Safe: None when unreviewed -> raw algo outcome.
-                    review_path = resolve_review_path(video_id, self.processing_dir)
-                    if review_path is not None:
-                        logger.info(f"Applying human review corrections: {review_path.name}")
-                    features = extractor.extract(dlc_path, reach_path, outcome_path,
-                                                 review_path=review_path)
-
-                    features_path = self.processing_dir / f"{video_id}_features.json"
-                    with open(features_path, 'w') as f:
-                        json.dump(features.to_dict(), f, indent=2)
-
-                    # The manifest was composed before this ran, so it still says
-                    # kinematics never happened. Stamp the truth -- including
-                    # WHICH review was applied (content identity; the staleness
-                    # scanner reads it back).
-                    from mousereach.pipeline.manifest import record_kinematic_version
-                    record_kinematic_version(video_id, self.processing_dir,
-                                             extractor.VERSION,
-                                             review_path=review_path)
-
-                    feat_duration = time.time() - step_start
-                    self.db.log_step(
-                        video_id, 'feature_extraction', 'completed',
-                        message=f"segments={features.n_segments}",
-                        duration=feat_duration
-                    )
-                    logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
-                    # No database push here: mousedb PULLS features files from
-                    # the Analyzed tree (tool independence, 2026-08-28). The old
-                    # sync call stayed behind, always failed on config, and
-                    # logged a failed 'db_sync' step on every video -- removed.
-
-                except Exception as e:
-                    feat_duration = time.time() - step_start
-                    self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e), duration=feat_duration)
-                    logger.warning(f"Feature extraction failed for {video_id}: {e}")
-
-        # Easy and Flat: the session file -- each reach and the session's
-        # attention, no kinematics or outcomes (FeatureExtractor.
-        # extract_session_only says why).
-        if skip_outcomes:
-            self._write_session_only_features(video_id, self.processing_dir, dlc_path)
+        Easy and Flat get the session file instead -- each reach and the
+        session's attention, no kinematics or outcomes (FeatureExtractor.
+        extract_session_only says why). Either way, no features file means
+        no 'processed': the video is held as failed (_make_features says why).
+        """
+        # --- Step 4/5: Feature Extraction (CLEAN videos ONLY) ---
+        why = self._make_features(video_id, self.processing_dir, dlc_path, skip_outcomes)
+        if why:
+            self._hold_without_kinematics(video_id, why)
+            return
 
         self.db.update_state(video_id, 'processed')
         self.db.log_step(
@@ -6400,6 +6492,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         # No hand-score check here: it runs before the gate
         # (_hand_score_precheck), so a 'processed' video has passed it.
+
+        if refuse_filing_without_features(self.db, video_id, self.processing_dir):
+            self._clear_archive_backoff(video_id)
+            return False
 
         # Let go of the outcome detector's cached video handle first: it keeps
         # the LAST processed mp4 open until the next video replaces it, and the

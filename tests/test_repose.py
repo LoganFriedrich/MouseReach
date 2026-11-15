@@ -643,6 +643,7 @@ def test_local_archive_files_from_processing_cleans_both_and_closes_the_request(
 
     monkeypatch.setattr(core, "archive_video", fake_archive)
     (env.processing / f"{VID}_segments.json").write_text("{}")
+    (env.processing / f"{VID}_features.json").write_text("{}")   # a finished run
     (env.processing / f"{VID}{NEW}.h5").write_bytes(b"pose")
     (env.local_q / f"{VID}.mp4").write_bytes(b"video")
     repose.write_json_atomic(env.queue / repose.INFLIGHT / f"{VID}.json", {"video_id": VID})

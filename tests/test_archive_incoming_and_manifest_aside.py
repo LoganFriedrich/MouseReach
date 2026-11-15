@@ -66,6 +66,9 @@ def _husk_and_run(tmp_path, monkeypatch, routing=None):
     proc.mkdir()
     manifest = proc / f"{STEM}_processing_manifest.json"
     manifest.write_text("{}", encoding="utf-8")
+    # A finished run has its kinematics; the archive step refuses one without
+    # (refuse_filing_without_features).
+    (proc / f"{STEM}_features.json").write_text("{}", encoding="utf-8")
     run = time.time() - 3600
     os.utime(manifest, (run, run))
     mp4 = husk / f"{STEM}.mp4"

@@ -3124,3 +3124,38 @@ re-filed or re-queued.
 **Where it lives.** `watcher/repose_videos.py` (`plan_and_move`, `main`); tests in
 `tests/test_repose_videos.py`, including one that fails if the row is marked while any copy of the
 pose is still in place.
+
+## Update 2026-11-15: a video is filed only with its kinematics
+
+**What a person sees.** A video whose kinematics could not be made is NOT filed into Analyzed. Its
+row goes to `failed` with an error message that starts `not filed: no kinematics` and says why
+(the extractor's error, or which input file was missing). Its files stay in the local Processing
+folder. `mousereach-watch-status` lists it among the failed videos with that message.
+
+**What happens next, with nobody doing anything.** On the processing server the failed-video retry
+(see the update "failed videos are retried" above) runs it again once its wait is over, up to
+`watcher.max_retries` times. If the kinematics work on a retry, it is filed as normal. If they keep
+failing, it stays `failed` for a person: fix the cause, then `mousereach-watch-reprocess <video>`.
+On a GPU machine with `also_process` true a failed video waits for a person in the same way.
+
+**What counts as "no kinematics".**
+- Pillar trays: the reaches file or the pellet-outcomes file is missing (kinematics never ran), or
+  the feature extractor raised.
+- Easy and Flat trays: the session file (reaches and attention) could not be written, including
+  when there is no reaches file.
+
+**Why.** Filing means done for good, and `<video>_features.json` is what the database takes from
+the filed folder. Before this, a failed extraction was only a warning: the video went on to
+`processed` and was filed with no features file, i.e. filed as finished with no kinematics.
+
+**The archive step checks too.** Before it moves anything, the archive step (both
+`_archive_to_nas` on the server and `_archive_locally_processed` on a GPU machine) refuses a video
+whose results folder holds its files but no `<video>_features.json`, and marks it failed the same
+way. Why a second check: a row can reach `processed` other than by a fresh run (a person's reset,
+an interrupted filing put back at startup). Not refused: a run whose features file was already
+filed by an earlier, part-way attempt (see the next update), and an empty folder (the archive step
+reports that itself).
+
+**Where it lives.** `watcher/orchestrator.py`: `BaseOrchestrator._make_features` (one kinematics
+step for both machine roles), `_hold_without_kinematics`, `refuse_filing_without_features`;
+tests in `tests/test_filing_requires_kinematics.py`.
