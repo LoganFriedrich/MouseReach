@@ -277,6 +277,12 @@ def remove_leftover_temps(path) -> int:
     return n
 
 
+def remove_temp_file(p) -> bool:
+    """Delete one temporary file found by is_leftover_temp (read-only
+    included); True when it is gone."""
+    return _unlink_temp(p)
+
+
 def is_leftover_temp(name: str) -> bool:
     """True for a file name this module's writers use for a temporary file
     (".<name>.<random>.tmp"). A mover that takes a whole folder (the review

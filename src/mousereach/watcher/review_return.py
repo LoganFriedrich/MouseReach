@@ -552,6 +552,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # Analyzed, staging) is used in place, so pose_src stands.
     h5_dest: Optional[Path] = pose_src
     moved = 0
+    from mousereach.pipeline.fsutil import is_leftover_temp, remove_temp_file
     for f in list(bundle.iterdir()):
         if not f.is_file():
             continue
@@ -560,6 +561,17 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                 f.unlink()
             except OSError:
                 pass
+            continue
+        if is_leftover_temp(f.name):
+            # A one-step write's temporary file (".<name>.<random>.tmp", see
+            # pipeline/fsutil.py) left by a crash between writing it and the
+            # rename. It is not one of the video's files: carried into
+            # Processing it would sit there for good (nothing sweeps dot-names
+            # there). The bundle's real files are complete, and a review's
+            # content is in the durable copy, written before the bundle copy.
+            if remove_temp_file(f):
+                logger.warning(f"Return {stem}: deleted a leftover temporary "
+                               f"file {f.name} instead of moving it")
             continue
         dest = processing_dir / f.name
         try:

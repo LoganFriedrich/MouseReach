@@ -302,3 +302,28 @@ def test_pose_outside_the_bundle_is_recorded_in_place(tmp_path, monkeypatch):
     _, _, kw = db.state_writes[0]
     assert kw["dlc_output_path"] == str(pose)
     assert pose.is_file()                        # read in place, not moved
+
+
+def test_a_leftover_temporary_file_is_not_carried_into_processing(tmp_path, monkeypatch):
+    """A one-step write that crashed leaves '.<name>.<random>.tmp' in the
+    bundle. The return moves every file in the bundle; that leftover must not
+    go with them -- nothing ever removes a dot-named file from Processing."""
+    triage, _ = _wire(monkeypatch, tmp_path)
+    # The return copies the review to the durable store first: keep it in tmp.
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    stem = "20990101_PRJ0111_P1"
+    bundle = triage / stem
+    bundle.mkdir()
+    (bundle / f"{stem}.mp4").write_bytes(b"x")
+    (bundle / _pose_name(stem, "ModelA", 100)).write_bytes(b"pose")
+    (bundle / f"{stem}_causal_review.json").write_text("{}", encoding="utf-8")
+    leftover = f".{stem}_causal_review.json.k3j9x2.tmp"
+    (bundle / leftover).write_text("{", encoding="utf-8")
+    proc = tmp_path / "proc"
+
+    assert rr._return_to_processing(bundle, stem, proc, FakeDB(), "triage_cleared")
+
+    assert (proc / f"{stem}_causal_review.json").is_file()
+    assert not (proc / leftover).exists()
+    assert not bundle.exists()
