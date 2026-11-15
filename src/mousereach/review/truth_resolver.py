@@ -42,14 +42,17 @@ landed on a neighbouring reach.
 Non-destructive (deep copies) and never raises on missing layers: a video with
 no human input resolves to pure algo. ASCII-only logging (Windows cp1252).
 
-Layer separation, in the data as it exists today:
-  - triage review  = the quick, triaged-elements-only pass  -> Pending bundle
-                     (Paths.TRIAGE_REVIEW / <stem> / <stem>_causal_review.json)
-  - causal review  = the thorough full-video pass           -> Deep_Review bundle
-                     (Paths.DEEP_REVIEW / <stem> / <stem>_causal_review.json),
-                     plus any review saved in the processing dir (primary_dir).
-Both write the same _causal_review.json schema; they are separated here by which
-bundle they came from so causal outranks triage per the precedence above.
+Where the human answers come from: ONE read of every copy of the video's
+review -- the file or folder the caller names (primary_dir), the triage and
+re-segmentation queue bundles, the video's filed folder and the durable store
+-- merged per segment to the newest answer (or recheck that reopened one) a
+person gave about its frames (causal_review_io.effective_review, the same read
+the review window, the release check and the census use). WHY one read: the
+copies used to be layered by WHERE they sat (a queue bundle outranking the
+durable copy), and the filed folder's copy was not read at all, so an answer
+that lived only in a copy this step did not prefer was not applied, and an
+older answer in a queue bundle beat a newer one elsewhere. Triage and
+full-video reviews write the same schema; both are "human_review".
 """
 from __future__ import annotations
 
@@ -79,65 +82,6 @@ def _read_json(p) -> Optional[dict]:
     except Exception as err:
         logger.error('Could not read %s, so any human answers in it are ignored: %s', p, err)
         return None
-
-
-def _review_doc(stem: str, base) -> Optional[dict]:
-    """Read ``<stem>_causal_review.json`` from ``base``, which may be a review
-    bundle root (``base/<stem>/<file>``), a bare processing dir
-    (``base/<file>``), or the review FILE itself. Returns the parsed doc or None.
-
-    WHY the file form: the kinematics extractor is handed the review file it
-    is applying (``review_path``) and passes it on here as ``primary_dir``.
-    Until 2026-10-30 only the two directory forms were tried, so a review that
-    existed ONLY in the processing folder -- not yet in a queue bundle or the
-    durable store -- was never read by the truth layering, and the extractor
-    quietly fell back to the algorithm's answers. A file is accepted only when it is this video's review by name, so a
-    path to some other video's file cannot be applied to this one."""
-    if not base or not stem:
-        return None
-    base = Path(base)
-    name = f"{stem}_causal_review.json"
-    try:
-        if base.is_file():
-            return (_read_json(base) or None) if base.name == name else None
-    except OSError:
-        return None
-    for cand in (base / stem / name, base / name):
-        try:
-            if cand.is_file():
-                d = _read_json(cand)
-                if d:
-                    return d
-        except OSError:
-            continue
-    return None
-
-
-def _durable_review_doc(stem: str) -> Optional[dict]:
-    """Read this video's review from the durable store, or None.
-
-    The three lookups above search places a review can DISAPPEAR from: the two
-    NAS review queues, whose bundles are regenerated and torn down, and the
-    caller's processing dir, which is one node's local disk. A review that
-    outlived its bundle but whose video has not been archived yet exists in
-    none of them -- it is exactly the case the durable store was added for, and
-    without this the extractor would quietly fall back to the algorithm's answer
-    while a human answer sat on disk unread.
-
-    Lowest priority of the review layers: any live copy wins, because a reviewer
-    may have edited it since.
-    """
-    if not stem:
-        return None
-    try:
-        from mousereach.review.causal_review_io import durable_review_path
-        p = durable_review_path(stem)
-        if p is not None and p.is_file():
-            return _read_json(p) or None
-    except Exception as err:
-        logger.warning('Could not read the durable review of %s: %s', stem, err)
-        pass
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -504,16 +448,22 @@ def resolve_truth_layers(
     _cur_segs = reaches_data.get("segments") or []
 
     # ---- per-segment OUTCOME layers, low -> high --------------------------
-    durable_doc = _durable_review_doc(stem)
-    triage_doc = _review_doc(stem, getattr(Paths, "TRIAGE_REVIEW", None))
-    causal_doc = _review_doc(stem, getattr(Paths, "DEEP_REVIEW", None))
-    primary_doc = _review_doc(stem, primary_dir) if primary_dir else None
+    # The human layer: every copy of the review, newest answer per segment
+    # (module docstring, "Where the human answers come from").
+    from mousereach.review.causal_review_io import effective_review, review_dirs
+    primary = primary_dir
+    if primary is not None and Path(primary).is_file() and \
+            Path(primary).name != f"{stem}_causal_review.json":
+        primary = None   # some other video's file is never read for this one
+    review_doc = effective_review(
+        stem, review_dirs(stem, primary),
+        current_segments=[{"segment_num": s.get("segment_num"),
+                           "start_frame": s.get("start_frame"),
+                           "end_frame": s.get("end_frame")} for s in _cur_segs] or None,
+        human_segmentation=human_segmentation) if stem else None
 
     layers: List[Dict[int, dict]] = [
-        _seg_overrides_from_review(durable_doc, "human_review", _cur_segs, human_segmentation),  # copy of record (fallback)
-        _seg_overrides_from_review(triage_doc, "human_review", _cur_segs, human_segmentation),   # triage tier
-        _seg_overrides_from_review(causal_doc, "human_review", _cur_segs, human_segmentation),   # causal tier
-        _seg_overrides_from_review(primary_doc, "human_review", _cur_segs, human_segmentation),  # causal tier (processing dir)
+        _seg_overrides_from_review(review_doc, "human_review", _cur_segs, human_segmentation),
     ]
 
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None
@@ -531,10 +481,10 @@ def resolve_truth_layers(
     if gt:
         logger.info(
             "truth layering %s: GT applied (reaches.exhaustive=%s, "
-            "outcomes.exhaustive=%s); reviews triage=%s causal=%s primary=%s",
+            "outcomes.exhaustive=%s); human review read=%s",
             stem,
             bool(((gt.get("reaches") or {}).get("exhaustive"))),
             bool(((gt.get("outcomes") or {}).get("exhaustive"))),
-            bool(triage_doc), bool(causal_doc), bool(primary_doc),
+            bool(review_doc),
         )
     return reaches_out, outcomes_out

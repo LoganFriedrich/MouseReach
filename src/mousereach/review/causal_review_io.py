@@ -1338,22 +1338,54 @@ def review_copies(video_stem: str, dirs=(), include_durable: bool = True) -> Lis
     return out
 
 
-def effective_review(video_stem: str, dirs=(), seg_doc=None):
+def review_dirs(video_stem: str, primary=None) -> List[Path]:
+    """Every folder a copy of this video's review can sit in, besides the
+    durable store (which review_copies always adds): ``primary`` (a folder, or
+    the review file itself -- its folder is used), the triage and
+    re-segmentation queue bundles, and the video's filed folder. Folders that
+    do not exist are harmless (nothing is read from them). Never raises."""
+    out: List[Path] = []
+    if primary is not None:
+        p = Path(primary)
+        try:
+            out.append(p.parent if p.is_file() else p)
+        except OSError:
+            out.append(p)
+    try:
+        from mousereach.config import Paths
+        for q in (getattr(Paths, "TRIAGE_REVIEW", None), getattr(Paths, "DEEP_REVIEW", None)):
+            if q:
+                out.append(Path(q) / video_stem)
+    except Exception:
+        pass
+    try:
+        from mousereach.review.bundle_media import filed_media_dirs
+        out += [Path(d) for d in filed_media_dirs(video_stem)[:1]]
+    except Exception:
+        pass
+    return out
+
+
+def effective_review(video_stem: str, dirs=(), seg_doc=None, current_segments=None,
+                     human_segmentation=None):
     """THE way to read a video's review: every copy (``{stem}_causal_review.json``
     in each of ``dirs``, then the durable copy -- review_copies), merged per
     current segment to the newest answer or recheck a person gave about its
     frames (merge_review_copies), matched against the segmentation in
-    ``seg_doc`` when given. Returns the merged document, or None when no copy
-    exists.
+    ``seg_doc`` -- or against ``current_segments`` (``[{segment_num,
+    start_frame, end_frame}]``) when the caller has them already. Returns the
+    merged document, or None when no copy exists.
 
     WHY one function: the review window's restore, its "already reviewed"
     check and the bulk release check each picked their own copies -- the
     first copy with records, a union over two folders, the bundle copy alone
     -- so one could call a pellet answered that another called open, or miss
     an answer only the durable copy still held."""
-    current = segments_from_segmentation(seg_doc) if seg_doc else None
+    current = current_segments or (segments_from_segmentation(seg_doc) if seg_doc else None)
+    human = (segmentation_is_human(seg_doc) if human_segmentation is None
+             else bool(human_segmentation))
     doc, _ = merge_review_copies(review_copies(video_stem, dirs), current or None,
-                                 human_segmentation=segmentation_is_human(seg_doc))
+                                 human_segmentation=human)
     return doc
 
 

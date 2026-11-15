@@ -989,13 +989,15 @@ Each of these is code that runs, produces a value, and has no reader.
 `resolve_truth_layers` (`truth_resolver.py:289`) builds layers low to high and merges them (`_apply_outcome_layers`, `:153-183`):
 
 ```
-ground truth  >  processing-dir review  >  re-segmentation-queue review  >  triage-queue review  >  algorithm
+ground truth  >  human review  >  algorithm
 ```
+
+**The human-review layer is ONE read of every copy of the video's review** -- the file or folder the caller hands it (the processing folder's review), the triage and re-segmentation queue bundles, the video's filed folder and the durable store -- merged per segment to the newest answer, or recheck that reopened one, a person gave about that segment's frames (`causal_review_io.effective_review` with `review_dirs`). It is the same read the review window, its "already reviewed" check, the release check and the census use, so the results step applies exactly the answers the review tools show as given. Why: the copies used to be layered by where they sat (processing folder over re-segmentation bundle over triage bundle over durable copy), and the filed folder's copy was not read at all. An answer that lived only in a copy this step did not prefer was not applied, an older answer in a queue bundle beat a newer one elsewhere, and a pellet reopened with "are you sure?" in one copy was still applied from another.
 
 Two things to be precise about:
 
 - **The unit is a segment, not an element.** Within the per-segment outcome layers, a higher layer replaces the whole override for that segment — outcome, causal reach id and interaction frame together (`:160-162`, `:172-180`). Only a segment that no layer covers keeps the algorithm's values. The separate per-reach layer (ground truth only) is merged reach by reach (`_apply_gt_reaches`, `:249`).
-- **Both review tiers are stamped the same.** Triage-queue and re-segmentation-queue reviews are both labelled `"human_review"` (`:320-322`); the data does not record which tool produced the answer.
+- **Every review answer is stamped the same.** Triage-queue and re-segmentation-queue answers are both labelled `"human_review"`; the data does not record which tool produced the answer.
 
 Ground truth only overrides segments it marks determined (`:138-139`). Provenance is stamped per segment as `outcome_source` (`algo` / `human_review` / `ground_truth`) and per reach as `reach_source` (`algo` / `ground_truth` / `human_review`), with the algorithm's originals preserved as `algo_outcome` and `algo_causal_reach_id` (`:172-176`). Reviews never change the boundaries of a detected reach. A review adds a reach only when the reviewer typed one the detector missed (`_add_reviewed_reaches`, since 2026-10-26; see "A reach the list does not have" above). Ground truth changes boundaries and existence, and only where `reaches.exhaustive` is set does it also delete algorithm reaches it never labelled (`:275-279`). Only real answers are applied (`is_answered`): until 2026-10-26 this step applied a pellet left on "-- select outcome --" as a human answer of "triaged".
 

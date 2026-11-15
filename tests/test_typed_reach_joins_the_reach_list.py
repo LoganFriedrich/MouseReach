@@ -36,9 +36,9 @@ def _data(review_human, answers=None):
 
 
 def _resolve(monkeypatch, reaches, outcomes, review):
-    monkeypatch.setattr(tr, "_durable_review_doc", lambda stem: None)
-    monkeypatch.setattr(tr, "_review_doc", lambda stem, base: review if base == "PRIMARY" else None)
     import mousereach.review.causal_review_io as cio
+    # The one read of every review copy hands back this review.
+    monkeypatch.setattr(cio, "effective_review", lambda stem, dirs=(), **k: review)
     monkeypatch.setattr(cio, "find_gt", lambda *a, **k: None)
     return tr.resolve_truth_layers(reaches, outcomes, video_stem="V", primary_dir="PRIMARY")
 
