@@ -7,13 +7,15 @@ bundle are two separate acts in the review tool, and the second one was being
 skipped: bundles sat in the queue with every segment answered and no marker,
 so the watcher's return scan never picked them up.
 
-Completeness is judged on ``human.outcome`` per segment. (An earlier version
-of this docstring claimed ``answers.reviewed`` was unusable; measured over
-every segment record the truth is narrower: unanswered placeholder records
-carry ``reviewed: False`` while answered records omit the key entirely, with
-zero disagreements against ``human.outcome``. A check written as
-``is not False`` therefore works too. ``human.outcome`` stays the criterion
-here because it is the substance of the review, not a bookkeeping flag.)
+Completeness is judged by ``causal_review_io.is_answered`` -- the one
+definition of a person's answer every other check uses -- on the answers whose
+frames match each CURRENT segment (``answered_segments``). WHY not
+``human.outcome is not None``, the test this used before: the review window
+saves a pellet left with no outcome picked with the algorithm's "triaged" in
+its outcome and ``reviewed: False``, and a pellet sent back with "are you
+sure?" keeps its old outcome under ``reviewed: False``. Both are open
+questions; the old test counted both as answered, so a bundle could be
+released with a pellet nobody had decided.
 
 A bundle whose every segment is answered is complete whoever cut it. A
 hand-corrected segmentation (``boundary_source == "human"`` in the bundle's
@@ -140,9 +142,8 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
                 asked = set(st.triaged)
                 doc = json.loads((bundle / f"{stem}_causal_review.json")
                                  .read_text(encoding="utf-8"))
-                got = {r.get("segment_num") for r in doc.get("segments", [])
-                       if isinstance(r, dict)
-                       and (r.get("human") or {}).get("outcome") is not None}
+                from mousereach.review.triage_status import resolved_segments
+                got = resolved_segments(doc, _segments_doc(bundle, stem))
                 if asked and asked <= got:
                     out["partial_walk"].append((stem, answered, total, len(asked)))
                     continue
@@ -171,8 +172,8 @@ def release_finished(queue_root: Path, cls: Optional[dict] = None):
                 "video_stem": stem,
                 "cleared_by": _get_username(),
                 "cleared_at": _get_timestamp(),
-                "reason": "bulk release: every segment carries a human outcome",
-                "gated_on": "human.outcome",
+                "reason": "bulk release: every segment answered",
+                "gated_on": "is_answered",
             })
             n += 1
         except Exception as e:
@@ -194,9 +195,23 @@ def release_finished(queue_root: Path, cls: Optional[dict] = None):
     return n, failures
 
 
+def _segments_doc(bundle: Path, stem: str) -> Optional[dict]:
+    """The bundle's segments document, or None when absent or unreadable."""
+    p = Path(bundle) / f"{stem}_segments.json"
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
+    except Exception as err:
+        logger.warning('Could not read %s, so answers count by segment number: %s', p, err)
+        return None
+
+
 def _completeness(bundle: Path, stem: str) -> Tuple[int, int]:
-    """(answered, total) segments for the bundle's causal review, by
-    human.outcome. (0, 0) when no review file exists."""
+    """(answered, total) segments for the bundle's causal review: answered by
+    ``is_answered``, matched to the CURRENT segments by frames when the bundle
+    has a segments file (total = its segments), else by number (total = the
+    review's records). (0, 0) when no review file exists."""
+    from mousereach.review.causal_review_io import segments_from_segmentation
+    from mousereach.review.triage_status import resolved_segments
     p = bundle / f"{stem}_causal_review.json"
     if not p.is_file():
         return 0, 0
@@ -205,22 +220,24 @@ def _completeness(bundle: Path, stem: str) -> Tuple[int, int]:
     except Exception:
         return 0, 0
     segs = [r for r in (doc.get("segments") or []) if isinstance(r, dict)]
-    answered = sum(1 for r in segs
-                   if (r.get("human") or {}).get("outcome") is not None)
-    return answered, len(segs)
+    seg_doc = _segments_doc(bundle, stem)
+    current = segments_from_segmentation(seg_doc) if seg_doc else []
+    if current:
+        return len(resolved_segments(doc, seg_doc)), len(current)
+    return len(resolved_segments(doc)), len(segs)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="mousereach-review-release",
         description="List re-segmentation-queue bundles by review completeness "
-                    "(human.outcome per segment); --clear writes the release "
+                    "(every segment answered); --clear writes the release "
                     "marker for fully-answered bundles so the watcher's "
                     "return scan re-injects them.")
     ap.add_argument("--clear", action="store_true",
                     help="write {stem}_deep_review_cleared.json for every "
-                         "COMPLETE bundle (all segments carry a human "
-                         "outcome). Without this flag, list only.")
+                         "COMPLETE bundle (every segment answered). Without "
+                         "this flag, list only.")
     args = ap.parse_args(argv)
 
     from mousereach.config import Paths
@@ -242,7 +259,7 @@ def main(argv=None) -> int:
     not_reseg = cls["not_resegmented"]
 
     print(f"Re-segmentation queue: {len(bundles)} bundle(s)")
-    print(f"  complete (every segment has a human outcome): {len(complete)}")
+    print(f"  complete (every segment answered): {len(complete)}")
     for stem, a, t in complete:
         print(f"    {stem}  {a}/{t}")
     print(f"  segmentation fixed by hand, releasable (routed for "

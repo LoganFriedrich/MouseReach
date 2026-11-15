@@ -2,18 +2,19 @@
 
 WHY THIS EXISTS -- READ BEFORE CHANGING ANYTHING HERE
 -----------------------------------------------------
-The obvious field to check is ``answers.reviewed`` on each segment. It is WRONG.
+A segment is answered when ``causal_review_io.is_answered`` says so -- the one
+definition every check of a person's answer uses: not a ``reviewed: False``
+record (a segment the reviewer never reached, a pellet left with no outcome
+picked, or a pellet sent back with "are you sure?"), and for a pellet an
+outcome other than "triaged", "uncertain" or none.
 
-Measured across 1,982 review documents on a live corpus: ``answers.reviewed`` is
-False on EVERY segment of EVERY file. Nothing in the codebase has ever written it.
-Any release condition, dashboard count or test keyed on that field reports "no
-reviews exist" forever, no matter how much work a reviewer has done.
+WHY not ``human.outcome is not None``, the test this module used before: a
+pellet left with no outcome picked is saved with the algorithm's "triaged" in
+its outcome, and a pellet sent back for a recheck keeps its old outcome. Both
+are open questions, and the old test counted both as answered, so this census
+could call a video complete that the release check holds.
 
-The reviewer's actual work lands in ``human.outcome`` and ``human.causal_reach``.
-On the same corpus 1,982 files carry ``human.outcome`` on at least one segment and
-1,900 carry ``human.causal_reach``.
-
-So: completeness = segments with a non-null ``human.outcome``, over total segments.
+So: completeness = answered segments, over total segments.
 
 A review document can exist in two places -- inside the queue bundle, and in the
 durable review store. They can disagree, because a bundle can be re-staged after a
@@ -42,9 +43,10 @@ def _read(path):
 def completeness_of_document(doc):
     """(answered, total, reviewer, reviewed_at) for one review document.
 
-    ``answered`` counts segments where a human recorded an outcome. Returns None if
-    the document has no segment list at all.
+    ``answered`` counts segments a person answered (``is_answered``). Returns
+    None if the document has no segment list at all.
     """
+    from mousereach.review.causal_review_io import is_answered
     if not isinstance(doc, dict):
         return None
     segments = doc.get("segments") or []
@@ -52,7 +54,7 @@ def completeness_of_document(doc):
         return None
     answered = sum(
         1 for s in segments
-        if isinstance(s, dict) and (s.get("human") or {}).get("outcome") is not None
+        if isinstance(s, dict) and is_answered(s)
     )
     return (answered, len(segments), doc.get("reviewer"), doc.get("reviewed_at"))
 

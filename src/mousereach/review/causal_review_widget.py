@@ -128,8 +128,20 @@ def segment_answered(seg, records) -> bool:
     again about pellets they had answered -- e.g. answered "displaced_sa", then
     a newer detector could not decide and the pellet came back (Logan: "the
     thing that was unsure has already been answered by a human reviewer.
-    That's wrong.")."""
-    return bool((records or {}).get(seg["segment_num"]))
+    That's wrong.").
+
+    A record counts only when it is an answer (is_answered, the one
+    definition): a pellet saved with no outcome picked stays open."""
+    return is_answered((records or {}).get(seg["segment_num"]))
+
+
+def review_complete(records) -> bool:
+    """Every segment record is an answer (is_answered). A re-segmentation save
+    that leaves this true releases the video by itself. WHY is_answered and not
+    "has an outcome": a pellet left with no outcome picked is saved with the
+    algorithm's "triaged" in its outcome, and the old test released videos
+    that still held such a pellet."""
+    return bool(records) and all(is_answered(r) for r in records)
 
 
 def open_triaged_indices(indices, segments, records) -> list:
@@ -3298,17 +3310,14 @@ The notes box travels with the video.
             update_corpus_index(
                 video_stem=self._video_stem,
                 review_file_path=out_path,
-                segments=[s for s in segments if s.get("answers", {}).get("reviewed", True) is not False],
+                segments=[s for s in segments if is_answered(s)],
                 reviewer=reviewer,
                 reviewed_at=timestamp,
             )
         except Exception as e:
             print(f"Warning: could not update corpus index: {e}")
 
-        n_reviewed = sum(
-            1 for s in segments
-            if s.get("answers", {}).get("reviewed", True) is not False
-        )
+        n_reviewed = sum(1 for s in segments if is_answered(s))
         show_info(
             f"Saved review: {n_reviewed}/{len(segments)} segments "
             f"-> {out_path.name}"
@@ -3316,8 +3325,10 @@ The notes box travels with the video.
 
         # Deep review: answering and releasing used to be separate acts, and
         # the second was skipped often enough that finished bundles sat in the
-        # queue with no path out. When this save leaves EVERY segment carrying
-        # a human outcome, the review is complete by the measure release uses
+        # queue with no path out. When this save leaves EVERY segment answered
+        # (is_answered -- the one definition; a pellet saved with no outcome
+        # picked is still open, although the algorithm's "triaged" sits in its
+        # outcome), the review is complete by the measure release uses
         # -- write the clear marker now. Partial walks (placeholders remain)
         # still go through the Clear button or the release CLI, where a human
         # judges whether covering every triaged segment was enough.
@@ -3325,10 +3336,7 @@ The notes box travels with the video.
             bundle = getattr(self, "_bundle_dir", None)
             if self._deep_review and bundle:
                 marker = Path(bundle) / f"{self._video_stem}_deep_review_cleared.json"
-                complete = bool(segments) and all(
-                    (s.get("human") or {}).get("outcome") is not None
-                    for s in segments
-                )
+                complete = review_complete(segments)
                 from mousereach.config import is_outcome_free_tray
                 from .resegmented import resegmented_since_entry
                 reseg_ok, reseg_why = (
@@ -3345,8 +3353,8 @@ The notes box travels with the video.
                         "cleared_by": reviewer,
                         "cleared_at": timestamp,
                         "reason": "review complete on save: every segment "
-                                  "carries a human outcome",
-                        "gated_on": "human.outcome",
+                                  "answered",
+                        "gated_on": "is_answered",
                     })
                     show_info("Review complete -- released back to the pipeline.")
         except Exception as e:

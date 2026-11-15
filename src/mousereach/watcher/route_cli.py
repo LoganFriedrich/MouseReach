@@ -216,7 +216,7 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
     <Analyzed>/Archive/manual_corrections/<name>.before_recheck_<time>."""
     from datetime import datetime
     from mousereach.config import Paths
-    from mousereach.review.causal_review_io import (index_review_by_segment,
+    from mousereach.review.causal_review_io import (index_review_by_segment, is_answered,
                                                     resolve_review_path,
                                                     segmentation_is_human,
                                                     segments_from_segmentation)
@@ -237,7 +237,9 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
     for sn in sorted(wanted):
         rec = mapping.get(sn)
         answers = (rec or {}).get("answers") or {}
-        if rec is None or answers.get("reviewed") is False:
+        # Only an answer can be asked again (is_answered, the one definition):
+        # a placeholder or a pellet left undecided is already open.
+        if not is_answered(rec):
             continue
         # Who gave the answer being questioned: the record's own values, or
         # the file's for a review saved before records carried them. The

@@ -28,7 +28,7 @@ walkthroughs of the review tools themselves.
 - [Step 3 - Reach Detection](#step-3-reach-detection) -- `mousereach-detect-reaches`, `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-review-reaches`
 - [Step 4 - Pellet Outcomes](#step-4-pellet-outcomes) -- `mousereach-detect-outcomes`, `mousereach-triage-outcomes`, `mousereach-advance-outcomes`, `mousereach-review-pellet-outcomes`, `mousereach-review-outcomes`
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
-- [Bulk release check for re-segmentation bundles (human-invoked; gates on human.outcome)](#bulk-release-check-for-re-segmentation-bundles-human-invoked-gates-on-human-outcome) -- `mousereach-review-release`
+- [Bulk release check for re-segmentation bundles (human-invoked; every segment answered)](#bulk-release-check-for-re-segmentation-bundles-human-invoked-every-segment-answered) -- `mousereach-review-release`
 - [Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)](#pipeline-census-total-workload-per-stage-breakdown-pace-and-eta-headless-json) -- `mousereach-census`
 - [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
 - [Send named videos back to a GPU for a new pose when their pose is not trusted (same model, distrusted machine); the re-pose round trip does the rest](#send-named-videos-back-to-a-gpu-for-a-new-pose-when-their-pose-is-not-trusted-same-model-distrusted-machine-the-re-pose-round-trip-does-the-rest) -- `mousereach-repose-videos`
@@ -670,22 +670,21 @@ options:
                         (slower: decodes each loaded video over the NAS).
 ```
 
-## Bulk release check for re-segmentation bundles (human-invoked; gates on human.outcome)
+## Bulk release check for re-segmentation bundles (human-invoked; every segment answered)
 
 ### `mousereach-review-release`
 
 ```
 usage: mousereach-review-release [-h] [--clear]
 
-List re-segmentation bundles by review completeness (human.outcome per segment);
---clear writes the release marker for fully-answered bundles so the watcher's
-return scan re-injects them.
+List re-segmentation-queue bundles by review completeness (every segment
+answered); --clear writes the release marker for fully-answered bundles so the
+watcher's return scan re-injects them.
 
 options:
   -h, --help  show this help message and exit
   --clear     write {stem}_deep_review_cleared.json for every COMPLETE bundle
-              (all segments carry a human outcome). Without this flag, list
-              only.
+              (every segment answered). Without this flag, list only.
 ```
 
 ## Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)

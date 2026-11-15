@@ -20,13 +20,18 @@ from mousereach.census.review_completeness import (
 from mousereach.census.runner import bundles_in, estimate_eta, ids_in_dir
 
 
-# --- Trap 1: the dead completion field ------------------------------------
-def test_completeness_ignores_answers_reviewed():
-    """answers.reviewed has never been written by anything; completeness must
-    come from human.outcome or it reports 'no reviews exist' forever."""
+# --- Trap 1: an outcome in a record is not an answer -----------------------
+def test_completeness_counts_answers_by_the_one_definition():
+    """Completeness uses causal_review_io.is_answered. An answered record has
+    no ``reviewed`` flag and a decided outcome; a record marked
+    ``reviewed: False`` is open even with an outcome written in it (a pellet
+    left with no outcome picked keeps the algorithm's "triaged"; a pellet sent
+    back with "are you sure?" keeps its old outcome)."""
     doc = {"segments": (
-        [{"answers": {"reviewed": False}, "human": {"outcome": "retrieved"}}] * 15
-        + [{"answers": {"reviewed": False}, "human": {"outcome": None}}] * 5
+        [{"answers": {}, "human": {"outcome": "retrieved"}}] * 15
+        + [{"answers": {"reviewed": False}, "human": {"outcome": "retrieved"}}] * 2
+        + [{"answers": {"reviewed": False}, "human": {"outcome": "triaged"}}] * 2
+        + [{"answers": {"reviewed": False}, "human": {"outcome": None}}] * 1
     )}
     answered, total, _, _ = completeness_of_document(doc)
     assert (answered, total) == (15, 20)

@@ -1,9 +1,9 @@
 """The outdated two-way door and the bulk release check.
 
 'outdated' must not be a one-way state (declaration accidents marked 1,255
-rows in August 2026 with no way back), and release completeness must be
-judged on human.outcome -- answers.reviewed has never been written by
-anything and is False on every review file in existence.
+rows in August 2026 with no way back), and release completeness is
+judged by causal_review_io.is_answered, the one definition of a person's
+answer (a record marked reviewed: False is open, whatever its outcome says).
 """
 
 import json
@@ -24,19 +24,19 @@ def _bundle(tmp_path, stem, segments):
     return b
 
 
-def test_completeness_counts_human_outcome_not_answers_reviewed():
-    # answers.reviewed is False everywhere and must be irrelevant.
+def test_completeness_counts_answers_not_outcomes():
+    # A record marked reviewed: False is open whatever its outcome says (a
+    # pellet sent back with "are you sure?" keeps its old outcome there).
     segs = [
-        {"segment_num": 1, "human": {"outcome": "retrieved"},
-         "answers": {"reviewed": False}},
-        {"segment_num": 2, "human": {"outcome": "missed"},
+        {"segment_num": 1, "human": {"outcome": "retrieved"}, "answers": {}},
+        {"segment_num": 2, "human": {"outcome": "retrieved"},
          "answers": {"reviewed": False}},
     ]
     import tempfile
     from pathlib import Path
     with tempfile.TemporaryDirectory() as d:
         b = _bundle(Path(d), "20990101_ABC9901_P1", segs)
-        assert _completeness(b, "20990101_ABC9901_P1") == (2, 2)
+        assert _completeness(b, "20990101_ABC9901_P1") == (1, 2)
 
 
 def test_partial_review_is_not_complete(tmp_path):

@@ -2263,6 +2263,9 @@ the question; the review file is first copied to `Analyzed/Archive/manual_correc
 stays in triage until that pellet is answered again. WHY: answers of "retrieved" whose frames show the
 pellet lying in the scoring area afterwards (Logan, 2026-10-26: "are you sure"). Ground truth is never
 reopened. Tests: `tests/test_route_recheck_answered.py`.
+Only a record that is an answer (`is_answered`) is reopened: a placeholder, or a pellet saved with
+no outcome decided (also an older record holding the algorithm's "triaged" with no `reviewed` flag),
+is already open, so there is nothing to ask again.
 
 ## Update 2026-10-28: each review answer records who gave it
 
