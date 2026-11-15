@@ -3284,3 +3284,34 @@ once the video has moved on, as for its own claims.
 **Where it lives.** `watcher/orchestrator.py` `DLCOrchestrator._not_held_for_pose`,
 `_process_single_dlc`; `watcher/cli.py` `main_process_animal`; tests in
 `tests/test_pose_only_claimed_files.py`.
+
+## Update 2026-11-15: deep review supersedes triage
+
+The rule: **a video in the deep-review queue is not allowed to be in the triage queue as well.**
+Deep review always wins; a triage copy of such a video is deleted, not kept.
+
+**Routing.** Every route into a review queue goes through `review_gate.route_to_queue`:
+- into triage while the video has a deep-review bundle (published, or being built in
+  `deep_review/.incoming/`): nothing is moved or created, the row is set to `deep_review`, the
+  refusal is logged, and the deep-review bundle is returned. When the gate itself asked (a re-run
+  of a video that is in deep review), that run's outputs stay in the local Processing folder and
+  the log says so;
+- into deep review: after the bundle is complete (its routing record lists no file that failed to
+  move), the video's triage bundle is deleted (`_drop_triage_copy`). With a failed file the triage
+  folder is kept and the log names it for a person.
+
+`mousereach-route-to-queue --queue triage` checks the rule before it flags any segment and
+reports such a video as `deep` (`"in_deep_review": true` with `--json`); it is not counted as a
+failure.
+
+**Readers.** Wherever both queues are read, the video counts as deep review only: the census
+(`census/runner.py`), the dashboard folder scan (deep review ranks above triage), reconcile, the
+return scan (never returns, releases or diverts such a triage copy), the triage review tool and
+the Review Queues tab, the GPU node's "already held" check, the re-run's "pose only in a review
+bundle" check, the archive step's queue check, the re-pose consumer (a video in deep review is
+not "held in triage") and `mousereach-repose-videos` (parks the deep-review bundle).
+
+**Where it lives.** `watcher/review_routing.py` (`deep_review_stems`, `in_deep_review`,
+`superseded_by_deep_review`, and the block comment above them), `watcher/review_gate.py`
+`route_to_queue`, `_drop_triage_copy`; tests in `tests/test_deep_review_supersedes_triage.py`.
+

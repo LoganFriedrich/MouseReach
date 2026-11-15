@@ -688,9 +688,14 @@ def _held_in_triage_on_disk(video_id: str) -> bool:
     if not root:
         return True
     try:
-        from mousereach.watcher.review_routing import INCOMING_DIR_NAME
+        from mousereach.watcher.review_routing import INCOMING_DIR_NAME, in_deep_review
     except ImportError:
         INCOMING_DIR_NAME = ".incoming"
+        in_deep_review = None
+    # Deep review supersedes triage (review_routing.py): a video in deep
+    # review is not held in triage, whatever copy the triage queue has.
+    if in_deep_review is not None and in_deep_review(video_id):
+        return False
     try:
         return ((Path(root) / video_id).is_dir()
                 or (Path(root) / INCOMING_DIR_NAME / video_id).is_dir())

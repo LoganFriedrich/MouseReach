@@ -735,6 +735,29 @@ Reaches themselves are grouped by segment in two different ways depending on fil
 
 ## The queues, and how a video leaves one
 
+### Deep review supersedes triage (since 2026-11-15)
+
+**A video that is in the re-segmentation (deep review) queue is never in the triage queue as
+well.** Deep review is the stronger hold: the whole video, cuts included, is in question.
+- **Nothing routes a video in deep review into triage.** The watcher's gate, the return scan's
+  diverts, `mousereach-route-to-queue` and every other route go through `route_to_queue`, which
+  creates no triage bundle for such a video, leaves it in deep review, records `deep_review` in the
+  watcher database and logs the refusal. `mousereach-route-to-queue` reports it as `deep` (not a
+  failure) and flags no segment.
+- **Moving a video into deep review deletes its triage bundle** (Escalate, Flag Session, the
+  watcher's diverts, a route) once the deep-review bundle is complete. If a file failed to move
+  into deep review, the triage folder is left and the log says so, because the file may still be
+  there; a person deletes it once the file is in the deep-review bundle.
+- **A triage copy of a video in deep review is ignored everywhere:** the triage review tool never
+  shows it and the Review Queues tab does not count it; the census, the dashboard's folder view and
+  `mousereach-reconcile` count the video in deep review only; the return scan never returns,
+  releases or diverts it (a byte-identical leftover is still filed away to `_Problematic`, as
+  before; any other copy is reported once in the watcher log for a person to delete).
+
+**Why:** a router that did not check sent videos already in deep review into triage from their
+filed results. The triage copy held older results than the deep-review copy, and a reviewer could
+answer the wrong one.
+
 ### Where they are
 
 Set in `config.py:164-166`, derived from `NAS_ROOT`:

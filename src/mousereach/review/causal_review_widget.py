@@ -3028,6 +3028,11 @@ The notes box travels with the video.
         purpose, so for a worklist only the manifest is checked."""
         if not bundle_manifest_path(b).exists():
             return False
+        # A triage copy of a video that is in deep review is never shown:
+        # deep review supersedes triage (watcher/review_routing.py).
+        from mousereach.watcher.review_routing import superseded_by_deep_review
+        if superseded_by_deep_review(b):
+            return False
         if self._worklist:
             return True
         if self._segmentation_failed(b):

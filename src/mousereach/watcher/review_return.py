@@ -694,6 +694,8 @@ _qc_recheck_cache: Dict[str, tuple] = {}
 # Cleared videos held because nobody re-segmented them: logged once per watcher
 # run, not once per scan (the scan runs every few seconds).
 _held_unsegmented_logged: set = set()
+# Triage copies of videos in deep review already reported (once per process).
+_both_queues_logged: set = set()
 _PERSON_FILE_SUFFIXES = ("_causal_review.json", "_deep_review_cleared.json",
                          "_unified_ground_truth.json")
 
@@ -1016,6 +1018,8 @@ def scan_review_queues(db, processing_dir: Path,
     seen_bundles = set()
     triage_bundles = _bundles(Paths.TRIAGE_REVIEW)
     triage_states = _states(triage_bundles)
+    from .review_routing import deep_review_stems
+    deep_stems = deep_review_stems()
     for bundle in triage_bundles:
         if not _budget_left():
             summary["deferred"] += 1
@@ -1065,9 +1069,15 @@ def scan_review_queues(db, processing_dir: Path,
         # the clear marker instantly releases it, the pipeline re-runs, repeat
         # (20250708_CNT0210_P4 made 43 laps on 2026-09-09).
         cleared = _deep_review_cleared(bundle, stem)
-        if st.seg_failed or st.seg_pending_reseg:
+        # DEEP REVIEW SUPERSEDES TRIAGE (review_routing): whatever this triage
+        # copy's status, a video that is in deep review is never returned,
+        # released or diverted from the triage queue -- the deep-review copy is
+        # the one that counts. Since the rule was made, any move into deep
+        # review deletes the triage copy (review_gate.route_to_queue); a copy
+        # left from before is handled here as below.
+        if stem in deep_stems:
             _dr = getattr(Paths, "DEEP_REVIEW", None)
-            if _dr and (Path(_dr) / stem).exists():
+            if _dr:
                 # A same-stem bundle ALREADY sits in deep review (historical
                 # escalations split bundles across queues: jsons moved, mp4
                 # left behind). Diverting would merge blindly into the
@@ -1094,8 +1104,13 @@ def scan_review_queues(db, processing_dir: Path,
                                 "leftover of its deep review bundle; retired to "
                                 "_Problematic", stem)
                     continue
-                logger.info("Return scan: %s exists in BOTH queues; divert "
-                            "skipped (duplicate needs deliberate cleanup)", stem)
+                if stem not in _both_queues_logged:
+                    _both_queues_logged.add(stem)
+                    logger.warning(
+                        "Return scan: %s is in deep review and has a triage copy "
+                        "that differs from it; the triage copy is ignored (deep "
+                        "review supersedes triage) -- delete it once nothing in "
+                        "it is needed", stem)
                 continue
         if st.seg_failed:
             # STALE-BUNDLE GUARD: if the video's CURRENT state says the

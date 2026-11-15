@@ -74,6 +74,16 @@ in the queue; a processed or archiving video's Analyzed copy is older than the
 outputs the daemon is about to archive, so a reviewer would judge stale data.
 A deferral is not a failure: offer the video again on a later run.
 
+A VIDEO IN DEEP REVIEW IS NEVER SENT TO TRIAGE
+---------------------------------------------
+Deep review supersedes triage: a video with a bundle in the deep-review queue
+is not flagged and not routed to triage; it is reported as "deep" (in_deep_review:
+true with --json) and stays where it is. Not a failure for the exit code. WHY:
+the filed results this command routes from are older than what deep review
+holds, and a triage copy beside the deep-review bundle had a reviewer answer
+the wrong copy. Routing into deep_review deletes the video's triage bundle
+once the deep-review bundle is complete (review_gate.route_to_queue).
+
 A CRYSTALLIZED VIDEO IS NEVER MOVED
 -----------------------------------
 A video locked for a publication (mousereach-crystallize; watcher state
@@ -93,7 +103,8 @@ Exit codes:
     0  every requested video was routed, was already not in Analyzed, or was
        deferred because the watcher is working on it, or had
        every requested segment already answered by a person ("done"), or is
-       crystallized ("lock")
+       crystallized ("lock"), or is in deep review and was asked for triage
+       ("deep")
     1  some video could not be routed, OR routing was refused because the
        watcher database could not be resolved, does not exist, or cannot be
        opened (then no video was touched)
@@ -257,7 +268,7 @@ def route_video(video_id: str, queue: str, reason: str,
 
     res = {"video_id": video_id, "queue": queue, "flagged": [], "answered": [],
            "routed": False, "deferred": False, "error": None, "reopened": [],
-           "locked": False}
+           "locked": False, "in_deep_review": False}
     try:
         analyzed = Paths.ANALYZED_OUTPUT
         if not analyzed or not Path(analyzed).exists():
@@ -284,6 +295,15 @@ def route_video(video_id: str, queue: str, reason: str,
                 res["deferred"] = True
                 res["error"] = ("in flight on the watcher (state '%s'); not "
                                 "routed -- offer it again on a later run" % state)
+                return res
+        if queue == "triage":
+            from mousereach.watcher.review_routing import in_deep_review
+            if in_deep_review(video_id):
+                # Deep review supersedes triage -- see the module docstring.
+                # Checked before any flag is written.
+                res["in_deep_review"] = True
+                res["error"] = ("in deep review, which supersedes triage; not "
+                                "routed to triage")
                 return res
         if segment_nums:
             # Never ask a person again what they (or ground truth) already
@@ -398,6 +418,7 @@ def main(argv=None) -> int:
         if not args.json:
             tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
                    else "lock" if r.get("locked")
+                   else "deep" if r.get("in_deep_review")
                    else "done" if (r["answered"] and not r["error"])
                    else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
             print("%s %s -> %s  flagged=%s  %s%s%s  (%.0f s)" % (
@@ -408,7 +429,7 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps(results, indent=1))
     bad = [r for r in results if not r["routed"] and not r["deferred"]
-           and not r.get("locked")
+           and not r.get("locked") and not r.get("in_deep_review")
            and not (r["answered"] and not r["error"])
            and not (r["error"] and "not found" in r["error"])]
     return 1 if bad else 0

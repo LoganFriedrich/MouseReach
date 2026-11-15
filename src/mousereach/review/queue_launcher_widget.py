@@ -162,8 +162,16 @@ Each tool opens in its own window and has its own ? guide.
         try:
             from mousereach.review.causal_review_io import bundle_manifest_path
             n = 0
+            # A triage copy of a video in deep review is not counted: deep
+            # review supersedes triage (watcher/review_routing.py).
+            from mousereach.config import Paths
+            from mousereach.watcher.review_routing import deep_review_stems
+            triage = getattr(Paths, "TRIAGE_REVIEW", None)
+            deep = (deep_review_stems() if triage and root == Path(triage)
+                    else set())
             for d in root.iterdir():
-                if d.is_dir() and bundle_manifest_path(d).exists():
+                if (d.is_dir() and d.name not in deep
+                        and bundle_manifest_path(d).exists()):
                     n += 1
             return n
         except Exception as e:

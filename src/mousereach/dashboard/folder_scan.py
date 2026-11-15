@@ -33,7 +33,9 @@ _QUAR = ".quarantine.json"
 # from Analyzed, so the same stem lives in both; the operator needs to see the
 # review-queue membership, not "done".
 _PRIORITY = {
-    "triage": 120, "deep_review": 120,
+    # deep_review above triage: deep review supersedes triage, so a video
+    # with a bundle in both queues shows as deep review (review_routing.py).
+    "triage": 120, "deep_review": 121,
     "quarantined": 115, "failed": 110,
     "analyzed": 100,
     "processing": 50, "dlc_complete": 40,

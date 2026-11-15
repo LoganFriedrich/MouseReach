@@ -423,11 +423,55 @@ def route_to_queue(
     set the DB hold state. Returns the bundle dir.
 
     Raises CrystallizedError, before anything moves, when ``db`` says the
-    video is crystallized (publication-locked; db.crystallized_refusal)."""
+    video is crystallized (publication-locked; db.crystallized_refusal).
+
+    DEEP REVIEW SUPERSEDES TRIAGE (review_routing, block comment above
+    deep_review_stems):
+      * into triage while the video has a deep-review bundle: nothing is moved
+        or created; the video stays in deep review, its row is set to
+        'deep_review', and the deep-review bundle is returned. Files at the
+        source stay where they are (logged).
+      * into deep review: once the deep-review bundle is complete (no file
+        failed to move), the video's triage bundle, if any, is deleted."""
     from .db import CrystallizedError, crystallized_refusal
+    from .review_routing import in_deep_review
     locked = crystallized_refusal(db, video_id, "routed to a review queue")
     if locked:
         raise CrystallizedError(locked)
+
+    def _record_state(state: str, why: str) -> None:
+        if db is None or not state:
+            return
+        try:
+            db.update_state(video_id, state)
+        except Exception as e:
+            # The bundle has ALREADY been moved into the review queue above, so
+            # the filesystem is the ground truth here and the DB has to follow it.
+            # Previously this only warned, which left the video sitting in a review
+            # folder while the DB reported some other state -- a silent
+            # disagreement between disk and database, visible as one log line and
+            # nothing else. Reconcile deliberately instead of diverging.
+            try:
+                db.force_state(
+                    video_id, state,
+                    reason=f"{why}; normal transition rejected ({e})")
+            except Exception as e2:
+                logger.error(
+                    f"Gate: {video_id} is in the '{state}' queue ON DISK but its "
+                    f"DB state could not be set ({e2}). Disk and DB now disagree.")
+
+    dest_root = Path(dest_root)
+    if (_same_folder(dest_root, getattr(Paths, "TRIAGE_REVIEW", None))
+            and in_deep_review(video_id)):
+        deep_bundle = Path(Paths.DEEP_REVIEW) / video_id
+        logger.warning(
+            f"Routing {video_id}: NOT routed to triage ({reason}) -- the video is "
+            f"in deep review, which supersedes triage; it stays there. Nothing was "
+            f"moved from {processing_dir}.")
+        _record_state("deep_review",
+                      f"routing into triage refused: the video is in deep review")
+        return deep_bundle
+
     bundle, moved = move_video_bundle(
         video_id, processing_dir, dest_root, reason,
         extra_sources=extra_sources,
@@ -439,31 +483,61 @@ def route_to_queue(
     # a queue reads as a seg-failed bundle and re-diverts "(0 files)" forever
     # -- the phantom that re-flipped a parked video (2026-09-08). The shared
     # Processing dir is never named like a video stem, so it never matches.
+    processing_dir = Path(processing_dir)
     try:
         if processing_dir.name == video_id and not any(processing_dir.iterdir()):
             processing_dir.rmdir()
     except OSError:
         pass
-    if db is not None and db_state:
-        try:
-            db.update_state(video_id, db_state)
-        except Exception as e:
-            # The bundle has ALREADY been moved into the review queue above, so
-            # the filesystem is the ground truth here and the DB has to follow it.
-            # Previously this only warned, which left the video sitting in a review
-            # folder while the DB reported some other state -- a silent
-            # disagreement between disk and database, visible as one log line and
-            # nothing else. Reconcile deliberately instead of diverging.
-            try:
-                db.force_state(
-                    video_id, db_state,
-                    reason=f"review gate moved bundle to '{reason}'; "
-                           f"normal transition rejected ({e})")
-            except Exception as e2:
-                logger.error(
-                    f"Gate: {video_id} is in the '{db_state}' queue ON DISK but its "
-                    f"DB state could not be set ({e2}). Disk and DB now disagree.")
+    _record_state(db_state, f"review gate moved bundle to '{reason}'")
+    if _same_folder(dest_root, getattr(Paths, "DEEP_REVIEW", None)):
+        _drop_triage_copy(video_id, bundle)
     return bundle
+
+
+def _same_folder(a, b) -> bool:
+    if not a or not b:
+        return False
+    try:
+        return (os.path.normcase(os.path.abspath(str(a)))
+                == os.path.normcase(os.path.abspath(str(b))))
+    except (TypeError, ValueError):
+        return False
+
+
+def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
+    """Delete ``<triage>/<video>`` once the video's deep-review bundle is
+    complete. Deep review supersedes triage: the triage copy is deleted, not
+    kept. Never deleted while the deep-review bundle's routing record lists a
+    file that failed to move (those files may still be in the triage folder,
+    and may be the video's only copy) -- logged for a person instead. Never
+    raises."""
+    import shutil
+    from .review_routing import read_routing_manifest
+    triage_root = getattr(Paths, "TRIAGE_REVIEW", None)
+    if not triage_root:
+        return
+    copy = Path(triage_root) / video_id
+    try:
+        if not copy.is_dir():
+            return
+    except OSError:
+        return
+    record = read_routing_manifest(deep_bundle, video_id) or {}
+    if record.get("failed_files"):
+        logger.error(
+            f"Routing {video_id}: in deep review now, but {len(record['failed_files'])} "
+            f"file(s) failed to move into it; its triage folder {copy} is left for a "
+            f"person (deep review supersedes triage -- delete it once the files are in "
+            f"{deep_bundle})")
+        return
+    try:
+        shutil.rmtree(copy)
+        logger.info(f"Routing {video_id}: triage copy {copy} deleted -- the video is "
+                    f"in deep review, which supersedes triage")
+    except OSError as e:
+        logger.error(f"Routing {video_id}: could not delete the triage copy {copy} "
+                     f"({e}); deep review supersedes it -- delete it by hand")
 
 
 def route_deep_review(

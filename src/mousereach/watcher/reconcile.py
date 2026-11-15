@@ -421,6 +421,11 @@ def reconcile() -> dict:
         mark(ids_in_dir(folder), "old:" + _rel(folder, nas))
     mark(bundles_in(Paths.TRIAGE_REVIEW), "triage")
     mark(bundles_in(Paths.DEEP_REVIEW), "deep_review")
+    # Deep review supersedes triage (review_routing.py): a video in both
+    # queues is judged as held in deep review only.
+    for places in where.values():
+        if "deep_review" in places:
+            places.discard("triage")
     # A route in progress (or interrupted) sits in the queue's build folder,
     # which bundles_in above never lists (not date-named). Its own label, so it
     # is never mistaken for a finished queue bundle.

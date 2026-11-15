@@ -61,6 +61,70 @@ _BOUNDARY_CHARS = (".", "_", "D")
 INCOMING_DIR_NAME = ".incoming"
 
 
+# ---------------------------------------------------------------------------
+# DEEP REVIEW SUPERSEDES TRIAGE
+#
+# A video in the deep-review queue is not allowed to be in the triage queue as
+# well. Deep review is the stronger hold (the whole video, cuts included, is in
+# question), so a triage copy of such a video is never created and, when one
+# exists, it is deleted by the move into deep review (review_gate.route_to_queue)
+# and ignored by every reader (census, dashboard, reconcile, the return scan,
+# the review tools' triage list). WHY: a router that did not check sent videos
+# already in deep review into triage as well; a reviewer then answered a triage
+# copy holding older results while the deep-review copy was the one that counted.
+# ---------------------------------------------------------------------------
+
+def deep_review_stems() -> set:
+    """Every video with a bundle in the deep-review queue, published or still
+    being built there (``.incoming``). Empty when the queue is not configured
+    or cannot be read."""
+    from ..config import Paths
+    root = getattr(Paths, "DEEP_REVIEW", None)
+    out = set()
+    if not root:
+        return out
+    for folder in (Path(root), Path(root) / INCOMING_DIR_NAME):
+        try:
+            with os.scandir(folder) as entries:
+                for e in entries:
+                    if not e.name.startswith(".") and e.is_dir():
+                        out.add(e.name)
+        except OSError:
+            continue
+    return out
+
+
+def in_deep_review(video_id: str) -> bool:
+    """Whether ``video_id`` has a bundle in the deep-review queue (published or
+    being built). Never raises."""
+    from ..config import Paths
+    root = getattr(Paths, "DEEP_REVIEW", None)
+    if not root:
+        return False
+    try:
+        return ((Path(root) / video_id).is_dir()
+                or (Path(root) / INCOMING_DIR_NAME / video_id).is_dir())
+    except OSError:
+        return False
+
+
+def superseded_by_deep_review(bundle_dir) -> bool:
+    """True when ``bundle_dir`` is a bundle in the TRIAGE queue whose video is
+    also in deep review -- a copy every reader ignores (deep review supersedes
+    triage). False for a deep-review bundle and on any error."""
+    from ..config import Paths
+    triage = getattr(Paths, "TRIAGE_REVIEW", None)
+    if not triage or not bundle_dir:
+        return False
+    try:
+        if (os.path.normcase(os.path.abspath(str(Path(bundle_dir).parent)))
+                != os.path.normcase(os.path.abspath(str(triage)))):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return in_deep_review(Path(bundle_dir).name)
+
+
 def _bundle_files(source_dir: Path, video_id: str) -> List[Path]:
     """Every file in ``source_dir`` that belongs to ``video_id``.
 

@@ -137,7 +137,8 @@ def _model_dirs(results: Optional[Path]) -> List[Path]:
 
 
 def _bundle(video_id: str) -> Optional[Path]:
-    for q in (getattr(Paths, "TRIAGE_REVIEW", None), getattr(Paths, "DEEP_REVIEW", None)):
+    # Deep review first: it supersedes triage (review_routing.py).
+    for q in (getattr(Paths, "DEEP_REVIEW", None), getattr(Paths, "TRIAGE_REVIEW", None)):
         if q and (Path(q) / video_id).is_dir():
             return Path(q) / video_id
     return None

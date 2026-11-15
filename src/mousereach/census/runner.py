@@ -453,6 +453,9 @@ def run_census(window_days: int = 14) -> dict:
                                         (nas / "Processing" / "Quarantine")
                                         if nas else None)),
     }
+    # Deep review supersedes triage (watcher/review_routing.py): a video with
+    # a bundle in both queues is counted in deep review only.
+    locations["triage"] = set(locations["triage"]) - set(locations["deep_review"])
 
     # -- The denominator: collage expansion UNIONED with found artifacts.
     found = set(index)
@@ -512,6 +515,12 @@ def run_census(window_days: int = 14) -> dict:
         # file at a retired queue name is not a queue to scan.
         if qroot and Path(qroot).is_dir():
             rows, skipped = scan_queue(qroot, durable_dir=durable)
+            if qname == "triage":
+                # Same rule: a triage copy of a video in deep review is not
+                # triage work.
+                in_deep = set(locations["deep_review"])
+                rows = [r for r in rows if r.get("stem") not in in_deep]
+                skipped = [s for s in skipped if s not in in_deep]
             s = summarise(rows)
             s["no_review_document"] = len(skipped)
             review[qname] = s

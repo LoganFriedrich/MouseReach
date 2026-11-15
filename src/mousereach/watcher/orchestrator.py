@@ -2113,8 +2113,9 @@ class DLCOrchestrator(BaseOrchestrator):
             from mousereach.watcher.review_routing import INCOMING_DIR_NAME
         except ImportError:
             INCOMING_DIR_NAME = ".incoming"
-        for qroot, qstate in ((getattr(Paths, 'TRIAGE_REVIEW', None), 'triage'),
-                              (getattr(Paths, 'DEEP_REVIEW', None), 'deep_review')):
+        # Deep review first: it supersedes triage (review_routing.py).
+        for qroot, qstate in ((getattr(Paths, 'DEEP_REVIEW', None), 'deep_review'),
+                              (getattr(Paths, 'TRIAGE_REVIEW', None), 'triage')):
             if not qroot:
                 continue
             try:
@@ -5734,8 +5735,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
         failed them. A missing pose is a pose to make or a file to follow, not
         a scientific outcome.
         """
-        for qdir, qstate in ((Paths.TRIAGE_REVIEW, 'triage'),
-                             (Paths.DEEP_REVIEW, 'deep_review')):
+        # Deep review first: it supersedes triage (review_routing.py).
+        for qdir, qstate in ((Paths.DEEP_REVIEW, 'deep_review'),
+                             (Paths.TRIAGE_REVIEW, 'triage')):
             try:
                 held = bool(qdir) and any((Path(qdir) / video_id).glob(f"{video_id}DLC*.h5"))
             except OSError:
@@ -6537,8 +6539,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # but only if the folder really holds this run (see
         # queue_folder_holds_this_run): a husk from an earlier round is left
         # for the return scan, which files it away once this video is archived.
-        for qdir, qstate in ((Paths.TRIAGE_REVIEW, 'triage'),
-                             (Paths.DEEP_REVIEW, 'deep_review')):
+        # Deep review first: it supersedes triage (review_routing.py).
+        for qdir, qstate in ((Paths.DEEP_REVIEW, 'deep_review'),
+                             (Paths.TRIAGE_REVIEW, 'triage')):
             if qdir and (qdir / video_id).is_dir():
                 if queue_folder_holds_this_run(qdir / video_id,
                                                self.processing_dir, video_id):
