@@ -257,6 +257,16 @@ def filed_this_run(video_id, processing_started_at, dest=None):
     return dest if feats >= started - 2 else None
 
 
+def _filed_by_this_run(db, video_id):
+    """filed_this_run for the run the watcher row describes (its
+    ``processing_started_at``). None when the row cannot be read."""
+    try:
+        started = (db.get_video(video_id) or {}).get('processing_started_at')
+    except Exception:
+        started = None
+    return filed_this_run(video_id, started)
+
+
 def _has_files_of(directory, video_id) -> bool:
     """Whether ``directory`` holds any file named for ``video_id``. Never
     raises (an unreadable folder counts as holding nothing)."""
@@ -286,11 +296,7 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
         return False
     if not _has_files_of(folder, video_id):
         return False
-    try:
-        started = (db.get_video(video_id) or {}).get('processing_started_at')
-    except Exception:
-        started = None
-    if filed_this_run(video_id, started) is not None:
+    if _filed_by_this_run(db, video_id) is not None:
         return False
     message = (f"{NO_KINEMATICS_REASON} (no {video_id}_features.json in "
                f"{folder}; the archive step does not file a video without it)")
@@ -4598,15 +4604,24 @@ class DLCOrchestrator(BaseOrchestrator):
             )
             duration = time.time() - start_time
 
+            if (not result.get('success')
+                    and result.get('error') == "No files found in Processing/"):
+                # Nothing left here: if this run's results are in the filed
+                # folder, an earlier attempt filed them without recording it
+                # (filed_this_run). Recorded as filed, not failed.
+                filed = _filed_by_this_run(self.db, video_id)
+                if filed is not None:
+                    logger.warning(
+                        f"{video_id}: nothing left in Processing, and this run's "
+                        f"results are already filed in {filed}; recorded as "
+                        f"archived now")
+                    result = {'success': True, 'files_moved': [],
+                              'destination': str(filed)}
+
             if result.get('success'):
                 self._clear_archive_backoff(video_id)
-                # 'processed' cannot go straight to 'archived' -- the state
-                # machine routes through 'archiving' (db.py VIDEO_TRANSITIONS).
-                # Jumping it raised, and because the files had ALREADY moved the
-                # video stayed in 'processed' with nothing left in Processing to
-                # archive: the next pass then read 'not ready' forever. Filing had
-                # never actually run before today, so this had never fired.
-                self.db.update_state(video_id, 'archiving')
+                # The row has said 'archiving' since before the move (written
+                # above), so this is the one write that completes it.
                 self.db.update_state(video_id, 'archived')
                 self.db.log_step(video_id, 'archive', 'completed',
                                 message=f"Archived {len(result.get('files_moved', []))} files",
@@ -4650,7 +4665,8 @@ class DLCOrchestrator(BaseOrchestrator):
             else:
                 error = result.get('error', 'archive failed')
                 if error == "No files found in Processing/":
-                    # Terminal, not retriable -- see _archive_to_nas for why.
+                    # Terminal, not retriable, and nothing of this run filed
+                    # -- see _archive_to_nas for why.
                     self.db.mark_failed(video_id, error)
                     self.db.log_step(video_id, 'archive', 'failed',
                                      message=error, duration=duration)
@@ -4659,6 +4675,7 @@ class DLCOrchestrator(BaseOrchestrator):
                         f"failed (nothing on disk to archive)")
                     return False
                 delay = self._note_archive_failure(video_id)
+                self._archiving_failed_keep_files(video_id)
                 self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
                 logger.warning(f"Archive failed for {video_id}: {error} "
                                f"(retrying in {delay // 60}m)")
@@ -4669,9 +4686,22 @@ class DLCOrchestrator(BaseOrchestrator):
             # Back off (see _archive_to_nas): a cheap repeating exception must
             # not re-select every cycle with no delay.
             self._note_archive_failure(video_id)
+            self._archiving_failed_keep_files(video_id)
             self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
             logger.error(f"Archive error for {video_id}: {e}")
             return False
+
+    def _archiving_failed_keep_files(self, video_id: str) -> None:
+        """Put the row back to 'processed' after a failed archive attempt that
+        left the files here. WHY: 'archiving' is written before the move, and
+        only 'processed' rows are picked for filing -- a row left 'archiving'
+        would wait for the next watcher restart instead of its backoff."""
+        try:
+            self.db.update_state(video_id, 'processed')
+        except Exception as err:
+            logger.error(f"{video_id}: could not put the row back to 'processed' "
+                         f"after a failed archive ({err}); restarting the "
+                         f"watcher does it")
 
     def _stage_files(self, video_id: str, files: list) -> list:
         """Move this video's files into NAS staging so the other side can
@@ -6508,8 +6538,62 @@ class ProcessingOrchestrator(BaseOrchestrator):
             pass
 
         logger.info(f"Archiving {video_id} to NAS")
+        # 'archiving' is written BEFORE anything moves, so a run that dies
+        # mid-move leaves a row that says so. WHY: the state used to be written
+        # only after the move (processed -> archiving -> archived, back to
+        # back). A crash between the move and those writes left the row
+        # 'processed' with the files already filed; the next pass found
+        # nothing in Processing and marked a filed video 'failed'. Now startup
+        # reclaim puts an 'archiving' row back to 'processed', and the
+        # "nothing left here" branch below recognises this run's files in the
+        # filed folder (filed_this_run) and records 'archived'.
+        self.db.update_state(video_id, 'archiving')
         self.db.log_step(video_id, 'archive', 'started')
         start_time = time.time()
+
+        def _back_to_processed():
+            # A failed attempt that leaves the files here: the row returns to
+            # 'processed' so the archive bucket picks it again after its
+            # backoff (only 'processed' rows are selected for filing).
+            try:
+                self.db.update_state(video_id, 'processed')
+            except Exception as err:
+                logger.error(f"{video_id}: could not put the row back to "
+                             f"'processed' after a failed archive ({err}); "
+                             f"restarting the watcher does it")
+
+        def _recorded_as_filed(message, duration):
+            # 'archiving' -> 'archived', then the hand-off clean-up.
+            self.db.update_state(video_id, 'archived')
+            self.db.log_step(video_id, 'archive', 'completed',
+                             message=message, duration=duration)
+            logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
+
+            # Export to central DB on NAS for cross-node provenance
+            self.db.export_to_central_db(video_id)
+
+            self._clear_archive_backoff(video_id)
+
+            # Remove from staging on NAS (the GPU node's copy)
+            left_behind = 0
+            if self.staging_dir:
+                staging_files = self._get_associated_files(self.staging_dir, video_id)
+                for f in staging_files:
+                    try:
+                        f.unlink()
+                        logger.debug(f"Cleaned staging: {f.name}")
+                    except Exception:
+                        left_behind += 1
+
+            # Release the claim only once the posed copy is gone. WHY
+            # after, not before: released first, the copy sits unclaimed
+            # in the posed folder, and any node taking in posed videos
+            # could claim and analyse a video that is already filed. A
+            # file that could not be removed keeps the claim; the periodic
+            # sweep lets go once nothing of the video is left there.
+            if not left_behind:
+                self._release_claim(video_id)
+            return True
 
         try:
             # skip_ready_check: state='processed' already encodes what the
@@ -6523,63 +6607,39 @@ class ProcessingOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
 
             if result.get('success'):
-                # 'processed' cannot go straight to 'archived' -- the state
-                # machine routes through 'archiving' (db.py VIDEO_TRANSITIONS).
-                # Jumping it raised, and because the files had ALREADY moved the
-                # video stayed in 'processed' with nothing left in Processing to
-                # archive: the next pass then read 'not ready' forever. Filing had
-                # never actually run before today, so this had never fired.
-                self.db.update_state(video_id, 'archiving')
-                self.db.update_state(video_id, 'archived')
-                self.db.log_step(
-                    video_id, 'archive', 'completed',
-                    message=f"Archived {len(result.get('files_moved', []))} files to {result.get('destination')}",
-                    duration=duration
-                )
-                logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")
-
-                # Export to central DB on NAS for cross-node provenance
-                self.db.export_to_central_db(video_id)
-
-                self._clear_archive_backoff(video_id)
-
-                # Remove from staging on NAS (the DLC PC's copy)
-                left_behind = 0
-                if self.staging_dir:
-                    staging_files = self._get_associated_files(self.staging_dir, video_id)
-                    for f in staging_files:
-                        try:
-                            f.unlink()
-                            logger.debug(f"Cleaned staging: {f.name}")
-                        except Exception:
-                            left_behind += 1
-
-                # Release the claim only once the posed copy is gone. WHY
-                # after, not before: released first, the copy sits unclaimed
-                # in the posed folder, and any node taking in posed videos
-                # could claim and analyse a video that is already filed. A
-                # file that could not be removed keeps the claim; the periodic
-                # sweep lets go once nothing of the video is left there.
-                if not left_behind:
-                    self._release_claim(video_id)
-                return True
+                return _recorded_as_filed(
+                    f"Archived {len(result.get('files_moved', []))} files to "
+                    f"{result.get('destination')}", duration)
             else:
                 error = result.get('error', 'archive failed')
                 if error == "No files found in Processing/":
-                    # Nothing to archive will not appear by waiting: the files
-                    # are gone (moved by hand, archived with the state write
-                    # lost, or a crash between move and write). Backoff kept
-                    # one such row invisible for three days -- re-selected at
-                    # every expiry, failing in 50 ms, reading as merely slow
-                    # (2026-09-04). Terminal and loud; a person resets the row
-                    # after restoring files (or force-states it archived if
-                    # the outputs are already in Analyzed).
+                    # Nothing left here. If this run's results are in the
+                    # filed folder, an earlier attempt filed them and did not
+                    # get to record it: record it now (filed_this_run says
+                    # how this run is recognised).
+                    filed = _filed_by_this_run(self.db, video_id)
+                    if filed is not None:
+                        logger.warning(
+                            f"{video_id}: nothing left in Processing, and this "
+                            f"run's results are already filed in {filed} -- an "
+                            f"earlier attempt filed them without recording it; "
+                            f"recorded as archived now")
+                        return _recorded_as_filed(
+                            f"already filed in {filed} by an earlier attempt; "
+                            f"recorded now", duration)
+                    # Otherwise nothing to archive will appear by waiting:
+                    # the files are gone (moved by hand, or never this run's).
+                    # Backing off only hid such a row -- re-selected at every
+                    # expiry, failing in milliseconds, reading as merely slow.
+                    # Terminal and loud; a person resets the row after
+                    # restoring files.
                     self.db.mark_failed(video_id, error)
                     self.db.log_step(video_id, 'archive', 'failed',
                                      message=error, duration=duration)
                     logger.error(
                         f"Archive impossible for {video_id}: {error} -- marked "
-                        f"failed (nothing on disk to archive)")
+                        f"failed (nothing on disk to archive, and nothing of "
+                        f"this run in the filed folder)")
                     return False
                 # Other errors are retriable -- but not on EVERY cycle: a video
                 # that cannot be archived usually cannot be archived a second
@@ -6589,6 +6649,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 # log. Back off, and say so once per escalation rather than once
                 # per attempt.
                 delay = self._note_archive_failure(video_id)
+                _back_to_processed()
                 self.db.log_step(video_id, 'archive', 'failed', message=error, duration=duration)
                 logger.warning(
                     f"Archive failed for {video_id}: {error} "
@@ -6600,9 +6661,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # Back off here too: an exception that repeats cheaply would
             # otherwise re-select this row every cycle with no delay at all.
             self._note_archive_failure(video_id)
+            _back_to_processed()
             self.db.log_step(video_id, 'archive', 'failed', message=str(e), duration=duration)
             logger.error(f"Archive error for {video_id}: {e}")
-            # Don't mark_failed — keep in processed state for retry
+            # Not marked failed: back in 'processed' for a retry
             return False
 
 

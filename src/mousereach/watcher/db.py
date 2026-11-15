@@ -44,7 +44,11 @@ VIDEO_TRANSITIONS = {
     'dlc_complete': ['processing', 'archived', 'unresolvable'],
     'processing': ['processed', 'failed', 'triage', 'deep_review', 'unresolvable'],  # triage/deep_review = human-review holds
     'processed': ['archiving', 'unresolvable'],
-    'archiving': ['archived', 'failed', 'unresolvable'],
+    # 'archiving' is written BEFORE the files move (orchestrator archive
+    # steps). 'processed' = that attempt failed with the files still in
+    # Processing (and startup reclaim of an interrupted filing): the archive
+    # bucket, which selects only 'processed', tries again after its backoff.
+    'archiving': ['archived', 'processed', 'failed', 'unresolvable'],
     'archived': ['outdated', 'crystallized', 'unresolvable'],  # Version-aware reprocessing
     # 'archived' = un-mark: the row compares current again (e.g. after a
     # corrective or compatible-version declaration). Without it 'outdated' was

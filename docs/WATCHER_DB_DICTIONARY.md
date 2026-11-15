@@ -212,7 +212,7 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
   dlc_complete  -> processing, archived, unresolvable
   processing    -> processed, failed, triage, deep_review, unresolvable
   processed     -> archiving, unresolvable
-  archiving     -> archived, failed, unresolvable
+  archiving     -> archived, processed, failed, unresolvable
   archived      -> outdated, crystallized, unresolvable
   outdated      -> dlc_queued, processing, failed, archived, unresolvable
   crystallized  -> nothing; force_state to unlock
@@ -232,6 +232,17 @@ READ THIS BEFORE INTERPRETING A STATE
 
   'processed' on the processing server means analysed, passed the review
   gate, and waiting to be filed.
+
+  'archiving' (since 2026-11-15) is written BEFORE the files move into the
+  filed folder. A row left in it means a filing attempt was interrupted; the
+  next watcher start puts it back to 'processed', and the next filing attempt
+  records 'archived' if that run's files are already in the filed folder. A
+  failed attempt that leaves the files in Processing goes back to 'processed'.
+
+  'failed' with an error starting "not filed: no kinematics" (since
+  2026-11-15) means the analysis ran but the features file could not be
+  written; the video is NOT filed, its files stay in Processing, and the
+  processing server's failed-video retry runs it again.
 
   'processing' can also mean "analysed, and HELD for its hand scores": since
   2026-10-28 the hand-score comparison runs after the analysis and before the

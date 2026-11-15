@@ -3159,3 +3159,32 @@ reports that itself).
 **Where it lives.** `watcher/orchestrator.py`: `BaseOrchestrator._make_features` (one kinematics
 step for both machine roles), `_hold_without_kinematics`, `refuse_filing_without_features`;
 tests in `tests/test_filing_requires_kinematics.py`.
+
+## Update 2026-11-15: filing is recorded before the files move; a filed run is never marked failed
+
+**Before.** The archive step moved the files into Analyzed and only then wrote the row's state
+(`processed -> archiving -> archived`, back to back). If the watcher died between the move and
+those writes, the row stayed `processed` with the files already filed; the next attempt found
+nothing in Processing ("No files found in Processing/") and marked a filed video `failed`.
+
+**Now, on both machine roles:**
+- `archiving` is written before anything moves. A row left in `archiving` therefore means "a
+  filing attempt was interrupted"; the next watcher start puts it back to `processed` (startup
+  reclaim, as before).
+- A failed attempt that leaves the files in Processing (a file in use, the share gone) puts the
+  row back to `processed` and backs off as before, so it is tried again. (`archiving ->
+  processed` is a legal transition for exactly this.)
+- When an attempt finds nothing left in Processing, it looks in the video's filed folder. If
+  that folder holds the video and a `<video>_features.json` at least as new as the row's
+  `processing_started_at`, those are this run's results, filed by the interrupted attempt: the
+  row is recorded `archived` (with the usual clean-up of the posed copy and the claim). Only when
+  nothing of this run is filed is the row marked `failed` for a person, as before.
+
+**How "this run" is recognised.** Every run writes a fresh features file after the row entered
+`processing`, and filing keeps a file's modified time. An earlier generation filed before this run
+started is older than the stamp and does not count. Anything unreadable counts as "not filed".
+
+**Where it lives.** `watcher/orchestrator.py`: `filed_this_run`, `_archive_to_nas`,
+`_archive_locally_processed`; `watcher/db.py` `VIDEO_TRANSITIONS['archiving']`; tests in
+`tests/test_filing_state_recorded.py`.
+
