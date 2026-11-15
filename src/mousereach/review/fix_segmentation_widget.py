@@ -212,9 +212,20 @@ keys 1-6 = speed. The keys work while the video has the keyboard -- click
 the video first. Anything typed while you are working in this panel stays in
 the panel and never runs a key.
 
-FINISHING: saving cuts does NOT release the video from the deep-review
-queue. When its cuts are right, open Deep Review on it and press
-"Clear -> re-enter pipeline" -- that is the release; everything after is
+WHICH VIDEOS ARE LISTED: every video in the queue that cannot leave until a
+person sets or confirms its cuts, and nobody has since it arrived -- whatever
+sent it (bad cuts, a flagged session, a quality hold), and also a video whose
+cuts were fixed on an earlier visit and that was sent back. The orange line
+under the video name says why it was sent and why it cannot leave yet. If
+the cuts already look right, answer Yes at every boundary and Save: confirming
+them is the step the queue is waiting for.
+
+FINISHING: saving releases a video that was sent here for its cuts. A video
+sent for another reason (a flagged session, a quality hold) is released once
+its cuts are saved: by the "Release finished videos" button on the Review
+Queues tab if every pellet is already answered, otherwise by answering its
+open pellets in Re-segmentation Review (it releases on the save that answers
+the last one, or with "Clear -> re-enter pipeline"). Everything after is
 automatic.
 
 "Skip this video" moves on without saving anything.

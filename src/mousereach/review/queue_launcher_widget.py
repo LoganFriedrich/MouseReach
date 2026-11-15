@@ -61,9 +61,11 @@ Refresh button.
   otherwise the status bar says why it stays.
 * Release finished videos -- one button that removes every FINISHED
   video from the re-segmentation queue and sends it back through the
-  pipeline (fully answered reviews + hand-fixed segmentations routed
-  for segmentation). It never touches videos held for other reasons;
-  those say so and release via Clear inside Re-segmentation Review.
+  pipeline: a video whose cuts were set or confirmed since it arrived AND
+  whose every pellet is answered (whoever cut it), or one whose cuts were
+  fixed after it was sent for its cuts. A video with open pellets that was
+  sent for another reason is not touched; Re-segmentation Review shows its
+  open pellets.
 
 Each tool opens in its own window and has its own ? guide.
 """
