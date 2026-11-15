@@ -2821,6 +2821,20 @@ The notes box travels with the video.
                 return   # take another look: the flag is recorded, the video is not moved
         except Exception as e:
             logger.warning("flag session: could not save review first: %s", e)
+        # Flagging means a person found a new problem, exactly like Escalate:
+        # an earlier re-segmentation clear travelling with the bundle would let
+        # the return scan release the video straight back on the same cuts. Set
+        # it aside (renamed, kept on record) BEFORE the move, as Escalate does;
+        # if that fails, the video is not moved -- it would only bounce back.
+        try:
+            from mousereach.watcher.review_gate import supersede_deep_review_clear
+            supersede_deep_review_clear(self._video_stem, Path(bundle))
+        except Exception as e:
+            show_error(f"Flagged session {key}, but the earlier re-segmentation clear "
+                       f"of {self._video_stem} could not be set aside, so the video "
+                       f"was NOT moved: {e}")
+            logger.exception("flag session: could not set aside the earlier clear")
+            return
         # The move is recorded in the watcher database as 'deep_review', so
         # the folder and the database agree (_watcher_db_for_move says why).
         db, db_note = self._watcher_db_for_move()

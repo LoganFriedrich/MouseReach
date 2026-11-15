@@ -197,8 +197,9 @@ video that was cleared in re-segmentation before is no longer cleared. Its old
 `{stem}_deep_review_cleared.json` is renamed to
 `{stem}_deep_review_cleared_superseded_<time>.json` (kept, never deleted) as
 the video moves, and it waits in re-segmentation until someone clears it again.
-Only the button does this (`escalate_to_deep_review` in `review_gate.py`);
-the watcher's own routes into re-segmentation happen only when there is no clear.
+The Escalate and Flag Session buttons do this (`supersede_deep_review_clear` in
+`review_gate.py`); the watcher's own routes into re-segmentation happen only when there is
+no clear.
 Before this, the old clear went along with the video, the watcher read it as
 "done" and released the video within seconds, and it came back to triage on
 the same cuts -- the button seemed to do nothing.
@@ -904,6 +905,15 @@ session in `Processing/Review/flagged_sessions.json` as provenance, and **routes
 video to the re-segmentation queue** via `route_to_queue`, then advances to the next video.
 The flag is a note about the session; the divert is the action. Nothing filters on the
 flag any more.
+
+**Flagging cancels any earlier re-segmentation clear, exactly as Escalate does.** Before the
+video moves, an old `{stem}_deep_review_cleared.json` from an earlier visit is renamed to
+`{stem}_deep_review_cleared_superseded_<time>.json` (kept, never deleted). Otherwise the
+watcher would read the old clear as "done" and release the video straight back on the same
+cuts. If the old clear cannot be renamed (a file in use), the video is NOT moved and an
+error says so -- press the button again once the file is free. In the re-segmentation queue
+a flagged video waits until its cuts are set or confirmed in the re-segmentation tool, which
+lists it (see "Every video that needs this is listed in the re-segmentation tool").
 
 **What it used to do.** The button is labelled "Flag Session (needs review)", its tooltip
 said it marks every video of that mouse+day as must-be-human-reviewed, and the toast said
