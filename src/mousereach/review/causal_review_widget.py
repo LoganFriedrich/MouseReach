@@ -60,6 +60,7 @@ from .causal_review_io import (
     plain_review_note,
     update_corpus_index,
     flag_session,
+    GUI_LOCK_WAIT_S,
     is_session_flagged,
     session_key,
     find_gt,
@@ -2844,7 +2845,11 @@ The notes box travels with the video.
         reason = (self._notes_edit.toPlainText().strip()
                   if hasattr(self, "_notes_edit") else "")
         try:
-            key = flag_session(self._video_stem, self._review_root(), reason=reason)
+            # A short wait for another window's lock: this runs on the
+            # window's own thread, and a long wait froze it (GUI_LOCK_WAIT_S,
+            # causal_review_io). The error names the lock file if it is stuck.
+            key = flag_session(self._video_stem, self._review_root(), reason=reason,
+                               lock_wait_s=GUI_LOCK_WAIT_S)
         except Exception as e:
             show_error(f"Could not flag session: {e}")
             return
@@ -3340,6 +3345,10 @@ The notes box travels with the video.
                 segments=[s for s in segments if is_answered(s)],
                 reviewer=reviewer,
                 reviewed_at=timestamp,
+                # Short wait: this runs on the window's own thread, and the
+                # full wait froze the window for a minute on every save while
+                # a closed window's lock stood (GUI_LOCK_WAIT_S).
+                lock_wait_s=GUI_LOCK_WAIT_S,
             )
         except Exception as e:
             # Shown in the window, not printed to a console nobody watches.

@@ -662,3 +662,44 @@ def test_a_lock_stale_only_by_the_local_clock_is_kept(tmp_path, monkeypatch):
     clock = cio._ShareClock(tmp_path)
     assert cio._break_if_stale(lock, cio.INDEX_LOCK_STALE_S, clock) is False
     assert lock.exists()
+
+
+def test_the_review_window_does_not_freeze_on_a_held_lock(tmp_path, monkeypatch):
+    """Flag Session runs on the window's own thread. While another window's
+    (or a closed window's) lock stands, it must give up within a few seconds
+    -- not hold the window frozen for the full background wait -- and say
+    which lock file is in the way."""
+    import mousereach.review.causal_review_widget as crw
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_WAIT_S", 20.0)
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    root = tmp_path / "root"
+    root.mkdir()
+    lock = root / "flagged_sessions.json.lock"
+    lock.write_text(json.dumps({"token": "another-window"}), encoding="utf-8")
+    errors = []
+    monkeypatch.setattr(crw, "show_error", lambda msg, *a, **k: errors.append(msg))
+    monkeypatch.setattr(crw, "show_info", lambda *a, **k: None)
+    window = SimpleNamespace(
+        _video_stem=VID, _bundle_dir=None, _review_root=lambda: root,
+        _status_label=SimpleNamespace(setText=lambda text: None))
+    t0 = time.monotonic()
+    crw.CausalReviewWidget._flag_session(window)
+    assert time.monotonic() - t0 < 10
+    assert errors and str(lock) in errors[0]
+    assert lock.exists()
+
+
+def test_a_short_wait_gives_up_on_the_index_quickly_and_names_the_lock(
+        review_roots, monkeypatch):
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "INDEX_LOCK_POLL_S", 0.02)
+    review_roots.records.mkdir(parents=True, exist_ok=True)
+    lock = review_roots.records / "causal_review_index.json.lock"
+    lock.write_text(json.dumps({"token": "someone-else"}), encoding="utf-8")
+    t0 = time.monotonic()
+    with pytest.raises(cio.IndexLockBusy) as e:
+        cio.update_corpus_index(VID, Path("x"), [_seg_record(1)], "r", "t",
+                                lock_wait_s=0.2)
+    assert time.monotonic() - t0 < 5
+    assert str(lock) in str(e.value)

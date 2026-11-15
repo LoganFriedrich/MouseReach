@@ -44,7 +44,7 @@ def test_flag_session_sets_the_old_clear_aside_before_moving(tmp_path, monkeypat
         seen["kept"] = sorted(p.name for p in source.glob(f"{stem}_deep_review_cleared_superseded_*"))
         return source
 
-    monkeypatch.setattr(crw, "flag_session", lambda stem, root, reason="": "session-key")
+    monkeypatch.setattr(crw, "flag_session", lambda stem, root, reason="", **kw: "session-key")
     monkeypatch.setattr(crw, "show_info", lambda *a, **k: None)
     monkeypatch.setattr(crw, "show_error", lambda *a, **k: None)
     monkeypatch.setattr(rg, "route_to_queue", route)
@@ -64,7 +64,7 @@ def test_flag_session_does_not_move_a_video_whose_clear_cannot_be_set_aside(
     def fail(stem, source):
         raise OSError("file in use")
 
-    monkeypatch.setattr(crw, "flag_session", lambda stem, root, reason="": "session-key")
+    monkeypatch.setattr(crw, "flag_session", lambda stem, root, reason="", **kw: "session-key")
     monkeypatch.setattr(crw, "show_info", lambda *a, **k: None)
     monkeypatch.setattr(crw, "show_error", lambda msg, *a, **k: errors.append(msg))
     monkeypatch.setattr(rg, "supersede_deep_review_clear", fail)

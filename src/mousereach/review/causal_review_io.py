@@ -1679,12 +1679,19 @@ def session_key(video_stem: str) -> str:
 # by a dead window, two windows breaking it at the same instant and a third
 # arriving within the same few milliseconds.
 #
-# A writer that cannot get the lock within INDEX_LOCK_WAIT_S gives up with
-# IndexLockBusy. For the index, the review itself is already saved by then
-# (both copies are written before the index) and the window says the index
-# was not updated; the video's index entries are rewritten on its next save.
+# A writer that cannot get the lock within its wait gives up with
+# IndexLockBusy, naming the lock file. Background callers wait up to
+# INDEX_LOCK_WAIT_S. The review window waits only GUI_LOCK_WAIT_S: it waits on
+# the window's own thread, so a long wait froze the window ("Not responding")
+# on every save while a dead window's lock was younger than
+# INDEX_LOCK_STALE_S -- and a frozen window invites being killed, which is how
+# stale locks are made. For the index, the review itself is already saved by
+# then (both copies are written before the index) and the window says the
+# index was not updated; the video's index entries are rewritten on its next
+# save.
 
 INDEX_LOCK_WAIT_S = 60.0
+GUI_LOCK_WAIT_S = 3.0
 INDEX_LOCK_STALE_S = 600.0
 INDEX_LOCK_POLL_S = 0.25
 # How often (seconds) a waiter re-learns the server clock's offset even when
@@ -1693,8 +1700,8 @@ SHARE_CLOCK_REFRESH_S = 30.0
 
 
 class IndexLockBusy(RuntimeError):
-    """Another writer held a shared corpus file's lock for longer than
-    INDEX_LOCK_WAIT_S (and it was not stale)."""
+    """Another writer held a shared corpus file's lock for longer than the
+    caller's wait (and it was not stale). The message names the lock file."""
 
 
 def _lock_path(path: Path) -> Path:
@@ -1823,8 +1830,9 @@ def _break_if_stale(lock: Path, stale_s: float,
     return True
 
 
-def _take_lock(lock: Path, token: str) -> None:
-    deadline = time.monotonic() + INDEX_LOCK_WAIT_S
+def _take_lock(lock: Path, token: str, wait_s: Optional[float] = None) -> None:
+    wait_s = INDEX_LOCK_WAIT_S if wait_s is None else wait_s
+    deadline = time.monotonic() + wait_s
     clock = _ShareClock(lock.parent)
     body = json.dumps({"token": token, "host": socket.gethostname(),
                        "pid": os.getpid(), "taken_at": _get_timestamp()}).encode("utf-8")
@@ -1836,9 +1844,13 @@ def _take_lock(lock: Path, token: str) -> None:
                 continue
             if time.monotonic() >= deadline:
                 raise IndexLockBusy(
-                    "%s is being written by another review window (lock %s); "
-                    "gave up after %.0f s" % (lock.name[:-len(".lock")], lock,
-                                              INDEX_LOCK_WAIT_S))
+                    "%s is being written by another review window (gave up "
+                    "after %.0f s). If no other review window is saving, the "
+                    "lock was left by a window that closed mid-save: it is "
+                    "removed automatically %d minutes after it was made, or "
+                    "delete %s by hand while no review window is open"
+                    % (lock.name[:-len(".lock")], wait_s,
+                       int(INDEX_LOCK_STALE_S // 60), lock))
             time.sleep(INDEX_LOCK_POLL_S)
             continue
         try:
@@ -1863,16 +1875,18 @@ def _release_lock(lock: Path, token: str) -> None:
                        "broken once stale", lock)
 
 
-def _locked_update(path: Path, change: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
+def _locked_update(path: Path, change: Callable[[Dict[str, Any]], None],
+                   wait_s: Optional[float] = None) -> Dict[str, Any]:
     """Read ``path`` (a JSON object, {} when absent), apply ``change`` to it,
     and write it back, all while holding ``<path>.lock``. Returns the document
-    written. Raises IndexLockBusy when the lock cannot be had, and whatever the
-    read or the write raises (an unreadable file is never overwritten)."""
+    written. Raises IndexLockBusy when the lock cannot be had within
+    ``wait_s`` (default INDEX_LOCK_WAIT_S), and whatever the read or the write
+    raises (an unreadable file is never overwritten)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = _lock_path(path)
     token = uuid.uuid4().hex
-    _take_lock(lock, token)
+    _take_lock(lock, token, wait_s)
     try:
         doc = _read_json(path)
         change(doc)
@@ -1910,12 +1924,15 @@ def is_session_flagged(video_stem: str, review_root: Path) -> bool:
 
 
 def flag_session(video_stem: str, review_root: Path, reason: str = "",
-                 flagged_by: Optional[str] = None) -> str:
+                 flagged_by: Optional[str] = None,
+                 lock_wait_s: Optional[float] = None) -> str:
     """Flag the video's whole session (mouse+day) as must-be-human-reviewed.
 
     Idempotent: re-flagging the same session updates the record. Returns the
     session key. Videos already GT'd/reviewed are still honored -- the flag only
-    forces review of the ones that aren't yet resolved.
+    forces review of the ones that aren't yet resolved. ``lock_wait_s``: how
+    long to wait for another writer's lock (the review window passes
+    GUI_LOCK_WAIT_S); IndexLockBusy after that.
     """
     key = session_key(video_stem)
     p = _flagged_sessions_path(review_root)
@@ -1935,7 +1952,7 @@ def flag_session(video_stem: str, review_root: Path, reason: str = "",
 
     # Under the shared-file lock (block comment above _lock_path): two windows
     # flagging at once must not drop each other's session.
-    _locked_update(p, change)
+    _locked_update(p, change, lock_wait_s)
     _FLAGGED_SESSIONS_CACHE.pop(str(review_root), None)  # invalidate read cache
     return key
 
@@ -1968,6 +1985,7 @@ def update_corpus_index(
     reviewer: str,
     reviewed_at: str,
     index_dir: Optional[Path] = None,
+    lock_wait_s: Optional[float] = None,
 ) -> Path:
     """Append or update corpus-level index entries for a reviewed video.
 
@@ -1989,6 +2007,10 @@ def update_corpus_index(
         ISO timestamp.
     index_dir : Path, optional
         Override index directory. Defaults to NAS/review_records/.
+    lock_wait_s : float, optional
+        How long to wait for another writer's lock on the index (default
+        INDEX_LOCK_WAIT_S; the review window passes GUI_LOCK_WAIT_S so it
+        never freezes for long). IndexLockBusy after that.
 
     Returns
     -------
@@ -2052,5 +2074,5 @@ def update_corpus_index(
     # Read, change and write under the shared-file lock (block comment above
     # _lock_path). WHY: two reviewers saving at once used to read the same old
     # index, and the second write dropped the first one's entries.
-    _locked_update(index_path, change)
+    _locked_update(index_path, change, lock_wait_s)
     return index_path
