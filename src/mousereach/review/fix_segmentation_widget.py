@@ -510,45 +510,25 @@ automatic.
     def _needs_reseg(self, bundle: Path, seg: dict) -> bool:
         """Does this bundle belong in the re-segmentation queue?
 
-        Three ways in, one way out:
-          * the segmenter's own needs_human verdict (the original criterion);
-          * a reviewer declared a segment mislabel (true_segment_num in the
-            travelling causal review);
-          * the bundle was ROUTED here for a segmentation reason (the triage
-            escalate button, or the watcher's mislabel diverts -- their
-            routing reasons all name segmentation).
-        The way out: boundary_source == "human" means the cuts were already
-        hand-fixed, so nothing here is pending regardless of the above."""
-        if seg.get("boundary_source") == "human":
-            return False
-        if needs_fixing(seg):
-            return True
-        stem = bundle.name
-        try:
-            from mousereach.review.triage_status import segmentation_corrected
-            rp = bundle / ("%s_causal_review.json" % stem)
-            if rp.is_file() and segmentation_corrected(
-                    json.loads(rp.read_text(encoding="utf-8"))):
-                return True
-        except Exception as err:
-            logger.warning('Could not read the review of %s: %s', bundle, err)
-            pass
-        try:
-            rj = bundle / ("%s_routing.json" % stem)
-            if rj.is_file():
-                reason = str(json.loads(rj.read_text(
-                    encoding="utf-8")).get("routed_reason", "")).lower()
-                if "segment" in reason or "re-seg" in reason:
-                    return True
-        except Exception as err:
-            logger.warning('Could not read the routing record of %s: %s', bundle, err)
-            pass
-        return False
+        Exactly when it cannot leave the queue until a person sets or confirms
+        its cuts, and nobody has done so since it arrived
+        (resegmented.needs_recut). That is the proof every way out of the
+        queue demands of a pillar video, whatever brought it here: the
+        segmenter's needs_human verdict, a reviewer's mislabel, the triage
+        escalate button, a flagged session or a quality hold.
+
+        WHY not the old three-ways-in test: it listed only bundles routed for
+        a segmentation reason whose cuts had never been set by hand. A video
+        whose cuts were hand-fixed on an earlier visit and then sent back, and
+        a video sent here for a flagged session, were never listed, yet could
+        not leave without new cuts -- no tool offered them any way out.
+        ``seg`` is unused; kept so callers need not change."""
+        from mousereach.review.resegmented import needs_recut
+        return needs_recut(bundle, bundle.name)[0]
 
     def _load_queue(self):
-        """Videos needing a human's cuts: the segmenter's own needs_human
-        verdict, a reviewer-declared segment mislabel, or a
-        segmentation-reason routing (see _needs_reseg)."""
+        """Videos that cannot leave the queue until a person sets or confirms
+        their cuts (see _needs_reseg)."""
         self._queue = []
         if not self.queue_dir.is_dir():
             self.header.setText("Queue not found: %s" % self.queue_dir)
@@ -617,6 +597,18 @@ automatic.
         reasons = needs_fixing(self.seg)
         self.header.setText("%s   --   %d frames" % (stem, self.n_frames))
         note = "The segmenter says: " + "; ".join(reasons) if reasons else ""
+        # Why it is here and why it cannot leave yet: a video sent back after
+        # an earlier hand fix, or sent for a flagged session, looks fine to the
+        # segmenter, and the person must still see what is asked of them.
+        try:
+            from .release_cli import _routing_reason
+            from .resegmented import resegmented_since_entry
+            sent_for = _routing_reason(bundle, stem)
+            _, pending = resegmented_since_entry(bundle, stem)
+            extra = (("Sent here: %s. " % sent_for) if sent_for else "") + pending
+            note = (note + "   |   " + extra) if note else extra
+        except Exception as err:
+            logger.warning('Could not read why %s is in the queue: %s', stem, err)
         if not self.candidates:
             note += ("   |   No candidate timepoints for this video: the "
                      "segmenter could not track the enclosure well enough to "

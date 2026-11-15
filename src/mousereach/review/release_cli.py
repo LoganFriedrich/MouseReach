@@ -15,12 +15,14 @@ zero disagreements against ``human.outcome``. A check written as
 ``is not False`` therefore works too. ``human.outcome`` stays the criterion
 here because it is the substance of the review, not a bookkeeping flag.)
 
-A hand-corrected segmentation (``boundary_source == "human"`` in the bundle's
-segments file) also finishes a bundle -- WHEN the bundle was routed for a
-segmentation problem. The routing reason gates that: the clear marker is a
+A bundle whose every segment is answered is complete whoever cut it. A
+hand-corrected segmentation (``boundary_source == "human"`` in the bundle's
+segments file) also finishes a bundle that still has open pellets -- WHEN the
+bundle was routed for a segmentation problem. The routing reason gates that: the clear marker is a
 blanket human-clear token the watcher gate honors, so releasing a bundle
 routed for e.g. a QC hold on the strength of a cut-fix would clear a concern
-nobody addressed. Such bundles are listed as held back, with their reason.
+nobody addressed. Such bundles are listed as held back, with their reason;
+their open pellets are what the review window shows next.
 
 This deliberately stays a human-invoked bulk form of the review tool's own
 CLEAR button, writing the same marker the button writes. Whether clearing
@@ -81,9 +83,11 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
     button is the primary interface -- the target user has no computing
     background and nothing may exist CLI-only; the CLI below is the button's
     terminal mirror for power users and scripting. Keys:
-      complete        [(stem, answered, total)]   every segment has a human outcome
+      complete        [(stem, answered, total)]   every segment answered, whoever cut it
       fixed_release   [(stem, reason)]            cuts hand-fixed AND routed for segmentation
-      fixed_held      [(stem, reason)]            cuts hand-fixed but routed for something else
+      fixed_held      [(stem, reason)]            cuts hand-fixed, routed for something
+                                                  else, and pellets still open: the
+                                                  review window shows it
       partial_walk    [(stem, a, t, n_asked)]     every TRIAGED segment answered (human judges)
       partial         [(stem, answered, total)]
       unreviewed      [stem]
@@ -106,6 +110,17 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
         if (bundle / f"{stem}_deep_review_cleared.json").is_file():
             out["already"].append(stem)
             continue
+        # Every pellet answered is complete WHOEVER cut the video. WHY first:
+        # this used to come after the hand-cut test, so a bundle whose cuts a
+        # person had re-set AND whose every pellet a person had answered, but
+        # which was sent here for a reason other than segmentation (a quality
+        # hold, a flagged session), was "held back" here, while the review
+        # window would not open it (nothing left to answer) and the fixer
+        # would not list it (already re-cut): no way out at all.
+        answered, total = _completeness(bundle, stem)
+        if total and answered == total:
+            out["complete"].append((stem, answered, total))
+            continue
         if _boundary_source_human(bundle, stem):
             reason = _routing_reason(bundle, stem)
             if _names_segmentation(reason):
@@ -114,10 +129,7 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
                 out["fixed_held"].append(
                     (stem, reason or "(no routing reason recorded)"))
             continue
-        answered, total = _completeness(bundle, stem)
-        if total and answered == total:
-            out["complete"].append((stem, answered, total))
-        elif answered:
+        if answered:
             # Partial by full coverage; maybe complete for every segment that
             # was actually ASKED (a triage-style walk). Listed for a human --
             # never auto-released, because the review file does not record

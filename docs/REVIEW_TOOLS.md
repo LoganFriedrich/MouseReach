@@ -207,7 +207,9 @@ the same cuts -- the button seemed to do nothing.
 (since 2026-10-27).** A clear is not enough on its own: the video stays
 until a person has set or confirmed every cut AFTER it arrived in the queue
 -- by saving in the segmentation fixer (which marks the whole list of cuts
-as theirs), or in a ground-truth file with every boundary verified. Cuts set
+as theirs), or in a ground-truth file with every boundary determined (the
+ground-truth tool's "determined"; files from its older format say "verified",
+which counts the same). Cuts set
 by hand before it arrived do not count: a video sent back is there because
 those cuts were found wrong. Pressing Clear on a video nobody has
 re-segmented says so ("cannot be cleared yet -- not re-segmented: ...") and
@@ -217,6 +219,14 @@ videos as "not re-segmented since they arrived". Easy and Flat trays are
 never segmented, so the rule does not apply to them. The check is
 `review/resegmented.py`; the watcher applies it in the return scan
 (`review_return.py`), so a clear written any other way is held too.
+
+**Every video that needs this is listed in the re-segmentation tool.** The
+tool (Open Re-segmentation) lists every video in the queue that cannot leave
+until its cuts are set or confirmed, whatever sent it there: the escalate
+button, a flagged session, a quality hold, or the segmenter itself. That
+includes a video whose cuts a person fixed on an earlier visit and that was
+sent back -- those earlier cuts no longer count, so the video is listed again.
+Once you save its cuts there, the tool no longer lists it.
 
 Until 2026-10-23 each segment also had a box, "Segmentation says this is
 segment N. If that's wrong, which segment is this actually?", which wrote
@@ -488,9 +498,21 @@ reasons, and each has its tool:
   Press **Open Re-segmentation Review**. It walks every segment of the video asking the
   same outcome/causal-reach questions as triage review.
 
-**Finishing a video.** Fixing the cuts does NOT release the video by itself.
-After the cuts are right (or after a full re-segmentation), open **Re-segmentation Review**
-on that video and press **Clear -> re-enter pipeline**. That is the release:
+Every video in this queue that is a pillar tray must have its cuts set or
+confirmed by a person before it can leave -- even one sent for a flagged
+session or a quality hold, and even one whose cuts were fixed on an earlier
+visit. Each such video is listed in **Open Re-segmentation**, and the line at
+the top says why it was sent and why it cannot leave yet. If the cuts look
+right, answer Yes at every boundary and press *Save these cuts*: confirming
+them is the step the queue waits for.
+
+**Finishing a video.** Saving the cuts releases a video that was sent for its
+cuts. A video sent for another reason (a flagged session, a quality hold) is
+released in one of two ways once its cuts are saved: if every pellet is
+already answered, the **Release finished videos** button on the Review Queues
+tab (or `mousereach-review-release --clear`) lists it as complete and releases
+it; otherwise open **Re-segmentation Review**, which shows its open pellets,
+answer them and press **Clear -> re-enter pipeline**. That is the release:
 the watcher then re-runs the video from segmentation onward -- keeping any
 human-made cuts -- and the results flow to the database automatically. Nothing
 else needs to be done.
@@ -509,6 +531,7 @@ The same widget with `deep_review=True` (`causal_review_widget.py:198-203`). Dif
 - `triage_only` is forced off (`:210`), so **every** segment is walked.
 - The **Clear -> re-enter pipeline** button appears. It saves the review, then writes `{stem}_deep_review_cleared.json` into the bundle (`_clear_deep_review`, `:3069`, marker at `:3085`). That marker is what the watcher looks for.
 - The same marker can be written in bulk from a terminal: `mousereach-review-release` lists every re-segmentation bundle's completeness (judged on `human.outcome` per segment -- never `answers.reviewed`, which nothing has ever written) and with `--clear` releases the fully-answered ones. It is the button's bulk form for reviews completed without the second step, not an automatic release.
+- A bundle whose every segment is answered is **complete whoever cut it**. A bundle whose cuts a person re-set after it arrived and whose pellets were all answered used to be "held back" when it had been sent for a reason other than segmentation; the window would not open it (nothing to answer) and the fixer would not list it (already re-cut), so nothing could release it. Held back now means: cuts re-set, sent for another reason, and pellets still open -- which the window shows.
 
 It has no console command. It opens from the "Review Queues" launcher tab (`queue_launcher_widget.py:123`) or from the pipeline dashboard for one named video (`dashboard/widget.py:1488`).
 
@@ -522,15 +545,24 @@ It has no console command. It opens from the "Review Queues" launcher tab (`queu
 Review Queues tab (`queue_launcher_widget._open_reseg`). Segment cuts only: no
 outcomes, no reaches, no causal attribution.
 
-It walks the re-segmentation queue (or `--queue-dir`) and offers bundles that need a
-human's cuts, three ways in (`_needs_reseg`): the segmenter's own non-empty
-`needs_human` list (its record of having had to force its answer, written by
-`save_segmentation`, `segmentation/core/segmenter_robust.py:931`); a
-reviewer-declared segment mislabel (`segmentation_wrong` in the bundle's
-travelling causal review); or a routing reason naming segmentation (the triage
-escalate button, or the watcher's mislabel diverts). One way out:
-`boundary_source: "human"` in the segments file means the cuts were already
-hand-fixed, and the bundle is not offered again. Videos with the most unused
+It walks the re-segmentation queue (or `--queue-dir`) and offers every pillar
+bundle that cannot leave until a person sets or confirms its cuts, and whose
+cuts nobody has set since it arrived (`_needs_reseg` ->
+`resegmented.needs_recut`). That is the same proof every way out of the queue
+demands, so the list and the exits cannot disagree. Whatever sent the video
+-- the segmenter's own `needs_human` list, a reviewer's mislabel, the triage
+escalate button, a flagged session, a quality hold -- it is listed. Cuts set
+by hand on an earlier visit do not hide it: they are older than its arrival,
+so they no longer count. Once a person saves cuts here, the bundle is not
+offered again. Easy and Flat trays are never listed (they are not segmented).
+The line under the video name says why the video was sent and why it cannot
+leave yet.
+
+Why: the list used to be "needs_human, a mislabel, or a routing reason naming
+segmentation -- unless the cuts were ever set by hand". A video sent back
+after an earlier hand fix, and a video sent for a flagged session, were then
+in the queue with no tool that would show them, while every exit still
+required new cuts. Videos with the most unused
 candidate cuts are offered first; videos with no candidates at all are last,
 because those have to be marked from scratch. Which videos come first is now
 also subject to the lab's work order (`priority_order.json`, see
