@@ -3007,7 +3007,7 @@ queue's release check still reads ground truth from the index only, so a triage 
 ground truth that answers every open segment is not released by it yet.
 
 **When every check still runs:** a new video; a video coming back from a review queue (it
-re-enters 'processing' with no start stage); a video held for its hand scores and picked again; a
+resumes just after the step that sent it (resume_stage), with every later check); a video held for its hand scores and picked again; a
 filed video whose re-run had to remake any of segmentation, reaches, outcomes or reach assignment
 (including a reused output that turned out to be missing); a video never filed (no
 `archived_at`); and a video whose filing the watcher cannot read.
