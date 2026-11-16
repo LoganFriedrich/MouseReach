@@ -116,6 +116,31 @@ def _no_writes_to_real_pipeline_folders():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_message_boxes(monkeypatch):
+    """No test puts a real message box on this machine's screen. WHY: tests
+    run watchers configured to pause for a recording program, and the watcher
+    then shows its "stopping" / "safe to record" boxes (watcher/record_notice)
+    -- on a machine where the suite runs while a person works, those boxes
+    appeared on their screen for no recording at all. A test of the boxes
+    passes its own show/close functions.
+
+    The "is one already up?" check is answered "no" unless a test passes its
+    own finder: asked of the real screen, a box left up by anything else on
+    the machine made a test's notice look like a duplicate and skip it."""
+    from mousereach.watcher import record_notice
+    real_already_on_screen = record_notice.already_on_screen
+    monkeypatch.setattr(
+        record_notice, "already_on_screen",
+        lambda title, find=None: (real_already_on_screen(title, find=find)
+                                  if find is not None else False))
+    shown = []
+    monkeypatch.setattr(record_notice, "_show_windows_box",
+                        lambda title, text: shown.append(title))
+    monkeypatch.setattr(record_notice, "_close_windows_box", lambda title: False)
+    return shown
+
+
+@pytest.fixture(autouse=True)
 def _no_real_hand_scores(monkeypatch):
     """No test reads this machine's hand-scores settings: the check before
     filing (watcher/hand_scores.py) would otherwise compare a test's video with
