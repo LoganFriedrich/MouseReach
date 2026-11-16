@@ -2674,7 +2674,9 @@ every machine and user already has: no environment variable, no per-user or per-
 are read on every call, so an edit reaches a running watcher and an open review window. A missing or
 unreadable lab file (not JSON, or not a JSON object) is reported once per run as a log warning naming
 the file, and the setting stays unset -- the same as before the file existed. A user config with no
-`nas_root` has no lab file and says nothing.
+`nas_root` has no lab file and says nothing. (Not for the hand-score settings and the filing rules:
+those two stop instead of reading "unset" -- see "an unreadable lab settings file holds the
+hand-score check" below.)
 
 WHY a new file rather than the lab profiles file (`setup/lab_profiles.json`): that file holds per-PC
 DEFAULTS that `mousereach-setup` copies into a PC's `config.json` once, matched by hostname and found
@@ -3863,3 +3865,50 @@ at line N, column M", open that file in a text editor, go to that line, and fix 
 missing comma or quote at the end of the line before). Then run the command again.
 
 Tests: `tests/test_damaged_config_file_is_refused.py`.
+
+## Update: an unreadable lab settings file holds the hand-score check; it never switches it off
+
+**What was wrong.** The hand-score settings (`hand_scores`: which scores file, which projects
+need it) usually live only in the lab settings file on the storage drive,
+`<nas_root>/mousereach_lab_config.json`. That file was read leniently: a file that did not parse
+(one bad hand edit), or a storage drive that could not be reached for a moment, read exactly like
+"no such setting". The check before triage then answered "no hand-scores file configured" and
+every analysed video went on to the gate, kinematics and filing WITHOUT being compared with its
+hand scores -- and filed means done. The filing rules (`filing`) are read from the same file, and
+the same lenient read made every project fall back to a folder under its own code, which no lookup
+that asks the rules ever searches.
+
+**What happens now** (`config.load_lab_config(strict=True)`, `config.lab_setting(..., strict=True)`):
+
+- The two settings that guard a check read the lab file strictly. "Not set" now means only: the
+  shared pipeline folder can be seen and there is no lab file in it, or the file has no such
+  section. A lab file that exists but cannot be read or parsed, or a shared pipeline folder that
+  cannot be reached, is an error, never "not set".
+- **Hand scores** (`hand_scores.settings`): that error makes the check one that could not run.
+  The video is HELD where it is (in 'processing', in the local Processing folder, before triage,
+  kinematics and filing), and listed in RED in `<nas_root>/attention/<host>_hand_scores.json`
+  (`hand_score_check_failed`, `needs_person`), with the message naming the file and what is
+  wrong. Nothing is recorded in its outcomes file as if it had been checked. Once the file is
+  fixed, the watcher sees the change at its next cycle, checks the video again, and it goes on by
+  itself. The attention list is written whenever a video is held, also while the settings cannot
+  be read.
+- **Filing rules** (`config.filing_rules`): the rules the process last read cleanly are kept, with
+  a warning once per run; when it has none yet, the archive step stops with the message (as it
+  does for a malformed rule) instead of filing into a fallback folder. The failure is logged once
+  and remembered for a minute, like good rules: the file is not read again for every video in
+  every cycle (on an unreachable share each read can hang for seconds).
+- Every other lab-wide setting still reads leniently (a warning once per run; the setting is
+  unset).
+
+**For an operator.** If the Pipeline Dashboard or the attention list shows analysed videos held
+in red because "the check against its hand scores could not run" and the reason names
+`mousereach_lab_config.json`, open that file in a text editor and fix the spot the message names
+(or reconnect the storage drive if it says the folder cannot be reached). The held videos go on by
+themselves; nothing else needs doing. A bad edit of that file therefore holds every analysed Pillar
+video, of any project, on every processing machine until it is fixed -- which projects need the
+comparison is itself in that file, so none can be let through. That is intended: none of them can
+be compared until then. Once it is fixed, the held videos go on by themselves also in a lab that
+has no `hand_scores` section at all (the watcher tells "settings unreadable" apart from "no
+scores file set", `hand_scores.scores_pair_stamp`).
+
+Tests: `tests/test_hand_scores_held_when_lab_file_unreadable.py`, `tests/test_filing_rules.py`.

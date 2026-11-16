@@ -60,7 +60,8 @@ def test_the_filed_folder_is_the_archive_destination(rules, tmp_path):
 def test_the_rules_are_read_from_the_lab_settings(monkeypatch):
     monkeypatch.setattr(config, "filing_rules", REAL_FILING_RULES)
     monkeypatch.setitem(config._FILING_CACHE, "rules", None)
-    monkeypatch.setattr(config, "load_lab_config", lambda user_config=None: {"filing": GRANT_RULES})
+    monkeypatch.setitem(config._FILING_CACHE, "error", None)
+    monkeypatch.setattr(config, "load_lab_config", lambda user_config=None, **k: {"filing": GRANT_RULES})
     assert config.AnimalID.get_project_and_cohort("PROJA0304") == ("GrantA/PROJA", "PROJA_03")
 
 
@@ -77,7 +78,8 @@ def test_the_rules_are_read_from_the_lab_settings(monkeypatch):
 def test_a_rule_that_could_file_somewhere_unexpected_is_refused(monkeypatch, bad):
     monkeypatch.setattr(config, "filing_rules", REAL_FILING_RULES)
     monkeypatch.setitem(config._FILING_CACHE, "rules", None)
-    monkeypatch.setattr(config, "load_lab_config", lambda user_config=None: {"filing": {"PROJA": bad}})
+    monkeypatch.setitem(config._FILING_CACHE, "error", None)
+    monkeypatch.setattr(config, "load_lab_config", lambda user_config=None, **k: {"filing": {"PROJA": bad}})
     with pytest.raises(ValueError):
         config.filing_rules()
 
@@ -145,6 +147,7 @@ def test_the_route_tool_finds_outcomes_in_the_filed_folder(rules, tmp_path):
 def test_a_persons_own_config_cannot_move_where_videos_are_filed(monkeypatch):
     monkeypatch.setattr(config, "filing_rules", REAL_FILING_RULES)
     monkeypatch.setitem(config._FILING_CACHE, "rules", None)
+    monkeypatch.setitem(config._FILING_CACHE, "error", None)
     monkeypatch.setattr(config, "_load_config", lambda: {"filing": GRANT_RULES})
-    monkeypatch.setattr(config, "load_lab_config", lambda user_config=None: {})
+    monkeypatch.setattr(config, "load_lab_config", lambda user_config=None, **k: {})
     assert config.filing_rules() == {}

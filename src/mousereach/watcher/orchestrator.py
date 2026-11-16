@@ -729,11 +729,23 @@ class BaseOrchestrator:
         return video_id in getattr(self, "_score_waits", {})
 
     def _write_score_attention(self) -> None:
-        """Rewrite this machine's list of videos waiting for hand scores."""
+        """Rewrite this machine's list of videos waiting for hand scores.
+
+        Written whenever hand scores are configured, and ALSO when the
+        settings cannot be read or a video is held: the held videos' red
+        "check could not run" items are the only place a person sees that an
+        unreadable settings file is holding them. Never raises (it is called
+        from the precheck's own error handling)."""
         from mousereach.watcher import hand_scores
-        if Paths.NAS_ROOT and hand_scores.settings().get("path"):
-            hand_scores.write_attention(Paths.NAS_ROOT, self.hostname,
-                                        getattr(self, "_score_waits", {}))
+        if not Paths.NAS_ROOT:
+            return
+        waits = getattr(self, "_score_waits", {})
+        try:
+            configured = bool(hand_scores.settings().get("path"))
+        except Exception:
+            configured = True           # unreadable: say so, never go quiet
+        if configured or waits:
+            hand_scores.write_attention(Paths.NAS_ROOT, self.hostname, waits)
 
     def _hand_score_precheck(self, video_id: str, folder: Path) -> bool:
         """Compare an analysed video with its session's hand scores, after

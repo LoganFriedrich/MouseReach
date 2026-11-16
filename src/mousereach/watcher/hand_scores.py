@@ -149,12 +149,18 @@ def settings() -> dict:
     drive (config.lab_setting). Every reader -- the check, the scores-file
     stamp, the attention list -- comes through here, so they all read the
     same file for the same person. (The review window reads no setting: it
-    reads the score the check kept in the outcomes file, score_from_outcomes.)"""
+    reads the score the check kept in the outcomes file, score_from_outcomes.)
+
+    {} means "no hand_scores section anywhere": nothing is checked. A
+    settings file that exists but cannot be read, or a shared pipeline folder
+    that cannot be reached, RAISES (config.lab_setting with strict=True), so
+    check() raises and the watcher holds the video as a check that could not
+    run -- listed in red for a person. WHY: this used to answer {} for those
+    too, and every video then went on to filing as "no hand-scores file
+    configured", never compared; a section that is merely unreadable is not
+    a section that is absent."""
     from mousereach.config import lab_setting
-    try:
-        value = lab_setting("hand_scores")
-    except Exception:
-        return {}
+    value = lab_setting("hand_scores", strict=True)
     return value if isinstance(value, dict) else {}
 
 
@@ -243,11 +249,13 @@ def _review_and_segments(video_id: str, folder: Path):
 
 
 def scores_file_stamp() -> Optional[float]:
-    """Modification time of the configured scores file, or None."""
-    p = settings().get("path")
+    """Modification time of the configured scores file, or None (also when
+    the settings cannot be read: the check itself then says so). Never
+    raises."""
     try:
+        p = settings().get("path")
         return Path(p).stat().st_mtime if p else None
-    except OSError:
+    except Exception:
         return None
 
 

@@ -329,9 +329,13 @@ filed before it has been compared:
 - **Easy and Flat trays**, and projects not listed as required, carry on
   without the comparison.
 - **The check cannot run** (the `hand_scores` path is wrong, the file cannot
-  be read): the video is held, never passed unchecked, and shown in red as
-  needing a person until the setting or the file is fixed; it then carries on
-  by itself.
+  be read, the lab settings file that holds the setting is damaged, or the
+  storage drive it is on cannot be reached): the video is held, never passed
+  unchecked, and shown in red as needing a person until the setting or the
+  file is fixed; it then carries on by itself. A damaged settings file never
+  reads as "hand scores not set up". While the lab settings file cannot be
+  read, this holds every analysed Pillar video, of any project -- which
+  projects need the comparison is itself in that file.
 
 Every time the sheet is read for a video, every pellet's hand score is kept
 inside that video's outcomes file (`<video>_pellet_outcomes.json`, key
@@ -520,8 +524,12 @@ where the storage root is the folder `nas_root` names. Every PC and person
 finds it from `nas_root`; nothing is set per PC or per user. For each setting
 MouseReach uses the person's own `config.json` if it has that key (the whole
 section), else the lab file, else leaves it unset -- except `filing`, which is
-read from the lab file only. A missing or unreadable lab file is reported once
-and leaves the setting unset. INSTALL.md, Part 6, Step 4 shows how to create it.
+read from the lab file only. A missing lab file leaves the setting unset. A lab
+file that exists but cannot be read (a typing mistake in it), or a storage drive
+that cannot be reached, is never read as "unset" for `hand_scores` and `filing`:
+videos that need the hand-score check are held, in red, and filing keeps the
+rules it last read (or stops, with the reason in the watcher log, if it has
+none) until the file is fixed. INSTALL.md, Part 6, Step 4 shows how to create it.
 
 `filing` says which folder under `Analyzed` each project's finished videos go
 in, and how its cohort folders are named -- for example every project of one

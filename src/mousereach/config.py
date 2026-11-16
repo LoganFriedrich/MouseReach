@@ -137,25 +137,58 @@ def _say_once(path, problem: str, message: str) -> None:
     logging.getLogger(__name__).warning(message)
 
 
-def load_lab_config(user_config: Optional[dict] = None) -> dict:
-    """The shared lab settings file's contents, or {} when there is none or it
-    cannot be read. Never raises: a missing or broken lab file leaves those
-    settings unset, which is what they were before the file existed. Read
-    again on every call, so an edit reaches a running watcher."""
+def _folder_visible(folder: Path) -> bool:
+    """True when ``folder`` can be seen right now (False on any error)."""
+    try:
+        return Path(folder).is_dir()
+    except OSError:
+        return False
+
+
+def load_lab_config(user_config: Optional[dict] = None, strict: bool = False) -> dict:
+    """The shared lab settings file's contents. Read again on every call, so
+    an edit reaches a running watcher.
+
+    ``strict`` False (the default): {} when there is no file or it cannot be
+    read, said once per run as a warning -- for settings whose absence only
+    switches a convenience off.
+
+    ``strict`` True: {} only when the file is really not there, i.e. the
+    shared pipeline folder it lives in IS visible and holds no such file.
+    Raises DamagedSettingsFile when the file exists but cannot be read or is
+    not a JSON object, and when the shared pipeline folder itself cannot be
+    seen (so whether the file exists is not known).
+
+    WHY strict exists: some settings guard a check. The hand-score settings
+    decide whether a video is compared with the bench before it can be filed,
+    and the filing rules decide which folder a video is filed in. Read
+    leniently, one bad edit of the lab file -- or the storage drive dropping
+    for a moment -- read as "no such setting": the comparison was skipped and
+    videos went on unchecked, or were filed under a fallback folder that no
+    lookup searches. Such readers must be able to tell "not set" from "could
+    not be read" and stop on the second."""
     path = lab_config_path(user_config)
     if path is None:
         return {}
     try:
-        if not path.is_file():
-            _say_once(path, "missing",
-                      "No shared lab settings file at %s. Settings that are not in "
-                      "this user's own config.json are unset." % path)
-            return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("it does not hold a JSON object")
-        return data
-    except Exception as e:
+        present = path.is_file()
+    except OSError:
+        present = False
+    if not present:
+        if strict and not _folder_visible(path.parent):
+            raise DamagedSettingsFile(
+                "The shared lab settings file %s cannot be checked: the shared pipeline "
+                "folder %s cannot be reached. Check that the storage drive is connected; "
+                "the work that needs these settings waits until it is." % (path, path.parent))
+        _say_once(path, "missing",
+                  "No shared lab settings file at %s. Settings that are not in "
+                  "this user's own config.json are unset." % path)
+        return {}
+    try:
+        return read_settings_file(path)
+    except DamagedSettingsFile as e:
+        if strict:
+            raise
         _say_once(path, "unreadable",
                   "The shared lab settings file %s could not be read (%s). Settings "
                   "that are not in this user's own config.json are unset until it "
@@ -163,7 +196,7 @@ def load_lab_config(user_config: Optional[dict] = None) -> dict:
         return {}
 
 
-def lab_setting(key: str, default=None):
+def lab_setting(key: str, default=None, strict: bool = False):
     """One setting, looked up in this order:
 
     1. this user's own ~/.mousereach/config.json, if it has ``key``;
@@ -173,11 +206,16 @@ def lab_setting(key: str, default=None):
 
     A key in the user's config.json wins whole, even when its value is an
     empty section, so a person can switch a lab-wide setting off for
-    themselves. Both files are read on every call."""
+    themselves. Both files are read on every call.
+
+    ``strict`` True: when the user's file does not have the key and the lab
+    file cannot be read (or its folder cannot be reached), raise
+    DamagedSettingsFile instead of answering ``default`` (load_lab_config
+    says why)."""
     user = _load_config()
     if user.get(key) is not None:
         return user[key]
-    lab = load_lab_config(user)
+    lab = load_lab_config(user, strict=strict)
     if lab.get(key) is not None:
         return lab[key]
     return default
@@ -573,7 +611,10 @@ class AnimalID:
 # until they are moved, the reconcile report lists them as in the wrong place.
 
 _FILING_TTL_S = 60.0
-_FILING_CACHE = {"at": 0.0, "rules": None}
+# "error": the message of a failed read while no rules were known yet; raised
+# again (as a fresh DamagedSettingsFile) until "at" + _FILING_TTL_S without
+# reading the file again.
+_FILING_CACHE = {"at": 0.0, "rules": None, "error": None}
 _FILING_FIELDS = ("folder", "cohort_folder")
 
 
@@ -609,15 +650,47 @@ def filing_rules() -> dict:
 
     Read at most once a minute: the work-priority sort asks for every item in
     every cycle, and each read is a round trip to the shared drive. An edit
-    therefore reaches a running watcher within a minute."""
+    therefore reaches a running watcher within a minute.
+
+    A lab file that exists but cannot be read, or a shared pipeline folder
+    that cannot be reached (load_lab_config, strict): the rules last read
+    cleanly in this process are kept, with a warning; when there are none,
+    this raises DamagedSettingsFile (a ValueError, like a malformed rule), so
+    the archive step stops with the message. WHY: read as "no rules", every
+    project fell back to a folder under its own code -- a second place that
+    no lookup asking the rules ever searches, and an earlier filed copy in
+    the right folder was then never replaced."""
     now = time.monotonic()
-    if _FILING_CACHE["rules"] is not None and now - _FILING_CACHE["at"] < _FILING_TTL_S:
+    fresh = now - _FILING_CACHE["at"] < _FILING_TTL_S
+    if fresh and _FILING_CACHE["rules"] is not None:
         return _FILING_CACHE["rules"]
-    raw = load_lab_config().get("filing") or {}
+    if fresh and _FILING_CACHE.get("error") is not None:
+        # The failure is remembered for the same minute as good rules are.
+        # WHY: the work-priority sort asks for the rules for every item in
+        # every cycle; re-reading a damaged file -- or an unreachable share,
+        # where each attempt can hang for seconds -- every time made a
+        # watcher started in that state crawl, silently. Only the MESSAGE is
+        # kept and a fresh exception raised each time: re-raising one stored
+        # instance adds frames to its traceback on every call for the minute.
+        raise DamagedSettingsFile(_FILING_CACHE["error"])
+    try:
+        lab = load_lab_config(strict=True)
+    except DamagedSettingsFile as e:
+        if _FILING_CACHE["rules"] is None:
+            _say_once("filing", str(e),
+                      "%s Filing stops until it is fixed (checked again every %d s)."
+                      % (e, _FILING_TTL_S))
+            _FILING_CACHE.update(at=now, error=str(e))
+            raise
+        _say_once("filing", str(e),
+                  "%s Filing keeps the rules it last read until then." % e)
+        _FILING_CACHE["at"] = now
+        return _FILING_CACHE["rules"]
+    raw = lab.get("filing") or {}
     if not isinstance(raw, dict):
         raise ValueError("the lab setting \"filing\" must map project codes to rules")
     rules = {str(code).strip(): _check_filing_rule(code, rule) for code, rule in raw.items()}
-    _FILING_CACHE.update(at=now, rules=rules)
+    _FILING_CACHE.update(at=now, rules=rules, error=None)
     return rules
 
 

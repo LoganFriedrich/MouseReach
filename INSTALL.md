@@ -470,6 +470,13 @@ does not add `.txt`) in the storage root.
 2. Otherwise the lab settings file.
 3. Otherwise the setting is unset, exactly as before the file existed.
 
+**If the file has a mistake in it** (a missing comma, say): it is NOT read as
+empty. Videos waiting for the hand-score check are held and shown in red on the
+Pipeline Dashboard, with a message naming the file and the line; filing keeps
+the folders it last read (a watcher that has read none since it started does
+not file until the file is fixed). Open the file in Notepad, fix the line the message
+names, save -- the held videos then carry on by themselves.
+
 So nothing that already works changes, and one person can still override a
 setting for themselves by putting it in their own `config.json`.
 
