@@ -35,7 +35,7 @@ from datetime import datetime
 
 from mousereach.watcher import claim_marker, node_status
 from mousereach.watcher.cycle_timer import CycleTimer
-from mousereach.watcher.db import WatcherDB
+from mousereach.watcher.db import INTAKE_MISS_REASON, WatcherDB
 from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
@@ -7296,11 +7296,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 # the intake scan drives it again once the files are all there.
                 # (A video once sat 'failed' for days after a race of about one
                 # minute, with its files present the whole time.)
+                #
+                # The reason starts with db.INTAKE_MISS_REASON: the posed-folder
+                # scan (state.discover_dlc_staged) puts exactly such a row back
+                # to 'dlc_complete' once the video and its pose are there. The
+                # posed claim is let go at once, so another node may take it.
                 self.db.mark_unresolvable(
-                    video_id,
-                    "no files for it in %s when intake looked" % source_dir)
+                    video_id, f"{INTAKE_MISS_REASON} ({source_dir})")
                 self.db.log_step(video_id, 'intake', 'skipped',
                                  message="files not all present yet")
+                self._release_claim(video_id)
                 return False
 
             self.processing_dir.mkdir(parents=True, exist_ok=True)

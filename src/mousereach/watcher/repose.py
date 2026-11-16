@@ -1041,10 +1041,24 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
                 continue                            # narrowed already, or another reason
         elif state != "unresolvable":
             continue
+        elif (row.get("error_message") or "").startswith(_intake_miss_reason()):
+            # Parked by the server's intake while the posed files were still
+            # arriving: a first intake, not a re-run of a filed video. The
+            # posed-folder scan takes it back as 'dlc_complete'
+            # (state.discover_dlc_staged); made 'outdated' here it would wait
+            # in the lowest-priority bucket as if it were a filed re-run.
+            continue
         if _narrow_to_segmentation(db, row, h5, f"declared pose {h5.name} staged"):
             close_request(video_id, repose_dir)
             adopted.append(video_id)
     return adopted
+
+
+def _intake_miss_reason() -> str:
+    """db.INTAKE_MISS_REASON, imported when needed (db imports this module
+    lazily, so a module-level import here is avoided)."""
+    from mousereach.watcher.db import INTAKE_MISS_REASON
+    return INTAKE_MISS_REASON
 
 
 def _archived_scorer(video_id: str) -> str:

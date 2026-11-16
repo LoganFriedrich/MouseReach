@@ -77,7 +77,9 @@ def test_neither_missing_input_path_raises_or_fails_in_the_source():
     assert "No files found for" not in source, (
         "a missing input must be recorded with mark_unresolvable, not raised into "
         "the blanket handler that calls mark_failed")
-    assert source.count("no files for it in") >= 2, (
+    # The intake's reason is db.INTAKE_MISS_REASON (the posed-folder scan takes
+    # such a row in again); the staging path keeps its own words.
+    assert "no files for it in" in source and "INTAKE_MISS_REASON" in source, (
         "both the intake and the staging path must retire the row as unresolvable")
 
 

@@ -116,6 +116,31 @@ def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[P
 REVIEW_HOLD_STATES = ('triage', 'deep_review')
 
 
+# Remote states in which another node holds a video BEFORE its pose is
+# finished: if that node gives the video back, it goes to the shared singles
+# folder, where any node may take it.
+BEFORE_POSE_STATES = ('discovered', 'validated', 'dlc_queued', 'dlc_running')
+
+
+def _elsewhere_reason(remote: dict, remote_state: str) -> str:
+    """The reason recorded on a row whose video another node has.
+
+    Before its pose is finished (BEFORE_POSE_STATES) the reason starts with
+    single_claim.ELSEWHERE_BEFORE_POSE_REASON, one of REDRIVE_REASONS: the
+    singles intake validates the row again when the file is back at the top of
+    the shared folder, stable and claimed by nobody. WHY: these rows used to
+    carry a reason the intake never re-drives, so a video the other node gave
+    back came back to this node only at its next restart. After the pose (or
+    for a filed video) the plain reason stays: such a video does not come back
+    through the singles folder."""
+    from mousereach.watcher import single_claim
+    host = remote.get('hostname') or 'another node'
+    if remote_state in BEFORE_POSE_STATES:
+        return (f"{single_claim.ELSEWHERE_BEFORE_POSE_REASON}: {host} has it at "
+                f"state '{remote_state}'")
+    return "no file on this node; %s has it at state '%s'" % (host, remote_state)
+
+
 def _remote_is_newer(local_row, remote) -> bool:
     """True only when the shared record was written after this node's row.
 
@@ -849,9 +874,7 @@ class PipelineCoordinator:
                             collage_id=remote.get('collage_id'),
                         )
                         local_db.mark_unresolvable(
-                            video_id,
-                            "no file on this node; %s has it at state '%s'" % (
-                                remote.get('hostname') or 'another node', remote_state))
+                            video_id, _elsewhere_reason(remote, remote_state))
                         stats['videos_elsewhere'] += 1
                         continue
 
@@ -897,10 +920,7 @@ class PipelineCoordinator:
                             if local_state != 'unresolvable':
                                 try:
                                     local_db.mark_unresolvable(
-                                        video_id,
-                                        "no file on this node; %s has it at state '%s'" % (
-                                            remote.get('hostname') or 'another node',
-                                            remote_state))
+                                        video_id, _elsewhere_reason(remote, remote_state))
                                     stats['videos_elsewhere'] += 1
                                 except Exception as e:
                                     logger.debug(

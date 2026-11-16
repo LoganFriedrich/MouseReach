@@ -4397,3 +4397,28 @@ For an operator: on the processing server, rows put in `dlc_queued` by the old `
 picked up by anything. `mousereach-watch-status` lists them under dlc_queued; a person checks
 each one (where are its video and pose?) before anything is changed. Where it lives: `watcher/cli.py` `_retry_unresolvable`; tests in
 `tests/test_unresolvable_retry.py`.
+
+**Two kinds of 'unresolvable' row come back by themselves.**
+- *Processing server, intake found the posed files incomplete.* A GPU node hands a video and its
+  pose over one file at a time, so the server's intake can look while the set is still incomplete.
+  The row is parked `unresolvable` with the reason "posed files not all in the posed folder when
+  intake looked (...)" (`db.INTAKE_MISS_REASON`) and the server lets go of its posed claim at once.
+  The posed-folder scan (`state.discover_dlc_staged`) used to skip every video it already knew, so
+  such a row came back only through the re-pose adoption -- as a re-run of a filed video, in the
+  lowest-priority bucket. Now that scan sets exactly such a row back to `dlc_complete` (ready for
+  intake) as soon as the video and its pose are both in the posed folder; the re-pose adoption
+  leaves it alone. Any other 'unresolvable' reason is not taken in by this scan.
+- *GPU node, startup recovery: another node had the video before its pose finished.* The shared
+  record says another node has the video at `discovered`, `validated`, `dlc_queued` or
+  `dlc_running`, and this node has no file. The reason now starts "no file on this node; another
+  node had it before its pose" (`single_claim.ELSEWHERE_BEFORE_POSE_REASON`), one of the reasons
+  the singles intake re-drives: if that node gives the video back to the top of the shared singles
+  folder, and no node holds a claim on it, the intake sets the row back to `validated` and any node
+  may take it -- without waiting for this node's next restart. When the other node is past the
+  pose (or the video is filed) the reason stays "no file on this node; <node> has it at state
+  '<state>'", which is never re-driven.
+For an operator: nothing to do. Rows parked before this change with the old wording come back
+only at a restart, as before. Where it lives: `watcher/db.py` `INTAKE_MISS_REASON`;
+`watcher/state.py` `discover_dlc_staged`; `watcher/repose.py` `adopt_staged_reposes`;
+`watcher/coordination.py` `_elsewhere_reason`; `watcher/single_claim.py` `REDRIVE_REASONS`;
+`ProcessingOrchestrator._intake_from_staging`. Tests in `tests/test_unresolvable_rows_come_back.py`.

@@ -163,6 +163,16 @@ FAILED_RERUN_PREFIX = "re-run of a filed video failed"
 # (orchestrator.ProcessingOrchestrator._rerun_could_not_start says why).
 RERUN_NOT_STARTED_PREFIX = "re-run could not start"
 
+# The start of the error_message of an 'unresolvable' row the processing
+# server parked because a posed video's files were not all in the posed folder
+# when its intake looked (a GPU node was still handing them over, say). The
+# posed-folder scan (state.WatcherStateManager.discover_dlc_staged) puts such
+# a row back to 'dlc_complete' -- ready for intake -- once the video and its
+# pose are there; the re-pose adoption (repose.adopt_staged_reposes) leaves it
+# to that scan. WHY a fixed start: 'unresolvable' has other reasons, and only
+# this one says "the files are on their way to the posed folder".
+INTAKE_MISS_REASON = "posed files not all in the posed folder when intake looked"
+
 # The states in which a row's reprocess_scope means something: a re-run that
 # is owed ('outdated') or under way ('processing', a 'failed' run waiting for
 # its retry, and the 'processed' -> 'archiving' steps of filing it). Entering

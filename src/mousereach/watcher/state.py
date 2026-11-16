@@ -399,16 +399,51 @@ class WatcherStateManager:
             return []
 
         from mousereach.config import get_video_id
+        from mousereach.watcher.db import INTAKE_MISS_REASON
 
         newly_registered = []
+        looked_at = set()
 
         # Scan for DLC h5 files (the definitive output of DLC)
         for h5_path in staging_dir.glob("*DLC*.h5"):
             # Extract video_id from DLC filename (e.g. "20250704_CNT0101_P1DLC_..." -> "20250704_CNT0101_P1")
             video_id = h5_path.stem.split("DLC")[0].rstrip('_')
+            if video_id in looked_at:
+                continue            # a second pose of the same video
+            looked_at.add(video_id)
 
-            # Skip if already in database
-            if self.db.video_exists(video_id):
+            # Already in the database: skip -- unless intake parked the row
+            # because the video's posed files were not all here when it
+            # looked (db.INTAKE_MISS_REASON) and they are here now. Such a
+            # row goes straight back to 'dlc_complete', the waiting-work state
+            # the intake selects. WHY here: this scan used to skip every known
+            # video, so the re-drive the intake's comment promised never came;
+            # the row came back only through the re-pose adoption, as a re-run
+            # of a filed video in the lowest-priority bucket.
+            row = self.db.get_video(video_id)
+            if row is not None:
+                missed = (row.get('state') == 'unresolvable'
+                          and (row.get('error_message') or '').startswith(INTAKE_MISS_REASON))
+                mp4_path = staging_dir / f"{video_id}.mp4"
+                try:
+                    back = missed and mp4_path.is_file()
+                except OSError:
+                    back = False
+                if back:
+                    from mousereach.pipeline.manifest import select_pose_file
+                    from mousereach.watcher import repose
+                    chosen = select_pose_file(
+                        staging_dir.glob(f"{video_id}DLC*.h5"),
+                        expected_scorer=repose.declared_scorer() or None) or h5_path
+                    self.db.force_state(
+                        video_id, 'dlc_complete',
+                        reason="its posed files are all in the posed folder now; "
+                               "taken in again",
+                        dlc_output_path=str(chosen), current_path=str(mp4_path),
+                        error_message=None)
+                    newly_registered.append(video_id)
+                    logger.info(f"{video_id}: its posed files are back in the posed "
+                                f"folder; ready for intake again")
                 continue
 
             # Find matching video file

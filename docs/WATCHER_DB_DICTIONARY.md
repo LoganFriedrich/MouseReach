@@ -406,7 +406,7 @@ READ THIS BEFORE INTERPRETING A STATE
   stopped before recording that; files in Posed are never taken as proof, so
   the row is not 'archived' either.
 
-  Two more 'unresolvable' reasons, both for singles dropped into
+  More 'unresolvable' reasons, for singles dropped into
   Unanalyzed/Single_Animal (since 2026-09-15; watcher/single_claim.py):
     * "gone from the shared singles folder before this node took it: ..."
       (single_claim.LEFT_FOLDER_REASON). Another GPU node claimed the video
@@ -419,6 +419,18 @@ READ THIS BEFORE INTERPRETING A STATE
       not be re-driven just because a same-named file exists. So a row may
       go from 'unresolvable' back to 'validated' with nobody acting: that is
       expected.
+    * "no file on this node; another node had it before its pose: <node> has
+      it at state '<state>'" (single_claim.ELSEWHERE_BEFORE_POSE_REASON),
+      written by startup recovery when the shared record says another node
+      had the video before its pose was finished. Re-driven exactly like the
+      reason above. The plain "no file on this node; <node> has it at state
+      ..." (another node is past the pose, or the video is filed) is never
+      re-driven.
+    * "posed files not all in the posed folder when intake looked (...)"
+      (db.INTAKE_MISS_REASON), processing server only: its intake looked
+      while a GPU node was still handing the files over. The posed-folder
+      scan sets the row back to 'dlc_complete' by itself once the video and
+      its pose are both in Processing/Posed.
     * "a second copy of a video another node already holds for pose: ..."
       (single_claim.DUPLICATE_OF_CLAIM_REASON). The same video was copied in
       again while another node still held it. It is never re-driven. A person

@@ -125,9 +125,17 @@ LEFT_FOLDER_REASON = "gone from the shared singles folder before this node took 
 # row is ready to be taken again -- by this node or any other.
 SHARED_REASON = "in the shared singles folder for any node to take"
 
+# The start of the reason startup recovery (coordination.recover_local_db)
+# records ('unresolvable') for a video the shared record says ANOTHER node had
+# before its pose was finished (discovered, validated, dlc_queued,
+# dlc_running), with no file here. Re-driven like the two above: if that node
+# gives the video back to the singles folder, this node may take it. The
+# other node's name and state follow the colon.
+ELSEWHERE_BEFORE_POSE_REASON = "no file on this node; another node had it before its pose"
+
 # Row reasons that mean "this video waits in the singles folder; take it from
 # there when it is back and stable" (state.WatcherStateManager.discover_new_singles).
-REDRIVE_REASONS = (LEFT_FOLDER_REASON, SHARED_REASON)
+REDRIVE_REASONS = (LEFT_FOLDER_REASON, SHARED_REASON, ELSEWHERE_BEFORE_POSE_REASON)
 
 # How many claimed videos a node keeps queued for its own GPU after cutting a
 # recording: the one it poses next and one more ready behind it. The rest of
