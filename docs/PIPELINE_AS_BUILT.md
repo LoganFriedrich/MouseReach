@@ -4503,3 +4503,41 @@ Known leftover (not closed here): a failed pose or hand-off is still retried onl
 the node that failed it, and the CPU-pool fix below covers its own hand-off only.
 Where it lives: `DLCOrchestrator._queue_copy_elsewhere`, `_drop_superseded_queue_copy`, `_process_single_dlc`,
 `_recover_local_dlc_queue`. Tests in `tests/test_queue_copy_needs_the_claim.py`.
+
+**The CPU pose pool retries a failed hand-on while it runs.** When the pool (`mousereach-cpu-pose`)
+finished a pose but could not hand it on to Processing/Posed (a dropped share, say), the pose waited
+in its work folder "until the next start" and its claim was no longer refreshed -- only running
+poses were. A day later the shared copy went back to the singles folder for any node, which posed
+the video again, and the pool then handed on its own pose too at its next start. Now the pool keeps
+the claim of such a pose alive with the running ones and tries the hand-on again: at once, then
+after 1, 2, 4 ... minutes, never more than 30 minutes apart (each try copies a whole video over the
+share). While the shared singles folder cannot be read at all (the share is down), nothing is
+decided: the pose and its claim wait. Only when the folder can be read and this machine's claimed
+copy is not in it (another machine broke the claim, or a person moved the file) is the pose not
+handed on. Its local copies in `CPU_Pose` are machine leftovers, and what happens to them depends
+on whether the video's current copy can be confirmed somewhere else -- the video file, the same size
+as the local one, at the top of the shared singles folder, in another machine's claim folder, or in
+Processing/Posed WITH its pose file (`<video>DLC...h5`) beside it; or the video already filed or held
+in a review queue. A video alone in Processing/Posed, with no pose beside it, does NOT count: it is a
+hand-on that stopped half way, which the server never takes in (the graphics-card nodes apply the
+same rule):
+- confirmed: the local copies are DELETED, and the log says "its claim is gone and its current copy
+  is at ...; its pose is not handed on and its local copies were deleted";
+- not confirmed anywhere: they stay exactly where they are (the local video may be the only copy),
+  the log warns once "its claim is gone and no current copy of the video was found elsewhere ...;
+  find where the video went", and the pool looks again every cycle -- as soon as a current copy
+  turns up, the leftovers are deleted.
+Nothing is ever moved to a side folder. When the pool starts, finished poses a previous run left
+with no claim of this machine are checked the same way -- but only when this machine's claim folder
+could actually be read: during a share outage the pool does not take "I could not read my claims"
+for "I have no claims", and leaves such copies for the next start. A video in `CPU_Pose` whose pose
+never finished (no `.h5` beside it) is never handed on, by a retry or at a start: a bare video in
+Processing/Posed would sit there untaken while its claimed shared copy was deleted. Its claim is
+simply no longer kept alive, so after the usual quiet period it goes back to the singles folder for
+any node to pose. Its log for a failed try says "could not hand
+on (...); ... its claim is kept, and the hand-on is tried again, waiting longer after each failure".
+For an operator: nothing to do, unless the "no current copy ... found elsewhere" warning appears --
+then find where the video went (a person moved it, or another machine lost it); the copy in
+`CPU_Pose` is kept until a current copy exists elsewhere. Where it lives: `watcher/cpu_pose_pool.py`
+`CpuPosePool._retry_hand_ons`, `_current_copy_elsewhere`, `recover`, `run`. Tests in
+`tests/test_cpu_pool_hand_on_retry.py`.

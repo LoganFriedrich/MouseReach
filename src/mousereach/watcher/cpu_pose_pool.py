@@ -40,7 +40,11 @@ group first, random inside it, Easy/Flat-type "idle only" work last.
 
 A FAILED pose puts the claimed video straight back in the shared folder for
 any node and keeps this pool off it for an hour. On start the pool gives back
-any claim a previous run left (or hands on a pose it had finished).
+any claim a previous run left (or hands on a pose it had finished). A
+finished pose whose hand-on fails keeps its claim and is retried
+(_retry_hand_ons); if its claim is gone, its local copies are deleted once a
+current copy of the video is confirmed elsewhere, and otherwise left where
+they are -- never moved to a side folder.
 A status report (``Processing/.node_status/<holder>.json``) is rewritten every
 cycle: other machines read it to know the pool is alive, and break its claims
 only after it has been quiet for hours (single_claim.reclaim_stale).
@@ -144,6 +148,9 @@ class CpuPosePool:
         self.work = Path(Paths.PROCESSING_ROOT) / "CPU_Pose"
         self.work.mkdir(parents=True, exist_ok=True)
         self.active: Dict[str, dict] = {}          # video_id -> {proc, local, started}
+        # Finished poses whose hand-on failed; their claims are kept alive and
+        # the hand-on is tried again with a growing wait (_retry_hand_ons).
+        self.unhanded: set = set()
         self.backoff: Dict[str, float] = {}
         self.done_times: List[float] = []
         self.stopping = False
@@ -198,11 +205,56 @@ class CpuPosePool:
             local = self.work / f"{video_id}.mp4"
             if self._pose_files(video_id) and local.is_file():
                 logger.info(f"{video_id}: a previous run finished its pose; handing it on")
-                self._hand_on(video_id)
+                if not self._hand_on(video_id):
+                    self._unhanded().add(video_id)
                 continue
             self._clear_local(video_id)
             if self.sc.release_single(claimed):
                 logger.info(f"{video_id}: left claimed by a previous run; given back")
+        # Finished poses a previous run left with no claim of this machine (a
+        # claim that was broken or moved while the pose waited): the same
+        # check as a finished pose whose claim went (_retry_hand_ons) --
+        # deleted once a current copy is confirmed elsewhere, otherwise left
+        # where they are and reported. WHY at start: the list of such poses
+        # lives only in memory, so a restart would otherwise forget them.
+        # Only when this machine's claim folder was positively READ
+        # (_own_claim_ids): single_claim.host_claims answers {} for a folder it
+        # cannot read, and taking that as "no claims" during a share outage
+        # would put every local video on the list, a half-posed one included.
+        # And only a video with a finished pose beside it: a bare local video
+        # is a pose that never finished, left as it is.
+        claims = self._own_claim_ids()
+        if claims is None:
+            logger.info("this machine's claim folder could not be read; local copies "
+                        "with no claim are checked at the next start")
+            return
+        try:
+            local_ids = sorted(p.stem for p in self.work.glob("*.mp4") if p.is_file())
+        except OSError:
+            local_ids = []
+        for video_id in local_ids:
+            if video_id not in claims and self._pose_files(video_id):
+                self._unhanded().add(video_id)
+
+    def _own_claim_ids(self) -> Optional[set]:
+        """The ids of this machine's claimed videos, or None when its claim
+        folder could not be read. An empty set only when the folder was read
+        and is empty, or is missing from a singles folder that WAS read.
+
+        WHY not single_claim.host_claims: that never raises and answers {}
+        for an unreadable folder, which here must not be mistaken for "no
+        claims" (see recover)."""
+        hdir = self.sc.host_dir(self.holder)
+        if hdir is None:
+            return None
+        try:
+            if hdir.is_dir():
+                return {p.stem for p in hdir.iterdir()
+                        if p.is_file() and p.suffix.lower() == ".mp4"}
+            os.listdir(hdir.parent.parent)    # raises when the share is unreachable
+            return set()
+        except OSError:
+            return None
 
     # -- one video ------------------------------------------------------------
     def _files_of(self, video_id: str) -> List[Path]:
@@ -308,7 +360,174 @@ class CpuPosePool:
                 continue
             mins = (time.time() - job["started"]) / 60
             logger.info(f"{video_id}: pose done in {mins:.0f} min")
-            self._hand_on(video_id)
+            if not self._hand_on(video_id):
+                self._unhanded().add(video_id)
+
+    def _unhanded(self) -> set:
+        """The finished poses whose hand-on failed (created on first use)."""
+        return self.__dict__.setdefault("unhanded", set())
+
+    # Wait before the next hand-on attempt of a finished pose: doubles after
+    # every failed attempt, from one cycle's worth up to this cap. WHY: each
+    # attempt copies a whole video over the share; a share that is down for
+    # hours must not be hammered every cycle.
+    HAND_ON_RETRY_MAX_S = 30 * 60
+
+    def _hand_on_backoff(self) -> Dict[str, tuple]:
+        """video_id -> (failed attempts, earliest next attempt), created on
+        first use."""
+        return self.__dict__.setdefault("hand_on_backoff", {})
+
+    def _claim_state(self, video_id: str) -> str:
+        """'held' (this machine's claimed copy is there), 'gone' (the shared
+        singles folder was read and the claimed copy is not in it), or
+        'unknown' (the share could not be read).
+
+        WHY three answers: Path.is_file() answers False -- it does not raise
+        -- for a share that is unreachable, so "is_file() is False" alone
+        would read a dropped share as a claim given back and throw away a
+        finished pose. 'gone' is said only after the singles folder itself
+        was listed successfully."""
+        claimed = self.sc.claimed_path(video_id, self.holder)
+        door = self.sc.front_door()
+        if claimed is None or door is None:
+            return 'unknown'
+        try:
+            if claimed.is_file():
+                return 'held'
+            os.listdir(door)                  # raises when the share is unreachable
+            host = claimed.parent
+            if host.is_dir():
+                names = set(os.listdir(host))
+            elif host.parent.is_dir():
+                names = set()                 # no claim folder for this machine any more
+            else:
+                os.listdir(host.parent.parent)
+                names = set()
+            return 'held' if claimed.name in names else 'gone'
+        except OSError:
+            return 'unknown'
+
+    def _current_copy_elsewhere(self, video_id: str) -> Optional[str]:
+        """Where the video's current copy is, when this machine's claim on it
+        is gone -- or None when no current copy could be confirmed anywhere.
+
+        Confirmed means: the video file, the same size as this machine's
+        local copy, at the top of the shared singles folder, in another
+        machine's claim folder, or in the posed folder WITH a pose file
+        (<id>DLC*.h5) beside it; or the GPU node's own
+        finished-or-held rule (_done_or_held: filed, or in a review queue)
+        says the video has moved on. WHY it must be confirmed: the local copy
+        is deleted on this answer, and a local copy no other place holds may
+        be the only copy of the video. A bare video in the posed folder is a
+        hand-off that stopped half way -- the server does not take it in --
+        so it is not a current copy (the GPU side's _queue_copy_elsewhere
+        asks for the video AND its pose in the posed folder too)."""
+        local = self.work / f"{video_id}.mp4"
+        try:
+            size = local.stat().st_size if local.is_file() else None
+        except OSError:
+            size = None
+        candidates = []
+        door = self.sc.front_door()
+        if door is not None:
+            candidates.append(Path(door) / f"{video_id}.mp4")
+        try:
+            holder = self.sc.inflight_ids().get(video_id)
+        except Exception:
+            holder = None
+        if holder and holder != self.holder:
+            other = self.sc.claimed_path(video_id, holder)
+            if other is not None:
+                candidates.append(Path(other))
+        try:
+            posed_pose = any(self.posed.glob(f"{video_id}DLC*.h5"))
+        except OSError:
+            posed_pose = False
+        if posed_pose:
+            candidates.append(self.posed / f"{video_id}.mp4")
+        for c in candidates:
+            try:
+                if c.is_file() and (size is None or c.stat().st_size == size):
+                    return str(c)
+            except OSError:
+                continue
+        try:
+            verdict = _done_or_held(video_id)
+        except Exception:
+            verdict = None
+        if verdict:
+            return str(verdict)
+        return None
+
+    def _retry_hand_ons(self) -> None:
+        """Try every finished pose whose hand-on failed again, with a growing
+        wait between attempts (HAND_ON_RETRY_MAX_S).
+
+        WHY: such a pose used to wait in the work folder "until the next
+        start", while its claim was no longer refreshed (only running poses
+        were) -- so after a day the shared copy was returned to the folder for
+        any node, which posed the video again, and this pool then handed on
+        its own pose too at its next start. Now the claim is kept alive (see
+        run) and the hand-on is retried here.
+
+        If the claim is gone all the same (another machine broke it, or a
+        person moved the file) -- known only when the singles folder could be
+        read (_claim_state) -- the video is someone else's now, and handing
+        it on would be the double this rule prevents: the pose is not handed
+        on. Its local copies are machine leftovers: they are DELETED once a
+        current copy of the video is confirmed elsewhere
+        (_current_copy_elsewhere), and otherwise left exactly where they are
+        -- never moved to a side folder -- with one warning in the log, and
+        looked at again every cycle. While the share cannot be read nothing
+        is decided; the pose waits for the next cycle with its claim kept."""
+        backoff = self._hand_on_backoff()
+        now = time.time()
+        for video_id in sorted(self._unhanded()):
+            if not self._pose_files(video_id):
+                # No finished pose here (it was removed, or the entry is a
+                # video whose pose never finished): nothing to hand on, and a
+                # bare video must never reach the posed folder. Dropped from
+                # the list, so its claim is no longer kept alive and goes
+                # back to the shared folder by the usual stale give-back.
+                logger.warning(f"{video_id}: no finished pose in {self.work}; not "
+                               f"handed on, and its claim is no longer kept alive")
+                self._unhanded().discard(video_id)
+                backoff.pop(video_id, None)
+                continue
+            state = self._claim_state(video_id)
+            if state == 'unknown':
+                continue                     # the share is unreachable: next cycle
+            if state == 'gone':
+                where = self._current_copy_elsewhere(video_id)
+                if where is None:
+                    warned = self.__dict__.setdefault("kept_warned", set())
+                    if video_id not in warned:
+                        warned.add(video_id)
+                        logger.warning(
+                            f"{video_id}: its claim is gone and no current copy of the "
+                            f"video was found elsewhere, so its pose is not handed on "
+                            f"and its local copies stay in {self.work}; find where the "
+                            f"video went (the local video may be its only copy)")
+                    continue
+                self._clear_local(video_id)
+                logger.info(f"{video_id}: its claim is gone and its current copy is at "
+                            f"{where}; its pose is not handed on and its local copies "
+                            f"were deleted")
+                self._unhanded().discard(video_id)
+                self.__dict__.setdefault("kept_warned", set()).discard(video_id)
+                backoff.pop(video_id, None)
+                continue
+            attempts, next_at = backoff.get(video_id, (0, 0.0))
+            if now < next_at:
+                continue
+            if self._hand_on(video_id):
+                self._unhanded().discard(video_id)
+                backoff.pop(video_id, None)
+            else:
+                attempts += 1
+                wait = min(self.HAND_ON_RETRY_MAX_S, 60 * (2 ** (attempts - 1)))
+                backoff[video_id] = (attempts, now + wait)
 
     def _hand_on(self, video_id: str) -> bool:
         """Into the shared Posed folder, the GPU nodes' way: every file under a
@@ -316,6 +535,12 @@ class CpuPosePool:
         copies removed only after that; the claimed copy removed only once
         the handed-on video is confirmed."""
         from mousereach.watcher.transfer import safe_copy
+        if not self._pose_files(video_id):
+            # WHY: a bare video in the posed folder is a hand-off the server
+            # never takes in; the claimed shared copy must stay the video's
+            # real file until a finished pose goes with it.
+            logger.error(f"{video_id}: no finished pose in {self.work}; not handed on")
+            return False
         files = sorted((p for p in self._files_of(video_id)
                         if p.suffix.lower() in (".mp4", ".h5", ".csv", ".pickle")),
                        key=lambda p: (p.suffix.lower() == ".h5", p.name))
@@ -337,7 +562,9 @@ class CpuPosePool:
                 except OSError:
                     pass
             logger.error(f"{video_id}: could not hand on ({e}); its pose stays in "
-                         f"{self.work} and is handed on at the next start")
+                         f"{self.work}, its claim is kept, and the hand-on is tried "
+                         f"again, waiting longer after each failure (up to "
+                         f"{self.HAND_ON_RETRY_MAX_S // 60} min)")
             return False
         for f, _, _ in parts:
             try:
@@ -380,8 +607,12 @@ class CpuPosePool:
                 logger.info(f"stop flag found: no new videos; finishing "
                             f"{len(self.active)} running pose(s)")
             self._reap()
-            if self.active:
-                self.sc.heartbeat_claims(self.holder, only=list(self.active))
+            self._retry_hand_ons()
+            # Keep alive the claims of running poses AND of finished poses not
+            # handed on yet (_retry_hand_ons says why).
+            held = list(self.active) + sorted(self._unhanded())
+            if held:
+                self.sc.heartbeat_claims(self.holder, only=held)
             if not self.stopping:
                 while len(self.active) < self.workers and self._start_one():
                     pass
