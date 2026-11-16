@@ -777,10 +777,11 @@ class BaseOrchestrator:
           flagged the pellet for is kept after it, "(also: ...)".
         - No hand scores yet in a required project: held, listed (grey) in
           the attention file, logged once as a 'hand_score_check' step, and
-          not picked again until the scores file changes. Once the cohort's
-          sheet has been imported after the video entered processing with
-          still no scores, the session was never scored by hand and the
-          video goes on.
+          not picked again until the scores file or its manifest changes.
+          Once the cohort's sheet has been imported after the video entered
+          processing with still no scores, the scores are MISSING: still
+          held, now listed in red as a defect for a person (the sheet row or
+          its matching to the video must be fixed), never filed uncompared.
         - The check cannot run: held, listed in red as needing a person. A
           video never goes past this point unchecked because a check failed.
         Every time the sheet was read, its scores are kept in the outcomes
@@ -812,23 +813,62 @@ class BaseOrchestrator:
                 # cannot move it later.
                 ready = (prev.get("ready_since") or row.get("processing_started_at")
                          or datetime.now().isoformat())
-                if not hand_scores.scores_never_came(v, ready):
-                    if "cohort_id" not in prev:
-                        logger.info(f"Holding {video_id} before triage and kinematics: "
-                                    f"{v.reason} -- waiting for the next import of the "
-                                    f"{v.cohort_id} sheet")
-                        self.db.log_step(
-                            video_id, 'hand_score_check', 'waiting',
-                            message=(f"analysed; held before triage and kinematics until "
-                                     f"the {v.cohort_id} sheet's next import"))
-                    self._score_waits[video_id] = {"stamp": stamp, "cohort_id": v.cohort_id,
-                                                   "ready_since": ready,
-                                                   "last_import": v.last_import}
-                    self._write_score_attention()
-                    return False
-                logger.info(f"{video_id} goes on without the hand-score comparison: the "
-                            f"{v.cohort_id} sheet was imported after it was ready and has "
-                            f"no scores for this session (never scored by hand)")
+                # Held either way: a required project's sessions are all
+                # scored by hand before their videos enter the pipeline, so a
+                # video is never filed without the comparison. Until the
+                # cohort's sheet has been imported after the video was ready,
+                # it only WAITS (grey). After that import, scores that are
+                # still not there are MISSING -- the sheet row is absent or
+                # misnamed, or the import did not match it to this video: a
+                # defect for a person to fix, listed in red. WHY not "never
+                # scored, so file it": that could not be told from a row the
+                # import failed to match, and the video was then filed
+                # uncompared and never compared again.
+                missing = hand_scores.scores_never_came(v, ready)
+                # Missing because NO sheet exists for the cohort (never
+                # imported, and an import of every sheet found none by that
+                # name) is a different defect from a sheet without the row,
+                # and has a different fix: telling a person to correct a row
+                # in a sheet that does not exist sends them looking for
+                # nothing, and the hold never clears.
+                no_sheet = bool(missing) and hand_scores.no_sheet_for_cohort(v)
+                if missing and no_sheet and not prev.get("no_sheet"):
+                    logger.warning(f"Holding {video_id} before triage and kinematics: no "
+                                   f"tracking sheet was found for cohort {v.cohort_id} in "
+                                   f"an import of every sheet, so its hand scores cannot "
+                                   f"be found; a person must add the cohort's sheet, or "
+                                   f"correct the cohort name in the sheet's or the video's "
+                                   f"name")
+                    self.db.log_step(
+                        video_id, 'hand_score_check', 'missing',
+                        message=(f"held: no tracking sheet found for cohort "
+                                 f"{v.cohort_id}, so no hand scores for this session"))
+                elif missing and not no_sheet and (not prev.get("missing")
+                                                   or prev.get("no_sheet")):
+                    logger.warning(f"Holding {video_id} before triage and kinematics: the "
+                                   f"{v.cohort_id} sheet was imported after it was ready "
+                                   f"and has no hand scores for this session -- the scores "
+                                   f"are missing or not matched to this video; a person must "
+                                   f"fix the sheet's row for this session")
+                    self.db.log_step(
+                        video_id, 'hand_score_check', 'missing',
+                        message=(f"held: the {v.cohort_id} sheet was imported after the "
+                                 f"video was ready and has no hand scores for this session"))
+                elif not missing and "cohort_id" not in prev:
+                    logger.info(f"Holding {video_id} before triage and kinematics: "
+                                f"{v.reason} -- waiting for the next import of the "
+                                f"{v.cohort_id} sheet")
+                    self.db.log_step(
+                        video_id, 'hand_score_check', 'waiting',
+                        message=(f"analysed; held before triage and kinematics until "
+                                 f"the {v.cohort_id} sheet's next import"))
+                self._score_waits[video_id] = {"stamp": stamp, "cohort_id": v.cohort_id,
+                                               "ready_since": ready,
+                                               "last_import": v.last_import,
+                                               "missing": bool(missing),
+                                               "no_sheet": no_sheet}
+                self._write_score_attention()
+                return False
             elif v.status == hand_scores.DISAGREES:
                 # Flagged only; the gate then sends the video to triage once,
                 # with every open question (flag_disagreements says how an

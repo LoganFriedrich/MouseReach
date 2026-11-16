@@ -339,10 +339,13 @@ READ THIS BEFORE INTERPRETING A STATE
   2026-10-28 the hand-score comparison runs after the analysis and before the
   review gate, and a video whose session has no hand scores yet stays in
   'processing', with its files in the local Processing folder, until the next
-  import of its sheet (watcher/hand_scores.py; it goes on without the
-  comparison if that import has none). Such videos are listed in
-  <NAS root>/attention/<host>_hand_scores.json, and the processing log has one
-  row for the wait: step 'hand_score_check', status 'waiting'. They do not
+  import of its sheet (watcher/hand_scores.py). If that import has none, the
+  scores are missing and the video STAYS in 'processing' -- it is never filed
+  uncompared -- until a later import brings them. Such videos are listed in
+  <NAS root>/attention/<host>_hand_scores.json (grey while waiting, red with
+  kind 'hand_scores_missing' once the import came without them), and the
+  processing log has one row for the wait: step 'hand_score_check', status
+  'waiting', and one more, status 'missing', when it turns red. They do not
   count against max_local_pending. (From 2026-10-26 to 2026-10-28 the wait
   happened in 'processed', before filing.)
 

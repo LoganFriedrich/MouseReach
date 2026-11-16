@@ -320,12 +320,24 @@ filed before it has been compared:
   -- until the project's sheet is next imported (a lab that enters scores the
   same day may still import them only on a schedule). If that import brings them, the
   video is compared as above and carries on by itself. If it does not, the
-  session was never scored by hand -- there is nothing to compare, so nothing
-  can disagree -- and the video carries on without the comparison. A cohort
-  with no sheet import at all waits for its sheet's first import if it has a
-  sheet; if it has none (or the name matches no sheet), its videos carry on
-  after the next import of every sheet. Held videos do not stop new videos
-  being taken in.
+  scores are **missing**: every session of such a project is scored by hand
+  before its videos enter the pipeline, so the sheet's row for this session is
+  absent or misnamed, or the import could not match it to the video. The video
+  stays held -- it is never filed without the comparison -- and is shown in
+  red as needing a person: fix the sheet -- enter the session's scores, or
+  correct its row so the date, animal and tray match the video's (do not
+  rename the held video: nothing would then find its files); after the next
+  import the video
+  is compared and carries on by itself. A cohort with no sheet import at all
+  waits for its sheet's first import if it has a sheet; if it has none (or the
+  name matches no sheet), its videos are held as missing their scores after
+  the next import of every sheet, and the red line then says **no tracking
+  sheet was found for the cohort**: add the cohort's tracking sheet to the
+  sheets folder, or correct the cohort in the sheet's file name if it is
+  misspelled; if it is the video's name that carries the wrong cohort, do not
+  rename the held files -- tell whoever maintains the pipeline. After the next
+  import the video is compared and carries on by itself. Held videos do not
+  stop new videos being taken in.
 - **Easy and Flat trays**, and projects not listed as required, carry on
   without the comparison.
 - **The check cannot run** (the `hand_scores` path is wrong, the file cannot
@@ -356,7 +368,8 @@ kept scores until it is analysed again; for it the box never appears.
 
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
 shows, in red at the top, **Needs your attention (N)** with one line per thing
-a person must fix (today: a hand-score check that cannot run) and what to do; it
+a person must fix (for example a hand-score check that cannot run, or a session
+whose hand scores are missing after its sheet was imported) and what to do; it
 is hidden when nothing needs a person, and refreshes every 5 minutes and on
 Refresh. Videos held for the sheet's next import are counted on a grey line
 below it, and the census (`mousereach-census`) prints how many of the videos in
@@ -388,8 +401,8 @@ session as MouseReach names its video, e.g. `20250709_ABC0207_P1`), `pellet`
 (1-20) and `score` (0 not touched, 1 displaced, 2 retrieved); a JSON file of the
 same name beside it gives `last_successful_import` per cohort (`ABC_02`),
 `sheets_seen` (the cohorts that have a sheet) and `full_import_at` (the last
-import of every sheet), which is how "still waiting" is told from "never scored
-by hand". A key it lacks counts as not known, and the video waits. Without
+import of every sheet), which is how "still waiting for the sheet's import" is
+told from "missing" (held, red). A key it lacks counts as not known, and the video waits. Without
 `path`, nothing is checked. The JSON file may also carry `scores_sha256`, the
 SHA-256 of the CSV it was written with; when it does and the CSV read does not
 match it (the writing tool is between replacing the two files), MouseReach reads

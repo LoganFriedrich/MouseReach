@@ -23,12 +23,19 @@ goes to triage, deep review or on to kinematics and filing:
     no hand scores for the session:
         project not in required_projects           -> on to the gate
         project in required_projects               -> HELD, in Processing,
-            before triage and kinematics, until the cohort's sheet has been
-            imported after the video entered Processing (the scores are
-            entered the same day; the import may run only nightly). If that
-            import did not bring them, the session was never scored by hand:
-            there is nothing to compare, so nothing can disagree, and the
-            video goes on to the gate.
+            before triage and kinematics, until its scores are there. Until
+            the cohort's sheet has been imported after the video entered
+            Processing (the scores are entered the same day; the import may
+            run only nightly) it only WAITS. If that import did not bring
+            them, the scores are MISSING -- in a required project every
+            session is scored by hand before its videos enter the pipeline,
+            so the sheet row is absent or misnamed, or the import did not
+            match it to this video. That is a defect for a person to fix: the
+            video stays held, listed in red, and goes on by itself once its
+            scores arrive. It is never filed without the comparison.
+            (Before, such a video went on as "never scored by hand" -- which
+            could not be told from a row the import failed to match -- and
+            was filed uncompared, never to be compared again.)
 
 WHY before triage and not before filing (moved 2026-10-28; from 2026-10-26
 it was the last step before filing): checked at filing, a video with a
@@ -58,8 +65,9 @@ the video's <video>_pellet_outcomes.json under the top-level key
 "hand_scores":
 
     "hand_scores": {"pellets": {"1": 2, "2": 0, ...},   # segment -> 0/1/2
-                    "verdict": "agrees" | "disagrees" | "never_scored"
-                               | "not_required",
+                    "verdict": "agrees" | "disagrees" | "not_required"
+                               (| "never_scored": only in videos filed
+                               before a missing score held the video),
                     "source_mtime": <the scores file's modification time>,
                     "cohort_last_import": <the cohort's last sheet import>,
                     "read_at": <when this check read it>}
@@ -463,8 +471,9 @@ def flag_disagreements(folder: Path, video_id: str, verdict: Verdict) -> list:
 
 # The word kept in the outcomes file for each verdict (see the module
 # docstring, "EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO"). A WAITING verdict
-# is only ever recorded once scores_never_came() has said the scores will not
-# come, so it is kept as "never_scored"; a video still waiting is not recorded.
+# is never recorded by the watcher any more: such a video is held until its
+# scores arrive. "never_scored" stays here because videos filed before that
+# rule carry it (they were filed uncompared; a person can list them by it).
 RECORD_WORDS = {AGREES: "agrees", DISAGREES: "disagrees", WAITING: "never_scored",
                 NOT_CHECKED: "not_required"}
 RECORD_KEY = "hand_scores"
@@ -570,11 +579,14 @@ def _after(a: Optional[str], b: Optional[str]) -> Optional[bool]:
 
 def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     """True once the cohort's sheet has been imported successfully after the
-    video was ready and the session still has no hand scores: it was never
-    scored by hand, so there is nothing to compare and the video is filed.
-    Before that import it only waits. WHY file rather than hold: a record
-    that does not exist cannot disagree with the video, and the video is the
-    only record of that session."""
+    video was ready and the session still has no hand scores: the scores are
+    MISSING, not merely late. The watcher then keeps holding the video, now
+    as a defect a person must fix (listed in red); before that import it
+    only waits. WHY hold and not file: in a required project every session is
+    scored by hand before its videos enter the pipeline, so no scores after
+    an import means a sheet row that is absent, misnamed, or not matched to
+    this video -- which looks exactly like "never scored" from here. Filed
+    uncompared, the video would never be compared again."""
     if verdict.status != WAITING or not ready_since:
         return False
     if verdict.last_import:
@@ -587,6 +599,16 @@ def scores_never_came(verdict: Verdict, ready_since: Optional[str]) -> bool:
     if verdict.has_sheet is not False:
         return False
     return bool(verdict.full_import_at) and _after(verdict.full_import_at, ready_since) is True
+
+
+def no_sheet_for_cohort(verdict: Verdict) -> bool:
+    """True when the cohort has never been imported and the latest import of
+    every sheet found no sheet by its name -- the case in which
+    scores_never_came calls the scores missing without any import of the
+    cohort. The remedy then is a sheet (or a corrected cohort name), not a
+    row: the messages must say so, or a person goes looking for a sheet that
+    does not exist."""
+    return not verdict.last_import and verdict.has_sheet is False
 
 
 def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Optional[Path]:
@@ -615,6 +637,56 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                              % (vid, w["error"])),
                 })
                 continue
+            if w.get("missing") and w.get("no_sheet"):
+                # No sheet at all for the cohort (no_sheet_for_cohort): an
+                # import of every sheet ran after the video was ready and
+                # none carries this cohort's name. Telling the person to fix
+                # a row in "the <cohort> sheet" would send them to a sheet
+                # that does not exist. A misspelled cohort in the VIDEO's name
+                # cannot be fixed by renaming the held files (see below), so
+                # that case goes to whoever maintains the pipeline.
+                items.append({
+                    "kind": "hand_scores_missing", "needs_person": True,
+                    "no_sheet": True,
+                    "video_id": vid, "cohort_id": w.get("cohort_id"),
+                    "ready_since": w.get("ready_since"),
+                    "last_import": w.get("last_import"),
+                    "says": ("%s is analysed but held before triage and kinematics: no "
+                             "tracking sheet was found for cohort %s -- an import of every "
+                             "sheet ran after the video was ready and none is named for "
+                             "this cohort -- so its hand scores cannot be found. Add the "
+                             "cohort's tracking sheet to the sheets folder, or correct the "
+                             "cohort in the sheet's file name if it is misspelled. If it is "
+                             "the video's name that carries the wrong cohort, do not rename "
+                             "the held files: tell whoever maintains the pipeline. The "
+                             "video goes on by itself after the next import brings its "
+                             "scores." % (vid, w.get("cohort_id"))),
+                })
+                continue
+            if w.get("missing"):
+                # The cohort's sheet was imported after the video was ready
+                # and still has no row for it: a defect, not a wait
+                # (scores_never_came). The remedy named is the SHEET only.
+                # WHY never "rename the video": a held video is a
+                # 'processing' row whose files sit in this watcher's local
+                # Processing folder, and nothing renames such a video -- the
+                # renamed files would belong to no row and the hold would
+                # never clear. The sheet decides when and what was recorded.
+                items.append({
+                    "kind": "hand_scores_missing", "needs_person": True,
+                    "video_id": vid, "cohort_id": w.get("cohort_id"),
+                    "ready_since": w.get("ready_since"),
+                    "last_import": w.get("last_import"),
+                    "says": ("%s is analysed but held before triage and kinematics: the "
+                             "%s sheet was imported after the video was ready and has no "
+                             "hand scores for this session. The scores are missing from "
+                             "the sheet, or the sheet's row does not match the video. "
+                             "Fix the sheet: enter the session's scores, or correct its "
+                             "row so the date, animal and tray match the video's. The "
+                             "video goes on by itself after the next import brings its "
+                             "scores." % (vid, w.get("cohort_id"))),
+                })
+                continue
             items.append({
                 "kind": "hand_scores_waiting",
                 "needs_person": False,
@@ -624,7 +696,8 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                 "last_import": w.get("last_import"),
                 "says": ("%s is analysed and held before triage and kinematics until the "
                          "%s sheet's next import, to be compared with its hand scores "
-                         "(it goes on without the comparison if that import has none)."
+                         "(if that import has none, it stays held and is listed as "
+                         "missing its scores)."
                          % (vid, w.get("cohort_id"))),
             })
         tmp = d / f".{hostname}_hand_scores.json.tmp"

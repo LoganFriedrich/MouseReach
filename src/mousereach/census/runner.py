@@ -379,9 +379,10 @@ def estimate_eta(machine_backlog: int, human_backlog: int,
 
 
 # Attention-list kinds that mean "analysed, held for its hand scores"
-# (watcher/hand_scores.write_attention): waiting for the sheet's import, or a
-# check that could not run.
-HAND_SCORE_HOLD_KINDS = ("hand_scores_waiting", "hand_score_check_failed")
+# (watcher/hand_scores.write_attention): waiting for the sheet's import, its
+# scores missing after that import, or a check that could not run.
+HAND_SCORE_HOLD_KINDS = ("hand_scores_waiting", "hand_scores_missing",
+                         "hand_score_check_failed")
 
 
 def run_census(window_days: int = 14) -> dict:

@@ -7,8 +7,8 @@ processing phase until it has no open issues. The check runs BEFORE the
 gate, so a disagreeing pellet joins the video's other open questions and the
 gate sends it to triage once. A video whose session's hand scores are not
 there yet is held in 'processing' for the sheet's next import; if that import
-has none, the session was never scored by hand and the video goes on (with
-nothing to compare against, there is nothing to disagree with).
+has none, the scores are missing (a defect for a person) and the video stays
+held -- it is never filed uncompared (tests/test_missing_hand_scores_hold.py).
 """
 import json
 
@@ -220,7 +220,7 @@ def test_a_check_that_cannot_run_holds_the_video_and_says_so_in_red(tmp_path, mo
     assert "could not run" in item["says"]
 
 
-def test_never_scored_is_measured_from_when_the_video_entered_processing(tmp_path, monkeypatch):
+def test_missing_scores_are_judged_from_when_the_video_entered_processing(tmp_path, monkeypatch):
     """A held video is never 'processed', so its wait is measured from
     processing_started_at."""
     folder = _setup(tmp_path, monkeypatch, scores={}, last_import="2026-10-26T20:05:00",
@@ -229,12 +229,12 @@ def test_never_scored_is_measured_from_when_the_video_entered_processing(tmp_pat
     _started_at(tmp_path, "2026-10-26T21:00:00")                # after that import: wait
     assert orch._hand_score_precheck(VID, folder) is False
     assert orch._score_waits[VID]["ready_since"] == "2026-10-26T21:00:00"
+    assert not orch._score_waits[VID]["missing"]
     orch._score_waits.clear()
-    _started_at(tmp_path, "2026-10-26T10:00:00")                # before it: never scored
-    assert orch._hand_score_precheck(VID, folder) is True
-    assert not orch._held_for_hand_scores(VID)
-    assert json.loads((folder / f"{VID}_pellet_outcomes.json").read_text())[
-        "hand_scores"]["verdict"] == "never_scored"
+    _started_at(tmp_path, "2026-10-26T10:00:00")                # before it: missing, still held
+    assert orch._hand_score_precheck(VID, folder) is False
+    assert orch._score_waits[VID]["missing"]
+    assert "hand_scores" not in json.loads((folder / f"{VID}_pellet_outcomes.json").read_text())
 
 
 def test_the_first_waits_ready_time_is_kept(tmp_path, monkeypatch):
@@ -246,7 +246,11 @@ def test_the_first_waits_ready_time_is_kept(tmp_path, monkeypatch):
     orch._score_waits = {VID: {"stamp": None, "cohort_id": "ABC_02",
                                "ready_since": "2026-10-26T10:00:00"}}
     _started_at(tmp_path, "2026-10-26T23:00:00")                # re-stamped by something
-    assert orch._hand_score_precheck(VID, folder) is True
+    assert orch._hand_score_precheck(VID, folder) is False
+    # judged from the FIRST wait's time: the import came after it, so the
+    # scores are missing (not still awaited)
+    assert orch._score_waits[VID]["ready_since"] == "2026-10-26T10:00:00"
+    assert orch._score_waits[VID]["missing"]
 
 
 # ---------------------------------------------------------------------------
@@ -500,4 +504,5 @@ def test_the_census_says_how_many_analysed_videos_wait_for_hand_scores(capsys):
     out = capsys.readouterr().out
     assert "of which waiting for hand scores: 3" in out
     out.encode("ascii")
-    assert set(runner.HAND_SCORE_HOLD_KINDS) == {"hand_scores_waiting", "hand_score_check_failed"}
+    assert set(runner.HAND_SCORE_HOLD_KINDS) == {"hand_scores_waiting", "hand_scores_missing",
+                                                 "hand_score_check_failed"}

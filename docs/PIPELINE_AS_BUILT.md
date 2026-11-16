@@ -2333,8 +2333,9 @@ said into the video's `<video>_pellet_outcomes.json`, under a new top-level key:
 `pellets` is keyed by segment number (the same numbering `check` compares with) and holds 0
 (untouched), 1 (displaced) or 2 (retrieved) for every pellet the sheet has for that session -- also
 when no pellet was compared because a person had answered them all. It is `{}` when the sheet has no
-row for the session (`never_scored`: a required project whose next import brought nothing;
-`not_required`: a project that does not need hand scores). Nothing is written for an Easy or Flat
+row for the session (`not_required`: a project that does not need hand scores; `never_scored`
+appears only in videos filed before missing scores began to be held -- see "a video whose hand
+scores cannot be found is held as a defect" below -- and is no longer written). Nothing is written for an Easy or Flat
 tray, or on a machine with no scores file configured. The whole file is read, the key set, and the
 file written to a temporary file and renamed into place, so every other key stays and no reader sees
 half a file; `record` raises when the file cannot be read or written, so its caller can hold the
@@ -2348,7 +2349,10 @@ ignore it. Tests: `tests/test_hand_score_check_before_filing.py` (the `record` t
 ## Update 2026-10-26: checked against the hand scores before filing
 
 (Superseded 2026-10-28: the check now runs before the review gate, not before filing -- see the
-update of that date above. This section is kept as the record of what ran from 2026-10-26.)
+update of that date above. This section is kept as the record of what ran from 2026-10-26. The
+"never scored by hand, so filed without the comparison" outcome it describes no longer exists: such
+a video is now held as missing its scores -- see "a video whose hand scores cannot be found is held
+as a defect".)
 
 The last step before a video is filed (`_archive_to_nas` on the processing server,
 `_archive_locally_processed` on a node that also analyses) is now a comparison of its pellets with
@@ -3941,3 +3945,55 @@ manifest beside it" for more than a few minutes, run the sheet import again (it 
 files); the held videos then go on by themselves.
 
 Tests: `tests/test_hand_scores_file_pair.py`.
+
+## Update: a video whose hand scores cannot be found is held as a defect, never filed uncompared
+
+**What was wrong.** In a project listed in `hand_scores.required_projects`, a video with no hand
+scores was held until its cohort's sheet had been imported after the video was ready. If that
+import still had no scores for the session, the watcher took it as "never scored by hand" and let
+the video go on to the gate, kinematics and filing WITHOUT the comparison (its outcomes file kept
+the verdict `never_scored`). But in such a project every session is scored by hand at the bench
+before its videos enter the pipeline, so no scores after an import means the sheet's row is
+absent or misnamed, or the import did not match it to the video -- which looked exactly the same
+from the watcher. Such a video was filed uncompared, and nothing ever compared it later.
+
+**What happens now** (`_hand_score_precheck`, `hand_scores.write_attention`):
+
+- Until the cohort's sheet has been imported after the video entered 'processing', the video
+  WAITS: held where it is, listed grey (`hand_scores_waiting`), one `hand_score_check` /
+  `waiting` row in the processing log -- as before.
+- After that import, still no scores: the scores are MISSING. The video STAYS held (in
+  'processing', files in the local Processing folder, before triage, kinematics and filing). It is
+  listed in red (`hand_scores_missing`, `needs_person`) with what to check, the processing log gets
+  one `hand_score_check` / `missing` row, and the watcher log one warning. Nothing is written into
+  its outcomes file. It is checked again whenever the scores file or its manifest changes, and goes
+  on by itself -- compared like any other video -- once an import brings its scores.
+- A cohort with no import at all and no sheet (or a name no sheet has): after the next import of
+  every sheet, its videos are held as missing their scores the same way, but their red line, log
+  row and warning say that NO TRACKING SHEET was found for the cohort (the attention item carries
+  `"no_sheet": true`; `hand_scores.no_sheet_for_cohort`). WHY a separate message: "the <cohort>
+  sheet was imported ... fix its row" would be false here and send the person looking for a sheet
+  that does not exist, so the hold would never clear.
+- The census counts these videos with the other hand-score holds.
+- Projects not in `required_projects`, Easy and Flat trays, and a machine with no scores file
+  configured are not checked, as before.
+
+**For an operator.** A red line "... the <cohort> sheet was imported after the video was ready and
+has no hand scores for this session" means: open that cohort's tracking sheet and find the
+session (its date, the animal, the tray). If the row is missing, enter the scores; if it is there,
+correct the row so its date, animal and tray match the video's exactly -- the sheet decides. Do
+not rename the held video: it is being worked in the watcher's own Processing folder, nothing
+renames a video there, and renamed files would belong to no video, so the hold would never clear.
+After the next sheet import the video is compared and carries on; nothing else needs doing.
+
+A red line "... no tracking sheet was found for cohort <cohort> ..." means the sheets folder has
+no tracking sheet for that cohort at all. Add the cohort's sheet to the sheets folder, or, if a
+sheet is there under a misspelled cohort, correct the cohort in its file name. If instead the
+video's name carries the wrong cohort, do not rename the held files (same reason as above): tell
+whoever maintains the pipeline. After the next sheet import the video is compared and carries on.
+
+**Videos filed before this change** with the kept verdict `never_scored` were filed without the
+comparison. They can be listed from their outcomes files (key `hand_scores`, `verdict`
+`never_scored`) without running anything; the watcher does not compare them again by itself.
+
+Tests: `tests/test_missing_hand_scores_hold.py`, `tests/test_hand_score_check_before_triage.py`.
