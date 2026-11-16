@@ -2,9 +2,8 @@
 and every later step runs (watcher/resume_point.py).
 
 WHY: a returned video used to re-enter at segmentation. All four algorithms
-were run again on a video a person had just cleared -- extra ways to fail it,
-and, when an algorithm had changed while it waited, the person's answers put
-onto outputs they never saw. Now each hold records WHICH STEP sent the video;
+were run again on a video a person had just cleared -- extra ways to fail it.
+Now each hold records WHICH STEP sent the video;
 the return resumes just after it; the quality triage, the hand-score comparison
 and the review gate always run again (they come after every algorithm step).
 An earlier step's output is reused only when its version and pose match what
@@ -47,7 +46,7 @@ def test_each_step_resumes_just_after_itself():
 
 
 def test_deep_review_always_resumes_after_segmentation():
-    """Deep review is where cuts are fixed; a re-cut voids everything after it."""
+    """Deep review is where cuts are fixed; everything made from the cuts is remade."""
     from mousereach.watcher import resume_point as rp
     assert rp.resume_stage_for("assignment", "deep_review") == "reach"
     assert rp.resume_stage_for(None, "deep_review") == "reach"

@@ -3614,8 +3614,7 @@ each hour by itself. Nothing is lost: the failed run's files are in `_finished_e
 **Before.** A video a review queue returned (triage answered, or deep review cleared) went back to
 'processing' with no record of why it had been held, and its run started at segmentation: all four
 algorithms were run again on a video a person had just cleared, then every check. That was extra
-work and extra ways to fail a cleared video; and when an algorithm version changed while the video
-waited, the person's answers were applied to outputs they never saw.
+work and extra ways to fail a cleared video.
 
 **Now.**
 1. **Every hold records which step sent the video.** When a video is moved into a review queue
@@ -3638,9 +3637,17 @@ waited, the person's answers were applied to outputs they never saw.
    | `outcome` | `assignment` | reach assignment | cuts, reaches, outcomes |
    | `assignment` | `checks` | nothing | all four algorithm outputs |
 
-   Deep review always resumes after segmentation, because a re-cut voids everything computed after
-   it. A bundle routed before this record existed resumes after the step its queue stands for
-   (deep review: segmentation; triage: outcome).
+   Deep review always resumes after segmentation, because everything computed from the cuts is
+   remade on the new ones. A bundle routed before this record existed resumes after the step its
+   queue stands for (deep review: segmentation; triage: outcome).
+
+   **What this does NOT do to the person's answers.** The review file stays with the video. The
+   gate counts a segment it answers as answered, and kinematics applies each answer to the segment
+   whose frames it covers -- on whatever outputs the run made. So when an output is remade (an
+   out-of-date output, point 4, or a deep-review return), the answers are applied to outputs the
+   person did not see; an answer whose frames match no segment after a re-cut is kept in the file
+   and applied to nothing. Voiding a person's earlier answers when the cuts change, or sending a
+   video whose answered outputs were remade back to triage, is not built yet.
 3. **Every later step runs.** The quality triage, the hand-score comparison and the review gate
    always run on a returned video -- they come after every algorithm step -- and then kinematics.
    A returned video is never treated as a filed video's "downstream calculation only" re-run,

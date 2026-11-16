@@ -10,8 +10,8 @@ when it is routed (review_gate.route_to_queue).
     step that sent it        what the person answers         resumes at
     -----------------        ------------------------         ----------
     segmentation             the cuts (re-segmentation /      reach
-      (every route into        deep review): a re-cut voids     (reach, outcome and
-      deep review)             everything after it              assignment are remade)
+      (every route into        deep review): every output       (reach, outcome and
+      deep review)             after the cuts is remade         assignment are remade)
     outcome                  a pellet's outcome or its        assignment
       (the gate's triage)      causal reach (triage)            (the outcomes are kept)
     assignment               the causal reach, when reach     checks
@@ -21,13 +21,24 @@ when it is routed (review_gate.route_to_queue).
 "checks" means: quality triage, hand-score comparison, review gate, then
 kinematics. The person's answers are applied from the review file by the gate
 and the feature extractor; no algorithm reads them, so remaking the steps
-before the one that sent the video would only redo work and, if an algorithm
-had changed meanwhile, put a person's answers onto outputs they never saw.
+before the one that sent the video would only redo work.
+
+WHAT HAPPENS TO THE PERSON'S ANSWERS WHEN AN OUTPUT IS REMADE. They are not
+voided. The review file stays in the processing folder; the gate counts a
+segment it answers as answered, and the feature extractor applies each answer
+to the segment whose frames it covers -- on the remade outputs, which the
+person did not see. That holds when the start moves earlier because an output
+is out of date (below), and on a deep-review return, where reach, outcome and
+assignment are remade on the new cuts: an answer whose frames still match a
+segment is applied to it, one whose frames match no segment is left unapplied
+(causal_review_io.index_review_by_segment). Voiding a person's earlier answers
+when the cuts change, or sending a video whose answered outputs were remade
+back to triage, is NOT built here.
 
 WHY deep review always resumes at reach: deep review is where cuts are fixed,
-and a re-cut voids everything computed after segmentation (the person's earlier
-answers included). Segmentation itself is not run again for its own sake: the
-segmentation step keeps a person's cuts as they are.
+and everything computed from the cuts is remade on the new ones. Segmentation
+itself is not run again for its own sake: the segmentation step keeps a
+person's cuts as they are.
 
 AN OUTPUT IS REUSED ONLY WHEN IT IS CURRENT. Before reusing the outputs of the
 steps before the resume point, each one's recorded algorithm version is checked

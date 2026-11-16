@@ -566,8 +566,19 @@ assignment is not tried again; your causal-reach answers stand). The quality
 check, the hand-score comparison and the review gate always run again after
 your answers. An earlier step's results are kept only if they were made with
 the algorithm versions and the pose model that are current now; if anything
-changed while the video waited, the watcher starts at that step instead, so
-your answers are never applied to results you did not see.
+changed while the video waited, the watcher starts at that step instead and
+makes that step's results and every later one again.
+
+**What happens to your answers when results are made again.** They are kept
+and used. The watcher does not ask you again: each answer is applied to the
+pellet whose frames it covers, on the remade results -- which you have not
+seen. The same is true after a re-segmentation: reaches, pellet outcomes and
+reach assignment are made again on the new cuts, an earlier answer whose
+frames still match a pellet is applied to it, and one whose frames match no
+pellet is kept in the file but applied to nothing. The video comes back to
+you only if the review gate finds a question no answer covers. Throwing away
+earlier answers when the cuts change, or sending a video back to you because
+results you answered were made again, is not built yet.
 
 **If you get a video that is not actually broken**, press *Skip this video* in
 the re-segmentation tool (it stays in the queue), or clear it through Deep
