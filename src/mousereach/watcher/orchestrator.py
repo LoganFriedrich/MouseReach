@@ -5848,10 +5848,29 @@ class ProcessingOrchestrator(BaseOrchestrator):
           * the list <NAS root>/attention/<host>_failed_reruns.json names the
             video for a person (watcher/attention.py).
         The version scan offers the re-run again when the declared versions
-        change, or when a review is saved; a person can press Re-run."""
+        change, or when a review is saved; a person can press Re-run.
+
+        Only for a video that has been filed (archived_at set) and is being
+        re-run (a scope on the row, _is_filed_rerun). Any other row is marked
+        'failed' with ``why``, as before: a video never filed must never
+        read as filed."""
         from mousereach.watcher.db import FAILED_RERUN_PREFIX
         try:
             row = self.db.get_video(video_id) or {}
+        except Exception as e:
+            row = {}
+            logger.warning(f"{video_id}: could not read its row ({e})")
+        if not self._is_filed_rerun(row):
+            # Never filed (archived_at unset): a first pass that failed and had
+            # Re-run pressed, or an 'unresolvable' row narrowed to 'outdated'.
+            # Nothing was ever filed for it, so 'archived' would read as "passed
+            # every check" for a video no check passed. It fails as before.
+            try:
+                self.db.mark_failed(video_id, why)
+            except Exception as e:
+                logger.error(f"{video_id}: could not mark it failed ({e})")
+            return
+        try:
             message = f"{FAILED_RERUN_PREFIX}: {why}"
             self.db.force_state(
                 video_id, 'archived',

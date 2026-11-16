@@ -173,3 +173,58 @@ def test_a_rerun_whose_copy_down_fails_goes_back_to_archived(orch, tmp_path, mon
     assert row["state"] == "archived" and row["archived_at"] == filed_at
     assert "copying it down failed" in row["error_message"]
     assert not any(orch.processing_dir.iterdir())          # partial set put aside
+
+
+# ---------------------------------------------------------------------------
+# A video that was never filed is never put to 'archived'
+# ---------------------------------------------------------------------------
+# WHY: rows reach 'outdated' from states other than 'archived' (the dashboard's
+# Re-run accepts 'failed' and 'unresolvable' rows; the re-pose round trip
+# narrows 'unresolvable' rows to 'outdated'). Put to 'archived', such a video
+# would read as filed -- passed every check -- although no check ever passed.
+
+def _never_filed_outdated(o):
+    o.db.register_video(video_id=VID, source_path="x")
+    o.db.force_state(VID, "processing", reason="test: first pass")
+    o.db.mark_failed(VID, "first pass failed")
+    o.db.force_state(VID, "outdated", reason="test: Re-run pressed",
+                     reprocess_scope="segmentation", mark_reason="redo it")
+
+
+def test_a_never_filed_rerun_that_cannot_start_is_failed(orch):
+    _never_filed_outdated(orch)
+    # The "cannot start" branch's own call (no processing folder configured);
+    # the pose search before it is not the subject here.
+    orch._restore_filed_after_failed_rerun(
+        VID, "could not start: PROCESSING path not configured")
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed"
+    assert row["archived_at"] is None
+    assert "PROCESSING path not configured" in row["error_message"]
+
+
+def test_a_never_filed_rerun_whose_copy_down_fails_is_failed_not_archived(orch, tmp_path, monkeypatch):
+    import mousereach.watcher.orchestrator as o
+    from mousereach.watcher import repose
+    filed = tmp_path / "Analyzed" / "PROJ" / "COHORT"
+    filed.mkdir(parents=True)
+    for n in (f"{VID}.mp4", POSE, f"{VID}_segments.json", f"{VID}_reaches.json"):
+        (filed / n).write_text("x", encoding="utf-8")
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed", raising=False)
+    monkeypatch.setattr(repose, "declared_scorer", lambda: "")
+    monkeypatch.setattr(o, "archived_pose_candidates", lambda *a, **k: [filed / POSE])
+    monkeypatch.setattr("mousereach.archive.core.get_archive_destination", lambda vid: filed)
+    orch.staging_dir = None
+
+    def _copy(src, dest, verify=True):
+        if src.name.endswith("_reaches.json"):
+            return False
+        dest.write_bytes(src.read_bytes())
+        return True
+    monkeypatch.setattr(o, "safe_copy", _copy)
+    _never_filed_outdated(orch)
+    orch._reprocess_video({"id": VID, "data": orch.db.get_video(VID)})
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed"
+    assert row["archived_at"] is None
+    assert any(orch.processing_dir.iterdir())             # nothing set aside

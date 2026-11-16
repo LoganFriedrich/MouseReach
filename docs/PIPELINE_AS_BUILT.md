@@ -3481,6 +3481,13 @@ cannot start, the processing watcher:
 The version scan then offers the re-run again when the declared versions change or a newer review
 or ground truth is saved, and a person can press Re-run.
 
+**Only a video that was filed.** All of the above applies only to a row that has been filed
+(`archived_at` set) and is being re-run. A video that was never filed -- a first pass that failed
+and had Re-run pressed, or an 'unresolvable' row sent round again -- is marked 'failed' when its
+re-run fails or cannot start, exactly as before, and its working files stay where they are. WHY:
+'archived' means filed, and filed means passed every check; a video no check ever passed must never
+read as filed.
+
 **Not covered, on purpose:** a video a review queue returned (a person has just answered questions
 about it) carries no re-run scope, and if it fails for good it stays 'failed' with its files in
 place, as before: its working files hold answers the filed results do not have yet, so they are not
