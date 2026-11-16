@@ -53,9 +53,13 @@ def test_recheck_reopens_the_answer_keeps_it_and_backs_up_the_file(tmp_path, mon
 def test_route_without_recheck_never_sends_an_answered_pellet_back(tmp_path, monkeypatch):
     _bundle(tmp_path)
     monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed", raising=False)
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review", raising=False)
     routed = []
     import mousereach.watcher.review_gate as rg
-    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
+    # The stand-in route leaves the files where they are and names that folder
+    # as the bundle, so the question is written there.
+    monkeypatch.setattr(rg, "route_to_queue",
+                        lambda vid, src, *a, **k: routed.append(src) or src)
     r = rc.route_video(VID, "triage", "test", [1])
     assert r["answered"] == [1] and not r["routed"] and not routed
     r = rc.route_video(VID, "triage", "test", [1], recheck=True,

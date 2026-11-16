@@ -119,20 +119,66 @@ def test_a_route_out_of_the_filed_folder_is_all_or_nothing(env, monkeypatch):
     assert db.get_video(VID)["state"] == "processing"
 
 
-def test_the_route_command_routes_out_of_the_filed_folder_all_or_nothing(env, monkeypatch):
+def _filed_with_a_question(tmp_path, monkeypatch, db):
     from mousereach.watcher import route_cli
-    tmp_path, triage, db = env
     filed = tmp_path / "Analyzed" / "PROJ" / "PROJ01"
-    before = _source(filed)
+    _source(filed)
+    (filed / f"{VID}_pellet_outcomes.json").write_text(json.dumps({"segments": [
+        {"segment_num": 1, "outcome": "untouched"}]}), encoding="utf-8")
+    (filed / f"{VID}_segments.json").write_text(json.dumps({"segments": [
+        {"segment_num": 1, "start_frame": 100, "end_frame": 190}]}), encoding="utf-8")
     db.force_state(VID, "archived", reason="test")
     monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
     monkeypatch.setattr(route_cli, "_find_outcomes",
                         lambda analyzed, vid: filed / f"{VID}_pellet_outcomes.json")
+    return filed, {p.name: p.read_bytes() for p in filed.iterdir()}
+
+
+def test_the_route_command_routes_out_of_the_filed_folder_all_or_nothing(env, monkeypatch):
+    """A route that fails puts every file back -- and writes no review flag
+    into the filed results: nothing was routed, so nothing changes."""
+    from mousereach.watcher import route_cli
+    tmp_path, triage, db = env
+    filed, before = _filed_with_a_question(tmp_path, monkeypatch, db)
     _lock(monkeypatch, f"{VID}_segments.json")
-    res = route_cli.route_video(VID, "triage", "bench check", db=db)
+    res = route_cli.route_video(VID, "triage", "bench check", [1], db=db)
     assert not res["routed"] and res["error"]
     assert {p.name: p.read_bytes() for p in filed.iterdir()} == before
     assert not (triage / VID).exists()
+
+
+def test_a_route_refused_because_the_video_is_held_leaves_the_filed_folder_alone(
+        env, monkeypatch):
+    """The held bundle appears between the check and the move: the question
+    goes into the held bundle, and the filed results stay as they were."""
+    from mousereach.watcher import route_cli
+    tmp_path, triage, db = env
+    filed, before = _filed_with_a_question(tmp_path, monkeypatch, db)
+    held = triage / VID
+    held.mkdir()
+    (held / f"{VID}_pellet_outcomes.json").write_text(json.dumps({"segments": [
+        {"segment_num": 1, "outcome": "untouched"}]}), encoding="utf-8")
+    (held / f"{VID}.mp4").write_text("held run", encoding="utf-8")
+    monkeypatch.setattr(route_cli, "_held_in_a_queue", lambda vid, db: "")
+    db.force_state(VID, "triage", reason="test")
+    res = route_cli.route_video(VID, "triage", "bench check", [1], db=db)
+    assert res["held"] and not res["routed"] and res["flagged"] == [1]
+    assert {p.name: p.read_bytes() for p in filed.iterdir()} == before
+    flagged = json.loads((held / f"{VID}_pellet_outcomes.json").read_text(
+        encoding="utf-8"))["segments"][0]
+    assert flagged["flagged_for_review"] is True
+
+
+def test_a_routed_question_is_written_into_the_bundle(env, monkeypatch):
+    from mousereach.watcher import route_cli
+    tmp_path, triage, db = env
+    filed, _ = _filed_with_a_question(tmp_path, monkeypatch, db)
+    res = route_cli.route_video(VID, "triage", "bench check", [1], db=db)
+    assert res["routed"] and res["flagged"] == [1] and not res["error"]
+    seg = json.loads((triage / VID / f"{VID}_pellet_outcomes.json").read_text(
+        encoding="utf-8"))["segments"][0]
+    assert seg["flagged_for_review"] is True and seg["flag_reason"] == "bench check"
+    assert not filed.joinpath(f"{VID}_pellet_outcomes.json").exists()
 
 
 def test_a_file_a_person_moved_in_by_hand_finishes_the_route(env, tmp_path):

@@ -67,8 +67,9 @@ def test_route_to_queue_removes_emptied_per_video_source(tmp_path, monkeypatch):
     stem = "20240101_ABC0101_P1"
     src = tmp_path / stem                      # per-video bundle dir, emptied
     src.mkdir()
+    # The bundle does not exist yet: a route into a queue that already holds
+    # one is refused (route_to_queue, AlreadyInQueueError).
     bundle = tmp_path / "queue" / stem
-    bundle.mkdir(parents=True)
     monkeypatch.setattr(rg, "move_video_bundle",
                         lambda *a, **k: (bundle, 0))
     monkeypatch.setattr(rg, "_write_review_manifest", lambda *a, **k: None)
@@ -80,8 +81,9 @@ def test_route_to_queue_never_removes_a_shared_dir(tmp_path, monkeypatch):
     stem = "20240101_ABC0101_P1"
     src = tmp_path / "Processing"              # shared dir, not stem-named
     src.mkdir()
+    # The bundle does not exist yet: a route into a queue that already holds
+    # one is refused (route_to_queue, AlreadyInQueueError).
     bundle = tmp_path / "queue" / stem
-    bundle.mkdir(parents=True)
     monkeypatch.setattr(rg, "move_video_bundle",
                         lambda *a, **k: (bundle, 0))
     monkeypatch.setattr(rg, "_write_review_manifest", lambda *a, **k: None)

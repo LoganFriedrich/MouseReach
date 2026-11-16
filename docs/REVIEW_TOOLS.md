@@ -850,13 +850,60 @@ A queue bundle holds what a person did (a review, ground truth, a clear marker, 
 hand) as well as what the machine made. Every move into, out of or between the queues follows
 these rules:
 
-- **A video sent to the queue it is already in is left exactly as it is.** If a button or
-  command routes a bundle into its own queue (for example **Flag Session** pressed in the
-  re-segmentation window, where the video already is), nothing is moved and the bundle's
-  routing record and manifest are not rewritten; only the watcher database is set to that
-  queue's state. **Why:** the move used to "move" each file onto itself, and the overwrite step
-  deleted the file first -- every file of the bundle except the video the window had open was
-  lost.
+- **A video sent to the queue it is already in is left exactly as it is.** If a route is asked
+  to move a bundle into the queue it is already in, nothing is moved and the bundle's routing
+  record and manifest are not rewritten; only the watcher database is set to that queue's state.
+  (Flag Session in the re-segmentation window does not route at all -- see "Flag Session on a
+  video that is already in the re-segmentation queue does not move it" below.) **Why:** the move
+  used to "move" each file onto itself, and the overwrite step deleted the file first -- every
+  file of the bundle except the video the window had open was lost.
+
+- **A video is never poured into a folder it already has in that queue.** When a route finds
+  `<queue>/<video>` already there and starts anywhere else (the processing folder, the filed
+  results in Analyzed, the other queue), it looks at that folder before anything moves:
+  - empty, or holding only the queue's records: not a bundle -- removed or set aside, and the
+    route goes on;
+  - an old copy of the video, and the video is not held in THIS queue (its watcher state is not
+    `triage` for the triage queue, not `deep_review` for the deep-review queue -- this route is a
+    newer run, or the video is held in the other queue): a review in the old folder is first
+    copied to the durable review store (so the person is not asked again), then the old folder is
+    taken out of the queue whole -- kept for a person and listed in the attention panel if a
+    person wrote anything in it, or if it holds a video or pose file this route does not bring --
+    and the route goes on (see "A folder taken out of a queue and kept for a person"). So an
+    Escalate from triage is never blocked by an old folder of the video in the deep-review queue;
+  - the live bundle of a video that is held there: nothing is moved and the route stops with
+    "<video> could not be routed to <queue> ... the queue already holds its live bundle ...
+    decide which copy is the live one". The attention panel lists it (file
+    `attention/<machine>_queue_folders_in_the_way.json`) until the folder is gone or the video is
+    routed. From the review window's Escalate button it shows as an error box and the video stays
+    where it was.
+  **Why:** the files used to be poured into the existing bundle, replacing same-named files -- an
+  older filed generation replaced the held run's results, and a review a person had saved there
+  could be replaced by an older one. Refusing every existing folder instead made every later run
+  of the video fail when the folder was only a leftover.
+- **`mousereach-route-to-queue` never moves a held video, and puts its question in the held
+  bundle.** A video whose watcher state is `triage` or `deep_review`, or that has a bundle in
+  either queue (published, or still being built in the queue's `.incoming` folder), is not moved
+  and its filed copy is not touched. The command prints it as `held` (`"held": true` with
+  `--json`). If segments were asked about (`--flag-segments`, or a worklist's `segment_nums`),
+  they are flagged inside the held triage bundle's `<video>_pellet_outcomes.json` -- the file the
+  triage review tool walks -- with the reason given, exactly as for a routed video (a segment a
+  person already answered is skipped; `--recheck` reopens it). That is a success (exit 0). When
+  the question cannot be recorded -- the video is held in deep review (its results are made again
+  after re-segmentation), only the watcher state says it is held, the held bundle has no outcomes
+  file or not those segments, its files cannot be read, deep review was asked for a video held in
+  triage, or the return scan is moving the bundle right now -- the line says `FAIL ... question
+  not recorded: <why>` (`"unrecorded": [segments]` with `--json`) and the exit code is 1: ask
+  again later (after the video is filed again, a normal route takes the question).
+- **A route-to-queue run that does not route changes nothing in the filed results.** The
+  command decides what to ask by reading only; it moves the video first and writes the flags into
+  the bundle's own `<video>_pellet_outcomes.json` after the move has succeeded. A route that fails
+  (every file goes back) or is refused (the video is held) leaves every filed file exactly as it
+  was. If the move succeeds but the flags cannot be written, the line says `FAIL ... routed;
+  question not recorded: <why>` and the exit code is 1; run the command again for that video -- it
+  is now held, so the question goes into its bundle. While the watcher's return scan (or a review
+  window) is moving the same video's bundle, the command prints `wait` for it and moves nothing;
+  offer it again later.
 
 - **A route records the hold as soon as the video is in the queue.** The order is: move the
   bundle in, set the watcher state (`triage` / `deep_review`), then write the review manifest (the
@@ -963,12 +1010,16 @@ folder with a file that is open somewhere does not move at all, and is tried aga
   it goes to `_Problematic/_superseded_queue_folders_<date>/<video>/` with the same note, for the
   record. Nothing there needs a person and it is not listed.
 
-The folders this applies to: a stale bundle the return scan retires that holds a person's
-file (one that does not still goes to `_Problematic/_stale_seg_failed_bundles_<date>/`), and what
-is left of a triage copy when the video moves into deep review. If the folder cannot be moved, it
-stays, and the panel lists it (file `attention/<machine>_queue_folders_in_the_way.json`) until it
-is gone. **Why:** a leftover in a live queue was a second place the video was in, and deleting it
-would have lost what a person wrote.
+The folders this applies to: an empty folder or one holding only queue records (left by a
+return that could not finish its last step); an old copy of a video met by a newer run's route
+when the video is not held in that queue (its watcher state is not that queue's: `triage` for
+the triage queue, `deep_review` for the deep-review queue); a
+stale bundle the return scan retires that holds a person's file (one that does not still goes to
+`_Problematic/_stale_seg_failed_bundles_<date>/`); and what is left of a triage copy when the video moves
+into deep review. If the folder cannot be moved, it stays, and the panel lists it (file
+`attention/<machine>_queue_folders_in_the_way.json`) until it is gone. **Why:** a leftover in a
+live queue was a second place the video was in -- the next route of the video met it and failed,
+over and over -- and deleting it would have lost what a person wrote.
 
 ### Where they are
 
@@ -1017,7 +1068,7 @@ comparison; the gate still runs and can ask only about a segment no person answe
 
 On a hold, `route_to_queue` (`:159`) moves the whole bundle out of the processing directory, writes a queue manifest so the review tool can open the bundle in place (`:138-156`), and sets the database state to `triage` or `deep_review`. If the normal state transition is rejected the code forces the state rather than letting disk and database disagree (`:178-194`).
 
-A new bundle is built out of sight and appears in one step. `move_video_bundle` (`review_routing.py`) moves the files into `<queue>/.incoming/<stem>/`, writes the routing manifest there, and then publishes the folder as `<queue>/<stem>/` with a single directory rename. **Why:** a move onto the shared drive is a copy that takes seconds per file, and the watcher's return scan reads the queues meanwhile. When the bundle folder was created first and filled in place, the scan saw it empty and filed it away mid-route (every remaining move then failed with "No such file or directory"), and a half-filled folder could be judged as a bundle before its files arrived. The readers that judge, retire or release bundles skip names starting with `.` (readers that key on stem-named files match nothing there by accident, not by rule), and the build folder sits under the queue itself so the rename never crosses a drive. A bundle that already exists (a re-route, or a divert into an existing bundle) is already visible and is filled in place as before. The routing manifest lists `moved_files` and `failed_files` (each file that could not be moved, with the error), so a part-moved bundle shows in the record rather than only in a log. A route that dies partway leaves its files in `.incoming/<stem>/` and the next route of that video reuses them; until then `mousereach-reconcile` lists the video as held, "being routed into <queue>, or an interrupted route -- check if this persists". If a concurrent route of the same video publishes the shared build folder first, the rest of this route's files and its routing manifest go into the published bundle, and a failed manifest write never stops the publish. A file that could not be merged in the fallback stays in `.incoming/<stem>/`, and the return refuses that bundle, naming the folder, until a person folds the file in -- returning would re-run the video without it (typically a locked mp4).
+A new bundle is built out of sight and appears in one step. `move_video_bundle` (`review_routing.py`) moves the files into `<queue>/.incoming/<stem>/`, writes the routing manifest there, and then publishes the folder as `<queue>/<stem>/` with a single directory rename. **Why:** a move onto the shared drive is a copy that takes seconds per file, and the watcher's return scan reads the queues meanwhile. When the bundle folder was created first and filled in place, the scan saw it empty and filed it away mid-route (every remaining move then failed with "No such file or directory"), and a half-filled folder could be judged as a bundle before its files arrived. The readers that judge, retire or release bundles skip names starting with `.` (readers that key on stem-named files match nothing there by accident, not by rule), and the build folder sits under the queue itself so the rename never crosses a drive. A route into a queue that already holds a bundle of the video is refused before anything moves (see "Moving a video into or out of a queue never deletes or overwrites a person's file"); `move_video_bundle` itself still fills an existing bundle in place for the two cases that need it: a concurrent route of the same video that published first, and the fallback when the publishing rename fails. The routing manifest lists `moved_files` and `failed_files` (each file that could not be moved, with the error), so a part-moved bundle shows in the record rather than only in a log. A route that dies partway leaves its files in `.incoming/<stem>/` and the next route of that video reuses them; until then `mousereach-reconcile` lists the video as held, "being routed into <queue>, or an interrupted route -- check if this persists". If a concurrent route of the same video publishes the shared build folder first, the rest of this route's files and its routing manifest go into the published bundle, and a failed manifest write never stops the publish. A file that could not be merged in the fallback stays in `.incoming/<stem>/`, and the return refuses that bundle, naming the folder, until a person folds the file in -- returning would re-run the video without it (typically a locked mp4).
 
 `reprocess_to_current._stage_review_bundle` (`reprocess_to_current.py:66`) stages bundles for the bring-current path and never clobbers a bundle that already exists (`:80-82`), but it does NOT build out of sight: it still creates `<queue>/<stem>/` first and fills it file by file, so a return scan can read it half-filled.
 
@@ -1037,7 +1088,7 @@ A new bundle is built out of sight and appears in one step. `move_video_bundle` 
 
 Only `scan_review_queues` (`review_return.py`) moves a bundle out. It runs inside the watcher every 10th poll cycle (`orchestrator.py:1345`, `:1391-1395`) and handles at most **10 bundles per scan** (`MAX_RETURNS_PER_SCAN`, `review_return.py`) so returning does not starve the pipeline.
 
-Because the queues are shared storage scanned by every watcher node, every mutation the scan performs — a return, a stale-bundle retire, a divert to re-segmentation — first takes a per-video claim marker in `{REVIEW_ROOT}/.return_claims/` (`_claim_return` / `_with_return_claim`, `review_return.py`). The marker is created exclusively (`watcher/claim_marker.py`): the file server creates it only if it does not already exist, so when two nodes race exactly one succeeds, and the marker records which host holds it -- and which process: the claim belongs to one process (its id and start time), not to the machine, because on the machine where review happens the watcher's return scan and the tools a person runs there are separate processes that can act on the same bundles. Another live process of the same machine is refused like another machine; a claim whose process has ended (a crash) is taken over at once. A stem another node or process holds is skipped this pass and re-examined next scan. A marker is broken only when its holder has stopped writing its status report (`Processing/.node_status/<host>.json`) for 3 hours, both times read from the file server so the machines' clock differences do not matter; an old marker whose holder is still reporting is never broken. If the claim folder cannot be made, nothing is moved that pass. With no shared root configured the claim is a no-op. (Until 2026-10-21 the marker was written, re-read after 0.5 s, and broken after 2 hours by age alone.) Scanning a bundle never takes a claim — only touching it does.
+Because the queues are shared storage scanned by every watcher node, every mutation the scan performs — a return, a stale-bundle retire, a divert to re-segmentation — first takes a per-video claim marker in `{REVIEW_ROOT}/.return_claims/` (`_claim_return` / `_with_return_claim`, `review_return.py`). The marker is created exclusively (`watcher/claim_marker.py`): the file server creates it only if it does not already exist, so when two nodes race exactly one succeeds, and the marker records which host holds it -- and which process: the claim belongs to one process (its id and start time), not to the machine, because on the machine where review happens the watcher's return scan, a review window and `mousereach-route-to-queue` are separate processes that act on the same bundles (a flag written into a bundle the scan was moving out used to be lost). Another live process of the same machine is refused like another machine; a claim whose process has ended (a crash) is taken over at once. A stem another node or process holds is skipped this pass and re-examined next scan. A marker is broken only when its holder has stopped writing its status report (`Processing/.node_status/<host>.json`) for 3 hours, both times read from the file server so the machines' clock differences do not matter; an old marker whose holder is still reporting is never broken. If the claim folder cannot be made, nothing is moved that pass. With no shared root configured the claim is a no-op. (Until 2026-10-21 the marker was written, re-read after 0.5 s, and broken after 2 hours by age alone.) Scanning a bundle never takes a claim — only touching it does.
 
 **An empty triage folder is left alone for 30 minutes before it is filed away.** An empty folder is not a bundle; it is residue of an earlier divert or return, and the scan retires it to `_Problematic` -- but only once its modification time is older than `EMPTY_DIR_GRACE_SECONDS` (30 minutes, `review_return.py`). **Why:** a router may have just created the folder and still be moving files in (routing into an existing bundle, or after a failed rename, fills the folder in place), and the time is stamped by the share's clock, which can differ from the scanning node's by many minutes. A time in the future, or one that cannot be read, counts as young. Real residue simply waits for a later scan. The same scan warns once per watcher run about any `<queue>/.incoming/<stem>/` older than 30 minutes and never touches it: those files are the video's only copy, and whether the route is still running or died is for a person to judge.
 

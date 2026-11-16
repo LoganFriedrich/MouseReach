@@ -708,11 +708,9 @@ options:
 ### `mousereach-route-to-queue`
 
 ```
-usage: mousereach-route-to-queue [-h] [--worklist WORKLIST] --queue
-                                 {triage,deep_review} --reason REASON
-                                 [--flag-segments FLAG_SEGMENTS] [--recheck]
-                                 [--json]
-                                 [video_id]
+usage: -c [-h] [--worklist WORKLIST] --queue {triage,deep_review} --reason
+          REASON [--flag-segments FLAG_SEGMENTS] [--recheck] [--json]
+          [video_id]
 
 mousereach-route-to-queue -- put an archived video into a review queue.
 
@@ -729,15 +727,31 @@ gets exactly the same routing the pipeline uses itself.
 
 What it does, in order:
   1. finds the video's results in the configured Analyzed tree,
-  2. optionally flags specific segments (flagged_for_review=True with the
-     given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
-     that is what the triage review tool walks. A worklist item may carry
-     "segment_details" ({segment number: words}); each flagged segment's
-     reason is then "<reason>: <its words>", and the review tool shows it on
-     screen beside that pellet (WHY: all a reviewer sees is the tool, so a
-     pellet sent back must say why),
-  3. moves the video's bundle into the queue with a routing manifest
-     (review_gate.route_to_queue), updating the watcher database.
+  2. moves the video's bundle into the queue with a routing manifest
+     (review_gate.route_to_queue), updating the watcher database -- all or
+     nothing (below),
+  3. optionally flags specific segments (flagged_for_review=True with the
+     given reason, triage_cleared cleared) in the BUNDLE's
+     {video}_pellet_outcomes.json -- that is what the triage review tool
+     walks. A worklist item may carry "segment_details" ({segment number:
+     words}); each flagged segment's reason is then "<reason>: <its words>",
+     and the review tool shows it on screen beside that pellet (WHY: all a
+     reviewer sees is the tool, so a pellet sent back must say why -- a
+     reviewer met finished videos coming back with no reason given).
+Steps 2 and 3 are done under the bundle's claim (review_return._claim_return),
+so the watcher's return scan -- another process -- cannot return the bundle
+between the move and the flag.
+
+THE FILED FOLDER IS NEVER CHANGED BY A ROUTE THAT DOES NOT HAPPEN
+-----------------------------------------------------------------
+The flags are written only after the move has succeeded, into the bundle's
+copy. WHY: they used to be written into the FILED outcomes file first; a
+route that then failed (a file held open, so every file went back), or was
+refused because the video is held, left the filed results carrying review
+flags although nothing had been routed. A failed or refused route now leaves
+every filed file byte for byte as it was. If the move succeeds and the flag
+cannot be written, the video is in the queue and is reported FAIL "question
+not recorded" (exit code 1): route it again to ask.
 
 A SEGMENT A PERSON HAS ANSWERED IS NEVER FLAGGED
 ------------------------------------------------
@@ -746,7 +760,7 @@ a person (or ground truth) has already answered -- matched by the FRAMES the
 answer is about, the rule the release check uses -- is dropped from the list
 and reported as "answered". If nothing is left, the video is not routed.
 WHY: the release check counts such a segment answered, so a routed video went
-straight back out with nobody looking, and the next scan would send it again.
+straight back out with nobody looking, and the next night's scan sent it again.
 A caller cannot always know what a person answered; this command
 reads the review itself, so the rule holds whoever asks.
 
@@ -787,7 +801,61 @@ the pipeline's own 'processing' -> 'processed' write an illegal transition, and
 the daemon marks the video failed with fresh outputs in Processing and old ones
 in the queue; a processed or archiving video's Analyzed copy is older than the
 outputs the daemon is about to archive, so a reviewer would judge stale data.
-A deferral is not a failure: offer the video again on a later run.
+A deferral is not a failure: offer the video again on a later run. A video
+whose bundle another process is moving right now (it holds the bundle's
+claim, review_return._claim_return -- the watcher's return scan, say) is
+deferred the same way.
+
+A VIDEO IN DEEP REVIEW IS NEVER SENT TO TRIAGE
+---------------------------------------------
+Deep review supersedes triage: a video with a bundle in the deep-review queue
+is not flagged and not routed to triage; it is reported as "deep" (in_deep_review:
+true with --json) and stays where it is. Not a failure for the exit code. WHY:
+the filed results this command routes from are older than what deep review
+holds, and a triage copy beside the deep-review bundle had a reviewer answer
+the wrong copy. Routing into deep_review empties the video's triage bundle
+once the deep-review bundle is complete, without losing a person's file: what
+the pipeline made is deleted, a review or ground truth the deep-review bundle
+lacks is carried into it, and what remains is taken out of the triage queue
+and kept for a person (listed in the dashboard's attention panel)
+(review_gate._drop_triage_copy).
+
+A VIDEO ALREADY HELD IN A QUEUE IS NOT MOVED -- ITS QUESTION GOES IN ITS BUNDLE
+--------------------------------------------------------------------------------
+A video whose watcher state is 'triage' or 'deep_review', or that has a bundle
+in either queue (published, or still being built in the queue's .incoming
+folder), is not moved and its filed copy is not touched; it is reported as
+"held" (held: true with --json). WHY: the held bundle is the video's live copy,
+and it can hold a person's answers and cuts. Routing used to take the OLDER
+filed results and move them into that bundle, replacing the held run's video,
+pose, results -- and a review a person had saved there -- with the filed ones.
+
+A question asked about a held video (--flag-segments, or a worklist's
+segment_nums) is not dropped: it is written into the HELD bundle's
+pellet_outcomes.json -- the file the triage review tool walks -- exactly as for
+a routed video (a segment a person already answered is skipped, --recheck
+reopens it). That is the path the hand-score check uses for videos already
+waiting in a queue. Exit code:
+  * held, and every requested segment flagged in the held bundle (or none was
+    requested, or every one was already answered): 0;
+  * held, and the question could NOT be recorded: 1, with "question not
+    recorded" and why. That happens when the video is held in deep review (its
+    results are made again after re-segmentation, so a flag would be thrown
+    away), when only the watcher state says it is held and no published triage
+    bundle is reachable from here, when the held triage bundle has no outcomes
+    file or not the requested segments, when deep review was asked for a video
+    held in triage (escalate it from the triage review tool instead), or when
+    the bundle is being moved by the return scan right now. Ask again later --
+    after the video is filed again, a normal route takes the question.
+
+A CRYSTALLIZED VIDEO IS NEVER MOVED
+-----------------------------------
+A video locked for a publication (mousereach-crystallize; watcher state
+'crystallized') is not flagged and not moved; it is reported as "lock"
+(locked: true with --json) with a message naming the lock. Its filed results
+must stay exactly as published. Unlock it first (mousereach-uncrystallize) if
+it really is to be reviewed again. Not a failure for the exit code: the
+command did what the lock asks.
 
 Usage:
     mousereach-route-to-queue VIDEO_ID --queue triage --reason "bench disagreement" --flag-segments 3,7
@@ -796,12 +864,18 @@ Usage:
         worklist.json: [{"video_id": "...", "segment_nums": [3, 7]}, ...]
 
 Exit codes:
-    0  every requested video was routed, was already not in Analyzed, or was
+    0  every requested video was routed (with its question, if any, written
+       into its bundle), was already not in Analyzed, or was
        deferred because the watcher is working on it, or had
-       every requested segment already answered by a person ("done")
-    1  some video could not be routed, OR routing was refused because the
-       watcher database could not be resolved, does not exist, or cannot be
-       opened (then no video was touched)
+       every requested segment already answered by a person ("done"), or is
+       crystallized ("lock"), or is in deep review and was asked for triage
+       ("deep"), or is already held in a queue with its question (if any)
+       written into the held bundle ("held")
+    1  some video could not be routed, or a held or routed video's question
+       could not be recorded (printed as FAIL "... question not recorded:
+       <why>"), OR
+       routing was refused because the watcher database could not be resolved,
+       does not exist, or cannot be opened (then no video was touched)
 ASCII-only output. With --json, stdout carries only the JSON results; the
 "[watcher db]" line and any refusal message go to stderr.
 
@@ -810,8 +884,9 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --worklist WORKLIST   JSON list of {"video_id", "segment_nums"} to route in
-                        one go
+  --worklist WORKLIST   JSON list of {"video_id", "segment_nums", optional
+                        "segment_details": {segment: words}} to route in one
+                        go
   --queue {triage,deep_review}
   --reason REASON       Recorded in the routing manifest
   --flag-segments FLAG_SEGMENTS

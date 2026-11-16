@@ -13,8 +13,9 @@ so that:
 
 Every move is recorded in a ``{stem}_routing.json`` manifest (source,
 destination, reason, moved files, files that failed to move, timestamp) for a
-full audit trail. The move is idempotent: re-routing a video that already has
-a bundle replaces it.
+full audit trail. A video is never merged into a bundle it already has in
+the destination queue: review_gate.route_to_queue refuses, or first takes an
+old folder out of the way (set_aside_queue_folder), before anything moves.
 
 A NEW bundle is never visible half-built. It is assembled in the hidden
 ``dest_root/.incoming/{stem}/`` and published with ONE directory rename, so a

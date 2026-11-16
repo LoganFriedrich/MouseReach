@@ -432,6 +432,140 @@ def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
                           reason=reason, db=db, db_state="deep_review")
 
 
+class AlreadyInQueueError(RuntimeError):
+    """Raised by route_to_queue, before anything moves, when the destination
+    queue already holds the video's LIVE bundle (the video is held there) and
+    the source is somewhere else. See route_to_queue for why nothing is
+    merged, and _clear_the_way for the folders that are not a live bundle."""
+
+
+# Watcher states in which a bundle in a queue is the video's live copy.
+HELD_STATES = ("triage", "deep_review")
+
+
+def _clear_the_way(video_id: str, existing: Path, processing_dir, reason: str,
+                   db, extra_sources: Optional[Iterable[Path]] = None) -> None:
+    """Deal with a folder ``existing`` = <queue>/<video> met by a route from
+    somewhere else, BEFORE anything moves. Returns when the route may go on;
+    raises AlreadyInQueueError when it may not.
+
+      * empty: removed (a return whose last step failed leaves one; if it
+        cannot be removed the route fills it -- there is nothing to replace);
+      * only queue records (manifest, routing record): not a bundle -- taken
+        out of the queue (review_routing.set_aside_queue_folder);
+      * a file of the video, and the video is HELD IN THIS QUEUE (watcher
+        state 'triage' for the triage queue, 'deep_review' for the deep-review
+        queue, or no database to ask): the folder is the live copy.
+        AlreadyInQueueError, and the refusal is listed for a person in the
+        attention panel (review_routing.note_folder_in_the_way);
+      * a file of the video, and the video is NOT held in this queue (it has
+        been analysed again since -- this route is that newer run -- or it is
+        held in the OTHER queue): the folder is an old copy. Its review goes to
+        the durable review store first; then it is taken out of the queue
+        whole -- kept for a person, and listed in the attention panel, when a
+        person wrote anything in it or it holds a video or pose file this
+        route does not bring (review_routing.inputs_the_live_copy_lacks) --
+        and the route goes on.
+
+    WHY: refusing every existing folder would fail later runs of a video for
+    good -- an empty residue, a records-only folder, or an old bundle someone
+    had written in would make the gate raise on every run. Merging into the
+    folder (what routes used to do) replaced a held run's files and a
+    person's saved review. The state is matched to THIS queue because a
+    video held in triage can have a stale deep-review folder (and the other
+    way round); refusing on the other queue's state blocked a person's
+    Escalate until someone cleaned up by hand."""
+    from .review_routing import (_bundle_files, inputs_the_live_copy_lacks,
+                                 is_queue_record, note_folder_in_the_way,
+                                 set_aside_queue_folder)
+    from .review_return import _claim_return_nested, _release_return_claim
+
+    def _refuse(why: str, what_to_do: str):
+        says = (f"{video_id} could not be routed to {existing.parent.name} "
+                f"({reason}): {why}. Nothing was moved from {processing_dir}. "
+                f"{what_to_do}")
+        note_folder_in_the_way(video_id, existing, says)
+        raise AlreadyInQueueError(says)
+
+    try:
+        entries = list(existing.iterdir())
+    except OSError as e:
+        _refuse(f"the folder {existing} is there and cannot be read ({e})",
+                "Check that folder, then let the video run again.")
+    if not entries:
+        try:
+            existing.rmdir()
+        except OSError:
+            pass
+        return
+    records_only = all(e.is_file() and is_queue_record(video_id, e.name)
+                       for e in entries)
+    if not records_only:
+        state = None
+        if db is not None:
+            try:
+                state = (db.get_video(video_id) or {}).get("state")
+            except Exception:
+                state = None
+        if _same_folder(existing.parent, getattr(Paths, "TRIAGE_REVIEW", None)):
+            live_states = ("triage",)
+        elif _same_folder(existing.parent, getattr(Paths, "DEEP_REVIEW", None)):
+            live_states = ("deep_review",)
+        else:
+            live_states = HELD_STATES           # a queue not configured here
+        if db is None or state in live_states:
+            _refuse(f"the queue already holds its live bundle {existing} (watcher "
+                    f"state '{state or 'unknown'}')",
+                    "A video is in one place at a time: decide which copy is the "
+                    "live one, and move or remove the other by hand.")
+    claimed, release = _claim_return_nested(video_id)
+    if not claimed:
+        _refuse(f"another machine is moving the folder {existing} right now",
+                "It is routed on its next run once that move is done.")
+    try:
+        what = "queue records only" if records_only else "an older copy of the video"
+        # A review leaving the queue keeps a copy where every reader looks, as
+        # in every other set-aside (_retire_stale_bundle, _drop_triage_copy):
+        # the new bundle has no review, and without the durable copy the
+        # person would be asked again.
+        from .review_return import _ensure_durable_review
+        _ensure_durable_review(existing, video_id)
+        live: dict = {}
+        try:
+            for f in _bundle_files(Path(processing_dir), video_id):
+                live[f.name] = f
+        except OSError:
+            pass
+        for f in extra_sources or []:
+            if Path(f).is_file():
+                live.setdefault(Path(f).name, Path(f))
+        try:
+            lacking = inputs_the_live_copy_lacks(existing, video_id, live)
+        except OSError:
+            lacking = []
+        dest = set_aside_queue_folder(
+            existing, video_id,
+            why=(f"{what} was in the queue when a later run of the video was routed "
+                 f"there ({reason}); a video is in one place at a time"
+                 + (f". It holds {', '.join(lacking)}, which the new route does not "
+                    f"bring" if lacking else "")),
+            what_to_do=(f"the live bundle is {existing}. Move into it anything here "
+                        f"that a person still needs (a review or ground truth "
+                        f"re-attaches to the new cuts by frames; a video or pose file "
+                        f"the live bundle lacks)."),
+            needs_person=lacking)
+        logger.warning(f"Routing {video_id}: {existing} was not the live bundle "
+                       f"({what}); set aside to {dest} before routing")
+    except OSError as e:
+        _refuse(f"the old folder {existing} is in the way and could not be set "
+                f"aside ({e})",
+                "Close anything that has a file in it open; the video is routed on "
+                "its next run.")
+    finally:
+        if release:
+            _release_return_claim(video_id)
+
+
 def route_to_queue(
     video_id: str,
     processing_dir: Path,
@@ -461,7 +595,20 @@ def route_to_queue(
         source stay where they are (logged).
       * into deep review: once the deep-review bundle is complete (no file
         failed to move), the video's triage bundle, if any, is emptied
-        without losing a person's file (_drop_triage_copy)."""
+        without losing a person's file (_drop_triage_copy).
+
+    A VIDEO IS NEVER MERGED INTO A FOLDER IT ALREADY HAS IN THAT QUEUE:
+      * the source IS that folder (routed onto itself): nothing moves, only
+        the database state is recorded (see below);
+      * the source is anywhere else (Processing, the filed folder, the other
+        queue): _clear_the_way decides, before anything moves -- a folder that
+        is not the live bundle (empty, records only, or an old copy of a video
+        that is no longer held) is taken out of the queue and the route goes
+        on; the live bundle of a held video raises AlreadyInQueueError, listed
+        for a person. WHY: the move used to pour the source's files into the
+        existing bundle, replacing same-named files -- an older filed
+        generation replaced the held run's results, and a review a person had
+        saved in the bundle could be replaced by an older one."""
     from .db import CrystallizedError, crystallized_refusal
     from .review_routing import in_deep_review
     locked = crystallized_refusal(db, video_id, "routed to a review queue")
@@ -513,6 +660,11 @@ def route_to_queue(
                       f"routing into triage refused: the video is in deep review")
         return deep_bundle
 
+    existing = dest_root / video_id
+    if existing.is_dir():
+        _clear_the_way(video_id, existing, processing_dir, reason, db,
+                       extra_sources=extra_sources)
+
     bundle, moved = move_video_bundle(
         video_id, processing_dir, dest_root, reason,
         extra_sources=extra_sources,
@@ -525,6 +677,8 @@ def route_to_queue(
     # already in the queue and the row never set -- the dispatcher then
     # marked the video failed, and its retry needed an mp4 that had moved.
     _record_state(db_state, f"review gate moved bundle to '{reason}'")
+    from .review_routing import clear_folder_in_the_way
+    clear_folder_in_the_way(video_id)     # an earlier refusal is resolved
     try:
         _write_review_manifest(bundle, video_id, reason)
     except Exception as e:

@@ -64,6 +64,8 @@ def site(tmp_path, monkeypatch):
     deep.mkdir(parents=True)
     monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", analyzed)
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
+    # The bundle's claim marker is kept under the review root.
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review", raising=False)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
     # Never let a pose lookup wander to the real staging area or version file.
     monkeypatch.setattr(Paths, "DLC_STAGING", None, raising=False)

@@ -418,21 +418,22 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
 # the same cleared bundle in one pass would both start moving its files and
 # tear the bundle in half across machines -- the split-bundle failure class,
 # cross-node edition. Claimed only at MUTATION time (returns, diverts,
-# retires, clean-ups), never for mere
+# retires, clean-ups, a question written into a held bundle), never for mere
 # scanning, with the same exclusive-create marker the posed-video intake uses
 # (watcher/claim_marker.py): exactly one node's create succeeds. A claim is
 # broken only when its holder has stopped reporting (claim_marker.GONE_AFTER_S,
 # by the file server's clock), never for its age.
 #
 # The claim belongs to ONE PROCESS (claim_marker.this_process), and within it
-# to one thread. WHY: several processes of one machine can move the same
-# bundles -- the watcher's return scan, and the tools a person runs on the
-# machine where review happens -- and a claim that belonged to the host let
-# one of them act while another was half-way through moving the same bundle.
-# A claim whose process has ended is taken over (crash leftovers). The same
-# thread may take it again while holding it (a step that calls another step
-# claiming the same bundle): it is counted, and the marker goes only when the
-# outermost holder releases it.
+# to one thread. WHY: on the machine where review happens, the watcher's
+# return scan, a review window and mousereach-route-to-queue are separate
+# processes of the same host. A claim that belonged to the host let any of
+# them act while another was half-way through moving the same bundle (a flag
+# written into an outcomes file the scan was copying out, then lost). A
+# claim whose process has ended is taken over (crash leftovers). The same
+# thread may take it again while holding it (a divert started by the scan
+# routes the bundle, and the route takes the claim too): it is counted, and
+# the marker goes only when the outermost holder releases it.
 #
 # The rule this replaced was a check, write, sleep and read-back (not
 # atomic), went ahead unclaimed when the claim folder could not be made, and
@@ -482,7 +483,7 @@ def _claim_return(stem: str) -> bool:
 
 def _claim_return_nested(stem: str):
     """``(claimed, release)`` for callers that may run inside a holder of the
-    claim (a step another step started while holding it). The claim is counted per thread,
+    claim (a route the return scan started). The claim is counted per thread,
     so ``release`` is simply ``claimed``: releasing an inner claim never drops
     the outer one."""
     ok = _claim_return(stem)
