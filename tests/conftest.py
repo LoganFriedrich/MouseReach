@@ -18,6 +18,7 @@ nothing.
 """
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -140,3 +141,45 @@ def _no_real_filing_rules(monkeypatch):
     real layout. A test of the rules themselves sets config.filing_rules."""
     import mousereach.config as config
     monkeypatch.setattr(config, "filing_rules", lambda: dict(TEST_FILING_RULES))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_shared_indexes(monkeypatch, tmp_path_factory):
+    """No test opens this machine's shared SQLite indexes by default path: the
+    version index (pipeline/version_index.py) and the triage queue index
+    (review/queue_index.py). Both find their file from config.Paths when no
+    path is given, and both are written as a side effect of ordinary calls
+    (writing a processing manifest updates the version index).
+
+    WHY, when the audit guard above already watches sqlite3.connect: the guard
+    reports a write AFTER it has happened, and only on a machine whose real
+    roots it could resolve. A test that wrote a processing manifest without
+    patching Paths.NAS_ROOT put a row for its invented video into a live
+    version index before anything failed. Here the default path itself is
+    turned away: whenever it would resolve outside pytest's own temporary
+    folder, it resolves to a file inside it instead. A test that points
+    config.Paths at tmp_path keeps the path it expects.
+    """
+    base = tmp_path_factory.getbasetemp().resolve()
+
+    def _inside_temp(path):
+        try:
+            Path(path).resolve().relative_to(base)
+            return True
+        except (ValueError, OSError):
+            return False
+
+    def _guarded(module, name):
+        real = module.default_index_path
+
+        def default_index_path():
+            found = real()
+            if found is not None and _inside_temp(found):
+                return found
+            return base / "_default_indexes" / name
+        monkeypatch.setattr(module, "default_index_path", default_index_path)
+
+    import mousereach.pipeline.version_index as version_index
+    import mousereach.review.queue_index as queue_index
+    _guarded(version_index, "version_index.db")
+    _guarded(queue_index, "triage_queue.db")
