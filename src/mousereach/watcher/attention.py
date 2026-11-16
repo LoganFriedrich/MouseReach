@@ -50,9 +50,11 @@ def write_failed_reruns(nas_root, hostname: str, rows) -> None:
     import logging
     try:
         from mousereach.pipeline.fsutil import write_json_atomic
+        # Created when missing, as hand_scores.write_attention does. WHY not
+        # skip: a missing folder would leave a person no list of these videos
+        # and no word that it is missing.
         d = Path(nas_root) / "attention"
-        if not d.is_dir():
-            return
+        d.mkdir(parents=True, exist_ok=True)
         items = [{
             "kind": "filed_rerun_failed",
             "needs_person": True,

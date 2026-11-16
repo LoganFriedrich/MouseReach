@@ -117,6 +117,18 @@ def test_a_returned_review_that_fails_stays_failed_for_a_person(orch):
     assert (orch.processing_dir / f"{VID}.mp4").is_file()
 
 
+def test_the_failed_reruns_list_is_written_when_its_folder_is_missing(orch):
+    import shutil
+    shutil.rmtree(Paths.NAS_ROOT / "attention", ignore_errors=True)
+    _filed(orch)
+    _working_copy(orch)
+    _fail(orch, 3)
+    orch._select_work_item()
+    listed = json.loads((Paths.NAS_ROOT / "attention" / "NODE-T_failed_reruns.json")
+                        .read_text(encoding="utf-8"))["items"]
+    assert [i["video_id"] for i in listed] == [VID]
+
+
 def test_a_restart_keeps_the_failed_rerun_message(orch):
     _filed(orch)
     _working_copy(orch)
