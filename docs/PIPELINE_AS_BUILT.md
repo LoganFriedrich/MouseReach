@@ -2991,7 +2991,12 @@ back to a person.
 
 **Still open, waiting on a decision.** (1) A filed video with a segment NO person ever answered
 (the algorithm's own "triaged" outcome, filed before the gate existed or before the question was
-answered): the gate still sends it to triage on a kinematics-only re-run, as it always has. (2) A
+answered): the gate still sends it to triage on a kinematics-only re-run, as it always has. Two
+later changes start such a re-run in more cases, and each of them reaches this same gate: a review
+saved for a filed video that has no processing manifest, and ground truth saved or changed after
+filing (both described under their own "Update" headings below). So until the decision is made, a
+filed video with a never-answered segment can be taken back to triage by either of those too, not
+only by a version change. Nothing about what the gate does was changed by them. (2) A
 saved answer the matching code sets aside because its causal reach lies outside the frames it
 records, or because two saved answers for the same frames disagree (`index_review_by_segment`):
 those segments still count as unanswered. The code that sets them aside says why -- a review-tool
