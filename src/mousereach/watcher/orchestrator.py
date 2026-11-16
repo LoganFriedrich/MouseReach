@@ -199,9 +199,12 @@ def kept_rerun_start_stage(row, held_for_hand_scores: bool = False):
     a run recomputes an algorithm and every check runs on it anyway, so
     starting it from segmentation changes only the work done, not what is
     checked. The scope is cleared when the video is filed, when a review
-    returns it, and when the gate finds its outputs out of step
-    (DECISION_STALE) -- so a kept scope can never skip the checks for a run
-    whose inputs a person or a re-cut has just changed."""
+    returns it, when the gate finds its outputs out of step
+    (DECISION_STALE), and whenever the row enters a state outside its re-run
+    (db.REPROCESS_SCOPE_STATES: triage, deep review, a quality hold,
+    'unresolvable' ...) -- so a kept scope can never skip the checks for a run
+    whose inputs a person or a re-cut has just changed, nor be read back by a
+    later, unrelated run."""
     if not row or held_for_hand_scores:
         return None
     if (row.get('reprocess_scope') or '') != 'kinematics':
@@ -5888,7 +5891,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         What is done:
           * the row goes back to 'archived', keeping its archived_at (when it
-            was filed) and its reprocess_scope, with error_message
+            was filed), with error_message
             "<FAILED_RERUN_PREFIX>: <why>" -- kept across restarts
             (clear_errors_on_archived), cleared when the video is filed again;
           * error_count back to 0, so the next re-run offered has its retries

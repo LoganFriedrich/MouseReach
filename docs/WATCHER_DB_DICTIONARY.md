@@ -194,13 +194,17 @@ Version tracking (added by migration, db.py:331)
                           the stage it remakes (assignment counts as
                           'outcome') before remaking it, so a later pick runs
                           every check. It is cleared when the video
-                          is filed, when a review queue returns it, and when the
-                          gate finds stale outputs.
-                          NULL when not outdated. On an 'archived' row a value
-                          means either a filed video whose re-run failed for
-                          good (error_message then starts "re-run of a filed
-                          video failed") or a leftover from before scopes were
-                          cleared at filing; neither starts a run.
+                          is filed, when a review queue returns it, when the
+                          gate finds stale outputs, and whenever the row enters
+                          a state other than 'outdated', 'processing',
+                          'failed', 'processed' or 'archiving' (db.py
+                          REPROCESS_SCOPE_STATES), so it never outlives its
+                          re-run. A value on a row in any other state is a
+                          leftover from older code, which the data repair
+                          that came with this rule clears; until it is
+                          cleared, such a row reaching 'processing' by a path
+                          that sets no start stage would read a 'kinematics'
+                          leftover back.
   held_at_step            which step sent the video to a review queue, written
                           when it is routed (review_gate.route_to_queue):
                           'segmentation' (every route into deep review),

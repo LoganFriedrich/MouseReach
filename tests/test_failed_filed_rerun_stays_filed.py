@@ -98,7 +98,7 @@ def test_a_filed_rerun_out_of_retries_goes_back_to_archived(orch):
     assert row["error_message"].startswith(FAILED_RERUN_PREFIX)
     assert "boom" in row["error_message"]
     assert row["error_count"] == 0                        # the next re-run has its retries
-    assert row["reprocess_scope"] == "kinematics"         # scope kept
+    assert row["reprocess_scope"] is None                 # the failed round's scope ends with it
     assert not any(orch.processing_dir.iterdir())         # working copies set aside...
     aside = list((orch.processing_dir.parent / "_finished_elsewhere").rglob(f"{VID}*"))
     assert len(aside) == 3                                # ...not deleted

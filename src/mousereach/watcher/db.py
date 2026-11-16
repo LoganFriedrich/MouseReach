@@ -162,6 +162,19 @@ FAILED_RERUN_PREFIX = "re-run of a filed video failed"
 # (orchestrator.ProcessingOrchestrator._rerun_could_not_start says why).
 RERUN_NOT_STARTED_PREFIX = "re-run could not start"
 
+# The states in which a row's reprocess_scope means something: a re-run that
+# is owed ('outdated') or under way ('processing', a 'failed' run waiting for
+# its retry, and the 'processed' -> 'archiving' steps of filing it). Entering
+# any other state clears the scope, unless the caller sets it.
+# WHY: the scope used to outlive its re-run on rows that went on to triage,
+# deep review, a quality hold or 'unresolvable'. A later run of such a row --
+# a quality-hold release, an intake, a restart -- read a leftover
+# 'kinematics' back (orchestrator.kept_rerun_start_stage) and skipped every
+# algorithm, the quality triage and the hand-score comparison, on outputs
+# nobody had re-checked. A scope written for one round now ends with it.
+REPROCESS_SCOPE_STATES = frozenset(
+    {"outdated", "processing", "failed", "processed", "archiving"})
+
 
 class WatcherDB:
     """
@@ -642,6 +655,9 @@ class WatcherDB:
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
+        # A re-run scope ends with its re-run (REPROCESS_SCOPE_STATES).
+        if new_state not in REPROCESS_SCOPE_STATES:
+            kwargs.setdefault('reprocess_scope', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -731,6 +747,9 @@ class WatcherDB:
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
+        # A re-run scope ends with its re-run (REPROCESS_SCOPE_STATES).
+        if new_state not in REPROCESS_SCOPE_STATES:
+            kwargs.setdefault('reprocess_scope', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -1401,14 +1420,18 @@ class WatcherDB:
                         f"Cannot reset to {to_state}. Valid retry states: {', '.join(valid_retry_states)}"
                     )
 
-                # Reset
+                # Reset. A re-run scope ends with its re-run
+                # (REPROCESS_SCOPE_STATES): a reset to an earlier state is a
+                # fresh run with every step and check.
                 conn.execute("""
                     UPDATE videos
                     SET state = ?,
                         error_message = NULL,
+                        reprocess_scope = CASE WHEN ? THEN reprocess_scope ELSE NULL END,
                         updated_at = ?
                     WHERE video_id = ?
-                """, (to_state, self._now(), video_id))
+                """, (to_state, 1 if to_state in REPROCESS_SCOPE_STATES else 0,
+                      self._now(), video_id))
 
                 conn.commit()
                 logger.info(f"Reset video {video_id} from failed to {to_state}")

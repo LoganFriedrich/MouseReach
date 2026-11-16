@@ -3359,7 +3359,16 @@ just changed:
 - the review gate finds the outputs out of step with the cuts ("stale outputs": outcomes older than
   the segments, or reaches older than a person's boundary correction). The video stays in
   'processing' and its next pick recomputes from segmentation; without the wipe it would reuse the
-  same out-of-step outputs and meet the same answer on every pick.
+  same out-of-step outputs and meet the same answer on every pick;
+- the row enters any state outside its re-run. The scope means something only while the row is
+  'outdated', 'processing', 'failed' (waiting for its retry), 'processed' or 'archiving'; entering
+  any other state -- triage, deep review, a quality hold, 'dlc_complete', 'unresolvable', or
+  'archived' (including a filed video put back after its re-run failed for good) -- clears it, and
+  so does a person's `mousereach-watch-reprocess` reset of a failed video to an earlier state.
+  WHY: a scope used to outlive its re-run on such rows, and a later, unrelated run (a quality-hold
+  release, an intake) read the leftover 'kinematics' back and skipped every algorithm, the quality
+  triage and the hand-score comparison on outputs nobody had re-checked. Rows left with a scope by
+  older code are cleared by the data repair that goes with this change.
 
 **For an operator.** Nothing to do. A filed video that is being re-run for its kinematics and shows
 'failed' in `mousereach-watch-status` is retried after an hour as a kinematics-only run, as the
@@ -3369,7 +3378,9 @@ status line "retrying after a failure" says.
 reasons), read by `ProcessingOrchestrator._run_pipeline`; narrowed there (`scope_for_recomputed`)
 before a stage is remade; the scope is wiped in
 `ProcessingOrchestrator._gate_held`, at filing in `_archive_to_nas` (both roles) and in
-`review_return._return_to_processing`. Tests in `tests/test_filed_rerun_skips_checks.py`.
+`review_return._return_to_processing`, and on every other state change by `WatcherDB.update_state`,
+`force_state` and `reset_failed` (`watcher/db.py` `REPROCESS_SCOPE_STATES`). Tests in
+`tests/test_filed_rerun_skips_checks.py` and `tests/test_rerun_scope_ends_with_its_round.py`.
 
 ## Update: a stage whose version was never recorded starts the re-run at that stage
 
@@ -3501,8 +3512,9 @@ a re-run (the one exclusion, a video `mousereach-repose-videos` took apart, is b
 re-run has used up its retries (`watcher.max_retries`, 3), or its working copy is gone so no retry
 could run, or the re-run could not start on its last try (see "A re-run that cannot start" below),
 the processing watcher:
-1. puts the row back to **'archived'**, keeping when it was filed (`archived_at`) and its re-run
-   scope, and wiping a review return's resume point (the next re-run starts afresh);
+1. puts the row back to **'archived'**, keeping when it was filed (`archived_at`), and wiping its
+   re-run scope and a review return's resume point (the next re-run starts afresh, with the scope
+   the version scan works out then);
 2. writes the reason into `error_message`, starting "re-run of a filed video failed: ..." (the
    watcher's start-up clean-up of old errors leaves this message alone; filing the video again
    clears it), and sets `error_count` back to 0 so the next re-run has its retries;
