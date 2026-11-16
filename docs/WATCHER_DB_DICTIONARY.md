@@ -316,6 +316,12 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
 
 READ THIS BEFORE INTERPRETING A STATE
 
+  Every state change (update_state, force_state, mark_failed,
+  mark_unresolvable, reset_failed) reads the row and writes its new state
+  under one write lock (db.WatcherDB._state_write). Two programs changing
+  the same row at once no longer overwrite each other: the second waits and
+  is checked against the state the first one wrote.
+
   'archived' means THIS NODE is done with it, not "fully analyzed". A GPU
   machine running also_process=false marks 'archived' the moment it has staged
   the pose; the algorithms have not run yet. The collages table uses the same

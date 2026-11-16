@@ -4324,3 +4324,21 @@ queue never deletes or overwrites a person's file".
   source looks older than the route and the newer-than-the-route rule cannot protect it. Tests:
   `tests/test_unfinished_routes_are_finished.py` (the held-file tests hold a real open handle).
 
+
+
+## Update: failed and unresolvable videos -- state changes, resets, retries and re-drives
+
+This section collects how a video that went wrong on one machine is changed, reset, retried
+and taken up again. Each part says what a person sees and what to do.
+
+**A state change is one step.** Every change of a video's state in the watcher database
+(`update_state`, `force_state`, `mark_failed`, `mark_unresolvable`, `reset_failed`) reads the
+row's current state and writes the new one while holding the database's write lock. Before, the
+read and the write were two separate statements, and another program writing the same database
+(a review window, route-to-queue, a command-line tool) could change the row in between; its
+change was then silently overwritten by a state that had been checked against the old one. Now
+the second program waits for the first (or, after the wait limit, gets "database is locked",
+which the watcher retries on a network drive) and is checked against the state the first one
+wrote. A `force_state` WARNING line is written only after the change is saved. For an operator:
+nothing to do. Where it lives: `watcher/db.py` `WatcherDB._state_write`; tests in
+`tests/test_state_change_under_write_lock.py`.

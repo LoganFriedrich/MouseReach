@@ -5,6 +5,7 @@ Tracks every video through the watcher pipeline with full state management,
 collage tracking, and processing audit logs.
 """
 
+import contextlib
 import sqlite3
 import threading
 import socket
@@ -662,6 +663,38 @@ class WatcherDB:
         """Get current timestamp in ISO format."""
         return datetime.now().isoformat()
 
+    @contextlib.contextmanager
+    def _state_write(self):
+        """One connection holding the database's write lock from the read of a
+        row's state to the write of its new one: BEGIN IMMEDIATE, the caller's
+        SELECT, check and UPDATE, then COMMIT -- or ROLLBACK and re-raise.
+
+        WHY: the connection is in autocommit mode, so a state change used to
+        be a SELECT and an UPDATE as two separate statements. Several programs
+        write this database (the watcher, the review windows, route-to-queue,
+        repose-videos, the command-line tools); two of them could both read the
+        same state, both pass the transition check, and the second UPDATE then
+        silently overwrote the first with a state that was never legal from
+        the row's real state. Under the write lock the second program waits
+        (or, after the busy timeout, raises 'database is locked', which
+        _retry_network_errors retries on a network drive) and then checks
+        against the state the first one wrote."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    yield conn
+                    conn.commit()
+                except BaseException:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    raise
+            finally:
+                conn.close()
+
     @_retry_network_errors
     def register_collage(self, filename: str, source_path: str) -> int:
         """
@@ -856,9 +889,9 @@ class WatcherDB:
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
-        with self._lock:
-            conn = self._get_connection()
-            try:
+        try:
+            # Read, check and write under one write lock (_state_write).
+            with self._state_write() as conn:
                 # Get current state
                 row = conn.execute(
                     "SELECT state FROM videos WHERE video_id = ?",
@@ -907,15 +940,11 @@ class WatcherDB:
                     f"UPDATE videos SET {', '.join(fields)} WHERE video_id = ?",
                     values
                 )
+            logger.info(f"Updated video {video_id}: {current_state} -> {new_state}")
 
-                conn.commit()
-                logger.info(f"Updated video {video_id}: {current_state} -> {new_state}")
-
-            except Exception as e:
-                logger.error(f"Failed to update video {video_id}: {e}")
-                raise
-            finally:
-                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to update video {video_id}: {e}")
+            raise
 
     @_retry_network_errors
     def force_state(self, video_id: str, new_state: str, reason: str = None,
@@ -949,9 +978,9 @@ class WatcherDB:
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
-        with self._lock:
-            conn = self._get_connection()
-            try:
+        try:
+            # Read, check and write under one write lock (_state_write).
+            with self._state_write() as conn:
                 row = conn.execute(
                     "SELECT state FROM videos WHERE video_id = ?",
                     (video_id,)
@@ -972,16 +1001,10 @@ class WatcherDB:
                         f"refused (reason given: {reason or 'none'}). Unlock it "
                         f"with mousereach-uncrystallize first.")
 
-                # Make the bypass visible. If this transition would have been legal
-                # anyway, say so -- that distinguishes "force_state used where
-                # update_state would have done" from a genuine override.
+                # Whether this transition would have been legal anyway; the
+                # WARNING below says so (after the commit, so a bypass that was
+                # rolled back is never logged as done).
                 legal = new_state in VIDEO_TRANSITIONS.get(current_state, [])
-                logger.warning(
-                    "force_state: %s %s -> %s (bypassed validation%s)%s",
-                    video_id, current_state, new_state,
-                    "; transition was legal anyway" if legal else "",
-                    f" reason: {reason}" if reason else " reason: not given",
-                )
 
                 # A re-run scope ends with its re-run and a resume point with
                 # its round (_end_of_round_defaults).
@@ -1015,15 +1038,19 @@ class WatcherDB:
                     f"UPDATE videos SET {', '.join(fields)} WHERE video_id = ?",
                     values
                 )
+            # Make the bypass visible. If this transition would have been legal
+            # anyway, say so -- that distinguishes "force_state used where
+            # update_state would have done" from a genuine override.
+            logger.warning(
+                "force_state: %s %s -> %s (bypassed validation%s)%s",
+                video_id, current_state, new_state,
+                "; transition was legal anyway" if legal else "",
+                f" reason: {reason}" if reason else " reason: not given",
+            )
 
-                conn.commit()
-                logger.info(f"Force-set video {video_id}: {current_state} -> {new_state}")
-
-            except Exception as e:
-                logger.error(f"Failed to force-set video {video_id}: {e}")
-                raise
-            finally:
-                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to force-set video {video_id}: {e}")
+            raise
 
     @_retry_network_errors
     def force_collage_state(self, filename: str, new_state: str, **kwargs):
@@ -1487,9 +1514,9 @@ class WatcherDB:
         crystallized_refusal says why). Its filed results are untouched by
         whatever went wrong, and 'failed' would put it back in the retry work.
         """
-        with self._lock:
-            conn = self._get_connection()
-            try:
+        try:
+            # Read and write under one write lock (_state_write).
+            with self._state_write() as conn:
                 # Get current error count
                 row = conn.execute(
                     "SELECT error_count, state FROM videos WHERE video_id = ?",
@@ -1519,15 +1546,11 @@ class WatcherDB:
                         updated_at = ?
                     WHERE video_id = ?
                 """, (error_message, error_count, self._now(), self._now(), video_id))
+            logger.warning(f"Marked video {video_id} as failed (error #{error_count}): {error_message}")
 
-                conn.commit()
-                logger.warning(f"Marked video {video_id} as failed (error #{error_count}): {error_message}")
-
-            except Exception as e:
-                logger.error(f"Failed to mark {video_id} as failed: {e}")
-                raise
-            finally:
-                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to mark {video_id} as failed: {e}")
+            raise
 
     @_retry_network_errors
     def mark_unresolvable(self, video_id: str, reason: str):
@@ -1551,9 +1574,9 @@ class WatcherDB:
         video keeps its state, and 'unresolvable' can be re-driven into the
         pipeline when a file turns up.
         """
-        with self._lock:
-            conn = self._get_connection()
-            try:
+        try:
+            # Read and write under one write lock (_state_write).
+            with self._state_write() as conn:
                 row = conn.execute(
                     "SELECT state FROM videos WHERE video_id = ?", (video_id,)
                 ).fetchone()
@@ -1574,17 +1597,13 @@ class WatcherDB:
                         updated_at = ?
                     WHERE video_id = ?
                 """, (reason, self._now(), video_id))
+            logger.warning(
+                f"{video_id}: no file on this node ({row['state']} -> "
+                f"unresolvable): {reason}")
 
-                conn.commit()
-                logger.warning(
-                    f"{video_id}: no file on this node ({row['state']} -> "
-                    f"unresolvable): {reason}")
-
-            except Exception as e:
-                logger.error(f"Failed to mark {video_id} unresolvable: {e}")
-                raise
-            finally:
-                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to mark {video_id} unresolvable: {e}")
+            raise
 
     @_retry_network_errors
     def reset_failed(self, video_id: str, to_state: str = None):
