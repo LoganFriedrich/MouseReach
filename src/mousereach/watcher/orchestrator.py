@@ -1347,6 +1347,11 @@ class BaseOrchestrator:
                             f"processing log")
         except Exception as e:
             logger.debug(f"Startup: could not clear old errors on archived rows ({e})")
+        # The list of filed videos whose re-run failed, rewritten from the rows
+        # (processing role only; ProcessingOrchestrator._write_failed_rerun_attention).
+        writer = getattr(self, '_write_failed_rerun_attention', None)
+        if writer is not None:
+            writer()
 
         while not shutdown_event.is_set():
             try:
@@ -1511,6 +1516,11 @@ class BaseOrchestrator:
             # GPU; ask for one over shared storage (once per scan, so the
             # cost is one pass per half hour, not per poll).
             self._publish_repose_requests()
+            # Drop videos filed again since from the failed re-runs list
+            # (the processing role keeps one; a pose-only node has none).
+            writer = getattr(self, '_write_failed_rerun_attention', None)
+            if writer is not None:
+                writer()
         except Exception as e:
             logger.warning(f"Reprocess scan skipped: {e}")
         finally:
@@ -5605,8 +5615,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # once its wait is over and while it has retries left
         # (_failed_retry_due); after that it stays failed and is listed by
         # mousereach-watch-status, where a person can see it.
-        due = [v for v in self.db.get_videos_in_state('failed')
-               if self._failed_retry_due(v)]
+        failed = self.db.get_videos_in_state('failed')
+        # A filed video's re-run that has failed for good goes back to
+        # 'archived' (_restore_filed_after_failed_rerun says why).
+        for v in [v for v in failed if self._filed_rerun_gave_up(v)]:
+            self._restore_filed_after_failed_rerun(
+                v['video_id'], f"gave up after {int(v.get('error_count') or 0)} "
+                               f"attempt(s); last error: {v.get('error_message') or '?'}")
+            failed = [f for f in failed if f['video_id'] != v['video_id']]
+        due = [v for v in failed if self._failed_retry_due(v)]
         if due:
             pick = self._pick_from_pool(due, priority_animal, 'animal_id')
             if pick is not None:
@@ -5770,6 +5787,117 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return resolve_pose_input(row.get('dlc_output_path'), vid, pdir) is not None
         except Exception:
             return False
+
+    @staticmethod
+    def _is_filed_rerun(row) -> bool:
+        """A row whose current run is a re-run of a FILED video started by the
+        version scan or a person's Re-run: it has been filed (archived_at) and
+        carries a re-run scope. A review return clears the scope, so a video a
+        person has just answered questions about is never one of these: its
+        working copy holds answers the filed results lack."""
+        return bool(row) and bool(row.get('archived_at')) and bool(
+            (row.get('reprocess_scope') or '').strip())
+
+    def _filed_rerun_gave_up(self, row) -> bool:
+        """A failed filed re-run with no retry left, or whose working copy is
+        gone so a retry could not run (it would wait for ever)."""
+        if not self._is_filed_rerun(row):
+            return False
+        try:
+            if int(row.get('error_count') or 0) >= self._max_retries():
+                return True
+            pdir = self.processing_dir
+            return not pdir or not (Path(pdir) / f"{row['video_id']}.mp4").is_file()
+        except Exception:
+            return False
+
+    def _restore_filed_after_failed_rerun(self, video_id: str, why: str) -> None:
+        """A re-run of a filed video failed for good, or could not start: put
+        the row back to 'archived', not 'failed'. Never raises.
+
+        WHY: filed means done. The filed results in Analyzed are untouched by a
+        re-run that failed -- they are still what the database pulls -- but the
+        row said 'failed', every status view showed the video as failed, and
+        the version scan (which walks only 'archived' rows) never looked at it
+        again, so no later declaration change or review could bring it current.
+
+        What is done:
+          * the row goes back to 'archived', keeping its archived_at (when it
+            was filed) and its reprocess_scope, with error_message
+            "<FAILED_RERUN_PREFIX>: <why>" -- kept across restarts
+            (clear_errors_on_archived), cleared when the video is filed again;
+          * error_count back to 0, so the next re-run offered has its retries
+            (the history is in processing_log);
+          * a 'reprocess' step logged 'failed' with the reason;
+          * the working copies in this machine's processing folder are set
+            aside (moved, never deleted) into
+            <processing_root>/_finished_elsewhere/<date>/<folder>/, the same
+            place the startup clean-up moves copies of finished videos;
+          * the list <NAS root>/attention/<host>_failed_reruns.json names the
+            video for a person (watcher/attention.py).
+        The version scan offers the re-run again when the declared versions
+        change, or when a review is saved; a person can press Re-run."""
+        from mousereach.watcher.db import FAILED_RERUN_PREFIX
+        try:
+            row = self.db.get_video(video_id) or {}
+            message = f"{FAILED_RERUN_PREFIX}: {why}"
+            self.db.force_state(
+                video_id, 'archived',
+                reason="re-run of a filed video failed; its filed results stand",
+                archived_at=row.get('archived_at'),
+                error_message=message, error_count=0)
+            self.db.log_step(video_id, 'reprocess', 'failed', message=message)
+            logger.error(f"{video_id}: {message} -- back to 'archived', filed results "
+                         f"unchanged; listed for a person")
+        except Exception as e:
+            logger.error(f"{video_id}: could not put the row back to 'archived' after "
+                         f"its re-run failed ({e}); it stays as it was")
+            return
+        self._set_aside_working_copies(video_id)
+        self._write_failed_rerun_attention()
+
+    def _set_aside_working_copies(self, video_id: str) -> int:
+        """Move this video's files out of the local processing folder into
+        <processing_root>/_finished_elsewhere/<date>/<folder>/ (never delete).
+        Returns how many files moved. Never raises."""
+        moved = 0
+        try:
+            from datetime import date as _date
+            folder = self.processing_dir
+            root = Paths.PROCESSING_ROOT
+            if not folder or not root or not Path(folder).is_dir():
+                return 0
+            target = (Path(root) / "_finished_elsewhere" / _date.today().isoformat()
+                      / Path(folder).name)
+            for e in os.scandir(folder):
+                n = e.name
+                if not e.is_file():
+                    continue
+                if n == f"{video_id}.mp4" or n.startswith(video_id + "DLC") \
+                        or n.startswith(video_id + "_"):
+                    target.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(Path(folder) / n), str(target / n))
+                    moved += 1
+            if moved:
+                logger.info(f"{video_id}: set aside {moved} working file(s) -> {target}")
+        except Exception as e:
+            logger.warning(f"{video_id}: could not set aside its working files ({e})")
+        return moved
+
+    def _write_failed_rerun_attention(self) -> None:
+        """Rewrite this machine's list of filed videos whose re-run failed
+        (watcher/attention.py), from the rows: 'archived' rows whose
+        error_message starts with FAILED_RERUN_PREFIX. Never raises."""
+        try:
+            from mousereach.watcher.db import FAILED_RERUN_PREFIX
+            from mousereach.watcher.attention import write_failed_reruns
+            if not Paths.NAS_ROOT:
+                return
+            rows = [r for r in self.db.get_videos_in_state('archived')
+                    if (r.get('error_message') or '').startswith(FAILED_RERUN_PREFIX)]
+            write_failed_reruns(Paths.NAS_ROOT, self.hostname, rows)
+        except Exception as e:
+            logger.debug(f"could not rewrite the failed re-runs list: {e}")
 
     # =========================================================================
     # DISPATCH
@@ -5960,7 +6088,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         # Copy needed files to local Processing/
         if not self.processing_dir:
-            self.db.mark_failed(video_id, "PROCESSING path not configured")
+            # Cannot start: a configuration fault, not the video's. A filed
+            # video is never left 'failed' (_restore_filed_after_failed_rerun).
+            self._restore_filed_after_failed_rerun(
+                video_id, "could not start: PROCESSING path not configured")
             return
 
         self.processing_dir.mkdir(parents=True, exist_ok=True)
@@ -5978,9 +6109,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # the stage-reuse checks (a locked _reaches.json nearly caused
             # exactly that). Fail loudly instead; safe_copy has
             # already absorbed transient locks with retries.
-            self.db.mark_failed(
+            # Cannot start. The partial working set is set aside with the
+            # row put back to 'archived' (_restore_filed_after_failed_rerun):
+            # marked 'failed', the retry used to run the pipeline on exactly
+            # the partial set this guard is here to stop.
+            self._restore_filed_after_failed_rerun(
                 video_id,
-                "reprocess copy failed for: %s" % ", ".join(sorted(copy_failures)))
+                "could not start: copying it down failed for: %s"
+                % ", ".join(sorted(copy_failures)))
             return
 
         # Transition to processing state. Name the model explicitly: the copy

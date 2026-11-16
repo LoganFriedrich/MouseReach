@@ -149,6 +149,12 @@ def _retry_network_errors(method):
     return wrapper
 
 
+# The start of the error_message an 'archived' row carries when a re-run of the
+# filed video failed for good and the row was put back (its filed results
+# stand). clear_errors_on_archived keeps such messages; filing clears them.
+FAILED_RERUN_PREFIX = "re-run of a filed video failed"
+
+
 class WatcherDB:
     """
     SQLite database for tracking video pipeline state.
@@ -580,13 +586,21 @@ class WatcherDB:
         Run at watcher start. WHY: until 2026-10-22 reaching 'archived' did not
         clear the previous error, so finished videos kept showing failures from
         runs that later succeeded (e.g. after a share outage). The history is in processing_log.
+
+        Except a message starting with FAILED_RERUN_PREFIX: that is not an old
+        error but the CURRENT state of a filed video whose re-run failed (its
+        filed results stand, the re-run did not happen); the watcher lists it
+        for a person from exactly these rows
+        (orchestrator.ProcessingOrchestrator._restore_filed_after_failed_rerun).
+        Filing the video again clears it.
         """
         with self._lock:
             conn = self._get_connection()
             try:
                 cur = conn.execute(
                     "UPDATE videos SET error_message = NULL WHERE state = 'archived' "
-                    "AND error_message IS NOT NULL")
+                    "AND error_message IS NOT NULL AND error_message NOT LIKE ?",
+                    (FAILED_RERUN_PREFIX + "%",))
                 conn.commit()
                 return cur.rowcount or 0
             finally:

@@ -3440,3 +3440,49 @@ file beside the run; `watcher/reprocessor.py` (`_index_archive`, `_pending_groun
 side and the un-mark side of `scan`); `video_prep/core/collage_provenance.py`
 `build_complete_stems`. Tests in `tests/test_version_scan_start_stage.py` and
 `tests/test_filed_rerun_skips_checks.py`.
+
+## Update: a filed video whose re-run fails stays filed
+
+**Before.** A filed video being re-run (marked 'outdated' by the version scan or a person's
+Re-run) that failed was marked 'failed' like any video. After its retries it stayed 'failed' for
+good, although its filed results in Analyzed were untouched and still what the database pulls.
+Every status view showed it as failed, and the version scan, which looks only at 'archived' rows,
+never looked at it again. A re-run that could not even start (copying its files down failed, or no
+processing folder configured) was marked 'failed' too, and the retry then ran the pipeline on the
+partly copied files.
+
+**Now.** A filed video never ends in 'failed' because of a re-run. When its re-run has used up its
+retries (`watcher.max_retries`, 3), or its working copy is gone so no retry could run, or the re-run
+cannot start, the processing watcher:
+1. puts the row back to **'archived'**, keeping when it was filed (`archived_at`) and its re-run
+   scope;
+2. writes the reason into `error_message`, starting "re-run of a filed video failed: ..." (the
+   watcher's start-up clean-up of old errors leaves this message alone; filing the video again
+   clears it), and sets `error_count` back to 0 so the next re-run has its retries;
+3. logs a `reprocess` step as failed, with the reason;
+4. moves this video's working files out of the local processing folder into
+   `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted -- the same
+   place the start-up clean-up puts copies of finished videos);
+5. lists the video in `<NAS root>/attention/<host>_failed_reruns.json`, which the Pipeline
+   Dashboard's red panel shows ("needs a person"). The list is rewritten from the rows at start-up,
+   after every such failure and after every version scan, so a video filed again drops off at the
+   next scan.
+
+The version scan then offers the re-run again when the declared versions change or a newer review
+or ground truth is saved, and a person can press Re-run.
+
+**Not covered, on purpose:** a video a review queue returned (a person has just answered questions
+about it) carries no re-run scope, and if it fails for good it stays 'failed' with its files in
+place, as before: its working files hold answers the filed results do not have yet, so they are not
+set aside. It is listed by `mousereach-watch-status` for a person.
+
+**For an operator.** Seeing "re-run of a filed video failed" in the red panel: the video's data in
+the database is the filed, older version and is complete. Read the reason; if it names a file that
+could not be copied or a missing setting, fix that and press Re-run for the video (or wait for the
+next version change). Nothing is lost: the failed run's files are in `_finished_elsewhere`.
+
+**Where it lives.** `watcher/orchestrator.py` `ProcessingOrchestrator._restore_filed_after_failed_rerun`
+(with `_is_filed_rerun`, `_filed_rerun_gave_up`, `_set_aside_working_copies`,
+`_write_failed_rerun_attention`), called from the retry bucket of `_select_work_item` and from
+`_reprocess_video`; `watcher/db.py` `FAILED_RERUN_PREFIX`, `clear_errors_on_archived`;
+`watcher/attention.py` `write_failed_reruns`. Tests in `tests/test_failed_filed_rerun_stays_filed.py`.

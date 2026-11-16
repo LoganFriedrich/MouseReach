@@ -38,3 +38,33 @@ def read_items(nas_root) -> List[dict]:
             out.append({"kind": "unreadable_list", "needs_person": True, "listed_in": f.name,
                         "says": "The list %s could not be read (%s)." % (f.name, e)})
     return out
+
+
+def write_failed_reruns(nas_root, hostname: str, rows) -> None:
+    """Write this machine's list of filed videos whose re-run failed for good
+    to <nas_root>/attention/<host>_failed_reruns.json (replaced each time;
+    an empty list when there are none). ``rows`` are watcher rows (video_id,
+    error_message). needs_person: the filed results stand, but what the
+    re-run was for (a newer algorithm, a person's answers) has not reached
+    them, and whatever stopped it may need a person. Never raises."""
+    import logging
+    try:
+        from mousereach.pipeline.fsutil import write_json_atomic
+        d = Path(nas_root) / "attention"
+        if not d.is_dir():
+            return
+        items = [{
+            "kind": "filed_rerun_failed",
+            "needs_person": True,
+            "video_id": r.get("video_id"),
+            "says": ("%s: %s. Its filed results are unchanged and it stays filed; "
+                     "the version scan offers the re-run again after the next change "
+                     "of the declared versions, or press Re-run for it. The watcher "
+                     "log and processing log say what failed."
+                     % (r.get("video_id"), r.get("error_message") or "re-run failed")),
+        } for r in sorted(rows, key=lambda r: r.get("video_id") or "")]
+        write_json_atomic(d / f"{hostname}_failed_reruns.json",
+                          {"written_by": hostname, "items": items}, indent=1)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Could not write the failed re-runs attention list: %s", e)

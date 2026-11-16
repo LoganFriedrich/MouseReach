@@ -134,7 +134,13 @@ State
   error_message           why it failed, or for 'unresolvable' the owning host
                           (the CURRENT error: reaching 'archived' clears it, and since
                           2026-10-22 each watcher start clears it on archived rows;
-                          the history is in processing_log)
+                          the history is in processing_log). One exception: an
+                          'archived' row whose message starts "re-run of a filed
+                          video failed" is a filed video whose re-run failed for
+                          good; its filed results stand. That message is kept
+                          across restarts and cleared when the video is filed
+                          again (the processing watcher lists these rows in
+                          <NAS root>/attention/<host>_failed_reruns.json).
   error_count             retries so far; not incremented for 'unresolvable'
   last_error_at
 
@@ -166,8 +172,18 @@ Version tracking (added by migration, db.py:331)
                             check; the review gate still runs and asks only
                             about segments no person answered (since
                             2026-11-03; PIPELINE_AS_BUILT.md).
-                          NULL when not outdated. A leftover non-NULL value on
-                          an 'archived' row is stale and means nothing.
+                          The scope stays on the row while the re-run is under
+                          way. A 'kinematics' scope on a filed row is read back
+                          when the run is picked without a start stage (the
+                          failed-video retry, a watcher restart), so the retry
+                          is kinematics-only too. It is cleared when the video
+                          is filed, when a review queue returns it, and when the
+                          gate finds stale outputs.
+                          NULL when not outdated. On an 'archived' row a value
+                          means either a filed video whose re-run failed for
+                          good (error_message then starts "re-run of a filed
+                          video failed") or a leftover from before scopes were
+                          cleared at filing; neither starts a run.
   mark_reason             NULL for a scanner mark; set for a HAND-mark. The
                           reprocessor's two-way door never un-marks a row
                           carrying a reason. That is the whole point of the
