@@ -228,3 +228,79 @@ def test_a_never_filed_rerun_whose_copy_down_fails_is_failed_not_archived(orch, 
     assert row["state"] == "failed"
     assert row["archived_at"] is None
     assert any(orch.processing_dir.iterdir())             # nothing set aside
+
+
+# ---------------------------------------------------------------------------
+# The version scan does not offer the same failing re-run again and again
+# ---------------------------------------------------------------------------
+# WHY: the restored row keeps its out-of-date manifest. Without a check the
+# next scan marks it 'outdated', the re-run fails the same way through all its
+# retries, it is restored, and so on for ever (reprocessor.failed_rerun_stamp).
+
+CURRENT = {"segmenter": "2.0", "reach_detector": "3.0", "outcome_detector": "4.0",
+           "assignment": "1.0", "kinematic_extractor": "5.0"}
+
+
+@pytest.fixture
+def scan_rig(orch, monkeypatch):
+    import mousereach.config as config
+    import mousereach.review.causal_review_io as crio
+    monkeypatch.setattr(config, "filing_rules", lambda: {
+        "ABC": {"folder": "Project_A", "cohort_folder": "{CODE}{NN}"}})
+    nas = Paths.NAS_ROOT
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", nas / "Analyzed", raising=False)
+    cohort = nas / "Analyzed" / "Project_A" / "ABC03"
+    cohort.mkdir(parents=True)
+    (nas / "pipeline_versions.json").write_text(json.dumps({"versions": CURRENT}),
+                                                encoding="utf-8")
+    m = {"video_stem": VID, "created_at": "2099-01-01T10:00:00",
+         "pipeline_versions": dict(CURRENT, kinematic_extractor="4.0")}
+    (cohort / f"{VID}_processing_manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    (cohort / f"{VID}_features.json").write_text("{}", encoding="utf-8")
+    (cohort / f"{VID}.mp4").write_bytes(b"x")
+    monkeypatch.setattr(crio, "review_path_index", lambda stems: {})
+    monkeypatch.setattr(crio, "resolve_review_path", lambda *a, **k: None)
+    _filed(orch)
+    _working_copy(orch)
+    _fail(orch, 3)
+    orch._select_work_item()                               # restored to 'archived'
+    assert orch.db.get_video(VID)["state"] == "archived"
+
+    def scan():
+        from mousereach.watcher.reprocessor import ReprocessingScanner
+        return ReprocessingScanner(orch.db, nas).scan(mark_outdated=True,
+                                                       adopt_orphans=False)
+    return type("ScanRig", (), {"nas": nas, "cohort": cohort, "scan": staticmethod(scan)})
+
+
+def test_a_restored_failed_rerun_is_not_marked_again_by_the_next_scan(orch, scan_rig):
+    summary = scan_rig.scan()
+    assert orch.db.get_video(VID)["state"] == "archived"
+    assert summary["failed_rerun_waiting"] == 1
+    assert summary["failed_rerun_waiting_videos"] == [VID]
+    scan_rig.scan()                                        # nor on the one after
+    assert orch.db.get_video(VID)["state"] == "archived"
+
+
+def test_a_declaration_change_offers_the_failed_rerun_again(orch, scan_rig):
+    (scan_rig.nas / "pipeline_versions.json").write_text(
+        json.dumps({"versions": dict(CURRENT, kinematic_extractor="5.1")}), encoding="utf-8")
+    scan_rig.scan()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "outdated" and row["reprocess_scope"] == "kinematics"
+
+
+def test_ground_truth_saved_since_offers_the_failed_rerun_again(orch, scan_rig):
+    (scan_rig.cohort / f"{VID}_unified_ground_truth.json").write_text(
+        json.dumps({"last_modified_at": "2099-01-02T10:00:00"}), encoding="utf-8")
+    scan_rig.scan()
+    assert orch.db.get_video(VID)["state"] == "outdated"
+
+
+def test_a_declaration_that_makes_the_filed_results_current_clears_the_failure(orch, scan_rig):
+    (scan_rig.nas / "pipeline_versions.json").write_text(json.dumps({
+        "versions": CURRENT,
+        "compatible_versions": {"kinematic_extractor": ["4.0"]}}), encoding="utf-8")
+    scan_rig.scan()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "archived" and row["error_message"] is None

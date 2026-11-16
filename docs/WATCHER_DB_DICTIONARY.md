@@ -156,7 +156,15 @@ Timestamps (ISO strings, on the writing machine's clock)
 Version tracking (added by migration, db.py:331)
 
   pipeline_versions_hash  may be NULL even on current videos; the manifest
-                          beside the video in Analyzed/ is the real provenance
+                          beside the video in Analyzed/ is the real provenance.
+                          Written in one case: on an 'archived' row whose
+                          re-run failed for good (error_message starts "re-run
+                          of a filed video failed"), the fingerprint of what
+                          that re-run was attempted against -- the declared
+                          versions, the saved review, the filed ground truth
+                          (watcher/reprocessor.py failed_rerun_stamp). The
+                          version scan does not mark such a row again while
+                          the fingerprint is unchanged.
   reprocess_scope         which stage to re-run, set when state='outdated':
                             'full'          needs a NEW pose on a GPU. Since
                                             2026-08-24 this means only "no pose

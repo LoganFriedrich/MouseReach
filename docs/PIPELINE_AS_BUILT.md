@@ -3478,8 +3478,22 @@ cannot start, the processing watcher:
    after every such failure and after every version scan, so a video filed again drops off at the
    next scan.
 
-The version scan then offers the re-run again when the declared versions change or a newer review
-or ground truth is saved, and a person can press Re-run.
+**When the re-run is offered again.** The row also keeps a fingerprint of what the re-run was
+attempted against (`pipeline_versions_hash`): the declared versions (`pipeline_versions.json`,
+including `compatible_versions`), the saved review the scan would apply and the ground truth filed
+beside the video. On every pass the version scan works the fingerprint out again for such a row:
+- the same: the video is **not** marked again. It is counted under `failed_rerun_waiting` (named in
+  `failed_rerun_waiting_videos`). WHY: the filed manifest is still out of date, so without this the
+  scan would mark the video again within half an hour, the re-run would fail the same way through
+  all its retries, and so on for ever -- each round a wasted run, and the video dropping off and
+  reappearing in the list a person reads;
+- different (the declaration changed, or a review or ground truth was saved since the failure): the
+  scan judges the video as for any other filed video and marks it if it is still out of date;
+- if the change makes the filed results count as current (for example a version declared
+  compatible), the failure message is cleared and the video leaves the list.
+
+A person can press **Re-run** for the video at any time; that marks it at once, whatever the
+fingerprint says.
 
 **Only a video that was filed.** All of the above applies only to a row that has been filed
 (`archived_at` set) and is being re-run. A video that was never filed -- a first pass that failed

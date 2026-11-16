@@ -54,6 +54,73 @@ def earliest_stale_stage(stale_components) -> str:
 
 
 
+def failed_rerun_stamp(current: dict, review_entry=None, gt_entry=None) -> str:
+    """What a filed video's failed re-run was attempted against, as one short
+    fingerprint: the declared versions (pipeline_versions.json 'versions' and
+    'compatible_versions'), the saved review the scan would apply (path,
+    whole-second modified time, size) and the ground truth filed beside it
+    (name, whole-second modified time).
+
+    WHY: a filed video whose re-run failed for good goes back to 'archived'
+    (orchestrator.ProcessingOrchestrator._restore_filed_after_failed_rerun)
+    with its out-of-date manifest. The version scan would mark it 'outdated'
+    again on its very next pass, the re-run would fail the same way, and so on
+    for ever -- each round costing a run and making the video drop off and
+    reappear in the list a person reads. The row keeps this fingerprint
+    (pipeline_versions_hash) from the moment of the failure; the scan offers
+    the re-run again only once it differs: the declaration changed, or a
+    review or ground truth was saved since. A person can always press Re-run.
+    Compared for equality only, never ordered, so no two clocks are
+    compared."""
+    import hashlib
+    current = current or {}
+
+    def _entry(e, n):
+        if not e:
+            return None
+        try:
+            return [Path(e[0]).name, int(float(e[1]))] + ([e[2]] if n == 3 else [])
+        except Exception:
+            return [str(e)]
+    payload = {
+        "versions": current.get("versions") or {},
+        "compatible_versions": current.get("compatible_versions") or {},
+        "review": _entry(review_entry, 3),
+        "ground_truth": _entry(gt_entry, 2),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str)
+                          .encode("utf-8")).hexdigest()[:16]
+
+
+def failed_rerun_stamp_for(video_id: str, nas_root=None) -> Optional[str]:
+    """failed_rerun_stamp for one video, looked up the way the version scan
+    sees it: the declaration on the share, the review from
+    causal_review_io.review_path_index, the ground truth in the video's filed
+    folder. None when it cannot be worked out (the scan then records it on
+    its next pass). Never raises."""
+    try:
+        from mousereach.config import Paths
+        from mousereach.pipeline.versions import get_current_versions
+        current = get_current_versions(nas_root or Paths.NAS_ROOT)
+        try:
+            from mousereach.review.causal_review_io import review_path_index
+            review = review_path_index([video_id]).get(video_id)
+        except Exception:
+            review = None
+        gt = None
+        try:
+            from mousereach.archive.core import get_archive_destination
+            p = Path(get_archive_destination(video_id)) / f"{video_id}{GROUND_TRUTH_SUFFIX}"
+            if p.is_file():
+                gt = (p, p.stat().st_mtime)
+        except Exception:
+            gt = None
+        return failed_rerun_stamp(current, review, gt)
+    except Exception as e:
+        logger.warning("%s: could not fingerprint the failed re-run (%s)", video_id, e)
+        return None
+
+
 def pose_scorers_in_archive(archive_dir) -> Dict[str, set]:
     """{video_id: set of DLC scorers whose pose file is in the archive}.
 
@@ -240,6 +307,10 @@ class ReprocessingScanner:
             'review_mislabel_videos': [],
             'errors': 0,
             'outdated_videos': [],
+            # Filed videos whose re-run failed for good and that nothing has
+            # changed for since (failed_rerun_stamp): not offered again.
+            'failed_rerun_waiting': 0,
+            'failed_rerun_waiting_videos': [],
             'unsupported_tray_videos': [],
         }
 
@@ -269,8 +340,10 @@ class ReprocessingScanner:
         manifest_index: dict = {}
         manifest_mtime: dict = {}
         feats_mtime: dict = {}
+        archive_listed = False
         try:
             manifest_index, manifest_mtime, feats_mtime = self._index_archive()
+            archive_listed = True
         except Exception as e:
             manifest_index, manifest_mtime, feats_mtime = {}, {}, {}
             logger.warning(
@@ -342,9 +415,38 @@ class ReprocessingScanner:
         # the archive tree at all.
         pose_index = None
 
+        from mousereach.watcher.db import FAILED_RERUN_PREFIX
         for video in archived:
             video_id = video['video_id']
             summary['scanned'] += 1
+
+            # A filed video whose re-run failed for good is not offered again
+            # until something it was attempted against has changed
+            # (failed_rerun_stamp says why: otherwise it loops for ever).
+            if (video.get('error_message') or '').startswith(FAILED_RERUN_PREFIX):
+                # Without this pass's review index or archive listing the
+                # fingerprint cannot be compared fairly: wait.
+                stamp_now = (failed_rerun_stamp(
+                    current, review_index.get(video_id),
+                    getattr(self, '_filed_gt', {}).get(video_id))
+                    if (review_index is not None and archive_listed) else None)
+                kept = video.get('pipeline_versions_hash')
+                if not kept and stamp_now and mark_outdated:
+                    # The failure could not record its fingerprint: record it
+                    # now and wait, rather than re-run the same failure.
+                    try:
+                        self.db.set_fields(video_id, pipeline_versions_hash=stamp_now)
+                    except Exception as e:
+                        logger.warning(f"{video_id}: could not record the failed "
+                                       f"re-run's fingerprint ({e})")
+                    kept = stamp_now
+                if stamp_now is None or not kept or kept == stamp_now:
+                    summary['failed_rerun_waiting'] += 1
+                    summary['failed_rerun_waiting_videos'].append(video_id)
+                    continue
+                logger.info(f"{video_id}: its re-run failed before, but the declared "
+                            f"versions, its review or its ground truth have changed "
+                            f"since -- checked again")
 
             # E (Easy) and F (Flat) trays are not re-run for version changes.
             # They are processed (last, never skipped), but
@@ -445,6 +547,17 @@ class ReprocessingScanner:
 
                 if comparison['is_current'] and not review_pending and not gt_pending:
                     summary['current'] += 1
+                    # A failed re-run whose reason has since gone away (the
+                    # declaration now counts the filed results current) is
+                    # no longer owed: its message is cleared, so it leaves
+                    # the list a person reads.
+                    if mark_outdated and (video.get('error_message') or '').startswith(
+                            FAILED_RERUN_PREFIX):
+                        try:
+                            self.db.set_fields(video_id, error_message=None)
+                        except Exception as e:
+                            logger.warning(f"{video_id}: could not clear its failed "
+                                           f"re-run message ({e})")
                 else:
                     summary['outdated'] += 1
                     if not comparison['is_current']:

@@ -58,8 +58,9 @@ def write_failed_reruns(nas_root, hostname: str, rows) -> None:
             "needs_person": True,
             "video_id": r.get("video_id"),
             "says": ("%s: %s. Its filed results are unchanged and it stays filed; "
-                     "the version scan offers the re-run again after the next change "
-                     "of the declared versions, or press Re-run for it. The watcher "
+                     "the version scan offers the re-run again once the declared "
+                     "versions change or a review or ground truth is saved for it, "
+                     "or press Re-run for it. The watcher "
                      "log and processing log say what failed."
                      % (r.get("video_id"), r.get("error_message") or "re-run failed")),
         } for r in sorted(rows, key=lambda r: r.get("video_id") or "")]

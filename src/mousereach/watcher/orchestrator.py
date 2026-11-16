@@ -5840,6 +5840,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
             (clear_errors_on_archived), cleared when the video is filed again;
           * error_count back to 0, so the next re-run offered has its retries
             (the history is in processing_log);
+          * the fingerprint of what the re-run was attempted against
+            (reprocessor.failed_rerun_stamp: the declared versions, its saved
+            review, its filed ground truth) in pipeline_versions_hash, so the
+            version scan does not offer the same failing re-run again until
+            one of them changes;
           * a 'reprocess' step logged 'failed' with the reason;
           * the working copies in this machine's processing folder are set
             aside (moved, never deleted) into
@@ -5847,8 +5852,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             place the startup clean-up moves copies of finished videos;
           * the list <NAS root>/attention/<host>_failed_reruns.json names the
             video for a person (watcher/attention.py).
-        The version scan offers the re-run again when the declared versions
-        change, or when a review is saved; a person can press Re-run.
+        The version scan offers the re-run again only when the declared
+        versions change, or a review or ground truth is saved, since the
+        failure (ReprocessingScanner.scan, 'failed_rerun_waiting'); a person
+        can press Re-run at any time.
 
         Only for a video that has been filed (archived_at set) and is being
         re-run (a scope on the row, _is_filed_rerun). Any other row is marked
@@ -5871,12 +5878,19 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 logger.error(f"{video_id}: could not mark it failed ({e})")
             return
         try:
+            from mousereach.watcher.reprocessor import failed_rerun_stamp_for
+            stamp = failed_rerun_stamp_for(video_id)
+        except Exception:
+            stamp = None
+        try:
             message = f"{FAILED_RERUN_PREFIX}: {why}"
             self.db.force_state(
                 video_id, 'archived',
                 reason="re-run of a filed video failed; its filed results stand",
                 archived_at=row.get('archived_at'),
-                error_message=message, error_count=0)
+                error_message=message, error_count=0,
+                last_error_at=self.db._now(),
+                pipeline_versions_hash=stamp)
             self.db.log_step(video_id, 'reprocess', 'failed', message=message)
             logger.error(f"{video_id}: {message} -- back to 'archived', filed results "
                          f"unchanged; listed for a person")
