@@ -175,6 +175,28 @@ RERUN_NOT_STARTED_PREFIX = "re-run could not start"
 REPROCESS_SCOPE_STATES = frozenset(
     {"outdated", "processing", "failed", "processed", "archiving"})
 
+# The states in which a row's resume_stage and held_at_step mean something: a
+# review return's resumed run ('processing', a 'failed' run waiting for its
+# retry, and the 'processed' -> 'archiving' steps of filing it). Entering any
+# other state clears both, unless the caller sets them -- with one exception:
+# held_at_step is also kept on entering a review hold ('triage',
+# 'deep_review'; HELD_AT_STEP_STATES). A new hold (review_gate.route_to_queue)
+# writes its own; a row set to its queue's state because its bundle was found
+# there (the watcher's reconcile paths) keeps the step its route recorded,
+# which is the same one the bundle's manifest carries.
+# WHY: a resume point is written for ONE round, by the return of a review.
+# It used to outlive that round on rows that a person reset (reset_failed),
+# that were sent for a new pose, or that went 'unresolvable' and were found
+# again. Their next run read the leftover back (orchestrator._run_pipeline ->
+# _resume_point) and reused the segmentation, reach and outcome outputs of
+# the earlier round -- a pose redone with the same model has the same scorer
+# name, so resume_point.current_start cannot tell those outputs came from the
+# distrusted pose. A reset, a re-pose or a fresh intake is a fresh run with
+# every step and check.
+RESUME_POINT_STATES = frozenset(
+    {"processing", "failed", "processed", "archiving"})
+HELD_AT_STEP_STATES = RESUME_POINT_STATES | {"triage", "deep_review"}
+
 
 class WatcherDB:
     """
@@ -658,6 +680,11 @@ class WatcherDB:
         # A re-run scope ends with its re-run (REPROCESS_SCOPE_STATES).
         if new_state not in REPROCESS_SCOPE_STATES:
             kwargs.setdefault('reprocess_scope', None)
+        # A resume point ends with its round (RESUME_POINT_STATES).
+        if new_state not in RESUME_POINT_STATES:
+            kwargs.setdefault('resume_stage', None)
+        if new_state not in HELD_AT_STEP_STATES:
+            kwargs.setdefault('held_at_step', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -750,6 +777,11 @@ class WatcherDB:
         # A re-run scope ends with its re-run (REPROCESS_SCOPE_STATES).
         if new_state not in REPROCESS_SCOPE_STATES:
             kwargs.setdefault('reprocess_scope', None)
+        # A resume point ends with its round (RESUME_POINT_STATES).
+        if new_state not in RESUME_POINT_STATES:
+            kwargs.setdefault('resume_stage', None)
+        if new_state not in HELD_AT_STEP_STATES:
+            kwargs.setdefault('held_at_step', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -1421,17 +1453,21 @@ class WatcherDB:
                     )
 
                 # Reset. A re-run scope ends with its re-run
-                # (REPROCESS_SCOPE_STATES): a reset to an earlier state is a
-                # fresh run with every step and check.
+                # (REPROCESS_SCOPE_STATES) and a review return's resume point
+                # with its round (RESUME_POINT_STATES): a reset to an earlier
+                # state is a fresh run with every step and check.
+                keep_point = 1 if to_state in RESUME_POINT_STATES else 0
                 conn.execute("""
                     UPDATE videos
                     SET state = ?,
                         error_message = NULL,
                         reprocess_scope = CASE WHEN ? THEN reprocess_scope ELSE NULL END,
+                        resume_stage = CASE WHEN ? THEN resume_stage ELSE NULL END,
+                        held_at_step = CASE WHEN ? THEN held_at_step ELSE NULL END,
                         updated_at = ?
                     WHERE video_id = ?
                 """, (to_state, 1 if to_state in REPROCESS_SCOPE_STATES else 0,
-                      self._now(), video_id))
+                      keep_point, keep_point, self._now(), video_id))
 
                 conn.commit()
                 logger.info(f"Reset video {video_id} from failed to {to_state}")

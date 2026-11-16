@@ -65,3 +65,66 @@ def test_a_person_resetting_a_failed_rerun_gets_a_full_run(db):
     db.mark_failed(VID, "kinematics failed: boom")
     db.reset_failed(VID, to_state="dlc_complete")
     assert db.get_video(VID)["reprocess_scope"] is None
+
+
+# ---------------------------------------------------------------------------
+# A review return's resume point ends with its round too
+# (watcher/db.py RESUME_POINT_STATES)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def resumed(tmp_path):
+    """A row a review return put back in 'processing': it resumes at the
+    checks, after a hold at reach assignment."""
+    d = WatcherDB(tmp_path / "r.db")
+    d.register_video(video_id=VID, source_path="x")
+    d.force_state(VID, "processing", reason="test: first pass")
+    d.update_state(VID, "triage", held_at_step="assignment")
+    d.update_state(VID, "processing", resume_stage="checks")
+    return d
+
+
+def test_the_resume_point_survives_its_own_round(resumed):
+    resumed.mark_failed(VID, "kinematics failed: boom")     # waits for its retry
+    row = resumed.get_video(VID)
+    assert row["resume_stage"] == "checks"
+    assert row["held_at_step"] == "assignment"
+
+
+@pytest.mark.parametrize("to_state", ["dlc_complete", "dlc_queued", "validated"])
+def test_a_person_resetting_a_resumed_run_gets_a_fresh_run(resumed, to_state):
+    resumed.mark_failed(VID, "boom")
+    resumed.reset_failed(VID, to_state=to_state)
+    row = resumed.get_video(VID)
+    assert row["resume_stage"] is None and row["held_at_step"] is None
+
+
+@pytest.mark.parametrize("state", ["dlc_complete", "dlc_queued", "unresolvable", "outdated"])
+def test_a_row_leaving_its_resumed_run_loses_the_resume_point(resumed, state):
+    resumed.force_state(VID, state, reason="test: reset, re-posed or parked")
+    row = resumed.get_video(VID)
+    assert row["resume_stage"] is None and row["held_at_step"] is None
+
+
+def test_an_unresolvable_row_found_again_is_a_fresh_run(resumed):
+    resumed.update_state(VID, "unresolvable")
+    resumed.update_state(VID, "dlc_complete")
+    resumed.update_state(VID, "processing")
+    assert resumed.get_video(VID)["resume_stage"] is None
+
+
+def test_a_new_hold_keeps_the_step_it_sets(resumed):
+    resumed.update_state(VID, "deep_review", held_at_step="segmentation")
+    row = resumed.get_video(VID)
+    assert row["held_at_step"] == "segmentation"
+    assert row["resume_stage"] is None
+
+
+def test_a_row_set_to_its_queue_state_keeps_the_step_its_route_recorded(resumed):
+    """The watcher sets a row to its queue's state when it finds the bundle
+    there (no held_at_step passed): the step the route recorded stays, and
+    the resume point of the earlier round goes."""
+    resumed.force_state(VID, "triage", reason="test: bundle found in the queue")
+    row = resumed.get_video(VID)
+    assert row["held_at_step"] == "assignment"
+    assert row["resume_stage"] is None

@@ -249,6 +249,22 @@ def test_the_resume_point_survives_a_restart(rig, monkeypatch):
     assert calls == ["assignment", "triage", "hand_scores", "gate"]
 
 
+def test_a_reset_after_a_resumed_run_failed_runs_every_step(rig, monkeypatch):
+    """A person resets a failed resumed run to an earlier state (to re-pose it,
+    or to run it again from the start): the next run is a fresh one. It must
+    not read the earlier round's resume point back and reuse the outputs it
+    finds -- a pose redone with the same model carries the same scorer name,
+    so those outputs cannot be told apart from current ones
+    (watcher/db.py RESUME_POINT_STATES)."""
+    _return_from(rig, "triage", held_at_step="assignment", monkeypatch=monkeypatch)
+    rig.orch.db.mark_failed(VID, "boom")
+    rig.orch.db.reset_failed(VID, to_state="dlc_complete")
+    rig.orch.db.update_state(VID, "processing")            # taken in again
+    calls = rig.run_from_row()
+    assert calls == ["segmentation", "reach", "outcome", "assignment",
+                     "triage", "hand_scores", "gate"]
+
+
 def test_a_video_held_for_its_hand_scores_reuses_its_assignments_when_picked_again(rig):
     """Picked again only because its scores file changed: every output it has,
     reach assignment included, is reused (only the checks run again)."""

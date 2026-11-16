@@ -3664,10 +3664,20 @@ work and extra ways to fail a cleared video.
    placeholder the hold wrote (`assignment_failed`, no version); when that video resumes at
    `checks` the placeholder is kept, because the person's causal-reach answers replace it --
    re-running reach assignment would redo the step that sent the video.
-5. **A retry or a restart resumes at the same point**: `resume_stage` stays on the row until the
-   video is filed (both roles wipe it, with `held_at_step`), until a new hold, or until the gate
-   finds stale outputs (then the next pick recomputes from segmentation). A version re-run of a
-   filed video (the version scan, Re-run) wipes it when it starts.
+5. **A retry or a restart resumes at the same point, and nothing later does**: `resume_stage`
+   (with `held_at_step`) stays on the row only while the returned video's own round lasts --
+   'processing', a 'failed' run waiting for its retry, and 'processed' -> 'archiving' while it is
+   filed (`watcher/db.py` `RESUME_POINT_STATES`). It is wiped when the video is filed (both
+   roles), by a new hold (which writes its own `held_at_step`), when the gate finds stale outputs
+   (then the next pick recomputes from segmentation), when a version re-run of a filed video
+   (the version scan, Re-run) starts, and whenever the row enters any other state:
+   a person's reset of a failed video (`mousereach-watch-reprocess`, `reset_failed`) to an earlier
+   state, a send for a new pose, 'unresolvable', 'outdated', or a forced state. Such a row's next
+   run is a fresh one with every step and check. (`held_at_step` is also kept while the video sits
+   in a review queue, 'triage' or 'deep_review': it is that hold's record.) WHY: a leftover resume point used to make a reset
+   or re-posed video reuse the earlier round's segmentation, reach and outcome outputs, and a pose
+   redone with the same model carries the same scorer name, so the pose test of point 4 could not
+   tell those outputs came from the pose that was being replaced.
 
 The processing log shows each resumed run as a `pipeline` step `resumed`, for example "returned from
 review: resumes at 'assignment'; every later step and check runs", or, when an output was out of
@@ -3686,4 +3696,4 @@ runs only the checks; an output that is missing is remade, with every step after
 `current_start`); `review_gate.route_to_queue` and `run_gate` record the step;
 `review_return._return_to_processing` (`_resume_stage`) writes the resume point;
 `ProcessingOrchestrator._run_pipeline` / `_resume_point` read it; `watcher/db.py` adds the two
-columns. Tests in `tests/test_review_return_resumes_after_the_step.py`.
+columns and ends them with their round (`RESUME_POINT_STATES`). Tests in `tests/test_review_return_resumes_after_the_step.py`.

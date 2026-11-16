@@ -210,8 +210,16 @@ Version tracking (added by migration, db.py:331)
                           'segmentation' (every route into deep review),
                           'outcome' (the gate's triage), 'assignment' (triage
                           because reach assignment could not run). Also in the
-                          bundle's manifest (provenance.held_at_step). Cleared
-                          when the video is filed. NULL on rows held before
+                          bundle's manifest (provenance.held_at_step). Kept
+                          while the video waits in the queue and through the
+                          run its return starts; cleared when the video is
+                          filed and whenever the row enters a state that is
+                          neither in that run (resume_stage, below) nor a
+                          review hold ('triage', 'deep_review'; db.py
+                          HELD_AT_STEP_STATES), unless the caller sets it. A
+                          new hold writes its own; a row set to its queue's
+                          state because its bundle was found there keeps the
+                          step its route recorded. NULL on rows held before
                           this column existed.
   resume_stage            where the run of a video a review queue returned
                           resumes: 'reach', 'assignment' or 'checks' (the
@@ -219,8 +227,15 @@ Version tracking (added by migration, db.py:331)
                           Written by the return, read by the pipeline (which
                           starts earlier if an earlier output is out of date;
                           watcher/resume_point.py). Kept through a retry or a
-                          restart; cleared by a new hold, by filing, by a
-                          stale-outputs gate and when a version re-run starts.
+                          restart: only in 'processing', 'failed', 'processed'
+                          and 'archiving' (db.py RESUME_POINT_STATES). Cleared
+                          by a new hold, by filing, by a stale-outputs gate,
+                          when a version re-run starts, and whenever the row
+                          enters any other state unless the caller sets it --
+                          update_state, force_state and reset_failed all do
+                          this, so a person's reset, a send for a new pose,
+                          'unresolvable' or 'outdated' ends the resume point
+                          and the next run is a fresh one with every step.
   mark_reason             NULL for a scanner mark; set for a HAND-mark. The
                           reprocessor's two-way door never un-marks a row
                           carrying a reason. That is the whole point of the
