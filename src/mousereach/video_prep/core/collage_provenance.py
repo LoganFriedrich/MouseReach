@@ -251,7 +251,7 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     An offspring counts ONLY when it is (a) in the final Analyzed output, (b)
     processed with the CURRENTLY shipped versions (its processing manifest matches
     pipeline_versions.json -- not an outdated DLC model or algo version), and (c)
-    has no human review still pending application. (b) and (c) follow the re-run
+    has no human review or ground truth still pending application. (b) and (c) follow the re-run
     scan's rules: an Easy/Flat video counts once its session file exists, and a
     person's segmentation is exempt from the segmenter version. An offspring sitting in Analyzed
     from an old version, or with an unresolved review, is deliberately EXCLUDED --
@@ -280,7 +280,8 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
     import fnmatch
     import os
     from mousereach.pipeline.analyzed_tree import iter_file_entries
-    found, feats = [], {}
+    from mousereach.pipeline.manifest import GROUND_TRUTH_SUFFIX, ground_truth_applied
+    found, feats, gts = [], {}, {}
     for e in iter_file_entries(analyzed_root):
         if fnmatch.fnmatch(e.name, f"*{_PROC_MANIFEST_SUFFIX}"):
             found.append((e.name[: -len(_PROC_MANIFEST_SUFFIX)], Path(e.path),
@@ -288,6 +289,9 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
         elif e.name.endswith("_features.json"):
             feats[(os.path.dirname(e.path), e.name[: -len("_features.json")])] = \
                 e.stat().st_mtime
+        elif e.name.endswith(GROUND_TRUTH_SUFFIX):
+            gts[(os.path.dirname(e.path), e.name[: -len(GROUND_TRUTH_SUFFIX)])] = \
+                (Path(e.path), e.stat().st_mtime)
     try:
         from mousereach.review.causal_review_io import review_path_index
         reviews = review_path_index({stem for stem, _, _ in found})
@@ -334,6 +338,15 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
                     features_mtime=ft)
         if pending:
             continue  # a human review still to apply -> not done
+        # Ground truth filed beside the video and saved or changed after its
+        # kinematics: the re-run scan re-runs it (reprocessor.
+        # _pending_ground_truth), so it is not done. ONE rule for both:
+        # pipeline.manifest.ground_truth_applied.
+        gt = gts.get((str(mp.parent), stem))
+        if gt is not None and not ground_truth_applied(
+                manifest, gt[0], gt_mtime=gt[1],
+                features_mtime=feats.get((str(mp.parent), stem))):
+            continue
         complete.add(stem)
     return complete
 

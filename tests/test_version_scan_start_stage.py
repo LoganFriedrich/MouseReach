@@ -53,6 +53,11 @@ def archive(tmp_path, monkeypatch):
     cohort.mkdir(parents=True)
     (nas / "pipeline_versions.json").write_text(json.dumps({
         "versions": dict(CURRENT, dlc_scorer=SCORER)}), encoding="utf-8")
+    # The shared version index is never written by a test.
+    import mousereach.pipeline.version_index as vi
+    from types import SimpleNamespace
+    monkeypatch.setattr(vi, "VersionIndex", lambda *a, **k: SimpleNamespace(
+        upsert_from_manifest=lambda *a, **k: None))
     # No saved review anywhere unless a test puts one there.
     monkeypatch.setattr(crio, "review_path_index", lambda stems: {})
     monkeypatch.setattr(crio, "resolve_review_path", lambda *a, **k: None)
@@ -154,3 +159,80 @@ def test_a_filed_video_with_no_manifest_and_no_review_is_only_counted(archive):
     summary = _scan(nas, db)
     assert summary["no_manifest"] == 1
     assert STEM not in db.marks
+
+
+# --- ground truth saved or changed after filing ------------------------------
+# WHY: the scan compared only the causal review with what the filed kinematics
+# applied, so ground truth saved after filing reached the features only if
+# some other reason re-ran the video (pipeline.manifest.ground_truth_applied).
+
+def _gt(folder, last_modified_at, stem=STEM, body="a"):
+    p = folder / f"{stem}_unified_ground_truth.json"
+    p.write_text(json.dumps({"video_name": stem, "last_modified_at": last_modified_at,
+                             "note": body}), encoding="utf-8")
+    return p
+
+
+def test_ground_truth_saved_after_filing_reruns_the_kinematics(archive):
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT))
+    _gt(cohort, "2099-01-02T09:00:00")          # after the manifest's created_at
+    db = DB(archived=[STEM])
+    summary = _scan(nas, db)
+    assert db.marks[STEM] == "kinematics"
+    assert summary["outdated_videos"][0]["stale_components"] == ["ground_truth"]
+
+
+def test_ground_truth_older_than_the_run_is_not_a_reason(archive):
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT))
+    _gt(cohort, "2099-01-01T09:00:00")          # before created_at
+    db = DB(archived=[STEM])
+    assert _scan(nas, db)["current"] == 1
+    assert STEM not in db.marks
+
+
+def test_the_rerun_stamps_the_ground_truth_and_the_next_scan_leaves_it(archive, tmp_path):
+    """After the re-run the stamp matches and the video is not marked again;
+    a later change to the file marks it once more."""
+    from mousereach.pipeline.manifest import record_kinematic_version
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT))
+    gt = _gt(cohort, "2099-01-02T09:00:00")
+    # what the re-run does: the filed files are copied down, kinematics run,
+    # the manifest is stamped with the ground truth beside the run, and filed.
+    run = tmp_path / "run"
+    run.mkdir()
+    for f in cohort.iterdir():
+        (run / f.name).write_bytes(f.read_bytes())
+    assert record_kinematic_version(STEM, run, "5.0",
+                                    ground_truth_path=run / gt.name)
+    (cohort / f"{STEM}_processing_manifest.json").write_bytes(
+        (run / f"{STEM}_processing_manifest.json").read_bytes())
+    db = DB(archived=[STEM])
+    assert _scan(nas, db)["current"] == 1
+    _gt(cohort, "2099-01-03T09:00:00", body="changed")
+    db = DB(archived=[STEM])
+    _scan(nas, db)
+    assert db.marks[STEM] == "kinematics"
+
+
+def test_a_marked_video_whose_ground_truth_is_still_owed_is_not_unmarked(archive):
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT))
+    _gt(cohort, "2099-01-02T09:00:00")
+    db = DB(outdated=[STEM])
+    assert _scan(nas, db)["unmarked_current"] == 0
+    assert db.rows[STEM] == "outdated"
+
+
+def test_recording_retirement_agrees_about_ground_truth(archive):
+    """Recording retirement must not call a video complete that the scan
+    will re-run (collage_provenance.build_complete_stems)."""
+    from mousereach.video_prep.core.collage_provenance import build_complete_stems
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT))
+    _gt(cohort, "2099-01-02T09:00:00")
+    assert STEM not in build_complete_stems(nas / "Analyzed", nas)
+    _gt(cohort, "2099-01-01T09:00:00")
+    assert STEM in build_complete_stems(nas / "Analyzed", nas)

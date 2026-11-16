@@ -295,8 +295,62 @@ def create_processing_manifest(
     return manifest
 
 
+GROUND_TRUTH_SUFFIX = "_unified_ground_truth.json"
+
+
+def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
+                         features_mtime=None, sha_cache: Optional[dict] = None) -> bool:
+    """Were the kinematics recorded by ``manifest`` made with the ground-truth
+    file at ``gt_path`` as it is now?
+
+    The ONE rule for this question, read by the version scan (watcher/
+    reprocessor.py: False -> re-run the filed video's kinematics) and by
+    recording retirement (video_prep/core/collage_provenance.py: False -> the
+    video is not complete). WHY: a ground-truth file saved or changed after a
+    video was filed reached its features only if some other reason happened
+    to re-run it -- the scan compared only the causal review.
+
+    In order, like the review's rule (reprocessor._pending_review_path):
+      1. the manifest's ``applied_ground_truth`` stamp (record_kinematic_version)
+         -- the sha256 of the file beside the run -- against the file's content;
+      2. a manifest with no stamp: the file's own ``last_modified_at`` against
+         the manifest's ``created_at`` (ISO strings sort as times);
+      3. only when either is missing: the file's modified time against the
+         features file's.
+    An error answers True (applied): a file that cannot be read must not
+    re-run a filed video on every scan."""
+    try:
+        stamp = (manifest or {}).get('applied_ground_truth') or {}
+        if stamp.get('sha256'):
+            from mousereach.pipeline.fsutil import sha256_file
+            key = ("gt", str(gt_path), gt_mtime)
+            digest = sha_cache.get(key) if (sha_cache is not None and gt_mtime is not None) else None
+            if digest is None:
+                digest = sha256_file(gt_path)
+                if sha_cache is not None and gt_mtime is not None:
+                    sha_cache[key] = digest
+            return digest == stamp['sha256']
+        last = None
+        try:
+            last = json.loads(Path(gt_path).read_text(encoding='utf-8')).get('last_modified_at')
+        except Exception:
+            pass
+        created = (manifest or {}).get('created_at')
+        if last and created:
+            return not (str(last) > str(created))
+        if features_mtime is None:
+            return False        # ground truth and no kinematics at all: owed
+        mtime = gt_mtime if gt_mtime is not None else Path(gt_path).stat().st_mtime
+        return not (mtime > features_mtime)
+    except Exception as e:
+        logger.warning("Could not tell whether %s was applied (%s); counted as applied",
+                       gt_path, e)
+        return True
+
+
 def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
-                             review_path: Optional[Path] = None) -> bool:
+                             review_path: Optional[Path] = None,
+                             ground_truth_path: Optional[Path] = None) -> bool:
     """Stamp the kinematic extractor version onto a video's existing manifest.
 
     Both pipelines compose the manifest BEFORE running feature extraction --
@@ -347,6 +401,29 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
                 manifest.pop('applied_review', None)
         else:
             manifest.pop('applied_review', None)
+        # The same for the ground-truth file that was beside the run
+        # (<stem>_unified_ground_truth.json in the processing folder -- a
+        # re-run copies the filed one there). The version scan compares the
+        # ground truth beside the FILED video with this stamp
+        # (ground_truth_applied), so a file saved or changed after filing
+        # re-runs the kinematics once, and only once.
+        if ground_truth_path is not None and Path(ground_truth_path).is_file():
+            try:
+                from mousereach.pipeline.fsutil import sha256_file
+                try:
+                    last = json.loads(Path(ground_truth_path).read_text(
+                        encoding='utf-8')).get('last_modified_at')
+                except Exception:
+                    last = None
+                manifest['applied_ground_truth'] = {
+                    'file': Path(ground_truth_path).name,
+                    'last_modified_at': last,
+                    'sha256': sha256_file(ground_truth_path),
+                }
+            except Exception:
+                manifest.pop('applied_ground_truth', None)
+        else:
+            manifest.pop('applied_ground_truth', None)
         with open(manifest_path, 'w') as f:
             json.dump(manifest, f, indent=2)
         try:

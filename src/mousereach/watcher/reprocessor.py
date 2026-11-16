@@ -21,6 +21,9 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# The ground-truth file's name ending (pipeline.manifest.GROUND_TRUTH_SUFFIX).
+GROUND_TRUTH_SUFFIX = "_unified_ground_truth.json"
+
 # Dependency-aware reprocessing: map each version-tracked component to its pipeline
 # stage, in order. Given the stale components we re-run from the EARLIEST stale
 # post-DLC stage and reuse the still-current upstream outputs.
@@ -388,10 +391,12 @@ class ReprocessingScanner:
                     # so the next scan compares its versions as for any video.
                     review_path = self._pending_review_path(
                         video_id, None, feats_mtime, review_index)
-                    if review_path is None:
+                    gt_pending = self._pending_ground_truth(video_id, None, feats_mtime)
+                    if review_path is None and not gt_pending:
                         summary['no_manifest'] += 1
                         continue
-                    if (self._review_declares_mislabel(review_path)
+                    if (review_path is not None
+                            and self._review_declares_mislabel(review_path)
                             and not self._segments_human_fixed(video_id)):
                         summary['review_mislabel'] += 1
                         summary['review_mislabel_videos'].append(video_id)
@@ -399,8 +404,10 @@ class ReprocessingScanner:
                             self._divert_mislabel_to_deep_review(video_id)
                         continue
                     summary['no_manifest_review'] += 1
+                    owed = (['human_review'] if review_path is not None else [])
+                    owed += (['ground_truth'] if gt_pending else [])
                     self._mark_kinematics_rerun(
-                        video_id, ['human_review', 'no manifest'], summary,
+                        video_id, owed + ['no manifest'], summary,
                         mark_outdated, full_only)
                     continue
 
@@ -416,6 +423,10 @@ class ReprocessingScanner:
                 review_path = self._pending_review_path(
                     video_id, manifest, feats_mtime, review_index)
                 review_pending = review_path is not None
+                # Ground truth saved or changed after the kinematics were made
+                # is owed the same kinematics-only re-run: the feature
+                # extractor applies ground truth over the algorithm's answers.
+                gt_pending = self._pending_ground_truth(video_id, manifest, feats_mtime)
 
                 # EXCEPTION: a pending review that declares a segment mislabel
                 # (true_segment_num set) must NOT drive a kinematics-only re-run
@@ -432,7 +443,7 @@ class ReprocessingScanner:
                         self._divert_mislabel_to_deep_review(video_id)
                     continue
 
-                if comparison['is_current'] and not review_pending:
+                if comparison['is_current'] and not review_pending and not gt_pending:
                     summary['current'] += 1
                 else:
                     summary['outdated'] += 1
@@ -484,11 +495,15 @@ class ReprocessingScanner:
                             for c in (comparison.get('unrecorded_components') or [])]
                         if review_pending:
                             stale.append('human_review')
+                        if gt_pending:
+                            stale.append('ground_truth')
                     else:
-                        # version-current, only a newer human review to apply ->
-                        # re-run just kinematics (the extractor applies the review).
+                        # version-current, only a newer human review or ground
+                        # truth to apply -> re-run just kinematics (the
+                        # extractor applies both).
                         scope = 'kinematics'
-                        stale = ['human_review']
+                        stale = ['human_review'] if review_pending else []
+                        stale += ['ground_truth'] if gt_pending else []
                         summary['review_triggered'] += 1
 
                     if scope == 'full':
@@ -579,6 +594,8 @@ class ReprocessingScanner:
                 if self._pending_review_path(video_id, manifest,
                                              feats_mtime, review_index) is not None:
                     continue  # a re-run is still owed for the review
+                if self._pending_ground_truth(video_id, manifest, feats_mtime):
+                    continue  # a re-run is still owed for the ground truth
                 if mark_outdated:
                     try:
                         self.db.update_state(video_id, 'archived',
@@ -611,6 +628,28 @@ class ReprocessingScanner:
         self._save_caches(manifest_index, review_index)
 
         return summary
+
+    def _pending_ground_truth(self, video_id: str, manifest=None,
+                              feats_mtime=None) -> bool:
+        """True when ground truth filed beside this video was saved or changed
+        after its kinematics were made (pipeline.manifest.ground_truth_applied,
+        the rule shared with recording retirement). Only the ground truth in
+        the video's own filed folder is looked at, from the scan's one listing
+        of the archive (_index_archive). Never raises."""
+        hit = getattr(self, "_filed_gt", {}).get(video_id)
+        if hit is None:
+            return False
+        try:
+            from mousereach.pipeline.manifest import ground_truth_applied
+            gt_path, gt_mtime = hit
+            ft = (feats_mtime or {}).get(video_id)
+            return not ground_truth_applied(manifest, gt_path, gt_mtime=gt_mtime,
+                                            features_mtime=ft,
+                                            sha_cache=self._review_sha_cache)
+        except Exception as err:
+            logger.warning('%s: could not check its ground truth, so it counts as '
+                           'applied: %s', video_id, err)
+            return False
 
     def _mark_kinematics_rerun(self, video_id, stale, summary, mark_outdated,
                                full_only) -> None:
@@ -839,6 +878,7 @@ class ReprocessingScanner:
         that way from the version scan without a word."""
         from mousereach.pipeline.analyzed_tree import iter_file_entries
         man, man_t, feat_t = {}, {}, {}
+        self._filed_gt = {}
         root = self.archive_dir
         if not root.exists():
             return man, man_t, feat_t
@@ -853,6 +893,11 @@ class ReprocessingScanner:
                 man_t[s] = e.stat().st_mtime
             elif n.endswith("_features.json"):
                 feat_t[n[: -len("_features.json")]] = e.stat().st_mtime
+            elif n.endswith(GROUND_TRUTH_SUFFIX):
+                # Ground truth filed beside a video, from the same listing
+                # (no extra network call): _pending_ground_truth reads it.
+                self._filed_gt[n[: -len(GROUND_TRUTH_SUFFIX)]] = (
+                    Path(e.path), e.stat().st_mtime)
         return man, man_t, feat_t
 
     def _load_manifest_indexed(self, video_id: str, manifest_index: dict,

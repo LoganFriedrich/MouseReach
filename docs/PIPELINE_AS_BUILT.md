@@ -3405,3 +3405,38 @@ no waiting review is still only counted (`no_manifest` in `mousereach-version-ch
 
 **Where it lives.** `watcher/reprocessor.py` (`ReprocessingScanner.scan`,
 `_mark_kinematics_rerun`). Tests in `tests/test_version_scan_start_stage.py`.
+
+## Update: ground truth saved after filing re-runs the video's kinematics
+
+**Before.** The version scan re-ran a filed video's kinematics when a saved causal review was not
+the one its kinematics had applied. Nothing did the same for ground truth
+(`<video>_unified_ground_truth.json`): ground truth saved or changed after a video was filed
+reached its features only if some other reason happened to re-run the video.
+
+**Now.**
+- When kinematics are made, the processing manifest records which ground-truth file was beside the
+  run, by content: `applied_ground_truth` = `{file, last_modified_at, sha256}` (none when there was
+  no ground truth). A re-run copies the filed ground truth down beside the run, so it is recorded.
+- The version scan reads the ground-truth files in the filed folders from the same single listing
+  of the archive it already makes (no extra network calls) and asks, for each, whether the
+  kinematics were made with it as it is now:
+  1. the manifest has the stamp: the file's content against the stamp;
+  2. a manifest from before the stamp: the file's own `last_modified_at` against the manifest's
+     `created_at`;
+  3. only when either is missing: the file's modified time against the features file's.
+- If not, the video is marked 'outdated' for a **kinematics-only** re-run, listed with
+  `ground_truth` among its reasons (also for a video with no manifest). After the re-run the stamp
+  matches and the video is not marked again; a later change marks it once more. A marked video
+  whose ground truth is still owed is not un-marked by the scan's "versions compare current" pass.
+- Recording retirement uses the same rule, so a video the scan will re-run for its ground truth does
+  not count as complete for retiring its recording.
+
+Only ground truth beside the filed video is watched. The stamp names the file that was beside the
+run; which ground truth the feature extractor itself applies is decided by the extractor.
+
+**Where it lives.** `pipeline/manifest.py` (`ground_truth_applied`, the one rule;
+`record_kinematic_version` writes the stamp); `watcher/orchestrator.py` `_make_features` passes the
+file beside the run; `watcher/reprocessor.py` (`_index_archive`, `_pending_ground_truth`, the mark
+side and the un-mark side of `scan`); `video_prep/core/collage_provenance.py`
+`build_complete_stems`. Tests in `tests/test_version_scan_start_stage.py` and
+`tests/test_filed_rerun_skips_checks.py`.
