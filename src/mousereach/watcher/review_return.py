@@ -32,6 +32,7 @@ import functools
 import os
 import logging
 import socket
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -412,18 +413,34 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
             stem, e)
 
 
-# --- cross-node bundle claims -------------------------------------------
+# --- bundle claims: one PROCESS at a time, across machines --------------
 # With several watchers scanning the SAME shared queues, two nodes that spot
 # the same cleared bundle in one pass would both start moving its files and
 # tear the bundle in half across machines -- the split-bundle failure class,
 # cross-node edition. Claimed only at MUTATION time (returns, diverts,
-# retires), never for mere scanning, with the same exclusive-create marker the
-# posed-video intake uses (watcher/claim_marker.py): exactly one node's create
-# succeeds. A claim is broken only when its holder has stopped reporting
-# (claim_marker.GONE_AFTER_S, by the file server's clock), never for its age.
+# retires, clean-ups), never for mere
+# scanning, with the same exclusive-create marker the posed-video intake uses
+# (watcher/claim_marker.py): exactly one node's create succeeds. A claim is
+# broken only when its holder has stopped reporting (claim_marker.GONE_AFTER_S,
+# by the file server's clock), never for its age.
+#
+# The claim belongs to ONE PROCESS (claim_marker.this_process), and within it
+# to one thread. WHY: several processes of one machine can move the same
+# bundles -- the watcher's return scan, and the tools a person runs on the
+# machine where review happens -- and a claim that belonged to the host let
+# one of them act while another was half-way through moving the same bundle.
+# A claim whose process has ended is taken over (crash leftovers). The same
+# thread may take it again while holding it (a step that calls another step
+# claiming the same bundle): it is counted, and the marker goes only when the
+# outermost holder releases it.
+#
 # The rule this replaced was a check, write, sleep and read-back (not
 # atomic), went ahead unclaimed when the claim folder could not be made, and
 # broke another node's marker after two hours by age alone.
+
+_claims_lock = threading.Lock()
+# stem -> [holding thread id, depth]: this process's claims.
+_claims_held: Dict[str, list] = {}
 
 
 def _return_claims_dir():
@@ -431,26 +448,64 @@ def _return_claims_dir():
     return (Path(root) / ".return_claims") if root else None
 
 
-def _claim_return(stem: str) -> bool:
-    d = _return_claims_dir()
-    if d is None:
-        return True                            # no shared queues configured
-    host = socket.gethostname()
-    if claim_marker.take(d, stem, host, suffix=".claim"):
+def _take_marker(d: Path, stem: str) -> bool:
+    host, me = socket.gethostname(), claim_marker.this_process()
+    if claim_marker.take(d, stem, host, suffix=".claim", process=me):
         return True
     # Held by another node. If that node has stopped running, its claim is a
     # crashed move's leftover: break it and try once more.
     if stem in claim_marker.sweep_gone(d, host, node_status.status_dir(Paths.NAS_ROOT),
                                        suffix=".claim"):
-        return claim_marker.take(d, stem, host, suffix=".claim")
+        return claim_marker.take(d, stem, host, suffix=".claim", process=me)
     return False
 
 
+def _claim_return(stem: str) -> bool:
+    """Take the claim on ``stem``'s bundle for this thread (see the block
+    comment above). True when held afterwards; every True must be matched by
+    one _release_return_claim. False while another machine, another process
+    or another thread of this process holds it."""
+    me = threading.get_ident()
+    with _claims_lock:
+        held = _claims_held.get(stem)
+        if held is not None:
+            if held[0] != me:
+                return False
+            held[1] += 1
+            return True
+        d = _return_claims_dir()
+        if d is not None and not _take_marker(d, stem):
+            return False
+        _claims_held[stem] = [me, 1]
+        return True
+
+
+def _claim_return_nested(stem: str):
+    """``(claimed, release)`` for callers that may run inside a holder of the
+    claim (a step another step started while holding it). The claim is counted per thread,
+    so ``release`` is simply ``claimed``: releasing an inner claim never drops
+    the outer one."""
+    ok = _claim_return(stem)
+    return ok, ok
+
+
 def _release_return_claim(stem: str) -> None:
-    d = _return_claims_dir()
-    if d is None:
-        return
-    claim_marker.release(d, stem, socket.gethostname(), suffix=".claim")
+    """Give back one _claim_return of this thread; the marker goes with the
+    outermost one. A claim this thread does not hold is never touched."""
+    me = threading.get_ident()
+    with _claims_lock:
+        held = _claims_held.get(stem)
+        if held is None or held[0] != me:
+            return
+        held[1] -= 1
+        if held[1] > 0:
+            return
+        _claims_held.pop(stem, None)
+        d = _return_claims_dir()
+        if d is None:
+            return
+        claim_marker.release(d, stem, socket.gethostname(), suffix=".claim",
+                             process=claim_marker.this_process())
 
 
 def _with_return_claim(fn):

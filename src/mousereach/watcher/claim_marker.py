@@ -45,6 +45,21 @@ longer exists) is judged by the marker's own share-stamped age instead. When
 nobody's report can be read at all, nothing is broken: with no evidence a
 holder is gone, the claim stands.
 
+ONE PROCESS, NOT ONE MACHINE, WHEN THE CALLER SAYS SO
+-----------------------------------------------------
+By default a claim belongs to a host: a host that already holds a claim gets
+True from ``take`` again. Several processes of ONE machine can work on the
+same item, though -- the review queues are moved by the watcher's return
+scan, by a review window and by mousereach-route-to-queue, all on the
+machine where review happens. A caller that passes ``process``
+(``this_process()``: the process id and its start time) gets a claim of that
+process only: another live process of the same host is refused, exactly as
+another host is. A claim whose process has ended (its id is gone, or now
+belongs to a process started at another time) is a crashed process's
+leftover and is taken over -- the host's status report cannot tell, because
+the host is still running. A marker with no process recorded (written by an
+older version) keeps the old meaning: it is the host's.
+
 ASCII-only log text (Windows cp1252 consoles cannot print Unicode).
 """
 from __future__ import annotations
@@ -71,15 +86,86 @@ def _path(claim_dir, key: str, suffix: str) -> Path:
     return Path(claim_dir) / f"{key}{suffix}"
 
 
-def take(claim_dir, key: str, host: str, suffix: str = ".claimed") -> bool:
-    """Claim ``key`` for ``host``. True when ``host`` holds it afterwards.
+_PROCESS_TAG = "process "
 
-    True also when ``host`` already held it (a node that crashed between
-    claiming and releasing must not lock itself out). False when another host
-    holds it, or when the claim could not be made at all -- the claim folder
-    cannot be created or written. WHY false then (it used to be true, "single
-    node mode"): with several nodes sharing the pool, acting without a claim
-    is exactly the double work the claim exists to stop. A node that cannot
+
+def this_process() -> str:
+    """This process's identity for a per-process claim: its id and its start
+    time (an id alone can be reused by a later process)."""
+    pid = os.getpid()
+    try:
+        import psutil
+        return f"{pid} {psutil.Process(pid).create_time():.3f}"
+    except Exception:
+        return f"{pid} ?"
+
+
+def process_alive(identity: Optional[str]) -> bool:
+    """True unless there is evidence the process ``identity`` (this_process)
+    has ended: no process has its id, or the one that has it started at
+    another time. Anything that cannot be checked counts as alive -- a live
+    claim must never be taken over."""
+    try:
+        pid_text, started = str(identity).split(" ", 1)
+        pid = int(pid_text)
+    except (TypeError, ValueError):
+        return True
+    try:
+        import psutil
+    except Exception:
+        return True
+    try:
+        proc = psutil.Process(pid)
+        if started == "?":
+            return True
+        return abs(proc.create_time() - float(started)) < 1.0
+    except psutil.NoSuchProcess:
+        return False
+    except Exception:
+        return True
+
+
+def holder_process(claim_dir, key: str, suffix: str = ".claimed") -> Optional[str]:
+    """The process (this_process) recorded in ``key``'s marker, or None when
+    the marker records none (or cannot be read)."""
+    try:
+        text = _path(claim_dir, key, suffix).read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith(_PROCESS_TAG):
+            return line[len(_PROCESS_TAG):].strip()
+    return None
+
+
+def _create(p: Path, host: str, process: Optional[str]) -> bool:
+    """Create the marker exclusively. True when this call created it."""
+    fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        text = f"{host}\n{datetime.now().isoformat()}\n"
+        if process:
+            text += f"{_PROCESS_TAG}{process}\n"
+        os.write(fd, text.encode("ascii", "replace"))
+    finally:
+        os.close(fd)
+    return True
+
+
+def take(claim_dir, key: str, host: str, suffix: str = ".claimed",
+         process: Optional[str] = None) -> bool:
+    """Claim ``key`` for ``host`` (and, given ``process``, for that process of
+    it only -- see the module docstring). True when the caller holds it
+    afterwards.
+
+    Without ``process``: True also when ``host`` already held it (a node that
+    crashed between claiming and releasing must not lock itself out).
+    With ``process``: True when this process already held it, or when the
+    process that held it has ended (process_alive); False while another live
+    process of the same host holds it. False when another host holds it, or
+    when the claim could not be made at all -- the claim folder cannot be
+    created or written. WHY false then (it used to be true, "single node
+    mode"): with several nodes sharing the pool, acting without a claim is
+    exactly the double work the claim exists to stop. A node that cannot
     claim waits and tries again.
     """
     p = _path(claim_dir, key, suffix)
@@ -90,17 +176,34 @@ def take(claim_dir, key: str, host: str, suffix: str = ".claimed") -> bool:
                        claim_dir, e, key)
         return False
     try:
-        fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        return _create(p, host, process)
     except FileExistsError:
-        return holder(claim_dir, key, suffix) == host
+        pass
     except OSError as e:
         logger.warning("Could not claim %s (%s)", key, e)
         return False
+    if holder(claim_dir, key, suffix) != host:
+        return False
+    if process is None:
+        return True
+    theirs = holder_process(claim_dir, key, suffix)
+    if theirs is None or theirs == process:
+        return True              # an older version's marker, or already ours
+    if process_alive(theirs):
+        return False             # another live process of this machine
+    # The holding process has ended without releasing (a crash): take it over.
     try:
-        os.write(fd, f"{host}\n{datetime.now().isoformat()}\n".encode("ascii", "replace"))
-    finally:
-        os.close(fd)
-    return True
+        p.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.debug("Could not break the ended process's claim on %s (%s)", key, e)
+        return False
+    logger.info("Took over the claim on %s: its process %s has ended", key, theirs)
+    try:
+        return _create(p, host, process)
+    except OSError:
+        return False             # another process won the retake
 
 
 def holder(claim_dir, key: str, suffix: str = ".claimed") -> Optional[str]:
@@ -121,15 +224,21 @@ def holds(claim_dir, key: str, host: str, suffix: str = ".claimed") -> bool:
     return holder(claim_dir, key, suffix) == host
 
 
-def release(claim_dir, key: str, host: str, suffix: str = ".claimed") -> bool:
-    """Remove ``host``'s claim on ``key``. Another host's claim is never
-    removed here (only ``sweep_gone`` breaks those, on evidence). True when
-    nothing of ``host``'s remains."""
+def release(claim_dir, key: str, host: str, suffix: str = ".claimed",
+            process: Optional[str] = None) -> bool:
+    """Remove ``host``'s claim on ``key`` (given ``process``: only that
+    process's -- a claim another process of the host recorded is left). Another
+    host's claim is never removed here (only ``sweep_gone`` breaks those, on
+    evidence). True when nothing of the caller's remains."""
     h = holder(claim_dir, key, suffix)
     if h is None:
         return True
     if h != host:
         return False
+    if process is not None:
+        theirs = holder_process(claim_dir, key, suffix)
+        if theirs is not None and theirs != process:
+            return False
     try:
         _path(claim_dir, key, suffix).unlink()
     except FileNotFoundError:
