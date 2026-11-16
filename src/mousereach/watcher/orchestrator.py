@@ -139,8 +139,9 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
 
     True only when all three hold:
       * the run is a re-run of a version-outdated video (reprocess_start_stage
-        is set -- only _reprocess_video sets it, and only for an 'outdated'
-        row, which the version scan makes from an 'archived' one);
+        is set -- _reprocess_video sets it for an 'outdated' row, which the
+        version scan makes from an 'archived' one, and a retry or a restart of
+        that run reads it back from the row, kept_rerun_start_stage);
       * the video has been filed before (archived_at is set);
       * none of the four algorithms ran in this run (``recomputed_stages`` is
         empty: every output was reused).
@@ -163,13 +164,49 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
     Everything else is a full run with every check:
       * a new video (no reprocess_start_stage);
       * a video coming back from a review queue -- it re-enters through
-        'processing' with no start stage;
+        'processing' with no start stage, and the return clears the row's
+        re-run scope so none is read back;
       * a video held for its hand scores and picked again (no start stage);
       * a filed video whose re-run recomputed any algorithm (a new segmenter,
         reach or outcome detector, a pose change, or a reused output that was
         missing and had to be made): what the checks judge is new.
     """
     return bool(reprocess_start_stage) and bool(archived_at) and not recomputed_stages
+
+
+def kept_rerun_start_stage(row, held_for_hand_scores: bool = False):
+    """Where a run that was handed no start stage starts, read from the
+    video's row: 'kinematics' for a filed video whose kinematics-only re-run
+    is still owed, else None (every stage runs, with every check).
+
+    WHY: the start stage of a re-run used to travel only inside the work item
+    _reprocess_video builds. When that run failed (the kinematics step itself,
+    say) the failed-video retry picked the bare row an hour later, and a
+    watcher restart picked the 'processing' row the same way -- both with no
+    start stage, so a filed video whose only change was a later calculation
+    was re-run through all four algorithms, the quality triage and the
+    hand-score comparison (exactly what filed_rerun_reuses_analysis exists to
+    prevent). The row's reprocess_scope survives a retry and a restart, so
+    it is the record read here.
+
+    'kinematics' ONLY, and only when all of these hold:
+      * the row's reprocess_scope is 'kinematics' (written by the version scan
+        when the scan marks the video 'outdated');
+      * the video has been filed before (archived_at is set);
+      * this watcher does not hold it for its hand scores (such a video ran
+        every check already and is picked again only to be compared again).
+    A scope of 'segmentation', 'reach' or 'outcome' is not carried over: such
+    a run recomputes an algorithm and every check runs on it anyway, so
+    starting it from segmentation changes only the work done, not what is
+    checked. The scope is cleared when the video is filed, when a review
+    returns it, and when the gate finds its outputs out of step
+    (DECISION_STALE) -- so a kept scope can never skip the checks for a run
+    whose inputs a person or a re-cut has just changed."""
+    if not row or held_for_hand_scores:
+        return None
+    if (row.get('reprocess_scope') or '') != 'kinematics':
+        return None
+    return 'kinematics' if row.get('archived_at') else None
 
 
 def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
@@ -1105,9 +1142,11 @@ class BaseOrchestrator:
     # these AT STARTUP was left behind by a process that is already gone.
     #
     # 'processing' is deliberately absent. Both roles already select it, so an
-    # interrupted pipeline run is picked up again on its own -- and picked up
-    # where it left off, because the pipeline reuses the stage outputs that
-    # already exist rather than redoing them.
+    # interrupted pipeline run is picked up again on its own. It is NOT resumed
+    # where it stopped: it starts over from segmentation (a person's cuts are
+    # kept, segmentation/core/batch.py), with every check -- except a filed
+    # video's kinematics-only re-run, which reads its start stage back from
+    # the row (kept_rerun_start_stage) and runs only the gate and kinematics.
     _ORPHANED_VIDEO_STATES = {
         # left behind in -> put back to
         'archiving': 'processed',        # re-files the finished video
@@ -4785,7 +4824,8 @@ class DLCOrchestrator(BaseOrchestrator):
                 self._clear_archive_backoff(video_id)
                 # The row has said 'archiving' since before the move (written
                 # above), so this is the one write that completes it.
-                self.db.update_state(video_id, 'archived')
+                # Filed: a re-run scope it carried is spent (kept_rerun_start_stage).
+                self.db.update_state(video_id, 'archived', reprocess_scope=None)
                 self.db.log_step(video_id, 'archive', 'completed',
                                 message=f"Archived {len(result.get('files_moved', []))} files",
                                 duration=duration)
@@ -6302,8 +6342,25 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Dependency-aware reprocessing: reuse a stage's existing output when it is
         # current AND upstream of the earliest stale stage. Fresh videos have no
         # reprocess_start_stage -> index 0 -> every stage runs.
+        # A run handed no start stage (the failed-video retry, a restart, the
+        # pipeline bucket) reads it from the row instead: a filed video's
+        # kinematics-only re-run keeps that scope through a retry or a restart
+        # (kept_rerun_start_stage says when and why).
+        _start_stage = video_data.get("reprocess_start_stage")
+        if not _start_stage:
+            try:
+                _start_stage = kept_rerun_start_stage(
+                    self.db.get_video(video_id),
+                    held_for_hand_scores=self._held_for_hand_scores(video_id))
+            except Exception as e:
+                logger.warning(f"{video_id}: could not read the row's re-run "
+                               f"scope ({e}); running every stage")
+                _start_stage = None
+            if _start_stage:
+                logger.info(f"{video_id}: filed video's '{_start_stage}' re-run "
+                            f"resumed from its row (retry or restart)")
         _STAGE_IDX = {"segmentation": 0, "reach": 1, "outcome": 2, "kinematics": 3}
-        _start_idx = _STAGE_IDX.get(video_data.get("reprocess_start_stage"), 0)
+        _start_idx = _STAGE_IDX.get(_start_stage, 0)
         _seg_out = self.processing_dir / f"{video_id}_segments.json"
         _reach_out = self.processing_dir / f"{video_id}_reaches.json"
         _outcome_out = self.processing_dir / f"{video_id}_pellet_outcomes.json"
@@ -6497,11 +6554,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
                            f"({e}); running every check")
             _archived_at = None
         _reuses_analysis = filed_rerun_reuses_analysis(
-            video_data.get("reprocess_start_stage"), _archived_at, _recomputed)
+            _start_stage, _archived_at, _recomputed)
         if _reuses_analysis:
             logger.info(
                 f"{video_id}: filed video, re-run for "
-                f"'{video_data.get('reprocess_start_stage')}' only; the four "
+                f"'{_start_stage}' only; the four "
                 f"algorithms' outputs reused -- no quality triage, no hand-score "
                 f"check; the gate asks only about segments no person answered")
             self.db.log_step(
@@ -6560,11 +6617,22 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # element -> TRIAGE. A held video's whole bundle is MOVED out of
         # Processing into the queue; STOP here -- no kinematics, no DB sync, no
         # 'processed'. It re-enters via the review -> reprocess path once cleared.
+        from mousereach.watcher import review_gate as _rg
         decision = run_gate(
             video_id, self.processing_dir, self.db,
             qc_verdict=qc_verdict,
             mp4_path=self.processing_dir / f"{video_id}.mp4",
         )
+        if decision == getattr(_rg, 'DECISION_STALE', None):
+            # The outputs are out of step with the cuts (review_gate says how):
+            # the next pick must recompute them, so a kept kinematics-only
+            # re-run scope is cleared -- read back, it would reuse the same
+            # out-of-step outputs and meet STALE again on every pick.
+            try:
+                self.db.set_fields(video_id, reprocess_scope=None)
+            except Exception as e:
+                logger.warning(f"{video_id}: could not clear the re-run scope "
+                               f"after a stale-outputs gate ({e})")
         if decision != DECISION_CLEAN:
             logger.info(f"Pipeline held: {video_id} -> {decision} "
                         f"({pipeline_duration:.1f}s, kinematics deferred until cleared)")
@@ -6696,8 +6764,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
                              f"restarting the watcher does it")
 
         def _recorded_as_filed(message, duration):
-            # 'archiving' -> 'archived', then the hand-off clean-up.
-            self.db.update_state(video_id, 'archived')
+            # 'archiving' -> 'archived', then the hand-off clean-up. Filed: a
+            # re-run scope it carried is spent (kept_rerun_start_stage).
+            self.db.update_state(video_id, 'archived', reprocess_scope=None)
             self.db.log_step(video_id, 'archive', 'completed',
                              message=message, duration=duration)
             logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")

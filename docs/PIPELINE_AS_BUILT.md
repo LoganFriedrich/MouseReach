@@ -3007,10 +3007,10 @@ filed video whose re-run had to remake any of segmentation, reaches, outcomes or
 (including a reused output that turned out to be missing); a video never filed (no
 `archived_at`); and a video whose filing the watcher cannot read.
 
-**One case not covered.** If the watcher is killed in the middle of a kinematics-only re-run
-(Task Scheduler End, a crash, a power cut), the video is left in 'processing' with no record of
-its start stage and is picked up next time as an ordinary run: every stage and every check. The
-stop flag never does this -- it waits for the current video to finish.
+**A retry or a restart keeps the scope (changed later; see "Update: a filed video's re-run keeps
+where it starts").** This paragraph used to say that a watcher killed in the middle of a
+kinematics-only re-run, or a re-run that failed and was retried, ran the video again through every
+stage and every check. It no longer does: the start stage is read back from the row.
 
 **Where it lives.** `filed_rerun_reuses_analysis` in `watcher/orchestrator.py` (the rule and its
 reasons), used by `ProcessingOrchestrator._run_pipeline`; `gt_resolved_segments` in
@@ -3317,3 +3317,45 @@ Where this applies on the watcher side:
 - **Routing a filed video back to a queue** (`mousereach-route-to-queue`). Flagging segments rewrites the video's `<video>_pellet_outcomes.json`, and `--recheck` rewrites its review file after copying it to `Archive/manual_corrections/<name>.before_recheck_<time>` (`route_cli.flag_segments`, `route_cli.reopen_answered`). Both replace the file in one step. If the write fails, the command stops with an error, the file is exactly as it was, and the command can simply be run again.
 - **Stamping the quality verdict.** After the automatic quality check, its verdict (`validation_status`, `triage_reason`) is written into `<video>_segments.json`, `<video>_reaches.json` and `<video>_pellet_outcomes.json` (`orchestrator._run_quality_triage`). Each of the three is replaced in one step; a crash mid-stamp used to leave a cut-off stage output -- the video's actual results. Before stamping, any temporary file an earlier crashed stamp left beside these three is deleted. A stamp that fails is logged and the file keeps its earlier content, as before.
 - **Keeping the hand scores with the video.** The sheet's scores for the session are written into `<video>_pellet_outcomes.json` under `hand_scores` (`hand_scores.record`). This already went through a temporary file, but one named `<video>_pellet_outcomes.json.tmp` -- a name that starts with the video's, so a leftover was carried along by the router and the archiver. It now uses the shared writer: dot-named temporary file, flushed, rename retried while the file is held. A failure holds the video, as before.
+
+## Update: a filed video's re-run keeps where it starts through a retry or a restart
+
+**Before.** The version scan marks a filed video 'outdated' with the stage to start from
+(`reprocess_scope`, see the table under "a recalculation re-runs no algorithm and no triage"). That
+start stage then travelled only inside the one run the watcher started for it. If that run failed
+(the kinematics step itself, say), the failed-video retry an hour later picked the bare row; if the
+watcher stopped mid-run, the next start picked the 'processing' row the same way. Both ran with no
+start stage, so a filed video whose only change was its kinematics was re-run through all four
+algorithms, the quality triage and the hand-score comparison -- and could be sent back to a person
+for a question already answered.
+
+**Now.** When the watcher runs a video without being told where to start (the retry, a restart,
+the ordinary pipeline pick), it reads the row:
+
+| The row says | The run |
+|---|---|
+| `reprocess_scope` = `kinematics`, the video has been filed before (`archived_at` set), and this watcher is not holding it for its hand scores | kinematics only: no algorithm, no quality triage, no hand-score check; the review gate still runs |
+| anything else (no scope, `segmentation`, `reach`, `outcome`, never filed, held for hand scores) | every stage and every check, as before |
+
+Only `kinematics` is carried over: a run from `segmentation`, `reach` or `outcome` recomputes an
+algorithm and every check runs on it anyway. The log line says "filed video's 'kinematics' re-run
+resumed from its row (retry or restart)".
+
+**When the kept scope is wiped**, so that it can never skip the checks for a run whose inputs have
+just changed:
+- the video is filed (both machine roles: the row reaches 'archived');
+- a review queue returns the video (a person has just answered questions about it; its next run
+  goes through every check);
+- the review gate finds the outputs out of step with the cuts ("stale outputs": outcomes older than
+  the segments, or reaches older than a person's boundary correction). The video stays in
+  'processing' and its next pick recomputes from segmentation; without the wipe it would reuse the
+  same out-of-step outputs and meet the same answer on every pick.
+
+**For an operator.** Nothing to do. A filed video that is being re-run for its kinematics and shows
+'failed' in `mousereach-watch-status` is retried after an hour as a kinematics-only run, as the
+status line "retrying after a failure" says.
+
+**Where it lives.** `kept_rerun_start_stage` in `watcher/orchestrator.py` (the rule and its
+reasons), read by `ProcessingOrchestrator._run_pipeline`; the scope is wiped in
+`ProcessingOrchestrator._gate_held`, at filing in `_archive_to_nas` (both roles) and in
+`review_return._return_to_processing`. Tests in `tests/test_filed_rerun_skips_checks.py`.

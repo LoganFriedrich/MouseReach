@@ -619,6 +619,12 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         return False
 
     kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
+    # A re-run scope left on the row (a filed video's kinematics-only re-run
+    # that the gate sent to a queue) is cleared: a person has just answered
+    # questions about this video, so its next run must go through every check,
+    # and the pipeline reads a kept 'kinematics' scope back from the row
+    # (orchestrator.kept_rerun_start_stage).
+    kw['reprocess_scope'] = None
     try:
         # NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a
         # SECOND ENTRY POINT into 'processing', beside intake. Any guard or

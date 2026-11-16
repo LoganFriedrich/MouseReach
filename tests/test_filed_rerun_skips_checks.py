@@ -208,3 +208,119 @@ def test_a_kinematics_rerun_whose_reused_output_is_missing_is_checked(rig):
 def test_a_kinematics_rerun_of_a_never_filed_video_is_checked(rig):
     calls = rig.run("kinematics")
     assert calls == ["triage", "hand_scores", "gate"]
+
+
+# ---------------------------------------------------------------------------
+# The scope is kept on the row: a retry or a restart resumes it
+# ---------------------------------------------------------------------------
+# WHY: the start stage used to travel only inside the work item. The failed
+# retry and a restart picked the bare row and ran a filed video through all
+# four algorithms, the quality triage and the hand-score comparison again
+# (orchestrator.kept_rerun_start_stage).
+
+def _run_from_row(rig):
+    """Run the video the way the retry bucket and the pipeline bucket do:
+    the bare row, no start stage in the work item."""
+    rig.calls.clear()
+    row = rig.orch.db.get_video(VID)
+    rig.orch._run_pipeline({"id": VID, "data": dict(row, state="processing")})
+    return list(rig.calls)
+
+
+def _mark_kinematics_rerun(rig):
+    rig.orch.db.force_state(VID, "outdated", reason="test",
+                            reprocess_scope="kinematics")
+    rig.orch.db.force_state(VID, "processing", reason="test re-run")
+
+
+def test_a_failed_kinematics_rerun_retried_runs_only_the_gate(rig):
+    rig.file_it()
+    _mark_kinematics_rerun(rig)
+    rig.orch.db.mark_failed(VID, "kinematics failed")
+    rig.orch.db.update_state(VID, "processing")      # what the retry bucket does
+    calls = _run_from_row(rig)
+    assert calls == ["gate"]
+
+
+def test_a_kinematics_rerun_picked_after_a_restart_runs_only_the_gate(rig):
+    rig.file_it()
+    _mark_kinematics_rerun(rig)
+    assert _run_from_row(rig) == ["gate"]
+
+
+def test_a_kept_scope_of_an_upstream_stage_is_a_full_run(rig):
+    """Only 'kinematics' is read back: an upstream scope recomputes an
+    algorithm, and every check runs on it anyway."""
+    rig.file_it()
+    rig.orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="outcome")
+    rig.orch.db.force_state(VID, "processing", reason="test re-run")
+    calls = _run_from_row(rig)
+    assert calls[0] == "segmentation" and "triage" in calls and "hand_scores" in calls
+
+
+def test_a_video_held_for_hand_scores_is_checked_again(rig):
+    rig.file_it()
+    _mark_kinematics_rerun(rig)
+    rig.orch._score_waits = {VID: {"stamp": None}}
+    calls = _run_from_row(rig)
+    assert "triage" in calls and "hand_scores" in calls
+
+
+def test_stale_outputs_clear_the_kept_scope_so_the_next_pick_recomputes(rig, monkeypatch):
+    import mousereach.watcher.review_gate as rg
+
+    def _stale(*a, **k):
+        rig.calls.append("gate")
+        return rg.DECISION_STALE
+    monkeypatch.setattr(rg, "run_gate", _stale)
+    rig.file_it()
+    _mark_kinematics_rerun(rig)
+    assert _run_from_row(rig) == ["gate"]
+    assert rig.orch.db.get_video(VID)["reprocess_scope"] is None
+    calls = _run_from_row(rig)
+    assert calls[:4] == ["segmentation", "reach", "outcome", "assignment"]
+
+
+def test_a_review_return_clears_the_kept_scope_and_the_next_run_is_checked(rig, tmp_path, monkeypatch):
+    import mousereach.watcher.review_return as rr
+    triage = tmp_path / "Review" / "triage"
+    bundle = triage / VID
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
+    monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", tmp_path / "Review" / "deep_review")
+    monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")
+    monkeypatch.setattr(rr.Paths, "ANALYZED_OUTPUT", None, raising=False)
+    monkeypatch.setattr(rr.Paths, "DLC_STAGING", None, raising=False)
+    monkeypatch.setattr(rr, "_ensure_durable_review", lambda *a, **k: None)
+    (bundle / f"{VID}.mp4").write_bytes(b"x")
+    (bundle / f"{VID}DLC_resnet50_ModelAshuffle1_100.h5").write_bytes(b"x")
+    rig.file_it()
+    rig.orch.db.force_state(VID, "triage", reason="test", reprocess_scope="kinematics")
+    assert rr._return_to_processing(bundle, VID, rig.folder, rig.orch.db, "triage_cleared")
+    assert rig.orch.db.get_video(VID)["reprocess_scope"] is None
+    calls = _run_from_row(rig)
+    assert "triage" in calls and "hand_scores" in calls
+
+
+def test_filing_clears_the_kept_scope(rig, tmp_path, monkeypatch):
+    from unittest import mock
+    from mousereach.config import Paths
+    monkeypatch.setattr(Paths, "TRIAGE_REVIEW", tmp_path / "triage")
+    monkeypatch.setattr(Paths, "DEEP_REVIEW", tmp_path / "deep_review")
+    monkeypatch.setattr(Paths, "PROCESSING", rig.folder)
+    monkeypatch.setattr("mousereach.archive.core.get_archive_destination",
+                        lambda vid: tmp_path / "Analyzed" / "PROJ" / "COHORT")
+    orch = rig.orch
+    orch.db.export_to_central_db = lambda vid: None
+    orch.staging_dir = None
+    orch._release_claim = lambda vid: None
+    (rig.folder / f"{VID}_features.json").write_text("{}", encoding="utf-8")
+    (rig.folder / f"{VID}.mp4").write_bytes(b"x")
+    rig.file_it()
+    orch.db.force_state(VID, "processed", reason="test", reprocess_scope="kinematics")
+    with mock.patch("mousereach.archive.core.archive_video",
+                    lambda video_id, **kw: {"success": True, "files_moved": ["a"],
+                                            "destination": "x"}):
+        o.ProcessingOrchestrator._archive_to_nas(orch, {"id": VID})
+    row = orch.db.get_video(VID)
+    assert row["state"] == "archived" and row["reprocess_scope"] is None

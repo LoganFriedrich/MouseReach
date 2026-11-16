@@ -549,7 +549,11 @@ it; otherwise open **Re-segmentation Review**, which shows its open pellets,
 answer them and press **Clear -> re-enter pipeline**. That is the release:
 the watcher then re-runs the video from segmentation onward -- keeping any
 human-made cuts -- and the results flow to the database automatically. Nothing
-else needs to be done.
+else needs to be done. This holds even for a video that had been filed and was
+in the queue because a kinematics-only re-run sent it there: the release wipes
+that re-run's "kinematics only" mark, so the video goes through every check
+again after your answers (docs/PIPELINE_AS_BUILT.md, "a filed video's re-run
+keeps where it starts").
 
 **If you get a video that is not actually broken**, press *Skip this video* in
 the re-segmentation tool (it stays in the queue), or clear it through Deep
