@@ -4365,3 +4365,17 @@ nothing to do. Where it lives: `watcher/db.py` `WatcherDB._state_write`; tests i
   The word after `--from-step` is no longer mistaken for the video id.
 Where it lives: `watcher/db.py` `reset_failed`, `infer_reset_state`; `watcher/cli.py`
 `main_reprocess`; tests in `tests/test_reset_failed_video.py`.
+
+**`mousereach-watch-process-animal` never leaves a claim behind.** It queues a single only when
+the video has no row on this machine or its row is `validated`, `failed` or `unresolvable` --
+the states that can go to `dlc_queued`. Every other state is skipped ("SKIP <video> (already
+<state>)") BEFORE anything is claimed. It used to skip a fixed list that missed `triage`,
+`deep_review`, `outdated`, `archiving` and `quarantined`: for those it claimed the shared file,
+then the move to `dlc_queued` raised, and the command stopped mid-list (or left its copy in the
+DLC queue) with the video in this machine's claim folder. A video a node already holds in its
+claim folder is skipped too ("a copy is being posed by <node>; this one is a second copy").
+Whatever fails after the claim -- the copy or the state change -- gives the claim back to the
+shared folder and removes the DLC-queue copy this run made. For an operator: a claim left by the
+old behaviour on a held video sits in `Single_Animal/.inflight/<this machine>/`; move that file
+back to the top of `Single_Animal` by hand. Where it lives: `watcher/cli.py`
+`main_process_animal`; tests in `tests/test_process_animal_states.py`.

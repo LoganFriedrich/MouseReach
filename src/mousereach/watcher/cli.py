@@ -1090,6 +1090,12 @@ def _resolve_nas_dir(configured_path, subfolder):
     return None
 
 
+# The row states mousereach-watch-process-animal queues a single from (each
+# can go to 'dlc_queued'); a video with no row is queued too. See the loop
+# in main_process_animal for why this is an allow-list.
+_PROCESS_ANIMAL_QUEUEABLE = ('validated', 'failed', 'unresolvable')
+
+
 def main_process_animal():
     """Queue all videos for a specific animal through the pipeline.
 
@@ -1199,27 +1205,30 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
     # are never queued again here -- but they still count as "we have this as
     # a single", or the collage they were cut from would be sent to be cut
     # (and posed) a second time.
-    claimed = {}
+    # Named held_for_pose, not "claimed": the queueing loop below has its own
+    # "claimed" (the file this run claims), and the shared name used to hide
+    # this dict there.
+    held_for_pose = {}
     if single_dir:
         try:
             from mousereach.census.runner import claimed_singles
-            claimed = {vid: host for vid, host in claimed_singles(single_dir).items()
-                       if f"_{animal_id}_" in f"{vid}.mp4"}
+            held_for_pose = {vid: host for vid, host in claimed_singles(single_dir).items()
+                             if f"_{animal_id}_" in f"{vid}.mp4"}
         except Exception as e:
             print(f"[!] Could not read singles claimed for pose: {_ascii(e)}",
                   file=sys.stderr)
 
     single_keys = set()  # date + tray combos we already have as singles
-    for name in [f.name for f in singles] + [f"{vid}.mp4" for vid in claimed]:
+    for name in [f.name for f in singles] + [f"{vid}.mp4" for vid in held_for_pose]:
         result = validate_single_filename(name)
         if result.valid:
             single_keys.add(f"{result.parsed['date']}_{result.parsed['tray_type']}")
 
-    if claimed:
-        print(f"\nAlready being posed by another machine ({len(claimed)}), "
+    if held_for_pose:
+        print(f"\nAlready being posed by another machine ({len(held_for_pose)}), "
               f"not queued again:")
-        for vid in sorted(claimed):
-            print(f"  {vid}  (claimed by {_ascii(claimed[vid])})")
+        for vid in sorted(held_for_pose):
+            print(f"  {vid}  (claimed by {_ascii(held_for_pose[vid])})")
 
     # --- Phase 2: Find collages containing this animal ---
     collages = []  # (collage_path, collage_filename)
@@ -1320,13 +1329,28 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
                   f"for pose by another machine, or removed)")
             skipped += 1
             continue
+        if video_id in held_for_pose:
+            # The same video is ALSO in a node's claim folder: this file is a
+            # second copy dropped in while the first is out being posed.
+            # Queueing it would pose the video twice.
+            print(f"  SKIP {video_id} (a copy is being posed by "
+                  f"{_ascii(held_for_pose[video_id])}; this one is a second copy)")
+            skipped += 1
+            continue
         existing = db.get_video(video_id)
         if existing:
             state = existing['state']
-            # 'crystallized': locked for a publication, never posed again
-            # (db.crystallized_refusal).
-            if state in ('processed', 'archived', 'dlc_complete', 'dlc_running',
-                         'dlc_queued', 'processing', 'crystallized'):
+            # Only a video that is waiting to be taken ('validated'), that
+            # failed, or that this machine had no file for ('unresolvable') is
+            # queued; each can go to 'dlc_queued'. Every other state is
+            # skipped BEFORE anything is claimed. WHY an allow-list: the old
+            # list of states to skip missed triage, deep_review, outdated,
+            # archiving and quarantined, and for those the move to
+            # 'dlc_queued' raised after the claim -- the command stopped
+            # mid-list and left the video in this machine's claim folder.
+            # ('crystallized', locked for a publication, is never posed again:
+            # db.crystallized_refusal.)
+            if state not in _PROCESS_ANIMAL_QUEUEABLE:
                 print(f"  SKIP {video_id} (already {state})")
                 skipped += 1
                 continue
@@ -1366,27 +1390,37 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
                       f"another machine took it meanwhile, or a program has it open)")
                 skipped += 1
                 continue
-            if dest.exists():
-                db.update_state(video_id, 'dlc_queued', current_path=str(dest))
-                queued_singles += 1
-                print(f"  QUEUED {video_id} (already in DLC_Queue)")
-            else:
-                try:
-                    if safe_copy(claimed, dest, verify=True):
-                        db.update_state(video_id, 'dlc_queued', current_path=str(dest))
-                        db.log_step(video_id, 'process_animal', 'queued',
-                                    message=f"Queued by process-animal for {animal_id}")
-                        queued_singles += 1
-                        print(f"  QUEUED {video_id}")
-                    else:
-                        single_claim.release_single(claimed)
-                        print(f"  ERROR {video_id} (copy failed; given back to the "
-                              f"singles folder)")
-                        errors += 1
-                except Exception as e:
+            # Everything after the claim is in one try: whatever fails (the
+            # copy, or the state change), the claim goes back to the shared
+            # folder and a queue copy THIS run made is removed, so no video is
+            # left held by this machine with nothing queued to pose it.
+            made_copy = False
+            try:
+                if dest.exists():
+                    db.update_state(video_id, 'dlc_queued', current_path=str(dest))
+                    queued_singles += 1
+                    print(f"  QUEUED {video_id} (already in DLC_Queue)")
+                elif safe_copy(claimed, dest, verify=True):
+                    made_copy = True
+                    db.update_state(video_id, 'dlc_queued', current_path=str(dest))
+                    db.log_step(video_id, 'process_animal', 'queued',
+                                message=f"Queued by process-animal for {animal_id}")
+                    queued_singles += 1
+                    print(f"  QUEUED {video_id}")
+                else:
                     single_claim.release_single(claimed)
-                    print(f"  ERROR {video_id}: {e} (given back to the singles folder)")
+                    print(f"  ERROR {video_id} (copy failed; given back to the "
+                          f"singles folder)")
                     errors += 1
+            except Exception as e:
+                single_claim.release_single(claimed)
+                if made_copy:
+                    try:
+                        dest.unlink()
+                    except OSError:
+                        pass
+                print(f"  ERROR {video_id}: {_ascii(e)} (given back to the singles folder)")
+                errors += 1
 
     # --- Queue collages: register so watcher crops them ---
     if collages:

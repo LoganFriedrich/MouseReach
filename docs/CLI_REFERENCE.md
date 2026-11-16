@@ -1877,6 +1877,13 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
   --tray T    Only this tray type (e.g. P for pillar).
 ```
 
+A single is queued only when this machine has no row for it, or its row is
+`validated`, `failed` or `unresolvable`. Any other state is listed as
+`SKIP <video> (already <state>)` and nothing is claimed for it. A video
+another machine already holds for pose is skipped as a second copy. If the
+copy or the state change fails after the claim, the claim goes back to the
+shared singles folder and the DLC-queue copy made by this run is removed.
+
 ### `mousereach-watch-info`
 
 ```
