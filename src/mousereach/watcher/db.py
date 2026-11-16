@@ -1652,7 +1652,9 @@ class WatcherDB:
         WHY: that failure gives the video back to the shared folder, and the
         row's own message tells a person to run mousereach-watch-reprocess
         once the cause is fixed. Without this case that reset found no file
-        on this node and refused."""
+        on this node and refused. Rows written by older versions say "could
+        not copy <file> into the DLC queue; put back in the shared singles
+        folder ..." and are read the same way."""
         try:
             from mousereach.config import Paths
             if dlc_queue is None:
@@ -1707,7 +1709,10 @@ class WatcherDB:
                                       'source_path': str(mp4)}
         try:
             from mousereach.watcher import single_claim
-            if (error_message or '').startswith(single_claim.COPY_FAILED_REASON):
+            msg = error_message or ''
+            legacy = (msg.startswith('could not copy ')
+                      and 'into the DLC queue; put back in the shared singles folder' in msg)
+            if msg.startswith(single_claim.COPY_FAILED_REASON) or legacy:
                 door = single_claim.front_door()
                 if door is not None:
                     mp4 = door / f"{video_id}.mp4"

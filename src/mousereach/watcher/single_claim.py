@@ -137,6 +137,13 @@ ELSEWHERE_BEFORE_POSE_REASON = "no file on this node; another node had it before
 # there when it is back and stable" (state.WatcherStateManager.discover_new_singles).
 REDRIVE_REASONS = (LEFT_FOLDER_REASON, SHARED_REASON, ELSEWHERE_BEFORE_POSE_REASON)
 
+# The start of the error_message of a 'failed' row whose copy from the shared
+# singles folder into this node's DLC queue failed. The video was given back
+# to the folder. The singles intake validates such a row again (this node may
+# take it) an hour after the failure, while it has retries left
+# (state.WatcherStateManager._copy_failed_retry_due).
+COPY_FAILED_REASON = "could not copy it from the shared singles folder into the DLC queue"
+
 # How many claimed videos a node keeps queued for its own GPU after cutting a
 # recording: the one it poses next and one more ready behind it. The rest of
 # the recording's videos go into the shared folder. See "WHAT A NODE HOLDS".

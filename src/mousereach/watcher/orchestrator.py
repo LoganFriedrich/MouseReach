@@ -3141,18 +3141,20 @@ class DLCOrchestrator(BaseOrchestrator):
             same = False
         if not same and not safe_copy(Path(src), dest, verify=True):
             # Give the video back so another node can take it; a claim this
-            # node cannot use must not keep it from everyone. THIS node does
-            # not retry it by itself: its row is 'failed', and the GPU role
-            # has no job list for failed rows (a full local disk would
-            # otherwise copy a whole video every minute). A person resets it.
+            # node cannot use must not keep it from everyone. The row is
+            # 'failed' with a reason starting single_claim.COPY_FAILED_REASON:
+            # the singles intake offers it again an hour later while it has
+            # retries left (state._copy_failed_retry_due) -- to this node or
+            # any other. WHY not at once: a full local disk would otherwise
+            # copy a whole video every couple of minutes.
             released = claimed_here and single_claim.release_single(src)
             back = (Path(src).parent.parent.parent / Path(src).name) if released else src
             self.db.mark_failed(
-                video_id, f"could not copy {back} into the DLC queue"
-                          + ("; put back in the shared singles folder, where another "
-                             "GPU node can take it. This node does not retry it on "
-                             "its own: fix the cause, then run "
-                             f"mousereach-watch-reprocess {video_id}"
+                video_id, f"{single_claim.COPY_FAILED_REASON}: could not copy {back}"
+                          + ("; put back in the shared singles folder, where any GPU "
+                             "node can take it. Offered again after an hour while it "
+                             "has retries left; if it keeps failing, fix the cause, "
+                             f"then run mousereach-watch-reprocess {video_id}"
                              if released else ""))
             return False
         self.db.update_state(video_id, 'dlc_queued',

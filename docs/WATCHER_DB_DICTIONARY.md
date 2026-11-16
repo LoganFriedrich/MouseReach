@@ -442,10 +442,19 @@ READ THIS BEFORE INTERPRETING A STATE
   confirmed: staged, archived, or in a review bundle. The message names the
   file and how the next copy was confirmed.
 
-  A 'failed' single whose error_message ends "put back in the shared singles
-  folder ..." had its copy onto this node fail. The video went back to the
-  folder for another node. This node does not retry it by itself; run
-  mousereach-watch-reprocess <video_id> once the cause is fixed.
+  A 'failed' single whose error_message starts "could not copy it from the
+  shared singles folder into the DLC queue" (single_claim.COPY_FAILED_REASON)
+  had its copy onto this node fail; the video went back to the folder for any
+  node. The singles intake sets the row back to 'validated' by itself an hour
+  after the failure (last_error_at) while error_count is below
+  watcher.max_retries, once the file is back at the top of the folder, stable
+  and claimed by no node -- so this node, or another, takes it again. When
+  the retries are used up it stays 'failed': fix the cause, then run
+  mousereach-watch-reprocess <video_id>; with the file back at the top of
+  the shared singles folder the reset puts the row to 'validated'. (Rows
+  written before this rule say "could not copy ... into the DLC queue; ...
+  This node does not retry it on its own" and are not offered again by
+  themselves; mousereach-watch-reprocess resets them the same way.)
 
   'triage' and 'deep_review' are human-review holds. Kinematics never run on a
   held video, and it stays out of the archive and the central database until a

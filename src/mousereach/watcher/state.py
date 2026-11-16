@@ -292,11 +292,14 @@ class WatcherStateManager:
             video_id = get_video_id(filename)
 
             # Already in the database: skip -- unless it is a row parked because
-            # this very file had left the folder, and the file is back.
+            # this very file had left the folder, and the file is back; or a
+            # row whose copy into this node's DLC queue failed and that may
+            # be tried again (_copy_failed_retry_due).
             row = self.db.get_video(video_id)
             if row is not None:
-                came_back = (row.get('state') == 'unresolvable'
-                             and (row.get('error_message') or '').startswith(REDRIVE_REASONS))
+                came_back = ((row.get('state') == 'unresolvable'
+                              and (row.get('error_message') or '').startswith(REDRIVE_REASONS))
+                             or self._copy_failed_retry_due(row))
                 if came_back and self._single_is_stable(file_path):
                     # Not while a node still holds a claim of that name: then
                     # the file is a second copy dropped in while the first is
@@ -380,6 +383,40 @@ class WatcherStateManager:
                 del sightings[key]
 
         return newly_registered
+
+    # How long a single whose copy into this node's DLC queue failed waits
+    # before the intake offers it again (see _copy_failed_retry_due).
+    COPY_RETRY_WAIT_S = 3600
+
+    def _copy_failed_retry_due(self, row: dict) -> bool:
+        """True for a 'failed' row whose copy from the shared singles folder
+        into this node's DLC queue failed (its error starts with
+        single_claim.COPY_FAILED_REASON), that has retries left
+        (error_count < watcher.max_retries) and whose last failure is at
+        least COPY_RETRY_WAIT_S old. The caller then validates it again once
+        the file is back at the top of the folder, stable and claimed by
+        nobody -- exactly as it does for a failed collage.
+
+        WHY: a GPU node's work loop has no job list for 'failed' rows, so a
+        copy that failed (a full disk, a dropped share) was never retried by
+        this node, only by a person or another node -- with one GPU node, never.
+        WHY the wait and the limit: without them a node with a full disk
+        would copy a whole video every couple of minutes, for ever."""
+        from mousereach.watcher.single_claim import COPY_FAILED_REASON
+        if row.get('state') != 'failed':
+            return False
+        if not (row.get('error_message') or '').startswith(COPY_FAILED_REASON):
+            return False
+        max_retries = getattr(self.config, 'max_retries', 3)
+        if max_retries is None:
+            max_retries = 3
+        if int(row.get('error_count') or 0) >= int(max_retries):
+            return False
+        try:
+            last = datetime.fromisoformat(row.get('last_error_at') or '')
+        except (TypeError, ValueError):
+            return True                     # no time recorded: nothing to wait for
+        return (datetime.now() - last).total_seconds() >= self.COPY_RETRY_WAIT_S
 
     def discover_dlc_staged(self, staging_dir: Path) -> List[str]:
         """

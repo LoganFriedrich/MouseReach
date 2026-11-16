@@ -161,6 +161,20 @@ def test_a_single_whose_dlc_queue_copy_failed_resets_to_the_shared_folder(env, t
     assert row["error_count"] == 0
 
 
+def test_an_older_copy_failure_message_resets_to_the_shared_folder_too(env, tmp_path, monkeypatch):
+    Paths, db = env
+    door = tmp_path / "Single_Animal"
+    door.mkdir()
+    monkeypatch.setattr(Paths, "SINGLE_ANIMAL_OUTPUT", door, raising=False)
+    (door / f"{VID}.mp4").write_bytes(b"v")
+    db.register_video(VID, str(door / f"{VID}.mp4"))
+    db.update_state(VID, "validated")
+    db.mark_failed(VID, f"could not copy {door / (VID + '.mp4')} into the DLC queue; put "
+                        f"back in the shared singles folder, where another GPU node can "
+                        f"take it. This node does not retry it on its own")
+    assert db.reset_failed(VID) == "validated"
+
+
 def test_any_other_failure_is_not_reset_to_the_shared_folder(env, tmp_path, monkeypatch):
     """Only the copy failure means 'given back to the shared folder'; a pose
     that failed for another reason is not inferred 'validated' from a file of

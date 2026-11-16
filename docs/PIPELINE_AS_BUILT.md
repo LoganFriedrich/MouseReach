@@ -1326,10 +1326,17 @@ week would otherwise look like a stale claim at once.
     which is never re-driven, and a WARNING asks a person to delete the second
     copy. WHY: posing it would put two poses of one name into Processing/Posed.
   * the copy onto the node failed: the claimed file is put back in the folder,
-    and the row is 'failed' with a message saying so. This node does not retry
-    it by itself (the GPU role has no job list for failed rows, and a full disk
-    would otherwise copy a whole video every minute). Run
-    `mousereach-watch-reprocess <stem>` once the cause is fixed.
+    and the row is 'failed' with a reason starting "could not copy it from the
+    shared singles folder into the DLC queue". The singles intake offers it
+    again by itself an hour after the failure, while its failure count is below
+    `watcher.max_retries` and the file is back at the top of the folder, stable
+    and claimed by no node (see "A GPU node retries a single whose copy into
+    its DLC queue failed" in "Update: failed and unresolvable videos"). When
+    the retries are used up it stays 'failed': fix the cause (a full disk, a
+    dropped share), then run `mousereach-watch-reprocess <stem>` -- with the
+    file back at the top of the shared singles folder the reset puts the row
+    to 'validated' and any GPU node takes it. [Before that update this node
+    never retried such a row by itself.]
 
 (d) The claimed file is removed only once the video's next copy is confirmed
 (`_retire_claimed_single`): the staged mp4 in Processing/Posed (or, if the
@@ -4422,3 +4429,18 @@ only at a restart, as before. Where it lives: `watcher/db.py` `INTAKE_MISS_REASO
 `watcher/state.py` `discover_dlc_staged`; `watcher/repose.py` `adopt_staged_reposes`;
 `watcher/coordination.py` `_elsewhere_reason`; `watcher/single_claim.py` `REDRIVE_REASONS`;
 `ProcessingOrchestrator._intake_from_staging`. Tests in `tests/test_unresolvable_rows_come_back.py`.
+
+**A GPU node retries a single whose copy into its DLC queue failed.** When the copy of a claimed
+single into the node's DLC queue fails (a full disk, a dropped share), the video goes back to the
+shared singles folder and the row becomes `failed` with a reason starting "could not copy it from
+the shared singles folder into the DLC queue" (`single_claim.COPY_FAILED_REASON`). A GPU node's
+work loop has no job list for failed rows, and the singles intake skipped every video it knew, so
+this node never took it again -- with a single GPU node, nothing did. Now the singles intake sets
+such a row back to `validated` (ready to be taken) once an hour has passed since the failure, while
+its failure count is below `watcher.max_retries`, the file is back at the top of the folder and
+stable, and no node holds a claim on it. The failure still counts; after the last retry the row
+stays `failed` for a person (`mousereach-watch-reprocess <video>` once the cause is fixed). WHY the
+hour and the limit: without them a node with a full disk would copy a whole video every couple of
+minutes. Only this reason is retried this way: a failed pose or hand-off is not. Where it lives:
+`watcher/state.py` `_copy_failed_retry_due`, `discover_new_singles`;
+`DLCOrchestrator._adopt_single_for_dlc`. Tests in `tests/test_copy_failed_single_retried.py`.
