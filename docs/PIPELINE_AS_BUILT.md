@@ -3496,11 +3496,12 @@ never looked at it again. A re-run that could not even start (copying its files 
 processing folder configured) was marked 'failed' too, and the retry then ran the pipeline on the
 partly copied files.
 
-**Now.** A filed video never ends in 'failed' because of a re-run. When its re-run has used up its
-retries (`watcher.max_retries`, 3), or its working copy is gone so no retry could run, or the re-run
-cannot start, the processing watcher:
+**Now.** A filed video whose filed results are still in Analyzed never ends in 'failed' because of
+a re-run (the one exclusion, a video `mousereach-repose-videos` took apart, is below). When its
+re-run has used up its retries (`watcher.max_retries`, 3), or its working copy is gone so no retry
+could run, or the re-run cannot start, the processing watcher:
 1. puts the row back to **'archived'**, keeping when it was filed (`archived_at`) and its re-run
-   scope;
+   scope, and wiping a review return's resume point (the next re-run starts afresh);
 2. writes the reason into `error_message`, starting "re-run of a filed video failed: ..." (the
    watcher's start-up clean-up of old errors leaves this message alone; filing the video again
    clears it), and sets `error_count` back to 0 so the next re-run has its retries;
@@ -3530,25 +3531,39 @@ beside the video. On every pass the version scan works the fingerprint out again
 A person can press **Re-run** for the video at any time; that marks it at once, whatever the
 fingerprint says.
 
-**Only a video that was filed.** All of the above applies only to a row that has been filed
-(`archived_at` set) and is being re-run. A video that was never filed -- a first pass that failed
-and had Re-run pressed, or an 'unresolvable' row sent round again -- is marked 'failed' when its
-re-run fails or cannot start, exactly as before, and its working files stay where they are. WHY:
-'archived' means filed, and filed means passed every check; a video no check ever passed must never
-read as filed.
+**How the watcher decides "filed".** Two things must both be true: the row has been filed
+(`archived_at` set), AND the video's `<video>_features.json` and `<video>_processing_manifest.json`
+are in its filed folder (`Analyzed/<project>/<cohort>/`) right now. It does not matter which run
+failed: the version scan's re-run, a person's Re-run, a video a review queue returned after a
+person answered its questions, or a run the gate sent back because its outputs were out of step
+with the cuts (which wipes the re-run scope). WHY not the re-run scope or `archived_at` alone: a
+review return and a stale-outputs gate both wipe the scope, and `archived_at` is never wiped, so it
+means "was filed once", not "its filed results are there now".
 
-**Not covered, on purpose:** a video a review queue returned (a person has just answered questions
-about it) carries no re-run scope, and if it fails for good it stays 'failed' with its files in
-place, as before: its working files hold answers the filed results do not have yet, so they are not
-set aside. It is listed by `mousereach-watch-status` for a person.
+**A video that does not pass that test is marked 'failed'**, exactly as before, and its working
+files stay where they are, listed by `mousereach-watch-status` for a person:
+- a video that was never filed -- a first pass that failed and had Re-run pressed, or an
+  'unresolvable' row sent round again;
+- **a video `mousereach-repose-videos` took apart**: that command moves the filed pose and every
+  output made from it into `Analyzed/Archive/<label>/` (and a held video's bundle into
+  `Repose_Queue/_parked/`) before the re-run, so nothing filed stands for it until the re-run
+  files it again.
+WHY: 'archived' means filed, and filed means passed every check; a video whose checked results are
+not in Analyzed must never read as filed.
+
+**A returned video's answers.** When the failed run was a review return, the person's answers are
+not lost: the return copied the review to the durable review store before anything moved, and
+setting the working files aside never touches that store. The fingerprint above includes that
+review, so changing it offers the re-run again; until then the video is in the red panel.
 
 **For an operator.** Seeing "re-run of a filed video failed" in the red panel: the video's data in
-the database is the filed, older version and is complete. Read the reason; if it names a file that
+the database is the filed, older version and is complete (a video whose filed results were moved
+away is never in this list -- it shows as failed in `mousereach-watch-status` instead). Read the reason; if it names a file that
 could not be copied or a missing setting, fix that and press Re-run for the video (or wait for the
 next version change). Nothing is lost: the failed run's files are in `_finished_elsewhere`.
 
 **Where it lives.** `watcher/orchestrator.py` `ProcessingOrchestrator._restore_filed_after_failed_rerun`
-(with `_is_filed_rerun`, `_filed_rerun_gave_up`, `_set_aside_working_copies`,
+(with `_is_filed_rerun`, `_filed_results_present`, `_filed_rerun_gave_up`, `_set_aside_working_copies`,
 `_write_failed_rerun_attention`), called from the retry bucket of `_select_work_item` and from
 `_reprocess_video`; `watcher/db.py` `FAILED_RERUN_PREFIX`, `clear_errors_on_archived`;
 `watcher/attention.py` `write_failed_reruns`. Tests in `tests/test_failed_filed_rerun_stays_filed.py`.

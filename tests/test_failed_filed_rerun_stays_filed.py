@@ -6,6 +6,12 @@ but the row said 'failed' for good: every status view showed the video as
 failed, and the version scan (which walks only 'archived' rows) never looked
 at it again (orchestrator.ProcessingOrchestrator._restore_filed_after_failed_rerun).
 
+"Filed" is decided by what is on disk: the row was filed (archived_at) AND the
+video's filed features and manifest are in its filed folder now. So a review
+return or a stale-outputs gate, which wipe the re-run scope, still count; a
+video mousereach-repose-videos took apart (its filed outputs moved into
+Analyzed/Archive/) does not.
+
 Built under tmp_path with invented ids; no real folder or database.
 """
 import json
@@ -31,9 +37,13 @@ def orch(tmp_path, monkeypatch):
     proc = root / "Processing"
     proc.mkdir(parents=True)
     nas = tmp_path / "nas"
-    (nas / "attention").mkdir(parents=True)
+    nas.mkdir()
     monkeypatch.setattr(Paths, "PROCESSING_ROOT", root, raising=False)
     monkeypatch.setattr(Paths, "NAS_ROOT", nas, raising=False)
+    import mousereach.config as config
+    monkeypatch.setattr(config, "filing_rules", lambda: {
+        "ABC": {"folder": "Project_A", "cohort_folder": "{CODE}{NN}"}})
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", nas / "Analyzed", raising=False)
     o = object.__new__(ProcessingOrchestrator)
     o.config = SimpleNamespace(max_retries=3, max_local_pending=4)
     o.db = WatcherDB(tmp_path / "w.db")
@@ -45,12 +55,23 @@ def orch(tmp_path, monkeypatch):
     return o
 
 
+def _filed_folder(vid=VID):
+    from mousereach.archive.core import get_archive_destination
+    return get_archive_destination(vid)
+
+
 def _filed(o, vid=VID):
+    """Filed: the row, and the filed features and manifest in Analyzed."""
     o.db.register_video(video_id=vid, source_path="x")
     o.db.force_state(vid, "processing", reason="test")
     o.db.update_state(vid, "processed")
     o.db.update_state(vid, "archiving")
     o.db.update_state(vid, "archived")
+    d = _filed_folder(vid)
+    d.mkdir(parents=True, exist_ok=True)
+    for n in (f"{vid}_features.json", f"{vid}_processing_manifest.json"):
+        if not (d / n).exists():
+            (d / n).write_text("{}", encoding="utf-8")
     return o.db.get_video(vid)["archived_at"]
 
 
@@ -106,15 +127,89 @@ def test_a_never_filed_video_out_of_retries_stays_failed(orch):
     assert orch.db.get_video(VID)["state"] == "failed"
 
 
-def test_a_returned_review_that_fails_stays_failed_for_a_person(orch):
-    """A review return clears the scope: its working copy holds a person's
-    answers the filed results lack, so it is never set aside as 'filed'."""
-    _filed(orch)
+def test_a_returned_review_of_a_filed_video_that_fails_goes_back_to_archived(orch):
+    """A review return wipes the re-run scope; the filed results still stand,
+    so it is not left 'failed' for good. The person's answers are in the
+    durable review store, which setting the working files aside never touches."""
+    from mousereach.review.causal_review_io import durable_review_path
+    filed_at = _filed(orch)
     _working_copy(orch)
-    _fail(orch, 3, scope=None)
+    durable = durable_review_path(VID)
+    if durable is not None:
+        durable.parent.mkdir(parents=True, exist_ok=True)
+        durable.write_text('{"reviewed_at": "2099-01-02T10:00:00"}', encoding="utf-8")
+    (orch.processing_dir / f"{VID}_causal_review.json").write_text("{}", encoding="utf-8")
+    _fail(orch, 3, scope=None)                            # returned: no scope on the row
+    orch.db.set_fields(VID, resume_stage="assignment", held_at_step="outcome")
     orch._select_work_item()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "archived" and row["archived_at"] == filed_at
+    assert row["error_message"].startswith(FAILED_RERUN_PREFIX)
+    assert row["resume_stage"] is None                    # the next re-run starts afresh
+    if durable is not None:
+        assert durable.is_file()                          # the answers of record stay put
+    aside = list((orch.processing_dir.parent / "_finished_elsewhere").rglob(
+        f"{VID}_causal_review.json"))
+    assert len(aside) == 1                                # the working copy moved, not deleted
+
+
+def test_a_filed_rerun_whose_scope_a_stale_gate_wiped_still_goes_back_to_archived(orch):
+    """A stale-outputs gate wipes the kept scope so the next pick recomputes
+    the outputs; three failures after that still leave the video filed."""
+    filed_at = _filed(orch)
+    _working_copy(orch)
+    orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="kinematics")
+    orch.db.force_state(VID, "processing", reason="test re-run")
+    held = orch._gate_held(VID, lambda *a, **k: "stale_outputs", "clean", None, 0.0)
+    assert held
+    for _ in range(3):
+        orch.db.mark_failed(VID, "kinematics failed: boom")
+    orch._select_work_item()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "archived" and row["archived_at"] == filed_at
+    assert row["error_message"].startswith(FAILED_RERUN_PREFIX)
+
+
+def _taken_apart_by_repose(o, vid=VID):
+    """What mousereach-repose-videos does before a re-run: the filed pose and
+    every output made from it move into Analyzed/Archive/<label>/."""
+    import shutil
+    d = _filed_folder(vid)
+    archive = Paths.ANALYZED_OUTPUT / "Archive" / "relabel" / d.name
+    archive.mkdir(parents=True)
+    for f in list(d.glob(f"{vid}_*")):
+        shutil.move(str(f), str(archive / f.name))
+
+
+@pytest.mark.parametrize("held_first", [False, True])
+def test_a_reposed_video_whose_rerun_fails_stays_failed(orch, held_first):
+    """Its filed results are no longer in Analyzed, so 'archived' would read
+    as filed with nothing filed. Also for a video that sat in triage (after a
+    re-run of it was held) when it was re-posed."""
+    _filed(orch)
+    if held_first:
+        orch.db.force_state(VID, "triage", reason="test: a re-run of it was held")
+    _taken_apart_by_repose(orch)
+    _working_copy(orch)
+    orch.db.force_state(VID, "outdated", reason="test: re-posed", reprocess_scope="segmentation")
+    orch.db.force_state(VID, "processing", reason="test re-run")
+    for _ in range(3):
+        orch.db.mark_failed(VID, "segmentation failed: boom")
+    orch._select_work_item()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed"
+    assert not row["error_message"].startswith(FAILED_RERUN_PREFIX)
+    assert (orch.processing_dir / f"{VID}.mp4").is_file()  # nothing set aside
+    orch._select_work_item()                               # and it is not re-read as filed
     assert orch.db.get_video(VID)["state"] == "failed"
-    assert (orch.processing_dir / f"{VID}.mp4").is_file()
+
+
+def test_a_reposed_video_whose_rerun_cannot_start_is_failed(orch):
+    _filed(orch)
+    _taken_apart_by_repose(orch)
+    orch.db.force_state(VID, "outdated", reason="test: re-posed", reprocess_scope="segmentation")
+    orch._restore_filed_after_failed_rerun(VID, "could not start: test")
+    assert orch.db.get_video(VID)["state"] == "failed"
 
 
 def test_the_failed_reruns_list_is_written_when_its_folder_is_missing(orch):
@@ -257,12 +352,9 @@ CURRENT = {"segmenter": "2.0", "reach_detector": "3.0", "outcome_detector": "4.0
 def scan_rig(orch, monkeypatch):
     import mousereach.config as config
     import mousereach.review.causal_review_io as crio
-    monkeypatch.setattr(config, "filing_rules", lambda: {
-        "ABC": {"folder": "Project_A", "cohort_folder": "{CODE}{NN}"}})
     nas = Paths.NAS_ROOT
-    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", nas / "Analyzed", raising=False)
     cohort = nas / "Analyzed" / "Project_A" / "ABC03"
-    cohort.mkdir(parents=True)
+    cohort.mkdir(parents=True, exist_ok=True)
     (nas / "pipeline_versions.json").write_text(json.dumps({"versions": CURRENT}),
                                                 encoding="utf-8")
     m = {"video_stem": VID, "created_at": "2099-01-01T10:00:00",

@@ -5808,26 +5808,67 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception:
             return False
 
+    def _is_filed_rerun(self, row) -> bool:
+        """A row whose current run is a re-run of a video whose FILED results
+        still stand: it has been filed (archived_at) AND this video's filed
+        features and processing manifest are in its filed folder now
+        (_filed_results_present).
+
+        WHY both, and why not the row's re-run scope: archived_at is never
+        cleared, so on its own it means "was filed once", not "its filed
+        results are in Analyzed now" -- mousereach-repose-videos moves the
+        filed pose and every output computed from it into Analyzed/Archive/
+        before the re-run, and such a video put back to 'archived' would read
+        as filed with nothing filed. The scope is not a reliable sign either:
+        a review return clears it, and a stale-outputs gate clears it, yet
+        either run is still a re-run of a video whose filed results stand.
+        Filed results on disk are the one fact that decides it."""
+        if not row or not row.get('archived_at'):
+            return False
+        return self._filed_results_present(row['video_id'])
+
     @staticmethod
-    def _is_filed_rerun(row) -> bool:
-        """A row whose current run is a re-run of a FILED video started by the
-        version scan or a person's Re-run: it has been filed (archived_at) and
-        carries a re-run scope. A review return clears the scope, so a video a
-        person has just answered questions about is never one of these: its
-        working copy holds answers the filed results lack."""
-        return bool(row) and bool(row.get('archived_at')) and bool(
-            (row.get('reprocess_scope') or '').strip())
+    def _filed_results_present(video_id: str) -> bool:
+        """True when this video's _features.json and _processing_manifest.json
+        are both in its filed folder (archive.core.get_archive_destination).
+        False when either is missing or the folder cannot be read -- a doubt
+        never reads as filed. Never raises."""
+        try:
+            from mousereach.archive.core import get_archive_destination
+            d = Path(get_archive_destination(video_id))
+            return ((d / f"{video_id}_features.json").is_file()
+                    and (d / f"{video_id}_processing_manifest.json").is_file())
+        except Exception as e:
+            logger.warning(f"{video_id}: could not check its filed results ({e}); "
+                           f"treated as not filed")
+            return False
 
     def _filed_rerun_gave_up(self, row) -> bool:
-        """A failed filed re-run with no retry left, or whose working copy is
-        gone so a retry could not run (it would wait for ever)."""
-        if not self._is_filed_rerun(row):
+        """A failed re-run of a video whose filed results stand
+        (_is_filed_rerun), with no retry left, or whose working copy is gone
+        so a retry could not run (it would wait for ever). The share is read
+        only for a row that has run out of retries, and a row found not filed
+        is remembered at its error count, so the same failed row is not
+        re-read on every cycle."""
+        if not row or not row.get('archived_at'):
             return False
         try:
-            if int(row.get('error_count') or 0) >= self._max_retries():
+            out = int(row.get('error_count') or 0) >= self._max_retries()
+            if not out:
+                pdir = self.processing_dir
+                out = not pdir or not (Path(pdir) / f"{row['video_id']}.mp4").is_file()
+            if not out:
+                return False
+            seen = getattr(self, '_not_filed_seen', None)
+            if seen is None:
+                seen = self._not_filed_seen = {}
+            count = int(row.get('error_count') or 0)
+            if seen.get(row['video_id']) == count:
+                return False
+            if self._is_filed_rerun(row):
                 return True
-            pdir = self.processing_dir
-            return not pdir or not (Path(pdir) / f"{row['video_id']}.mp4").is_file()
+            seen[row['video_id']] = count
+            return False
         except Exception:
             return False
 
@@ -5865,10 +5906,19 @@ class ProcessingOrchestrator(BaseOrchestrator):
         failure (ReprocessingScanner.scan, 'failed_rerun_waiting'); a person
         can press Re-run at any time.
 
-        Only for a video that has been filed (archived_at set) and is being
-        re-run (a scope on the row, _is_filed_rerun). Any other row is marked
-        'failed' with ``why``, as before: a video never filed must never
-        read as filed."""
+        Only for a video that has been filed (archived_at set) whose filed
+        features and manifest are still in its filed folder (_is_filed_rerun)
+        -- whichever run it was: the version scan's, a person's Re-run, a
+        review return, or a run a stale-outputs gate sent back. Any other row
+        is marked 'failed' with ``why``, as before: a video never filed, or
+        one whose filed results mousereach-repose-videos has moved into
+        Analyzed/Archive/, must never read as filed.
+
+        A review return's answers are not lost by this: the return copied the
+        review to the durable store (review_return._ensure_durable_review),
+        which the set-aside below never touches, and the fingerprint includes
+        that review, so a person's later change to it offers the re-run
+        again."""
         from mousereach.watcher.db import FAILED_RERUN_PREFIX
         try:
             row = self.db.get_video(video_id) or {}
@@ -5878,8 +5928,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not self._is_filed_rerun(row):
             # Never filed (archived_at unset): a first pass that failed and had
             # Re-run pressed, or an 'unresolvable' row narrowed to 'outdated'.
-            # Nothing was ever filed for it, so 'archived' would read as "passed
-            # every check" for a video no check passed. It fails as before.
+            # Or filed once, but its filed results are no longer in its filed
+            # folder (mousereach-repose-videos moved them into
+            # Analyzed/Archive/). Either way nothing filed stands for it, so
+            # 'archived' would read as "passed every check" for a video whose
+            # checked results are not there. It fails as before, for a person.
             try:
                 self.db.mark_failed(video_id, why)
             except Exception as e:
@@ -5898,7 +5951,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 archived_at=row.get('archived_at'),
                 error_message=message, error_count=0,
                 last_error_at=self.db._now(),
-                pipeline_versions_hash=stamp)
+                pipeline_versions_hash=stamp,
+                # A review return's resume point belongs to the run that
+                # failed; the next re-run is started afresh by the scan or a
+                # person, never from it.
+                resume_stage=None, held_at_step=None)
             self.db.log_step(video_id, 'reprocess', 'failed', message=message)
             logger.error(f"{video_id}: {message} -- back to 'archived', filed results "
                          f"unchanged; listed for a person")
@@ -6612,8 +6669,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # restart while the video waits for its hand scores, or a failure
         # between the recompute and the checks). So the scope is narrowed,
         # BEFORE the stage runs, to that stage: the row still records a filed
-        # video's re-run (_is_filed_rerun needs that), but never again as a
-        # kinematics-only one.
+        # video's re-run, but never again as a kinematics-only one.
         def _recompute(stage):
             if _start_stage == 'kinematics' and not _recomputed:
                 narrowed = scope_for_recomputed([stage])
