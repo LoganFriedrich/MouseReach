@@ -41,6 +41,9 @@ declaration or the processing manifest cannot be read, nothing is reused
 (start at segmentation): an output that cannot be shown current is not
 trusted. A person's cuts (boundary_source 'human') are exempt from the
 segmenter's version, as everywhere else (the version scan exempts them too).
+The placeholder reach-assignment file a hold writes when reach assignment
+could not run (it carries ``assignment_failed`` and no version) is kept when
+the run resumes at the checks: the person's causal-reach answers replace it.
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
@@ -131,6 +134,9 @@ def current_start(processing_dir, video_id: str, wanted: str, declared: dict,
     if declared_pose and made_from != declared_pose:
         return "segmentation", f"outputs made from pose {made_from}, declared is {declared_pose}"
 
+    # Imported here: review_gate imports this module inside its functions.
+    from .review_gate import ASSIGNMENT_FAILED_KEY
+
     seg_doc = _read_json(folder / f"{video_id}_segments.json") or {}
     human_cuts = seg_doc.get("boundary_source") == "human"
     for step, suffix, key, component in _STEP_OUTPUT:
@@ -141,6 +147,13 @@ def current_start(processing_dir, video_id: str, wanted: str, declared: dict,
             return step, f"{video_id}{suffix} is missing or unreadable"
         if step == "segmentation" and human_cuts:
             continue                         # a person's cuts: version-exempt
+        if step == "assignment" and wanted == "checks" and ASSIGNMENT_FAILED_KEY in doc:
+            # The placeholder the hold writes when reach assignment could not
+            # run (orchestrator._hold_for_failed_assignment). It carries no
+            # version, yet it IS the output the person answered: their
+            # causal-reach answers in the review file replace it. Remaking it
+            # would re-run the very step that sent the video (the rule above).
+            continue
         want_v = versions.get(component) or ""
         if not want_v:
             continue                         # nothing declared: nothing to enforce

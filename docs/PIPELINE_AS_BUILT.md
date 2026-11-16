@@ -3612,6 +3612,10 @@ waited, the person's answers were applied to outputs they never saw.
    missing, out of date or unreadable; a different pose means starting at segmentation. If the
    declaration or the processing manifest cannot be read, nothing is reused (start at
    segmentation). A person's cuts are exempt from the segmenter's version, as in the version scan.
+   The reach-assignment file of a video held because reach assignment could not run is the
+   placeholder the hold wrote (`assignment_failed`, no version); when that video resumes at
+   `checks` the placeholder is kept, because the person's causal-reach answers replace it --
+   re-running reach assignment would redo the step that sent the video.
 5. **A retry or a restart resumes at the same point**: `resume_stage` stays on the row until the
    video is filed (both roles wipe it, with `held_at_step`), until a new hold, or until the gate
    finds stale outputs (then the next pick recomputes from segmentation). A version re-run of a

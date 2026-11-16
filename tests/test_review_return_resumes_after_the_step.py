@@ -150,14 +150,18 @@ def rig(tmp_path, monkeypatch):
                             "run_from_row": staticmethod(run_from_row)})
 
 
-def _return_from(rig, queue, held_at_step=None, monkeypatch=None, **versions):
+def _return_from(rig, queue, held_at_step=None, monkeypatch=None, before_route=None,
+                 **versions):
     """Put the video in ``queue`` the way a route does (row + bundle manifest),
-    then return it the way the return scan does once a person has answered."""
+    then return it the way the return scan does once a person has answered.
+    ``before_route(src)`` may change the routed outputs first."""
     import mousereach.watcher.review_return as rr
     from mousereach.watcher.review_gate import route_to_queue
     src = rig.folder.parent / "routed_from"
     src.mkdir(exist_ok=True)
     rig.write_outputs(src, **versions)
+    if before_route is not None:
+        before_route(src)
     rig.orch.db.force_state(VID, "processing", reason="test: first pass")
     dest = Paths.DEEP_REVIEW if queue == "deep_review" else Paths.TRIAGE_REVIEW
     # held_at_step only when a test names one: code without the record does
@@ -182,6 +186,37 @@ def test_a_return_after_a_failed_assignment_resumes_at_the_checks(rig, monkeypat
     _return_from(rig, "triage", held_at_step="assignment", monkeypatch=monkeypatch)
     calls = rig.run_from_row()
     assert calls == ["triage", "hand_scores", "gate"]
+
+
+def test_a_return_after_a_failed_assignment_keeps_the_hold_placeholder(rig, monkeypatch):
+    """The real case: the assignment file in the bundle is the placeholder the
+    hold writes when reach assignment could not run (no version in it). The
+    person's causal-reach answers replace it, so it is kept, not remade --
+    re-running assignment would redo the step that sent the video."""
+    def hold(src):
+        rig.orch._hold_for_failed_assignment(VID, src, "its inputs could not be read")
+        doc = json.loads((src / f"{VID}_reach_assignments.json").read_text(encoding="utf-8"))
+        assert "version" not in doc          # what the hold really writes
+    _return_from(rig, "triage", held_at_step="assignment", monkeypatch=monkeypatch,
+                 before_route=hold)
+    calls = rig.run_from_row()
+    assert calls == ["triage", "hand_scores", "gate"]
+
+
+def test_the_placeholder_is_kept_only_when_resuming_at_the_checks(tmp_path):
+    """A placeholder still means reach assignment has to run when the return
+    resumes at assignment or earlier (a triage return after the outcomes)."""
+    from mousereach.watcher import resume_point as rp
+    from mousereach.watcher.review_gate import ASSIGNMENT_FAILED_KEY
+    for suffix, (key, v) in OUTPUTS.items():
+        (tmp_path / f"{VID}{suffix}").write_text(json.dumps({key: v}), encoding="utf-8")
+    (tmp_path / f"{VID}_reach_assignments.json").write_text(json.dumps(
+        {"video_id": VID, "reaches": [], ASSIGNMENT_FAILED_KEY: "x"}), encoding="utf-8")
+    (tmp_path / f"{VID}_processing_manifest.json").write_text(json.dumps(
+        {"dlc_model": {"dlc_scorer": SCORER}}), encoding="utf-8")
+    declared = {"versions": VERSIONS}
+    assert rp.current_start(tmp_path, VID, "checks", declared, SCORER) == ("checks", "")
+    assert rp.current_start(tmp_path, VID, "assignment", declared, SCORER)[0] == "assignment"
 
 
 def test_a_deep_review_return_remakes_everything_after_segmentation(rig, monkeypatch):

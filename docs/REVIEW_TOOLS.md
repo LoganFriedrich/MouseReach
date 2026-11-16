@@ -561,7 +561,8 @@ just after the step that sent it").
 video's questions releases it into the step after the one that asked them:
 after pellet outcomes for an outcome or causal-reach question (reach
 assignment is made again, the outcomes are kept), after reach assignment when
-the question was asked because reach assignment could not run. The quality
+the question was asked because reach assignment could not run (reach
+assignment is not tried again; your causal-reach answers stand). The quality
 check, the hand-score comparison and the review gate always run again after
 your answers. An earlier step's results are kept only if they were made with
 the algorithm versions and the pose model that are current now; if anything
