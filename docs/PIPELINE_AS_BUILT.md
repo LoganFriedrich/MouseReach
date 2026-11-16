@@ -2279,7 +2279,9 @@ What each answer does now:
   checked again: its segmentation, reaches, outcomes and assignment are reused, the quality check and
   the hand-score check run again. Once the cohort's sheet has been imported after the video entered
   'processing' (`processing_started_at`, kept from the first wait) and still has no scores for it,
-  the session was never scored by hand and the video goes on to the gate.
+  the session was never scored by hand and the video goes on to the gate. (Changed: such a video
+  now stays held, in red, as missing its scores -- see "a video whose hand scores cannot be found
+  is held as a defect" below.)
 - **The check cannot run**: held the same way, listed in red (`needs_person`, kind
   `hand_score_check_failed`), and tried again when the scores file changes.
 - **The pellet numbers are in doubt**: a review record says a segment is really another pellet
@@ -2301,9 +2303,10 @@ What each answer does now:
 
 Held videos do not count against `max_local_pending` (`_held_for_hand_scores`): they are analysed
 already, and a night of them would otherwise stop all intake until the next sheet import. They
-occupy local disk exactly as the waiting 'processed' videos did before. The list of held videos lives
-only in the watcher's memory: after a restart it is empty, every held video is picked once more,
-runs in full (nothing marks its outputs reusable after a restart) and is checked again. On a node
+occupy local disk exactly as the waiting 'processed' videos did before. The list of held videos lived
+only in the watcher's memory: after a restart it was empty, every held video was picked once more,
+ran in full and was checked again. (Changed: the processing server now rebuilds the list from its
+attention list at start -- see "a hand-score hold survives a watcher restart" below.) On a node
 that also analyses, a held video picked again keeps its row as it is (`processing_started_at` is not
 re-stamped).
 
@@ -3997,3 +4000,48 @@ comparison. They can be listed from their outcomes files (key `hand_scores`, `ve
 `never_scored`) without running anything; the watcher does not compare them again by itself.
 
 Tests: `tests/test_missing_hand_scores_hold.py`, `tests/test_hand_score_check_before_triage.py`.
+
+## Update: a hand-score hold survives a watcher restart
+
+**What was wrong.** The list of videos held for their hand scores (waiting for the sheet's import,
+or missing their scores) lived only in the processing watcher's memory. At every start it was
+emptied, so each held video -- still in 'processing', its files in place -- was picked again and
+run through segmentation, reach detection, outcome detection and reach assignment in full, only to
+be held again. A night of held videos cost hours of analysis after every restart.
+
+**What happens now** (`ProcessingOrchestrator._restore_score_waits`, `_restored_hold_start`,
+`resume_point.restored_hold_start`):
+
+- At start the watcher reads its own attention list, `<NAS root>/attention/<host>_hand_scores.json`
+  (it rewrites that file whenever a hold changes, so it is the record of what was held). Each
+  item that is a wait (`hand_scores_waiting`) or missing scores (`hand_scores_missing`) is
+  restored, but only when the video's row is still 'processing' with the same
+  `processing_started_at` the hold was measured from. Anything else -- the video moved on, was
+  reset, or its row was re-stamped -- is not restored and runs as a fresh pick. A check that could
+  not run (`hand_score_check_failed`) is not restored: it is simply checked again in full.
+- A restored video still does not count against `max_local_pending`, keeps its place in the list
+  a person sees, and is picked once to be checked again.
+- A restored video that had come back from a review queue (its row still carries `resume_stage`)
+  resumes exactly as any review return does (`_resume_point`): the cuts and answers the person
+  worked on are kept while they pass the declared-version test, and the steps after the one that
+  sent it run again. The rule below is for every other restored hold.
+- That run reuses an algorithm output only while it is CURRENT: it exists, was made from the pose
+  this run uses and the pose model declared now, carries the declared version (or a compatible
+  one, `pipeline_versions.json`), AND carries the version the running code makes
+  (`code_stamped_versions`) or one declared compatible. WHY the running code too: a restart is how new code is deployed, and
+  the declaration can lag behind it; reused unguarded, outputs of the old algorithms would go on
+  to kinematics and filing. The run starts at the first output that is not current and runs every
+  step after it; a person's cuts are exempt from the segmenter's version, as everywhere else. The
+  processing log shows it as a `pipeline` / `resumed` row, for example "held for hand scores before
+  a restart: its analysis is reused; the checks run again" or "... runs again from 'reach' --
+  reach_detector output is version X, the running code makes Y".
+- When the attention list cannot be read, nothing is restored and held videos are analysed again
+  in full, as before (a warning in the watcher log says so).
+
+**Not changed.** A graphics-card node that also analyses (`also_process`) still starts with an
+empty list; its held videos run in full once after a restart, as before.
+
+**For an operator.** Nothing to do. Restarting the processing watcher no longer re-analyses every
+held video.
+
+Tests: `tests/test_hand_score_hold_survives_restart.py`.

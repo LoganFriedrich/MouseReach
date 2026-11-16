@@ -5286,16 +5286,68 @@ class ProcessingOrchestrator(BaseOrchestrator):
     def _reclaim_orphaned_work(self) -> dict:
         reclaimed = super()._reclaim_orphaned_work()
         self._export_missed_to_central()
-        # The list of videos held for their hand scores lives only in memory,
-        # so it starts empty: every held video is still in 'processing' with
-        # its files in place, the pipeline step picks it up again, runs it in
-        # full once (nothing marks its outputs as reusable after a restart)
-        # and checks it again -- so nothing that still waits drops off.
-        self._score_waits = {}
+        # The videos held for their hand scores, rebuilt from this machine's
+        # attention list (_restore_score_waits). Each is checked once more at
+        # the first pick, reusing the analysis it has when that is current.
+        self._score_waits = self._restore_score_waits()
         self._write_score_attention()
         # Copies left in Processing after the video was filed into Analyzed.
         self._set_aside_finished_copies()
         return reclaimed
+
+    def _restore_score_waits(self) -> dict:
+        """The hand-score holds this machine had before it stopped, rebuilt
+        from its attention list (<NAS root>/attention/<host>_hand_scores.json,
+        which the precheck rewrites on every change). Never raises; {} when
+        the list cannot be read.
+
+        WHY: the list of held videos lived only in memory. After every
+        restart each held video was run through segmentation, reach and
+        outcome detection again, in full, only to be held again -- a night of
+        held videos cost hours of analysis per restart.
+
+        Restored: only items that are a WAIT or MISSING scores (not a check
+        that could not run: that is simply checked again in full), and only
+        when the video's row is still 'processing' with the same
+        processing_started_at the hold was measured from -- anything else
+        means the video moved on or was restarted since, and it runs as a
+        fresh pick. A restored entry carries ``restored`` and a stamp that
+        matches no scores file, so the video is picked once and checked
+        again; that run reuses its outputs only while they are current
+        (_restored_hold_start)."""
+        out = {}
+        nas = getattr(Paths, "NAS_ROOT", None)
+        if not nas:
+            return out
+        try:
+            path = Path(nas) / "attention" / f"{self.hostname}_hand_scores.json"
+            if not path.is_file():
+                return out
+            items = json.loads(path.read_text(encoding="utf-8")).get("items") or []
+        except Exception as e:
+            logger.warning(f"Could not read the hand-score holds kept before the restart "
+                           f"({e}); held videos are analysed again in full")
+            return out
+        for item in items:
+            kind = item.get("kind")
+            vid, ready = item.get("video_id"), item.get("ready_since")
+            if kind not in ("hand_scores_waiting", "hand_scores_missing") or not vid or not ready:
+                continue
+            try:
+                row = self.db.get_video(vid) or {}
+            except Exception:
+                continue
+            if row.get("state") != "processing" or row.get("processing_started_at") != ready:
+                continue
+            out[vid] = {"stamp": "restored", "restored": True,
+                        "cohort_id": item.get("cohort_id"), "ready_since": ready,
+                        "last_import": item.get("last_import"),
+                        "missing": kind == "hand_scores_missing",
+                        "no_sheet": bool(item.get("no_sheet"))}
+        if out:
+            logger.info(f"Restored {len(out)} video(s) held for their hand scores before "
+                        f"the restart; each is checked again once")
+        return out
 
     # At most this many videos are re-sent per pass, so a backlog drains over
     # several passes instead of holding up the work loop on a slow share.
@@ -7056,7 +7108,16 @@ class ProcessingOrchestrator(BaseOrchestrator):
                                f"running every stage")
                 _row = {}
             _held = self._held_for_hand_scores(video_id)
-            if _row.get('resume_stage') and not _held:
+            # A hold restored after a restart whose row still carries the
+            # review return's resume_stage resumes through _resume_point,
+            # exactly as before holds were restored. WHY: such a video carries
+            # a person's answers, and _restored_hold_start re-cuts on any
+            # segmenter version the running code does not make -- a re-cut
+            # under answers matched by frame number. _resume_point keeps the
+            # cuts while they pass the declared-version test.
+            _restored_hold = _held and bool(
+                (self._score_waits.get(video_id) or {}).get("restored"))
+            if _row.get('resume_stage') and (not _held or _restored_hold):
                 _resumed = self._resume_point(video_id, _row['resume_stage'], dlc_path)
             else:
                 try:
@@ -7087,14 +7148,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # A video held for its hand scores (_hand_score_precheck) is analysed
         # already; it is picked again only because the scores file changed,
         # to be checked again -- so every stage output it has is reused.
-        # After a watcher restart the list of held videos is empty and the
-        # video simply runs in full once.
+        # A hold RESTORED after a watcher restart (_restore_score_waits) was
+        # analysed by an earlier process, possibly by older code: its outputs
+        # are reused only up to the first one that is not current
+        # (_restored_hold_start); from there every step runs again.
         if self._held_for_hand_scores(video_id):
-            _run_seg = not _seg_out.exists()
-            _run_reach = _run_seg or not _reach_out.exists()
-            _run_outcome = _run_reach or not _outcome_out.exists()
+            _hold_from = _STAGE_IDX["checks"]       # same process: reuse all it has
+            if _resumed is not None:
+                _hold_from = _STAGE_IDX[_resumed]   # a review return's own resume point
+            elif (self._score_waits.get(video_id) or {}).get("restored"):
+                _hold_from = _STAGE_IDX[self._restored_hold_start(video_id, dlc_path)]
+            _run_seg = _hold_from <= 0 or not _seg_out.exists()
+            _run_reach = _run_seg or _hold_from <= 1 or not _reach_out.exists()
+            _run_outcome = _run_reach or _hold_from <= 2 or not _outcome_out.exists()
             # Its assignments too, unless an earlier output was remade.
-            _run_assign = _run_outcome
+            _run_assign = _run_outcome or _hold_from <= _STAGE_IDX["assignment"]
         # Which stages this run actually recomputes -- filled in below as each
         # one runs. Read by filed_rerun_reuses_analysis before the checks.
         _recomputed = []
@@ -7335,6 +7403,34 @@ class ProcessingOrchestrator(BaseOrchestrator):
         msg = (f"returned from review: resumes at '{start}'"
                + (f" instead of '{wanted}' -- {why}" if start != wanted else "")
                + "; every later step and check runs")
+        logger.info(f"{video_id}: {msg}")
+        try:
+            self.db.log_step(video_id, 'pipeline', 'resumed', message=msg)
+        except Exception:
+            pass
+        return start
+
+    def _restored_hold_start(self, video_id: str, dlc_path) -> str:
+        """Where the run of a hand-score hold restored after a restart
+        (_restore_score_waits) starts: 'checks' when every algorithm output
+        it has is current, else the first step whose output is not
+        (resume_point.restored_hold_start says what "current" means). Logged
+        as a 'pipeline' step. Never raises; a failure starts at
+        segmentation (nothing is reused)."""
+        from mousereach.watcher.resume_point import restored_hold_start
+        try:
+            from mousereach.pipeline.versions import (code_stamped_versions,
+                                                      get_current_versions)
+            from mousereach.watcher import repose
+            declared = get_current_versions(Paths.NAS_ROOT) if Paths.NAS_ROOT else {}
+            scorer = repose.scorer_of(Path(dlc_path)) if dlc_path else ""
+            start, why = restored_hold_start(self.processing_dir, video_id, declared,
+                                             scorer, code_stamped_versions())
+        except Exception as e:
+            start, why = "segmentation", f"could not check its outputs ({e})"
+        msg = (f"held for hand scores before a restart: "
+               + ("its analysis is reused; the checks run again" if start == "checks"
+                  else f"runs again from '{start}' -- {why}"))
         logger.info(f"{video_id}: {msg}")
         try:
             self.db.log_step(video_id, 'pipeline', 'resumed', message=msg)

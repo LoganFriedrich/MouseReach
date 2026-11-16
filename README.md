@@ -352,9 +352,11 @@ filed before it has been compared:
 Every time the sheet is read for a video, every pellet's hand score is kept
 inside that video's outcomes file (`<video>_pellet_outcomes.json`, key
 `hand_scores`), so it travels with the video into the review queue and into
-Analyzed. If the watcher is restarted while videos are held, each held video
-is analysed once more and checked again -- nothing is lost, it only costs the
-analysis time.
+Analyzed. If the watcher is restarted while videos are held, it rebuilds the
+list of held videos from its attention list and checks each once more,
+reusing the analysis it already has -- unless the restart brought new
+algorithm versions, in which case the steps whose outputs are out of date run
+again first.
 
 **The review window uses the same scores.** When a reviewer's answer for a
 pellet disagrees with both the algorithm and the hand score, a "check your

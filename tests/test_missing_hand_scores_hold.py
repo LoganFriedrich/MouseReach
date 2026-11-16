@@ -136,6 +136,10 @@ def test_a_cohort_with_no_sheet_is_told_to_add_the_sheet_not_to_fix_a_row(tmp_pa
         (VID,)).fetchall()]
     con.close()
     assert len(msgs) == 1 and "no tracking sheet found for cohort ABC_02" in msgs[0]
+    # The same text after a watcher restart: the kind of defect is kept in
+    # the attention list the holds are rebuilt from.
+    restored = orch._restore_score_waits()
+    assert restored[VID]["missing"] is True and restored[VID]["no_sheet"] is True
 
 
 def test_a_cohort_whose_sheet_exists_keeps_the_fix_the_row_message(tmp_path, monkeypatch):

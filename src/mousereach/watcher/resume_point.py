@@ -179,3 +179,50 @@ def current_start(processing_dir, video_id: str, wanted: str, declared: dict,
         if have_v != str(want_v) and have_v not in {str(v) for v in (compat.get(component) or [])}:
             return step, f"{component} output is version {have_v or 'unrecorded'}, declared {want_v}"
     return wanted, ""
+
+
+def restored_hold_start(processing_dir, video_id: str, declared: dict, pose_scorer: str,
+                        code_versions: dict) -> Tuple[str, str]:
+    """``(start, why)`` for a video held for its hand scores whose hold was
+    restored after a watcher restart: 'checks' when every algorithm output it
+    has may be reused, else the first step whose output may not.
+
+    An output is reused only when it passes current_start (it exists, was
+    made from the pose this run uses and the pose model declared now, and
+    carries the declared version or a compatible one) AND carries the version
+    the RUNNING code stamps (``code_versions``, pipeline.versions
+    .code_stamped_versions) or a version declared compatible with it. WHY both: the held video was analysed by an
+    earlier process, and a restart is how new code is deployed. Reused
+    unguarded, outputs of the old algorithms would go on to kinematics and
+    filing; the declaration alone can lag behind a deploy. A person's cuts
+    are exempt from the segmenter's version, as everywhere else."""
+    start, why = current_start(processing_dir, video_id, "checks", declared, pose_scorer)
+    if start == "segmentation":
+        return start, why
+    folder = Path(processing_dir)
+    compat = (declared or {}).get("compatible_versions") or {}
+    from .review_gate import ASSIGNMENT_FAILED_KEY
+    seg_doc = _read_json(folder / f"{video_id}_segments.json") or {}
+    human_cuts = seg_doc.get("boundary_source") == "human"
+    for step, suffix, key, component in _STEP_OUTPUT:
+        if RUN_STAGES.index(step) >= RUN_STAGES.index(start):
+            break
+        doc = _read_json(folder / f"{video_id}{suffix}")
+        if doc is None:
+            return step, f"{video_id}{suffix} is missing or unreadable"
+        if step == "segmentation" and human_cuts:
+            continue
+        if step == "assignment" and ASSIGNMENT_FAILED_KEY in doc:
+            continue
+        want_v = str((code_versions or {}).get(component) or "")
+        if not want_v:
+            continue                         # this code stamps no version: nothing to enforce
+        have_v = str(doc.get(key) or (doc.get("diagnostics") or {}).get(key) or "")
+        # A version declared compatible counts as current here too, as in
+        # current_start. WHY: declaring the old version compatible is how a
+        # deploy says its outputs stay valid; re-running them anyway would
+        # throw away work the lab chose to keep.
+        if have_v != want_v and have_v not in {str(v) for v in (compat.get(component) or [])}:
+            return step, (f"{component} output is version {have_v or 'unrecorded'}, "
+                          f"the running code makes {want_v}")
+    return start, why
