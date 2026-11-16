@@ -159,7 +159,22 @@ def launch(video_path=None, steps=None):
     # === Configuration validation ===
     # Ensure paths are configured before proceeding
     tprint("Loading configuration...", end=" ")
-    from mousereach.config import Paths
+    from mousereach.settings_file import DamagedSettingsFile
+    try:
+        from mousereach.config import Paths
+    except DamagedSettingsFile as e:
+        # A damaged ~/.mousereach/config.json: say what is wrong, then open
+        # the Setup screen, which shows the same message in red and refuses
+        # to save over the file. WHY not the full app: every tool reads its
+        # folders from that file, and running on "nothing set" would hide
+        # the damage behind "not configured".
+        print("FAILED")
+        print("\n" + "=" * 60)
+        print("[FAIL] %s" % e)
+        print("Opening the Setup screen, which shows this message too.")
+        print("=" * 60 + "\n")
+        _launch_setup_only()
+        raise SystemExit(1)   # not sys.exit: launch() binds sys locally further down
     print("OK")
     if not Paths.is_configured():
         print("\n" + "=" * 60)

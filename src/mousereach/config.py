@@ -16,12 +16,13 @@ from typing import Optional, List
 
 
 # =============================================================================
-# CONFIGURATION ERRORS
+# CONFIGURATION ERRORS AND THE SETTINGS-FILE READER
 # =============================================================================
-
-class ConfigurationError(Exception):
-    """Raised when required configuration is missing."""
-    pass
+# Defined in mousereach.settings_file (which reads nothing on import) and
+# re-exported here, so the error class is the same object everywhere.
+from mousereach.settings_file import (  # noqa: E402,F401
+    ConfigurationError, DamagedSettingsFile, read_settings_file,
+)
 
 
 # =============================================================================
@@ -40,16 +41,47 @@ def config_file_path() -> Path:
     return Path.home() / ".mousereach" / "config.json"
 
 
+# The last copy of each settings file this process read cleanly, by path:
+# {path: dict}. And the (path, modification time) pairs already warned about.
+_LAST_GOOD_CONFIG = {}
+_CONFIG_DAMAGE_REPORTED = set()
+
+
 def _load_config() -> dict:
-    """Load configuration from JSON file."""
+    """This user's ~/.mousereach/config.json as a dict; {} when it does not exist.
+
+    A file that exists but is damaged (read_settings_file):
+      * if this process has never read it cleanly, raise DamagedSettingsFile,
+        naming the file, the line and column, and the remedy. At import time
+        that stops every MouseReach command with the message -- the person
+        sees what is wrong at once instead of "MouseReach is not configured";
+      * if it was read cleanly before (a running watcher whose file is being
+        edited, or broke under it), keep using that last good copy and log a
+        warning once per change of the file, so a running watcher is not
+        stopped by a half-saved edit.
+
+    WHY never {}: an empty dict means "never set up". Every path then read as
+    unset, and the lab's shared settings (lab_setting) were looked up with no
+    nas_root at all -- the hand-score check, for one, was silently skipped."""
     config_file = config_file_path()
-    if config_file.exists():
+    key = str(config_file)
+    try:
+        data = read_settings_file(config_file)
+    except DamagedSettingsFile as e:
+        if key not in _LAST_GOOD_CONFIG:
+            raise
         try:
-            with open(config_file, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+            mtime = config_file.stat().st_mtime
+        except OSError:
+            mtime = None
+        if (key, mtime) not in _CONFIG_DAMAGE_REPORTED:
+            _CONFIG_DAMAGE_REPORTED.add((key, mtime))
+            import logging
+            logging.getLogger(__name__).warning(
+                "%s Using the settings as they were last read cleanly until then.", e)
+        return dict(_LAST_GOOD_CONFIG[key])
+    _LAST_GOOD_CONFIG[key] = data
+    return dict(data)
 
 _config = _load_config()
 

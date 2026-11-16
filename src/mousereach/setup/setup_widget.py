@@ -103,7 +103,12 @@ class SetupWidget(QWidget):
             self._proc.setText(str(cfg.get("processing_root", "") or ""))
             self._nas.setText(str(cfg.get("nas_root", "") or ""))
         except Exception as e:
-            logger.debug(f"load_config failed: {e}")
+            # A damaged settings file is said here, in the panel: the fields
+            # stay empty, and Save refuses too (load_config raises), so the
+            # damaged file is never overwritten with only these two paths.
+            logger.warning(f"load_config failed: {e}")
+            self._status.setText("[!] " + str(e))
+            self._status.setStyleSheet("color:#c33; font-weight:bold;")
 
     def _detect(self):
         try:

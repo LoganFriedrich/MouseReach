@@ -1757,10 +1757,11 @@ def _user_config_file() -> Path:
 def _read_config_for_edit(path: Path) -> dict:
     """The whole config file, for an in-place edit. A missing file is {}.
 
-    Raises _ConfigEditError for a file that is not a JSON object. WHY:
-    mousereach.config quietly treats an unreadable file as empty; an editor
-    that did the same would rewrite it holding only the watcher section and
-    erase processing_root, nas_root and every other setting on the machine.
+    Raises _ConfigEditError for a file that is not a JSON object. WHY: an
+    editor that read a damaged file as empty would rewrite it holding only
+    the watcher section and erase processing_root, nas_root and every other
+    setting on the machine. (mousereach.config refuses a damaged file the
+    same way: read_settings_file.)
     """
     if not path.exists():
         return {}

@@ -3828,3 +3828,38 @@ columns and ends them with their round (`RESUME_POINT_STATES`). Tests in `tests/
 **Before.** The hand-run cropping code (`video_prep/core/cropper.py`, behind `mousereach-crop`, `mousereach-prep` and the Video Prep panel) worked out its default archive folder, `<nas_root>/Analyzed/Multi-Animal`, the moment it was loaded. On a machine with no `nas_root` that sum fails, so just loading the cropper -- and with it the Video Prep panel and every piece of code that imports it -- stopped with `TypeError: unsupported operand type(s) for /: 'NoneType' and 'str'`, a message that says nothing about setup.
 
 **Now.** The default folders (collages to cut, cut singles, the pose queue, the collage archive) are looked up only when a command actually needs one (`cropper.default_dir`). On a set-up machine they are exactly the same folders as before. On a machine that is not set up, everything loads; giving the folders explicitly (`-i`, `-o`) works; and leaving one out stops with "MouseReach is not configured ... Run: mousereach-setup". Tests: `tests/test_cropper_imports_without_config.py`.
+## Update: a damaged config.json is refused, never read as "not set up"
+
+**What was wrong.** When `~/.mousereach/config.json` held a JSON error (a missing comma after a
+hand edit, say), every MouseReach program read it as an EMPTY file, without a word. Every path
+was then unset, the tools said "MouseReach is not configured -- run mousereach-setup", the lab's
+shared settings file could not be found (it is found from `nas_root`), so the hand-score check
+was silently skipped, and a save from `mousereach-setup` or the Setup panel rewrote the file with
+only the few settings setup manages -- every other setting in it lost.
+
+**What happens now** (`config.read_settings_file`, `config._load_config`):
+
+- A missing file, or an empty one, still means "nothing set up yet".
+- A file that exists but cannot be read, is not valid JSON, or does not hold a `{ ... }` object
+  stops the program with a message naming the file, the line and column of the error, and what
+  to do (fix that spot in a text editor, or restore the file from a backup). A byte-order mark
+  at the start (Notepad writes one) is accepted. A file saved in another encoding than UTF-8 (an
+  accented letter saved as "ANSI") is refused the same way, naming the byte that cannot be read
+  and saying to save the file again as UTF-8.
+- A program that already read the file cleanly -- a running watcher whose file is being edited
+  -- keeps using the settings as it last read them, and logs the problem once per change of the
+  file, so a half-saved edit does not stop it.
+- `mousereach-setup` prints `[FAIL]` with the same message and exits with code 1. The app
+  (`mousereach`) prints `[FAIL]` with the message and opens only the Setup screen, which shows it
+  in red; the Setup panel of an app that was already open shows it in red the same way. Neither
+  writes anything over the damaged file. (Importing MouseReach no longer reads the file by
+  itself -- `from mousereach import Paths` is looked up on first use -- so these two commands get
+  the chance to say what is wrong; `mousereach.settings_file` holds the reader and the error.)
+- Every other command (the watcher, the review tools, the batch commands) stops with a Python
+  traceback whose LAST line is the same message: the file, the line and column, and what to do.
+
+**For an operator.** If a MouseReach command stops with "The settings file ... is damaged: ...
+at line N, column M", open that file in a text editor, go to that line, and fix it (most often a
+missing comma or quote at the end of the line before). Then run the command again.
+
+Tests: `tests/test_damaged_config_file_is_refused.py`.

@@ -49,5 +49,18 @@ __version__ = "2.16.0-dev"
 
 __author__ = "Logan Friedrich"
 
-# Convenience imports for common config access
-from mousereach.config import Paths, FilePatterns, get_video_id
+# Convenience access to common config names: ``from mousereach import Paths``.
+# Loaded on first use (PEP 562 module __getattr__), never while the package
+# itself is being imported. WHY: mousereach.config reads ~/.mousereach/config.json
+# when it is imported and stops on a damaged file. Imported here eagerly, that
+# stop happened inside "import mousereach" -- before mousereach-setup or the
+# launcher could catch it and say [FAIL] with what to fix -- so a damaged file
+# ended every command, even the one meant to repair the setup, in a traceback.
+_CONFIG_NAMES = ("Paths", "FilePatterns", "get_video_id")
+
+
+def __getattr__(name):
+    if name in _CONFIG_NAMES:
+        from mousereach import config as _config_module
+        return getattr(_config_module, name)
+    raise AttributeError("module 'mousereach' has no attribute %r" % name)

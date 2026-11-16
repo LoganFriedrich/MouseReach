@@ -271,7 +271,23 @@ def detect_lab_profile() -> tuple:
 # =============================================================================
 
 def cli_main():
-    """Main entry point for mousereach-setup command."""
+    """Main entry point for mousereach-setup command.
+
+    A damaged ~/.mousereach/config.json stops the command with the message
+    saying which file, where in it and what to do (exit code 1), never with a
+    traceback and never by writing over the file."""
+    # WHY the error class comes from settings_file: importing mousereach.config
+    # itself raises on a damaged file, so importing it inside this handler
+    # would raise a second time instead of reporting the first.
+    from mousereach.settings_file import DamagedSettingsFile
+    try:
+        _cli_main()
+    except DamagedSettingsFile as e:
+        print("[FAIL] %s" % e)
+        sys.exit(1)
+
+
+def _cli_main():
     if len(sys.argv) > 1:
         if sys.argv[1] == "--show":
             show_config()
@@ -756,14 +772,17 @@ def load_config() -> dict:
 
     Returns:
         dict with 'nas_drive' and 'processing_root' keys, or empty dict if not found
+
+    Raises mousereach.config.DamagedSettingsFile (naming the file, the line
+    and column, and the remedy) when the file exists but is damaged. WHY:
+    save_config starts from this dict, so reading a damaged file as {} made
+    the next save rewrite it with only the few keys setup manages -- every
+    other setting (the shared pipeline folder, the backup folders, the
+    hand-score settings) lost. Refusing leaves the damaged file for a person
+    to fix.
     """
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    from mousereach.settings_file import read_settings_file
+    return read_settings_file(CONFIG_FILE)
 
 
 def show_config():
