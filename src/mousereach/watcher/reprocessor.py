@@ -346,6 +346,11 @@ class ReprocessingScanner:
             archive_listed = True
         except Exception as e:
             manifest_index, manifest_mtime, feats_mtime = {}, {}, {}
+            # A listing that stopped part-way may have seen a video's ground
+            # truth but not its features file; read as "ground truth newer
+            # than kinematics", that would mark a re-run it does not owe.
+            # This pass looks at no filed ground truth at all.
+            self._filed_gt = {}
             logger.warning(
                 f"Archive index build failed ({e}); falling back to per-video walks")
 
@@ -491,6 +496,15 @@ class ReprocessingScanner:
                     # a review saved for such a video never reached its filed
                     # kinematics. The kinematics-only re-run writes a manifest,
                     # so the next scan compares its versions as for any video.
+                    #
+                    # Only when this pass listed the archive. WHY: if the
+                    # listing failed (a share hiccup), "no manifest and no
+                    # features file" is what EVERY filed video looks like, and
+                    # each one with a saved review or ground truth would be
+                    # marked for a re-run it does not owe. Unsure -> no change.
+                    if not archive_listed:
+                        summary['no_manifest'] += 1
+                        continue
                     review_path = self._pending_review_path(
                         video_id, None, feats_mtime, review_index)
                     gt_pending = self._pending_ground_truth(video_id, None, feats_mtime)

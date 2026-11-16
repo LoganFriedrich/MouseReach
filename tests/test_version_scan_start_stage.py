@@ -249,3 +249,38 @@ def test_recording_retirement_agrees_about_ground_truth(archive):
     assert STEM not in build_complete_stems(nas / "Analyzed", nas)
     _gt(cohort, "2099-01-01T09:00:00")
     assert STEM in build_complete_stems(nas / "Analyzed", nas)
+
+
+# --- a pass whose listing of the archive failed ------------------------------
+# WHY: with the listing gone (a share hiccup) every filed video looks as if it
+# had no manifest and no features file; marked on that, each one with a saved
+# review or ground truth would get a re-run it does not owe.
+
+def _listing_fails(monkeypatch, seen_gt=None):
+    def _raise(self):
+        if seen_gt is not None:
+            self._filed_gt = dict(seen_gt)     # what a listing saw before it broke
+        raise OSError("the share went away")
+    monkeypatch.setattr(ReprocessingScanner, "_index_archive", _raise)
+
+
+def test_a_pass_that_could_not_list_the_archive_marks_no_manifestless_video(
+        archive, tmp_path, monkeypatch):
+    nas, cohort = archive
+    _filed_without_manifest(cohort)
+    _review_for(tmp_path, monkeypatch)
+    _listing_fails(monkeypatch)
+    db = DB(archived=[STEM])
+    summary = _scan(nas, db)
+    assert STEM not in db.marks
+    assert summary["no_manifest"] == 1
+
+
+def test_a_listing_that_broke_part_way_is_no_ground_truth_reason(archive, monkeypatch):
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT))
+    gt = _gt(cohort, "2099-01-02T09:00:00")
+    _listing_fails(monkeypatch, seen_gt={STEM: (gt, gt.stat().st_mtime)})
+    db = DB(archived=[STEM])
+    _scan(nas, db)
+    assert STEM not in db.marks

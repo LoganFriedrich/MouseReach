@@ -3414,6 +3414,12 @@ the video's versions are compared like any other. A review that says a segment w
 sent to deep review instead, exactly as for a video with a manifest. A video with no manifest and
 no waiting review is still only counted (`no_manifest` in `mousereach-version-check`).
 
+**Only when the scan could list the archive.** If this pass's one listing of Analyzed failed (a
+network hiccup), every filed video looks as if it had no manifest and no features file, and each
+one with a saved review or ground truth would be marked for a re-run it does not owe. So on such a
+pass a video with no manifest is only counted (`no_manifest`), never marked, and filed ground truth
+is not looked at at all; the next pass that lists the archive judges it properly.
+
 **Where it lives.** `watcher/reprocessor.py` (`ReprocessingScanner.scan`,
 `_mark_kinematics_rerun`). Tests in `tests/test_version_scan_start_stage.py`.
 
