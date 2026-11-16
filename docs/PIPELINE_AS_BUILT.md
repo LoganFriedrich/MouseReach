@@ -3537,13 +3537,14 @@ partly copied files.
 
 **Now.** A filed video whose filed results are still in Analyzed never ends in 'failed' because of
 a re-run (the one exclusion, a video `mousereach-repose-videos` took apart, is below). When its
-re-run has used up its retries (`watcher.max_retries`, 3), or its working copy is gone so no retry
-could run, or the re-run could not start on its last try (see "A re-run that cannot start" below),
-the processing watcher:
+re-run has used up its retries (`watcher.max_retries`, 3), or its working files are gone so no
+retry could run, or the re-run could not start on its last try (see "A re-run that cannot start"
+below), the processing watcher:
 1. puts the row back to **'archived'**, keeping when it was filed (`archived_at`), and wiping its
    re-run scope and a review return's resume point (the next re-run starts afresh, with the scope
    the version scan works out then);
-2. writes the reason into `error_message`, starting "re-run of a filed video failed: ..." (the
+2. writes the reason into `error_message`, starting "re-run of a filed video failed: ..." and
+   ending with the folder the failed run's working files were moved to (step 4) (the
    watcher's start-up clean-up of old errors leaves this message alone; filing the video again
    clears it), and sets `error_count` back to 0 so the next re-run has its retries;
 3. logs a `reprocess` step as failed, with the reason;
@@ -3555,25 +3556,77 @@ the processing watcher:
    after every such failure and after every version scan, so a video filed again drops off at the
    next scan.
 
+**"Its working files are gone" means all three of these:** the video is not in the processing
+folder, the file the row records as the video (`current_path`) does not exist, and the file it
+records as the pose (`dlc_output_path`) does not exist. WHY all three: a video a review queue
+returned can run with its video or pose left where it was, outside the processing folder. Judged
+by the processing folder alone, one passing failure of such a run put the video straight back to
+'archived' and parked the answers the person had just given. While any of the three is still
+there, the row stays 'failed' and keeps its retries.
+
+**The one failed re-run of a filed video that stays 'failed': it carries something a person made
+that has no other copy.** Before the row is put back to 'archived' the watcher looks in the
+processing folder for four kinds of file:
+- `<video>_segments.json` whose cuts a person set (it says `"boundary_source": "human"`);
+- ground truth: any of the video's files with `ground_truth` in its name
+  (`<video>_unified_ground_truth.json`);
+- the deep-review "cleared" marker, `<video>_deep_review_cleared.json`;
+- a review's answers, `<video>_causal_review.json`.
+
+Each one found is compared with the same-named file in the video's filed folder; a review's
+answers are also compared with the copy in the durable review store. "The same" means the same
+content, not merely the same name. If ANY of them has no identical copy, the row is NOT put back
+to 'archived'. It stays 'failed', listed by `mousereach-watch-status`; nothing in the processing
+folder is moved; no fingerprint is written; and the row's `error_message` gains one sentence,
+"left as failed, files in place: <file names> in the processing folder was made by a person and
+has no other copy". A file the watcher cannot read or compare counts as having no other copy.
+
+WHY: each of these comes to the processing folder from a review queue, and until the video is
+filed again that can be the only place it exists. Ground truth and the clear marker have no second
+store at all. A review's answers normally have a durable copy, but not when no durable store is
+configured or when the copy failed at the return (the return only logs that and goes on). Cuts
+have none. Putting the row back to 'archived' moves every file of the video into
+`_finished_elsewhere` -- a folder named for finished videos, which operators clear -- and the next
+re-run copies down from the filed folder only, so the person's work would silently never be
+applied and could then be deleted. (The first version of this step exempted hand-set cuts only;
+ground truth, the clear marker and a review with no durable copy were moved aside with everything
+else.)
+
+A file that IS identical to its copy -- ground truth copied down from the filed folder for a
+re-run, a review whose durable copy the return made -- does not keep the row 'failed': moving
+that duplicate aside loses nothing.
+
+What to do with such a video: find out why the run failed (the `error_message` and the processing
+log say), fix that, and reset the video with
+`mousereach-watch-reprocess --from-step processing <video id>`; the run starts again on the files
+in the processing folder, the person's file among them.
+
 **A re-run that cannot start.** Before a re-run, the watcher copies the video's files down from
 Analyzed into its own processing folder. If any copy fails (usually a file locked for a moment),
 or no processing folder is configured, the re-run has not started, and that is not yet a re-run
 that failed for good. For EVERY such video, filed or not, the watcher:
-1. moves whatever did arrive out of the processing folder into
+1. moves the files THIS try copied down out of the processing folder into
    `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted). WHY: a
-   partly copied set left there used to be picked up by a retry and run -- a stale local copy of
-   the file that failed to copy was reused, or, with a person's cuts missing, the algorithm cut
-   the video again;
+   partly copied set left there used to be picked up by a retry and run on files that had not all
+   arrived. A file that was ALREADY in the processing folder before the try is never moved. WHY:
+   for a video that was never filed (a first pass that failed, then Re-run pressed) the processing
+   folder holds the only copies of its video, its pose, a person's cuts and its review file, and
+   the row points at them; moved aside, the next try found "no pose and no video" for files that
+   were sitting in a folder named for finished videos. A copied-down file still has its original
+   where it came from, so moving the copy loses nothing;
 2. leaves the row **'outdated'** (it still owes its re-run) with `error_message` "re-run could not
-   start (attempt N): <reason>" and `last_error_at` now. `error_count` is not touched: that is the
-   pipeline's own retry count;
+   start (attempt N): <reason>", ending with the folder the copies were moved to, and
+   `last_error_at` now. `error_count` is not touched: that is the pipeline's own retry count;
 3. logs a `reprocess` step as failed, with the reason;
 4. tries again after an hour (the same wait a failed video has). A try that copies everything
    starts the re-run and clears the message.
 After `watcher.max_retries` (3) tries in a row that could not start, the re-run counts as failed
 for good: a filed video goes back to 'archived' as described above (fingerprinted and in the red
-panel), any other video is marked 'failed' -- with nothing left in the processing folder, so the
-failed-video retry does not run it on a partial set either. WHY not straight back to 'archived'
+panel) -- unless its processing folder holds something a person made that has no other copy (the
+rule above), in which case it is marked 'failed' and that file stays; any other video is marked
+'failed' too, with the files it had before the re-run still in the processing folder. (Still open, and the same as before this change: when such a never-filed video
+already had its own older copy of the file that could not be copied, the failed-video retry can
+run on that older copy.) WHY not straight back to 'archived'
 on the first failed copy: an 'archived' row with the fingerprint is not offered again until the
 declared versions change or a review or ground truth is saved, so one passing lock would have
 parked an owed re-run indefinitely.
@@ -3613,8 +3666,8 @@ review return and a stale-outputs gate both wipe the scope, and `archived_at` is
 means "was filed once", not "its filed results are there now".
 
 **A video that does not pass that test is marked 'failed'**, exactly as before, listed by
-`mousereach-watch-status` for a person; its working files stay where they are, except after a
-re-run that could not start, whose partial set has been moved aside (above):
+`mousereach-watch-status` for a person; its working files stay where they are, except that after
+a re-run that could not start the files that try copied down have been moved aside (above):
 - a video that was never filed -- a first pass that failed and had Re-run pressed, or an
   'unresolvable' row sent round again;
 - **a video `mousereach-repose-videos` took apart**: that command moves the filed pose and every
@@ -3625,9 +3678,14 @@ WHY: 'archived' means filed, and filed means passed every check; a video whose c
 not in Analyzed must never read as filed.
 
 **A returned video's answers.** When the failed run was a review return, the person's answers are
-not lost: the return copied the review to the durable review store before anything moved, and
-setting the working files aside never touches that store. The fingerprint above includes that
-review, so changing it offers the re-run again; until then the video is in the red panel.
+not lost. Normally the return copied the review to the durable review store before anything
+moved; then the file in the processing folder is a duplicate, it is set aside with the rest, the
+durable copy stays where it is, and the fingerprint above includes that review, so changing it
+offers the re-run again; until then the video is in the red panel. When the durable copy is NOT
+there or is not the same -- no durable store configured, or the copy failed -- the review in the
+processing folder is the only one, and the video stays 'failed' with it in place (the rule
+above). The same holds for ground truth and a deep-review clear marker the return brought, which
+have no durable store: they keep the video 'failed' unless the filed folder holds the same file.
 
 **For an operator.** Seeing "re-run of a filed video failed" in the red panel: the video's data in
 the database is the filed, older version and is complete (a video whose filed results were moved
@@ -3635,10 +3693,19 @@ away is never in this list -- it shows as failed in `mousereach-watch-status` in
 could not be copied or a missing setting, fix that and press Re-run for the video (or wait for the
 next version change). A video only waiting after a copy that failed is NOT in the red panel: it
 stays 'outdated', its reason starting "re-run could not start (attempt N)", and is tried again
-each hour by itself. Nothing is lost: the failed run's files are in `_finished_elsewhere`.
+each hour by itself. Nothing is lost: the reason on the row (and in the red panel) ends with the
+exact folder under `_finished_elsewhere` that the failed run's files, or the copies made for a try
+that could not start, were moved to. Only copies of files that are also somewhere else (in
+Analyzed, or a review's answers in the durable review store) and outputs of the failed run are
+ever moved there by this step. A never-filed video's own files stay in the processing folder, and
+so does everything of a video that carries a person's cuts, ground truth, deep-review clear
+marker or review answers with no identical copy elsewhere -- that video shows as failed in
+`mousereach-watch-status`, its reason naming the file, not in the red panel.
 
 **Where it lives.** `watcher/orchestrator.py` `ProcessingOrchestrator._restore_filed_after_failed_rerun`
-(with `_is_filed_rerun`, `_filed_results_present`, `_filed_rerun_gave_up`, `_set_aside_working_copies`,
+(with `_is_filed_rerun`, `_filed_results_present`, `_filed_rerun_gave_up`, `_working_files_findable`,
+`_unfiled_person_files` (with `_unfiled_cuts_of_a_person`, `_same_content`,
+`_note_person_files_kept`), `_set_aside_working_copies`, `_set_aside_folder`,
 `_write_failed_rerun_attention`), called from the retry bucket of `_select_work_item` and from
 `_rerun_could_not_start` (with `_rerun_start_wait_over`, which the outdated pick in
 `_select_work_item` uses), itself called from `_reprocess_video`; `watcher/db.py`

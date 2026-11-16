@@ -15,6 +15,7 @@ Analyzed/Archive/) does not.
 Built under tmp_path with invented ids; no real folder or database.
 """
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -127,18 +128,34 @@ def test_a_never_filed_video_out_of_retries_stays_failed(orch):
     assert orch.db.get_video(VID)["state"] == "failed"
 
 
-def test_a_returned_review_of_a_filed_video_that_fails_goes_back_to_archived(orch):
+@pytest.fixture
+def durable_store(tmp_path, monkeypatch):
+    """A durable review store under tmp_path; ``rig.path`` is where this
+    video's copy of record goes. ``rig.unconfigure()`` makes it a machine
+    with no durable store at all."""
+    import mousereach.review.causal_review_io as crio
+    state = {"dir": tmp_path / "durable_reviews"}
+    monkeypatch.setattr(
+        crio, "durable_review_path",
+        lambda stem: None if state["dir"] is None
+        else state["dir"] / f"{stem}_causal_review.json")
+    return type("Durable", (), {
+        "path": state["dir"] / f"{VID}_causal_review.json",
+        "unconfigure": staticmethod(lambda: state.update(dir=None))})
+
+
+def test_a_returned_review_of_a_filed_video_that_fails_goes_back_to_archived(orch, durable_store):
     """A review return wipes the re-run scope; the filed results still stand,
     so it is not left 'failed' for good. The person's answers are in the
-    durable review store, which setting the working files aside never touches."""
-    from mousereach.review.causal_review_io import durable_review_path
+    durable review store (the return copied them there), so the file in the
+    processing folder is a duplicate, and setting it aside loses nothing."""
     filed_at = _filed(orch)
     _working_copy(orch)
-    durable = durable_review_path(VID)
-    if durable is not None:
-        durable.parent.mkdir(parents=True, exist_ok=True)
-        durable.write_text('{"reviewed_at": "2099-01-02T10:00:00"}', encoding="utf-8")
-    (orch.processing_dir / f"{VID}_causal_review.json").write_text("{}", encoding="utf-8")
+    answers = '{"reviewed_at": "2099-01-02T10:00:00"}'
+    durable = durable_store.path
+    durable.parent.mkdir(parents=True, exist_ok=True)
+    durable.write_text(answers, encoding="utf-8")
+    (orch.processing_dir / f"{VID}_causal_review.json").write_text(answers, encoding="utf-8")
     _fail(orch, 3, scope=None)                            # returned: no scope on the row
     orch.db.set_fields(VID, resume_stage="assignment", held_at_step="outcome")
     orch._select_work_item()
@@ -146,8 +163,7 @@ def test_a_returned_review_of_a_filed_video_that_fails_goes_back_to_archived(orc
     assert row["state"] == "archived" and row["archived_at"] == filed_at
     assert row["error_message"].startswith(FAILED_RERUN_PREFIX)
     assert row["resume_stage"] is None                    # the next re-run starts afresh
-    if durable is not None:
-        assert durable.is_file()                          # the answers of record stay put
+    assert durable.read_text(encoding="utf-8") == answers  # the answers of record stay put
     aside = list((orch.processing_dir.parent / "_finished_elsewhere").rglob(
         f"{VID}_causal_review.json"))
     assert len(aside) == 1                                # the working copy moved, not deleted
@@ -463,3 +479,249 @@ def test_the_work_loop_leaves_a_rerun_that_could_not_start_until_its_hour_is_ove
     orch.db.set_fields(VID, last_error_at="2000-01-01T00:00:00")
     work = orch._select_work_item()
     assert work and work["type"] == "reprocess" and work["id"] == VID
+
+
+# ---------------------------------------------------------------------------
+# Setting files aside never takes the only copy of anything
+# ---------------------------------------------------------------------------
+# WHY: the set-aside folder is named for finished videos and operators clear
+# it. A file whose only copy is in the processing folder -- a never-filed
+# video's own working files, a person's re-cut of a filed video -- must stay
+# where the row and the next try look for it.
+
+def test_a_never_filed_rerun_keeps_its_own_files_when_one_copy_down_fails(orch, copy_down):
+    """Re-run pressed on a failed first pass: its video, pose, a person's
+    cuts and review file are in the processing folder and nowhere else, and
+    the row's pose path points there. One file of its results folder fails to
+    copy. Only what the try copied down is set aside."""
+    from mousereach.archive.core import get_archive_destination
+    _never_filed_outdated(orch)
+    own = {f"{VID}.mp4": "the video", POSE: "the pose",
+           f"{VID}_segments.json": '{"boundary_source": "human"}',
+           f"{VID}_causal_review.json": '{"answers": 1}'}
+    for name, text in own.items():
+        (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    orch.db.set_fields(VID, dlc_output_path=str(orch.processing_dir / POSE),
+                       current_path=str(orch.processing_dir / f"{VID}.mp4"))
+    # Its results folder holds two earlier outputs and nothing else; the copy
+    # of _reaches.json fails (copy_down).
+    results = get_archive_destination(VID)
+    for name in (f"{VID}.mp4", POSE, f"{VID}_segments.json"):
+        (results / name).unlink()
+    (results / f"{VID}_pellet_outcomes.json").write_text("filed", encoding="utf-8")
+
+    for _ in range(3):
+        row = copy_down.attempt()
+        for name, text in own.items():                     # its own files: untouched
+            assert (orch.processing_dir / name).read_text(encoding="utf-8") == text
+        assert Path(row["dlc_output_path"]).is_file()
+        assert not (orch.processing_dir / f"{VID}_pellet_outcomes.json").exists()
+    assert row["state"] == "failed" and row["archived_at"] is None
+    assert "no pose and no video found" not in row["error_message"]
+    # What was copied down for the try was set aside, and the row says where.
+    aside = orch.processing_dir.parent / "_finished_elsewhere"
+    assert {p.name for p in aside.rglob(f"{VID}*")} == {f"{VID}_pellet_outcomes.json"}
+    assert str(orch._set_aside_folder()) in row["error_message"]
+    assert copy_down.ran == []
+
+
+def test_a_failed_rerun_carrying_a_persons_recut_stays_failed_with_its_files(orch):
+    """A filed video was re-cut by a person in deep review and its return run
+    failed for good. The re-cut exists only in the processing folder: the
+    row stays 'failed' and nothing is set aside."""
+    _filed(orch)
+    (_filed_folder() / f"{VID}_segments.json").write_text(
+        json.dumps({"boundaries": [10, 20], "boundary_source": "algorithm"}), encoding="utf-8")
+    _working_copy(orch)
+    recut = json.dumps({"boundaries": [12, 22], "boundary_source": "human"})
+    (orch.processing_dir / f"{VID}_segments.json").write_text(recut, encoding="utf-8")
+    _fail(orch, 3, scope=None)
+    orch._select_work_item()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed"
+    assert (orch.processing_dir / f"{VID}_segments.json").read_text(encoding="utf-8") == recut
+    assert not (orch.processing_dir.parent / "_finished_elsewhere").exists()
+    orch._select_work_item()                               # and it is left alone after
+    assert orch.db.get_video(VID)["state"] == "failed"
+
+
+def test_a_persons_cuts_that_are_the_filed_ones_do_not_keep_the_row_failed(orch):
+    """Human cuts copied down from the filed folder are not at risk: the
+    filed folder has them."""
+    _filed(orch)
+    cuts = json.dumps({"boundaries": [12, 22], "boundary_source": "human"})
+    (_filed_folder() / f"{VID}_segments.json").write_text(cuts, encoding="utf-8")
+    _working_copy(orch)
+    (orch.processing_dir / f"{VID}_segments.json").write_text(cuts, encoding="utf-8")
+    _fail(orch, 3)
+    orch._select_work_item()
+    assert orch.db.get_video(VID)["state"] == "archived"
+
+
+def test_a_restored_row_says_where_the_failed_runs_files_went(orch):
+    _filed(orch)
+    _working_copy(orch)
+    _fail(orch, 3)
+    orch._select_work_item()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "archived"
+    assert str(orch._set_aside_folder()) in row["error_message"]
+    listed = json.loads((Paths.NAS_ROOT / "attention" / "NODE-T_failed_reruns.json")
+                        .read_text(encoding="utf-8"))["items"]
+    assert str(orch._set_aside_folder()) in listed[0]["says"]
+
+
+def test_a_failed_filed_run_whose_video_is_elsewhere_keeps_its_retries(orch, tmp_path):
+    """A review return can run a video whose mp4 and pose stayed outside the
+    processing folder. One failure of that run is not 'working files gone':
+    the row is not put back to 'archived' while it has retries left."""
+    _filed(orch)
+    elsewhere = tmp_path / "staging"
+    elsewhere.mkdir()
+    (elsewhere / f"{VID}.mp4").write_text("x", encoding="utf-8")
+    (elsewhere / POSE).write_text("x", encoding="utf-8")
+    _fail(orch, 1, scope=None)
+    orch.db.set_fields(VID, current_path=str(elsewhere / f"{VID}.mp4"),
+                       dlc_output_path=str(elsewhere / POSE))
+    orch._select_work_item()
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed"
+    assert not (row["error_message"] or "").startswith(FAILED_RERUN_PREFIX)
+
+
+def test_a_failed_filed_run_with_no_files_anywhere_goes_back_to_archived(orch):
+    """Nothing a retry could run on is left (no local video, and the row's
+    paths point at nothing): waiting would be for ever, so it is restored."""
+    _filed(orch)
+    _fail(orch, 1)
+    orch.db.set_fields(VID, current_path=str(orch.processing_dir / f"{VID}.mp4"),
+                       dlc_output_path="")
+    orch._select_work_item()
+    assert orch.db.get_video(VID)["state"] == "archived"
+
+
+# ---------------------------------------------------------------------------
+# A person's file with no other copy keeps the failed run where a re-run finds it
+# ---------------------------------------------------------------------------
+# WHY: a review queue hands the run more than cuts -- ground truth, the
+# deep-review clear marker, the review's answers. Until the video is filed
+# again the processing folder can hold the only copy of each (ground truth
+# and the marker have no second store; the review's durable copy is missing
+# when no store is configured or the copy failed). Put back to 'archived',
+# the row's files all go to the set-aside folder, which operators clear, and
+# the next re-run copies down from the filed folder without them
+# (ProcessingOrchestrator._unfiled_person_files).
+
+PERSON_FILES = {
+    "ground truth": (f"{VID}_unified_ground_truth.json", '{"segments": [1, 2, 3]}'),
+    "deep-review clear marker": (f"{VID}_deep_review_cleared.json", '{"cleared_by": "a person"}'),
+    "review answers": (f"{VID}_causal_review.json", '{"answers": {"3": "retrieved"}}'),
+}
+
+
+def _assert_left_failed_in_place(orch, name, text):
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed"
+    assert (orch.processing_dir / name).read_text(encoding="utf-8") == text
+    assert not (orch.processing_dir.parent / "_finished_elsewhere").exists()
+    assert name in row["error_message"] and "no other copy" in row["error_message"]
+    assert not (row["error_message"] or "").startswith(FAILED_RERUN_PREFIX)
+    assert row["pipeline_versions_hash"] is None           # no "do not offer again" mark
+    return row
+
+
+@pytest.mark.parametrize("kind", sorted(PERSON_FILES))
+def test_a_failed_rerun_carrying_a_persons_only_copy_stays_failed_with_its_files(
+        orch, durable_store, kind):
+    """A filed video came back from review with a file a person made, and
+    the run failed for good. Nothing else holds that file: the row stays
+    'failed', the file stays where a re-run finds it, the row names it."""
+    name, text = PERSON_FILES[kind]
+    _filed(orch)
+    _working_copy(orch)
+    (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    _fail(orch, 3, scope=None)
+    orch._select_work_item()
+    _assert_left_failed_in_place(orch, name, text)
+    message = orch.db.get_video(VID)["error_message"]
+    orch._select_work_item()                               # and it is left alone after
+    row = orch.db.get_video(VID)
+    assert row["state"] == "failed" and row["error_message"] == message
+    assert (orch.processing_dir / f"{VID}.mp4").is_file()  # the whole working set stays
+
+
+def test_review_answers_stay_in_place_on_a_machine_with_no_durable_store(orch, durable_store):
+    name, text = PERSON_FILES["review answers"]
+    durable_store.unconfigure()
+    _filed(orch)
+    _working_copy(orch)
+    (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    _fail(orch, 3, scope=None)
+    orch._select_work_item()
+    _assert_left_failed_in_place(orch, name, text)
+
+
+def test_review_answers_that_differ_from_the_durable_copy_stay_in_place(orch, durable_store):
+    """The durable store holds an EARLIER review of this video; the answers
+    in the processing folder are newer and exist nowhere else."""
+    name, text = PERSON_FILES["review answers"]
+    durable_store.path.parent.mkdir(parents=True)
+    durable_store.path.write_text('{"answers": {}}', encoding="utf-8")
+    _filed(orch)
+    _working_copy(orch)
+    (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    _fail(orch, 3, scope=None)
+    orch._select_work_item()
+    _assert_left_failed_in_place(orch, name, text)
+
+
+@pytest.mark.parametrize("kind", ["ground truth", "deep-review clear marker"])
+def test_a_persons_file_that_is_also_in_the_filed_folder_does_not_keep_the_row_failed(
+        orch, durable_store, kind):
+    """Ground truth copied down from the filed folder for a re-run is a
+    duplicate: the filed folder has it, so the row goes back to 'archived'
+    and the copy is set aside."""
+    name, text = PERSON_FILES[kind]
+    _filed(orch)
+    (_filed_folder() / name).write_text(text, encoding="utf-8")
+    _working_copy(orch)
+    (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    _fail(orch, 3)
+    orch._select_work_item()
+    assert orch.db.get_video(VID)["state"] == "archived"
+    assert (_filed_folder() / name).read_text(encoding="utf-8") == text
+    aside = list((orch.processing_dir.parent / "_finished_elsewhere").rglob(name))
+    assert len(aside) == 1
+
+
+def test_ground_truth_changed_since_it_was_filed_stays_in_place(orch, durable_store):
+    """The filed folder holds an older ground truth; a person changed it in
+    review. The changed one is the only copy of the change."""
+    name, text = PERSON_FILES["ground truth"]
+    _filed(orch)
+    (_filed_folder() / name).write_text('{"segments": [1]}', encoding="utf-8")
+    _working_copy(orch)
+    (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    _fail(orch, 3, scope=None)
+    orch._select_work_item()
+    _assert_left_failed_in_place(orch, name, text)
+    assert (_filed_folder() / name).read_text(encoding="utf-8") == '{"segments": [1]}'
+
+
+@pytest.mark.parametrize("kind", sorted(PERSON_FILES))
+def test_a_rerun_that_cannot_start_never_sets_a_persons_only_copy_aside(
+        orch, copy_down, durable_store, kind):
+    """The last "could not start" try of a filed video takes the same road:
+    the copies that try brought down are set aside, the person's file is
+    not, and the row is 'failed', not 'archived'."""
+    name, text = PERSON_FILES[kind]
+    _filed(orch)
+    (orch.processing_dir / name).write_text(text, encoding="utf-8")
+    orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="kinematics")
+    for _ in range(3):
+        row = copy_down.attempt()
+        assert (orch.processing_dir / name).read_text(encoding="utf-8") == text
+    assert row["state"] == "failed"
+    assert name in row["error_message"] and "no other copy" in row["error_message"]
+    assert not list((orch.processing_dir.parent / "_finished_elsewhere").rglob(name))
+    assert copy_down.ran == []

@@ -539,7 +539,7 @@ depth.
 DLC_Queue/           -> Videos waiting for DLC processing
 Processing/          -> ALL active videos + analysis files (v2.3+ unified)
 Failed/              -> Processing errors
-_finished_elsewhere/ -> Local copies set aside at watcher start (see below)
+_finished_elsewhere/ -> Local copies set aside by the watcher (see below)
 ```
 
 **`_finished_elsewhere/<date>/<folder>/`** -- when a graphics-card machine's
@@ -548,8 +548,40 @@ videos that are already finished: the machine's record says so AND the video's
 results (its `_processing_manifest.json`) are in `Analyzed/`. Those copies are
 moved here, never deleted, and the watcher log says how many and where. A copy
 whose results cannot be found in `Analyzed/` is left where it is, whatever the
-record says. Once you are satisfied the results are in `Analyzed/`, the folder can
-be cleared to free space.
+record says.
+
+The processing watcher also moves files here while it runs, in three cases:
+the working files of a filed video whose re-run failed for good (the video
+goes back to "archived" and its row names this folder); the copies made for a
+re-run that could not start because one file would not copy; and a pose or
+video left over when a run was refused because the video is in deep review.
+In the first two cases everything moved is either a copy of a file that is
+also somewhere else (in `Analyzed/`, or, for a review's answers, in the durable
+review store) or an output of the run that failed. A video's only copy of
+anything a person made is never moved here by those two. Four kinds of file
+count as made by a person: cuts set by hand (`_segments.json` saying
+`"boundary_source": "human"`), ground truth (any file with `ground_truth` in
+its name), the deep-review "cleared" marker (`_deep_review_cleared.json`) and
+a review's answers (`_causal_review.json`). Before moving anything the watcher
+compares each one in `Processing/` with the same-named file in the video's
+`Analyzed/` folder (a review's answers also with the copy in the durable
+review store). If any of them has no identical copy, nothing of that video is
+moved: it is left as "failed" with all its files in `Processing/`, and its
+reason in `mousereach-watch-status` names the file and says it "was made by a
+person and has no other copy".
+
+**Before clearing a dated folder,** check each video in it: its
+`_processing_manifest.json` is in `Analyzed/`, and the watcher does not list
+it as failed (`mousereach-watch-status`). Then look at the file names: if the
+folder holds a `_segments.json`, a file with `ground_truth` in its name, a
+`_deep_review_cleared.json` or a `_causal_review.json` for a video, open the
+video's `Analyzed/` folder and check the same file is there (a
+`_causal_review.json` may instead be in the durable review store,
+`<NAS root>/review_records/reviews/`). The watcher made that comparison
+before it moved the file; this second look costs a minute and a person's work
+cannot be made again. If all of that holds for every video in the folder, it
+can be deleted to free space. If you are not sure about one, leave that dated
+folder.
 
 **Note:** v2.3+ uses a single Processing/ folder. Status tracked via `validation_status`
 field in JSON files ("needs_review", "auto_approved", "validated").

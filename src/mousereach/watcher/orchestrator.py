@@ -5851,18 +5851,30 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     def _filed_rerun_gave_up(self, row) -> bool:
         """A failed re-run of a video whose filed results stand
-        (_is_filed_rerun), with no retry left, or whose working copy is gone
-        so a retry could not run (it would wait for ever). The share is read
-        only for a row that has run out of retries, and a row found not filed
-        is remembered at its error count, so the same failed row is not
-        re-read on every cycle."""
+        (_is_filed_rerun), with no retry left, or whose working files are
+        gone so a retry could not run (it would wait for ever). The share is
+        read only for such a row, and a row found not filed -- or holding a
+        file a person made that has no other copy (_unfiled_person_files:
+        cuts set by hand, ground truth, a deep-review clear marker, a
+        review's answers) -- is remembered at its error count, so the same
+        failed row is not re-read on every cycle. A row kept 'failed' for
+        such a file gets one sentence added to its error_message naming the
+        file, so a person reading the row sees why it was not put back to
+        'archived'.
+
+        "Working files gone" means ALL of: no video in the processing folder,
+        the row's current_path is not a file, and its dlc_output_path is not
+        a file. WHY all three: a review return runs a video whose mp4 or pose
+        stayed where it was (outside the bundle), so a missing local mp4 alone
+        does not mean the run's files are gone -- one passing failure of such
+        a run would have put the video back to 'archived' at once and parked
+        the answers the person had just given."""
         if not row or not row.get('archived_at'):
             return False
         try:
             out = int(row.get('error_count') or 0) >= self._max_retries()
             if not out:
-                pdir = self.processing_dir
-                out = not pdir or not (Path(pdir) / f"{row['video_id']}.mp4").is_file()
+                out = not self._working_files_findable(row)
             if not out:
                 return False
             seen = getattr(self, '_not_filed_seen', None)
@@ -5871,12 +5883,165 @@ class ProcessingOrchestrator(BaseOrchestrator):
             count = int(row.get('error_count') or 0)
             if seen.get(row['video_id']) == count:
                 return False
-            if self._is_filed_rerun(row):
+            if not self._is_filed_rerun(row):
+                seen[row['video_id']] = count
+                return False
+            kept = self._unfiled_person_files(row['video_id'])
+            if not kept:
                 return True
             seen[row['video_id']] = count
+            self._note_person_files_kept(row, kept)
             return False
         except Exception:
             return False
+
+    def _working_files_findable(self, row) -> bool:
+        """Whether anything a retry could run on is still where the row or
+        the processing folder says: the video in the processing folder, or
+        the row's current_path, or its dlc_output_path. Never raises."""
+        try:
+            pdir = self.processing_dir
+            if pdir and (Path(pdir) / f"{row['video_id']}.mp4").is_file():
+                return True
+            for key in ('current_path', 'dlc_output_path'):
+                raw = row.get(key)
+                if raw and Path(raw).is_file():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _unfiled_cuts_of_a_person(self, video_id: str) -> Optional[Path]:
+        """The segments file in the processing folder when it holds a PERSON'S
+        cuts (boundary_source 'human') that are not the cuts in the video's
+        filed folder; else None. Never raises (a doubt about a file that
+        says 'human' counts as not filed).
+
+        WHY: a person's re-cut, made in deep review, exists in one place
+        only until the video is filed again -- the processing folder (the
+        review file has a durable copy, the cuts have none). Putting the row
+        back to 'archived' sets the working files aside, and a later re-run
+        copies the OLD cuts down from the filed folder, so the re-cut would
+        silently never be applied. A failed run that carries one therefore
+        stays 'failed', with its files where they are, for a person."""
+        try:
+            pdir = self.processing_dir
+            if not pdir:
+                return None
+            local = Path(pdir) / f"{video_id}_segments.json"
+            if not local.is_file():
+                return None
+            doc = json.loads(local.read_text(encoding="utf-8"))
+            if not isinstance(doc, dict) or doc.get("boundary_source") != "human":
+                return None
+        except Exception:
+            return None
+        try:
+            from mousereach.archive.core import get_archive_destination
+            filed = Path(get_archive_destination(video_id)) / local.name
+            if filed.is_file() and json.loads(filed.read_text(encoding="utf-8")) == doc:
+                return None
+        except Exception:
+            pass
+        return local
+
+    @staticmethod
+    def _same_content(a: Path, b: Path) -> bool:
+        """Whether two files hold the same thing: the same bytes, or the same
+        JSON document. False when either cannot be read."""
+        try:
+            raw_a, raw_b = Path(a).read_bytes(), Path(b).read_bytes()
+            if raw_a == raw_b:
+                return True
+            return json.loads(raw_a.decode("utf-8")) == json.loads(raw_b.decode("utf-8"))
+        except Exception:
+            return False
+
+    def _unfiled_person_files(self, video_id: str) -> list:
+        """The files in the processing folder that a PERSON made for this
+        video and that have no identical copy where a later re-run would
+        find it; [] when there is none. Never raises: a file this cannot
+        judge counts as having no other copy.
+
+        Made by a person (the list a review queue uses to tell that a person
+        touched a bundle, review_return._PERSON_FILE_SUFFIXES, plus cuts):
+          * <video>_segments.json holding a person's cuts
+            (_unfiled_cuts_of_a_person);
+          * ground truth -- any of the video's files with 'ground_truth' in
+            its name;
+          * the deep-review clear marker, <video>_deep_review_cleared.json;
+          * a review's answers, <video>_causal_review.json.
+        "An identical copy" is the same-named file in the video's filed
+        folder with the same content or, for a review's answers, the copy in
+        the durable review store with the same content.
+
+        WHY: each of these reaches the processing folder from a review
+        queue, and until the video is filed again that can be its only copy
+        -- ground truth and the clear marker have no second store at all,
+        and a review's durable copy is missing when no durable store is
+        configured or the copy failed (review_return._ensure_durable_review
+        only logs that). Putting a failed re-run's row back to 'archived'
+        moves every '<video>_*' file into a folder named for finished videos,
+        which operators clear, and a later re-run copies down from the filed
+        folder only -- so the person's work would silently never be applied
+        and could then be deleted. A failed run that carries one stays
+        'failed', with its files where they are, for a person."""
+        out = []
+        cuts = self._unfiled_cuts_of_a_person(video_id)
+        if cuts is not None:
+            out.append(cuts)
+        try:
+            from mousereach.watcher.review_return import _PERSON_FILE_SUFFIXES
+            folder = Path(self.processing_dir)
+            names = [n for n in self._working_file_names(video_id)
+                     if n.endswith(_PERSON_FILE_SUFFIXES) or "ground_truth" in n]
+        except Exception:
+            return out
+        if not names:
+            return out
+        try:
+            from mousereach.archive.core import get_archive_destination
+            filed = Path(get_archive_destination(video_id))
+        except Exception:
+            filed = None
+        for name in names:
+            local = folder / name
+            copies = [] if filed is None else [filed / name]
+            if name == f"{video_id}_causal_review.json":
+                try:
+                    from mousereach.review.causal_review_io import durable_review_path
+                    durable = durable_review_path(video_id)
+                    if durable is not None:
+                        copies.append(Path(durable))
+                except Exception:
+                    pass
+            if not any(self._same_content(local, c) for c in copies):
+                out.append(local)
+        return out
+
+    @staticmethod
+    def _person_files_kept_note(kept) -> str:
+        """The sentence put on a row that stays 'failed' because of
+        _unfiled_person_files."""
+        return ("left as failed, files in place: "
+                + ", ".join(sorted(p.name for p in kept))
+                + " in the processing folder was made by a person and has no "
+                  "other copy")
+
+    def _note_person_files_kept(self, row, kept) -> None:
+        """Say on the row, once, why a failed re-run of a filed video was not
+        put back to 'archived' (_filed_rerun_gave_up). Never raises."""
+        try:
+            message = row.get('error_message') or ''
+            if "left as failed, files in place" in message:
+                return
+            note = self._person_files_kept_note(kept)
+            self.db.set_fields(row['video_id'],
+                               error_message=f"{message} -- {note}" if message else note)
+            logger.error(f"{row['video_id']}: its re-run failed for good; {note}")
+        except Exception as e:
+            logger.warning(f"{row.get('video_id')}: could not note why it stays "
+                           f"failed ({e})")
 
     def _restore_filed_after_failed_rerun(self, video_id: str, why: str) -> None:
         """A re-run of a filed video failed for good -- out of retries, or it
@@ -5905,9 +6070,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
           * the working copies in this machine's processing folder are set
             aside (moved, never deleted) into
             <processing_root>/_finished_elsewhere/<date>/<folder>/, the same
-            place the startup clean-up moves copies of finished videos;
+            place the startup clean-up moves copies of finished videos; the
+            error_message ends with that folder, so a person reading the row
+            or the list below knows where the failed run's files went;
           * the list <NAS root>/attention/<host>_failed_reruns.json names the
             video for a person (watcher/attention.py).
+        NOT done when the processing folder holds a file a person made that
+        has no identical copy in the filed folder or the durable review
+        store (_unfiled_person_files: cuts set by hand, ground truth, a
+        deep-review clear marker, a review's answers): that row is marked
+        'failed' and its files stay where they are -- 'archived' would set
+        the only copy aside and let a later re-run go without it.
         The version scan offers the re-run again only when the declared
         versions change, or a review or ground truth is saved, since the
         failure (ReprocessingScanner.scan, 'failed_rerun_waiting'); a person
@@ -5921,17 +6094,30 @@ class ProcessingOrchestrator(BaseOrchestrator):
         one whose filed results mousereach-repose-videos has moved into
         Analyzed/Archive/, must never read as filed.
 
-        A review return's answers are not lost by this: the return copied the
-        review to the durable store (review_return._ensure_durable_review),
-        which the set-aside below never touches, and the fingerprint includes
-        that review, so a person's later change to it offers the re-run
-        again."""
+        A review return's answers are not lost by this. When the return's
+        copy to the durable store (review_return._ensure_durable_review) is
+        there and identical, the set-aside below moves only a duplicate, and
+        the fingerprint includes that review, so a person's later change to
+        it offers the re-run again. When that copy is missing or differs --
+        no durable store configured, or the copy failed, which the return
+        only logs -- the review in the processing folder is the only one and
+        the row stays 'failed' with it in place (the NOT done case above)."""
         from mousereach.watcher.db import FAILED_RERUN_PREFIX
         try:
             row = self.db.get_video(video_id) or {}
         except Exception as e:
             row = {}
             logger.warning(f"{video_id}: could not read its row ({e})")
+        kept = self._unfiled_person_files(video_id)
+        if kept:
+            # Only reached from a run that could not start (the gave-up check
+            # leaves such a row 'failed' by itself and never calls this).
+            try:
+                self.db.mark_failed(
+                    video_id, f"{why} -- {self._person_files_kept_note(kept)}")
+            except Exception as e:
+                logger.error(f"{video_id}: could not mark it failed ({e})")
+            return
         if not self._is_filed_rerun(row):
             # Never filed (archived_at unset): a first pass that failed and had
             # Re-run pressed, or an 'unresolvable' row narrowed to 'outdated'.
@@ -5952,6 +6138,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             stamp = None
         try:
             message = f"{FAILED_RERUN_PREFIX}: {why}"
+            aside = self._set_aside_folder()
+            if aside is not None and self._working_file_names(video_id):
+                message += f" (the failed run's working files were moved to {aside})"
             self.db.force_state(
                 video_id, 'archived',
                 reason="re-run of a filed video failed; its filed results stand",
@@ -6003,16 +6192,24 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception:
             return True
 
-    def _rerun_could_not_start(self, video_id: str, why: str) -> None:
+    def _rerun_could_not_start(self, video_id: str, why: str,
+                               copied_down=()) -> None:
         """A re-run (an 'outdated' row) could not start: its files could not
         be copied down, or no processing folder is configured. Never raises.
 
-        Whatever did arrive in the processing folder is set aside first
-        (_set_aside_working_copies: moved, never deleted), for EVERY row,
-        filed or not. WHY: a partial working set left there was picked up by a
-        retry and run; the stage-reuse checks then reused a stale local twin
-        of the file that failed to copy, or the algorithm re-cut a video whose
-        human cuts never arrived.
+        The files THIS try copied down (``copied_down``: their names in the
+        processing folder) are set aside first (_set_aside_working_copies:
+        moved, never deleted). WHY: a partial working set left there was
+        picked up by a retry and run on files that never all arrived.
+        WHY only those, and never a file that was already in the processing
+        folder: for a video that was never filed -- a failed first pass with
+        Re-run pressed -- the processing folder holds the ONLY copies of its
+        video, its pose, a person's cuts and its review file, and the row's
+        paths point at them. Moving them aside left the next try with "no
+        pose and no video found" for files that were sitting in a folder
+        named for finished videos. A file that was copied down has its
+        original where it came from, so moving the copy loses nothing. The
+        message on the row names the folder the copies went to.
 
         Then the try is counted. While fewer than watcher.max_retries tries
         have failed in a row, the row STAYS 'outdated' -- it still owes its
@@ -6030,10 +6227,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
         After the last try the re-run counts as failed for good:
         _restore_filed_after_failed_rerun puts a filed video back to 'archived'
         (fingerprinted and listed for a person) and marks any other row
-        'failed' -- with nothing left in the processing folder, so the failed
-        retry bucket does not run it on a partial set either."""
+        'failed' -- a never-filed video, or a filed one whose processing
+        folder holds a person's file with no other copy
+        (_unfiled_person_files) -- with the files it had before the re-run
+        still in the processing folder."""
         from mousereach.watcher.db import RERUN_NOT_STARTED_PREFIX
-        self._set_aside_working_copies(video_id)
+        aside = self._set_aside_working_copies(video_id, only=set(copied_down or ()))
+        if aside is not None:
+            why = f"{why} (the files copied down for this try were moved to {aside})"
         try:
             row = self.db.get_video(video_id) or {}
         except Exception as e:
@@ -6055,33 +6256,56 @@ class ProcessingOrchestrator(BaseOrchestrator):
         self._restore_filed_after_failed_rerun(
             video_id, f"could not start after {attempt} attempt(s): {why}")
 
-    def _set_aside_working_copies(self, video_id: str) -> int:
-        """Move this video's files out of the local processing folder into
-        <processing_root>/_finished_elsewhere/<date>/<folder>/ (never delete).
-        Returns how many files moved. Never raises."""
-        moved = 0
+    def _set_aside_folder(self) -> Optional[Path]:
+        """Where _set_aside_working_copies moves files today:
+        <processing_root>/_finished_elsewhere/<date>/<folder>/. None when no
+        processing folder or root is configured."""
+        from datetime import date as _date
+        folder = self.processing_dir
+        root = Paths.PROCESSING_ROOT
+        if not folder or not root:
+            return None
+        return (Path(root) / "_finished_elsewhere" / _date.today().isoformat()
+                / Path(folder).name)
+
+    def _working_file_names(self, video_id: str) -> list:
+        """The names of this video's files in the processing folder (its
+        video, its pose files, its '<video>_*' outputs). Never raises."""
         try:
-            from datetime import date as _date
             folder = self.processing_dir
-            root = Paths.PROCESSING_ROOT
-            if not folder or not root or not Path(folder).is_dir():
-                return 0
-            target = (Path(root) / "_finished_elsewhere" / _date.today().isoformat()
-                      / Path(folder).name)
-            for e in os.scandir(folder):
-                n = e.name
-                if not e.is_file():
+            if not folder or not Path(folder).is_dir():
+                return []
+            return sorted(
+                e.name for e in os.scandir(folder)
+                if e.is_file() and (e.name == f"{video_id}.mp4"
+                                    or e.name.startswith(video_id + "DLC")
+                                    or e.name.startswith(video_id + "_")))
+        except Exception:
+            return []
+
+    def _set_aside_working_copies(self, video_id: str, only=None) -> Optional[Path]:
+        """Move this video's files out of the local processing folder into
+        _set_aside_folder() (never delete). With ``only`` (a set of file
+        names), just those of its files. Returns the folder when at least one
+        file moved, else None. Never raises."""
+        moved = 0
+        target = None
+        try:
+            target = self._set_aside_folder()
+            if target is None:
+                return None
+            folder = self.processing_dir
+            for n in self._working_file_names(video_id):
+                if only is not None and n not in only:
                     continue
-                if n == f"{video_id}.mp4" or n.startswith(video_id + "DLC") \
-                        or n.startswith(video_id + "_"):
-                    target.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(Path(folder) / n), str(target / n))
-                    moved += 1
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(Path(folder) / n), str(target / n))
+                moved += 1
             if moved:
                 logger.info(f"{video_id}: set aside {moved} working file(s) -> {target}")
         except Exception as e:
             logger.warning(f"{video_id}: could not set aside its working files ({e})")
-        return moved
+        return target if moved else None
 
     def _write_failed_rerun_attention(self) -> None:
         """Rewrite this machine's list of filed videos whose re-run failed
@@ -6298,23 +6522,36 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Copy DLC h5 and video
         all_files = _reprocess_copy_set(source_dirs, source_h5.parent, video_id)
         copy_failures = []
+        # The files this try brought down from somewhere else. A source that
+        # already IS the file in the processing folder (a never-filed video's
+        # own working files) is not one of them: _rerun_could_not_start says
+        # why the difference matters.
+        copied_down = []
         for src_file in all_files:
             dest = self.processing_dir / src_file.name
+            try:
+                in_place = dest.exists() and Path(src_file).samefile(dest)
+            except OSError:
+                in_place = False
             if not safe_copy(src_file, dest, verify=True):
                 copy_failures.append(src_file.name)
+            elif not in_place:
+                copied_down.append(dest.name)
         if copy_failures:
             # A partial working set must not reach the pipeline: a stale local
             # twin of a file that failed to copy would be silently reused by
             # the stage-reuse checks (a locked _reaches.json nearly caused
             # exactly that). Fail loudly instead; safe_copy has
             # already absorbed transient locks with retries.
-            # Cannot start: the partial working set is set aside and the
+            # Cannot start: the files this try copied down are set aside (a
+            # file that was already in the processing folder stays) and the
             # copy-down is tried again later (_rerun_could_not_start). Marked
             # 'failed', the retry used to run the pipeline on exactly the
             # partial set this guard is here to stop.
             self._rerun_could_not_start(
                 video_id,
-                "copying it down failed for: %s" % ", ".join(sorted(copy_failures)))
+                "copying it down failed for: %s" % ", ".join(sorted(copy_failures)),
+                copied_down=copied_down)
             return
 
         # Transition to processing state. Name the model explicitly: the copy
