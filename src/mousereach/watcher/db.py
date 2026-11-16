@@ -1605,22 +1605,148 @@ class WatcherDB:
             logger.error(f"Failed to mark {video_id} unresolvable: {e}")
             raise
 
-    @_retry_network_errors
-    def reset_failed(self, video_id: str, to_state: str = None):
+    # The states a person's reset can choose with --from-step: the legal
+    # targets from 'failed' that put a video back in front of a work step.
+    # 'validated' and 'unresolvable' are left out on purpose (see
+    # infer_reset_state for the one case where 'validated' is inferred).
+    RESET_STEP_CHOICES = ('dlc_queued', 'dlc_complete', 'processing', 'processed')
+
+    @staticmethod
+    def infer_reset_state(video_id: str, dlc_queue=None, processing_dir=None,
+                          error_message=None):
+        """Where a reset of a failed video should put it, judged from the
+        files THIS node holds: ``(state, {column: value})``, or None when its
+        files are not here.
+
+          * the video and a pose in the processing folder -> 'processing';
+          * the video in this node's DLC queue -> 'dlc_complete' if a pose from
+            the declared model is beside it, else 'dlc_queued'.
+
+        The same reading the automatic retries make (the processing server's
+        failed-video retry; a GPU node's restart, _recover_local_dlc_queue),
+        so a person's reset and an automatic retry agree. ``dlc_queue`` and
+        ``processing_dir`` default to this node's configured folders.
+
+        WHY never 'discovered': it is not a legal state after 'failed', and
+        inferring it made every reset of a video with no recorded pose and no
+        validation time raise. WHY 'validated' only in one case: on a GPU
+        node that state is "waiting in the shared singles folder for a node
+        to take it", and a reset must not claim that a file is there. It IS
+        there in one case, which is then the answer:
+
+          * the row failed copying the single into a DLC queue (its
+            ``error_message`` starts with single_claim.COPY_FAILED_REASON)
+            and the video is back at the top of the shared singles folder ->
+            'validated', with source_path and current_path set to that file.
+
+        WHY: that failure gives the video back to the shared folder, and the
+        row's own message tells a person to run mousereach-watch-reprocess
+        once the cause is fixed. Without this case that reset found no file
+        on this node and refused."""
+        try:
+            from mousereach.config import Paths
+            if dlc_queue is None:
+                dlc_queue = Paths.DLC_QUEUE
+            if processing_dir is None:
+                processing_dir = Paths.PROCESSING
+        except Exception:
+            pass
+
+        def _poses(folder):
+            try:
+                return sorted(Path(folder).glob(f"{video_id}DLC*.h5"))
+            except OSError:
+                return []
+
+        def _declared(poses):
+            try:
+                from mousereach.watcher import repose
+                declared = repose.declared_scorer()
+                if not declared:
+                    return None
+                for h5 in poses:
+                    if repose.scorer_of(h5) == declared:
+                        return h5
+            except Exception:
+                return None
+            return None
+
+        def _is_file(p):
+            try:
+                return p.is_file()
+            except OSError:
+                return False
+
+        if processing_dir:
+            mp4 = Path(processing_dir) / f"{video_id}.mp4"
+            poses = _poses(processing_dir)
+            if poses and _is_file(mp4):
+                from mousereach.pipeline.manifest import select_pose_file
+                h5 = _declared(poses) or select_pose_file(poses)
+                return 'processing', {'current_path': str(mp4),
+                                      'dlc_output_path': str(h5) if h5 else None}
+        if dlc_queue:
+            mp4 = Path(dlc_queue) / f"{video_id}.mp4"
+            if _is_file(mp4):
+                h5 = _declared(_poses(dlc_queue))
+                if h5 is not None:
+                    return 'dlc_complete', {'current_path': str(mp4),
+                                            'source_path': str(mp4),
+                                            'dlc_output_path': str(h5)}
+                return 'dlc_queued', {'current_path': str(mp4),
+                                      'source_path': str(mp4)}
+        try:
+            from mousereach.watcher import single_claim
+            if (error_message or '').startswith(single_claim.COPY_FAILED_REASON):
+                door = single_claim.front_door()
+                if door is not None:
+                    mp4 = door / f"{video_id}.mp4"
+                    if _is_file(mp4):
+                        return 'validated', {'current_path': str(mp4),
+                                             'source_path': str(mp4)}
+        except Exception:
+            pass
+        return None
+
+    def reset_failed(self, video_id: str, to_state: str = None,
+                     dlc_queue=None, processing_dir=None) -> Optional[str]:
         """
-        Reset a failed video to retry from a previous state.
+        Reset a failed video so it is worked again. Returns the state it was
+        set to, or None when the row was NOT changed because it is not
+        'failed' (a person's command says so; it never claims a reset it did
+        not make).
 
         Args:
             video_id: Video identifier
-            to_state: State to reset to. If None, infers from context:
-                     - If has DLC output: reset to 'dlc_complete'
-                     - Else if validated: reset to 'validated'
-                     - Else: reset to 'discovered'
+            to_state: State to reset to (the person's --from-step). If None,
+                it is read from the files this node holds
+                (infer_reset_state); if they are not here a ValueError names
+                the --from-step choices.
+
+        The reset gives the video its automatic retries back: error_count
+        goes to 0. WHY: the count is what the automatic retries compare with
+        watcher.max_retries, and a person resets a video once the cause is
+        fixed; keeping the old count put the very next failure past the
+        limit. The old count and error are kept in processing_log
+        (step 'reset').
         """
-        with self._lock:
-            conn = self._get_connection()
-            try:
-                # Get video info
+        inferred_fields = {}
+        if to_state is None:
+            row = self.get_video(video_id)
+            found = self.infer_reset_state(
+                video_id, dlc_queue, processing_dir,
+                error_message=(row or {}).get('error_message'))
+            if found is not None:
+                to_state, inferred_fields = found
+        return self._reset_failed_row(video_id, to_state, inferred_fields)
+
+    @_retry_network_errors
+    def _reset_failed_row(self, video_id: str, to_state, fields: dict) -> Optional[str]:
+        """The database half of reset_failed, under one write lock
+        (_state_write): the row is changed only if it is still 'failed'."""
+        old_count = old_error = None
+        try:
+            with self._state_write() as conn:
                 row = conn.execute(
                     "SELECT * FROM videos WHERE video_id = ?",
                     (video_id,)
@@ -1630,17 +1756,17 @@ class WatcherDB:
                     raise ValueError(f"Video {video_id} not found")
 
                 if row['state'] != 'failed':
-                    logger.warning(f"Video {video_id} is not in failed state (current: {row['state']})")
-                    return
+                    logger.warning(f"Video {video_id} is not in failed state "
+                                   f"(current: {row['state']}); not changed")
+                    return None
 
-                # Infer state if not provided
                 if to_state is None:
-                    if row['dlc_output_path']:
-                        to_state = 'dlc_complete'
-                    elif row['validated_at']:
-                        to_state = 'validated'
-                    else:
-                        to_state = 'discovered'
+                    raise ValueError(
+                        f"{video_id}: its files are not on this node (not in this "
+                        f"node's DLC queue, nor video and pose in its processing "
+                        f"folder), so where to restart it cannot be read from them. "
+                        f"Name the step: --from-step "
+                        f"{' | '.join(self.RESET_STEP_CHOICES)}")
 
                 # Validate target state exists in transitions
                 valid_retry_states = VIDEO_TRANSITIONS.get('failed', [])
@@ -1649,27 +1775,33 @@ class WatcherDB:
                         f"Cannot reset to {to_state}. Valid retry states: {', '.join(valid_retry_states)}"
                     )
 
+                old_count = row['error_count'] or 0
+                old_error = row['error_message']
+
                 # Reset. A re-run scope ends with its re-run
                 # (REPROCESS_SCOPE_STATES) and a review return's resume point
                 # with its round (RESUME_POINT_STATES): a reset to an earlier
                 # state is a fresh run with every step and check.
                 clears = self._end_of_round_sql(conn, 'failed', to_state)
-                conn.execute(f"""
+                sets = "".join(f"{col} = ?, " for col in fields)
+                cur = conn.execute(f"""
                     UPDATE videos
                     SET state = ?,
                         error_message = NULL,
-                        {clears}updated_at = ?
-                    WHERE video_id = ?
-                """, (to_state, self._now(), video_id))
-
-                conn.commit()
-                logger.info(f"Reset video {video_id} from failed to {to_state}")
-
-            except Exception as e:
-                logger.error(f"Failed to reset video {video_id}: {e}")
-                raise
-            finally:
-                conn.close()
+                        error_count = 0,
+                        {sets}{clears}updated_at = ?
+                    WHERE video_id = ? AND state = 'failed'
+                """, (to_state, *fields.values(), self._now(), video_id))
+                if cur.rowcount != 1:
+                    return None
+        except Exception as e:
+            logger.error(f"Failed to reset video {video_id}: {e}")
+            raise
+        logger.info(f"Reset video {video_id} from failed to {to_state}")
+        self.log_step(video_id, 'reset', 'completed',
+                      message=f"reset from failed to {to_state}; retries given back "
+                              f"(error count was {old_count}); last error: {old_error}")
+        return to_state
 
     @_retry_network_errors
     def update_file_size(self, filename: str, size: int):

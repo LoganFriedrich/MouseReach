@@ -221,13 +221,19 @@ class TestWatcherDB:
         assert video['error_count'] == 1
         assert video['error_message'] == "Test error 1"
 
-        # Reset and fail again
+        # Fail again without a reset: the count goes on
+        temp_db.force_state(video_id, 'dlc_running', reason="test retry")
+        temp_db.mark_failed(video_id, "Test error 2")
+        assert temp_db.get_video(video_id)['error_count'] == 2
+
+        # A person's reset gives the retries back, so the next failure is
+        # the first one again (the old count stays in the processing log)
         temp_db.reset_failed(video_id, to_state='dlc_queued')
         temp_db.update_state(video_id, 'dlc_running')
-        temp_db.mark_failed(video_id, "Test error 2")
+        temp_db.mark_failed(video_id, "Test error 3")
 
         video = temp_db.get_video(video_id)
-        assert video['error_count'] == 2
+        assert video['error_count'] == 1
 
     def test_reset_failed_returns_to_valid_state(self, temp_db):
         """reset_failed transitions back to appropriate state."""

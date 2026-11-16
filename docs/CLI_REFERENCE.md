@@ -1764,14 +1764,48 @@ status every node last reported.
 ### `mousereach-watch-reprocess`
 
 ```
-usage: mousereach-watch-reprocess [video_id ...] [--all-failed] [--from-step STEP]
+usage: mousereach-watch-reprocess [video_id] [--all-failed] [--from-step STEP]
 
-Reset failed videos so the watcher picks them up again.
+Reset a failed video so the watcher works it again, with its automatic
+retries given back. Only a video in the 'failed' state is changed; for any
+other state the command says what to do instead and exits with code 1.
 
-  video_id ...       Specific video id(s) to reset.
+  video_id           The video to reset.
   --all-failed       Reset every video currently in the failed state.
-  --from-step STEP   Restart from this pipeline step instead of the beginning.
+  --from-step STEP   Restart at this step: dlc_queued, dlc_complete,
+                     processing or processed. Without it the step is read
+                     from the files this machine holds (video in its DLC
+                     queue: dlc_queued, or dlc_complete with a pose beside it;
+                     video and pose in its Processing folder: processing;
+                     a single whose copy into the DLC queue failed and
+                     that is back in the shared singles folder:
+                     validated).
 ```
+
+What it does, step by step:
+
+1. Run it on the machine whose watcher failed the video (the database it
+   changes is that machine's). Activate the mousereach environment first.
+2. Without `--from-step`, it looks for the video's files on this machine:
+   the video and a pose in the Processing folder restart it at `processing`;
+   the video in the DLC queue restarts it at `dlc_queued` (or `dlc_complete`
+   when a pose from the declared model is beside it). A single whose copy
+   into the DLC queue failed (its error starts "could not copy it from the
+   shared singles folder") was given back to the shared singles folder; if
+   it is there, it restarts at `validated` and any GPU node can take it.
+   If the files are not
+   on this machine it changes nothing and prints the `--from-step` choices;
+   name one only if you know where the files are.
+3. The video's failure count goes back to 0, so the watcher's own automatic
+   retries apply to it again. The old count and the last error are kept in
+   the processing log (step `reset`).
+4. A video that is not `failed` is never changed. The command prints, for
+   example, `<video> not changed: it is 'archived', not failed.` and what to
+   do instead (a filed video is run again with the dashboard's "Re-run video"
+   button; a held one waits for its review), and exits with code 1.
+5. `--all-failed` asks once, then resets each failed video and prints
+   `Reset K of N videos.` -- K counts only the videos really reset (one the
+   watcher retried in the meantime is not counted).
 
 Since 2026-10-30 the processing server retries a failed video on its own: an hour
 after the failure, while the video has retries left (`watcher.max_retries`, 3 by

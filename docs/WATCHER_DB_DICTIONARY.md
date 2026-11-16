@@ -146,7 +146,18 @@ State
                           not be copied down; it is tried again an hour after
                           last_error_at, and the message clears when the
                           re-run starts.
-  error_count             retries so far; not incremented for 'unresolvable'
+  error_count             failures since the last reset; not incremented for
+                          'unresolvable'. A person's reset
+                          (mousereach-watch-reprocess) sets it back to 0 and
+                          writes the old count to processing_log (step
+                          'reset'), so the automatic retries apply again.
+                          Without --from-step the reset reads its restart
+                          step from this node's files (db.py
+                          infer_reset_state); a single whose copy into the
+                          DLC queue failed (error starts "could not copy it
+                          from the shared singles folder") and that is back
+                          at the top of the shared singles folder is reset
+                          to 'validated' with its path set to that file.
   last_error_at
 
 Timestamps (ISO strings, on the writing machine's clock)

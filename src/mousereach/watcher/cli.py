@@ -703,13 +703,22 @@ status every node last reported.
 def main_reprocess():
     """Reset failed videos for reprocessing."""
     _maybe_print_help("""
-usage: mousereach-watch-reprocess [video_id ...] [--all-failed] [--from-step STEP]
+usage: mousereach-watch-reprocess [video_id] [--all-failed] [--from-step STEP]
 
-Reset failed videos so the watcher picks them up again.
+Reset a failed video so the watcher works it again, with its automatic
+retries given back. Only a video in the 'failed' state is changed; for any
+other state the command says what to do instead and exits with code 1.
 
-  video_id ...       Specific video id(s) to reset.
+  video_id           The video to reset.
   --all-failed       Reset every video currently in the failed state.
-  --from-step STEP   Restart from this pipeline step instead of the beginning.
+  --from-step STEP   Restart at this step: dlc_queued, dlc_complete,
+                     processing or processed. Without it the step is read
+                     from the files this machine holds (video in its DLC
+                     queue: dlc_queued, or dlc_complete with a pose beside it;
+                     video and pose in its Processing folder: processing;
+                     a single whose copy into the DLC queue failed and
+                     that is back in the shared singles folder:
+                     validated).
 """)
     # Parse args
     args = sys.argv[1:]
@@ -721,19 +730,23 @@ Reset failed videos so the watcher picks them up again.
         if arg == '--from-step' and i + 1 < len(args):
             from_step = args[i + 1]
 
-    # Get video_id if provided
+    # Get video_id if provided. The word after --from-step is the step, not
+    # the video (it used to be taken as the video id, so the documented
+    # "--from-step dlc_complete <video>" looked up a video named dlc_complete).
     video_id = None
-    for arg in args:
-        if not arg.startswith('--'):
-            video_id = arg
-            break
+    for i, arg in enumerate(args):
+        if arg.startswith('--') or (i > 0 and args[i - 1] == '--from-step'):
+            continue
+        video_id = arg
+        break
 
     if not video_id and not all_failed:
         print("Usage: mousereach-watch-reprocess [options] [video_id]", file=sys.stderr)
         print()
         print("Options:")
         print("  --all-failed      Reset ALL failed videos")
-        print("  --from-step STEP  Reprocess from a specific step")
+        print("  --from-step STEP  Restart at this step (dlc_queued, dlc_complete,")
+        print("                    processing, processed)")
         print()
         print("Examples:")
         print("  mousereach-watch-reprocess 20250101_CNT0101_P1")
@@ -774,39 +787,73 @@ Reset failed videos so the watcher picks them up again.
             print("Cancelled.")
             return
 
-        # Reset all
+        # Reset all. Count only what was really reset: a row can leave
+        # 'failed' between the listing above and its reset (the watcher
+        # retries failed videos on its own), and such a row is not changed.
+        done = 0
         for video in failed:
+            vid = video['video_id']
             try:
-                db.reset_failed(video['video_id'], to_state=from_step)
-                print(f"Reset: {video['video_id']}")
+                new_state = db.reset_failed(vid, to_state=from_step)
             except Exception as e:
-                print(f"ERROR resetting {video['video_id']}: {e}", file=sys.stderr)
+                print(f"ERROR resetting {vid}: {e}", file=sys.stderr)
+                continue
+            if new_state:
+                done += 1
+                print(f"Reset: {vid} -> {new_state} (retries given back)")
+            else:
+                print(f"  {vid} not changed: it is no longer failed")
 
-        print(f"\nReset {len(failed)} videos.")
+        print(f"\nReset {done} of {len(failed)} videos.")
 
     else:
-        # Reset single video
+        # Reset single video. Only a 'failed' row is ever changed; for any
+        # other state the command says so and what to do instead, and exits 1.
+        # WHY no "Reset anyway?" question any more: the reset never changed
+        # such a row, yet the command printed "Reset" -- a person was told a
+        # video was reset that was not.
         try:
             video = db.get_video(video_id)
             if not video:
                 print(f"ERROR: Video not found: {video_id}", file=sys.stderr)
                 sys.exit(1)
 
-            if video['state'] != 'failed':
-                print(f"WARNING: Video {video_id} is not in failed state (current: {video['state']})")
-                response = input("Reset anyway? [y/N]: ")
-                if response.lower() != 'y':
-                    print("Cancelled.")
-                    return
+            new_state = None
+            if video['state'] == 'failed':
+                new_state = db.reset_failed(video_id, to_state=from_step)
+            if not new_state:
+                state = (db.get_video(video_id) or video)['state']
+                print(f"{video_id} not changed: it is '{state}', not failed.")
+                print(f"  {_reprocess_next_step(state)}")
+                sys.exit(1)
 
-            db.reset_failed(video_id, to_state=from_step)
-            print(f"Reset: {video_id}")
-            if from_step:
-                print(f"  Will restart from: {from_step}")
+            print(f"Reset: {video_id} -> {new_state} (retries given back)")
 
+        except SystemExit:
+            raise
         except Exception as e:
             print(f"ERROR: Failed to reset video: {e}", file=sys.stderr)
             sys.exit(1)
+
+
+def _reprocess_next_step(state: str) -> str:
+    """What a person does instead, for a video mousereach-watch-reprocess did
+    not reset because it is not 'failed'."""
+    if state == 'archived':
+        return ("A filed video is run again with the 'Re-run video' button in the "
+                "dashboard (it asks why).")
+    if state == 'crystallized':
+        return ("It is locked for a publication; unlock it with "
+                "mousereach-uncrystallize first if a re-run is really intended.")
+    if state in ('triage', 'deep_review'):
+        return ("It is held for a person in the review queue; it goes on by itself "
+                "once the review is finished.")
+    if state == 'unresolvable':
+        return ("This machine has no file for it; mousereach-watch-unresolvable "
+                "--list says why.")
+    if state == 'quarantined':
+        return "It is quarantined; see mousereach-watch-quarantine --list."
+    return "It is already being worked; mousereach-watch-status shows where it is."
 
 
 # =============================================================================

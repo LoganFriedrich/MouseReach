@@ -4342,3 +4342,26 @@ which the watcher retries on a network drive) and is checked against the state t
 wrote. A `force_state` WARNING line is written only after the change is saved. For an operator:
 nothing to do. Where it lives: `watcher/db.py` `WatcherDB._state_write`; tests in
 `tests/test_state_change_under_write_lock.py`.
+
+**A person's reset (`mousereach-watch-reprocess`).** Three defects are fixed:
+- With no `--from-step` the restart point used to be guessed from the row alone: 'discovered'
+  for a row with no recorded pose and no validation time -- not a legal state after 'failed',
+  so the reset raised -- or 'validated', which on a GPU node means "waiting in the shared singles
+  folder", where the file was not. It is now read from the files this machine holds, exactly as
+  the automatic retries read them (`WatcherDB.infer_reset_state`): video and pose in the
+  Processing folder -> `processing`; video in the DLC queue -> `dlc_complete` with a pose from
+  the declared model beside it, else `dlc_queued`; a single whose copy into the DLC queue failed
+  (error starting "could not copy it from the shared singles folder") and that is back at the
+  top of the shared singles folder -> `validated` (that failure gave it back there, and its
+  message tells a person to run this command). No files here: nothing changes and the
+  `--from-step` choices are printed.
+- A reset kept the failure count, so the very next failure was already past
+  `watcher.max_retries` and the automatic retries never applied again. A reset now sets the
+  count to 0; the old count and error are written to the processing log (step `reset`).
+- For a video that was not 'failed' the command asked "Reset anyway?" and printed "Reset" --
+  but nothing was changed. It now changes only a 'failed' row (the UPDATE itself requires
+  'failed'), says "<video> not changed: it is '<state>', not failed." with what to do instead,
+  and exits with code 1. `--all-failed` prints how many were really reset ("Reset K of N").
+  The word after `--from-step` is no longer mistaken for the video id.
+Where it lives: `watcher/db.py` `reset_failed`, `infer_reset_state`; `watcher/cli.py`
+`main_reprocess`; tests in `tests/test_reset_failed_video.py`.
