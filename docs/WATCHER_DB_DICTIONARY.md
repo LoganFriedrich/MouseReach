@@ -176,7 +176,11 @@ Version tracking (added by migration, db.py:331)
                           way. A 'kinematics' scope on a filed row is read back
                           when the run is picked without a start stage (the
                           failed-video retry, a watcher restart), so the retry
-                          is kinematics-only too. It is cleared when the video
+                          is kinematics-only too. A run that has to remake an
+                          algorithm output after all changes 'kinematics' to
+                          the stage it remakes (assignment counts as
+                          'outcome') before remaking it, so a later pick runs
+                          every check. It is cleared when the video
                           is filed, when a review queue returns it, and when the
                           gate finds stale outputs.
                           NULL when not outdated. On an 'archived' row a value

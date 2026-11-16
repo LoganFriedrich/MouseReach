@@ -341,3 +341,67 @@ def test_the_kinematics_step_stamps_the_ground_truth_beside_the_run(rig, monkeyp
     rig.file_it()
     rig.run("kinematics")
     assert seen.get("ground_truth_path") == gt
+
+
+# ---------------------------------------------------------------------------
+# A kept scope never outlives a recompute
+# ---------------------------------------------------------------------------
+# WHY: the evidence that a run recomputed an algorithm output lives only inside
+# that run. Read back as 'kinematics' on the next pick, the scope would reuse
+# the freshly recomputed output and skip the quality triage and the hand-score
+# comparison for it -- after a restart while the video waited for its hand
+# scores, or after a failure between the recompute and the checks. The scope
+# is narrowed to the recomputed stage before that stage runs
+# (orchestrator.scope_for_recomputed).
+
+def test_a_recomputed_output_held_for_hand_scores_is_checked_after_a_restart(rig):
+    rig.file_it()
+    _mark_kinematics_rerun(rig)
+    (rig.folder / f"{VID}_reach_assignments.json").unlink()
+
+    def _hold_once(video_id, folder_):
+        rig.calls.append("hand_scores")
+        # what the real assignment step would have left behind
+        (rig.folder / f"{VID}_reach_assignments.json").write_text("{}", encoding="utf-8")
+        return False                                   # held: scores not in yet
+    rig.orch._hand_score_precheck = _hold_once
+    calls = _run_from_row(rig)
+    assert calls == ["assignment", "triage", "hand_scores"]
+    assert rig.orch.db.get_video(VID)["reprocess_scope"] == "outcome"
+
+    rig.orch._score_waits = {}                          # a watcher restart
+    calls = _run_from_row(rig)
+    assert "triage" in calls and "hand_scores" in calls
+
+
+def test_a_recompute_that_fails_before_the_checks_is_checked_on_retry(rig, monkeypatch):
+    """The reach step writes its file and then crashes: the retry finds the
+    file and would reuse it, unjudged, under a kept 'kinematics' scope."""
+    import mousereach.reach.core.batch as reachb
+    rig.file_it()
+    _mark_kinematics_rerun(rig)
+    (rig.folder / f"{VID}_reaches.json").unlink()
+
+    def _reach_writes_then_crashes(*a, **k):
+        rig.calls.append("reach")
+        (rig.folder / f"{VID}_reaches.json").write_text("{}", encoding="utf-8")
+        raise RuntimeError("reach step crashed after writing")
+    monkeypatch.setattr(reachb, "process_single", _reach_writes_then_crashes)
+    with pytest.raises(RuntimeError):
+        _run_from_row(rig)
+    row = rig.orch.db.get_video(VID)
+    assert row["state"] == "failed" and row["reprocess_scope"] == "reach"
+
+    monkeypatch.setattr(reachb, "process_single",
+                        lambda *a, **k: rig.calls.append("reach") or {"total_reaches": 0})
+    rig.orch.db.update_state(VID, "processing")        # the retry
+    calls = _run_from_row(rig)
+    assert "triage" in calls and "hand_scores" in calls
+
+
+def test_the_narrowed_scope_is_the_earliest_recomputed_stage():
+    f = o.scope_for_recomputed
+    assert f(["assignment"]) == "outcome"
+    assert f(["reach", "outcome", "assignment"]) == "reach"
+    assert f(["segmentation"]) == "segmentation"
+    assert f([]) == "segmentation"

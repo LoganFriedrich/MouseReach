@@ -209,6 +209,18 @@ def kept_rerun_start_stage(row, held_for_hand_scores: bool = False):
     return 'kinematics' if row.get('archived_at') else None
 
 
+def scope_for_recomputed(recomputed_stages) -> str:
+    """The re-run scope a filed video's row is narrowed to once a run has
+    recomputed ``recomputed_stages`` (names as _run_pipeline records them):
+    the earliest of them, with reach assignment counted at 'outcome' (it has
+    no start stage of its own). Never 'kinematics', so kept_rerun_start_stage
+    never reads it back as a kinematics-only re-run."""
+    order = ['segmentation', 'reach', 'outcome']
+    named = [('outcome' if s == 'assignment' else s) for s in (recomputed_stages or [])]
+    named = [s for s in named if s in order]
+    return min(named, key=order.index) if named else 'segmentation'
+
+
 def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
     """Is the queue folder named after this video where THIS run's results
     went, or a leftover from an earlier round?
@@ -6522,14 +6534,34 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # one runs. Read by filed_rerun_reuses_analysis before the checks.
         _recomputed = []
 
+        # A kept 'kinematics' scope is read back on the next pick
+        # (kept_rerun_start_stage). Once this run recomputes any algorithm
+        # output, that output exists on disk and a later pick would REUSE it
+        # -- and, reading 'kinematics', skip the quality triage and the
+        # hand-score comparison for an output no check ever judged (a watcher
+        # restart while the video waits for its hand scores, or a failure
+        # between the recompute and the checks). So the scope is narrowed,
+        # BEFORE the stage runs, to that stage: the row still records a filed
+        # video's re-run (_is_filed_rerun needs that), but never again as a
+        # kinematics-only one.
+        def _recompute(stage):
+            if _start_stage == 'kinematics' and not _recomputed:
+                narrowed = scope_for_recomputed([stage])
+                try:
+                    self.db.set_fields(video_id, reprocess_scope=narrowed)
+                except Exception as e:
+                    logger.warning(f"{video_id}: could not narrow the kept re-run "
+                                   f"scope to '{narrowed}' ({e})")
+            _recomputed.append(stage)
+
         # --- Step 1: Segmentation ---
         self.db.log_step(video_id, 'segmentation', 'started')
         step_start = time.time()
 
         try:
             if _run_seg:
+                _recompute('segmentation')
                 seg_result = seg_single(dlc_path)
-                _recomputed.append('segmentation')
             else:
                 logger.info(f"Reusing segmentation for {video_id} (dependency-aware reprocess)")
                 seg_result = {'success': True, 'status': 'reused', 'n_boundaries': 0}
@@ -6587,8 +6619,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         try:
             if _run_reach:
+                _recompute('reach')
                 reach_result = reach_single(dlc_path, seg_path)
-                _recomputed.append('reach')
             else:
                 logger.info(f"Reusing reach detection for {video_id} (dependency-aware reprocess)")
                 reach_result = {'total_reaches': 0}
@@ -6620,8 +6652,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
             try:
                 if _run_outcome:
+                    _recompute('outcome')
                     outcome_result = outcome_single(dlc_path, seg_path, reach_path)
-                    _recomputed.append('outcome')
                 else:
                     logger.info(f"Reusing outcomes for {video_id} (dependency-aware reprocess)")
                     outcome_result = {'n_segments': 0}
@@ -6650,7 +6682,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             step_start = time.time()
             try:
                 if _run_outcome or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists():
-                    _recomputed.append('assignment')
+                    _recompute('assignment')
                     if assign_reaches_for_video(self.processing_dir, video_id, dlc_path) is None:
                         raise RuntimeError("its inputs could not be read")
                 else:

@@ -3341,6 +3341,15 @@ Only `kinematics` is carried over: a run from `segmentation`, `reach` or `outcom
 algorithm and every check runs on it anyway. The log line says "filed video's 'kinematics' re-run
 resumed from its row (retry or restart)".
 
+**When the kept scope is narrowed.** The moment a kinematics-only re-run finds it has to remake an
+algorithm output after all (a copied-down output was missing), the row's scope is changed to that
+stage -- `segmentation`, `reach` or `outcome` (reach assignment counts as `outcome`) -- before the
+stage runs. A later pick then runs every stage and every check. WHY: the fact that this run remade
+an output lives only inside the run. Without the change, a watcher restart while the video waits
+for its hand scores, or a failure between the remake and the checks, would pick the video up again
+as kinematics-only, find the remade output on disk, reuse it, and file it with no quality triage
+and no hand-score comparison -- an output no check ever judged.
+
 **When the kept scope is wiped**, so that it can never skip the checks for a run whose inputs have
 just changed:
 - the video is filed (both machine roles: the row reaches 'archived');
@@ -3356,7 +3365,8 @@ just changed:
 status line "retrying after a failure" says.
 
 **Where it lives.** `kept_rerun_start_stage` in `watcher/orchestrator.py` (the rule and its
-reasons), read by `ProcessingOrchestrator._run_pipeline`; the scope is wiped in
+reasons), read by `ProcessingOrchestrator._run_pipeline`; narrowed there (`scope_for_recomputed`)
+before a stage is remade; the scope is wiped in
 `ProcessingOrchestrator._gate_held`, at filing in `_archive_to_nas` (both roles) and in
 `review_return._return_to_processing`. Tests in `tests/test_filed_rerun_skips_checks.py`.
 
