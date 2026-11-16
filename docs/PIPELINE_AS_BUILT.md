@@ -3912,3 +3912,32 @@ has no `hand_scores` section at all (the watcher tells "settings unreadable" apa
 scores file set", `hand_scores.scores_pair_stamp`).
 
 Tests: `tests/test_hand_scores_held_when_lab_file_unreadable.py`, `tests/test_filing_rules.py`.
+
+## Update: the hand-scores file and its manifest are read as a pair
+
+**What was wrong.** The hand scores come as two files written by another tool: the scores CSV and,
+beside it, a JSON manifest (`last_successful_import` per cohort, `sheets_seen`, `full_import_at`).
+The writer replaces the CSV first and the manifest second -- two renames. The watcher cached the
+pair keyed on the CSV alone, and checked a held video again only when the CSV changed. A read that
+fell between the two renames therefore kept the OLD manifest beside the NEW scores until the next
+import (normally a day later), and a video waiting for its cohort's import -- which is recorded in
+the manifest -- was not looked at again when the manifest arrived.
+
+**What happens now** (`hand_scores.load`, `hand_scores.scores_pair_stamp`):
+
+- The cache is keyed on both files' size and modification time: a change to either is read.
+- When the manifest has `scores_sha256` (the SHA-256 of the CSV it was written with) and the CSV
+  read does not match it, both are read again up to 3 times, a second apart. If they still do not
+  match, `ScoresPairMismatch` is raised and nothing is cached: the check could not run, the video
+  is held and listed in red ("does not match the manifest beside it"), and it is checked again when
+  either file changes. A manifest without `scores_sha256` (written before the key existed) is
+  accepted as it is.
+- A held video is picked again when the CSV OR the manifest changes (the stamp kept with each held
+  video is both modification times). The `source_mtime` kept in a video's outcomes file is still the
+  CSV's modification time.
+
+**For an operator.** Nothing to do. If a red item says the hand-scores file "does not match the
+manifest beside it" for more than a few minutes, run the sheet import again (it rewrites both
+files); the held videos then go on by themselves.
+
+Tests: `tests/test_hand_scores_file_pair.py`.

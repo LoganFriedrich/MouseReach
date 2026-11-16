@@ -170,3 +170,17 @@ def test_filing_with_no_good_rules_reads_a_failing_file_once_a_minute(lab, monke
     lab.file.write_text(json.dumps({"filing": GRANT}), encoding="utf-8")
     monkeypatch.setitem(config._FILING_CACHE, "at", -1e9)          # the minute is up
     assert config.AnimalID.get_project_and_cohort("ABC0207") == ("GrantA/ABC", "ABC_02")
+
+
+def test_a_video_held_while_the_lab_file_was_damaged_goes_on_in_a_lab_with_no_hand_scores(
+        lab, tmp_path):
+    """A lab with no hand_scores section at all: once the damaged file is
+    fixed, the held video is picked again at once, not after a restart."""
+    lab.file.write_text("{broken", encoding="utf-8")
+    orch = _orch(tmp_path)
+    assert orch._hand_score_precheck(VID, lab.folder) is False
+    assert orch._waiting_for_hand_scores(VID)
+    lab.file.write_text(json.dumps({"some_other_setting": 1}), encoding="utf-8")
+    assert not orch._waiting_for_hand_scores(VID)    # picked again
+    assert orch._hand_score_precheck(VID, lab.folder) is True
+    assert _attention(lab)["items"] == []

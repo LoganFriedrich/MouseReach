@@ -390,7 +390,12 @@ same name beside it gives `last_successful_import` per cohort (`ABC_02`),
 `sheets_seen` (the cohorts that have a sheet) and `full_import_at` (the last
 import of every sheet), which is how "still waiting" is told from "never scored
 by hand". A key it lacks counts as not known, and the video waits. Without
-`path`, nothing is checked.
+`path`, nothing is checked. The JSON file may also carry `scores_sha256`, the
+SHA-256 of the CSV it was written with; when it does and the CSV read does not
+match it (the writing tool is between replacing the two files), MouseReach reads
+both again a few times, a second apart, and if they still do not match the video
+is held as a check that could not run (red) until they do. A held video is
+checked again whenever EITHER file changes.
 
 ---
 

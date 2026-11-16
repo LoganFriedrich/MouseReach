@@ -166,24 +166,81 @@ def settings() -> dict:
 
 _CACHE = {"key": None, "scores": None, "manifest": None}
 
+# How often, and how long apart, load() reads the pair again when the
+# manifest's hash does not match the scores file (see load()).
+PAIR_RETRIES = 3
+PAIR_RETRY_WAIT_S = 1.0
+
+
+class ScoresPairMismatch(Exception):
+    """The scores file and its manifest do not belong together: the manifest
+    names the SHA-256 of the scores file it was written with, and the scores
+    file read has another. Raised by load() after a few short retries; the
+    caller holds the video as a check that could not run."""
+
+
+def _pair_key(path: Path):
+    """What identifies the pair as read: both files' size and modification
+    time in nanoseconds (None for a manifest that is not there). WHY
+    nanoseconds: two writes of the same length within one float-rounded
+    time would otherwise read as one."""
+    st = path.stat()
+    mp = path.with_suffix(".json")
+    try:
+        mst = mp.stat()
+        m = (mst.st_size, mst.st_mtime_ns)
+    except FileNotFoundError:
+        m = None
+    return (str(path), st.st_size, st.st_mtime_ns, m)
+
 
 def load(path: Path):
-    """({video_key: {pellet: score}}, manifest dict) for the scores file, read
-    again only when the file changes. Raises when it cannot be read."""
+    """({video_key: {pellet: score}}, manifest dict) for the scores file and
+    the JSON manifest beside it, read again only when EITHER file changes.
+    Raises when they cannot be read, or when they do not belong together.
+
+    WHY both files, and the hash: the tool that writes them replaces the
+    scores file first and the manifest second -- two renames, not one. Keyed
+    on the scores file alone, a read that fell between the two kept the OLD
+    manifest beside the NEW scores until the next import, a day later: the
+    cohort's import time was then the old one, and a video whose scores had
+    just arrived could be judged by the wrong import. The manifest carries
+    the SHA-256 of the scores file it was written with ("scores_sha256");
+    when that does not match the bytes read, the pair is read again a few
+    times, a second apart (the writer is between its two renames), and if it
+    still does not match this raises WITHOUT caching, so the next check reads
+    again. A manifest with no hash (written before the key existed) is
+    accepted as it is."""
+    import hashlib
+    import io
+    import time
     path = Path(path)
-    st = path.stat()
-    key = (str(path), st.st_size, st.st_mtime)
-    if _CACHE["key"] != key:
-        scores: Dict[str, Dict[int, int]] = {}
-        with open(path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                scores.setdefault(row["video_key"], {})[int(row["pellet"])] = int(row["score"])
+    for attempt in range(PAIR_RETRIES + 1):
+        key = _pair_key(path)
+        if _CACHE["key"] == key:
+            return _CACHE["scores"], _CACHE["manifest"]
+        raw = path.read_bytes()
         manifest = {}
         mp = path.with_suffix(".json")
         if mp.is_file():
             manifest = json.loads(mp.read_text(encoding="utf-8"))
+        want = manifest.get("scores_sha256") if isinstance(manifest, dict) else None
+        have = hashlib.sha256(raw).hexdigest()
+        if want and str(want).lower() != have:
+            if attempt < PAIR_RETRIES:
+                time.sleep(PAIR_RETRY_WAIT_S)
+                continue
+            raise ScoresPairMismatch(
+                "the hand-scores file %s does not match the manifest beside it (the "
+                "manifest was written for another version of it); if this lasts, run "
+                "the tool that writes them again" % path)
+        scores: Dict[str, Dict[int, int]] = {}
+        for row in csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline="")):
+            scores.setdefault(row["video_key"], {})[int(row["pellet"])] = int(row["score"])
+        # The key taken BEFORE the read: if either file changed during it,
+        # the next call sees a new key and reads again.
         _CACHE.update(key=key, scores=scores, manifest=manifest)
-    return _CACHE["scores"], _CACHE["manifest"]
+        return scores, manifest
 
 
 class PelletNumbersUnknown(Exception):
@@ -257,6 +314,45 @@ def scores_file_stamp() -> Optional[float]:
         return Path(p).stat().st_mtime if p else None
     except Exception:
         return None
+
+
+# What scores_pair_stamp answers when it has no modification times to give.
+# Distinct strings, never None, for the two failures. WHY: a held video is
+# checked again only when the stamp CHANGES. A video held because the
+# settings could not be read was kept with stamp None; once the file was
+# fixed, a lab with no scores file configured also answered None, nothing had
+# "changed", and the video stayed held until the watcher restarted.
+STAMP_SETTINGS_UNREADABLE = "settings-unreadable"
+STAMP_SCORES_FILE_UNREADABLE = "scores-file-unreadable"
+
+
+def scores_pair_stamp():
+    """(scores file's modification time, manifest's modification time) when a
+    scores file is configured and can be seen; None when none is configured;
+    STAMP_SETTINGS_UNREADABLE when the settings cannot be read;
+    STAMP_SCORES_FILE_UNREADABLE when the configured file cannot be seen.
+    Never raises.
+
+    The watcher keeps this with each held video and checks the video again
+    only when it changes. WHY both files: the manifest is replaced after the
+    scores file, so a video checked between the two renames would otherwise
+    wait for the NEXT change of the scores file -- a day later -- although
+    the manifest it lacked arrived a second after."""
+    try:
+        p = settings().get("path")
+    except Exception:
+        return STAMP_SETTINGS_UNREADABLE
+    if not p:
+        return None
+    try:
+        csv_mtime = Path(p).stat().st_mtime
+    except Exception:
+        return STAMP_SCORES_FILE_UNREADABLE
+    try:
+        man_mtime = Path(p).with_suffix(".json").stat().st_mtime
+    except OSError:
+        man_mtime = None
+    return (csv_mtime, man_mtime)
 
 
 def check(video_id: str, folder: Path) -> Verdict:

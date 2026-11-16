@@ -291,7 +291,7 @@ def _no_lab_order(monkeypatch):
 
 def test_a_held_video_is_not_picked_and_does_not_count_against_intake(
         tmp_path, monkeypatch, _no_lab_order):
-    monkeypatch.setattr(hs, "scores_file_stamp", lambda: 5.0)
+    monkeypatch.setattr(hs, "scores_pair_stamp", lambda: 5.0)
     held = "20250709_ABC0207_P1"
     new = "20250709_ABC0208_P1"
     orch = _server({"processing": [_row(held)], "dlc_complete": [_row(new)]},
@@ -303,7 +303,7 @@ def test_a_held_video_is_not_picked_and_does_not_count_against_intake(
     orch.db.by_state["dlc_complete"] = []
     assert orch._select_work_item(admit_deferred=True) is None
     # the scores file changes: it is picked again, to be checked again
-    monkeypatch.setattr(hs, "scores_file_stamp", lambda: 6.0)
+    monkeypatch.setattr(hs, "scores_pair_stamp", lambda: 6.0)
     work = orch._select_work_item(admit_deferred=True)
     assert work["type"] == "pipeline" and work["id"] == held
     # and a video that is NOT held still counts against the limit
@@ -316,7 +316,7 @@ def test_a_held_video_is_not_picked_and_does_not_count_against_intake(
 def test_a_node_that_also_analyses_skips_a_held_video_too(monkeypatch, _no_lab_order):
     from types import SimpleNamespace
     from mousereach.watcher.orchestrator import DLCOrchestrator
-    monkeypatch.setattr(hs, "scores_file_stamp", lambda: 5.0)
+    monkeypatch.setattr(hs, "scores_pair_stamp", lambda: 5.0)
     orch = object.__new__(DLCOrchestrator)
     orch.config = SimpleNamespace(also_process=True, work_priority=None)
     orch.db = _FakeDB({"processing": [_row(VID)]})
@@ -325,7 +325,7 @@ def test_a_node_that_also_analyses_skips_a_held_video_too(monkeypatch, _no_lab_o
     orch._score_waits = {VID: {"stamp": 5.0}}
     picked = orch._select_work_item(admit_deferred=True)
     assert picked is None or picked.get("id") != VID
-    monkeypatch.setattr(hs, "scores_file_stamp", lambda: 6.0)
+    monkeypatch.setattr(hs, "scores_pair_stamp", lambda: 6.0)
     picked = orch._select_work_item(admit_deferred=True)
     assert picked["type"] == "local_pipeline" and picked["id"] == VID
 

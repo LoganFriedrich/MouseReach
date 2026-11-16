@@ -705,16 +705,16 @@ class BaseOrchestrator:
         return bool(entry) and time.time() < entry[1]
 
     def _waiting_for_hand_scores(self, video_id: str) -> bool:
-        """True while this video is held for its hand scores and the scores
-        file has not changed since it was checked: running it again could only
-        give the same answer, and an analysed video in 'processing' would
-        otherwise be picked by the pipeline step every cycle
-        (watcher/hand_scores.py)."""
+        """True while this video is held for its hand scores and neither the
+        scores file nor its manifest has changed since it was checked
+        (hand_scores.scores_pair_stamp): running it again could only give the
+        same answer, and an analysed video in 'processing' would otherwise be
+        picked by the pipeline step every cycle (watcher/hand_scores.py)."""
         w = getattr(self, "_score_waits", {}).get(video_id)
         if not w:
             return False
         from mousereach.watcher import hand_scores
-        return w.get("stamp") == hand_scores.scores_file_stamp()
+        return w.get("stamp") == hand_scores.scores_pair_stamp()
 
     def _held_for_hand_scores(self, video_id: str) -> bool:
         """True for a video this watcher holds for its hand scores (waiting
@@ -732,7 +732,8 @@ class BaseOrchestrator:
         """Rewrite this machine's list of videos waiting for hand scores.
 
         Written whenever hand scores are configured, and ALSO when the
-        settings cannot be read or a video is held: the held videos' red
+        settings cannot be read, a video is held, or this machine's list
+        already exists (to empty it): the held videos' red
         "check could not run" items are the only place a person sees that an
         unreadable settings file is holding them. Never raises (it is called
         from the precheck's own error handling)."""
@@ -744,7 +745,15 @@ class BaseOrchestrator:
             configured = bool(hand_scores.settings().get("path"))
         except Exception:
             configured = True           # unreadable: say so, never go quiet
-        if configured or waits:
+        # Also when a list is already there: the last hold of a lab with no
+        # scores file configured (held only while its settings could not be
+        # read) must clear its red item, not leave it on the dashboard.
+        try:
+            listed = (Path(Paths.NAS_ROOT) / "attention"
+                      / f"{self.hostname}_hand_scores.json").exists()
+        except OSError:
+            listed = True
+        if configured or waits or listed:
             hand_scores.write_attention(Paths.NAS_ROOT, self.hostname, waits)
 
     def _hand_score_precheck(self, video_id: str, folder: Path) -> bool:
@@ -780,7 +789,10 @@ class BaseOrchestrator:
         if not hasattr(self, "_score_waits"):
             self._score_waits = {}
         prev = self._score_waits.get(video_id) or {}
-        stamp = hand_scores.scores_file_stamp()
+        # Taken BEFORE the check: a scores file or manifest replaced while it
+        # runs gives a new stamp, so the video is checked again (both files,
+        # hand_scores.scores_pair_stamp says why).
+        stamp = hand_scores.scores_pair_stamp()
         try:
             try:
                 v = hand_scores.check(video_id, folder)
@@ -823,7 +835,8 @@ class BaseOrchestrator:
                 # earlier reason is kept).
                 hand_scores.flag_disagreements(folder, video_id, v)
                 logger.info(f"{video_id}: {v.reason} -- flagged for triage")
-            hand_scores.record(folder, video_id, v, stamp)
+            hand_scores.record(folder, video_id, v,
+                               stamp[0] if isinstance(stamp, tuple) else None)
         except Exception as e:
             if not prev.get("error"):
                 logger.warning(f"Holding {video_id} before triage and kinematics: the "
