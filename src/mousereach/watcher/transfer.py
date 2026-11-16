@@ -81,6 +81,25 @@ COPY_RETRY_BASE_DELAY = 2.0
 from mousereach.pipeline.fsutil import is_transient_lock as _is_transient_lock
 
 
+def _same_file(src: Path, dst: Path) -> bool:
+    """True when ``src`` and ``dst`` are the same file on disk.
+
+    WHY: copying a file onto itself makes shutil raise SameFileError (an
+    OSError), and the partial-copy cleanup below would then unlink the
+    destination -- which IS the source. A re-run whose recorded pose already
+    sits in the local processing folder asks for exactly that copy for every
+    file of the video (video, pose, a person's cuts, review files), so the
+    "copy" deleted them all. A file that is already where it should be needs
+    no copy and must never be deleted.
+    """
+    try:
+        if not (src.exists() and dst.exists()):
+            return False
+        return src.samefile(dst)
+    except OSError:
+        return False
+
+
 def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
     """
     Copy a file with size verification.
@@ -96,8 +115,13 @@ def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
         verify: If True, verify file sizes match after copy
 
     Returns:
-        True if copy succeeded (and verified if requested)
+        True if copy succeeded (and verified if requested). A source that
+        is already the destination counts as copied: nothing is written and
+        nothing is deleted (see ``_same_file``).
     """
+    if _same_file(src, dst):
+        logger.debug(f"{src.name} is already at {dst.parent}; nothing to copy")
+        return True
     for attempt in range(1, COPY_RETRY_ATTEMPTS + 1):
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -155,8 +179,12 @@ def safe_move(src: Path, dst: Path) -> bool:
         dst: Destination file path
 
     Returns:
-        True if move succeeded
+        True if move succeeded. A source that is already the destination
+        counts as moved and is never unlinked (it is the only copy).
     """
+    if _same_file(src, dst):
+        logger.debug(f"{src.name} is already at {dst.parent}; nothing to move")
+        return True
     if not safe_copy(src, dst, verify=True):
         return False
 

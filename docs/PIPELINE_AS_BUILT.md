@@ -3550,6 +3550,14 @@ on the first failed copy: an 'archived' row with the fingerprint is not offered 
 declared versions change or a review or ground truth is saved, so one passing lock would have
 parked an owed re-run indefinitely.
 
+**A file already in the processing folder is not copied, and never deleted.** A video that failed
+its first pass and then had Re-run pressed still records its pose in the local processing folder,
+so its copy-down "copied" every file of the video onto itself. The copy routine
+(`transfer.safe_copy`) treated the resulting same-file error as a failed copy and deleted the
+destination -- which was the only copy: the video, the pose, a person's cuts and the review files
+were all lost, and the re-run then could not start. Now a source that is already the destination
+counts as copied (and, for `safe_move`, as moved): nothing is written and nothing is deleted.
+
 **When the re-run is offered again.** The row also keeps a fingerprint of what the re-run was
 attempted against (`pipeline_versions_hash`): the declared versions (`pipeline_versions.json`,
 including `compatible_versions`), the saved review the scan would apply and the ground truth filed
