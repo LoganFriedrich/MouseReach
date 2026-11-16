@@ -156,6 +156,12 @@ def _retry_network_errors(method):
 # stand). clear_errors_on_archived keeps such messages; filing clears them.
 FAILED_RERUN_PREFIX = "re-run of a filed video failed"
 
+# The start of the error_message an 'outdated' row carries while its re-run
+# could not start (its files could not be copied down) and it waits to try
+# again; " (attempt N)" follows it. Cleared when a re-run starts
+# (orchestrator.ProcessingOrchestrator._rerun_could_not_start says why).
+RERUN_NOT_STARTED_PREFIX = "re-run could not start"
+
 
 class WatcherDB:
     """

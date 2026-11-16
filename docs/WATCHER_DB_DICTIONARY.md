@@ -141,6 +141,11 @@ State
                           across restarts and cleared when the video is filed
                           again (the processing watcher lists these rows in
                           <NAS root>/attention/<host>_failed_reruns.json).
+                          On an 'outdated' row a message starting "re-run
+                          could not start (attempt N)" means its files could
+                          not be copied down; it is tried again an hour after
+                          last_error_at, and the message clears when the
+                          re-run starts.
   error_count             retries so far; not incremented for 'unresolvable'
   last_error_at
 

@@ -3499,7 +3499,8 @@ partly copied files.
 **Now.** A filed video whose filed results are still in Analyzed never ends in 'failed' because of
 a re-run (the one exclusion, a video `mousereach-repose-videos` took apart, is below). When its
 re-run has used up its retries (`watcher.max_retries`, 3), or its working copy is gone so no retry
-could run, or the re-run cannot start, the processing watcher:
+could run, or the re-run could not start on its last try (see "A re-run that cannot start" below),
+the processing watcher:
 1. puts the row back to **'archived'**, keeping when it was filed (`archived_at`) and its re-run
    scope, and wiping a review return's resume point (the next re-run starts afresh);
 2. writes the reason into `error_message`, starting "re-run of a filed video failed: ..." (the
@@ -3513,6 +3514,29 @@ could run, or the re-run cannot start, the processing watcher:
    Dashboard's red panel shows ("needs a person"). The list is rewritten from the rows at start-up,
    after every such failure and after every version scan, so a video filed again drops off at the
    next scan.
+
+**A re-run that cannot start.** Before a re-run, the watcher copies the video's files down from
+Analyzed into its own processing folder. If any copy fails (usually a file locked for a moment),
+or no processing folder is configured, the re-run has not started, and that is not yet a re-run
+that failed for good. For EVERY such video, filed or not, the watcher:
+1. moves whatever did arrive out of the processing folder into
+   `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted). WHY: a
+   partly copied set left there used to be picked up by a retry and run -- a stale local copy of
+   the file that failed to copy was reused, or, with a person's cuts missing, the algorithm cut
+   the video again;
+2. leaves the row **'outdated'** (it still owes its re-run) with `error_message` "re-run could not
+   start (attempt N): <reason>" and `last_error_at` now. `error_count` is not touched: that is the
+   pipeline's own retry count;
+3. logs a `reprocess` step as failed, with the reason;
+4. tries again after an hour (the same wait a failed video has). A try that copies everything
+   starts the re-run and clears the message.
+After `watcher.max_retries` (3) tries in a row that could not start, the re-run counts as failed
+for good: a filed video goes back to 'archived' as described above (fingerprinted and in the red
+panel), any other video is marked 'failed' -- with nothing left in the processing folder, so the
+failed-video retry does not run it on a partial set either. WHY not straight back to 'archived'
+on the first failed copy: an 'archived' row with the fingerprint is not offered again until the
+declared versions change or a review or ground truth is saved, so one passing lock would have
+parked an owed re-run indefinitely.
 
 **When the re-run is offered again.** The row also keeps a fingerprint of what the re-run was
 attempted against (`pipeline_versions_hash`): the declared versions (`pipeline_versions.json`,
@@ -3540,8 +3564,9 @@ with the cuts (which wipes the re-run scope). WHY not the re-run scope or `archi
 review return and a stale-outputs gate both wipe the scope, and `archived_at` is never wiped, so it
 means "was filed once", not "its filed results are there now".
 
-**A video that does not pass that test is marked 'failed'**, exactly as before, and its working
-files stay where they are, listed by `mousereach-watch-status` for a person:
+**A video that does not pass that test is marked 'failed'**, exactly as before, listed by
+`mousereach-watch-status` for a person; its working files stay where they are, except after a
+re-run that could not start, whose partial set has been moved aside (above):
 - a video that was never filed -- a first pass that failed and had Re-run pressed, or an
   'unresolvable' row sent round again;
 - **a video `mousereach-repose-videos` took apart**: that command moves the filed pose and every
@@ -3560,12 +3585,16 @@ review, so changing it offers the re-run again; until then the video is in the r
 the database is the filed, older version and is complete (a video whose filed results were moved
 away is never in this list -- it shows as failed in `mousereach-watch-status` instead). Read the reason; if it names a file that
 could not be copied or a missing setting, fix that and press Re-run for the video (or wait for the
-next version change). Nothing is lost: the failed run's files are in `_finished_elsewhere`.
+next version change). A video only waiting after a copy that failed is NOT in the red panel: it
+stays 'outdated', its reason starting "re-run could not start (attempt N)", and is tried again
+each hour by itself. Nothing is lost: the failed run's files are in `_finished_elsewhere`.
 
 **Where it lives.** `watcher/orchestrator.py` `ProcessingOrchestrator._restore_filed_after_failed_rerun`
 (with `_is_filed_rerun`, `_filed_results_present`, `_filed_rerun_gave_up`, `_set_aside_working_copies`,
 `_write_failed_rerun_attention`), called from the retry bucket of `_select_work_item` and from
-`_reprocess_video`; `watcher/db.py` `FAILED_RERUN_PREFIX`, `clear_errors_on_archived`;
+`_rerun_could_not_start` (with `_rerun_start_wait_over`, which the outdated pick in
+`_select_work_item` uses), itself called from `_reprocess_video`; `watcher/db.py`
+`FAILED_RERUN_PREFIX`, `RERUN_NOT_STARTED_PREFIX`, `clear_errors_on_archived`;
 `watcher/attention.py` `write_failed_reruns`. Tests in `tests/test_failed_filed_rerun_stays_filed.py`.
 
 ## Update: a returned video resumes just after the step that sent it

@@ -5740,8 +5740,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # small, and nothing in it blocks the videos that CAN be re-run here.
             needs_pose = [v for v in outdated
                           if (v.get('reprocess_scope') or '') == 'full']
+            # A re-run that could not start waits its hour before the next
+            # try (_rerun_could_not_start).
             actionable = [v for v in outdated
-                          if (v.get('reprocess_scope') or '') != 'full']
+                          if (v.get('reprocess_scope') or '') != 'full'
+                          and self._rerun_start_wait_over(v)]
 
             if needs_pose and not getattr(self, '_logged_repose_hold', False):
                 self._logged_repose_hold = True
@@ -5873,8 +5876,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return False
 
     def _restore_filed_after_failed_rerun(self, video_id: str, why: str) -> None:
-        """A re-run of a filed video failed for good, or could not start: put
-        the row back to 'archived', not 'failed'. Never raises.
+        """A re-run of a filed video failed for good -- out of retries, or it
+        could not start on its last try (_rerun_could_not_start): put the row
+        back to 'archived', not 'failed'. Never raises.
 
         WHY: filed means done. The filed results in Analyzed are untouched by a
         re-run that failed -- they are still what the database pulls -- but the
@@ -5965,6 +5969,88 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return
         self._set_aside_working_copies(video_id)
         self._write_failed_rerun_attention()
+
+    def _rerun_not_started_attempts(self, row) -> int:
+        """How many tries in a row this 'outdated' row's re-run could not
+        start: the N of "(attempt N)" in its RERUN_NOT_STARTED_PREFIX message,
+        0 when the message is anything else. Kept in the message, not in
+        error_count, because error_count is the pipeline's own retry count and
+        a copy-down that never started the pipeline must not use those up."""
+        from mousereach.watcher.db import RERUN_NOT_STARTED_PREFIX
+        msg = (row or {}).get('error_message') or ''
+        if not msg.startswith(RERUN_NOT_STARTED_PREFIX):
+            return 0
+        m = re.match(r"\s*\(attempt (\d+)\)", msg[len(RERUN_NOT_STARTED_PREFIX):])
+        return int(m.group(1)) if m else 1
+
+    def _rerun_start_wait_over(self, row, now: Optional[datetime] = None) -> bool:
+        """Whether an 'outdated' row may be picked for its re-run now: always,
+        unless its last try could not start, in which case it waits
+        RETRY_FAILED_AFTER_S after that try (the same hour a failed video
+        waits), so a lock that has not cleared is not hit again every cycle.
+        Never raises: a row this cannot judge is picked."""
+        try:
+            if not self._rerun_not_started_attempts(row):
+                return True
+            last = row.get('last_error_at')
+            if not last:
+                return True
+            when = datetime.fromisoformat(str(last))
+            return ((now or datetime.now()) - when).total_seconds() >= self.RETRY_FAILED_AFTER_S
+        except Exception:
+            return True
+
+    def _rerun_could_not_start(self, video_id: str, why: str) -> None:
+        """A re-run (an 'outdated' row) could not start: its files could not
+        be copied down, or no processing folder is configured. Never raises.
+
+        Whatever did arrive in the processing folder is set aside first
+        (_set_aside_working_copies: moved, never deleted), for EVERY row,
+        filed or not. WHY: a partial working set left there was picked up by a
+        retry and run; the stage-reuse checks then reused a stale local twin
+        of the file that failed to copy, or the algorithm re-cut a video whose
+        human cuts never arrived.
+
+        Then the try is counted. While fewer than watcher.max_retries tries
+        have failed in a row, the row STAYS 'outdated' -- it still owes its
+        re-run -- with error_message "<RERUN_NOT_STARTED_PREFIX> (attempt N):
+        <why>" and last_error_at now, and the work loop picks it again once
+        RETRY_FAILED_AFTER_S has passed (_rerun_start_wait_over). WHY not at
+        once to 'archived': a copy that fails is usually a file locked for a
+        moment, and an 'archived' row carrying the failed-re-run fingerprint is
+        not offered again until the declared versions change or a review or
+        ground truth is saved -- one passing lock would have parked an owed
+        re-run indefinitely. The count is kept in the message, not in
+        error_count (the pipeline's own retries); a re-run that starts clears
+        it.
+
+        After the last try the re-run counts as failed for good:
+        _restore_filed_after_failed_rerun puts a filed video back to 'archived'
+        (fingerprinted and listed for a person) and marks any other row
+        'failed' -- with nothing left in the processing folder, so the failed
+        retry bucket does not run it on a partial set either."""
+        from mousereach.watcher.db import RERUN_NOT_STARTED_PREFIX
+        self._set_aside_working_copies(video_id)
+        try:
+            row = self.db.get_video(video_id) or {}
+        except Exception as e:
+            row = {}
+            logger.warning(f"{video_id}: could not read its row ({e})")
+        attempt = self._rerun_not_started_attempts(row) + 1
+        if attempt < self._max_retries():
+            message = f"{RERUN_NOT_STARTED_PREFIX} (attempt {attempt}): {why}"
+            try:
+                self.db.set_fields(video_id, error_message=message,
+                                   last_error_at=self.db._now())
+                self.db.log_step(video_id, 'reprocess', 'failed', message=message)
+                logger.warning(f"{video_id}: {message} -- tried again in "
+                               f"{self.RETRY_FAILED_AFTER_S // 60} min")
+                return
+            except Exception as e:
+                logger.error(f"{video_id}: could not record that its re-run could not "
+                             f"start ({e})")
+        self._restore_filed_after_failed_rerun(
+            video_id, f"could not start after {attempt} attempt(s): {why}")
 
     def _set_aside_working_copies(self, video_id: str) -> int:
         """Move this video's files out of the local processing folder into
@@ -6200,8 +6286,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if not self.processing_dir:
             # Cannot start: a configuration fault, not the video's. A filed
             # video is never left 'failed' (_restore_filed_after_failed_rerun).
-            self._restore_filed_after_failed_rerun(
-                video_id, "could not start: PROCESSING path not configured")
+            self._rerun_could_not_start(
+                video_id, "PROCESSING path not configured")
             return
 
         self.processing_dir.mkdir(parents=True, exist_ok=True)
@@ -6219,14 +6305,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # the stage-reuse checks (a locked _reaches.json nearly caused
             # exactly that). Fail loudly instead; safe_copy has
             # already absorbed transient locks with retries.
-            # Cannot start. The partial working set is set aside with the
-            # row put back to 'archived' (_restore_filed_after_failed_rerun):
-            # marked 'failed', the retry used to run the pipeline on exactly
-            # the partial set this guard is here to stop.
-            self._restore_filed_after_failed_rerun(
+            # Cannot start: the partial working set is set aside and the
+            # copy-down is tried again later (_rerun_could_not_start). Marked
+            # 'failed', the retry used to run the pipeline on exactly the
+            # partial set this guard is here to stop.
+            self._rerun_could_not_start(
                 video_id,
-                "could not start: copying it down failed for: %s"
-                % ", ".join(sorted(copy_failures)))
+                "copying it down failed for: %s" % ", ".join(sorted(copy_failures)))
             return
 
         # Transition to processing state. Name the model explicitly: the copy
@@ -6237,9 +6322,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
         local_h5 = select_pose_file(
             self.processing_dir.glob(f"{video_id}DLC*.h5"),
             expected_scorer=declared or None)
+        # It started: a "could not start" message from an earlier try is over.
+        from mousereach.watcher.db import RERUN_NOT_STARTED_PREFIX
+        started = {}
+        if (video_data.get('error_message') or '').startswith(RERUN_NOT_STARTED_PREFIX):
+            started['error_message'] = None
         self.db.force_state(
             video_id, 'processing',
             reason="re-run: archived results copied down to bring it current",
+            **started,
             dlc_output_path=str(local_h5) if local_h5 else '',
             current_path=str(self.processing_dir / f"{video_id}.mp4"),
             # Not a review return: a resume point left from an earlier round

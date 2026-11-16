@@ -252,9 +252,10 @@ def test_filing_again_clears_the_message(orch):
     assert listed == []
 
 
-def test_a_rerun_whose_copy_down_fails_goes_back_to_archived(orch, tmp_path, monkeypatch):
-    """Marked 'failed', the retry ran the pipeline on the partial set the
-    copy guard is there to stop."""
+@pytest.fixture
+def copy_down(orch, tmp_path, monkeypatch):
+    """A filed folder holding the video's files, and a copy that fails for
+    its _reaches.json (a file locked on the share) until ``rig.unlock()``."""
     import mousereach.watcher.orchestrator as o
     from mousereach.watcher import repose
     filed = tmp_path / "Analyzed" / "PROJ" / "COHORT"
@@ -266,20 +267,72 @@ def test_a_rerun_whose_copy_down_fails_goes_back_to_archived(orch, tmp_path, mon
     monkeypatch.setattr(o, "archived_pose_candidates", lambda *a, **k: [filed / POSE])
     monkeypatch.setattr("mousereach.archive.core.get_archive_destination", lambda vid: filed)
     orch.staging_dir = None
+    locked = {"on": True}
 
     def _copy(src, dest, verify=True):
-        if src.name.endswith("_reaches.json"):
+        if locked["on"] and src.name.endswith("_reaches.json"):
             return False
         dest.write_bytes(src.read_bytes())
         return True
     monkeypatch.setattr(o, "safe_copy", _copy)
+    ran = []
+    monkeypatch.setattr(orch, "_run_pipeline", lambda work: ran.append(work["id"]),
+                        raising=False)
+
+    def attempt():
+        orch._reprocess_video({"id": VID, "data": orch.db.get_video(VID)})
+        return orch.db.get_video(VID)
+
+    def unlock():
+        locked["on"] = False
+    return type("CopyDown", (), {"attempt": staticmethod(attempt),
+                                 "unlock": staticmethod(unlock), "ran": ran})
+
+
+def test_a_copy_down_that_fails_once_keeps_the_rerun_owed(orch, copy_down):
+    """One failed copy (a file locked for a moment) is not a re-run that
+    failed for good: the row stays 'outdated' with no fingerprint, waits its
+    hour, and nothing partial is left in the processing folder."""
+    _filed(orch)
+    orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="kinematics")
+    row = copy_down.attempt()
+    assert row["state"] == "outdated"
+    assert row["reprocess_scope"] == "kinematics"
+    assert row["pipeline_versions_hash"] is None
+    assert "copying it down failed" in row["error_message"]
+    assert int(row["error_count"] or 0) == 0               # the pipeline's retries untouched
+    assert not any(orch.processing_dir.iterdir())          # partial set put aside...
+    aside = list((orch.processing_dir.parent / "_finished_elsewhere").rglob(f"{VID}*"))
+    assert aside                                           # ...not deleted
+    assert copy_down.ran == []
+    # It waits its hour before the next try.
+    assert not orch._rerun_start_wait_over(row)
+    orch.db.set_fields(VID, last_error_at="2000-01-01T00:00:00")
+    assert orch._rerun_start_wait_over(orch.db.get_video(VID))
+
+
+def test_the_next_try_that_copies_starts_the_rerun_and_clears_the_message(orch, copy_down):
+    _filed(orch)
+    orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="kinematics")
+    copy_down.attempt()
+    copy_down.unlock()
+    row = copy_down.attempt()
+    assert row["state"] == "processing"
+    assert row["error_message"] is None
+    assert copy_down.ran == [VID]
+
+
+def test_a_filed_rerun_whose_copy_down_keeps_failing_goes_back_to_archived(orch, copy_down):
     filed_at = _filed(orch)
     orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="kinematics")
-    orch._reprocess_video({"id": VID, "data": orch.db.get_video(VID)})
-    row = orch.db.get_video(VID)
+    for _ in range(2):
+        assert copy_down.attempt()["state"] == "outdated"
+    row = copy_down.attempt()                              # the third try in a row
     assert row["state"] == "archived" and row["archived_at"] == filed_at
+    assert row["error_message"].startswith(FAILED_RERUN_PREFIX)
     assert "copying it down failed" in row["error_message"]
-    assert not any(orch.processing_dir.iterdir())          # partial set put aside
+    assert not any(orch.processing_dir.iterdir())
+    assert copy_down.ran == []
 
 
 # ---------------------------------------------------------------------------
@@ -310,31 +363,22 @@ def test_a_never_filed_rerun_that_cannot_start_is_failed(orch):
     assert "PROCESSING path not configured" in row["error_message"]
 
 
-def test_a_never_filed_rerun_whose_copy_down_fails_is_failed_not_archived(orch, tmp_path, monkeypatch):
-    import mousereach.watcher.orchestrator as o
-    from mousereach.watcher import repose
-    filed = tmp_path / "Analyzed" / "PROJ" / "COHORT"
-    filed.mkdir(parents=True)
-    for n in (f"{VID}.mp4", POSE, f"{VID}_segments.json", f"{VID}_reaches.json"):
-        (filed / n).write_text("x", encoding="utf-8")
-    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed", raising=False)
-    monkeypatch.setattr(repose, "declared_scorer", lambda: "")
-    monkeypatch.setattr(o, "archived_pose_candidates", lambda *a, **k: [filed / POSE])
-    monkeypatch.setattr("mousereach.archive.core.get_archive_destination", lambda vid: filed)
-    orch.staging_dir = None
-
-    def _copy(src, dest, verify=True):
-        if src.name.endswith("_reaches.json"):
-            return False
-        dest.write_bytes(src.read_bytes())
-        return True
-    monkeypatch.setattr(o, "safe_copy", _copy)
+def test_a_never_filed_rerun_whose_copy_down_fails_never_runs_on_a_partial_set(orch, copy_down):
+    """A row that was never filed: the partial working set is set aside on
+    every failed try, so neither the next try nor the failed-retry bucket can
+    run the pipeline on it (missing human cuts would be re-cut by the
+    algorithm), and it is never put to 'archived'."""
     _never_filed_outdated(orch)
-    orch._reprocess_video({"id": VID, "data": orch.db.get_video(VID)})
-    row = orch.db.get_video(VID)
+    row = copy_down.attempt()
+    assert row["state"] == "outdated"
+    assert not any(orch.processing_dir.iterdir())
+    for _ in range(2):
+        row = copy_down.attempt()
     assert row["state"] == "failed"
     assert row["archived_at"] is None
-    assert any(orch.processing_dir.iterdir())             # nothing set aside
+    assert not any(orch.processing_dir.iterdir())          # nothing partial to retry
+    assert not orch._failed_retry_due(dict(row, last_error_at=None))
+    assert copy_down.ran == []
 
 
 # ---------------------------------------------------------------------------
@@ -408,3 +452,14 @@ def test_a_declaration_that_makes_the_filed_results_current_clears_the_failure(o
     scan_rig.scan()
     row = orch.db.get_video(VID)
     assert row["state"] == "archived" and row["error_message"] is None
+
+
+def test_the_work_loop_leaves_a_rerun_that_could_not_start_until_its_hour_is_over(orch, copy_down):
+    _filed(orch)
+    orch.db.force_state(VID, "outdated", reason="test", reprocess_scope="kinematics")
+    copy_down.attempt()
+    work = orch._select_work_item()
+    assert not (work and work.get("id") == VID)
+    orch.db.set_fields(VID, last_error_at="2000-01-01T00:00:00")
+    work = orch._select_work_item()
+    assert work and work["type"] == "reprocess" and work["id"] == VID
