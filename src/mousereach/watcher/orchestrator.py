@@ -5432,6 +5432,27 @@ class DLCOrchestrator(BaseOrchestrator):
             self._release_claim_given_up(video_id, "no local copy left to stage")
             return False
 
+        # Hand on only a copy this node holds -- the pose step's rule
+        # (_not_held_for_pose): its own DLC queue or its own claim folder.
+        # WHY: the search above also looks at the top of the shared singles
+        # folder, and the loop below MOVES every file of the video it finds
+        # into Posed. A 'dlc_complete' row with no local copy (cross-node
+        # recovery, a video another node gave back) used to move that shared,
+        # unposed file into Posed and delete it from the singles folder. Now
+        # nothing is moved and the row says where the copy was.
+        refusal = self._not_held_for_pose(current_path)
+        if refusal:
+            refusal = refusal.replace("not posed", "not staged", 1)
+            if single_claim.in_front_door(current_path):
+                # Back to the singles intake, which claims it properly.
+                self.db.mark_unresolvable(
+                    video_id, f"{single_claim.SHARED_REASON}: {refusal}")
+            else:
+                self.db.mark_unresolvable(video_id, refusal)
+            self.db.log_step(video_id, 'stage_to_nas', 'skipped', message=refusal)
+            logger.warning(f"{video_id}: {refusal}")
+            return False
+
         self.db.log_step(video_id, 'stage_to_nas', 'started')
         start_time = time.time()
 

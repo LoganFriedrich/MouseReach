@@ -2439,7 +2439,11 @@ usage: mousereach-watch-unresolvable [--list | --sweep | --retry] [--dry-run]
 Handle DB rows whose video file this node cannot find anywhere.
 
   --list      Show the pathless rows.
-  --sweep     Mark them unresolvable so they leave the work loop.
+  --sweep     Mark them unresolvable so they leave the work loop. A row
+              whose file IS here gets its path filled in instead (on a
+              processing server the posed folder counts, and for a
+              re-run or filing row the filed folder too; on a GPU node
+              only its own working folders).
   --retry     GPU node only: queue again an unresolvable video whose file
               is now in this node's DLC queue; one at the top of the shared
               singles folder is left for the intake to claim. Any other
@@ -2520,10 +2524,43 @@ Handle DB rows whose video file this node cannot find anywhere.
         print()
 
     if do_sweep:
+        from mousereach.config import WatcherConfig
+        from mousereach.watcher import single_claim
+        import socket
+        try:
+            mode = WatcherConfig.load().mode
+        except Exception as e:
+            print(f"ERROR: could not read this machine's watcher settings: {_ascii(e)}",
+                  file=sys.stderr)
+            sys.exit(1)
+        server = mode == 'processing_server'
         moved = kept = 0
         for row in phantoms:
             video_id = row['video_id']
-            found = locate_video_file(video_id)
+            # Only a file this machine works the row from counts, and that
+            # depends on the machine's role (read from its watcher settings,
+            # as --retry does):
+            #   * GPU node: never the filed folder, the posed folder (the
+            #     processing server's intake), the top of the shared singles
+            #     folder or another node's claim folder. WHY: the sweep
+            #     records what it finds against a WORKING state, and a working
+            #     state with a filed or posed path sent a GPU node's hand-off
+            #     step to move those files (it used to search everywhere).
+            #   * processing server: the posed folder IS where it works a
+            #     posed video from, and a filed video marked for a re-run
+            #     ('outdated', or one being filed, 'archiving') is worked
+            #     from its filed folder -- so those are searched, as before;
+            #     the filed folder only for those two states, so no other
+            #     working state is pointed at a filed copy.
+            found = locate_video_file(
+                video_id,
+                search_archive=server and row['state'] in ('outdated', 'archiving'),
+                search_staging=server)
+            if found is not None:
+                holder = single_claim.claim_holder(found)
+                if single_claim.in_front_door(found) or (
+                        holder is not None and holder != socket.gethostname()):
+                    found = None
             if found is not None:
                 # Not a phantom after all: the file is here, the row just never
                 # recorded where. Fill the path in and leave the state alone.

@@ -153,6 +153,42 @@ def is_in_staging(path) -> bool:
     return _folder_is_or_under(parent, _staging_keys())
 
 
+def is_in_archive(path) -> bool:
+    """True when ``path`` lies in the filed folder (``Paths.ANALYZED_OUTPUT``,
+    directly or anywhere beneath it). False when none is configured or the
+    path is empty.
+
+    WHY: ``search_archive=False`` used to drop the archive only from the
+    SEARCH; a recorded path pointing into it was still returned. A handler
+    that moves what it finds (staging) would then move a filed video's
+    results out of the archive."""
+    if not path:
+        return False
+    try:
+        from mousereach.config import Paths
+        root = Paths.ANALYZED_OUTPUT
+    except Exception:
+        return False
+    if not root:
+        return False
+    try:
+        parent = Path(path).parent
+    except (TypeError, ValueError):
+        return False
+    return _folder_is_or_under(parent, _path_keys(root))
+
+
+def _recorded_path_allowed(raw, search_archive: bool, search_staging: bool) -> bool:
+    """Whether a recorded path may be returned as-is: not inside the staging
+    folder when ``search_staging`` is False, not inside the filed folder when
+    ``search_archive`` is False."""
+    if not search_staging and is_in_staging(raw):
+        return False
+    if not search_archive and is_in_archive(raw):
+        return False
+    return True
+
+
 def archive_dir_for(video_id: str) -> Optional[Path]:
     """This video's archive folder, computed from its id -- no tree walk.
 
@@ -232,9 +268,10 @@ def locate_pose_file(video_id: str, raw=None, extra_dirs: Iterable = (),
 
     ``search_staging=False`` (every GPU-node caller): the processing server's
     intake folder is not searched, and a recorded ``raw`` path inside it is
-    ignored as if it were absent -- see the module docstring.
+    ignored as if it were absent -- see the module docstring. Likewise
+    ``search_archive=False`` ignores a recorded path inside the filed folder.
     """
-    if raw and not search_staging and is_in_staging(raw):
+    if raw and not _recorded_path_allowed(raw, search_archive, search_staging):
         raw = None
     dirs = _search_dirs(video_id, extra_dirs, search_archive, search_staging)
     return resolve_pose_input(raw, video_id, *dirs)
@@ -252,7 +289,9 @@ def locate_video_file(video_id: str, raw=None, extra_dirs: Iterable = (),
     Pass ``search_archive=False`` from any handler that MOVES or WRITES BESIDE
     what it finds -- staging and DLC inference both do. A hit in the archive is
     the finished copy of the video; moving it out, or dropping a new pose file
-    next to it, would damage the archive to satisfy a queue.
+    next to it, would damage the archive to satisfy a queue. A recorded
+    ``raw`` path inside the filed folder is then ignored too (it used to be
+    returned whenever the file existed).
 
     Pass ``search_staging=False`` from every GPU-node handler: the processing
     server's intake folder is not searched, and a recorded ``raw`` path inside
@@ -260,7 +299,7 @@ def locate_video_file(video_id: str, raw=None, extra_dirs: Iterable = (),
     """
     if raw:
         p = Path(raw)
-        if search_staging or not is_in_staging(p):
+        if _recorded_path_allowed(p, search_archive, search_staging):
             if p.is_file():
                 return p
     dirs = _search_dirs(video_id, extra_dirs, search_archive, search_staging)

@@ -4444,3 +4444,28 @@ hour and the limit: without them a node with a full disk would copy a whole vide
 minutes. Only this reason is retried this way: a failed pose or hand-off is not. Where it lives:
 `watcher/state.py` `_copy_failed_retry_due`, `discover_new_singles`;
 `DLCOrchestrator._adopt_single_for_dlc`. Tests in `tests/test_copy_failed_single_retried.py`.
+
+**The hand-off to the posed folder moves only files this GPU node holds.** The stage step
+(`_stage_to_nas`) finds a `dlc_complete` video by name and MOVES every file of it that it finds
+into Processing/Posed. Its search also covered the top of the shared singles folder, and a path
+recorded on the row inside the filed folder was used even with the archive search switched off.
+So a row with no local copy (after cross-node recovery, or after a node gave the video back) moved
+a shared, unposed video into Posed and deleted it from the singles folder; a row recording a filed
+path would have moved a filed video's results. Now:
+- the stage step hands on only a copy in this node's DLC queue or its own claim folder (the pose
+  step's rule). Otherwise nothing is moved and the row becomes `unresolvable`, with the reason
+  naming where the copy was; an unclaimed copy at the top of the shared folder gets the
+  shared-folder reason, so the singles intake claims it properly;
+- `locate_video_file` / `locate_pose_file` with the archive search off ignore a recorded path
+  inside the filed folder, as they already ignored one inside Posed with the staging search off;
+- startup recovery does not count a file at the top of the shared singles folder as "on this
+  node" (it is waiting for any node to claim it);
+- `mousereach-watch-unresolvable --sweep` on a GPU node looks only in this node's own folders: a
+  copy in the filed folder, in Posed, at the top of the shared folder or in another node's claim
+  folder is not recorded against a working state; such a row is swept to `unresolvable`. On a
+  processing server (the role is read from the machine's watcher settings) the sweep still counts
+  a copy in Posed -- where the server works a posed video from -- and, for a row in `outdated` or
+  `archiving` only, the video's filed copy, so those rows get their path filled in as before.
+For an operator: nothing to do. Where it lives: `watcher/locate.py` (`is_in_archive`);
+`DLCOrchestrator._stage_to_nas`; `watcher/coordination.py` `_file_on_this_node`; `watcher/cli.py`
+`main_unresolvable`. Tests in `tests/test_hand_off_moves_only_own_files.py`.

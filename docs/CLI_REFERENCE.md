@@ -1833,7 +1833,11 @@ usage: mousereach-watch-unresolvable [--list | --sweep | --retry] [--dry-run]
 Handle DB rows whose video file this node cannot find anywhere.
 
   --list      Show the pathless rows.
-  --sweep     Mark them unresolvable so they leave the work loop.
+  --sweep     Mark them unresolvable so they leave the work loop. A row
+              whose file IS here gets its path filled in instead (on a
+              processing server the posed folder counts, and for a
+              re-run or filing row the filed folder too; on a GPU node
+              only its own working folders).
   --retry     GPU node only: queue again an unresolvable video whose file
               is now in this node's DLC queue; one at the top of the shared
               singles folder is left for the intake to claim. Any other
@@ -1841,6 +1845,21 @@ Handle DB rows whose video file this node cannot find anywhere.
               changes nothing (its watcher takes videos back by itself).
   --dry-run   With --sweep/--retry: show what would change, change nothing.
 ```
+
+What `--sweep` counts as "the file is here" depends on the machine's role
+(read from its watcher settings; if they cannot be read the command stops
+with an error and changes nothing):
+
+- GPU node: only its own working folders (its DLC queue, its own claim
+  folder). A copy in the filed folder, in the posed folder, at the top of the
+  shared singles folder or in another node's claim folder does not count, and
+  the row is swept to `unresolvable`.
+- processing server: its working folders and the posed folder
+  (Processing/Posed, where it works a posed video from); for a row in
+  `outdated` (a filed video marked for a re-run) or `archiving` also the
+  video's filed folder. A row in any other state is never pointed at a filed
+  copy. A file at the top of the shared singles folder or in a GPU node's
+  claim folder never counts.
 
 What `--retry` does with each unresolvable video, on a GPU node:
 

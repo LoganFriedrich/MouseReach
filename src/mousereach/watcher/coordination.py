@@ -94,14 +94,23 @@ def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[P
     in another host's claim folder is that host's, so it counts as not here;
     the row is then recorded as elsewhere, as for any video whose files sit on
     another machine. This node's own claim folder is still its own.
+
+    Nor is a file at the TOP of the shared singles folder this node's: it is
+    waiting there for any node to claim it. Counting it let a restarting node
+    adopt another node's 'dlc_complete' row for it, and the hand-off step then
+    moved that unposed shared file into Posed. The row is recorded as
+    elsewhere instead; before the pose its reason lets the singles intake
+    claim the file properly (_elsewhere_reason).
     """
-    from mousereach.watcher.single_claim import claim_holder
+    from mousereach.watcher.single_claim import claim_holder, in_front_door
     local_file = locate_video_file(
         video_id, raw=remote.get('source_path'),
         search_archive=False, search_staging=False)
     if local_file is not None:
         holder = claim_holder(local_file)
         if holder is not None and holder != hostname:
+            return None
+        if in_front_door(local_file):
             return None
     return local_file
 
