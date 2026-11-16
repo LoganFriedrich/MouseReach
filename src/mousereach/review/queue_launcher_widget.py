@@ -9,7 +9,7 @@ queue and opens the right review tool for each:
   * Re-segmentation queue (Paths.DEEP_REVIEW) -- segmentation-failed or escalated
     videos; opens the causal review tool in DEEP-REVIEW mode (full-segment walk +
     a CLEAR button that writes {stem}_deep_review_cleared.json so the watcher
-    re-injects the video at the pipeline start).
+    re-injects the video just after segmentation).
 
 Each queue opens in ITS OWN napari viewer window. The causal review widget owns
 the viewer's single playhead, layers, and single-key shortcuts, so two of them

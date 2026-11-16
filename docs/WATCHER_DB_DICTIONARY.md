@@ -196,6 +196,22 @@ Version tracking (added by migration, db.py:331)
                           good (error_message then starts "re-run of a filed
                           video failed") or a leftover from before scopes were
                           cleared at filing; neither starts a run.
+  held_at_step            which step sent the video to a review queue, written
+                          when it is routed (review_gate.route_to_queue):
+                          'segmentation' (every route into deep review),
+                          'outcome' (the gate's triage), 'assignment' (triage
+                          because reach assignment could not run). Also in the
+                          bundle's manifest (provenance.held_at_step). Cleared
+                          when the video is filed. NULL on rows held before
+                          this column existed.
+  resume_stage            where the run of a video a review queue returned
+                          resumes: 'reach', 'assignment' or 'checks' (the
+                          step after held_at_step; deep review always 'reach').
+                          Written by the return, read by the pipeline (which
+                          starts earlier if an earlier output is out of date;
+                          watcher/resume_point.py). Kept through a retry or a
+                          restart; cleared by a new hold, by filing, by a
+                          stale-outputs gate and when a version re-run starts.
   mark_reason             NULL for a scanner mark; set for a HAND-mark. The
                           reprocessor's two-way door never un-marks a row
                           carrying a reason. That is the whole point of the

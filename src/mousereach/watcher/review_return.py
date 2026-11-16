@@ -8,6 +8,12 @@ the pipeline re-runs them (Priority-2 'pipeline' work). On the re-run the review
 file travels with the bundle, so the gate re-checks and -- now that every
 triaged element is resolved -- lets the video through to kinematics.
 
+Where the re-run starts: just after the step that sent the video to the queue,
+with every later step run -- the quality triage, the hand-score comparison and
+the gate included (watcher/resume_point.py has the rule and its reasons). The
+return writes that point to the row (``resume_stage``); the pipeline reuses the
+earlier steps' outputs only when they are current.
+
 Clear signals:
   TRIAGE      -- every triaged element resolved (``triage_status.fully_resolved``
                  and segmentation not failed). Works with the existing review
@@ -20,8 +26,9 @@ Clear signals:
   DEEP_REVIEW -- an explicit ``{stem}_deep_review_cleared.json`` marker (written
                  by the deep tools when a reviewer clears the flag) OR a
                  co-located ``{stem}_unified_ground_truth.json`` (the deep GT
-                 tool produced the answer). Re-injection restarts the pipeline
-                 from segmentation.
+                 tool produced the answer). Re-injection resumes just after
+                 segmentation: the person's cuts are kept and everything after
+                 them is remade.
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
@@ -586,6 +593,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # recorded at its destination; one outside the bundle (legacy manifest,
     # Analyzed, staging) is used in place, so pose_src stands.
     h5_dest: Optional[Path] = pose_src
+    resume = _resume_stage(bundle, stem, db, reason)
     moved = 0
     for f in list(bundle.iterdir()):
         if not f.is_file():
@@ -619,11 +627,16 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         return False
 
     kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
+    # Where the run resumes: just after the step that sent the video here
+    # (resume_point.resume_stage_for; read before the moves, since the
+    # bundle's manifest is queue metadata and is dropped by them).
+    kw['resume_stage'] = resume
     # A re-run scope left on the row (a filed video's kinematics-only re-run
     # that the gate sent to a queue) is cleared: a person has just answered
-    # questions about this video, so its next run must go through every check,
-    # and the pipeline reads a kept 'kinematics' scope back from the row
-    # (orchestrator.kept_rerun_start_stage).
+    # questions about this video, so its next run must go through every check
+    # (a resumed run always does), and the pipeline must not read a kept
+    # 'kinematics' scope back from the row (orchestrator.kept_rerun_start_stage)
+    # in place of the resume point.
     kw['reprocess_scope'] = None
     try:
         # NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a
@@ -682,6 +695,31 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     _return_retry_after.pop(stem, None)
     logger.info(f"Returned {stem} to Processing ({moved} files) reason={reason}")
     return True
+
+
+def _resume_stage(bundle: Path, stem: str, db, reason: str) -> str:
+    """Where the returned video's run resumes (resume_point.resume_stage_for):
+    from the step recorded when it was routed -- the bundle's manifest first
+    (it travels with the bundle), then the row -- and the queue it is
+    returning from. Never raises."""
+    from .resume_point import resume_stage_for
+    queue = "deep_review" if reason == "deep_review_cleared" else "triage"
+    step = None
+    try:
+        import json
+        doc = json.loads((Path(bundle) / f"{stem}_manifest.json").read_text(encoding="utf-8"))
+        step = (doc.get("provenance") or {}).get("held_at_step")
+    except Exception:
+        step = None
+    if not step:
+        try:
+            step = (db.get_video(stem) or {}).get("held_at_step")
+        except Exception:
+            step = None
+    resume = resume_stage_for(step, queue)
+    logger.info(f"Return {stem}: held at step '{step or 'not recorded'}' "
+                f"({queue}); its run resumes at '{resume}' with every later step")
+    return resume
 
 
 @_with_return_claim

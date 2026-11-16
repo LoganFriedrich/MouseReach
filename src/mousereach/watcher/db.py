@@ -59,12 +59,14 @@ VIDEO_TRANSITIONS = {
     # until a human clears it. Kinematics NEVER run on a held video. ---
     # 'triage': the algo left per-element questions (which reach / what outcome).
     #   The triage review tool answers them. When EVERY triaged element is
-    #   addressed -> 'outdated' (the reprocessor re-runs the pipeline and the gate
+    #   addressed -> 'processing', resuming just after the step that sent it
+    #   (watcher/resume_point.py; every later check runs again and the gate
     #   re-checks). If the reviewer cannot resolve it -> escalate to 'deep_review'.
     'triage': ['outdated', 'processing', 'deep_review', 'failed'],
     # 'deep_review': segmentation FAILED, or a reviewer escalated a triaged video.
-    #   The causal/GT deep tools clear the flag -> the video is re-injected at the
-    #   START of the pipeline (re-segment): -> 'outdated'/'processing' (re-seg) or
+    #   The causal/GT deep tools clear the flag -> the video is re-injected just
+    #   after segmentation (a person's cuts are kept; everything after them is
+    #   remade, watcher/resume_point.py): -> 'outdated'/'processing' or
     #   'dlc_queued' (only if the deep fix changed the pose h5).
     'deep_review': ['outdated', 'processing', 'dlc_queued', 'failed'],
     'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed', 'unresolvable'],  # Retry from any prior state
@@ -383,6 +385,15 @@ class WatcherDB:
             # reprocessor's two-way door must never un-mark a hand-mark, and
             # a mark's reason must survive log rotation to enforce that.
             ('videos', 'mark_reason', 'TEXT'),
+            # Which step sent the video to a review queue, written when it is
+            # routed (review_gate.route_to_queue), and where its run resumes
+            # once a person has answered (review_return._return_to_processing).
+            # WHY on the row: a returned video resumes just after the step that
+            # sent it, with every later step run (watcher/resume_point.py); a
+            # resume point held only in memory would be lost by a retry or a
+            # restart, and the run would fall back to segmentation.
+            ('videos', 'held_at_step', 'TEXT'),
+            ('videos', 'resume_stage', 'TEXT'),
         ]
 
         with self._lock:

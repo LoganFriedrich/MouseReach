@@ -163,9 +163,9 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
 
     Everything else is a full run with every check:
       * a new video (no reprocess_start_stage);
-      * a video coming back from a review queue -- it re-enters through
-        'processing' with no start stage, and the return clears the row's
-        re-run scope so none is read back;
+      * a video coming back from a review queue -- it resumes just after the
+        step that sent it (watcher/resume_point.py), always with every check,
+        and the return clears the row's re-run scope so none is read back;
       * a video held for its hand scores and picked again (no start stage);
       * a filed video whose re-run recomputed any algorithm (a new segmenter,
         reach or outcome detector, a pose change, or a reused output that was
@@ -1166,9 +1166,12 @@ class BaseOrchestrator:
     # 'processing' is deliberately absent. Both roles already select it, so an
     # interrupted pipeline run is picked up again on its own. It is NOT resumed
     # where it stopped: it starts over from segmentation (a person's cuts are
-    # kept, segmentation/core/batch.py), with every check -- except a filed
-    # video's kinematics-only re-run, which reads its start stage back from
-    # the row (kept_rerun_start_stage) and runs only the gate and kinematics.
+    # kept, segmentation/core/batch.py), with every check -- except a video a
+    # review queue returned, which starts again at its resume point (the
+    # row's resume_stage, watcher/resume_point.py) with every check, and a
+    # filed video's kinematics-only re-run, which reads its start stage back
+    # from the row (kept_rerun_start_stage) and runs only the gate and
+    # kinematics.
     _ORPHANED_VIDEO_STATES = {
         # left behind in -> put back to
         'archiving': 'processed',        # re-files the finished video
@@ -4857,7 +4860,8 @@ class DLCOrchestrator(BaseOrchestrator):
                 # The row has said 'archiving' since before the move (written
                 # above), so this is the one write that completes it.
                 # Filed: a re-run scope it carried is spent (kept_rerun_start_stage).
-                self.db.update_state(video_id, 'archived', reprocess_scope=None)
+                self.db.update_state(video_id, 'archived', reprocess_scope=None,
+                                     resume_stage=None, held_at_step=None)
                 self.db.log_step(video_id, 'archive', 'completed',
                                 message=f"Archived {len(result.get('files_moved', []))} files",
                                 duration=duration)
@@ -6180,7 +6184,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             video_id, 'processing',
             reason="re-run: archived results copied down to bring it current",
             dlc_output_path=str(local_h5) if local_h5 else '',
-            current_path=str(self.processing_dir / f"{video_id}.mp4")
+            current_path=str(self.processing_dir / f"{video_id}.mp4"),
+            # Not a review return: a resume point left from an earlier round
+            # must not decide where a retry of THIS run starts.
+            resume_stage=None,
         )
 
         # Run the standard pipeline (seg/reach/outcomes) -- dependency-aware:
@@ -6537,21 +6544,41 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # pipeline bucket) reads it from the row instead: a filed video's
         # kinematics-only re-run keeps that scope through a retry or a restart
         # (kept_rerun_start_stage says when and why).
+        #
+        # A video a review queue returned resumes just after the step that sent
+        # it (row's resume_stage, written by the return); every later step
+        # runs, the quality triage and the hand-score comparison included
+        # (watcher/resume_point.py: the rule, and the version and pose test an
+        # earlier step's output must pass to be reused). _resumed holds where
+        # such a run really starts; it is None for every other run.
         _start_stage = video_data.get("reprocess_start_stage")
+        _resumed = None
         if not _start_stage:
             try:
-                _start_stage = kept_rerun_start_stage(
-                    self.db.get_video(video_id),
-                    held_for_hand_scores=self._held_for_hand_scores(video_id))
+                _row = self.db.get_video(video_id) or {}
             except Exception as e:
-                logger.warning(f"{video_id}: could not read the row's re-run "
-                               f"scope ({e}); running every stage")
-                _start_stage = None
-            if _start_stage:
-                logger.info(f"{video_id}: filed video's '{_start_stage}' re-run "
-                            f"resumed from its row (retry or restart)")
-        _STAGE_IDX = {"segmentation": 0, "reach": 1, "outcome": 2, "kinematics": 3}
-        _start_idx = _STAGE_IDX.get(_start_stage, 0)
+                logger.warning(f"{video_id}: could not read its row ({e}); "
+                               f"running every stage")
+                _row = {}
+            _held = self._held_for_hand_scores(video_id)
+            if _row.get('resume_stage') and not _held:
+                _resumed = self._resume_point(video_id, _row['resume_stage'], dlc_path)
+            else:
+                try:
+                    _start_stage = kept_rerun_start_stage(_row, held_for_hand_scores=_held)
+                except Exception as e:
+                    logger.warning(f"{video_id}: could not read the row's re-run "
+                                   f"scope ({e}); running every stage")
+                    _start_stage = None
+                if _start_stage:
+                    logger.info(f"{video_id}: filed video's '{_start_stage}' re-run "
+                                f"resumed from its row (retry or restart)")
+        # 'checks' (a resumed run after every algorithm step) reuses what
+        # 'kinematics' reuses; the difference is that a resumed run always runs
+        # every check (see _reuses_analysis below).
+        _STAGE_IDX = {"segmentation": 0, "reach": 1, "outcome": 2, "assignment": 3,
+                      "kinematics": 4, "checks": 4}
+        _start_idx = _STAGE_IDX.get(_resumed or _start_stage, 0)
         _seg_out = self.processing_dir / f"{video_id}_segments.json"
         _reach_out = self.processing_dir / f"{video_id}_reaches.json"
         _outcome_out = self.processing_dir / f"{video_id}_pellet_outcomes.json"
@@ -6718,7 +6745,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'assignment', 'started')
             step_start = time.time()
             try:
-                if _run_outcome or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists():
+                if (_run_outcome or _start_idx <= _STAGE_IDX["assignment"]
+                        or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists()):
                     _recompute('assignment')
                     if assign_reaches_for_video(self.processing_dir, video_id, dlc_path) is None:
                         raise RuntimeError("its inputs could not be read")
@@ -6764,7 +6792,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             logger.warning(f"{video_id}: could not read whether it was filed before "
                            f"({e}); running every check")
             _archived_at = None
-        _reuses_analysis = filed_rerun_reuses_analysis(
+        # A resumed review return is never a "downstream calculation only"
+        # run: a person has just answered, and every later check judges the
+        # answers (watcher/resume_point.py).
+        _reuses_analysis = (not _resumed) and filed_rerun_reuses_analysis(
             _start_stage, _archived_at, _recomputed)
         if _reuses_analysis:
             logger.info(
@@ -6783,6 +6814,33 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         self._extract_features_and_finish(video_id, dlc_path, skip_outcomes,
                                           pipeline_duration)
+
+    def _resume_point(self, video_id: str, wanted: str, dlc_path) -> str:
+        """Where a review return's run really starts: ``wanted`` (the row's
+        resume_stage) unless an earlier step's output is missing, out of date
+        or made from another pose, then that step
+        (resume_point.current_start says how). Logged either way, and as a
+        'pipeline' step so the processing log shows it. Never raises; a
+        failure starts at segmentation."""
+        from mousereach.watcher.resume_point import current_start
+        try:
+            from mousereach.pipeline.versions import get_current_versions
+            from mousereach.watcher import repose
+            declared = get_current_versions(Paths.NAS_ROOT) if Paths.NAS_ROOT else {}
+            scorer = repose.scorer_of(Path(dlc_path)) if dlc_path else ""
+            start, why = current_start(self.processing_dir, video_id, wanted,
+                                       declared, scorer)
+        except Exception as e:
+            start, why = "segmentation", f"could not check its outputs ({e})"
+        msg = (f"returned from review: resumes at '{start}'"
+               + (f" instead of '{wanted}' -- {why}" if start != wanted else "")
+               + "; every later step and check runs")
+        logger.info(f"{video_id}: {msg}")
+        try:
+            self.db.log_step(video_id, 'pipeline', 'resumed', message=msg)
+        except Exception:
+            pass
+        return start
 
     def _run_checks_before_kinematics(self, video_id, dlc_path, pipeline_duration,
                                       triage_video, run_gate, DECISION_CLEAN,
@@ -6837,10 +6895,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         if decision == getattr(_rg, 'DECISION_STALE', None):
             # The outputs are out of step with the cuts (review_gate says how):
             # the next pick must recompute them, so a kept kinematics-only
-            # re-run scope is cleared -- read back, it would reuse the same
-            # out-of-step outputs and meet STALE again on every pick.
+            # re-run scope, and a review return's resume point, are cleared --
+            # read back, either would reuse the same out-of-step outputs and
+            # meet STALE again on every pick.
             try:
-                self.db.set_fields(video_id, reprocess_scope=None)
+                self.db.set_fields(video_id, reprocess_scope=None, resume_stage=None)
             except Exception as e:
                 logger.warning(f"{video_id}: could not clear the re-run scope "
                                f"after a stale-outputs gate ({e})")
@@ -6977,7 +7036,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         def _recorded_as_filed(message, duration):
             # 'archiving' -> 'archived', then the hand-off clean-up. Filed: a
             # re-run scope it carried is spent (kept_rerun_start_stage).
-            self.db.update_state(video_id, 'archived', reprocess_scope=None)
+            self.db.update_state(video_id, 'archived', reprocess_scope=None,
+                                 resume_stage=None, held_at_step=None)
             self.db.log_step(video_id, 'archive', 'completed',
                              message=message, duration=duration)
             logger.info(f"Archived {video_id} to NAS ({duration:.1f}s)")

@@ -375,7 +375,8 @@ class CausalReviewWidget(QWidget):
         # videos). Walks ALL segments (a failed-seg bundle has no per-element
         # triage) and exposes a CLEAR button that writes
         # {stem}_deep_review_cleared.json -- the watcher return scan then re-injects
-        # the video at the start of the pipeline.
+        # the video just after segmentation (watcher/resume_point.py): the cuts
+        # are kept and every later step runs.
         self._deep_review = bool(deep_review)
 
         # Triaged-only mode: the video queue only includes videos that still
@@ -715,7 +716,8 @@ The notes box travels with the video.
         self._clear_deep_btn.setStyleSheet("background: #3a5a16; color: white; font-weight: bold;")
         self._clear_deep_btn.setToolTip(
             "Re-segmentation done: save the review, mark this video cleared, and "
-            "let the watcher re-inject it at the start of the pipeline. Only "
+            "let the watcher re-run it from the step after segmentation (your "
+            "cuts are kept; reaches, outcomes and every check run again). Only "
             "possible once its cuts were saved in the Re-segmentation tool since "
             "it arrived."
         )
@@ -3586,8 +3588,8 @@ The notes box travels with the video.
 
     def _clear_deep_review(self):
         """Deep review complete: persist the review, then write the cleared
-        marker the watcher return scan consumes to re-inject the video at the
-        pipeline start. Advances to the next deep-review bundle."""
+        marker the watcher return scan consumes to re-inject the video just
+        after segmentation. Advances to the next deep-review bundle."""
         bundle = getattr(self, "_bundle_dir", None)
         stem = self._video_stem
         if not bundle or not stem:

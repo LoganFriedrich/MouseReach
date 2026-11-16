@@ -241,7 +241,7 @@ def test_route_to_queue_writes_review_manifest_into_final_folder(tmp_path, monke
     written = []
     monkeypatch.setattr(
         rg, "_write_review_manifest",
-        lambda b, v, r: written.append(b) or (b / f"{v}_manifest.json").write_text(
+        lambda b, v, r, **k: written.append(b) or (b / f"{v}_manifest.json").write_text(
             "{}", encoding="utf-8"))
 
     bundle = rg.route_to_queue(STEM, src, queue, "why", db=None)

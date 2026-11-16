@@ -269,7 +269,9 @@ class Paths:
     #     outcome" questions the triage review tool answers quickly (<5s each).
     #   DEEP_REVIEW (Processing/Review/deep_review) -- segmentation FAILED,
     #     or a reviewer escalated a video that needs the causal/GT deep tools.
-    #     Clearing a deep-review flag re-injects the video at the START (re-segment).
+    #     Clearing a deep-review flag re-injects the video just after segmentation:
+    #     the person's cuts are kept and reaches, outcomes, assignment and every
+    #     check run again (watcher/resume_point.py).
     # The folder is named for the queue it is (deep_review, beside triage). WHY
     # not Processing/Review/flagged_for_review: that old folder name is now a
     # guard FILE on the shared drive, so stale code raises instead of reviving

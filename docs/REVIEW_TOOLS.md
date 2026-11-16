@@ -547,13 +547,26 @@ already answered, the **Release finished videos** button on the Review Queues
 tab (or `mousereach-review-release --clear`) lists it as complete and releases
 it; otherwise open **Re-segmentation Review**, which shows its open pellets,
 answer them and press **Clear -> re-enter pipeline**. That is the release:
-the watcher then re-runs the video from segmentation onward -- keeping any
-human-made cuts -- and the results flow to the database automatically. Nothing
+the watcher then re-runs the video from the step after segmentation -- your
+cuts are kept as they are; reaches, pellet outcomes and reach assignment are
+made again on them, then the quality check, the hand-score comparison and the
+review gate -- and the results flow to the database automatically. Nothing
 else needs to be done. This holds even for a video that had been filed and was
 in the queue because a kinematics-only re-run sent it there: the release wipes
 that re-run's "kinematics only" mark, so the video goes through every check
-again after your answers (docs/PIPELINE_AS_BUILT.md, "a filed video's re-run
-keeps where it starts").
+again after your answers (docs/PIPELINE_AS_BUILT.md, "a returned video resumes
+just after the step that sent it").
+
+**Where a video released from triage starts again.** Answering a triage
+video's questions releases it into the step after the one that asked them:
+after pellet outcomes for an outcome or causal-reach question (reach
+assignment is made again, the outcomes are kept), after reach assignment when
+the question was asked because reach assignment could not run. The quality
+check, the hand-score comparison and the review gate always run again after
+your answers. An earlier step's results are kept only if they were made with
+the algorithm versions and the pose model that are current now; if anything
+changed while the video waited, the watcher starts at that step instead, so
+your answers are never applied to results you did not see.
 
 **If you get a video that is not actually broken**, press *Skip this video* in
 the re-segmentation tool (it stays in the queue), or clear it through Deep

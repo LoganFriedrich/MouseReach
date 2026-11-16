@@ -6,10 +6,16 @@ whole bundle into the right review queue so kinematics + the central database ne
 touch it:
 
     segmentation failed (hard or soft) OR QC-critical -> DEEP_REVIEW
-        (needs the causal/GT deep tools; clearing re-injects at the pipeline start)
+        (needs the causal/GT deep tools; clearing re-injects just after
+        segmentation: reaches, outcomes and assignment are remade)
     any triaged element still UNRESOLVED              -> TRIAGE
-        (fast per-element review tool; resolving re-runs the video through here)
+        (fast per-element review tool; resolving resumes the video just after
+        the step that sent it and runs every later step, this gate included)
     clean / every triaged element already resolved    -> proceed to kinematics
+
+Every route records WHICH STEP sent the video (``held_at_step`` on the watcher
+row and in the bundle's manifest); the return reads it to decide where the run
+resumes (watcher/resume_point.py has the rule and its reasons).
 
 The moved bundle is self-contained (mp4 + pose h5 + all algo JSONs) and carries a
 ``manifest.json`` with BUNDLE-LOCAL canonical pointers, so the review tool opens
@@ -318,9 +324,14 @@ def _copy_pose_into_bundle(pose: Path, bundle: Path, video_id: str) -> Optional[
         return None
 
 
-def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
+def _write_review_manifest(bundle: Path, video_id: str, reason: str,
+                           held_at_step: Optional[str] = None) -> None:
     """Write the ``manifest.json`` the review tool needs to open a self-contained
     bundle -- BUNDLE-LOCAL canonical pointers so the video + pose load in place.
+
+    ``provenance.held_at_step`` records which step sent the video (route_to_queue);
+    the return reads it, so it travels with the bundle even where the row
+    cannot be written (a review window routing with no watcher database).
     """
     mp4 = bundle / f"{video_id}.mp4"
     h5s = sorted(p for p in bundle.glob(f"{video_id}DLC*.h5") if p.is_file())
@@ -372,6 +383,7 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str) -> None:
             "staged_at": datetime.now().isoformat(),
             # True only when the pose really is IN the bundle.
             "self_contained": self_contained,
+            "held_at_step": held_at_step,
         },
     }
     (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -436,9 +448,16 @@ def route_to_queue(
     db=None,
     db_state: Optional[str] = None,
     extra_sources: Optional[Iterable[Path]] = None,
+    held_at_step: Optional[str] = None,
 ) -> Path:
     """Move a video bundle into a review queue, write the review manifest, and
     set the DB hold state. Returns the bundle dir.
+
+    ``held_at_step`` is the step that sent the video (resume_point.RESUME_AFTER
+    names them). It is written to the row and to the bundle's manifest, so the
+    return resumes just after that step. Left None it is the step the queue
+    stands for: 'segmentation' for deep review (where cuts are fixed),
+    'outcome' for triage (pellet outcomes and causal reaches).
 
     Raises CrystallizedError, before anything moves, when ``db`` says the
     video is crystallized (publication-locked; db.crystallized_refusal).
@@ -457,11 +476,23 @@ def route_to_queue(
     if locked:
         raise CrystallizedError(locked)
 
+    from .resume_point import QUEUE_STEP
+
+    def _step_for(state: str) -> Optional[str]:
+        # Deep review is where cuts are fixed, whatever sent the video there.
+        if state == "deep_review":
+            return QUEUE_STEP["deep_review"]
+        return held_at_step or QUEUE_STEP.get(state or "")
+
     def _record_state(state: str, why: str) -> None:
         if db is None or not state:
             return
+        # The step that sent it, and no resume point yet (one is set when a
+        # person's answers return it): a resume point from an earlier round
+        # must never outlive a new hold.
+        hold = {"held_at_step": _step_for(state), "resume_stage": None}
         try:
-            db.update_state(video_id, state)
+            db.update_state(video_id, state, **hold)
         except Exception as e:
             # The bundle has ALREADY been moved into the review queue above, so
             # the filesystem is the ground truth here and the DB has to follow it.
@@ -472,7 +503,7 @@ def route_to_queue(
             try:
                 db.force_state(
                     video_id, state,
-                    reason=f"{why}; normal transition rejected ({e})")
+                    reason=f"{why}; normal transition rejected ({e})", **hold)
             except Exception as e2:
                 logger.error(
                     f"Gate: {video_id} is in the '{state}' queue ON DISK but its "
@@ -495,7 +526,9 @@ def route_to_queue(
         extra_sources=extra_sources,
         extra_manifest={"db_state": db_state} if db_state else None,
     )
-    _write_review_manifest(bundle, video_id, reason)
+    _write_review_manifest(bundle, video_id, reason, held_at_step=_step_for(
+        "deep_review" if _same_folder(dest_root, getattr(Paths, "DEEP_REVIEW", None))
+        else (db_state or "triage")))
     # If the SOURCE was a per-video bundle dir (a queue-to-queue divert) and
     # the move emptied it, remove it: an empty date-named dir left behind in
     # a queue reads as a seg-failed bundle and re-diverts "(0 files)" forever
@@ -653,8 +686,14 @@ def run_gate(
                        db=db, db_state="deep_review", extra_sources=extra)
         logger.info(f"Gate: {video_id} -> DEEP_REVIEW ({reason})")
     elif decision == DECISION_TRIAGE:
+        # The step the questions are about: the causal reach when reach
+        # assignment could not run (its answer is all that is missing), else
+        # the pellet outcomes and causal reaches (resume_point says where each
+        # resumes).
+        step = "assignment" if _assignment_failure(video_id, processing_dir) else "outcome"
         bundle = route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
-                                db=db, db_state="triage", extra_sources=extra)
+                                db=db, db_state="triage", extra_sources=extra,
+                                held_at_step=step)
         if _same_folder(Path(bundle).parent, getattr(Paths, "DEEP_REVIEW", None)):
             # Refused: the video is in deep review, which supersedes triage.
             # This run's files must not stay here as a second place the video
