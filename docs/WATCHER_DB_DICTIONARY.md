@@ -374,7 +374,8 @@ collages.state (db.COLLAGE_TRANSITIONS):
 The per-video `_processing_manifest.json` beside the video in
 Analyzed/{project}/{cohort}/ is the authority on what actually produced a
 video's results: the pose model, every stage version, the applied_review
-stamp and the applied_ground_truth stamp (which ground-truth file was beside
-the run, by content). The database records where a video is in the pipeline; the manifest
+stamp and the applied_ground_truth stamp (the ground-truth file the feature
+extractor actually applied, by content; null: none was applied; absent: it
+could not be determined). The database records where a video is in the pipeline; the manifest
 records what was done to it. When the two disagree, the manifest is the one
 that was written by the code that did the work.

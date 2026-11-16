@@ -217,6 +217,19 @@ def test_the_rerun_stamps_the_ground_truth_and_the_next_scan_leaves_it(archive, 
     assert db.marks[STEM] == "kinematics"
 
 
+def test_kinematics_that_applied_no_ground_truth_owe_one_filed_later(archive):
+    """A null stamp says the extractor applied NO ground truth (its lookup
+    found none). A file filed beside the video is owed a re-run even though
+    the file's own date is older than the manifest -- the case a stale
+    ground-truth index produced: the file was there, the run did not see it."""
+    nas, cohort = archive
+    _filed(cohort, dict(CURRENT), applied_ground_truth=None)
+    _gt(cohort, "2099-01-01T09:00:00")          # before created_at
+    db = DB(archived=[STEM])
+    _scan(nas, db)
+    assert db.marks[STEM] == "kinematics"
+
+
 def test_a_marked_video_whose_ground_truth_is_still_owed_is_not_unmarked(archive):
     nas, cohort = archive
     _filed(cohort, dict(CURRENT))

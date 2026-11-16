@@ -513,15 +513,19 @@ class BaseOrchestrator:
             # kinematics never happened. Stamp the truth -- including WHICH
             # review was applied (content identity; the staleness scanner
             # reads it back).
-            # And which ground-truth file was beside this run, by content, so a
-            # file saved or changed after filing re-runs these kinematics
-            # (manifest.ground_truth_applied says why).
+            # And which ground-truth file the extractor actually applied, by
+            # content (None: it applied none), so a file saved or changed after
+            # filing re-runs these kinematics until they are made with it
+            # (manifest.ground_truth_applied says why). The file the extractor
+            # READ, not the one beside the run: the two differ whenever the
+            # extractor's lookup missed the file beside the run, and stamping
+            # the latter would certify ground truth that was never applied.
             from mousereach.pipeline.manifest import (
-                record_kinematic_version, GROUND_TRUTH_SUFFIX)
-            gt_beside = processing_dir / f"{video_id}{GROUND_TRUTH_SUFFIX}"
+                record_kinematic_version, NOT_RESOLVED)
             record_kinematic_version(video_id, processing_dir, extractor.VERSION,
                                      review_path=review_path,
-                                     ground_truth_path=gt_beside if gt_beside.is_file() else None)
+                                     ground_truth_path=getattr(
+                                         extractor, "applied_ground_truth", NOT_RESOLVED))
 
             feat_duration = time.time() - step_start
             self.db.log_step(video_id, 'feature_extraction', 'completed',

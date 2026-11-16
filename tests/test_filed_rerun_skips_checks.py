@@ -326,21 +326,32 @@ def test_filing_clears_the_kept_scope(rig, tmp_path, monkeypatch):
     assert row["state"] == "archived" and row["reprocess_scope"] is None
 
 
-def test_the_kinematics_step_stamps_the_ground_truth_beside_the_run(rig, monkeypatch):
-    """The manifest records which ground-truth file was beside the run, so
-    the version scan can tell when one is saved or changed after filing
-    (pipeline.manifest.ground_truth_applied)."""
+def test_the_kinematics_step_stamps_the_ground_truth_the_extractor_applied(rig, monkeypatch):
+    """The manifest records the ground truth the extractor really applied --
+    not merely the file that sat beside the run -- so the version scan can
+    tell when one is saved or changed after filing, and never takes a file the
+    extractor missed for one it applied (pipeline.manifest.ground_truth_applied)."""
     import mousereach.pipeline.manifest as man
     import mousereach.watcher.review_gate as rg
+    import mousereach.kinematics.core.feature_extractor as fe
     seen = {}
     monkeypatch.setattr(man, "record_kinematic_version",
                         lambda *a, **k: seen.update(k))
     monkeypatch.setattr(rg, "run_gate", lambda *a, **k: rg.DECISION_CLEAN)
-    gt = rig.folder / f"{VID}_unified_ground_truth.json"
-    gt.write_text("{}", encoding="utf-8")
+    beside = rig.folder / f"{VID}_unified_ground_truth.json"
+    beside.write_text("{}", encoding="utf-8")
+    elsewhere = rig.folder.parent / "elsewhere" / beside.name
+    base = fe.FeatureExtractor
+
+    class _Applies(base):
+        def extract(self, *a, **k):
+            self.applied_ground_truth = elsewhere      # what its lookup found
+            return base.extract(self, *a, **k)
+    monkeypatch.setattr(fe, "FeatureExtractor", _Applies)
     rig.file_it()
     rig.run("kinematics")
-    assert seen.get("ground_truth_path") == gt
+    assert seen.get("ground_truth_path") == elsewhere   # not the file beside the run
+
 
 
 # ---------------------------------------------------------------------------

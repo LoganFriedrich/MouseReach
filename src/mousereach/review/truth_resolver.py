@@ -428,6 +428,7 @@ def resolve_truth_layers(
     primary_dir=None,
     extra_gt_dirs=(),
     human_segmentation: bool = False,
+    applied: Optional[dict] = None,
 ) -> Tuple[dict, dict]:
     """Return (reaches_data, outcomes_data) with every element resolved by
     GT > causal review > triage review > algo (see module docstring).
@@ -435,7 +436,16 @@ def resolve_truth_layers(
     ``primary_dir`` is an extra location to look for a causal-review file (e.g.
     the processing dir the extractor is running in). ``extra_gt_dirs`` are extra
     dirs to check for the video's unified GT before the corpus index. Never
-    raises: any missing layer is simply absent."""
+    raises: any missing layer is simply absent.
+
+    ``applied``, when a dict is given, receives ``'ground_truth'``: the path of
+    the ground-truth file this call found and layered (None when it found
+    none). WHY: the kinematics step records in the processing manifest which
+    ground truth its numbers were made with, and the version scan re-runs a
+    filed video whose filed ground truth differs from it. Recording the file
+    that happened to sit beside the run instead could name a file this call
+    never read (the corpus index is built once per process), and the video
+    would then count as brought up to date when it was not."""
     from mousereach.config import Paths
     from mousereach.review.causal_review_io import find_gt
 
@@ -467,6 +477,8 @@ def resolve_truth_layers(
     ]
 
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None
+    if applied is not None:
+        applied['ground_truth'] = gt_path
     gt = _read_json(gt_path) if gt_path else None
     if gt:
         gt_out, _exhaustive_out = _seg_overrides_from_gt(gt, _cur_segs, human_segmentation)

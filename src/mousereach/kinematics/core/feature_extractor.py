@@ -13,6 +13,7 @@ import json
 import numpy as np
 import pandas as pd
 
+from mousereach.pipeline.manifest import NOT_RESOLVED
 from mousereach.kinematics.core.anchored_path import AnchoredPath, anchored_hand_path, tracked_steps
 
 
@@ -266,7 +267,10 @@ class FeatureExtractor:
     RULER_MM = 9.0  # Physical size of ruler (SABL-SABR distance)
 
     def __init__(self):
-        pass
+        # Set by extract(): the ground-truth file the truth layering found and
+        # applied (None: it found none). Left as NOT_RESOLVED when the layering
+        # did not run to that point, so a caller never records a guess.
+        self.applied_ground_truth = NOT_RESOLVED
 
     def extract(
         self,
@@ -343,13 +347,23 @@ class FeatureExtractor:
                 _human_seg = segmentation_is_human(json.loads(_seg_file.read_text(encoding="utf-8")))
         except Exception:
             _human_seg = False
+        # Ground truth BESIDE THIS RUN is looked for first (extra_gt_dirs), then
+        # the corpus index. WHY: the index (causal_review_io.gt_index) is built
+        # once per process. In a long-running watcher it predates a ground-truth
+        # file copied down for a re-run -- the very file the re-run exists to
+        # apply -- so the re-run applied no ground truth, or an older one.
+        self.applied_ground_truth = NOT_RESOLVED
+        _applied = {}
         try:
             from mousereach.review.truth_resolver import resolve_truth_layers
             reaches_data, outcomes_data = resolve_truth_layers(
                 reaches_data, outcomes_data,
                 video_stem=reaches_data.get('video_name'),
                 primary_dir=review_path,
-                human_segmentation=_human_seg)
+                extra_gt_dirs=(Path(reaches_path).parent,),
+                human_segmentation=_human_seg,
+                applied=_applied)
+            self.applied_ground_truth = _applied.get('ground_truth', NOT_RESOLVED)
         except Exception as _e:
             print(f"[feature_extractor] truth layering skipped: {_e}")
             if review_path is not None:

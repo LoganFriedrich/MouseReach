@@ -298,6 +298,21 @@ def create_processing_manifest(
 GROUND_TRUTH_SUFFIX = "_unified_ground_truth.json"
 
 
+class _NotResolved:
+    """Type of NOT_RESOLVED (a readable repr in logs and test output)."""
+
+    def __repr__(self):
+        return "NOT_RESOLVED"
+
+
+# "Which ground truth did the kinematics apply?" has three answers, and only
+# two of them are facts: a file, or none at all. NOT_RESOLVED is the third --
+# the truth layering did not get far enough to say -- and it is recorded as
+# NOTHING (no stamp), never as "none", so a guess can never re-run a video or
+# certify one (FeatureExtractor.applied_ground_truth, record_kinematic_version).
+NOT_RESOLVED = _NotResolved()
+
+
 def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
                          features_mtime=None, sha_cache: Optional[dict] = None) -> bool:
     """Were the kinematics recorded by ``manifest`` made with the ground-truth
@@ -312,7 +327,10 @@ def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
 
     In order, like the review's rule (reprocessor._pending_review_path):
       1. the manifest's ``applied_ground_truth`` stamp (record_kinematic_version)
-         -- the sha256 of the file beside the run -- against the file's content;
+         -- the sha256 of the ground-truth file the feature extractor found and
+         applied -- against the file's content. A stamp of null means the
+         extractor looked and applied NO ground truth: a file filed beside the
+         video now is owed (False);
       2. a manifest with no stamp: the file's own ``last_modified_at`` against
          the manifest's ``created_at`` (ISO strings sort as times);
       3. only when either is missing: the file's modified time against the
@@ -320,6 +338,9 @@ def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
     An error answers True (applied): a file that cannot be read must not
     re-run a filed video on every scan."""
     try:
+        if (manifest and 'applied_ground_truth' in manifest
+                and manifest['applied_ground_truth'] is None):
+            return False        # the extractor applied none; one is filed now
         stamp = (manifest or {}).get('applied_ground_truth') or {}
         if stamp.get('sha256'):
             from mousereach.pipeline.fsutil import sha256_file
@@ -350,7 +371,7 @@ def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
 
 def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
                              review_path: Optional[Path] = None,
-                             ground_truth_path: Optional[Path] = None) -> bool:
+                             ground_truth_path=NOT_RESOLVED) -> bool:
     """Stamp the kinematic extractor version onto a video's existing manifest.
 
     Both pipelines compose the manifest BEFORE running feature extraction --
@@ -401,13 +422,21 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
                 manifest.pop('applied_review', None)
         else:
             manifest.pop('applied_review', None)
-        # The same for the ground-truth file that was beside the run
-        # (<stem>_unified_ground_truth.json in the processing folder -- a
-        # re-run copies the filed one there). The version scan compares the
-        # ground truth beside the FILED video with this stamp
-        # (ground_truth_applied), so a file saved or changed after filing
-        # re-runs the kinematics once, and only once.
-        if ground_truth_path is not None and Path(ground_truth_path).is_file():
+        # The same for the ground truth the feature extractor APPLIED
+        # (FeatureExtractor.applied_ground_truth: the file the truth layering
+        # found -- beside the run first, where a re-run copies the filed one --
+        # or None when it found none). The version scan compares the ground
+        # truth beside the FILED video with this stamp (ground_truth_applied),
+        # so a file saved or changed after filing re-runs the kinematics until
+        # they have really been made with it, and then no more.
+        #   a path        -> {file, last_modified_at, sha256}
+        #   None          -> null: none applied (a file filed later is owed)
+        #   NOT_RESOLVED  -> no key: unknown, the older time-based rule decides
+        if ground_truth_path is None:
+            manifest['applied_ground_truth'] = None
+        elif ground_truth_path is NOT_RESOLVED:
+            manifest.pop('applied_ground_truth', None)
+        elif Path(ground_truth_path).is_file():
             try:
                 from mousereach.pipeline.fsutil import sha256_file
                 try:

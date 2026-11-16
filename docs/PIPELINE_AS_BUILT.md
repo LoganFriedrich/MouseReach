@@ -3424,13 +3424,23 @@ the one its kinematics had applied. Nothing did the same for ground truth
 reached its features only if some other reason happened to re-run the video.
 
 **Now.**
-- When kinematics are made, the processing manifest records which ground-truth file was beside the
-  run, by content: `applied_ground_truth` = `{file, last_modified_at, sha256}` (none when there was
-  no ground truth). A re-run copies the filed ground truth down beside the run, so it is recorded.
+- When kinematics are made, the feature extractor looks for the video's ground truth **beside the
+  run first** (the processing folder; a re-run copies the filed ground truth down there), and only
+  then in the ground-truth index. WHY: that index is built once per watcher process, so in a watcher
+  that has been running for days it does not know a file copied down for a re-run -- and the re-run
+  then made the kinematics without the very ground truth it was started for.
+- The processing manifest then records, by content, the ground truth the extractor **actually
+  applied**: `applied_ground_truth` = `{file, last_modified_at, sha256}`; `null` when it looked and
+  found none; no entry at all when the extractor could not say (its truth layering failed -- the
+  older time-based rule below then decides). WHY the applied file and not "the file beside the
+  run": the two differ exactly when the lookup missed, and stamping the file beside the run would
+  record ground truth as applied that never reached the numbers -- the video would never be
+  re-run for it.
 - The version scan reads the ground-truth files in the filed folders from the same single listing
   of the archive it already makes (no extra network calls) and asks, for each, whether the
   kinematics were made with it as it is now:
-  1. the manifest has the stamp: the file's content against the stamp;
+  1. the manifest has the stamp: the file's content against the stamp; a `null` stamp (no ground
+     truth applied) means a file filed now is owed, whatever its dates say;
   2. a manifest from before the stamp: the file's own `last_modified_at` against the manifest's
      `created_at`;
   3. only when either is missing: the file's modified time against the features file's.
@@ -3441,15 +3451,33 @@ reached its features only if some other reason happened to re-run the video.
 - Recording retirement uses the same rule, so a video the scan will re-run for its ground truth does
   not count as complete for retiring its recording.
 
-Only ground truth beside the filed video is watched. The stamp names the file that was beside the
-run; which ground truth the feature extractor itself applies is decided by the extractor.
+Only ground truth beside the filed video is watched; ground truth kept anywhere else does not
+trigger a re-run.
+
+**Why kinematics only, not from reach detection.** Ground truth can move a reach's frames. That is
+applied by the feature extractor itself: its truth layering puts the ground truth's reaches over the
+algorithm's (replacing the reach each one overlaps, adding the ones the detector missed, and -- when
+the ground truth marks its reach list complete -- dropping the algorithm's others), and computes the
+kinematics over the ground truth's frames (`reach_source` = `ground_truth`). Reach detection does
+not read ground truth at all, so starting the re-run there would recompute the same algorithm reaches
+and add nothing -- while turning a filed video's re-run into a full one with every check. Ground
+truth's pellet outcomes are layered the same way. Ground-truth SEGMENT boundaries are not applied by
+the kinematics step (or by any step of the pipeline): a re-cut is done in the re-segmentation tools.
+
+**For an operator.** Nothing to do: ground truth saved beside a filed video reaches its features at
+the next version scan (about every half hour). If the re-run cannot apply it, the video is offered
+again on the next scan.
 
 **Where it lives.** `pipeline/manifest.py` (`ground_truth_applied`, the one rule;
-`record_kinematic_version` writes the stamp); `watcher/orchestrator.py` `_make_features` passes the
-file beside the run; `watcher/reprocessor.py` (`_index_archive`, `_pending_ground_truth`, the mark
+`record_kinematic_version` writes the stamp, `NOT_RESOLVED` = "could not say");
+`kinematics/core/feature_extractor.py` (`extract` looks beside the run first and sets
+`applied_ground_truth`); `review/truth_resolver.py` (`resolve_truth_layers(applied=...)` reports the
+file it found); `watcher/orchestrator.py` `_make_features` passes what the extractor applied; `watcher/reprocessor.py` (`_index_archive`, `_pending_ground_truth`, the mark
 side and the un-mark side of `scan`); `video_prep/core/collage_provenance.py`
-`build_complete_stems`. Tests in `tests/test_version_scan_start_stage.py` and
-`tests/test_filed_rerun_skips_checks.py`.
+`build_complete_stems`. Tests in `tests/test_version_scan_start_stage.py`,
+`tests/test_filed_rerun_skips_checks.py` and `tests/test_ground_truth_beside_the_run_is_applied.py`
+(including a ground-truth file created after the index was built, and a reach whose frames the
+ground truth moves).
 
 ## Update: a filed video whose re-run fails stays filed
 
