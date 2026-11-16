@@ -27,6 +27,7 @@ ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
 from __future__ import annotations
 
+import filecmp
 import functools
 import os
 import logging
@@ -38,7 +39,7 @@ from typing import Dict, List, Optional
 from ..config import Paths, is_outcome_free_tray
 from . import claim_marker, node_status
 from ..review.triage_status import triage_status
-from .review_routing import _safe_move
+from .review_routing import _safe_move, same_path as _same_path
 
 try:
     from .review_routing import INCOMING_DIR_NAME
@@ -466,6 +467,74 @@ def _with_return_claim(fn):
     return wrapper
 
 
+def _set_processing_state(db, stem: str, h5_dest: Optional[Path]) -> None:
+    """Set ``stem`` to 'processing' after a return; raise when that cannot be
+    done (the caller then puts the files back).
+
+    NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a SECOND
+    ENTRY POINT into 'processing', beside intake. Any guard or invariant of the
+    form "videos in processing got there through intake, so a check at intake
+    is sufficient" is wrong because of this path -- a human-cleared review
+    re-enters here, bypassing intake entirely. (An orchestrator work-selection
+    guard was designed on that assumption and had to be redone; hence this
+    sign.)
+
+    A cleared review routinely returns a video whose row has no legal path to
+    'processing' (typically 'archived': the bundle sat in a review queue while
+    the row was closed out). That is exactly what force_state exists for -- go
+    straight there instead of letting update_state log an ERROR first and then
+    forcing anyway. The WARNING force_state writes is the honest audit line."""
+    kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
+    reason = "review cleared; returned to Processing"
+    state = None
+    try:
+        row = db.get_video(stem)
+        state = row['state'] if row else None
+    except Exception:
+        state = None
+    from .db import VIDEO_TRANSITIONS
+    try:
+        if state is not None and "processing" not in VIDEO_TRANSITIONS.get(state, []):
+            db.force_state(stem, "processing", reason=reason, **kw)
+        else:
+            db.update_state(stem, "processing", **kw)
+    except Exception:
+        # The row exists (registered before the moves), so a legal-transition
+        # failure is what lands here; force_state is the documented escape
+        # hatch. If it fails too, this raises and the files go back.
+        db.force_state(stem, "processing", reason=reason, **kw)
+
+
+def _undo_return_moves(stem: str, done, current) -> None:
+    """Put back every file a failed return moved (newest first). ``current``
+    is the (source, destination, destination existed before) of the move that
+    raised: when its source is still in the bundle, a copy the move left at
+    the destination is deleted (a move across drives copies, then deletes the
+    source -- a held source leaves a full copy behind) -- but only when the
+    move made it: the destination was not there before, or it is byte for
+    byte the bundle's file. WHY: a same-named file already in Processing,
+    which the move's overwrite could not delete in time, is not this move's
+    copy and may be the only one of its kind. A file that will not go back is
+    logged as an ERROR naming both places: the bundle is then split and a
+    person must finish it."""
+    if current is not None:
+        src, dst, existed = current
+        try:
+            if (Path(src).is_file() and Path(dst).is_file() and not _same_path(src, dst)
+                    and (not existed or filecmp.cmp(str(src), str(dst), shallow=False))):
+                Path(dst).unlink()
+        except OSError as err:
+            logger.error("Return %s: could not delete the partial copy %s of %s: %s",
+                         stem, dst, src, err)
+    for src, dst in reversed(done):
+        try:
+            _safe_move(dst, src)
+        except Exception as err:
+            logger.error("Return %s: could not move %s back to %s while undoing a "
+                         "failed return, so this bundle is now split -- move it back "
+                         "by hand: %s", stem, dst, src, err)
+
+
 @_with_return_claim
 def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                           reason: str) -> bool:
@@ -585,16 +654,28 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # wrong -- often the old -- pose. A selected pose inside the bundle is
     # recorded at its destination; one outside the bundle (legacy manifest,
     # Analyzed, staging) is used in place, so pose_src stands.
+    #
+    # ALL OR NOTHING. Every move is planned first, each one done is recorded,
+    # and the state is set inside the same try: if any move -- or the state
+    # write -- fails, every file already moved goes back into the bundle and
+    # the return is retried after RETURN_RETRY_S. The queue records (manifest,
+    # routing) are deleted only after the state is set. WHY: the moves used to
+    # stop at the first failure (a file held open by a review window, an
+    # indexer, a backup pass) with earlier files -- the video, its pose, the
+    # reviewer's answers, possibly the clear marker -- already in Processing
+    # and the queue records already deleted. The half left in the queue then
+    # read as unanswered and no review tool listed it; only a person could
+    # put it back together. Inputs move first and the clear marker LAST, so
+    # even an undo that cannot finish never leaves a clear in the queue
+    # beside a bundle missing its files.
     h5_dest: Optional[Path] = pose_src
-    moved = 0
+    metadata: List[Path] = []
+    plan: List[tuple] = []
     for f in list(bundle.iterdir()):
         if not f.is_file():
             continue
         if _is_queue_metadata(f.name, stem):
-            try:
-                f.unlink()
-            except OSError:
-                pass
+            metadata.append(f)
             continue
         if is_leftover_temp(f.name):
             # One that appeared after the check above (a save that started in
@@ -605,63 +686,48 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                                f"appeared during the return and could not be "
                                f"deleted; it is left in {bundle}")
             continue
-        dest = processing_dir / f.name
-        try:
-            _safe_move(f, dest)
-            moved += 1
-            if Path(f) == Path(pose_src):
-                h5_dest = dest
-        except Exception as e:
-            logger.warning(f"Return {stem}: could not move {f.name}: {e}")
-            return False
+        plan.append((f, processing_dir / f.name))
 
-    if moved == 0:
+    def _move_order(item):
+        name = item[0].name
+        if name == f"{stem}_deep_review_cleared.json":
+            return 2
+        if name == f"{stem}.mp4" or name.startswith(f"{stem}DLC"):
+            return 0
+        return 1
+    plan.sort(key=_move_order)
+
+    if not plan:
         return False
 
-    kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
+    done: List[tuple] = []
+    current = None
     try:
-        # NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a
-        # SECOND ENTRY POINT into 'processing', beside intake. Any guard or
-        # invariant of the form "videos in processing got there through
-        # intake, so a check at intake is sufficient" is wrong because of
-        # this path -- a human-cleared review re-enters here, bypassing
-        # intake entirely. (An orchestrator work-selection guard was designed
-        # on that assumption and had to be redone; hence this sign.)
-        #
-        # A cleared review routinely returns a video whose row has no legal
-        # path to 'processing' (typically 'archived': the bundle sat in a
-        # review queue while the row was closed out). That is exactly what
-        # force_state exists for -- go straight there instead of letting
-        # update_state log an ERROR first and then forcing anyway. The WARNING
-        # force_state writes is the honest audit line; the ERROR was noise
-        # that fired on every legitimate return.
-        state = None
+        for src, dst in plan:
+            current = (src, dst, Path(dst).exists())
+            _safe_move(src, dst)
+            done.append((src, dst))
+            current = None
+            if Path(src) == Path(pose_src):
+                h5_dest = dst
+        _set_processing_state(db, stem, h5_dest)
+    except Exception as e:
+        _undo_return_moves(stem, done, current)
+        logger.error(
+            f"Return {stem}: could not complete ({e}); every file moved so far "
+            f"was put back and the bundle stays in the queue. (Tried again in "
+            f"{RETURN_RETRY_S // 60} min.)")
+        _return_failed(stem)
+        return False
+    moved = len(done)
+
+    # The queue records go last, once the video is back in Processing and its
+    # state says so (see ALL OR NOTHING above).
+    for f in metadata:
         try:
-            row = db.get_video(stem)
-            state = row['state'] if row else None
-        except Exception:
-            state = None
-        from .db import VIDEO_TRANSITIONS
-        if state is not None and "processing" not in VIDEO_TRANSITIONS.get(state, []):
-            db.force_state(stem, "processing",
-                           reason="review cleared; returned to Processing", **kw)
-        else:
-            db.update_state(stem, "processing", **kw)
-    except Exception:
-        # The row exists (registered above), so a legal-transition failure is
-        # what lands here. force_state is the documented escape hatch and logs
-        # the bypass; without it the video would sit in Processing unreferenced.
-        try:
-            db.force_state(stem, "processing",
-                           reason="review cleared; returned to Processing", **kw)
-        except Exception as e2:
-            # Do NOT delete the bundle -- the files are already in Processing but
-            # the queue entry is the only remaining pointer to this work.
-            logger.error(
-                f"Return {stem}: could not set 'processing' state ({e2}). "
-                f"Bundle kept in the queue so the clearance is not lost."
-            )
-            return False
+            f.unlink()
+        except OSError:
+            pass
 
     # Remove the now-empty bundle dir so it leaves the queue.
     try:

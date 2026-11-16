@@ -3343,4 +3343,12 @@ queue never deletes or overwrites a person's file".
   `ROUTE_REPAIR_INTERVAL_S` = 10 minutes) writes a missing manifest again for any bundle in either
   queue that has a routing record and some file of the video, under the return claim. Tests:
   `tests/test_route_records_hold_before_manifest.py`.
+- **Returns are all or nothing.** `_return_to_processing` plans every move (inputs first, the
+  clear marker last), records each one done, and sets 'processing' (`_set_processing_state`) in
+  the same try. Any failure puts every moved file back (`_undo_return_moves`, newest first; a
+  partial copy at the destination of the move that failed is deleted when its source is still in
+  the bundle and the move created it -- the destination was not there before, or is identical --
+  so a file of another run already in Processing is never deleted), backs the bundle off for
+  `RETURN_RETRY_S`, and returns False. The queue records are
+  deleted only after the state is set. Tests: section (f) of `tests/test_review_return_safety.py`.
 
