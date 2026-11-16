@@ -3604,6 +3604,11 @@ declared 4.0".
 **For an operator.** Nothing to do. A returned video takes less time than before, because the steps
 before the one that held it are not redone unless something changed while it waited.
 
+**A video waiting for its hand scores is not a returned video.** One held where it is for its
+session's hand scores (it stays in 'processing') is picked again only when the scores file changes,
+to be compared again. That pick reuses every output it has -- reach assignment included -- and
+runs only the checks; an output that is missing is remade, with every step after it.
+
 **Where it lives.** `watcher/resume_point.py` (the rule, `resume_stage_for`, and the currency test,
 `current_start`); `review_gate.route_to_queue` and `run_gate` record the step;
 `review_return._return_to_processing` (`_resume_stage`) writes the resume point;

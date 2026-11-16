@@ -6585,6 +6585,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         _run_seg = _start_idx <= 0 or not _seg_out.exists()
         _run_reach = _start_idx <= 1 or not _reach_out.exists()
         _run_outcome = _start_idx <= 2 or not _outcome_out.exists()
+        # Reach assignment is its own step: a run resumed AT it (a triage
+        # return of a video held at assignment) recomputes it even though the
+        # outcomes are reused.
+        _run_assign = _start_idx <= _STAGE_IDX["assignment"]
         # A video held for its hand scores (_hand_score_precheck) is analysed
         # already; it is picked again only because the scores file changed,
         # to be checked again -- so every stage output it has is reused.
@@ -6594,6 +6598,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             _run_seg = not _seg_out.exists()
             _run_reach = _run_seg or not _reach_out.exists()
             _run_outcome = _run_reach or not _outcome_out.exists()
+            # Its assignments too, unless an earlier output was remade.
+            _run_assign = _run_outcome
         # Which stages this run actually recomputes -- filled in below as each
         # one runs. Read by filed_rerun_reuses_analysis before the checks.
         _recomputed = []
@@ -6745,7 +6751,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'assignment', 'started')
             step_start = time.time()
             try:
-                if (_run_outcome or _start_idx <= _STAGE_IDX["assignment"]
+                if (_run_outcome or _run_assign
                         or not (self.processing_dir / f"{video_id}_reach_assignments.json").exists()):
                     _recompute('assignment')
                     if assign_reaches_for_video(self.processing_dir, video_id, dlc_path) is None:
