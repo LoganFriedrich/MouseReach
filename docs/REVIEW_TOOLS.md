@@ -827,8 +827,10 @@ well.** Deep review is the stronger hold: the whole video, cuts included, is in 
   an older model, beside the deep-review bundle's own pose, needs nobody: if that is all that is
   left, the folder goes to the unlisted superseded-folders archive. An empty folder is simply
   removed. If a file failed to move into deep review, the triage folder is not touched at all,
-  because the file may still be there: the attention panel lists it. Move the missing file into
-  the deep-review bundle by hand, then delete the triage folder once nothing in it is needed.
+  because the file may still be there: the attention panel lists it. Once the deep-review bundle
+  has every file -- the watcher moved it in, or a person moved it in by hand as the panel asks --
+  the next check (within ten minutes) empties the triage folder as above and the listing goes
+  away.
   **Why:** the whole triage folder used to be deleted, and a person's ground truth or clear marker
   in it had no copy anywhere; and a remainder left in the triage queue made the video be in two
   places.
@@ -903,6 +905,40 @@ these rules:
   and kept for a person" below). **Why:** nothing reads `_Problematic`; a person's ground truth or
   hand-set cuts filed away there unannounced no longer counted anywhere, and leaving the bundle in
   its queue instead kept a filed video in a queue as well, in the way of its next route.
+
+- **A route that could not move every file is finished later.** When the watcher sends a video
+  from its processing folder to a queue and a file cannot be moved (most often the video, still
+  held open for a moment), the route goes on and the routing record lists that file under
+  `failed_files`, with where it still is. Every ten minutes the watcher's return scan moves such a
+  file into the bundle once it can (the log says "moved ... into its bundle -- left behind by a
+  route"), and the routing record then lists it under `finished_later`. A file at the source that
+  is newer than the route is NOT moved in (it belongs to a later run). A listed file that is in
+  the bundle and no longer at its old place (a person moved it in by hand, as the panel asks, or
+  it arrived some other way) counts as finished too: it is crossed off the routing record (the
+  record keeps its old modified time) and listed under `finished_later`. Until a bundle is whole, it
+  is listed in the dashboard's red "Needs your attention" panel (file
+  `attention/<machine>_unfinished_routes.json` under the pipeline's NAS folder), with what is
+  missing and why. If it stays listed, move the named file into the video's bundle folder by hand
+  (move, do not copy: a copy left at the old place is compared and, if identical, deleted); the
+  listing clears on the next check, and for a video in deep review its triage folder is emptied
+  then too.
+  - **A file held open is never left in two places.** A file that is open somewhere cannot be
+    renamed, so moving it copies it and then fails to delete the original; the route now deletes
+    that copy again, so the file stays only where it was. If an older route left such a copy (the
+    file in the bundle AND at its old place), the check compares the two: identical -- the old
+    place's copy is deleted and the file counts as finished; different -- both are kept and the
+    panel lists it ("a different copy is still at ...; a person decides which is right").
+  - **Only the machine that made the route touches its own disk.** A file left in a machine's own
+    processing folder is finished only by that machine (the routing record names it,
+    `routed_by`); other machines leave it alone and do not list it. A file left on the NAS is
+    finished by any machine. A record written before records named the machine is never acted on
+    for a file on a machine's own disk: if such a file is there, the panel lists it for a person.
+- **A route out of the filed results is all or nothing.** `mousereach-route-to-queue` and the
+  watcher's "segment mislabel" divert take a video's files out of its filed folder in Analyzed.
+  If any file cannot be moved, every file already moved goes back to the filed folder, nothing
+  appears in the queue, the watcher state is unchanged, and the command reports the video as
+  `FAIL` with the reason; run it again later. **Why:** a filed generation left half moved still
+  counted as a filed result for the files left behind, while the queue held the rest.
 
 ### A folder taken out of a queue and kept for a person
 

@@ -440,9 +440,15 @@ def route_to_queue(
     db=None,
     db_state: Optional[str] = None,
     extra_sources: Optional[Iterable[Path]] = None,
+    all_or_nothing: bool = False,
 ) -> Path:
     """Move a video bundle into a review queue, write the review manifest, and
     set the DB hold state. Returns the bundle dir.
+
+    ``all_or_nothing`` True (routes out of the FILED folder): if any file
+    cannot be moved, everything is put back and
+    review_routing.RouteIncompleteError is raised, with nothing routed and no
+    state changed (review_routing.move_video_bundle says why).
 
     Raises CrystallizedError, before anything moves, when ``db`` says the
     video is crystallized (publication-locked; db.crystallized_refusal).
@@ -511,6 +517,7 @@ def route_to_queue(
         video_id, processing_dir, dest_root, reason,
         extra_sources=extra_sources,
         extra_manifest={"db_state": db_state} if db_state else None,
+        all_or_nothing=all_or_nothing,
     )
     # The hold is recorded the moment the bundle is in the queue, BEFORE the
     # review manifest is written. WHY this order: a manifest write that failed
@@ -633,7 +640,8 @@ def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
     Never touched while the deep-review bundle's routing record lists a file
     that failed to move (those files may still be in the triage folder, and
     may be the video's only copy): it is listed for a person in the attention
-    panel. Otherwise:
+    panel, and the return scan empties it once the deep-review bundle is whole
+    (review_return.repair_unfinished_routes). Otherwise:
       * the triage copy's review goes to the durable review store first;
       * a review or ground-truth file the deep-review bundle does not have is
         MOVED into it (it re-attaches to the new cuts by frames, as an
@@ -674,9 +682,10 @@ def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
     if record.get("failed_files"):
         says = (f"{video_id} is in deep review, but {len(record['failed_files'])} "
                 f"file(s) failed to move into its bundle {deep_bundle}; its triage "
-                f"folder {copy} is kept, because those files may still be in it: move "
-                f"them into the bundle by hand, then delete this folder once nothing "
-                f"in it is needed.")
+                f"folder {copy} is kept until they are in (the watcher moves them in "
+                f"by itself when it can, then empties this folder). If it stays "
+                f"listed, move the files named in the bundle's routing record in by "
+                f"hand.")
         logger.error(f"Routing {video_id}: {says}")
         note_folder_in_the_way(video_id, copy, says)
         return
@@ -772,11 +781,13 @@ def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
 def route_deep_review(
     video_id: str, processing_dir: Path, reason: str, db=None,
     extra_sources: Optional[Iterable[Path]] = None,
+    all_or_nothing: bool = False,
 ) -> Path:
     """Route a video to DEEP_REVIEW (segmentation failed / QC-critical / escalated)."""
     return route_to_queue(
         video_id, processing_dir, Paths.DEEP_REVIEW, reason,
         db=db, db_state="deep_review", extra_sources=extra_sources,
+        all_or_nothing=all_or_nothing,
     )
 
 

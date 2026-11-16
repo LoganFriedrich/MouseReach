@@ -289,6 +289,37 @@ def _move_keeping_person_files(src: Path, dst: Path, video_id: str) -> None:
     _safe_move(src, dst)
 
 
+def _move_leaving_no_copy(src: Path, dst: Path, video_id: str) -> None:
+    """_move_keeping_person_files, and when the move fails with ``src`` still
+    in place, any copy it left at ``dst`` is deleted before the error is
+    raised again. WHY: a file held open (Windows sharing violation) cannot be
+    renamed, so shutil.move copies it and then fails to delete the source --
+    the whole copy is left at the destination while the source stays. The
+    file was then in two places: the bundle (or the hidden build folder)
+    held a copy, Processing or the filed folder still held the original, and
+    an all-or-nothing route that "put everything back" left that copy behind.
+    The copy is deleted only when it is a copy of ``src`` (new at ``dst``, or
+    byte-identical to ``src``) -- nothing that was there before is lost."""
+    existed = dst.exists()
+    try:
+        _move_keeping_person_files(src, dst, video_id)
+    except PersonFileInTheWay:
+        raise
+    except Exception:
+        try:
+            if (src.is_file() and dst.is_file() and not same_path(src, dst)
+                    and (not existed or _same_content(src, dst))):
+                dst.unlink()
+                logger.warning(f"Routing {video_id}: {src.name} could not be moved; "
+                               f"the copy the move left at {dst} was deleted, the "
+                               f"file stays at {src}")
+        except OSError as e:
+            logger.error(f"Routing {video_id}: {src.name} could not be moved, and the "
+                         f"copy the move left at {dst} could not be deleted ({e}); "
+                         f"the file is now in both places -- delete {dst} by hand")
+        raise
+
+
 def same_path(a, b) -> bool:
     """True when ``a`` and ``b`` name the same file or folder (case and
     separators normalised, as Windows compares them). Never raises."""
@@ -434,6 +465,30 @@ def _publish_incoming(
         pass
 
 
+class RouteIncompleteError(OSError):
+    """An all-or-nothing route could not move every file; everything it had
+    moved was put back and nothing was routed."""
+
+
+def _undo_route(video_id: str, done, build: Optional[Path]) -> None:
+    """Move every file of an abandoned route back where it came from (newest
+    first), then remove the staging folder ``build`` if it is left empty. A
+    file that will not go back is logged as an ERROR naming both places."""
+    for src, dst in reversed(done):
+        try:
+            _safe_move(dst, src)
+        except Exception as e:
+            logger.error(f"Routing {video_id}: could not move {dst} back to {src} "
+                         f"while undoing an unfinished route -- move it back by "
+                         f"hand: {e}")
+    if build is not None:
+        for d in (build, build.parent):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+
 def move_video_bundle(
     video_id: str,
     source_dir: Path,
@@ -442,6 +497,7 @@ def move_video_bundle(
     *,
     extra_sources: Optional[Iterable[Path]] = None,
     extra_manifest: Optional[Dict] = None,
+    all_or_nothing: bool = False,
 ) -> Tuple[Path, List[str]]:
     """Move a whole video bundle from ``source_dir`` into ``dest_root/{stem}/``.
 
@@ -464,6 +520,15 @@ def move_video_bundle(
     extra_manifest : dict, optional
         Extra key/values merged into the routing manifest (e.g. triaged element
         detail, DB state, node hostname).
+    all_or_nothing : bool
+        True: if any file cannot be moved, every file already moved goes back
+        to where it came from, the staging folder is removed, and
+        RouteIncompleteError is raised -- nothing is published. For a route
+        out of the FILED folder (a filed generation must never be half
+        moved). False (the pipeline's own routes out of Processing): the
+        route goes on, and the files that failed are listed in the routing
+        record's ``failed_files``; the return scan moves them in later
+        (review_return.repair_unfinished_routes).
 
     Returns
     -------
@@ -503,29 +568,37 @@ def move_video_bundle(
         # manifest write raised out of the route, losing its record.
         return staged and not build.is_dir() and bundle.is_dir()
 
-    def _move_in(src: Path) -> None:
+    def _move_in(src: Path) -> Path:
         # Never replaces a person's file already in the bundle with a
         # different one (it stays at the source and is listed as failed).
+        # Returns where the file went.
+        # A file that cannot be moved leaves no copy behind
+        # (_move_leaving_no_copy).
         try:
-            _move_keeping_person_files(src, build / src.name, video_id)
+            _move_leaving_no_copy(src, build / src.name, video_id)
+            return build / src.name
         except PersonFileInTheWay:
             raise
         except OSError:
             if not _published_by_other_route():
                 raise
-            _move_keeping_person_files(src, bundle / src.name, video_id)
+            _move_leaving_no_copy(src, bundle / src.name, video_id)
+            return bundle / src.name
 
     moved: List[str] = []
+    done: List[Tuple[Path, Path]] = []
     # Recorded in the manifest, not only logged: a part-moved bundle (a husk)
-    # must be visible in the record the review tool and audits read.
+    # must be visible in the record the review tool and audits read. Each
+    # entry names where the file still is ("source"), so the return scan can
+    # finish the route later.
     failed: List[Dict[str, str]] = []
     for f in _bundle_files(source_dir, video_id):
         try:
-            _move_in(f)
+            done.append((f, _move_in(f)))
             moved.append(f.name)
         except Exception as e:
             logger.warning(f"Routing {video_id}: could not move {f.name}: {e}")
-            failed.append({"name": f.name, "error": str(e)})
+            failed.append({"name": f.name, "error": str(e), "source": str(f)})
 
     for f in extra_sources or []:
         f = Path(f)
@@ -534,11 +607,18 @@ def move_video_bundle(
         if (build / f.name).exists():
             continue  # already brought in by the main sweep
         try:
-            _move_in(f)
+            done.append((f, _move_in(f)))
             moved.append(f.name)
         except Exception as e:
             logger.warning(f"Routing {video_id}: could not move extra {f.name}: {e}")
-            failed.append({"name": f.name, "error": str(e)})
+            failed.append({"name": f.name, "error": str(e), "source": str(f)})
+
+    if failed and all_or_nothing:
+        _undo_route(video_id, done, build if staged else None)
+        raise RouteIncompleteError(
+            f"{video_id}: {len(failed)} file(s) could not be moved "
+            f"({', '.join(x['name'] for x in failed)}); every file moved was put "
+            f"back in {source_dir} and nothing was routed")
 
     manifest = {
         "video_id": video_id,
@@ -548,6 +628,10 @@ def move_video_bundle(
         "moved_files": sorted(moved),
         "failed_files": failed,
         "routed_at": datetime.now().isoformat(),
+        # The machine that made the route. WHY: a failed file's "source" can be
+        # a path on that machine's own disk (its Processing folder); only that
+        # machine may finish the move later (review_return._finish_failed_moves).
+        "routed_by": socket.gethostname(),
     }
     if extra_manifest:
         manifest.update(extra_manifest)

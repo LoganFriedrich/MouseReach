@@ -3273,8 +3273,10 @@ file, and what remains leaves the triage queue, kept for a person (see below).
   bundle's: `review_routing.inputs_the_live_copy_lacks`) is taken out of the triage queue whole to
   `_Problematic/_kept_for_a_person/<video>/` with a note `SET_ASIDE.json`, listed in
   `attention/kept_for_a_person.json` (`review_routing.set_aside_queue_folder`). With a failed file
-  the triage folder is kept untouched and listed in `attention/<host>_queue_folders_in_the_way.json`
-  for a person.
+  the triage folder is kept untouched and listed in `attention/<host>_queue_folders_in_the_way.json`;
+  `repair_unfinished_routes` empties it as above on every pass once the deep-review bundle's
+  route is whole (its record has `finished_later` and no `failed_files` left), whoever moved the
+  missing file in.
 
 `mousereach-route-to-queue --queue triage` checks the rule before it flags any segment and
 reports such a video as `deep` (`"in_deep_review": true` with `--json`); it is not counted as a
@@ -3375,4 +3377,32 @@ queue never deletes or overwrites a person's file".
   removes the triage folder whole, and `discard_run_outputs` sets a person's file aside unless the
   deep-review bundle holds it byte for byte (see "deep review supersedes triage" above for the
   rules). Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
+- **Queue folder check reads the dict entries.** `orchestrator.queue_folder_holds_this_run`
+  reads each `failed_files` entry's `name` (entries are dicts with `name`, `error`, `source`; the
+  oldest records hold bare names), so a route that could not move the run's processing manifest is
+  recognised as holding this run. Before, the str() of the dict was taken for a file name and the
+  check never matched. Tests: `tests/test_queue_folder_holds_this_run.py`.
+- **Unfinished routes.** `move_video_bundle(..., all_or_nothing=True)` (passed through
+  `route_to_queue` / `route_deep_review`) puts every moved file back and raises
+  `RouteIncompleteError` when any file fails; `route_cli.route_video` and the reprocessor's
+  mislabel divert use it, since their source is the filed folder. The pipeline's own routes out of
+  Processing keep going and record each failed file with its `source`;
+  `review_return.repair_unfinished_routes` (the same ten-minute pass as the manifest repair) moves
+  each one in under the return claim when it is still at its recorded place and no newer than
+  `routed_at` (+60 s), records it under `finished_later`, and lists every bundle still missing a
+  file in `<NAS root>/attention/<host>_unfinished_routes.json` (written only when the list
+  changes, and only when there is something to list or an earlier list to empty). A move that
+  fails leaves no copy at its destination (`review_routing._move_leaving_no_copy`: a file held
+  open is copied and then not deleted by `shutil.move`; the copy is deleted when it is new there
+  or identical). `_finish_failed_moves` handles a listed file that is in the bundle AND still at
+  its source: identical -- the source copy is deleted and recorded under `finished_later`;
+  different -- listed, nothing deleted. A listed file that is in the bundle and at none of its
+  candidate places (the entry's `source`, `<source_dir>/<name>`, `.incoming/<video>/<name>`; a
+  candidate that is the bundle's own file is skipped) is crossed off as finished too -- a person
+  moved it in, as the attention panel asks. The record is rewritten with `os.utime` putting back
+  its old modified time, because `_superseded_by_archive` judges a bundle by its files' times. Every routing record names the machine that made it
+  (`routed_by`); a source not under the NAS or review root is finished only by that machine
+  (`_on_shared_storage`), and an entry of a record without `routed_by` whose local source file
+  exists is listed, never acted on. Tests: `tests/test_unfinished_routes_are_finished.py` (the
+  held-file tests hold a real open handle).
 

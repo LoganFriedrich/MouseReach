@@ -1137,12 +1137,22 @@ def _warn_stale_incoming() -> None:
 # ---------------------------------------------------------------------------
 # Finishing routes that did not finish
 # ---------------------------------------------------------------------------
-# A route publishes the bundle, records the hold in the database, and only then
-# writes the review manifest -- the file the review tools list a bundle by. If
-# that last write fails, the bundle is in the queue, the row says so, and no
-# review tool offers it. The scan writes such a missing manifest again from the
-# routing record. Checked at most every ROUTE_REPAIR_INTERVAL_S, not on every
-# scan: it costs one listing per bundle on the share, and the case is rare.
+# Two things a route can leave undone, both finished here:
+#   * The review manifest. A route publishes the bundle, records the hold in
+#     the database, and only then writes the review manifest -- the file the
+#     review tools list a bundle by. If that last write fails, the bundle is in
+#     the queue, the row says so, and no review tool offers it. The scan
+#     writes such a missing manifest again from the routing record.
+#   * Files that could not be moved. A route out of Processing goes on when a
+#     file cannot be moved (most often the mp4, still held open) and lists it
+#     under failed_files in the routing record. Nothing moved such files in
+#     afterwards: the reviewer's bundle lacked them, and Processing kept a file
+#     of a video whose row said it was in a queue. The scan now moves each one
+#     in from where the record says it is, and lists every bundle still
+#     missing a file in <NAS root>/attention/<host>_unfinished_routes.json (the
+#     dashboard's "needs your attention" panel) until it is whole.
+# Checked at most every ROUTE_REPAIR_INTERVAL_S, not on every scan: it costs
+# one listing per bundle on the share, and both cases are rare.
 ROUTE_REPAIR_INTERVAL_S = 600
 _route_repair_due = [0.0]
 
@@ -1183,15 +1193,224 @@ def _repair_missing_manifest(bundle: Path, stem: str) -> bool:
         _release_return_claim(stem)
 
 
+def _iso_to_epoch(text) -> Optional[float]:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(text)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _on_shared_storage(path) -> bool:
+    """True when ``path`` is on the shared storage every machine sees (under
+    the NAS root or the review root); False for a machine's own disk."""
+    for root in (getattr(Paths, "NAS_ROOT", None), getattr(Paths, "REVIEW_ROOT", None)):
+        if not root:
+            continue
+        try:
+            r = os.path.normcase(os.path.abspath(str(root))).rstrip("\\/")
+            q = os.path.normcase(os.path.abspath(str(path)))
+            if q == r or q.startswith(r + os.sep):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _finish_failed_moves(bundle: Path, stem: str):
+    """Finish what the routing record of ``bundle`` lists as failed_files.
+    Returns ``(still_missing, moved_count)``: the entries this machine lists
+    for a person (empty when the bundle is whole, or what is left belongs to
+    another machine) and how many files this call finished. Never raises.
+
+    For each listed file, by where its copies are:
+      * not in the bundle, still at the source: moved in -- unless the source
+        file is newer than the route (modified more than a minute after
+        ``routed_at``): that is a later run's file, and moving it in would mix
+        generations, so it stays listed for a person;
+      * in the bundle AND still at the source: the move copied it but could
+        not delete the original (a file held open cannot be renamed, so a
+        move copies and then deletes). Byte-identical: the copy at the source
+        is deleted and the file counts as finished. Different: the bundle's
+        copy may be cut off -- listed for a person, nothing deleted;
+      * in the bundle only: whole (a person moved it in by hand, as the
+        attention panel asks, or an earlier pass could not update the
+        record) -- counted as finished, so it leaves the record;
+      * nowhere: listed (missing).
+
+    WHICH MACHINE: a source on shared storage is finished by any machine. A
+    source on a machine's own disk (its Processing folder) is finished only
+    by the machine that made the route (``routed_by`` in the record); another
+    machine leaves that entry alone and does not list it -- the same path on
+    its own disk is a different file (it may be its own run of the same
+    video). An entry of a record written before records named the machine is
+    never acted on when its source is on a machine's own disk: if a file is at
+    that path here, the entry is listed for a person.
+
+    Done under the return claim. The routing record is rewritten (in one step)
+    only when this call finished a file, and keeps its modified time. WHY:
+    readers judge a bundle by its files' times (_superseded_by_archive), and
+    crossing an entry off the list is not new content."""
+    from .review_routing import (INCOMING_DIR_NAME as _INC, _move_leaving_no_copy,
+                                 _same_content, read_routing_manifest,
+                                 _write_routing_manifest, same_path)
+    from mousereach.pipeline.fsutil import retry_transient
+    record = read_routing_manifest(bundle, stem) or {}
+    failed = list(record.get("failed_files") or [])
+    if not failed:
+        return [], 0
+    here = socket.gethostname()
+    routed_by = record.get("routed_by")
+    if not _claim_return(stem):
+        return [], 0                      # another machine is on it; next pass
+    try:
+        routed = _iso_to_epoch(record.get("routed_at"))
+        keep, listed, finished = [], [], []
+        for entry in failed:
+            name = str(entry.get("name") or "")
+            target = bundle / name
+            candidates = [entry.get("source"),
+                          str(Path(record.get("source_dir") or "") / name)
+                          if record.get("source_dir") else None,
+                          str(bundle.parent / _INC / stem / name)]
+            src, foreign = None, None
+            for c in candidates:
+                if not c or same_path(c, target):
+                    continue
+                if not _on_shared_storage(c) and routed_by != here:
+                    # Another machine's disk. A record without the machine:
+                    # only a file that is actually here is in question.
+                    if routed_by is not None or Path(c).is_file():
+                        foreign = foreign or c
+                    continue
+                if Path(c).is_file():
+                    src = Path(c)
+                    break
+            in_bundle = target.is_file()
+            try:
+                if src is None and foreign is not None:
+                    keep.append(entry)
+                    if routed_by is None:
+                        listed.append(dict(entry, error=(
+                            "routed before routing records named the machine; "
+                            "check %s on the machine that routed it%s" % (
+                                foreign, " -- the bundle has a copy, so delete that "
+                                "one if identical" if in_bundle else ""))))
+                    continue                   # the routing machine finishes it
+                if src is None:
+                    if not in_bundle:
+                        keep.append(entry)
+                        listed.append(entry)
+                    else:
+                        # In the bundle only: whole -- moved in by a person
+                        # (the attention panel asks for exactly that) or by
+                        # a pass whose record update failed. The entry is
+                        # dropped from the record like a file moved here, so
+                        # the bundle stops counting as unfinished.
+                        finished.append(name)
+                    continue
+                if in_bundle:
+                    if _same_content(src, target):
+                        retry_transient(src.unlink, what=src.name)
+                        finished.append(name)
+                    else:
+                        err = ("a different copy is still at %s; the bundle's copy "
+                               "may be incomplete -- a person decides which is "
+                               "right" % src)
+                        keep.append(dict(entry, error=err))
+                        listed.append(dict(entry, error=err))
+                    continue
+                if routed is not None and src.stat().st_mtime > routed + 60:
+                    err = ("the file at the source is newer than the route; not moved "
+                           "-- a person decides which copy belongs in the bundle")
+                    keep.append(dict(entry, error=err))
+                    listed.append(dict(entry, error=err))
+                    continue
+                _move_leaving_no_copy(src, target, stem)
+                finished.append(name)
+            except Exception as e:
+                keep.append(dict(entry, error=str(e)))
+                listed.append(dict(entry, error=str(e)))
+        if finished:
+            record["failed_files"] = keep
+            record["finished_later"] = sorted(set(record.get("finished_later") or [])
+                                              | set(finished))
+            record_path = bundle / f"{stem}_routing.json"
+            try:
+                before = record_path.stat()
+            except OSError:
+                before = None
+            try:
+                _write_routing_manifest(bundle, stem, record)
+                if before is not None:
+                    # The record keeps its modified time. WHY: readers judge
+                    # a bundle by its files' times (_superseded_by_archive:
+                    # "every file predates the archived results"), and
+                    # crossing a file off this list is not new content.
+                    os.utime(record_path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            except Exception as e:
+                logger.error("Return scan: %s: finished %s but could not update its "
+                             "routing record: %s", stem, ", ".join(finished), e)
+            logger.warning("Return scan: %s: finished %s -- left behind by a route "
+                           "that could not move %s at the time",
+                           stem, ", ".join(finished),
+                           "it" if len(finished) == 1 else "them")
+        return listed, len(finished)
+    finally:
+        _release_return_claim(stem)
+
+
+_unfinished_listed: List = [None]
+
+
+def _write_unfinished_attention(unfinished: Dict[str, List[Dict[str, str]]]) -> None:
+    """List the bundles still missing a file in this machine's attention file
+    (watcher/attention.py), rewritten only when the list changes. Never raises."""
+    from .review_routing import attention_dir
+    d = attention_dir()            # None: no NAS root, or queues outside it
+    if d is None:
+        return
+    items = []
+    for stem, missing in sorted(unfinished.items()):
+        names = ", ".join(f"{m.get('name')} ({m.get('error') or 'not moved'})"
+                          for m in missing)
+        items.append({
+            "kind": "route_unfinished", "needs_person": True, "video_id": stem,
+            "says": (f"{stem} is in a review queue without all its files: {names}. "
+                     f"The watcher moves a file in by itself once it can; if it stays "
+                     f"listed, move the file into the video's bundle folder by hand "
+                     f"(its routing record names where the file is)."),
+        })
+    if _unfinished_listed[0] == items:
+        return
+    try:
+        from mousereach.pipeline.fsutil import write_json_atomic
+        host = socket.gethostname()
+        target = d / f"{host}_unfinished_routes.json"
+        if not items and not target.exists():
+            # Nothing to list and no earlier list to empty: write nothing (a
+            # machine that never had an unfinished route gets no file).
+            _unfinished_listed[0] = items
+            return
+        d.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(target,
+                          {"written_by": host, "items": items}, indent=1)
+        _unfinished_listed[0] = items
+    except Exception as e:
+        logger.warning("Return scan: could not write the unfinished-routes attention "
+                       "list: %s", e)
+
+
 def repair_unfinished_routes(force: bool = False) -> Dict[str, int]:
     """Finish what an interrupted route left undone, in both queues (see the
     block comment above). Runs at most every ROUTE_REPAIR_INTERVAL_S unless
     ``force``. Never raises."""
-    out = {"manifests_written": 0}
+    out = {"manifests_written": 0, "route_files_finished": 0}
     now = time.monotonic()
     if not force and now < _route_repair_due[0]:
         return out
     _route_repair_due[0] = now + ROUTE_REPAIR_INTERVAL_S
+    unfinished: Dict[str, List[Dict[str, str]]] = {}
     for queue_root in (getattr(Paths, "TRIAGE_REVIEW", None),
                        getattr(Paths, "DEEP_REVIEW", None)):
         try:
@@ -1199,8 +1418,34 @@ def repair_unfinished_routes(force: bool = False) -> Dict[str, int]:
         except OSError:
             continue
         for bundle in bundles:
-            if _repair_missing_manifest(bundle, bundle.name):
+            stem = bundle.name
+            try:
+                from .review_routing import read_routing_manifest
+                if (read_routing_manifest(bundle, stem) or {}).get("failed_files"):
+                    still, n_moved = _finish_failed_moves(bundle, stem)
+                    out["route_files_finished"] += n_moved
+                    if still:
+                        unfinished[stem] = still
+                if queue_root == getattr(Paths, "DEEP_REVIEW", None):
+                    record = read_routing_manifest(bundle, stem) or {}
+                    triage = getattr(Paths, "TRIAGE_REVIEW", None)
+                    if (record.get("finished_later") and not record.get("failed_files")
+                            and triage and (Path(triage) / stem).is_dir()):
+                        # A deep-review route that was unfinished is whole
+                        # now (finished by the watcher or by a person): the
+                        # triage copy kept while its files were missing is
+                        # emptied (review_gate._drop_triage_copy). Checked on
+                        # every pass, not only the pass that finished it, so
+                        # a triage copy that could not be emptied then (a
+                        # file held open) is emptied once it can be.
+                        from .review_gate import _drop_triage_copy
+                        _drop_triage_copy(stem, bundle)
+            except Exception as e:
+                logger.warning("Return scan: could not finish the route of %s: %s",
+                               stem, e)
+            if _repair_missing_manifest(bundle, stem):
                 out["manifests_written"] += 1
+    _write_unfinished_attention(unfinished)
     # The two lists of queue folders that need a person are recomputed from
     # disk here, so a folder a person dealt with drops off by itself.
     from .review_routing import refresh_folders_in_the_way, refresh_kept_attention

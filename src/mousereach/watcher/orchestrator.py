@@ -208,7 +208,11 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
     try:
         r = json.loads(record.read_text(encoding="utf-8"))
         routed = datetime.fromisoformat(r["routed_at"]).timestamp()
-        failed = [Path(str(f)).name for f in r.get("failed_files") or []]
+        # Each entry is a dict ({"name", "error", "source"}); the oldest
+        # records hold bare names. WHY read "name": the str() of a dict is
+        # not a file name, so this check never matched a dict entry.
+        failed = [str(f.get("name") or "") if isinstance(f, dict) else Path(str(f)).name
+                  for f in r.get("failed_files") or []]
     except Exception:
         return True
     return routed >= run_time and manifest_name in failed

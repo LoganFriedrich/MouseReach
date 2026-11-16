@@ -337,8 +337,11 @@ def route_video(video_id: str, queue: str, reason: str,
             res["flagged"] = flag_segments(outcomes, segment_nums, reason,
                                            details=segment_details)
         dest_root = Paths.TRIAGE_REVIEW if queue == "triage" else Paths.DEEP_REVIEW
+        # All or nothing: the source is the FILED folder, and a filed
+        # generation must never be left half moved (a file still there would
+        # go on counting as a filed result).
         route_to_queue(video_id, outcomes.parent, dest_root, reason=reason,
-                       db=db, db_state=queue)
+                       db=db, db_state=queue, all_or_nothing=True)
         res["routed"] = True
     except Exception as e:  # never break the caller; report instead
         res["error"] = f"{type(e).__name__}: {e}"

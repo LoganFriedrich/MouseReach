@@ -132,7 +132,10 @@ def test_failed_move_is_recorded_in_manifest(tmp_path, monkeypatch):
     assert stuck not in moved
     assert (src / stuck).exists()            # never deleted, left where it was
     man = _routing_manifest(bundle)
-    assert man["failed_files"] == [{"name": stuck, "error": "file is locked"}]
+    # Each entry also names where the file still is, so the return scan can
+    # finish the route later (review_return.repair_unfinished_routes).
+    assert man["failed_files"] == [{"name": stuck, "error": "file is locked",
+                                    "source": str(src / stuck)}]
     assert stuck not in man["moved_files"]
 
 
