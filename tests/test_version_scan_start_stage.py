@@ -113,3 +113,44 @@ def test_every_tracked_stage_has_a_start_stage():
     """A tracked stage with no line in the map is ignored, and a video whose
     only stale stage is ignored is re-run from segmentation."""
     assert set(TRACKED_STAGES) <= set(reprocessor._STAGE_FOR_COMPONENT)
+
+
+# --- a filed video with no processing manifest ------------------------------
+# WHY: the scan skipped a video with no manifest before it looked for a saved
+# review, so a review saved for it never reached its filed kinematics.
+
+def _review_for(tmp_path, monkeypatch, stem=STEM, mtime=4_000_000_000):
+    import os
+    p = tmp_path / "reviews" / f"{stem}_causal_review.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"segments": []}), encoding="utf-8")
+    os.utime(p, (mtime, mtime))
+    monkeypatch.setattr(crio, "review_path_index",
+                        lambda stems: {stem: (p, mtime, p.stat().st_size)})
+    monkeypatch.setattr(crio, "resolve_review_path", lambda *a, **k: p)
+    return p
+
+
+def _filed_without_manifest(cohort, stem=STEM):
+    (cohort / f"{stem}_features.json").write_text("{}", encoding="utf-8")
+    (cohort / f"{stem}.mp4").write_bytes(b"x")
+
+
+def test_a_review_saved_for_a_filed_video_with_no_manifest_reruns_its_kinematics(
+        archive, tmp_path, monkeypatch):
+    nas, cohort = archive
+    _filed_without_manifest(cohort)
+    _review_for(tmp_path, monkeypatch)
+    db = DB(archived=[STEM])
+    summary = _scan(nas, db)
+    assert db.marks[STEM] == "kinematics"
+    assert summary["no_manifest"] == 0
+
+
+def test_a_filed_video_with_no_manifest_and_no_review_is_only_counted(archive):
+    nas, cohort = archive
+    _filed_without_manifest(cohort)
+    db = DB(archived=[STEM])
+    summary = _scan(nas, db)
+    assert summary["no_manifest"] == 1
+    assert STEM not in db.marks

@@ -231,6 +231,8 @@ class ReprocessingScanner:
             'crystallized_skipped': 0,
             'no_manifest': 0,
             'review_triggered': 0,  # version-current but a newer human review to apply
+            'no_manifest_review': 0,  # no manifest, but a saved review its
+                                      # kinematics have not applied: re-run them
             'review_mislabel': 0,   # pending review declares a segment mislabel -> deep review
             'review_mislabel_videos': [],
             'errors': 0,
@@ -376,7 +378,30 @@ class ReprocessingScanner:
                 manifest = self._load_manifest_indexed(video_id, manifest_index,
                                                        manifest_mtime)
                 if not manifest:
-                    summary['no_manifest'] += 1
+                    # No manifest: no versions to compare. A saved human review
+                    # its kinematics have not applied is still owed, though --
+                    # the check below works without a manifest (it falls back
+                    # to the features file's time, or to "no kinematics yet").
+                    # WHY: this used to `continue` before the review check, so
+                    # a review saved for such a video never reached its filed
+                    # kinematics. The kinematics-only re-run writes a manifest,
+                    # so the next scan compares its versions as for any video.
+                    review_path = self._pending_review_path(
+                        video_id, None, feats_mtime, review_index)
+                    if review_path is None:
+                        summary['no_manifest'] += 1
+                        continue
+                    if (self._review_declares_mislabel(review_path)
+                            and not self._segments_human_fixed(video_id)):
+                        summary['review_mislabel'] += 1
+                        summary['review_mislabel_videos'].append(video_id)
+                        if mark_outdated:
+                            self._divert_mislabel_to_deep_review(video_id)
+                        continue
+                    summary['no_manifest_review'] += 1
+                    self._mark_kinematics_rerun(
+                        video_id, ['human_review', 'no manifest'], summary,
+                        mark_outdated, full_only)
                     continue
 
                 # Compare against current versions
@@ -586,6 +611,29 @@ class ReprocessingScanner:
         self._save_caches(manifest_index, review_index)
 
         return summary
+
+    def _mark_kinematics_rerun(self, video_id, stale, summary, mark_outdated,
+                               full_only) -> None:
+        """Count, and when marking, mark a filed video 'outdated' for a
+        kinematics-only re-run (scope 'kinematics'): the feature extractor
+        applies the saved human answers; no algorithm and no quality or
+        hand-score check runs again (orchestrator.filed_rerun_reuses_analysis)."""
+        summary['outdated'] += 1
+        summary['outdated_partial'] += 1
+        summary['review_triggered'] += 1
+        summary['outdated_videos'].append({
+            'video_id': video_id, 'scope': 'kinematics',
+            'stale_components': list(stale)})
+        if full_only:
+            summary['outdated_partial_unmarked'] = (
+                summary.get('outdated_partial_unmarked', 0) + 1)
+            summary['outdated'] -= 1
+            return
+        if mark_outdated:
+            self.db.force_state(video_id, 'outdated', reprocess_scope='kinematics',
+                                mark_reason=None)
+            logger.info(f"Marked {video_id} as outdated (scope=kinematics, "
+                        f"stale: {list(stale)})")
 
     def _pending_review_path(self, video_id: str, manifest=None,
                              feats_mtime=None, review_index=None):

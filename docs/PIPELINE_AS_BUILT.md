@@ -3387,3 +3387,21 @@ ones, so the reason a video is marked is visible.
 mark side of `ReprocessingScanner.scan`). Tests in `tests/test_version_scan_start_stage.py`
 (including one that fails if a stage tracked in `pipeline/manifest.py` `TRACKED_STAGES` has no
 start stage).
+
+## Update: a review saved for a filed video with no processing manifest reaches its kinematics
+
+**Before.** The version scan skips a filed video that has no processing manifest (it has no
+versions to compare) and counts it as `no_manifest`. It skipped it before looking for a saved
+review, so a person's answers saved for such a video never reached its filed kinematics.
+
+**Now.** For a filed video with no manifest the scan still asks whether a saved review is waiting
+to be applied (the same check as for every other video; without a manifest it compares the
+review's time with the filed features file, and a review with no features file at all counts as
+waiting). If one is waiting, the video is marked 'outdated' for a **kinematics-only** re-run
+(listed as `human_review, no manifest`), and the re-run writes a manifest, so from the next scan on
+the video's versions are compared like any other. A review that says a segment was mislabelled is
+sent to deep review instead, exactly as for a video with a manifest. A video with no manifest and
+no waiting review is still only counted (`no_manifest` in `mousereach-version-check`).
+
+**Where it lives.** `watcher/reprocessor.py` (`ReprocessingScanner.scan`,
+`_mark_kinematics_rerun`). Tests in `tests/test_version_scan_start_stage.py`.
