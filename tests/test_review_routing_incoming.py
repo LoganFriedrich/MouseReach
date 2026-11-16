@@ -77,7 +77,10 @@ def test_existing_bundle_still_merges_in_place(tmp_path, monkeypatch):
     queue = tmp_path / "triage"
     bundle = queue / STEM
     bundle.mkdir(parents=True)
-    (bundle / f"{STEM}_segments.json").write_text("old", encoding="utf-8")
+    # The machine's cuts (a person's cuts are never replaced -- see
+    # test_person_files_are_kept_apart.py).
+    (bundle / f"{STEM}_segments.json").write_text('{"boundary_source": "algo"}',
+                                                  encoding="utf-8")
     (bundle / f"{STEM}_manifest.json").write_text("{}", encoding="utf-8")
     real_move = routing._safe_move
 

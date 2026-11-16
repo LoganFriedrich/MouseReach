@@ -746,7 +746,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
 
 @_with_return_claim
 def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
-                         why: str = None) -> bool:
+                         why: str = None, copies_only: bool = False) -> bool:
     """Move a stale queue bundle into the _Problematic archive (never delete).
 
     A bundle is STALE when the pipeline has re-handled its video since it was
@@ -756,6 +756,20 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
     would destroy provenance. Archive it beside the other reconciled bundles,
     with a note saying why. Never raises; False means the bundle stayed put
     (it will be re-attempted next scan).
+
+    A bundle holding a file a person wrote (review_routing.is_person_file: a
+    review, ground truth, a clear marker, hand-set cuts ...) goes, whole, to
+    _Problematic/_kept_for_a_person/ instead, with a note, and is listed in
+    the attention panel until a person deletes it
+    (review_routing.set_aside_queue_folder). A review in any bundle that
+    leaves the queue is copied to the durable store first. ``copies_only``
+    True is for a bundle the caller has checked is a byte-identical copy of
+    another one, whose person files are therefore kept elsewhere. WHY: a
+    retired bundle sits under _Problematic, where no reader looks -- a
+    person's ground truth or hand-set cuts in it would count nowhere and
+    nobody would know; and leaving such a bundle IN its queue (as an earlier
+    version did) kept the video in two places -- filed, and in a queue --
+    and stopped every later route of it.
     """
     import json
     from datetime import datetime
@@ -764,6 +778,30 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
         root = Paths.REVIEW_ROOT
         if not root:
             return False
+        # A review leaving the queue keeps a copy where every reader looks.
+        _ensure_durable_review(bundle, stem)
+        if not copies_only:
+            from .review_routing import (note_folder_in_the_way, person_entries,
+                                         set_aside_queue_folder)
+            if person_entries(bundle, stem):
+                why_text = (why or "stale bundle") + (
+                    f" (the video's state is '{video_state}')")
+                try:
+                    set_aside_queue_folder(
+                        bundle, stem, why=why_text,
+                        what_to_do=("the video no longer waits in this queue. Look at "
+                                    "what a person wrote here; if the video should "
+                                    "be reviewed again, route it again "
+                                    "(mousereach-route-to-queue)."))
+                    return True
+                except OSError as e:
+                    says = (f"{stem}: the old bundle {bundle} ({why_text}) holds what "
+                            f"a person wrote and could not be taken out of its queue "
+                            f"({e}). Close anything that has a file in it open; the "
+                            f"watcher tries again.")
+                    logger.warning("Return scan: %s", says)
+                    note_folder_in_the_way(stem, bundle, says)
+                    return False
         dest = (Path(root) / "_Problematic"
                 / f"_stale_seg_failed_bundles_{datetime.now():%Y-%m-%d}" / stem)
         dest.mkdir(parents=True, exist_ok=True)
@@ -1163,6 +1201,11 @@ def repair_unfinished_routes(force: bool = False) -> Dict[str, int]:
         for bundle in bundles:
             if _repair_missing_manifest(bundle, bundle.name):
                 out["manifests_written"] += 1
+    # The two lists of queue folders that need a person are recomputed from
+    # disk here, so a folder a person dealt with drops off by itself.
+    from .review_routing import refresh_folders_in_the_way, refresh_kept_attention
+    refresh_kept_attention()
+    refresh_folders_in_the_way()
     return out
 
 
@@ -1291,7 +1334,8 @@ def scan_review_queues(db, processing_dir: Path,
                         bundle, stem, "(copy in deep review)",
                         why="leftover of a split escalation: every file is a "
                             "byte-identical copy of one in the deep review "
-                            "bundle, which is the copy being reviewed"):
+                            "bundle, which is the copy being reviewed",
+                        copies_only=True):
                     summary["leftover_retired"] = summary.get("leftover_retired", 0) + 1
                     logger.info("Return scan: %s triage copy is a byte-identical "
                                 "leftover of its deep review bundle; retired to "

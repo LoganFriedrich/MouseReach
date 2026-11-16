@@ -3351,4 +3351,14 @@ queue never deletes or overwrites a person's file".
   so a file of another run already in Processing is never deleted), backs the bundle off for
   `RETURN_RETRY_S`, and returns False. The queue records are
   deleted only after the state is set. Tests: section (f) of `tests/test_review_return_safety.py`.
+- **Person's files.** `review_routing.is_person_file` / `is_machine_output` / `is_input_file`
+  classify a video's files: machine outputs are `archive.supersede._ALGO_SUFFIXES` plus the queue
+  records; anything else not an input, and a `_segments.json` with `boundary_source` 'human' (or
+  unreadable), is a person's. `move_video_bundle` (and its publish fallback) never replaces a
+  person's file with a different one (`PersonFileInTheWay`, listed in `failed_files`).
+  `review_return._retire_stale_bundle` copies a review to the durable store, then sends a bundle
+  holding a person's file to `_kept_for_a_person` (`set_aside_queue_folder`, listed for a person)
+  unless the caller passes `copies_only=True` (the byte-identical leftover case); a bundle that
+  cannot be moved stays and is listed in the in-the-way list. Tests:
+  `tests/test_person_files_are_kept_apart.py`.
 

@@ -866,6 +866,56 @@ these rules:
   the queue records already deleted; the half left behind read as unanswered and no review tool
   listed it.
 
+- **What counts as "a person's file".** The video (`<video>.mp4`) and its pose files
+  (`<video>DLC...`) are the inputs. The machine outputs are one fixed list -- `_segments.json`,
+  `_reaches.json`, `_pellet_outcomes.json`, `_reach_assignments.json`, `_features.json`,
+  `_processing_manifest.json`, `_triage.json`, `_results.csv` -- plus the queue's own records
+  (`_manifest.json`, `_routing.json`). Every other file of the video is treated as a person's: a
+  review, any ground-truth file, a clear marker (current or set aside), an older tool's
+  validation file. A `_segments.json` whose cuts a person set (`"boundary_source": "human"`, or a
+  file that cannot be read) is a person's too. Anything not on the machine list falls on the safe
+  side on purpose: a person-written name nobody listed is never deleted by accident.
+- **A move never replaces a person's file with a different one.** If a route finds a person's
+  file of the same name already in the bundle and the incoming file differs, the incoming file
+  stays where it was and the routing record lists it under `failed_files` with "is a person's file
+  and differs ... not replaced". An identical copy may replace it (nothing is lost).
+- **A stale bundle holding a person's file is kept for a person, not filed away unseen.** The
+  return scan files away (to `_Problematic`) bundles it judges leftovers -- for example a triage
+  bundle of a video the pipeline has since re-handled. Its review is first copied to the durable
+  review store. If it holds a person's file, it goes whole to `_Problematic/_kept_for_a_person/`
+  with a note and is listed in the dashboard's attention panel (see "A folder taken out of a queue
+  and kept for a person" below). **Why:** nothing reads `_Problematic`; a person's ground truth or
+  hand-set cuts filed away there unannounced no longer counted anywhere, and leaving the bundle in
+  its queue instead kept a filed video in a queue as well, in the way of its next route.
+
+### A folder taken out of a queue and kept for a person
+
+A video is in one place at a time, so a folder in a review queue that is not the video's live
+bundle does not stay there. The watcher takes it out of the queue **whole, in one step** (a
+folder with a file that is open somewhere does not move at all, and is tried again later):
+
+- If anything in it was written by a person (a review, ground truth, a clear marker, cuts set
+  by hand, or any file not on the machine list below), it goes to
+  `<pipeline NAS folder>/Processing/Review/_Problematic/_kept_for_a_person/<video>/` (a second
+  one of the same video gets `__<date and time>` added to its name). A note `SET_ASIDE.json`
+  inside says where it came from, why, what to do and which files are a person's. The
+  dashboard's red **"Needs your attention"** panel lists every such folder (file
+  `attention/kept_for_a_person.json` under the pipeline's NAS folder) with the same words.
+  **What to do:** open the folder, decide whether anything in it is still needed (normally a
+  review or ground truth that should go into the video's live bundle -- a review re-attaches to
+  new cuts by frames), move that in, then delete the folder. The panel item disappears by itself
+  within ten minutes of the folder being deleted.
+- If it holds only what the pipeline makes again (results, the video or pose, queue records),
+  it goes to `_Problematic/_superseded_queue_folders_<date>/<video>/` with the same note, for the
+  record. Nothing there needs a person and it is not listed.
+
+The folders this applies to: a stale bundle the return scan retires that holds a person's
+file (one that does not still goes to `_Problematic/_stale_seg_failed_bundles_<date>/`). If the
+folder cannot be moved, it stays, and the panel lists it (file
+`attention/<machine>_queue_folders_in_the_way.json`) until it is gone. **Why:** a leftover in a
+live queue was a second place the video was in, and deleting it would have lost what a person
+wrote.
+
 ### Where they are
 
 Set in `config.py:164-166`, derived from `NAS_ROOT`:

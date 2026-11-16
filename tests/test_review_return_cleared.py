@@ -41,6 +41,10 @@ def _wire(monkeypatch, tmp_path):
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")
     monkeypatch.setattr(rr.time, "sleep", lambda s: None)
+    # A review leaving the queue is copied to the durable store first; keep
+    # that store under tmp_path.
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
     return triage, deep
 
 
@@ -106,9 +110,12 @@ def test_cleared_bundle_releases_once_segments_are_answered(tmp_path, monkeypatc
     assert summary.get("triage_returned") == 1
 
 
-def test_cleared_husk_is_still_retired(tmp_path, monkeypatch):
+def test_cleared_husk_is_never_reinjected_and_its_person_files_are_kept(tmp_path, monkeypatch):
     """The stale-bundle guard applies to cleared bundles too: a husk whose
-    video was re-handled must be retired, never re-injected."""
+    video was re-handled is never re-injected. It holds what a person wrote
+    (a review, a clear marker), so it is not filed away among the retired
+    bundles either: it leaves the queue whole -- a filed video is in no queue
+    -- and is kept for a person, with a note."""
     triage, deep = _wire(monkeypatch, tmp_path)
     stem = "20240101_ABC0203_P1"
     _cleared_seg_failed_bundle(triage, stem, resolved=True)
@@ -124,3 +131,7 @@ def test_cleared_husk_is_still_retired(tmp_path, monkeypatch):
     assert summary.get("stale_retired") == 1
     assert not routed and not returned
     assert not (triage / stem).exists()
+    kept = tmp_path / "Review" / "_Problematic" / "_kept_for_a_person" / stem
+    assert (kept / f"{stem}_causal_review.json").is_file()
+    assert (kept / f"{stem}_deep_review_cleared.json").is_file()
+    assert (kept / "SET_ASIDE.json").is_file()
