@@ -454,7 +454,8 @@ def route_to_queue(
         'deep_review', and the deep-review bundle is returned. Files at the
         source stay where they are (logged).
       * into deep review: once the deep-review bundle is complete (no file
-        failed to move), the video's triage bundle, if any, is deleted."""
+        failed to move), the video's triage bundle, if any, is emptied
+        without losing a person's file (_drop_triage_copy)."""
     from .db import CrystallizedError, crystallized_refusal
     from .review_routing import in_deep_review
     locked = crystallized_refusal(db, video_id, "routed to a review queue")
@@ -568,9 +569,15 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
     A video is in one place at a time, and the deep-review bundle is its live
     copy. So, for each of the video's files in ``processing_dir`` (only there:
     a file elsewhere, e.g. a filed copy, is never touched):
-      * an output of this run (segments, reaches, outcomes, assignment,
-        manifest, triage record ...) is deleted -- it is made again when the
-        video leaves deep review and is analysed again;
+      * a machine output of this run (segments, reaches, outcomes, assignment,
+        manifest, triage record ... -- review_routing.is_machine_output) is
+        deleted -- it is made again when the video leaves deep review and is
+        analysed again;
+      * a file a person wrote (a review, ground truth, a clear marker, cuts
+        set by hand -- review_routing.is_person_file) is deleted only when the
+        deep-review bundle holds the same file byte for byte; otherwise it is
+        set aside like an input below. WHY: "not an input, so an output of
+        this run" counted a person's files as outputs and deleted them;
       * an input (the video or a pose file) is deleted only when the
         deep-review bundle holds the same file (same name and content); one
         that could be the only copy is set aside, never deleted, to
@@ -582,7 +589,7 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
     import shutil
     from datetime import date as _date
     from mousereach.archive.core import _same_file
-    from .review_routing import _bundle_files
+    from .review_routing import _bundle_files, _same_content, is_person_file
     out = {"deleted": [], "set_aside": [], "failed": []}
     try:
         files = list(_bundle_files(Path(processing_dir), video_id))
@@ -593,7 +600,13 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
     for f in files:
         try:
             twin = Path(deep_bundle) / f.name
-            if not _is_input_file(video_id, f.name) or (twin.is_file() and _same_file(f, twin)):
+            if is_person_file(f, video_id):
+                deletable = twin.is_file() and _same_content(f, twin)
+            elif _is_input_file(video_id, f.name):
+                deletable = twin.is_file() and _same_file(f, twin)
+            else:
+                deletable = True        # a machine output of this run
+            if deletable:
                 f.unlink()
                 out["deleted"].append(f.name)
             else:
@@ -607,20 +620,47 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
         f"{video_id}: in deep review, so this run's files were taken out of "
         f"{processing_dir}: {len(out['deleted'])} deleted (outputs, or inputs the "
         f"deep-review bundle holds identically), {len(out['set_aside'])} set aside "
-        f"to {aside} (inputs that could be the only copy)"
+        f"to {aside} (inputs or a person's files that could be the only copy)"
         + (f"; could not remove: {', '.join(out['failed'])}" if out["failed"] else ""))
     return out
 
 
 def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
-    """Delete ``<triage>/<video>`` once the video's deep-review bundle is
-    complete. Deep review supersedes triage: the triage copy is deleted, not
-    kept. Never deleted while the deep-review bundle's routing record lists a
-    file that failed to move (those files may still be in the triage folder,
-    and may be the video's only copy) -- logged for a person instead. Never
-    raises."""
-    import shutil
-    from .review_routing import read_routing_manifest
+    """Empty ``<triage>/<video>`` once the video's deep-review bundle is
+    complete (deep review supersedes triage), without losing anything a
+    person wrote, and take what is left out of the triage queue. Never raises.
+
+    Never touched while the deep-review bundle's routing record lists a file
+    that failed to move (those files may still be in the triage folder, and
+    may be the video's only copy): it is listed for a person in the attention
+    panel. Otherwise:
+      * the triage copy's review goes to the durable review store first;
+      * a review or ground-truth file the deep-review bundle does not have is
+        MOVED into it (it re-attaches to the new cuts by frames, as an
+        escalated review does);
+      * the video, or a pose file, when the deep-review bundle has no file of
+        that kind at all (review_routing.input_kind), is MOVED into it: it may
+        be the video's only copy, and the live bundle needs it;
+      * machine outputs, and any file the deep-review bundle holds byte for
+        byte, are deleted;
+      * anything else -- a different review or ground truth than the
+        deep-review bundle's, a clear marker (moved into deep review it would
+        release the video at once), a hand-set segmentation, a video or pose
+        file that differs from the deep-review bundle's -- stays in the
+        folder, and the folder is taken out of the triage queue whole to
+        <review root>/_Problematic/_kept_for_a_person/ with a note, listed in
+        the attention panel (review_routing.set_aside_queue_folder). A pose of
+        an older model, beside the deep-review bundle's own pose, needs no
+        person: such a remainder goes to the superseded-folders archive.
+    The folder is removed when nothing is left in it.
+    WHY: the whole folder used to be deleted (shutil.rmtree), a person's
+    ground truth and clear markers with it; only reviews had a durable copy.
+    And a remainder left IN the triage queue was a second place the video was
+    in: once the video left deep review, every later triage route met it."""
+    from .review_routing import (read_routing_manifest, input_kind,
+                                 inputs_the_live_copy_lacks, is_person_file,
+                                 _same_content, _safe_move,
+                                 note_folder_in_the_way, set_aside_queue_folder)
     triage_root = getattr(Paths, "TRIAGE_REVIEW", None)
     if not triage_root:
         return
@@ -632,19 +672,101 @@ def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
         return
     record = read_routing_manifest(deep_bundle, video_id) or {}
     if record.get("failed_files"):
-        logger.error(
-            f"Routing {video_id}: in deep review now, but {len(record['failed_files'])} "
-            f"file(s) failed to move into it; its triage folder {copy} is left for a "
-            f"person (deep review supersedes triage -- delete it once the files are in "
-            f"{deep_bundle})")
+        says = (f"{video_id} is in deep review, but {len(record['failed_files'])} "
+                f"file(s) failed to move into its bundle {deep_bundle}; its triage "
+                f"folder {copy} is kept, because those files may still be in it: move "
+                f"them into the bundle by hand, then delete this folder once nothing "
+                f"in it is needed.")
+        logger.error(f"Routing {video_id}: {says}")
+        note_folder_in_the_way(video_id, copy, says)
         return
     try:
-        shutil.rmtree(copy)
-        logger.info(f"Routing {video_id}: triage copy {copy} deleted -- the video is "
-                    f"in deep review, which supersedes triage")
+        from .review_return import _ensure_durable_review
+        _ensure_durable_review(copy, video_id)
+    except Exception as e:
+        logger.warning(f"Routing {video_id}: could not copy the triage review to the "
+                       f"durable store first: {e}")
+    deep_bundle = Path(deep_bundle)
+    carried, deleted, kept = [], [], []
+    try:
+        entries = sorted(copy.iterdir())
     except OSError as e:
-        logger.error(f"Routing {video_id}: could not delete the triage copy {copy} "
-                     f"({e}); deep review supersedes it -- delete it by hand")
+        says = (f"{video_id} is in deep review; its triage folder {copy} could not "
+                f"be listed ({e}) and is left where it is -- move what a person "
+                f"needs into {deep_bundle}, then delete the folder.")
+        logger.error(f"Routing {video_id}: {says}")
+        note_folder_in_the_way(video_id, copy, says)
+        return
+    for f in entries:
+        try:
+            if not f.is_file():
+                kept.append(f.name)
+                continue
+            twin = deep_bundle / f.name
+            name = f.name
+            if twin.is_file() and _same_content(f, twin):
+                f.unlink()
+                deleted.append(name)
+            elif is_person_file(f, video_id):
+                carry = (name == f"{video_id}_causal_review.json"
+                         or "ground_truth" in name)
+                if carry and not twin.exists():
+                    _safe_move(f, twin)
+                    carried.append(name)
+                else:
+                    kept.append(name)
+            elif input_kind(video_id, name) is not None:
+                kind = input_kind(video_id, name)
+                held = {input_kind(video_id, g.name) for g in deep_bundle.iterdir()
+                        if g.is_file()}
+                if kind not in held and not twin.exists():
+                    _safe_move(f, twin)
+                    carried.append(name)
+                else:
+                    kept.append(name)
+            else:
+                f.unlink()              # a machine output of an older run
+                deleted.append(name)
+        except OSError as e:
+            kept.append(f"{f.name} ({e})")
+    if carried:
+        logger.info(f"Routing {video_id}: carried {', '.join(carried)} from the triage "
+                    f"copy into the deep-review bundle {deep_bundle}")
+    try:
+        left = any(copy.iterdir())
+    except OSError:
+        left = True
+    if not left:
+        try:
+            copy.rmdir()
+            logger.info(f"Routing {video_id}: triage copy {copy} removed -- the video "
+                        f"is in deep review, which supersedes triage")
+            return
+        except OSError:
+            pass                        # set aside below, like a remainder
+    try:
+        live = {g.name: g for g in deep_bundle.iterdir() if g.is_file()}
+        lacking = inputs_the_live_copy_lacks(copy, video_id, live)
+    except OSError:
+        lacking = [n for n in kept if input_kind(video_id, n) is not None]
+    try:
+        set_aside_queue_folder(
+            copy, video_id,
+            why=(f"the video moved into deep review (which supersedes triage) and "
+                 f"its triage copy still held {', '.join(kept) or 'a folder'} -- a "
+                 f"person's file, or a video or pose file that differs from the "
+                 f"deep-review bundle's"),
+            what_to_do=(f"the video's live bundle is {deep_bundle}. Move into it "
+                        f"anything here a person still needs (a different review, "
+                        f"ground truth, video or pose: decide which one is right)."),
+            needs_person=lacking)
+    except OSError as e:
+        says = (f"{video_id} is in deep review; its triage folder {copy} still holds "
+                f"{', '.join(kept)} and could not be taken out of the triage queue "
+                f"({e}). Move what a person needs into {deep_bundle}, then delete "
+                f"the folder.")
+        logger.error(f"Routing {video_id}: {says}")
+        note_folder_in_the_way(video_id, copy, says)
 
 
 def route_deep_review(

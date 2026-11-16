@@ -68,8 +68,11 @@ INCOMING_DIR_NAME = ".incoming"
 # A video in the deep-review queue is not allowed to be in the triage queue as
 # well. Deep review is the stronger hold (the whole video, cuts included, is in
 # question), so a triage copy of such a video is never created and, when one
-# exists, it is deleted by the move into deep review (review_gate.route_to_queue)
-# and ignored by every reader (census, dashboard, reconcile, the return scan,
+# exists, the move into deep review empties it (review_gate._drop_triage_copy):
+# what the pipeline made is deleted, a person's review or ground truth the
+# deep-review bundle lacks is carried into it, and anything else a person wrote
+# is taken out of the queue with the folder and kept for a person
+# (set_aside_queue_folder). Until then it is ignored by every reader (census, dashboard, reconcile, the return scan,
 # the review tools' triage list). WHY: a router that did not check sent videos
 # already in deep review into triage as well; a reviewer then answered a triage
 # copy holding older results while the deep-review copy was the one that counted.
@@ -182,6 +185,41 @@ def is_queue_record(video_id: str, name: str) -> bool:
 def is_input_file(video_id: str, name: str) -> bool:
     """The video itself or a pose file (with the pose step's side files)."""
     return name == f"{video_id}.mp4" or name.startswith(f"{video_id}DLC")
+
+
+def input_kind(video_id: str, name: str) -> Optional[str]:
+    """'video' for the video, 'pose<extension>' for a pose-step file, None for
+    anything else. Two pose files of different models are the same kind."""
+    if name == f"{video_id}.mp4":
+        return "video"
+    if name.startswith(f"{video_id}DLC"):
+        return "pose" + Path(name).suffix.lower()
+    return None
+
+
+def inputs_the_live_copy_lacks(folder, video_id: str, live: Dict[str, Path]) -> List[str]:
+    """Inputs in ``folder`` that the video's live copy does not hold. ``live``
+    maps each file name of the live copy (a bundle, or the files a route is
+    about to bring) to its path. An input counts as lacking when the live copy
+    holds a DIFFERENT file of that name, or holds no file of that kind at all
+    (input_kind: no video, or no pose file of that extension). A pose of
+    another model beside the live copy's own pose does not count: that is an
+    older model's output, and the live copy has its pose. WHY: a folder taken
+    out of a queue that holds the only copy of the video or pose the live
+    bundle needs must go to a person, not to a folder nobody reads."""
+    kinds = {input_kind(video_id, n) for n in live}
+    out = []
+    for f in Path(folder).iterdir():
+        kind = input_kind(video_id, f.name) if f.is_file() else None
+        if kind is None:
+            continue
+        twin = live.get(f.name)
+        if twin is not None:
+            if not _same_content(f, twin):
+                out.append(f.name)
+        elif kind not in kinds:
+            out.append(f.name)
+    return sorted(out)
 
 
 def is_machine_output(video_id: str, name: str) -> bool:
@@ -568,15 +606,17 @@ def read_routing_manifest(bundle_dir: Path, video_id: str) -> Optional[Dict]:
 # holding a file that is open somewhere does not move at all), to
 #
 #   <review root>/_Problematic/_kept_for_a_person/<video>[__<time>]/
-#       when it holds anything a person wrote (is_person_file, or a subfolder):
+#       when it holds anything a person wrote (is_person_file, or a subfolder),
+#       or a video or pose file the video's live copy lacks (the caller names
+#       those: inputs_the_live_copy_lacks):
 #       a note SET_ASIDE.json says where it came from, why, and what to do, and
 #       it is listed in <NAS root>/attention/kept_for_a_person.json -- the
 #       dashboard's "needs your attention" panel -- until a person deletes the
 #       folder;
 #   <review root>/_Problematic/_superseded_queue_folders_<date>/<video>[__<time>]/
 #       when it holds only what the pipeline makes again (machine outputs,
-#       inputs, queue records): kept for the record with the same note, not
-#       listed (nothing in it needs a person).
+#       inputs the live copy holds as well, queue records): kept for the record
+#       with the same note, not listed (nothing in it needs a person).
 #
 # A folder that cannot be moved stays where it is, and the caller lists it in
 # this machine's <NAS root>/attention/<host>_queue_folders_in_the_way.json
@@ -607,10 +647,14 @@ def kept_for_a_person_root() -> Optional[Path]:
     return Path(root) / PROBLEMATIC_DIR_NAME / KEPT_FOR_A_PERSON_DIR if root else None
 
 
-def set_aside_queue_folder(folder, video_id: str, why: str, what_to_do: str) -> Path:
+def set_aside_queue_folder(folder, video_id: str, why: str, what_to_do: str,
+                           needs_person: Iterable[str] = ()) -> Path:
     """Take ``folder`` out of its queue whole (see the block comment above) and
-    return where it went. Raises OSError, with nothing moved, when it cannot
-    be moved (no review root configured, a file in it held open ...)."""
+    return where it went. ``needs_person`` names further files in it that a
+    person must see (inputs the live copy lacks); with any, or with a file a
+    person wrote, it is kept for a person and listed. Raises OSError, with
+    nothing moved, when it cannot be moved (no review root configured, a file
+    in it held open ...)."""
     from ..config import Paths
     from mousereach.pipeline.fsutil import retry_transient, write_json_atomic
     folder = Path(folder)
@@ -630,7 +674,7 @@ def set_aside_queue_folder(folder, video_id: str, why: str, what_to_do: str) -> 
         inside = False
     if not inside:
         raise OSError(f"{folder} is not inside the review root {root}; not set aside")
-    person = person_entries(folder, video_id)
+    person = sorted(set(person_entries(folder, video_id)) | set(needs_person or ()))
     now = datetime.now()
     parent = (Path(root) / PROBLEMATIC_DIR_NAME
               / (KEPT_FOR_A_PERSON_DIR if person
@@ -727,8 +771,10 @@ def refresh_kept_attention() -> None:
         items.append({
             "kind": "kept_for_a_person", "needs_person": True, "video_id": vid,
             "folder": str(d),
-            "says": (f"{vid}: a folder holding files a person wrote ({theirs}) was "
-                     f"taken out of the review queue and kept in {d}. Why: "
+            "says": (f"{vid}: a folder holding files a person must look at "
+                     f"({theirs}: what a person wrote, or a video or pose file the "
+                     f"live copy lacks) was taken out of the review queue and kept "
+                     f"in {d}. Why: "
                      f"{note.get('why') or 'see SET_ASIDE.json in the folder'}. "
                      f"What to do: "
                      f"{note.get('what_to_do') or 'decide what is still needed.'} "

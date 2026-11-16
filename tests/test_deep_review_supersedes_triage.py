@@ -31,6 +31,12 @@ def queues(tmp_path, monkeypatch):
     deep.mkdir(parents=True)
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", triage.parent)
+    monkeypatch.setattr(Paths, "NAS_ROOT", triage.parent.parent, raising=False)
+    # A triage copy's review goes to the durable store before the copy is
+    # removed; keep that store under tmp_path.
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
     db = WatcherDB(db_path=tmp_path / "w.db")
     db.register_video(video_id=VID, source_path="x")
     for st in ("validated", "dlc_queued", "dlc_running", "dlc_complete",

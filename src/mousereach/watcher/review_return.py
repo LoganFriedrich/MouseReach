@@ -1309,8 +1309,10 @@ def scan_review_queues(db, processing_dir: Path,
         # copy's status, a video that is in deep review is never returned,
         # released or diverted from the triage queue -- the deep-review copy is
         # the one that counts. Since the rule was made, any move into deep
-        # review deletes the triage copy (review_gate.route_to_queue); a copy
-        # left from before is handled here as below.
+        # review empties the triage copy without losing a person's file --
+        # what remains leaves the queue, kept for a person
+        # (review_gate._drop_triage_copy); a copy left from before is handled
+        # here as below.
         if stem in deep_stems:
             _dr = getattr(Paths, "DEEP_REVIEW", None)
             if _dr:

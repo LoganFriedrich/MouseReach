@@ -81,8 +81,12 @@ is not flagged and not routed to triage; it is reported as "deep" (in_deep_revie
 true with --json) and stays where it is. Not a failure for the exit code. WHY:
 the filed results this command routes from are older than what deep review
 holds, and a triage copy beside the deep-review bundle had a reviewer answer
-the wrong copy. Routing into deep_review deletes the video's triage bundle
-once the deep-review bundle is complete (review_gate.route_to_queue).
+the wrong copy. Routing into deep_review empties the video's triage bundle
+once the deep-review bundle is complete, without losing a person's file: what
+the pipeline made is deleted, a review or ground truth the deep-review bundle
+lacks is carried into it, and what remains is taken out of the triage queue
+and kept for a person (listed in the dashboard's attention panel)
+(review_gate._drop_triage_copy).
 
 A CRYSTALLIZED VIDEO IS NEVER MOVED
 -----------------------------------

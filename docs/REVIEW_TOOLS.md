@@ -812,10 +812,26 @@ well.** Deep review is the stronger hold: the whole video, cuts included, is in 
   creates no triage bundle for such a video, leaves it in deep review, records `deep_review` in the
   watcher database and logs the refusal. `mousereach-route-to-queue` reports it as `deep` (not a
   failure) and flags no segment.
-- **Moving a video into deep review deletes its triage bundle** (Escalate, Flag Session, the
-  watcher's diverts, a route) once the deep-review bundle is complete. If a file failed to move
-  into deep review, the triage folder is left and the log says so, because the file may still be
-  there; a person deletes it once the file is in the deep-review bundle.
+- **Moving a video into deep review empties its triage bundle, keeping what a person wrote**
+  (Escalate, Flag Session, the watcher's diverts, a route) once the deep-review bundle is
+  complete. The triage copy's review is first copied to the durable review store. Then: a review or
+  ground-truth file the deep-review bundle does not have is moved into it (it re-attaches to the
+  new cuts by frames, as an escalated review does); the video, or a pose file, is moved into the
+  deep-review bundle when that bundle has no video (or no pose file of that type) at all -- it may
+  be the only copy; machine outputs, and any file the deep-review bundle holds byte for byte, are
+  deleted; everything else -- a review or ground truth that differs from the deep-review bundle's,
+  a clear marker (moved into deep review it would release the video at once), hand-set cuts, a
+  video or pose file that differs from the deep-review bundle's -- stays in the folder, and the
+  folder is then taken out of the triage queue and kept for a person (see "A folder taken out of a
+  queue and kept for a person" below; it is listed in the dashboard's attention panel). A pose of
+  an older model, beside the deep-review bundle's own pose, needs nobody: if that is all that is
+  left, the folder goes to the unlisted superseded-folders archive. An empty folder is simply
+  removed. If a file failed to move into deep review, the triage folder is not touched at all,
+  because the file may still be there: the attention panel lists it. Move the missing file into
+  the deep-review bundle by hand, then delete the triage folder once nothing in it is needed.
+  **Why:** the whole triage folder used to be deleted, and a person's ground truth or clear marker
+  in it had no copy anywhere; and a remainder left in the triage queue made the video be in two
+  places.
 - **A triage copy of a video in deep review is ignored everywhere:** the triage review tool never
   shows it and the Review Queues tab does not count it; the census, the dashboard's folder view and
   `mousereach-reconcile` count the video in deep review only; the return scan never returns,
@@ -895,7 +911,8 @@ bundle does not stay there. The watcher takes it out of the queue **whole, in on
 folder with a file that is open somewhere does not move at all, and is tried again later):
 
 - If anything in it was written by a person (a review, ground truth, a clear marker, cuts set
-  by hand, or any file not on the machine list below), it goes to
+  by hand, or any file not on the machine list below), or it holds a video or pose file that the
+  video's live bundle lacks (or holds differently), it goes to
   `<pipeline NAS folder>/Processing/Review/_Problematic/_kept_for_a_person/<video>/` (a second
   one of the same video gets `__<date and time>` added to its name). A note `SET_ASIDE.json`
   inside says where it came from, why, what to do and which files are a person's. The
@@ -905,16 +922,17 @@ folder with a file that is open somewhere does not move at all, and is tried aga
   review or ground truth that should go into the video's live bundle -- a review re-attaches to
   new cuts by frames), move that in, then delete the folder. The panel item disappears by itself
   within ten minutes of the folder being deleted.
-- If it holds only what the pipeline makes again (results, the video or pose, queue records),
+- If it holds only what the pipeline makes again (results, a video or pose file the live bundle
+  holds as well -- or an older model's pose beside the live bundle's own -- queue records),
   it goes to `_Problematic/_superseded_queue_folders_<date>/<video>/` with the same note, for the
   record. Nothing there needs a person and it is not listed.
 
 The folders this applies to: a stale bundle the return scan retires that holds a person's
-file (one that does not still goes to `_Problematic/_stale_seg_failed_bundles_<date>/`). If the
-folder cannot be moved, it stays, and the panel lists it (file
-`attention/<machine>_queue_folders_in_the_way.json`) until it is gone. **Why:** a leftover in a
-live queue was a second place the video was in, and deleting it would have lost what a person
-wrote.
+file (one that does not still goes to `_Problematic/_stale_seg_failed_bundles_<date>/`), and what
+is left of a triage copy when the video moves into deep review. If the folder cannot be moved, it
+stays, and the panel lists it (file `attention/<machine>_queue_folders_in_the_way.json`) until it
+is gone. **Why:** a leftover in a live queue was a second place the video was in, and deleting it
+would have lost what a person wrote.
 
 ### Where they are
 

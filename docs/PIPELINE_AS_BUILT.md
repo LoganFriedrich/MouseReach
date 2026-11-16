@@ -3249,7 +3249,8 @@ once the video has moved on, as for its own claims.
 ## Update 2026-11-15: deep review supersedes triage
 
 The rule: **a video in the deep-review queue is not allowed to be in the triage queue as well.**
-Deep review always wins; a triage copy of such a video is deleted, not kept.
+Deep review always wins; a triage copy of such a video is emptied without losing a person's
+file, and what remains leaves the triage queue, kept for a person (see below).
 
 **Routing.** Every route into a review queue goes through `review_gate.route_to_queue`:
 - into triage while the video has a deep-review bundle (published, or being built in
@@ -3257,14 +3258,23 @@ Deep review always wins; a triage copy of such a video is deleted, not kept.
   refusal is logged, and the deep-review bundle is returned. When the gate itself asked (a re-run
   of a video that is in deep review), that run's files are then taken out of the local Processing
   folder so the video is in one place only (`review_gate.discard_run_outputs`): the run's outputs
-  are deleted (they are made again when the video leaves deep review), the video or a pose file is
-  deleted only when the deep-review bundle holds the same file, and one that could be the only
+  are deleted (they are made again when the video leaves deep review), the video, a pose file or a
+  person's file (review, ground truth, clear marker, hand-set cuts -- `review_routing.is_person_file`)
+  is deleted only when the deep-review bundle holds the same file, and one that could be the only
   copy is set aside, never deleted, to `<processing root>/_finished_elsewhere/<date>/Processing/`.
   The log says what was deleted and what was set aside. A route from anywhere else (a filed
   folder, a queue) never deletes anything;
 - into deep review: after the bundle is complete (its routing record lists no file that failed to
-  move), the video's triage bundle is deleted (`_drop_triage_copy`). With a failed file the triage
-  folder is kept and the log names it for a person.
+  move), the video's triage bundle is emptied (`_drop_triage_copy`): its review is copied to the
+  durable store, a review or ground truth the deep-review bundle lacks is moved into it, so is the
+  video or a pose file when the deep-review bundle has no file of that kind
+  (`review_routing.input_kind`), machine outputs and byte-identical files are deleted, and the
+  folder with anything else a person wrote (or an input that differs from the deep-review
+  bundle's: `review_routing.inputs_the_live_copy_lacks`) is taken out of the triage queue whole to
+  `_Problematic/_kept_for_a_person/<video>/` with a note `SET_ASIDE.json`, listed in
+  `attention/kept_for_a_person.json` (`review_routing.set_aside_queue_folder`). With a failed file
+  the triage folder is kept untouched and listed in `attention/<host>_queue_folders_in_the_way.json`
+  for a person.
 
 `mousereach-route-to-queue --queue triage` checks the rule before it flags any segment and
 reports such a video as `deep` (`"in_deep_review": true` with `--json`); it is not counted as a
@@ -3361,4 +3371,8 @@ queue never deletes or overwrites a person's file".
   unless the caller passes `copies_only=True` (the byte-identical leftover case); a bundle that
   cannot be moved stays and is listed in the in-the-way list. Tests:
   `tests/test_person_files_are_kept_apart.py`.
+- **Deep review beats triage without deleting a person's file.** `_drop_triage_copy` no longer
+  removes the triage folder whole, and `discard_run_outputs` sets a person's file aside unless the
+  deep-review bundle holds it byte for byte (see "deep review supersedes triage" above for the
+  rules). Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
 
