@@ -165,13 +165,22 @@ RERUN_NOT_STARTED_PREFIX = "re-run could not start"
 # The states in which a row's reprocess_scope means something: a re-run that
 # is owed ('outdated') or under way ('processing', a 'failed' run waiting for
 # its retry, and the 'processed' -> 'archiving' steps of filing it). Entering
-# any other state clears the scope, unless the caller sets it.
+# any other state clears the scope, unless the caller sets it. And a scope is
+# carried only BETWEEN these states: a row that enters one of them from a state
+# outside them starts with no scope unless the caller gives one
+# (WatcherDB._end_of_round_defaults).
 # WHY: the scope used to outlive its re-run on rows that went on to triage,
 # deep review, a quality hold or 'unresolvable'. A later run of such a row --
 # a quality-hold release, an intake, a restart -- read a leftover
 # 'kinematics' back (orchestrator.kept_rerun_start_stage) and skipped every
 # algorithm, the quality triage and the hand-score comparison, on outputs
 # nobody had re-checked. A scope written for one round now ends with it.
+# WHY the second half: rows written before this rule still carry a scope in
+# 'triage', 'deep_review', 'unresolvable' or 'archived'. Such a row going
+# triage -> 'failed' or -> 'outdated' would have brought its old 'kinematics'
+# into the very states where it is read. Opening the database also clears
+# those leftovers (WatcherDB._clear_scopes_outside_reruns), but that is a
+# tidy-up a locked database can skip; the transition rule is what holds.
 REPROCESS_SCOPE_STATES = frozenset(
     {"outdated", "processing", "failed", "processed", "archiving"})
 
@@ -452,8 +461,171 @@ class WatcherDB:
                         if "duplicate column" not in str(err).lower():
                             logger.warning(f"Could not add column {table}.{column}: {err}")
                 conn.commit()
+                self._known_columns = self._read_video_columns(conn)
             finally:
                 conn.close()
+        missing = [c for t, c, _ in new_columns
+                   if t == 'videos' and c not in self._known_columns]
+        if missing:
+            # Not fatal here: update_state and force_state try again before
+            # they write (_ensure_video_columns), and until a column is there
+            # they do not add their own writes to it.
+            logger.error(
+                "watcher database %s: column(s) %s could not be added (the "
+                "database was probably locked by another program). They are "
+                "tried again at the next state change.",
+                self.db_path, ", ".join(missing))
+        self._clear_scopes_outside_reruns()
+
+    # The columns added after the first release that update_state and
+    # force_state write BY THEMSELVES (to end a re-run scope or a resume point
+    # with its round), with their types. See _ensure_video_columns.
+    _ROUND_COLUMNS = (('reprocess_scope', 'TEXT'), ('resume_stage', 'TEXT'),
+                      ('held_at_step', 'TEXT'))
+
+    @staticmethod
+    def _read_video_columns(conn) -> set:
+        return {r[1] for r in conn.execute("PRAGMA table_info(videos)").fetchall()}
+
+    def _ensure_video_columns(self, conn) -> set:
+        """The columns the videos table really has, adding any of
+        _ROUND_COLUMNS that is still missing. Never raises.
+
+        WHY: _migrate_db adds columns when the database is opened, and it
+        only logs an ALTER that fails -- a database locked at that moment (a
+        review window, a status view and the watcher all open this file) left
+        the column missing for the life of the process. That was harmless
+        while only callers who needed a column wrote it. But every state
+        change now writes these three columns to end a scope or a resume
+        point, so one missed ALTER would have failed EVERY later transition
+        of that process -- routing to a queue, filing, archiving -- with "no
+        such column". So the missing ones are added again here, just before
+        a write; and a column that still cannot be added is left out of the
+        writes this class adds by itself (_end_of_round_defaults), so the
+        state change itself goes through as it did before these columns
+        existed. A column a CALLER names is still written, and still fails
+        loudly if it is not there."""
+        known = getattr(self, '_known_columns', None)
+        if known is not None and all(c in known for c, _ in self._ROUND_COLUMNS):
+            return known
+        try:
+            known = self._read_video_columns(conn)
+            for column, col_type in self._ROUND_COLUMNS:
+                if column in known:
+                    continue
+                try:
+                    conn.execute(f"ALTER TABLE videos ADD COLUMN {column} {col_type}")
+                    logger.warning(f"Added column videos.{column}, which could not "
+                                   f"be added when the database was opened")
+                except Exception as err:
+                    if "duplicate column" not in str(err).lower():
+                        logger.warning(f"Could not add column videos.{column}: {err}")
+            known = self._read_video_columns(conn)
+        except Exception as err:
+            logger.warning(f"Could not read the columns of the videos table: {err}")
+            known = known or set()
+        self._known_columns = known
+        return known
+
+    def _end_of_round_defaults(self, conn, current_state: str, new_state: str,
+                               kwargs: dict) -> None:
+        """Add to ``kwargs`` the writes that end a re-run scope and a review
+        return's resume point when the row leaves their round. A value the
+        caller passed is never replaced.
+
+          * reprocess_scope -> NULL when the new state is outside
+            REPROCESS_SCOPE_STATES, and also when the row ENTERS one of those
+            states from outside them (the constant's comment says why);
+          * resume_stage -> NULL outside RESUME_POINT_STATES;
+          * held_at_step -> NULL outside HELD_AT_STEP_STATES.
+        A column the database does not have yet is skipped
+        (_ensure_video_columns)."""
+        known = self._ensure_video_columns(conn)
+        entering = (current_state != new_state
+                    and current_state not in REPROCESS_SCOPE_STATES)
+        if 'reprocess_scope' in known and (
+                new_state not in REPROCESS_SCOPE_STATES or entering):
+            kwargs.setdefault('reprocess_scope', None)
+        if 'resume_stage' in known and new_state not in RESUME_POINT_STATES:
+            kwargs.setdefault('resume_stage', None)
+        if 'held_at_step' in known and new_state not in HELD_AT_STEP_STATES:
+            kwargs.setdefault('held_at_step', None)
+
+    def _end_of_round_sql(self, conn, current_state: str, new_state: str) -> str:
+        """The same rule as _end_of_round_defaults, as "col = NULL, " text
+        for the writers that set a state with their own UPDATE (mark_failed,
+        mark_unresolvable, reset_failed). '' when nothing ends."""
+        ended = {}
+        self._end_of_round_defaults(conn, current_state, new_state, ended)
+        return "".join(f"{column} = NULL, " for column in ended)
+
+    def _clear_scopes_outside_reruns(self) -> int:
+        """Clear reprocess_scope on rows whose state is outside
+        REPROCESS_SCOPE_STATES. Run each time the database is opened; returns
+        how many rows were cleared. Never raises.
+
+        WHY: before a scope ended with its re-run, rows kept one after they
+        went on to a review queue, 'unresolvable' or 'archived'. Nothing reads
+        a scope in those states and no transition carries one out of them
+        (_end_of_round_defaults), so these are leftovers that only mislead a
+        person reading the row. It looks first and writes only when there is
+        something to clear, so opening the database stays a read on every
+        start after the first. If the database is locked the leftovers stay
+        until the next open, which is safe for the reason just given.
+
+        WHY it writes what it is about to clear into the log first: the
+        clearing cannot be undone from the database, and it is done by
+        whichever program happens to open the database first, with nobody
+        watching. So BEFORE the UPDATE the log gets how many rows per state
+        and every (video, state, scope) about to be cleared -- enough to put
+        each value back by hand. The rows are read and cleared under one
+        write lock, so the rows in the log are exactly the rows cleared."""
+        marks = ",".join("?" * len(REPROCESS_SCOPE_STATES))
+        where = f"reprocess_scope IS NOT NULL AND state NOT IN ({marks})"
+        states = tuple(sorted(REPROCESS_SCOPE_STATES))
+        try:
+            with self._lock:
+                conn = self._get_connection()
+                try:
+                    if conn.execute(f"SELECT 1 FROM videos WHERE {where} LIMIT 1",
+                                    states).fetchone() is None:
+                        return 0
+                    # Take the write lock BEFORE reading the rows, so the
+                    # rows written to the log are exactly the rows cleared:
+                    # no other program can change one in between.
+                    conn.execute("BEGIN IMMEDIATE")
+                    found = [tuple(r) for r in conn.execute(
+                        f"SELECT video_id, state, reprocess_scope FROM videos "
+                        f"WHERE {where} ORDER BY state, video_id", states)]
+                    per_state = {}
+                    for _, state, _ in found:
+                        per_state[state] = per_state.get(state, 0) + 1
+                    logger.info(
+                        "Clearing a leftover re-run scope on %d row(s) that are not "
+                        "in a re-run -- per state: %s. The rows, as video (state) = "
+                        "scope, follow.", len(found),
+                        ", ".join(f"{s}: {n}" for s, n in sorted(per_state.items())))
+                    # A few dozen to a line, so no single log line is cut short.
+                    for i in range(0, len(found), 40):
+                        logger.info("Leftover re-run scope being cleared: %s", "; ".join(
+                            f"{vid} ({state}) = {scope}"
+                            for vid, state, scope in found[i:i + 40]))
+                    # One statement, under the lock taken above: one per row
+                    # held the database for many seconds on a table with
+                    # thousands of leftovers.
+                    cur = conn.execute(
+                        f"UPDATE videos SET reprocess_scope = NULL WHERE {where}", states)
+                    n = cur.rowcount or 0
+                    conn.commit()
+                finally:
+                    conn.close()
+            logger.info(f"Cleared a leftover re-run scope on {n} row(s) that are "
+                        f"not in a re-run")
+            return n
+        except Exception as err:
+            logger.warning(f"Could not clear leftover re-run scopes ({err}); "
+                           f"tried again the next time the database is opened")
+            return 0
 
     def _validate_transition(self, current_state: str, new_state: str,
                            transitions: Dict[str, List[str]], entity_type: str):
@@ -677,14 +849,6 @@ class WatcherDB:
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
-        # A re-run scope ends with its re-run (REPROCESS_SCOPE_STATES).
-        if new_state not in REPROCESS_SCOPE_STATES:
-            kwargs.setdefault('reprocess_scope', None)
-        # A resume point ends with its round (RESUME_POINT_STATES).
-        if new_state not in RESUME_POINT_STATES:
-            kwargs.setdefault('resume_stage', None)
-        if new_state not in HELD_AT_STEP_STATES:
-            kwargs.setdefault('held_at_step', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -701,6 +865,10 @@ class WatcherDB:
 
                 # Validate transition
                 self._validate_transition(current_state, new_state, VIDEO_TRANSITIONS, "video")
+
+                # A re-run scope ends with its re-run and a resume point with
+                # its round (_end_of_round_defaults).
+                self._end_of_round_defaults(conn, current_state, new_state, kwargs)
 
                 # Build update
                 fields = ['state = ?', 'updated_at = ?']
@@ -774,14 +942,6 @@ class WatcherDB:
         # The history stays in processing_log.
         if new_state == 'archived':
             kwargs.setdefault('error_message', None)
-        # A re-run scope ends with its re-run (REPROCESS_SCOPE_STATES).
-        if new_state not in REPROCESS_SCOPE_STATES:
-            kwargs.setdefault('reprocess_scope', None)
-        # A resume point ends with its round (RESUME_POINT_STATES).
-        if new_state not in RESUME_POINT_STATES:
-            kwargs.setdefault('resume_stage', None)
-        if new_state not in HELD_AT_STEP_STATES:
-            kwargs.setdefault('held_at_step', None)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -815,6 +975,10 @@ class WatcherDB:
                     "; transition was legal anyway" if legal else "",
                     f" reason: {reason}" if reason else " reason: not given",
                 )
+
+                # A re-run scope ends with its re-run and a resume point with
+                # its round (_end_of_round_defaults).
+                self._end_of_round_defaults(conn, current_state, new_state, kwargs)
 
                 # Build update (same as update_state but no validation)
                 fields = ['state = ?', 'updated_at = ?']
@@ -1334,11 +1498,15 @@ class WatcherDB:
 
                 error_count = (row['error_count'] or 0) + 1
 
-                # Update to failed state
-                conn.execute("""
+                # Update to failed state. A row that fails from OUTSIDE a
+                # re-run (a review queue, say) does not bring a re-run scope
+                # into 'failed', where the retry would read it back
+                # (_end_of_round_defaults); a run that fails keeps its own.
+                clears = self._end_of_round_sql(conn, row['state'], 'failed')
+                conn.execute(f"""
                     UPDATE videos
                     SET state = 'failed',
-                        error_message = ?,
+                        {clears}error_message = ?,
                         error_count = ?,
                         last_error_at = ?,
                         updated_at = ?
@@ -1389,10 +1557,13 @@ class WatcherDB:
                         f"{video_id} is crystallized; not marked unresolvable ({reason}). "
                         f"Unlock it with mousereach-uncrystallize first if this is intended.")
 
-                conn.execute("""
+                # Outside every re-run and review round: scope and resume
+                # point end here (_end_of_round_defaults).
+                clears = self._end_of_round_sql(conn, row['state'], 'unresolvable')
+                conn.execute(f"""
                     UPDATE videos
                     SET state = 'unresolvable',
-                        error_message = ?,
+                        {clears}error_message = ?,
                         updated_at = ?
                     WHERE video_id = ?
                 """, (reason, self._now(), video_id))
@@ -1456,18 +1627,14 @@ class WatcherDB:
                 # (REPROCESS_SCOPE_STATES) and a review return's resume point
                 # with its round (RESUME_POINT_STATES): a reset to an earlier
                 # state is a fresh run with every step and check.
-                keep_point = 1 if to_state in RESUME_POINT_STATES else 0
-                conn.execute("""
+                clears = self._end_of_round_sql(conn, 'failed', to_state)
+                conn.execute(f"""
                     UPDATE videos
                     SET state = ?,
                         error_message = NULL,
-                        reprocess_scope = CASE WHEN ? THEN reprocess_scope ELSE NULL END,
-                        resume_stage = CASE WHEN ? THEN resume_stage ELSE NULL END,
-                        held_at_step = CASE WHEN ? THEN held_at_step ELSE NULL END,
-                        updated_at = ?
+                        {clears}updated_at = ?
                     WHERE video_id = ?
-                """, (to_state, 1 if to_state in REPROCESS_SCOPE_STATES else 0,
-                      keep_point, keep_point, self._now(), video_id))
+                """, (to_state, self._now(), video_id))
 
                 conn.commit()
                 logger.info(f"Reset video {video_id} from failed to {to_state}")

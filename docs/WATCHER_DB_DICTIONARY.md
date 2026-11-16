@@ -199,12 +199,26 @@ Version tracking (added by migration, db.py:331)
                           a state other than 'outdated', 'processing',
                           'failed', 'processed' or 'archiving' (db.py
                           REPROCESS_SCOPE_STATES), so it never outlives its
-                          re-run. A value on a row in any other state is a
-                          leftover from older code, which the data repair
-                          that came with this rule clears; until it is
-                          cleared, such a row reaching 'processing' by a path
-                          that sets no start stage would read a 'kinematics'
-                          leftover back.
+                          re-run. A scope is also carried only BETWEEN those
+                          five states: a row that enters one of them from any
+                          other state (a review queue, 'unresolvable',
+                          'archived' ...) starts with no scope unless the
+                          caller gives one with the move -- update_state,
+                          force_state, mark_failed, mark_unresolvable and
+                          reset_failed all keep this rule. A value on a row
+                          in any other state is a leftover from older code.
+                          It cannot be read back (the rule above), and it is
+                          cleared the next time any program opens the
+                          database (WatcherDB._clear_scopes_outside_reruns).
+                          The clearing cannot be undone from the database, so
+                          BEFORE it happens the log of the program that
+                          opened the database gets: how many rows are being
+                          cleared, the count per state, and every row as
+                          "<video> (<state>) = <scope>" -- enough to put a
+                          value back by hand. Only the rows named in the log
+                          are cleared, and a last line says how many were.
+                          If the database is locked at that moment the
+                          leftovers simply wait for the next open.
   held_at_step            which step sent the video to a review queue, written
                           when it is routed (review_gate.route_to_queue):
                           'segmentation' (every route into deep review),
@@ -236,6 +250,13 @@ Version tracking (added by migration, db.py:331)
                           this, so a person's reset, a send for a new pose,
                           'unresolvable' or 'outdated' ends the resume point
                           and the next run is a fresh one with every step.
+                          held_at_step and resume_stage were added after the
+                          first release. A database that was locked when a
+                          program opened it may not have them yet (the log
+                          says "column(s) ... could not be added"); they are
+                          added again at that program's next state change,
+                          and until then state changes go through without
+                          them.
   mark_reason             NULL for a scanner mark; set for a HAND-mark. The
                           reprocessor's two-way door never un-marks a row
                           carrying a reason. That is the whole point of the

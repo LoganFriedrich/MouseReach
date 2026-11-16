@@ -3367,8 +3367,36 @@ just changed:
   so does a person's `mousereach-watch-reprocess` reset of a failed video to an earlier state.
   WHY: a scope used to outlive its re-run on such rows, and a later, unrelated run (a quality-hold
   release, an intake) read the leftover 'kinematics' back and skipped every algorithm, the quality
-  triage and the hand-score comparison on outputs nobody had re-checked. Rows left with a scope by
-  older code are cleared by the data repair that goes with this change.
+  triage and the hand-score comparison on outputs nobody had re-checked.
+- the row enters its re-run's states from OUTSIDE them without being given a scope. A scope is
+  carried only between 'outdated', 'processing', 'failed', 'processed' and 'archiving'. A row
+  that comes into one of them from a review queue, 'unresolvable' or 'archived' starts with no
+  scope, unless the step that moves it gives one (the version scan and Re-run always do). This
+  holds for every way a row changes state, a video marked failed while it sits in a review queue
+  included. WHY: rows written by older code still carry a scope in those outside states; without
+  this, such a row marked 'failed' or 'outdated' would bring its old 'kinematics' into the very
+  states where it is read back.
+
+**Rows left with a scope by older code** need no manual repair. They cannot be read back (the last
+point above), and every program that opens the watcher database clears them, the first time one
+does and never after. The clearing cannot be undone from the database, and it is done by
+whichever program happens to open the database first, so it is written down before it happens.
+In that program's log, in this order:
+1. "Clearing a leftover re-run scope on N row(s) that are not in a re-run -- per state: archived:
+   A, triage: B, ..." -- how many, and how many in each state;
+2. one or more lines "Leftover re-run scope being cleared: <video> (<state>) = <scope>; ..." naming
+   EVERY row and the value it held (forty rows to a line);
+3. then the rows named are cleared -- only those -- and
+4. "Cleared a leftover re-run scope on N row(s) that are not in a re-run".
+To put a value back by hand, the lines of step 2 hold everything needed; nothing reads a scope in
+those states, so there is no reason to. If the database is locked at that moment, the clean-up
+waits for the next open.
+
+**If the database was locked when a program opened it.** Two columns this change added to the
+watcher database (`resume_stage`, `held_at_step`) are created when a program opens the database.
+A database locked at that moment refuses, and the log says "column(s) ... could not be added".
+Nothing has to be done: the program adds them again at its next state change, and until it can,
+its state changes go through without them (as they did before the columns existed).
 
 **For an operator.** Nothing to do. A filed video that is being re-run for its kinematics and shows
 'failed' in `mousereach-watch-status` is retried after an hour as a kinematics-only run, as the
