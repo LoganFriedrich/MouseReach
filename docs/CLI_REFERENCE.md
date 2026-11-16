@@ -1834,9 +1834,28 @@ Handle DB rows whose video file this node cannot find anywhere.
 
   --list      Show the pathless rows.
   --sweep     Mark them unresolvable so they leave the work loop.
-  --retry     Put previously-swept rows back into the work loop.
+  --retry     GPU node only: queue again an unresolvable video whose file
+              is now in this node's DLC queue; one at the top of the shared
+              singles folder is left for the intake to claim. Any other
+              copy is listed and left alone. On a processing server it
+              changes nothing (its watcher takes videos back by itself).
   --dry-run   With --sweep/--retry: show what would change, change nothing.
 ```
+
+What `--retry` does with each unresolvable video, on a GPU node:
+
+- its video is in this node's DLC queue: the row goes back to `dlc_queued`
+  and the watcher poses it;
+- its video is at the top of the shared singles folder: the row stays
+  `unresolvable` with the reason "in the shared singles folder for any node
+  to take", and the watcher's singles intake claims the file and queues it
+  (on this node or another) -- unless its reason already says it waits for
+  the intake, or that it is a second copy of a video another node holds;
+- a copy anywhere else (filed, in the posed folder, in another node's claim
+  folder) is listed and nothing is changed.
+
+On a processing server `--retry` changes nothing and says so: that watcher
+takes a video back by itself once its video and pose are in the posed folder.
 
 ### `mousereach-watch-prioritize`
 

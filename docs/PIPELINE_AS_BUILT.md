@@ -1067,7 +1067,8 @@ sleeps for a poll interval instead of re-picking the same row at full speed.
 Known gaps, not yet closed: `WatcherDB.register_video` called without a
 source_path, and `mousereach-watch-unresolvable --retry`, still search with the
 default folder list, which includes Posed. Neither runs in the GPU work loop's
-normal path.
+normal path. [`--retry` is closed: see "Update: failed and unresolvable videos"
+near the end of this document.]
 
 ---
 
@@ -4379,3 +4380,20 @@ shared folder and removes the DLC-queue copy this run made. For an operator: a c
 old behaviour on a held video sits in `Single_Animal/.inflight/<this machine>/`; move that file
 back to the top of `Single_Animal` by hand. Where it lives: `watcher/cli.py`
 `main_process_animal`; tests in `tests/test_process_animal_states.py`.
+
+**`mousereach-watch-unresolvable --retry` takes back only this node's own copy.** It used to
+search every folder, the posed folder and the filed folder included, and force `dlc_queued` on
+whatever it found, on any machine. On the processing server no work step selects `dlc_queued`,
+so such a row was stranded; on a GPU node a posed or filed copy is refused by the pose step and
+parked again. Now:
+- on a processing server it changes nothing and says that its watcher takes a video back by
+  itself (the posed-folder scan) once the video and its pose are in Processing/Posed;
+- on a GPU node only `DLC_Queue/<video>.mp4` is queued (`dlc_queued`); a copy at the top of the
+  shared singles folder keeps the row `unresolvable` with the shared-folder reason, so the
+  singles intake claims it properly (a row already waiting for the intake, or recorded as a
+  second copy of a video another node holds, keeps its reason); any other copy is listed and
+  left alone.
+For an operator: on the processing server, rows put in `dlc_queued` by the old `--retry` are not
+picked up by anything. `mousereach-watch-status` lists them under dlc_queued; a person checks
+each one (where are its video and pose?) before anything is changed. Where it lives: `watcher/cli.py` `_retry_unresolvable`; tests in
+`tests/test_unresolvable_retry.py`.

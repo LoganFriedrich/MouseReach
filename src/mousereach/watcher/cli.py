@@ -2440,7 +2440,11 @@ Handle DB rows whose video file this node cannot find anywhere.
 
   --list      Show the pathless rows.
   --sweep     Mark them unresolvable so they leave the work loop.
-  --retry     Put previously-swept rows back into the work loop.
+  --retry     GPU node only: queue again an unresolvable video whose file
+              is now in this node's DLC queue; one at the top of the shared
+              singles folder is left for the intake to claim. Any other
+              copy is listed and left alone. On a processing server it
+              changes nothing (its watcher takes videos back by itself).
   --dry-run   With --sweep/--retry: show what would change, change nothing.
 """)
     args = sys.argv[1:]
@@ -2461,8 +2465,9 @@ Handle DB rows whose video file this node cannot find anywhere.
         print("              sitting in a working state (the old phantom rows)")
         print("  --sweep     Move those pathless rows to 'unresolvable' so the")
         print("              watcher stops picking them up. Nothing is deleted.")
-        print("  --retry     Put back into the pipeline any unresolvable video")
-        print("              whose file has since appeared on this node")
+        print("  --retry     GPU node only: queue again any unresolvable video whose")
+        print("              file is now in this node's DLC queue; one in the shared")
+        print("              singles folder is left for the intake to claim")
         print("  --dry-run   Show what --sweep or --retry would do, and change nothing")
         print()
         print("Examples:")
@@ -2541,18 +2546,80 @@ Handle DB rows whose video file this node cannot find anywhere.
               f"{kept} turned out to have a file here.")
 
     if do_retry:
-        back = 0
-        for row in unresolvable:
-            video_id = row['video_id']
-            found = locate_video_file(video_id)
-            if found is None:
-                continue
-            print(f"  {video_id}: file found at {found} -> dlc_queued")
+        _retry_unresolvable(db, unresolvable, dry_run)
+
+
+def _retry_unresolvable(db, unresolvable, dry_run: bool) -> int:
+    """--retry: put back an 'unresolvable' video whose file this GPU node now
+    holds. Returns how many were (or would be) put back.
+
+    WHY so narrow: it used to search everywhere (the filed folder and the
+    posed folder included) and force 'dlc_queued' on any machine. On the
+    processing server no work step selects 'dlc_queued', so the row was
+    stranded there; on a GPU node a filed or posed copy is refused for pose
+    and parked again. Now:
+      * processing server: nothing is changed -- its watcher takes a posed
+        video back by itself (the posed-folder scan), so it says so;
+      * GPU node: only a copy in THIS node's DLC queue is queued; a copy at the
+        top of the shared singles folder is left for the singles intake,
+        which claims it properly (its row gets the shared-folder reason the
+        intake re-drives); any other copy is listed and left alone."""
+    from mousereach.config import Paths, WatcherConfig
+    from mousereach.watcher import single_claim
+    from mousereach.watcher.locate import locate_video_file
+
+    try:
+        mode = WatcherConfig.load().mode
+    except Exception as e:
+        print(f"ERROR: could not read this machine's watcher settings: {_ascii(e)}",
+              file=sys.stderr)
+        sys.exit(1)
+    if mode == 'processing_server':
+        print("This is a processing server: --retry changes nothing here.")
+        print("Its watcher takes a video back by itself once the video and its pose")
+        print("are in the posed folder (Processing/Posed) again; nothing needs to be")
+        print("forced. 'mousereach-watch-unresolvable --list' shows why each one waits.")
+        return 0
+
+    queue = Path(Paths.DLC_QUEUE) if Paths.DLC_QUEUE else None
+    keep_reasons = (single_claim.DUPLICATE_OF_CLAIM_REASON,) + single_claim.REDRIVE_REASONS
+    back = shared = 0
+    for row in unresolvable:
+        video_id = row['video_id']
+        local = queue / f"{video_id}.mp4" if queue else None
+        try:
+            in_queue = local is not None and local.is_file()
+        except OSError:
+            in_queue = False
+        if in_queue:
+            print(f"  {video_id}: in this node's DLC queue ({local}) -> dlc_queued")
             if not dry_run:
                 db.force_state(video_id, 'dlc_queued',
-                               reason="file has since appeared on this node",
-                               source_path=str(found), current_path=str(found),
+                               reason="a person's retry: the file is in this node's DLC queue",
+                               source_path=str(local), current_path=str(local),
                                error_message=None)
             back += 1
-        print()
-        print(f"{'Would return' if dry_run else 'Returned'} {back} video(s) to the pipeline.")
+            continue
+        found = locate_video_file(video_id, search_archive=True, search_staging=True)
+        if found is None:
+            continue
+        if single_claim.in_front_door(found):
+            reason = row.get('error_message') or ''
+            if reason.startswith(keep_reasons):
+                print(f"  {video_id}: in the shared singles folder; already waiting "
+                      f"for the intake ({reason[:60]}) -- left as it is")
+                continue
+            print(f"  {video_id}: in the shared singles folder ({found}) -> left for "
+                  f"the intake to claim it")
+            if not dry_run:
+                db.mark_unresolvable(
+                    video_id, f"{single_claim.SHARED_REASON}: put back for the intake "
+                              f"by a person's retry ({found})")
+            shared += 1
+            continue
+        print(f"  {video_id}: a copy is at {found}, which is not this node's (filed, "
+              f"posed for the server, or another node's claim) -- left as it is")
+    print()
+    print(f"{'Would return' if dry_run else 'Returned'} {back} video(s) from this "
+          f"node's DLC queue to the pipeline; {shared} left for the singles intake.")
+    return back + shared
