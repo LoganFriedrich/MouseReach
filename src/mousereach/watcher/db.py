@@ -577,9 +577,16 @@ class WatcherDB:
         clearing cannot be undone from the database, and it is done by
         whichever program happens to open the database first, with nobody
         watching. So BEFORE the UPDATE the log gets how many rows per state
-        and every (video, state, scope) about to be cleared -- enough to put
-        each value back by hand. The rows are read and cleared under one
-        write lock, so the rows in the log are exactly the rows cleared."""
+        and every (video, state, scope) about to be cleared. The rows are read
+        and cleared under one write lock, so the rows in the log are exactly
+        the rows cleared. Those lines are enough to put each value back by hand
+        ONLY if they reach a log file that is kept: they go to the logger of
+        whichever program opened the database first. The watcher keeps its
+        log, so when the watcher opens it first the record is there; when a
+        dashboard or control window opens it first, the lines go to that
+        program's logger and may never be written anywhere. Anyone who must be
+        able to undo the clearing copies the database before the first start
+        of this version, and puts values back from that copy."""
         marks = ",".join("?" * len(REPROCESS_SCOPE_STATES))
         where = f"reprocess_scope IS NOT NULL AND state NOT IN ({marks})"
         states = tuple(sorted(REPROCESS_SCOPE_STATES))
