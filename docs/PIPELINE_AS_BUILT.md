@@ -3359,3 +3359,31 @@ status line "retrying after a failure" says.
 reasons), read by `ProcessingOrchestrator._run_pipeline`; the scope is wiped in
 `ProcessingOrchestrator._gate_held`, at filing in `_archive_to_nas` (both roles) and in
 `review_return._return_to_processing`. Tests in `tests/test_filed_rerun_skips_checks.py`.
+
+## Update: a stage whose version was never recorded starts the re-run at that stage
+
+**Before.** A filed video's processing manifest can lack a stage's version ("not recorded":
+`not_run`, `unknown`, empty). The version scan counted such a video as out of date, as it should,
+but chose the start stage from the stages that ran at an OLD version only. A manifest whose only
+gap was the kinematics version therefore gave an empty list, and an empty list means "start at
+segmentation": all four algorithms, the quality triage and the hand-score comparison were run
+again on a filed video, and it could be sent back to a person. A stale reach-assignment version
+did the same, because assignment had no start stage in the scan's map.
+
+**Now.** A stage that was never recorded counts like a stale one, at its own stage, and the re-run
+starts at the earliest stage either list names:
+
+| Out of date or not recorded | Re-run starts at |
+|---|---|
+| segmenter | segmentation |
+| reach detector | reach |
+| outcome detector, or reach assignment (it is recomputed with the outcomes) | outcome |
+| kinematic extractor only | kinematics (no algorithm, no quality triage, no hand-score check) |
+
+`mousereach-version-check` lists a not-recorded stage as `<stage> (not recorded)` beside the stale
+ones, so the reason a video is marked is visible.
+
+**Where it lives.** `watcher/reprocessor.py` (`_STAGE_FOR_COMPONENT`, `earliest_stale_stage`, the
+mark side of `ReprocessingScanner.scan`). Tests in `tests/test_version_scan_start_stage.py`
+(including one that fails if a stage tracked in `pipeline/manifest.py` `TRACKED_STAGES` has no
+start stage).

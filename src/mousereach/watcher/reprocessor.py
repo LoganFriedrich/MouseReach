@@ -24,10 +24,17 @@ logger = logging.getLogger(__name__)
 # Dependency-aware reprocessing: map each version-tracked component to its pipeline
 # stage, in order. Given the stale components we re-run from the EARLIEST stale
 # post-DLC stage and reuse the still-current upstream outputs.
+#
+# Every stage in pipeline.manifest.TRACKED_STAGES needs a line here (a test
+# checks it): a component missing from this map is ignored, and a video whose
+# only stale or unrecorded component is ignored is re-run from segmentation.
+# Reach assignment has no start stage of its own -- the pipeline recomputes it
+# whenever it recomputes outcomes -- so it starts at 'outcome'.
 _STAGE_FOR_COMPONENT = {
     "segmenter": "segmentation",
     "reach_detector": "reach",
     "outcome_detector": "outcome",
+    "assignment": "outcome",
     "kinematic_extractor": "kinematics",
 }
 _POST_DLC_ORDER = ["segmentation", "reach", "outcome", "kinematics"]
@@ -438,8 +445,18 @@ class ReprocessingScanner:
                             else:
                                 scope = 'full'  # genuinely needs a new pose
                         else:
-                            scope = earliest_stale_stage(comparison['stale_components'])
-                        stale = list(comparison['stale_components'])
+                            # A stage the manifest never recorded a version for
+                            # counts like a stale one, at ITS stage. WHY: only
+                            # the stale list used to be passed, so a manifest
+                            # missing nothing but its kinematics version gave
+                            # an empty list and a re-run from segmentation with
+                            # every check, instead of kinematics only.
+                            scope = earliest_stale_stage(
+                                list(comparison['stale_components'])
+                                + list(comparison.get('unrecorded_components') or []))
+                        stale = list(comparison['stale_components']) + [
+                            f"{c} (not recorded)"
+                            for c in (comparison.get('unrecorded_components') or [])]
                         if review_pending:
                             stale.append('human_review')
                     else:
