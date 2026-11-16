@@ -4469,3 +4469,37 @@ path would have moved a filed video's results. Now:
 For an operator: nothing to do. Where it lives: `watcher/locate.py` (`is_in_archive`);
 `DLCOrchestrator._stage_to_nas`; `watcher/coordination.py` `_file_on_this_node`; `watcher/cli.py`
 `main_unresolvable`. Tests in `tests/test_hand_off_moves_only_own_files.py`.
+
+**A GPU node works its DLC-queue copy only while it holds the video.** The rule is "a node either
+holds the claim or holds no copy it works". A node gives a claim back when its pose fails, when a
+hand-off fails (the claim is no longer kept alive) or when it pauses; when the give-back could not
+confirm the shared copy, the node kept its local DLC-queue copy -- and at its next start (or when a
+person queued the row by hand) it posed that copy again while another node posed the shared one.
+Now, at the start of every pose and when the watcher starts (`_recover_local_dlc_queue`, for rows
+that are `unresolvable`, or `failed` with retries left), a DLC-queue copy is NOT worked when this node holds no claim
+on the video (`Single_Animal/.inflight/<this node>/`), no re-pose was requested for it, and the
+video is also:
+- at the top of the shared singles folder -- the row stays `unresolvable` with the shared-folder
+  reason, and the singles intake claims it properly (on this node or another);
+- in another node's claim folder -- `unresolvable`, naming that node;
+- already in the posed folder, the video AND a pose of it -- `unresolvable`, naming the posed copy.
+  A video there without a pose is a hand-off that stopped half way (the video is copied first);
+  the node finishes the hand-off from its own copies instead (`failed` with retries left ->
+  `dlc_complete` when its pose is beside the queue copy).
+A `failed` row that has used all its retries (`error_count` has reached `watcher.max_retries`) is
+not looked at by the restart at all: it stays `failed` for a person (`mousereach-watch-reprocess`),
+and the log says "failed with no retries left ... the row stays 'failed'". WHY: re-labelling it
+`unresolvable` took it off the failed list, the singles intake then set it back to `validated`, and
+the video was posed again once per restart with no limit.
+A video in none of those places (one this node cut and could not publish, or one dropped straight
+into its DLC queue) is worked as before, and so is a video this node holds the claim on. The
+processing log shows step `dlc`, status `skipped` with the reason. A DLC-queue copy that is not
+worked for one of these reasons is a machine leftover: the node DELETES `DLC_Queue/<video>.mp4` once
+the copy it found elsewhere is confirmed to be the same size (the log says "deleted its DLC_Queue
+copy ...; the current copy is ..."). If the sizes differ, or the other copy cannot be read, the
+queue copy stays where it is -- it may be the only good copy -- and is not worked; nothing is ever
+moved to a side folder. For an operator: nothing to do.
+Known leftover (not closed here): a failed pose or hand-off is still retried only at a restart on
+the node that failed it, and the CPU-pool fix below covers its own hand-off only.
+Where it lives: `DLCOrchestrator._queue_copy_elsewhere`, `_drop_superseded_queue_copy`, `_process_single_dlc`,
+`_recover_local_dlc_queue`. Tests in `tests/test_queue_copy_needs_the_claim.py`.

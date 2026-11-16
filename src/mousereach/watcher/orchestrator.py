@@ -3686,7 +3686,40 @@ class DLCOrchestrator(BaseOrchestrator):
                 # put it back in the pipeline. Without this the terminal state
                 # would be a one-way door and a video that arrived late would sit
                 # in the database forever with its file on disk beside it.
-                if existing.get('state') == 'unresolvable':
+                # Neither an 'unresolvable' nor a 'failed' row is put back to
+                # work from its DLC-queue copy while the video is also in a
+                # shared place and this node holds no claim on it
+                # (_queue_copy_elsewhere): a restart used to pose such
+                # a copy while another node posed the shared one.
+                #
+                # A 'failed' row is looked at only while it has retries left
+                # (error_count < watcher.max_retries), the same limit the
+                # retry below keeps. WHY: re-labelling a failed row
+                # 'unresolvable' takes it off the failed list; the singles
+                # intake then sets a re-driven reason back to 'validated', so a
+                # video that had used up its retries was posed again once per
+                # restart, with no limit. Past the limit the row stays 'failed'
+                # for a person (mousereach-watch-reprocess).
+                max_retries = getattr(self.config, 'max_retries', 3)
+                if max_retries is None:
+                    max_retries = 3
+                retries_left = int(existing.get('error_count') or 0) < int(max_retries)
+                if existing.get('state') == 'failed' and not retries_left:
+                    logger.info(f"{video_id}: failed with no retries left "
+                                f"({existing.get('error_count')} of {max_retries}); its "
+                                f"DLC_Queue copy is not worked and the row stays 'failed' "
+                                f"for a person (mousereach-watch-reprocess)")
+                    continue
+                elsewhere = (self._drop_superseded_queue_copy(
+                                 video_id, mp4, existing.get('mark_reason'))
+                             if existing.get('state') in ('unresolvable', 'failed')
+                             else None)
+                if elsewhere:
+                    if (existing.get('error_message') or '') != elsewhere:
+                        self.db.mark_unresolvable(video_id, elsewhere)
+                    logger.info(f"{video_id}: its DLC_Queue copy is not worked: "
+                                f"{elsewhere}")
+                elif existing.get('state') == 'unresolvable':
                     self.db.force_state(
                         video_id, 'dlc_queued',
                         reason="file has since appeared in DLC_Queue",
@@ -4615,6 +4648,105 @@ class DLCOrchestrator(BaseOrchestrator):
         return (f"not posed: the copy found ({path}) is outside this node's DLC "
                 f"queue and its own claim folder")
 
+    def _queue_copy_elsewhere(self, video_id: str, mark_reason: str = None):
+        """None when this node may work its DLC-queue copy of ``video_id``;
+        otherwise why not (words for a person; the shared-folder case starts
+        with single_claim.SHARED_REASON so the singles intake re-drives it).
+
+        The rule is "a node either holds the claim or holds no copy it
+        works": a DLC-queue copy is worked when this node holds the video's
+        claim (``.inflight/<this host>/``), when a re-pose was requested
+        (``mark_reason``; the request is its claim), or when the video is in
+        no shared place at all (a video this node cut and could not publish,
+        or one a person dropped straight into the queue). It is NOT worked
+        when the video is also
+          * at the top of the shared singles folder (given back, for any node),
+          * in another node's claim folder (that node is posing it), or
+          * in the posed folder (already handed on for the processing server)
+            -- the video AND a pose of it. A bare video there is a hand-off
+            that stopped half way (the video is copied first): the pose is
+            still only in this node's queue and the server never takes in a
+            video without one, so the node must finish the hand-off, not
+            park the row.
+        WHY: a node that gave a claim back but kept its queue copy (the
+        give-back could not confirm the shared copy; a failed pose or
+        hand-off) used to pose that copy again -- at its next start, or when
+        a hand retry queued it -- while another node posed the shared one.
+
+        Never raises: a share that cannot be read counts as "not there", so
+        a node cut off from the share keeps working its own queue as before.
+
+        Returns ``(reason, path of the copy found)`` -- the path is what
+        _drop_superseded_queue_copy compares the local copy against -- or None.
+        """
+        from mousereach.watcher import repose
+        if (mark_reason or '').startswith(repose.REASON_PREFIX):
+            return None
+        try:
+            mine = single_claim.claimed_path(video_id, self.hostname)
+            if mine is not None and mine.is_file():
+                return None
+        except OSError:
+            pass
+        try:
+            door = single_claim.front_door()
+            shared = door / f"{video_id}.mp4" if door else None
+            if shared is not None and shared.is_file():
+                return (f"{single_claim.SHARED_REASON}: this node holds no claim on its "
+                        f"DLC-queue copy, and the video is back in the shared singles "
+                        f"folder ({shared}); not posed from the queue copy", shared)
+        except OSError:
+            pass
+        try:
+            holder = single_claim.inflight_ids().get(video_id)
+        except Exception:
+            holder = None
+        if holder and holder != self.hostname:
+            try:
+                theirs = single_claim.claimed_path(video_id, holder)
+            except Exception:
+                theirs = None
+            return (f"not posed: {holder} holds it for pose (it is in "
+                    f"{single_claim.INFLIGHT_DIR}/{holder}), and this node holds no "
+                    f"claim on its DLC-queue copy", theirs)
+        try:
+            staging = getattr(self, 'staging_dir', None) or Paths.DLC_STAGING
+            posed = Path(staging) / f"{video_id}.mp4" if staging else None
+            if (posed is not None and posed.is_file()
+                    and any(Path(staging).glob(f"{video_id}DLC*.h5"))):
+                return (f"not posed: it is already in the posed folder ({posed}) for "
+                        f"the processing server, and this node holds no claim on its "
+                        f"DLC-queue copy", posed)
+        except OSError:
+            pass
+        return None
+
+    def _drop_superseded_queue_copy(self, video_id: str, local: Path,
+                                    mark_reason: str = None) -> Optional[str]:
+        """When this node's DLC-queue copy of ``video_id`` is not worked because
+        the video is elsewhere (_queue_copy_elsewhere), delete the queue copy
+        once that other copy is confirmed the same size
+        (_remove_local_queue_copy). Returns the reason it is not worked, or
+        None when it may be worked.
+
+        WHY delete: a queue copy whose video is confirmed elsewhere is a
+        machine leftover -- the copy that counts is the shared, claimed or
+        posed one -- and a leftover is not kept or set aside once a current
+        copy is confirmed. Kept, it only waited for a person to delete it by
+        hand and could be posed again later. A copy whose twin could NOT be
+        confirmed the same size is left where it is (logged), because it may
+        then be the only good copy."""
+        found = self._queue_copy_elsewhere(video_id, mark_reason)
+        if not found:
+            return None
+        reason, other = found
+        if other is not None:
+            self._remove_local_queue_copy(video_id, Path(local), Path(other))
+            if not Path(local).exists():
+                logger.info(f"{video_id}: deleted its DLC_Queue copy {local}; the "
+                            f"current copy is {other}")
+        return reason
+
     def _process_single_dlc(self, work: dict):
         """Run DLC inference on a single video.
 
@@ -4698,6 +4830,19 @@ class DLCOrchestrator(BaseOrchestrator):
                 self.db.mark_unresolvable(video_id, refusal)
             logger.warning(f"{video_id}: {refusal}")
             return False
+
+        # A copy in this node's own DLC queue is posed only while this node
+        # holds the video (_queue_copy_elsewhere says why).
+        if (Paths.DLC_QUEUE and current_path.parent is not None
+                and os.path.normcase(os.path.abspath(str(current_path.parent)))
+                == os.path.normcase(os.path.abspath(str(Paths.DLC_QUEUE)))):
+            elsewhere = self._drop_superseded_queue_copy(
+                video_id, current_path, video_data.get('mark_reason'))
+            if elsewhere:
+                self.db.mark_unresolvable(video_id, elsewhere)
+                self.db.log_step(video_id, 'dlc', 'skipped', message=elsewhere)
+                logger.warning(f"{video_id}: {elsewhere}")
+                return False
 
         logger.info(f"Running DLC on {video_id}")
 
