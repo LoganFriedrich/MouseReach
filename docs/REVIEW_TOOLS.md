@@ -569,16 +569,23 @@ the algorithm versions and the pose model that are current now; if anything
 changed while the video waited, the watcher starts at that step instead and
 makes that step's results and every later one again.
 
-**What happens to your answers when results are made again.** They are kept
-and used. The watcher does not ask you again: each answer is applied to the
-pellet whose frames it covers, on the remade results -- which you have not
-seen. The same is true after a re-segmentation: reaches, pellet outcomes and
-reach assignment are made again on the new cuts, an earlier answer whose
-frames still match a pellet is applied to it, and one whose frames match no
-pellet is kept in the file but applied to nothing. The video comes back to
-you only if the review gate finds a question no answer covers. Throwing away
-earlier answers when the cuts change, or sending a video back to you because
-results you answered were made again, is not built yet.
+**What happens to your answers when results are made again.** On the SAME
+cuts, they are kept and used, as designed: the watcher does not ask you again;
+each answer is applied to the pellet whose frames it covers, on the remade
+reaches, outcomes or reach assignment. The video comes back to you only if the
+review gate finds a question no answer covers.
+
+**Known defect: answers are still carried across a re-cut.** The design rule is
+that new cuts void every answer given after segmentation: your earlier pellet
+outcomes and causal reaches should be kept on file as a record only and asked
+again. The watcher does not do that yet. When a video is re-cut -- after a
+deep-review release, or when a triage video's automatic cuts turned out to be
+out of date while it waited and the watcher started it again at segmentation
+-- an earlier answer whose frames still match a pellet on the new cuts is
+applied to it, and one whose frames match no pellet is kept in the file but
+applied to nothing. Until this is fixed, if you re-cut a video whose pellets
+you had already answered, check those pellets again in the review tool rather
+than trusting that the old answers still fit.
 
 **If you get a video that is not actually broken**, press *Skip this video* in
 the re-segmentation tool (it stays in the queue), or clear it through Deep

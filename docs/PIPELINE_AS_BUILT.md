@@ -3641,13 +3641,22 @@ work and extra ways to fail a cleared video.
    remade on the new ones. A bundle routed before this record existed resumes after the step its
    queue stands for (deep review: segmentation; triage: outcome).
 
-   **What this does NOT do to the person's answers.** The review file stays with the video. The
-   gate counts a segment it answers as answered, and kinematics applies each answer to the segment
-   whose frames it covers -- on whatever outputs the run made. So when an output is remade (an
-   out-of-date output, point 4, or a deep-review return), the answers are applied to outputs the
-   person did not see; an answer whose frames match no segment after a re-cut is kept in the file
-   and applied to nothing. Voiding a person's earlier answers when the cuts change, or sending a
-   video whose answered outputs were remade back to triage, is not built yet.
+   **The person's answers on the SAME cuts persist, as designed.** The review file stays with the
+   video. The gate counts a segment it answers as answered, and kinematics applies each answer to
+   the segment whose frames it covers, on the reaches, outcomes or assignment the run remade
+   (an out-of-date output, point 4).
+
+   **Known defect: answers are still carried across a re-cut.** The design rule is that
+   re-segmentation voids everything after it, a person's earlier outcome and causal-reach answers
+   included: they are kept as a record only and asked again, never carried by frames or by segment
+   number. Two paths still break that rule: a deep-review return (the cuts were redone, and the
+   old answers are applied by frames to the new segments; one that matches no segment is kept in
+   the file and applied to nothing), and a triage return whose algorithm cuts are out of date or
+   unreadable (point 4 moves its start back to segmentation, the segmenter cuts again, and the old
+   answers are applied the same way). This is not new -- before this change every return re-cut
+   the video -- and it is scheduled for removal by the review-answer-records work (saving cuts
+   voids later answers and re-runs from reaches). Until then, re-check already-answered pellets
+   after a re-cut instead of trusting the carried answers.
 3. **Every later step runs.** The quality triage, the hand-score comparison and the review gate
    always run on a returned video -- they come after every algorithm step -- and then kinematics.
    A returned video is never treated as a filed video's "downstream calculation only" re-run,

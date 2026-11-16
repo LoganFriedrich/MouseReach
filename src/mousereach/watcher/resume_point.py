@@ -23,17 +23,24 @@ kinematics. The person's answers are applied from the review file by the gate
 and the feature extractor; no algorithm reads them, so remaking the steps
 before the one that sent the video would only redo work.
 
-WHAT HAPPENS TO THE PERSON'S ANSWERS WHEN AN OUTPUT IS REMADE. They are not
-voided. The review file stays in the processing folder; the gate counts a
-segment it answers as answered, and the feature extractor applies each answer
-to the segment whose frames it covers -- on the remade outputs, which the
-person did not see. That holds when the start moves earlier because an output
-is out of date (below), and on a deep-review return, where reach, outcome and
-assignment are remade on the new cuts: an answer whose frames still match a
-segment is applied to it, one whose frames match no segment is left unapplied
-(causal_review_io.index_review_by_segment). Voiding a person's earlier answers
-when the cuts change, or sending a video whose answered outputs were remade
-back to triage, is NOT built here.
+WHAT HAPPENS TO THE PERSON'S ANSWERS WHEN AN OUTPUT IS REMADE. On the SAME
+cuts they persist, as designed: the review file stays in the processing folder;
+the gate counts a segment it answers as answered, and the feature extractor
+applies each answer to the segment whose frames it covers, on the remade reach,
+outcome or assignment outputs. That is the case when the start moves earlier
+to reach, outcome or assignment because an output is out of date (below).
+
+KNOWN DEFECT, NOT THE DESIGN: answers are still carried across a re-cut. The
+design rule is that re-segmentation voids everything after it, a person's
+earlier outcome and causal-reach answers included: they are kept as a record
+only and asked again, never carried by frames or by segment number. Two paths
+here still re-cut and then apply the old answers by frames
+(causal_review_io.index_review_by_segment): the deep-review return (resumes at
+reach on the new cuts) and a triage return whose algorithm cuts are out of date
+or unreadable (current_start moves its start back to segmentation, so the
+segmenter cuts again). The voiding is owed by the review-answer-records work
+(saving cuts voids later answers); this module only decides where a run starts
+and does not touch the review file.
 
 WHY deep review always resumes at reach: deep review is where cuts are fixed,
 and everything computed from the cuts is remade on the new ones. Segmentation
