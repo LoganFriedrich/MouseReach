@@ -22,18 +22,47 @@ import subprocess
 from pathlib import Path
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
-from mousereach.config import Paths, AnimalID
+from mousereach.config import Paths, AnimalID, ConfigurationError
 
 
 # =============================================================================
-# CONFIGURATION - Derived from environment variables
+# CONFIGURATION - default folders, read from the machine's config WHEN USED
 # =============================================================================
 
-# Default paths - now configured via MouseReach_NAS_DRIVE and MouseReach_PROCESSING_ROOT
-DEFAULT_MULTI_ANIMAL = Paths.MULTI_ANIMAL_SOURCE
-DEFAULT_SINGLE_ANIMAL = Paths.SINGLE_ANIMAL_OUTPUT
-DEFAULT_DLC_QUEUE = Paths.DLC_QUEUE
-DEFAULT_ARCHIVE = Paths.ANALYZED_OUTPUT / "Multi-Animal"
+# Which configured folder each default comes from: (Paths attribute, subfolder).
+# WHY these are looked up at call time and not as module constants: the archive
+# default used to be built at import (Paths.ANALYZED_OUTPUT / "Multi-Animal"),
+# and on a machine without a MouseReach config that is None / str, so merely
+# IMPORTING the cropper -- and with it mousereach.video_prep.core, the prep
+# window and every test that touches either -- crashed with a TypeError that
+# said nothing about setup. Looking the folder up when a function actually
+# needs it keeps behaviour identical on a configured machine, lets an
+# unconfigured one import the module (and pass explicit folders), and turns a
+# missing default into a message naming the command that fixes it.
+_DEFAULT_DIRS = {
+    "multi_animal": ("MULTI_ANIMAL_SOURCE", None),
+    "single_animal": ("SINGLE_ANIMAL_OUTPUT", None),
+    "dlc_queue": ("DLC_QUEUE", None),
+    "archive": ("ANALYZED_OUTPUT", "Multi-Animal"),
+}
+
+
+def default_dir(which: str) -> Path:
+    """The configured default folder `which` (see _DEFAULT_DIRS), read now.
+
+    Raises ConfigurationError naming mousereach-setup when the setting it
+    hangs off (nas_root or processing_root) is not configured.
+    """
+    attr, sub = _DEFAULT_DIRS[which]
+    base = getattr(Paths, attr)
+    if base is None:
+        raise ConfigurationError(
+            f"No default folder for '{which}': MouseReach is not configured "
+            f"on this machine (Paths.{attr} is unset).\n\n"
+            "Run: mousereach-setup\n\n"
+            "or pass the folder explicitly."
+        )
+    return Path(base) / sub if sub else Path(base)
 
 # Crop coordinates: (width, height, x_offset, y_offset)
 # Collage is 1920x1080, grid is 4x2, each cell is 480x540
@@ -214,8 +243,8 @@ def crop_all(
     verbose: bool = True
 ) -> dict:
     """Crop all collages in a directory."""
-    input_dir = Path(input_dir or DEFAULT_MULTI_ANIMAL)
-    output_dir = Path(output_dir or DEFAULT_SINGLE_ANIMAL)
+    input_dir = Path(input_dir) if input_dir else default_dir("multi_animal")
+    output_dir = Path(output_dir) if output_dir else default_dir("single_animal")
     
     mkv_files = sorted(input_dir.glob("*.mkv"))
     
@@ -259,8 +288,8 @@ def copy_to_dlc_queue(
     verbose: bool = True
 ) -> int:
     """Copy/move cropped videos to DLC queue."""
-    source_dir = Path(source_dir or DEFAULT_SINGLE_ANIMAL)
-    dest_dir = Path(dest_dir or DEFAULT_DLC_QUEUE)
+    source_dir = Path(source_dir) if source_dir else default_dir("single_animal")
+    dest_dir = Path(dest_dir) if dest_dir else default_dir("dlc_queue")
     dest_dir.mkdir(parents=True, exist_ok=True)
     
     mp4_files = list(source_dir.glob("*.mp4"))
@@ -291,8 +320,8 @@ def archive_collages(
     verbose: bool = True
 ) -> int:
     """Move processed collages to archive."""
-    source_dir = Path(source_dir or DEFAULT_MULTI_ANIMAL)
-    dest_dir = Path(dest_dir or DEFAULT_ARCHIVE)
+    source_dir = Path(source_dir) if source_dir else default_dir("multi_animal")
+    dest_dir = Path(dest_dir) if dest_dir else default_dir("archive")
     dest_dir.mkdir(parents=True, exist_ok=True)
     
     mkv_files = list(source_dir.glob("*.mkv"))

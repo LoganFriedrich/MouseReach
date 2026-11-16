@@ -3822,3 +3822,9 @@ runs only the checks; an output that is missing is remade, with every step after
 `review_return._return_to_processing` (`_resume_stage`) writes the resume point;
 `ProcessingOrchestrator._run_pipeline` / `_resume_point` read it; `watcher/db.py` adds the two
 columns and ends them with their round (`RESUME_POINT_STATES`). Tests in `tests/test_review_return_resumes_after_the_step.py`.
+
+## Update 2026-11-16: the cropper loads on a machine that is not set up yet
+
+**Before.** The hand-run cropping code (`video_prep/core/cropper.py`, behind `mousereach-crop`, `mousereach-prep` and the Video Prep panel) worked out its default archive folder, `<nas_root>/Analyzed/Multi-Animal`, the moment it was loaded. On a machine with no `nas_root` that sum fails, so just loading the cropper -- and with it the Video Prep panel and every piece of code that imports it -- stopped with `TypeError: unsupported operand type(s) for /: 'NoneType' and 'str'`, a message that says nothing about setup.
+
+**Now.** The default folders (collages to cut, cut singles, the pose queue, the collage archive) are looked up only when a command actually needs one (`cropper.default_dir`). On a set-up machine they are exactly the same folders as before. On a machine that is not set up, everything loads; giving the folders explicitly (`-i`, `-o`) works; and leaving one out stops with "MouseReach is not configured ... Run: mousereach-setup". Tests: `tests/test_cropper_imports_without_config.py`.
