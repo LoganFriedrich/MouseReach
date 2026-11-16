@@ -85,7 +85,7 @@ def test_a_manifest_missing_only_its_kinematics_version_reruns_kinematics_only(a
     _filed(cohort, dict(CURRENT, kinematic_extractor="not_run"))
     db = DB(archived=[STEM])
     summary = _scan(nas, db)
-    assert db.marks[STEM] == "kinematics"
+    assert db.marks.get(STEM) == "kinematics"
     listed = summary["outdated_videos"][0]["stale_components"]
     assert "kinematic_extractor (not recorded)" in listed
 
@@ -95,7 +95,7 @@ def test_an_unrecorded_stage_starts_the_rerun_at_its_own_stage(archive):
     _filed(cohort, dict(CURRENT, reach_detector="unknown"))
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks[STEM] == "reach"
+    assert db.marks.get(STEM) == "reach"
 
 
 def test_an_unrecorded_stage_earlier_than_a_stale_one_wins(archive):
@@ -103,7 +103,7 @@ def test_an_unrecorded_stage_earlier_than_a_stale_one_wins(archive):
     _filed(cohort, dict(CURRENT, outcome_detector="", kinematic_extractor="4.9"))
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks[STEM] == "outcome"
+    assert db.marks.get(STEM) == "outcome"
 
 
 def test_a_stale_assignment_starts_at_outcome_not_segmentation(archive):
@@ -111,7 +111,7 @@ def test_a_stale_assignment_starts_at_outcome_not_segmentation(archive):
     _filed(cohort, dict(CURRENT, assignment="0.9"))
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks[STEM] == "outcome"
+    assert db.marks.get(STEM) == "outcome"
 
 
 def test_every_tracked_stage_has_a_start_stage():
@@ -148,7 +148,7 @@ def test_a_review_saved_for_a_filed_video_with_no_manifest_reruns_its_kinematics
     _review_for(tmp_path, monkeypatch)
     db = DB(archived=[STEM])
     summary = _scan(nas, db)
-    assert db.marks[STEM] == "kinematics"
+    assert db.marks.get(STEM) == "kinematics"
     assert summary["no_manifest"] == 0
 
 
@@ -179,7 +179,7 @@ def test_ground_truth_saved_after_filing_reruns_the_kinematics(archive):
     _gt(cohort, "2099-01-02T09:00:00")          # after the manifest's created_at
     db = DB(archived=[STEM])
     summary = _scan(nas, db)
-    assert db.marks[STEM] == "kinematics"
+    assert db.marks.get(STEM) == "kinematics"
     assert summary["outdated_videos"][0]["stale_components"] == ["ground_truth"]
 
 
@@ -214,7 +214,7 @@ def test_the_rerun_stamps_the_ground_truth_and_the_next_scan_leaves_it(archive, 
     _gt(cohort, "2099-01-03T09:00:00", body="changed")
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks[STEM] == "kinematics"
+    assert db.marks.get(STEM) == "kinematics"
 
 
 def test_kinematics_that_applied_no_ground_truth_owe_one_filed_later(archive):
@@ -227,7 +227,7 @@ def test_kinematics_that_applied_no_ground_truth_owe_one_filed_later(archive):
     _gt(cohort, "2099-01-01T09:00:00")          # before created_at
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks[STEM] == "kinematics"
+    assert db.marks.get(STEM) == "kinematics"
 
 
 def test_a_marked_video_whose_ground_truth_is_still_owed_is_not_unmarked(archive):
