@@ -520,7 +520,9 @@ def test_a_never_filed_rerun_keeps_its_own_files_when_one_copy_down_fails(orch, 
     assert "no pose and no video found" not in row["error_message"]
     # What was copied down for the try was set aside, and the row says where.
     aside = orch.processing_dir.parent / "_finished_elsewhere"
-    assert {p.name for p in aside.rglob(f"{VID}*")} == {f"{VID}_pellet_outcomes.json"}
+    # Each try's copies are kept apart (a later try's set-aside never replaces
+    # an earlier one's files), so the name can appear once per try.
+    assert {p.name for p in aside.rglob(f"{VID}*") if p.is_file()} == {f"{VID}_pellet_outcomes.json"}
     assert str(orch._set_aside_folder()) in row["error_message"]
     assert copy_down.ran == []
 
@@ -725,3 +727,46 @@ def test_a_rerun_that_cannot_start_never_sets_a_persons_only_copy_aside(
     assert name in row["error_message"] and "no other copy" in row["error_message"]
     assert not list((orch.processing_dir.parent / "_finished_elsewhere").rglob(name))
     assert copy_down.ran == []
+
+
+def test_a_second_set_aside_the_same_day_never_replaces_the_first(orch):
+    """A filed video's re-run fails for good twice in one day. Each failed
+    run's files are set aside into the same dated folder; the second set
+    must not replace the first set's files of the same name, and the row
+    names the folder the second set really went to."""
+    _filed(orch)
+    for n in (f"{VID}.mp4", POSE, f"{VID}_segments.json"):
+        (orch.processing_dir / n).write_text("first run", encoding="utf-8")
+    _fail(orch, 3)
+    orch._select_work_item()
+    first = orch.db.get_video(VID)
+    assert first["state"] == "archived"
+
+    for n in (f"{VID}.mp4", POSE, f"{VID}_segments.json"):
+        (orch.processing_dir / n).write_text("second run", encoding="utf-8")
+    _fail(orch, 3)
+    orch._select_work_item()
+    second = orch.db.get_video(VID)
+    assert second["state"] == "archived"
+
+    aside = orch.processing_dir.parent / "_finished_elsewhere"
+    kept = sorted(p.read_text(encoding="utf-8")
+                  for p in aside.rglob(f"{VID}_segments.json"))
+    assert kept == ["first run", "second run"]             # both sets kept
+    assert not list(orch.processing_dir.glob(f"{VID}*"))   # nothing left behind
+    # The second row's message names the folder holding the second set.
+    where = [p.parent for p in aside.rglob(f"{VID}_segments.json")
+             if p.read_text(encoding="utf-8") == "second run"][0]
+    assert f"moved to {where})" in second["error_message"]
+
+
+def test_a_set_aside_never_moves_a_file_onto_one_already_there(orch):
+    """Belt and braces: told to move into a folder that already holds a file
+    of the same name, the set-aside leaves the file where it is."""
+    target = orch._set_aside_folder()
+    target.mkdir(parents=True)
+    (target / f"{VID}_segments.json").write_text("earlier", encoding="utf-8")
+    (orch.processing_dir / f"{VID}_segments.json").write_text("now", encoding="utf-8")
+    assert orch._set_aside_working_copies(VID, target=target) is None
+    assert (target / f"{VID}_segments.json").read_text(encoding="utf-8") == "earlier"
+    assert (orch.processing_dir / f"{VID}_segments.json").read_text(encoding="utf-8") == "now"

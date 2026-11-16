@@ -558,7 +558,11 @@ video left over when a run was refused because the video is in deep review.
 In the first two cases everything moved is either a copy of a file that is
 also somewhere else (in `Analyzed/`, or, for a review's answers, in the durable
 review store) or an output of the run that failed. A video's only copy of
-anything a person made is never moved here by those two. Four kinds of file
+anything a person made is never moved here by those two. A video can be
+set aside more than once on the same day (a try whose copy failed, then the
+run that failed for good); the second set then goes into its own sub-folder,
+`<video>_again_<time>/`, inside the dated folder, so it never replaces the
+first set's files, and the video's reason names the sub-folder. Four kinds of file
 count as made by a person: cuts set by hand (`_segments.json` saying
 `"boundary_source": "human"`), ground truth (any file with `ground_truth` in
 its name), the deep-review "cleared" marker (`_deep_review_cleared.json`) and

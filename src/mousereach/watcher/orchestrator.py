@@ -6070,7 +6070,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
           * the working copies in this machine's processing folder are set
             aside (moved, never deleted) into
             <processing_root>/_finished_elsewhere/<date>/<folder>/, the same
-            place the startup clean-up moves copies of finished videos; the
+            place the startup clean-up moves copies of finished videos, or a
+            "<video>_again_<time>" sub-folder of it when the video was set
+            aside there earlier the same day (_set_aside_destination); the
             error_message ends with that folder, so a person reading the row
             or the list below knows where the failed run's files went;
           * the list <NAS root>/attention/<host>_failed_reruns.json names the
@@ -6138,7 +6140,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             stamp = None
         try:
             message = f"{FAILED_RERUN_PREFIX}: {why}"
-            aside = self._set_aside_folder()
+            # Chosen before the row is written so the message names the
+            # folder the files really go to (a second set-aside the same day
+            # gets its own sub-folder, _set_aside_destination).
+            aside = self._set_aside_destination(video_id)
             if aside is not None and self._working_file_names(video_id):
                 message += f" (the failed run's working files were moved to {aside})"
             self.db.force_state(
@@ -6159,7 +6164,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             logger.error(f"{video_id}: could not put the row back to 'archived' after "
                          f"its re-run failed ({e}); it stays as it was")
             return
-        self._set_aside_working_copies(video_id)
+        self._set_aside_working_copies(video_id, target=aside)
         self._write_failed_rerun_attention()
 
     def _rerun_not_started_attempts(self, row) -> int:
@@ -6283,20 +6288,57 @@ class ProcessingOrchestrator(BaseOrchestrator):
         except Exception:
             return []
 
-    def _set_aside_working_copies(self, video_id: str, only=None) -> Optional[Path]:
-        """Move this video's files out of the local processing folder into
-        _set_aside_folder() (never delete). With ``only`` (a set of file
-        names), just those of its files. Returns the folder when at least one
-        file moved, else None. Never raises."""
-        moved = 0
-        target = None
+    def _set_aside_destination(self, video_id: str, only=None) -> Optional[Path]:
+        """The folder _set_aside_working_copies will move this video's files
+        into: _set_aside_folder() when none of the files to move already has
+        a namesake there, else a new sub-folder of it,
+        "<video>_again_<HHMMSS_microseconds>". None when no processing folder
+        or root is configured. Never raises.
+
+        WHY a sub-folder and never the same name: the dated folder is per
+        day, and a video can be set aside twice in one day (a copy-down that
+        failed on two tries, then the run that failed for good). Moving the
+        second set onto the first replaced the first set's files of the same
+        name, so the files a person might need to look at from the earlier
+        try were gone. Each set-aside keeps its own files."""
         try:
-            target = self._set_aside_folder()
+            base = self._set_aside_folder()
+            if base is None:
+                return None
+            names = [n for n in self._working_file_names(video_id)
+                     if only is None or n in only]
+            if not any((base / n).exists() for n in names):
+                return base
+            while True:
+                sub = base / f"{video_id}_again_{datetime.now():%H%M%S_%f}"
+                if not sub.exists():
+                    return sub
+        except Exception as e:
+            logger.warning(f"{video_id}: could not choose where to set its files aside ({e})")
+            return None
+
+    def _set_aside_working_copies(self, video_id: str, only=None,
+                                  target: Optional[Path] = None) -> Optional[Path]:
+        """Move this video's files out of the local processing folder into
+        ``target`` (default _set_aside_destination(); never delete). With
+        ``only`` (a set of file names), just those of its files. A file whose
+        namesake is already in the target is left where it is, with a
+        warning -- a set-aside never replaces a file set aside earlier.
+        Returns the folder when at least one file moved, else None. Never
+        raises."""
+        moved = 0
+        try:
+            if target is None:
+                target = self._set_aside_destination(video_id, only=only)
             if target is None:
                 return None
             folder = self.processing_dir
             for n in self._working_file_names(video_id):
                 if only is not None and n not in only:
+                    continue
+                if (target / n).exists():
+                    logger.warning(f"{video_id}: {n} not set aside -- {target} already "
+                                   f"holds a file of that name; left in the processing folder")
                     continue
                 target.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(Path(folder) / n), str(target / n))

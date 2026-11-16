@@ -3555,7 +3555,13 @@ below), the processing watcher:
 3. logs a `reprocess` step as failed, with the reason;
 4. moves this video's working files out of the local processing folder into
    `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted -- the same
-   place the start-up clean-up puts copies of finished videos);
+   place the start-up clean-up puts copies of finished videos). When that dated folder already
+   holds a file of the same name -- the video was set aside earlier the same day, by a try whose
+   copy failed or an earlier failed run -- this set goes into its own sub-folder,
+   `.../Processing/<video>_again_<HHMMSS_microseconds>/`, and step 2's message names that
+   sub-folder. WHY: the dated folder is per day; moving a second set onto the first replaced the
+   first set's files of the same name. A file that would still land on a namesake is left in the
+   processing folder with a warning in the log, never moved over it;
 5. lists the video in `<NAS root>/attention/<host>_failed_reruns.json`, which the Pipeline
    Dashboard's red panel shows ("needs a person"). The list is rewritten from the rows at start-up,
    after every such failure and after every version scan, so a video filed again drops off at the
@@ -3611,7 +3617,9 @@ Analyzed into its own processing folder. If any copy fails (usually a file locke
 or no processing folder is configured, the re-run has not started, and that is not yet a re-run
 that failed for good. For EVERY such video, filed or not, the watcher:
 1. moves the files THIS try copied down out of the processing folder into
-   `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted). WHY: a
+   `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted; a second
+   set the same day goes into its own `<video>_again_<time>/` sub-folder, as in step 4 above,
+   never over the first). WHY: a
    partly copied set left there used to be picked up by a retry and run on files that had not all
    arrived. A file that was ALREADY in the processing folder before the try is never moved. WHY:
    for a video that was never filed (a first pass that failed, then Re-run pressed) the processing
@@ -3710,7 +3718,7 @@ marker or review answers with no identical copy elsewhere -- that video shows as
 **Where it lives.** `watcher/orchestrator.py` `ProcessingOrchestrator._restore_filed_after_failed_rerun`
 (with `_is_filed_rerun`, `_filed_results_present`, `_filed_rerun_gave_up`, `_working_files_findable`,
 `_unfiled_person_files` (with `_unfiled_cuts_of_a_person`, `_same_content`,
-`_note_person_files_kept`), `_set_aside_working_copies`, `_set_aside_folder`,
+`_note_person_files_kept`), `_set_aside_working_copies`, `_set_aside_destination`, `_set_aside_folder`,
 `_write_failed_rerun_attention`), called from the retry bucket of `_select_work_item` and from
 `_rerun_could_not_start` (with `_rerun_start_wait_over`, which the outdated pick in
 `_select_work_item` uses), itself called from `_reprocess_video`; `watcher/db.py`
