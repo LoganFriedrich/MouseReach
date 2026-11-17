@@ -13,12 +13,19 @@ the feature extractor calls resolve_truth_layers() instead of applying causal
 review alone, so that GROUND TRUTH (and GT reach boundaries, which review never
 touches) also flow into the shipped numbers.
 
+Only what a person DETERMINED in the ground-truth file is ground truth: a reach
+whose start and end were both determined (truth_resolver.gt_reach_is_determined),
+an outcome marked determined. The tool also saves the algorithm's own items it
+was seeded with; those are never applied as ground truth.
+
 GT is whole-COMPONENT authoritative only where that component's `exhaustive`
 flag is set (GT stores `exhaustive` separately for segmentation / reaches /
 outcomes):
   - reaches.exhaustive == True  -> the GT reach set is COMPLETE. Each segment's
        reaches ARE the GT reaches; algo reaches GT never labeled are false
        positives and are dropped. GT reaches flagged exclude_from_analysis drop.
+       A segment still holding an undetermined GT reach is not finished: there
+       only its determined reaches are merged, as in the non-exhaustive case.
   - reaches.exhaustive == False -> GT is positive-only: it overrides the algo
        reach it overlaps and adds any GT reach with no algo match, but does NOT
        drop unlabeled algo reaches (absence is not a reliable negative for
@@ -362,10 +369,41 @@ def _segment_of_reach(r: dict, spans: Dict[int, Tuple[int, int]]) -> Optional[in
     return best
 
 
+def gt_reach_is_determined(r: dict) -> bool:
+    """True when a person determined BOTH frames of a ground-truth reach.
+
+    The ground-truth tool seeds its reach list from the algorithm's reaches
+    and marks a start or end "determined" only when a person sets or confirms
+    it; a saved file can therefore hold algorithm reaches nobody looked at
+    (the progress save writes every reach). Such a reach is the algorithm's
+    guess carried in a ground-truth file, not ground truth, so it is never
+    applied as ground truth. Older files (schema 1) say ``start_verified`` /
+    ``end_verified`` for the same thing; both spellings are read, because
+    reading only the new one would throw away every older file's reaches."""
+    def _flag(new, old):
+        v = r.get(new)
+        return bool(r.get(old)) if v is None else bool(v)
+    return _flag("start_determined", "start_verified") and         _flag("end_determined", "end_verified")
+
+
 def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
     """Resolve per-segment reaches against GT. Exhaustive -> GT reach set is the
     complete truth for every segment; non-exhaustive -> overlap-merge only where
     GT labeled reaches. Non-destructive.
+
+    Only reaches a person determined (gt_reach_is_determined: start AND end)
+    are applied. A segment is replaced by the ground truth's reach set only
+    when the set is exhaustive AND every ground-truth reach in that segment is
+    determined; when the set is marked exhaustive but a segment still holds an
+    undetermined reach, the person had not finished that segment, so only its
+    determined reaches are overlap-merged and the algorithm's other reaches
+    stay (logged with the segment and count). WHY: undetermined reaches are
+    the algorithm's seeds from the run the file was made on; applying them as
+    "ground truth" stamped an old algorithm guess reach_source ground_truth,
+    and an exhaustive set built from them dropped real detected reaches.
+    A reach the person flagged exclude_from_analysis is a person's statement
+    whatever its frame flags, so it still removes the reach it covers when
+    the segment is replaced.
 
     Each GT reach goes to the CURRENT segment its frames lie in, not to the
     segment NUMBER it was labelled with: a re-cut renumbers segments, and a
@@ -374,7 +412,12 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
     frames, or no current segment holds the reach."""
     rr = (gt or {}).get("reaches") or {}
     exhaustive = bool(rr.get("exhaustive"))
-    gt_reaches = [r for r in (rr.get("reaches") or []) if not r.get("exclude_from_analysis")]
+    listed = [r for r in (rr.get("reaches") or []) if isinstance(r, dict)]
+    gt_reaches = [r for r in listed
+                  if not r.get("exclude_from_analysis") and gt_reach_is_determined(r)]
+    # Undetermined, not excluded: they keep a segment from being replaced.
+    open_reaches = [r for r in listed
+                    if not r.get("exclude_from_analysis") and not gt_reach_is_determined(r)]
     if not exhaustive and not gt_reaches:
         return reaches_data  # nothing GT can say about reaches
 
@@ -386,18 +429,25 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
             spans[sn] = (int(seg["start_frame"]), int(seg["end_frame"]))
         except (TypeError, ValueError, KeyError):
             continue
-    by_seg: Dict[int, List[dict]] = {}
-    for r in gt_reaches:
+    def _place(r, log=True):
         sn = _segment_of_reach(r, spans)
         if sn is None:
             sn = r.get("segment_num")
-        elif r.get("segment_num") is not None and int(r["segment_num"]) != sn:
+        elif log and r.get("segment_num") is not None and int(r["segment_num"]) != sn:
             logger.info("ground-truth reach %s-%s labelled segment %s lies in current "
                         "segment %s; placed there", r.get("start_frame"),
                         r.get("end_frame"), r.get("segment_num"), sn)
-        by_seg.setdefault(int(sn) if sn is not None else -1, []).append(r)
+        return int(sn) if sn is not None else -1
+
+    by_seg: Dict[int, List[dict]] = {}
+    for r in gt_reaches:
+        by_seg.setdefault(_place(r), []).append(r)
     for lst in by_seg.values():
         lst.sort(key=lambda r: (r.get("start_frame") or 0))
+    open_by_seg: Dict[int, int] = {}
+    for r in open_reaches:
+        sn = _place(r, log=False)
+        open_by_seg[sn] = open_by_seg.get(sn, 0) + 1
 
     for seg in out.get("segments", []):
         for a in seg.get("reaches", []):
@@ -407,7 +457,15 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
         except (TypeError, ValueError):
             continue
         gtr = by_seg.get(sn, [])
-        if exhaustive:
+        if exhaustive and open_by_seg.get(sn):
+            logger.warning("ground truth marks its reaches complete, but segment %s still "
+                           "holds %d reach(es) nobody determined: only its %d determined "
+                           "reach(es) are applied, the detected reaches stay",
+                           sn, open_by_seg[sn], len(gtr))
+            if gtr:
+                seg["reaches"] = _merge_reaches(seg.get("reaches", []), gtr)
+                seg["n_reaches"] = len(seg["reaches"])
+        elif exhaustive:
             # GT is the complete reach set for this segment (possibly empty ->
             # every algo reach here was a false positive and is dropped).
             seg["reaches"] = [_gt_reach_dict(r, i + 1) for i, r in enumerate(gtr)]

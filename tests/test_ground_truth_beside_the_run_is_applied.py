@@ -66,6 +66,7 @@ def _gt(folder):
         "video_name": VID,
         "reaches": {"exhaustive": False, "reaches": [
             {"reach_id": 1, "segment_num": 1, "start_frame": 22, "end_frame": 40,
+             "start_determined": True, "end_determined": True,
              "apex_frame": 31}]},
     }), encoding="utf-8")
     return p

@@ -22,6 +22,9 @@ TODAY = [(1, 50, 99, []), (2, 100, 199, []),
 
 
 def _gt(exhaustive, reaches):
+    # Every reach here was determined by a person: undetermined ones are
+    # never applied (test_gt_undetermined_reaches_not_applied).
+    reaches = [dict(r, start_determined=True, end_determined=True) for r in reaches]
     return {"reaches": {"exhaustive": exhaustive, "reaches": reaches}}
 
 
