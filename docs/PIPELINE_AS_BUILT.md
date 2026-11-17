@@ -5230,3 +5230,16 @@ server, check the share, or close the program holding the file open; then run
 `mousereach-watch-reprocess --from-step dlc_complete <video>`. While it is waiting between
 attempts, `mousereach-watch-unresolvable --list` shows it. These attempts count toward the same
 retry limit as a failed run of the video (the row's error count); a reprocess resets that count.
+network share) is fixed.
+
+**A Pillar tray's outcome step never runs without its video.** Two of the outcome cascade's
+checks read the video's pixels (the check that a "displaced" pellet really arrived at its
+landing spot, and the check for a pellet lost in the paw's shadow). Without the video beside
+the pose they do nothing, so the same pose could give a different answer depending on whether
+the `.mp4` happened to be there. Now, before the outcome step on a Pillar tray, the watcher
+makes sure `<video>.mp4` is in its Processing folder: if not, it looks where the video can be
+on this machine (the recorded path, the posed folder, a review bundle, the filed cohort
+folder) and COPIES it in -- a filed or queued copy is never moved. If the video is nowhere on
+this machine, the row is set to 'unresolvable' with the reason "no <video>.mp4 on this node",
+nothing is analysed, and the video comes back once its file is found, as for any unresolvable
+video. Every outcomes file now also records `"cv_video": "found"` or `"missing"`.

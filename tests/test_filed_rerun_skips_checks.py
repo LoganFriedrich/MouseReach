@@ -67,6 +67,9 @@ def rig(tmp_path, monkeypatch):
         (folder / f"{VID}{name}").write_text("{}", encoding="utf-8")
     pose = folder / f"{VID}DLC_test.h5"
     pose.write_bytes(b"")
+    # The outcome step needs the video beside the pose (it is fetched, or the
+    # video is unresolvable): a Pillar run without it never reaches the gate.
+    (folder / f"{VID}.mp4").write_bytes(b"x")
     monkeypatch.setattr(o, "resolve_pose_input", lambda *a, **k: pose)
 
     def _stage(name, result):

@@ -8239,6 +8239,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
         tray_type = tray_info.get('tray_type', 'P')
         skip_outcomes = tray_type in ('E', 'F')
 
+        if not skip_outcomes and _run_outcome:
+            # The cascade's video checks (the CV-artifact gate, Stage 98) run
+            # only with the video beside the pose; without it a displaced_sa
+            # call is committed unchecked. So a Pillar tray's cascade never
+            # runs without its video: it is fetched (copied, never moved) from
+            # wherever this node has it, and a video this node does not have
+            # at all is 'unresolvable' -- a file that is not here, not a
+            # failure of the video (_video_beside_pose).
+            why = self._video_beside_pose(video_id, video_data.get('current_path'))
+            if why:
+                self.db.log_step(video_id, 'outcome_detection', 'skipped', message=why)
+                self.db.mark_unresolvable(video_id, why)
+                logger.warning(f"{video_id}: {why}")
+                return
+
         if not skip_outcomes:
             reach_path = self.processing_dir / f"{video_id}_reaches.json"
 
@@ -8345,6 +8360,30 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         self._extract_features_and_finish(video_id, dlc_path, skip_outcomes,
                                           pipeline_duration)
+
+    def _video_beside_pose(self, video_id: str, raw=None) -> Optional[str]:
+        """Put ``<video>.mp4`` in the processing folder beside the pose.
+        None when it is there; else why it could not be (words for a person).
+
+        Searched as locate_video_file searches (the recorded path, the posed
+        folder, a review bundle, the filed folder); a hit is COPIED, so a
+        filed or queued copy is never disturbed."""
+        local = Path(self.processing_dir) / f"{video_id}.mp4"
+        if local.is_file():
+            return None
+        try:
+            found = locate_video_file(video_id, raw=raw,
+                                      extra_dirs=[d for d in (getattr(self, "staging_dir", None),) if d])
+        except Exception as e:
+            found = None
+            logger.warning(f"{video_id}: looking for the video failed ({e})")
+        if found is None:
+            return (f"no {video_id}.mp4 on this node: the outcome step needs the "
+                    f"video for its checks and does not run without it")
+        if not safe_copy(Path(found), local, verify=True):
+            return f"{found} could not be copied beside the pose"
+        logger.info(f"{video_id}: video fetched from {found} for the outcome step")
+        return None
 
     def _resume_point(self, video_id: str, wanted: str, dlc_path) -> str:
         """Where a review return's run really starts: ``wanted`` (the row's
