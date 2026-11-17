@@ -146,6 +146,11 @@ class UnifiedGroundTruth:
     outcomes_exhaustive: bool = False
     outcomes_exhaustive_determined_by: Optional[str] = None
     outcomes_exhaustive_determined_at: Optional[str] = None
+    # Determined outcomes of a saved ground truth that match no pellet of the
+    # current cuts when the file is reopened (_overlay_gt_determinations).
+    # Kept, written back on every save, never applied: a person's answer is
+    # never dropped, and never put on footage it was not given for.
+    unmatched_outcomes: List[OutcomeGT] = field(default_factory=list)
 
     def update_completion_status(self) -> CompletionStatus:
         """Recompute completion status from current data."""
@@ -437,10 +442,37 @@ def _dict_to_unified_gt(data: Dict) -> UnifiedGroundTruth:
             comment=o_data.get("comment"),
         ))
 
+    for o_data in outcomes_section.get("unmatched", []) or []:
+        gt.unmatched_outcomes.append(OutcomeGT(
+            segment_num=o_data.get("segment_num", 0),
+            outcome=o_data.get("outcome", "unknown"),
+            interaction_frame=o_data.get("interaction_frame"),
+            outcome_known_frame=o_data.get("outcome_known_frame"),
+            causal_reach_id=o_data.get("causal_reach_id"),
+            determined=o_data.get("determined", False),
+            determined_by=o_data.get("determined_by"),
+            determined_at=o_data.get("determined_at"),
+            comment=o_data.get("comment"),
+        ))
+
     # Update completion status
     gt.update_completion_status()
 
     return gt
+
+
+def _outcome_to_dict(o: OutcomeGT) -> Dict:
+    return {
+        "segment_num": o.segment_num,
+        "outcome": o.outcome,
+        "interaction_frame": o.interaction_frame,
+        "outcome_known_frame": o.outcome_known_frame,
+        "causal_reach_id": o.causal_reach_id,
+        "determined": o.determined,
+        "determined_by": o.determined_by,
+        "determined_at": o.determined_at,
+        "comment": o.comment,
+    }
 
 
 def _unified_gt_to_dict(gt: UnifiedGroundTruth) -> Dict:
@@ -500,20 +532,10 @@ def _unified_gt_to_dict(gt: UnifiedGroundTruth) -> Dict:
             "exhaustive_determined_by": gt.outcomes_exhaustive_determined_by,
             "exhaustive_determined_at": gt.outcomes_exhaustive_determined_at,
             "n_segments": len(gt.outcomes),
-            "segments": [
-                {
-                    "segment_num": o.segment_num,
-                    "outcome": o.outcome,
-                    "interaction_frame": o.interaction_frame,
-                    "outcome_known_frame": o.outcome_known_frame,
-                    "causal_reach_id": o.causal_reach_id,
-                    "determined": o.determined,
-                    "determined_by": o.determined_by,
-                    "determined_at": o.determined_at,
-                    "comment": o.comment,
-                }
-                for o in gt.outcomes
-            ],
+            "segments": [_outcome_to_dict(o) for o in gt.outcomes],
+            # Kept answers that match no pellet of the cuts they were last
+            # opened on; no reader applies them (see UnifiedGroundTruth).
+            "unmatched": [_outcome_to_dict(o) for o in gt.unmatched_outcomes],
         },
     }
 
@@ -1058,6 +1080,13 @@ def load_or_create_unified_gt(video_path: Path,
     return gt
 
 
+def _segments_of(gt: UnifiedGroundTruth):
+    """[(segment_num, start, end)] from a ground truth's boundaries (by their
+    index: segment N runs from cut N-1 to the frame before cut N)."""
+    by_index = {b.index: b.frame for b in gt.boundaries if b.frame is not None}
+    return [(i + 1, by_index[i], by_index[i + 1] - 1) for i in sorted(by_index) if i + 1 in by_index]
+
+
 def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGroundTruth):
     """Overlay determination status from saved GT onto algorithm GT."""
     # Copy exhaustive flags from saved GT
@@ -1084,53 +1113,100 @@ def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGro
                 b.frame = sb.frame
             b.comment = sb.comment
 
-    # Reaches: match by reach_id and apply determination status
-    saved_reaches = {r.reach_id: r for r in saved_gt.reaches}
-    for r in algo_gt.reaches:
-        if r.reach_id in saved_reaches:
-            sr = saved_reaches[r.reach_id]
-            r.start_determined = sr.start_determined
-            r.start_determined_by = sr.start_determined_by
-            r.start_determined_at = sr.start_determined_at
-            r.end_determined = sr.end_determined
-            r.end_determined_by = sr.end_determined_by
-            r.end_determined_at = sr.end_determined_at
-            # If determined, use the saved frame values
-            if sr.start_determined:
-                r.start_frame = sr.start_frame
-            if sr.end_determined:
-                r.end_frame = sr.end_frame
-            r.exclude_from_analysis = sr.exclude_from_analysis
-            r.exclude_reason = sr.exclude_reason
-            r.comment = sr.comment
-
-    # Also add any reaches from saved GT not in algorithm output
-    algo_reach_ids = {r.reach_id for r in algo_gt.reaches}
+    # Reaches: matched by FRAMES, never by reach_id. WHY: reach ids are
+    # renumbered on every run, so after a re-pose or a new detector the
+    # saved reach "id 7" is another reach of the new list; matched by id, a
+    # determined reach took over (and erased) whichever current reach had its
+    # number. A saved reach is matched to the current reach that covers most
+    # of its frames (causal_review_io.typed_reach_match, the rule the review
+    # window uses); the current reach keeps this run's id. A saved reach that
+    # matches nothing is kept as its own row, with a new id if its old one is
+    # taken -- never dropped.
+    from mousereach.review.causal_review_io import typed_reach_match
+    free = list(algo_gt.reaches)
+    extra = []
     for sr in saved_gt.reaches:
-        if sr.reach_id not in algo_reach_ids:
-            algo_gt.reaches.append(sr)
+        pool = [{"start_frame": r.start_frame, "end_frame": r.end_frame, "_r": r} for r in free]
+        hit = typed_reach_match(sr.start_frame, sr.end_frame, pool) \
+            if sr.start_frame is not None and sr.end_frame is not None else None
+        if hit is None:
+            extra.append(sr)
+            continue
+        r = hit["_r"]
+        free.remove(r)
+        r.start_determined = sr.start_determined
+        r.start_determined_by = sr.start_determined_by
+        r.start_determined_at = sr.start_determined_at
+        r.end_determined = sr.end_determined
+        r.end_determined_by = sr.end_determined_by
+        r.end_determined_at = sr.end_determined_at
+        # If determined, use the saved frame values
+        if sr.start_determined:
+            r.start_frame = sr.start_frame
+        if sr.end_determined:
+            r.end_frame = sr.end_frame
+        r.exclude_from_analysis = sr.exclude_from_analysis
+        r.exclude_reason = sr.exclude_reason
+        r.comment = sr.comment
+    taken = {r.reach_id for r in algo_gt.reaches}
+    next_id = 1 + max([r.reach_id for r in algo_gt.reaches + extra if r.reach_id is not None] + [0])
+    for sr in extra:
+        if sr.reach_id in taken:
+            sr.reach_id = next_id
+            next_id += 1
+        taken.add(sr.reach_id)
+        algo_gt.reaches.append(sr)
 
     # Sort reaches by segment then start_frame for consistent display order
     algo_gt.reaches.sort(key=lambda r: (r.segment_num, r.start_frame))
 
-    # Outcomes: match by segment_num and apply determination status
-    saved_outcomes = {o.segment_num: o for o in saved_gt.outcomes}
-    for o in algo_gt.outcomes:
-        if o.segment_num in saved_outcomes:
-            so = saved_outcomes[o.segment_num]
-            o.determined = so.determined
-            o.determined_by = so.determined_by
-            o.determined_at = so.determined_at
-            # If determined, use the saved outcome value
-            if so.determined:
-                o.outcome = so.outcome
-            if so.interaction_frame is not None:
-                o.interaction_frame = so.interaction_frame
-            if so.outcome_known_frame is not None:
-                o.outcome_known_frame = so.outcome_known_frame
-            if so.causal_reach_id is not None:
-                o.causal_reach_id = so.causal_reach_id
-            o.comment = so.comment
+    # Outcomes: a saved outcome is put back on its pellet only when that
+    # pellet's frames in the SAVED file's own cuts are exactly the frames of
+    # the same-numbered pellet now. WHY: after a re-cut, the saved "pellet 7"
+    # is other footage than today's pellet 7, and an outcome a person
+    # determined landed on a pellet nobody judged -- and was saved there as
+    # theirs. A re-cut voids the answers given on the old cuts; they are not
+    # moved onto new pellets either. Such an outcome is kept in
+    # unmatched_outcomes (written back on save, never applied, listed when the
+    # file is opened); an earlier save's unmatched answers are carried along
+    # the same way. A file that records no cuts for a pellet (an older file,
+    # or one saved with only some cuts) is matched by number, the only handle
+    # it has.
+    from mousereach.review.causal_review_io import gt_segments
+    saved_spans = {s_["segment_num"]: (s_["start_frame"], s_["end_frame"])
+                   for s_ in gt_segments(_unified_gt_to_dict(saved_gt))}
+    current_spans = {n: (a, b) for n, a, b in _segments_of(algo_gt)}
+    by_seg = {}
+    for so in saved_gt.outcomes:
+        own = saved_spans.get(so.segment_num)
+        if own is None or current_spans.get(so.segment_num) == own:
+            by_seg[so.segment_num] = so
+    placed = set()
+    cur_outcomes = {o.segment_num: o for o in algo_gt.outcomes}
+    for sn, so in by_seg.items():
+        o = cur_outcomes.get(int(sn))
+        if o is None:
+            continue
+        placed.add(id(so))
+        o.determined = so.determined
+        o.determined_by = so.determined_by
+        o.determined_at = so.determined_at
+        # If determined, use the saved outcome value
+        if so.determined:
+            o.outcome = so.outcome
+        if so.interaction_frame is not None:
+            o.interaction_frame = so.interaction_frame
+        if so.outcome_known_frame is not None:
+            o.outcome_known_frame = so.outcome_known_frame
+        if so.causal_reach_id is not None:
+            o.causal_reach_id = so.causal_reach_id
+        o.comment = so.comment
+    algo_gt.unmatched_outcomes = list(saved_gt.unmatched_outcomes) + [
+        so for so in saved_gt.outcomes if id(so) not in placed and so.determined]
+    for so in algo_gt.unmatched_outcomes:
+        logger.warning("ground truth %s: saved outcome for pellet %s (%s) matches no pellet of "
+                       "the current cuts; kept unapplied", algo_gt.video_name,
+                       so.segment_num, so.outcome)
 
     algo_gt.update_completion_status()
 

@@ -840,6 +840,16 @@ class GroundTruthWidget(QWidget):
             # apart from the video (bundle layout) via _gt_algo_dir().
             self.gt = load_or_create_unified_gt(video_path, algo_dir=self._gt_algo_dir())
             self.progress.setValue(90)
+            # Saved outcomes that fit no pellet of today's cuts are kept in the
+            # file but not shown on any pellet (unified_gt.UnifiedGroundTruth.
+            # unmatched_outcomes); say so, so the person knows to look again.
+            _unmatched = getattr(self.gt, "unmatched_outcomes", None) or []
+            if _unmatched:
+                show_warning(
+                    f"{len(_unmatched)} saved outcome(s) match no pellet of the current cuts "
+                    f"(pellet(s) {', '.join(str(o.segment_num) for o in _unmatched)} of the cuts "
+                    f"they were given on). They are kept in the file but not applied; "
+                    f"determine those pellets again if needed.")
 
             # Load DLC data for J/K navigation and overlays
             self._load_dlc_data()
