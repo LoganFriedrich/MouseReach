@@ -5156,3 +5156,20 @@ video's name". Tray numbers can have more than one digit, so `..._P1` would also
 (`pipeline.fsutil.files_of_video`): the character right after the video's name must be `.`,
 `_` or `D`, and an unfinished copy (`.part`, `.tmp`, `.partial`) is never one of the files.
 The review queues already used the same rule; they now share it.
+
+**Filing moves the features file and the provenance file last.** When a finished video is
+filed into its Analyzed cohort folder, every other file moves first. Only when all of them are
+in does `<video>_processing_manifest.json` move, and `<video>_features.json` is the very last
+file. If any file cannot be moved (a review window or a virus scanner still holding it), those
+two stay in the local Processing folder, the attempt counts as failed, and the watcher tries
+again after 1 minute, then 5, 15 and 60 minutes; the attempt that succeeds finishes the job.
+WHY: the features file is what the nightly database import takes from the filed folder and
+what the watcher reads as "this video is filed". Before, the files moved in listing order, so
+one stuck file could leave new kinematics filed next to missing or old outputs, or a video
+filed without its `.mp4` that the next attempt then marked "no kinematics".
+
+What is still not one step (a known leftover): on a re-run, the previous generation's files
+that are about to be replaced are moved into `Analyzed/Archive` before the new ones go in. If a
+new file then fails to move, the cohort folder holds neither a whole old nor a whole new result
+until the retry succeeds. Because the features file is held back, the database import and the
+watcher do not treat that folder as filed in the meantime.

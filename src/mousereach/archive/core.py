@@ -296,9 +296,32 @@ def archive_video(
     #    retry loop failing forever.
     #  - A per-file failure is named in result["error"], never swallowed
     #    into a bare success=False with error=None.
+    #
+    # ORDER (filing is one step as far as any reader can tell): every other
+    # file first; then <stem>_processing_manifest.json; then
+    # <stem>_features.json LAST, and those two only when every other file
+    # is in. WHY: the features file is what the database integrator takes
+    # from the filed folder and what the watcher's filing checks read as
+    # "this run is filed"; the manifest is the provenance the version scan
+    # reads. Moved in listing order, a failure part-way could leave new
+    # features beside old (or missing) outputs, or an analysed video filed
+    # without its .mp4 that the next attempt then read as "no kinematics".
+    # Now, when anything else fails, both stay in Processing with
+    # success=False and the watcher's retry (60 s, rising to 1 h) finishes
+    # the job; until then the filed folder simply does not read as filed.
+    # A narrower window remains (see docs/PIPELINE_AS_BUILT.md): the
+    # previous generation's files that are about to be replaced were swept
+    # into the versioned Archive above, so between a failure here and the
+    # retry the filed folder holds no complete generation.
+    last_names = (f"{video_id}_processing_manifest.json",
+                  f"{video_id}_features.json")
+    rest = [f for f in files if f.name not in last_names]
+    last = [f for n in last_names for f in files if f.name == n]
+
     moved = []
     failed = []
-    for f in files:
+
+    def _move_one(f):
         dest_path = dest / f.name
         try:
             if f.name in identical or (dest_path.exists() and _same_file(f, dest_path)):
@@ -306,7 +329,7 @@ def archive_video(
                 moved.append(f.name)
                 if verbose:
                     print(f"    Already archived (identical): {f.name}")
-                continue
+                return
             # A handle another process is just closing (a video reader on the
             # success path) makes the first move fail with WinError 32; a few
             # seconds later it succeeds. Try briefly before calling it failed.
@@ -328,6 +351,21 @@ def archive_video(
             failed.append(f"{f.name} ({e})")
             if verbose:
                 print(f"    FAILED: {f.name} - {e}")
+
+    for f in rest:
+        _move_one(f)
+    if failed:
+        for f in last:
+            failed.append(f"{f.name} (held back: the other files are not all filed yet)")
+    else:
+        for f in last:
+            _move_one(f)
+            if failed:
+                break
+        for f in last:
+            if f.exists() and f.name not in moved and not any(
+                    x.startswith(f.name + " ") for x in failed):
+                failed.append(f"{f.name} (held back: the manifest did not file)")
 
     result["files_moved"] = moved
     result["success"] = len(moved) == len(files)
