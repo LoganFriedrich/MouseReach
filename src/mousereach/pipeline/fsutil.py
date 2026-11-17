@@ -293,3 +293,56 @@ def is_leftover_temp(name: str) -> bool:
 def _glob_escape(s: str) -> str:
     import glob
     return glob.escape(s)
+
+
+# ---------------------------------------------------------------------------
+# WHICH FILES IN A FOLDER BELONG TO ONE VIDEO
+#
+# A video's files are named <stem>.mp4, <stem>_<output>.json and
+# <stem>DLC_<scorer>.h5. A bare "starts with the stem" test also takes the
+# files of every video whose stem merely BEGINS with this one: tray numbers
+# are any number of digits, so <date>_<animal>_P1 is a prefix of
+# <date>_<animal>_P10, and filing, staging or cleaning up the first would
+# move or delete the second's files -- leaving that video in no place. So the
+# character after the stem must be one a file of THIS video can carry.
+
+# Names copy programs (and transfer.safe_copy) give a file while it is still
+# being written, renaming it once complete. Such a file is unfinished by
+# definition and is never taken for one of a video's files.
+TEMP_SUFFIXES = ('.part', '.tmp', '.partial')
+
+# '.' -> <stem>.mp4 / <stem>.<ext>; '_' -> <stem>_<output>.json;
+# 'D' -> <stem>DLC_<scorer>.h5 (the pose tool appends its scorer directly).
+VIDEO_NAME_BOUNDARY = (".", "_", "D")
+
+
+def is_file_of_video(name: str, video_id: str, include_temp: bool = False) -> bool:
+    """True when the file name ``name`` belongs to ``video_id`` (see above)."""
+    if not video_id or not name.startswith(video_id):
+        return False
+    n = len(video_id)
+    if len(name) > n and name[n] not in VIDEO_NAME_BOUNDARY:
+        return False
+    if not include_temp and name.lower().endswith(TEMP_SUFFIXES):
+        return False
+    return True
+
+
+def files_of_video(directory, video_id: str, include_temp: bool = False) -> list:
+    """Every file in ``directory`` that belongs to ``video_id`` -- the one
+    rule every mover uses (filing, staging, clean-up). A missing folder holds
+    nothing. Unfinished copies (TEMP_SUFFIXES) are left out unless asked for.
+
+    The name is tested before asking whether the entry is a file, and the
+    listing's own entry answers that (no extra round trip on Windows): the
+    folders scanned can hold tens of thousands of entries on a share."""
+    import os
+    out = []
+    try:
+        with os.scandir(directory) as entries:
+            for e in entries:
+                if is_file_of_video(e.name, video_id, include_temp) and e.is_file():
+                    out.append(Path(e.path))
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    return out

@@ -40,6 +40,7 @@ from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
 from mousereach.watcher.transfer import safe_copy, safe_move
+from mousereach.pipeline.fsutil import is_file_of_video
 from mousereach.watcher import single_claim
 from mousereach.watcher.locate import (
     resolve_pose_input, locate_pose_file, locate_video_file, node_search_dirs,
@@ -341,9 +342,9 @@ def _filed_by_this_run(db, video_id):
 def _has_files_of(directory, video_id) -> bool:
     """Whether ``directory`` holds any file named for ``video_id``. Never
     raises (an unreadable folder counts as holding nothing)."""
+    from mousereach.pipeline.fsutil import files_of_video
     try:
-        with os.scandir(directory) as entries:
-            return any(e.name.startswith(video_id) and e.is_file() for e in entries)
+        return bool(files_of_video(directory, video_id))
     except (OSError, TypeError):
         return False
 
@@ -503,7 +504,7 @@ def _reprocess_copy_set(source_dirs, pose_dir, video_id):
         # on Windows, and it is asked only of this video's few files.
         with os.scandir(d) as entries:
             for e in entries:
-                if not e.name.startswith(video_id) or not e.is_file():
+                if not is_file_of_video(e.name, video_id) or not e.is_file():
                     continue
                 f = Path(e.path)
                 if not f.stem.startswith(video_id):
@@ -2309,8 +2310,9 @@ class BaseOrchestrator:
             with os.scandir(directory) as entries:
                 for entry in entries:
                     name = entry.name
-                    if (name.startswith(video_id)
-                            and not name.endswith(('.part', '.tmp'))
+                    # is_file_of_video: the shared rule -- not another
+                    # video whose stem begins with this one (_P1 / _P10).
+                    if (is_file_of_video(name, video_id)
                             and entry.is_file()):
                         files.append(Path(entry.path))
         except FileNotFoundError:

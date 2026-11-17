@@ -5146,3 +5146,13 @@ video under the video's own name that a later pass would take for the real thing
 pose. A failed copy removes its `.part` file. A `.part` (or `.tmp` / `.partial`) file left
 behind by a crash is ignored by every step that picks up a video's files; it can be deleted
 by hand once nothing is copying.
+
+**Which files belong to a video: one rule, used by every step that moves files.** A video's
+files are `<video>.mp4`, `<video>_<something>.json` and `<video>DLC_<model>.h5`. Filing,
+intake, staging, the re-run copy-down, the clean-ups after filing, the bring-current helper
+and the old segmentation triage mover used to take "every file whose name starts with the
+video's name". Tray numbers can have more than one digit, so `..._P1` would also have taken
+`..._P10`'s files and moved or deleted them with its own. All of them now ask one function
+(`pipeline.fsutil.files_of_video`): the character right after the video's name must be `.`,
+`_` or `D`, and an unfinished copy (`.part`, `.tmp`, `.partial`) is never one of the files.
+The review queues already used the same rule; they now share it.

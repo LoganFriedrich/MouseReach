@@ -42,17 +42,11 @@ def get_video_files(video_id: str) -> List[Path]:
     Returns:
         List of file paths
     """
-    files = []
-    processing = Paths.PROCESSING
-
-    if not processing.exists():
-        return files
-
-    for f in processing.iterdir():
-        if f.is_file() and f.name.startswith(video_id):
-            files.append(f)
-
-    return files
+    # files_of_video: the one rule for "this video's files" -- a stem that is
+    # a prefix of another video's (..._P1 / ..._P10) does not take its files,
+    # and an unfinished copy (<name>.part) is never filed.
+    from mousereach.pipeline.fsutil import files_of_video
+    return files_of_video(Paths.PROCESSING, video_id)
 
 
 # The three stage outputs, and where each records the verdict triage gave it.
@@ -210,7 +204,8 @@ def archive_video(
 
     # Get files
     if source_dir:
-        files = [f for f in source_dir.iterdir() if f.name.startswith(video_id) and f.is_file()]
+        from mousereach.pipeline.fsutil import files_of_video
+        files = files_of_video(source_dir, video_id)
     else:
         files = get_video_files(video_id)
     if not files:
@@ -265,7 +260,8 @@ def archive_video(
     identical = {f.name for f in files
                  if (dest / f.name).exists() and _same_file(f, dest / f.name)}
     superseded = None
-    if any(dest.glob(f"{video_id}*")) and any(f.name not in identical for f in files):
+    from mousereach.pipeline.fsutil import files_of_video as _fov
+    if _fov(dest, video_id) and any(f.name not in identical for f in files):
         try:
             from mousereach.archive.supersede import supersede_video_outputs
             # only=: sweep just the destination files this archive is about to

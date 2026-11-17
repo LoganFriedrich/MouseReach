@@ -45,15 +45,8 @@ def add_validation_status(json_path: Path, status: str):
 
 def get_associated_files(dlc_path: Path, video_id: str) -> List[Path]:
     """Get ALL files associated with a video (everything with video_id prefix)."""
-    parent = dlc_path.parent
-    files = []
-
-    # Grab everything that starts with the video_id
-    for f in parent.iterdir():
-        if f.is_file() and f.name.startswith(video_id):
-            files.append(f)
-
-    return files
+    from mousereach.pipeline.fsutil import files_of_video
+    return files_of_video(dlc_path.parent, video_id)
 
 
 def move_to_folder(files: List[Path], dest_folder: Path, verbose: bool = True):

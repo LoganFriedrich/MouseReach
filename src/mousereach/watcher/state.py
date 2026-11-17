@@ -34,7 +34,7 @@ VIDEO_EXTENSIONS = {'.mkv', '.avi', '.mp4', '.mov', '.wmv'}
 # rejects these names, so this matters only if that rule is ever widened.
 # (This pipeline's own '.part' files are written into Processing/Posed by
 # DLCOrchestrator._stage_files, not into the singles folder.)
-TEMP_SUFFIXES = ('.part', '.tmp', '.partial')
+from mousereach.pipeline.fsutil import TEMP_SUFFIXES  # noqa: E402  (one list)
 
 
 @dataclass

@@ -21,11 +21,8 @@ import shutil
 
 def get_associated_files(parent_dir: Path, video_id: str) -> List[Path]:
     """Get ALL files associated with a video (everything with video_id prefix)."""
-    files = []
-    for f in parent_dir.iterdir():
-        if f.is_file() and f.name.startswith(video_id):
-            files.append(f)
-    return files
+    from mousereach.pipeline.fsutil import files_of_video
+    return files_of_video(parent_dir, video_id)
 
 
 def has_complete_gt(folder: Path, video_id: str, gt_type: str) -> bool:

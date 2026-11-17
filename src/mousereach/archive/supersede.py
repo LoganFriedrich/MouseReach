@@ -231,7 +231,10 @@ def supersede_video_outputs(
                "archive_root": str(archive_root), "pose": [], "algo": [],
                "kept": [], "failed": [], "dry_run": dry_run}
 
-    candidates = sorted(source_dir.glob(f"{video_id}*"))
+    # The shared rule (pipeline.fsutil.files_of_video): never another video
+    # whose stem merely begins with this one, never an unfinished copy.
+    from mousereach.pipeline.fsutil import files_of_video
+    candidates = sorted(files_of_video(source_dir, video_id))
     for f in candidates:
         if not f.is_file():
             continue

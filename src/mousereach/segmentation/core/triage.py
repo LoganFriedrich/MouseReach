@@ -145,8 +145,9 @@ def reject_unsupported_tray_type(
         files_to_move.append(video_path)
 
     # Find associated DLC and JSON files
-    for f in folder.glob(f"{video_id}*"):
-        if f.is_file() and f not in files_to_move:
+    from mousereach.pipeline.fsutil import files_of_video
+    for f in files_of_video(folder, video_id):
+        if f not in files_to_move:
             files_to_move.append(f)
 
     moved_files = []

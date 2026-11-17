@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # ``{stem}.mp4`` (next char '.'); every algo output is ``{stem}_*.json`` (next
 # char '_'). Requiring the next char to be one of these prevents a stem that is
 # a strict prefix of another (CNT0312_P2 vs CNT0312_P21) from stealing files.
-_BOUNDARY_CHARS = (".", "_", "D")
+from mousereach.pipeline.fsutil import VIDEO_NAME_BOUNDARY as _BOUNDARY_CHARS  # noqa: E402
 
 # Staging folder, directly under a queue root, where a NEW bundle is assembled
 # before it is published into place by one rename. WHY a dot-folder: the queue
