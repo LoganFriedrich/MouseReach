@@ -154,41 +154,67 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
     return out
 
 
+def _write_marker_once(path: Path, doc: dict) -> bool:
+    """Create the clear marker ``path`` holding ``doc``; False (nothing
+    written) when its bundle folder is gone or a marker is already there.
+
+    WHY create-only and never make the folder: the marker used to be written
+    through a writer that creates missing folders, so a bundle that had left
+    the queue since the list was made came back as a one-file folder -- a
+    "cleared" video with no files, held for ever. And a marker already there
+    (another window or machine released it first) is that person's record,
+    not something to overwrite."""
+    import os
+    text = json.dumps(doc, indent=2, default=str) + "\n"
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    except (FileNotFoundError, FileExistsError):
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    return True
+
+
 def release_finished(queue_root: Path, cls: Optional[dict] = None):
     """Write the release marker for every releasable bundle (complete +
     fixed_release). Returns (n_released, failures) where failures is a list of
-    'stem: error' strings. Held-back and partial bundles are never touched."""
-    from mousereach.review.causal_review_io import (
-        _get_username, _get_timestamp, _write_json,
-    )
+    'stem: error' strings. Held-back and partial bundles are never touched.
+
+    ``cls`` is the list the person confirmed (the Review Queues tab shows it
+    before asking). The queue is classified AGAIN here and a bundle is
+    released only if it is releasable in BOTH. WHY: the tab's list can be
+    minutes old; in that time a bundle can have left the queue, been sent
+    back, or had its cuts or answers changed, and releasing on the old list
+    would clear a video nobody finished. A bundle that is no longer
+    releasable, whose folder is gone, or that already has a marker is
+    skipped (not a failure) -- it is simply not released by this press."""
+    from mousereach.review.causal_review_io import _get_username, _get_timestamp
+    fresh = classify_queue(queue_root)
     if cls is None:
-        cls = classify_queue(queue_root)
+        cls = fresh
+    now_complete = {stem for stem, *_ in fresh["complete"]}
+    now_fixed = {stem for stem, *_ in fresh["fixed_release"]}
     n, failures = 0, []
+    jobs = []
     for stem, a, t in cls["complete"]:
-        try:
-            _write_json(Path(queue_root) / stem / f"{stem}_deep_review_cleared.json", {
-                "type": "deep_review_cleared",
-                "video_stem": stem,
-                "cleared_by": _get_username(),
-                "cleared_at": _get_timestamp(),
-                "reason": "bulk release: every segment answered",
-                "gated_on": "is_answered",
-            })
-            n += 1
-        except Exception as e:
-            failures.append(f"{stem}: {e}")
+        if stem in now_complete:
+            jobs.append((stem, {"reason": "bulk release: every segment answered",
+                                "gated_on": "is_answered"}))
     for stem, r in cls["fixed_release"]:
+        if stem in now_fixed:
+            jobs.append((stem, {"reason": "segmentation corrected by hand",
+                                "gated_on": "boundary_source",
+                                "routing_reason": r}))
+    for stem, extra in jobs:
+        doc = {"type": "deep_review_cleared", "video_stem": stem,
+               "cleared_by": _get_username(), "cleared_at": _get_timestamp()}
+        doc.update(extra)
         try:
-            _write_json(Path(queue_root) / stem / f"{stem}_deep_review_cleared.json", {
-                "type": "deep_review_cleared",
-                "video_stem": stem,
-                "cleared_by": _get_username(),
-                "cleared_at": _get_timestamp(),
-                "reason": "segmentation corrected by hand",
-                "gated_on": "boundary_source",
-                "routing_reason": r,
-            })
-            n += 1
+            if _write_marker_once(
+                    Path(queue_root) / stem / f"{stem}_deep_review_cleared.json", doc):
+                n += 1
         except Exception as e:
             failures.append(f"{stem}: {e}")
     return n, failures
@@ -310,6 +336,10 @@ def main(argv=None) -> int:
         print(f"[FAIL] {f}")
     print(f"\nReleased {n} of {len(complete) + len(fixed_release)} "
           f"releasable bundle(s).")
+    skipped = len(complete) + len(fixed_release) - n - len(failures)
+    if skipped:
+        print(f"  {skipped} not released: since the list was made they left the "
+              f"queue, were released by someone else, or are no longer finished.")
     return 0
 
 

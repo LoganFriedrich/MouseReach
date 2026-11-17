@@ -340,13 +340,19 @@ Each tool opens in its own window and has its own ? guide.
             return
         try:
             from mousereach.review.release_cli import release_finished
+            # release_finished classifies the queue again and releases only
+            # what is still finished: the list shown above can be minutes old.
             done, failures = release_finished(Path(queue), c)
+            skipped = n - done - len(failures)
+            note = (f" {skipped} were not released: since this list was made "
+                    f"they left the queue, were released by someone else, or "
+                    f"are no longer finished." if skipped > 0 else "")
             if failures:
                 show_error(f"Released {done}; {len(failures)} failed -- "
-                           f"first: {failures[0]}")
+                           f"first: {failures[0]}.{note}")
             else:
                 show_info(f"Released {done} video(s) back into the pipeline. "
-                          f"The watcher picks them up within ~2 minutes.")
+                          f"The watcher picks them up within ~2 minutes.{note}")
         except Exception as e:
             show_error(f"Release failed: {e}")
         self._refresh_counts()
