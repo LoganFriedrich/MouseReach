@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 
 from mousereach.watcher import claim_marker, node_status
 from mousereach.watcher.cycle_timer import CycleTimer
-from mousereach.watcher.db import INTAKE_MISS_REASON, WatcherDB
+from mousereach.watcher.db import INTAKE_COPY_FAILED, INTAKE_MISS_REASON, WatcherDB
 from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
@@ -7886,16 +7886,69 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
             # Copy files to local Processing/
             copied_files = []
+            not_copied = []
             for file_path in all_files:
                 dest_path = self.processing_dir / file_path.name
                 if safe_copy(file_path, dest_path, verify=True):
                     copied_files.append(file_path.name)
                     logger.debug(f"Copied: {file_path.name}")
                 else:
+                    not_copied.append(file_path.name)
                     logger.warning(f"Failed to copy: {file_path.name}")
 
-            if not copied_files:
-                raise IOError(f"Failed to copy any files for {video_id}")
+            # All or nothing -- including the case where NO file copied (a
+            # full disk fails every copy): there is then nothing to remove,
+            # and the row is parked and counted exactly as for one failed
+            # file. (That case used to raise, and the handler below turned it
+            # into 'failed' on the first attempt.) WHY all or nothing: a run
+            # that went on without one of its files
+            # -- the video most of all -- analysed the video with the outcome
+            # detector's video checks silently off, routed review bundles a
+            # person could not open, and after filing the clean-up deleted the
+            # posed copy, so the video was in no place but its recording. The
+            # copies made here are removed (the posed originals are untouched).
+            # A copy that failed is an infrastructure fact (the share, a lock),
+            # not a verdict on the video, so the row is NOT marked failed at
+            # first: it is parked the way an intake that found the posed files
+            # incomplete is (INTAKE_MISS_REASON), the posed claim is let go,
+            # and the posed-folder scan puts it back in line for intake -- but
+            # only after a wait (state.COPY_RETRY_WAIT_S), and each attempt is
+            # counted (error_count, last_error_at). WHY the wait and the count:
+            # the files ARE all in the posed folder, so without them every
+            # pass would copy the whole video over the share and delete it
+            # again, for ever (a full disk does not fix itself). After
+            # watcher.max_retries attempts the row is marked 'failed' with what
+            # to do: mousereach-watch-status lists it for a person, and the
+            # failed-video retry does not pick it up (its files are not on
+            # this disk), so nothing loops.
+            if not_copied:
+                for name in copied_files:
+                    try:
+                        (self.processing_dir / name).unlink()
+                    except OSError:
+                        pass
+                attempt = int((self.db.get_video(video_id) or {}).get('error_count') or 0) + 1
+                limit = self._max_retries()
+                names = ', '.join(not_copied)
+                if attempt >= limit:
+                    why = (f"intake {INTAKE_COPY_FAILED} {names} on {attempt} attempt(s), "
+                           f"nothing kept; no more automatic tries. Fix the cause "
+                           f"(free disk space, the share, a file another program "
+                           f"holds open), then run: mousereach-watch-reprocess "
+                           f"--from-step dlc_complete {video_id}")
+                    self.db.mark_failed(video_id, why)
+                    self.db.log_step(video_id, 'intake', 'failed', message=why)
+                else:
+                    why = (f"{INTAKE_MISS_REASON} ({INTAKE_COPY_FAILED} {names}; "
+                           f"intake stopped, nothing kept; attempt {attempt} of "
+                           f"{limit}, tried again in about an hour)")
+                    self.db.mark_unresolvable(video_id, why)
+                    self.db.set_fields(video_id, error_count=attempt,
+                                       last_error_at=self.db._now())
+                    self.db.log_step(video_id, 'intake', 'skipped', message=why)
+                self._release_claim(video_id)
+                logger.warning(f"{video_id}: {why}")
+                return False
 
             duration = time.time() - start_time
 

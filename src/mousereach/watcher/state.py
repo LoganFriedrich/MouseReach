@@ -522,6 +522,23 @@ class WatcherStateManager:
             return True                     # no time recorded: nothing to wait for
         return (datetime.now() - last).total_seconds() >= self.COPY_RETRY_WAIT_S
 
+    def _intake_copy_retry_due(self, row: dict) -> bool:
+        """True when an intake parked for a failed copy (db.INTAKE_COPY_FAILED
+        in its message) may be tried again: its last attempt
+        (last_error_at) is at least COPY_RETRY_WAIT_S old, and it has an
+        attempt left (error_count < watcher.max_retries). A row with no time
+        recorded is due -- there is nothing to wait for. The same wait and
+        limit as a single whose copy into a DLC queue failed
+        (_copy_failed_retry_due)."""
+        max_retries = getattr(self.config, 'max_retries', 3) or 3
+        if int(row.get('error_count') or 0) >= int(max_retries):
+            return False
+        try:
+            last = datetime.fromisoformat(row.get('last_error_at') or '')
+        except (TypeError, ValueError):
+            return True
+        return (datetime.now() - last).total_seconds() >= self.COPY_RETRY_WAIT_S
+
     def _held_or_filed_instead(self, video_id: str, mp4_path: Path,
                                staging_dir: Path) -> bool:
         """For a posed video this server has NO row for: record it as held
@@ -584,7 +601,7 @@ class WatcherStateManager:
             return []
 
         from mousereach.config import get_video_id
-        from mousereach.watcher.db import INTAKE_MISS_REASON
+        from mousereach.watcher.db import INTAKE_COPY_FAILED, INTAKE_MISS_REASON
 
         newly_registered = []
         looked_at = set()
@@ -607,8 +624,16 @@ class WatcherStateManager:
             # of a filed video in the lowest-priority bucket.
             row = self.db.get_video(video_id)
             if row is not None:
+                message = row.get('error_message') or ''
                 missed = (row.get('state') == 'unresolvable'
-                          and (row.get('error_message') or '').startswith(INTAKE_MISS_REASON))
+                          and message.startswith(INTAKE_MISS_REASON))
+                # A row parked because a copy FAILED (its files were all
+                # here) waits before it is tried again: otherwise every pass
+                # would copy the video and throw it away again, for ever. The
+                # intake counts the attempts and marks the row 'failed' at the
+                # limit, so the wait is the only thing to check here.
+                if missed and INTAKE_COPY_FAILED in message:
+                    missed = self._intake_copy_retry_due(row)
                 mp4_path = staging_dir / f"{video_id}.mp4"
                 try:
                     back = missed and mp4_path.is_file()

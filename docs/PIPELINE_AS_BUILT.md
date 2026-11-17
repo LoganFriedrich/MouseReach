@@ -5208,3 +5208,25 @@ Not done yet (a known leftover): the filing step does not ask the review gate ag
 does not look for the record of the hand-score comparison itself; it relies on 'processed'
 having been reached through those checks, and a person's reset of a failed video can no
 longer skip them.
+
+**Intake takes in all of a video's files or none.** When the processing server takes a posed
+video into its Processing folder, it copies the video, its pose and any other file of the
+video. It used to carry on when at least one file copied. A run without its `.mp4` then ran
+the outcome step with its video checks silently off, a review bundle it routed had no video for
+the reviewer, and after filing the clean-up deleted the posed copy. Now, if any file fails to
+copy -- one of them, or every one of them as on a full disk -- the copies just made are removed (the posed originals are untouched), the row is set to
+'unresolvable' with the reason "posed files not all in the posed folder when intake looked
+(failed to copy <file> ...; attempt N of M ...)", and the posed claim is let go. A failed copy
+is a problem of the disk, the network or a lock, not of the video, so at first it is not marked
+failed. The posed-folder scan puts the row back in line for intake, but not before about an
+hour has passed since the failed attempt: the files are all in the posed folder, so without
+that wait every pass would copy the whole video over the share and delete it again, for as
+long as the cause lasts (a full disk does not fix itself). Each attempt is counted. When the
+last attempt allowed by `watcher.max_retries` (3 unless set) also fails, the row is marked
+'failed' with the reason "intake failed to copy <file> on N attempt(s) ... no more automatic
+tries" and the command to run once the cause is fixed. Nothing picks a row in that state up by
+itself; `mousereach-watch-status` lists it. What to do: free disk space on the processing
+server, check the share, or close the program holding the file open; then run
+`mousereach-watch-reprocess --from-step dlc_complete <video>`. While it is waiting between
+attempts, `mousereach-watch-unresolvable --list` shows it. These attempts count toward the same
+retry limit as a failed run of the video (the row's error count); a reprocess resets that count.

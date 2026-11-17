@@ -178,6 +178,16 @@ RERUN_NOT_STARTED_PREFIX = "re-run could not start"
 # this one says "the files are on their way to the posed folder".
 INTAKE_MISS_REASON = "posed files not all in the posed folder when intake looked"
 
+# Written inside an INTAKE_MISS_REASON row's message when the files WERE in the
+# posed folder but one of them failed to copy (a full disk, a dropped share, a
+# locked file). Such a row is not brought back at once: the posed-folder scan
+# waits WatcherStateManager.COPY_RETRY_WAIT_S after the failure, and after
+# watcher.max_retries attempts the intake marks the row 'failed' instead
+# (orchestrator._intake_from_staging). WHY: the files are all there, so
+# "back at once" would copy the whole video over the share and throw it away
+# again on every pass, for ever.
+INTAKE_COPY_FAILED = "failed to copy"
+
 # The states in which a row's reprocess_scope means something: a re-run that
 # is owed ('outdated') or under way ('processing', a 'failed' run waiting for
 # its retry, and the 'processed' -> 'archiving' steps of filing it). Entering
@@ -1612,8 +1622,11 @@ class WatcherDB:
           - 'failed' is also read by people as "something went wrong with this
             animal's data". A file that lives on another machine is not that.
 
-        error_count is deliberately NOT incremented: nothing was attempted and
-        nothing failed. The row keeps whatever it already knows, and
+        error_count is deliberately NOT incremented here: nothing was attempted
+        and nothing failed. (One caller counts on its own: an intake whose copy
+        failed sets error_count and last_error_at right after, because there
+        the files were here and a copy WAS attempted -- see
+        INTAKE_COPY_FAILED.) The row keeps whatever it already knows, and
         _recover_local_dlc_queue puts it straight back into the pipeline if the
         file ever turns up here.
 
