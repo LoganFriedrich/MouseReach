@@ -87,14 +87,11 @@ def test_hand_cuts_saved_after_it_was_sent_let_it_leave(tmp_path):
     assert resegmented_since_entry(b, STEM)[0]
 
 
-def test_ground_truth_counts_only_when_every_boundary_is_verified(tmp_path):
+def test_ground_truth_is_never_proof_of_re_segmentation(tmp_path):
     later = "2026-10-27T12:00:00"
-    some = [{"verified": True, "verified_at": later}, {"verified": False}]
-    assert not resegmented_since_entry(
-        _queued(tmp_path / "a", "2026-10-27T11:00:00", gt_bounds=some), STEM)[0]
     every = [{"verified": True, "verified_at": later}] * 3
-    assert resegmented_since_entry(
-        _queued(tmp_path / "b", "2026-10-27T11:00:00", gt_bounds=every), STEM)[0]
+    assert not resegmented_since_entry(
+        _queued(tmp_path, "2026-10-27T11:00:00", gt_bounds=every), STEM)[0]
 
 
 def test_return_scan_holds_a_cleared_video_nobody_resegmented(tmp_path, monkeypatch):

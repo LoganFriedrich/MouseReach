@@ -24,9 +24,13 @@ Clear signals:
                  re-injected -- re-running with the wrong boundaries would
                  compute kinematics over the wrong frames.
   DEEP_REVIEW -- an explicit ``{stem}_deep_review_cleared.json`` marker (written
-                 by the deep tools when a reviewer clears the flag) OR a
-                 co-located ``{stem}_unified_ground_truth.json`` (the deep GT
-                 tool produced the answer). Re-injection resumes just after
+                 by the deep tools when a reviewer clears the flag), and, for
+                 a Pillar tray, cuts a person set or confirmed in the
+                 segmentation fixer since the video arrived
+                 (review/resegmented.py). A ground-truth file in the bundle is
+                 NOT a clear: nothing writes its boundaries into the segments
+                 file, so releasing on it re-ran the video on the very cuts a
+                 person had replaced. Re-injection resumes just after
                  segmentation: the person's cuts are kept and everything after
                  them is remade.
 
@@ -377,13 +381,19 @@ def _ensure_registered(db, stem: str, source_path: Path) -> bool:
 
 
 def _deep_review_cleared(bundle: Path, stem: str) -> bool:
-    """True if a reviewer has cleared this deep-review bundle."""
-    if (bundle / f"{stem}_deep_review_cleared.json").exists():
-        return True
-    # The deep GT tool produced the answer in place.
-    if (bundle / f"{stem}_unified_ground_truth.json").exists():
-        return True
-    return False
+    """True if a reviewer has cleared this deep-review bundle: its clear
+    marker exists. The SAME test the review gate applies
+    (review_gate._deep_review_cleared), so the scan and the gate cannot
+    disagree about whether a person cleared a video.
+
+    WHY the marker only: a ground-truth file in the bundle used to count as a
+    clear by its mere presence -- even a progress save with nothing in it
+    determined, and without anyone pressing Clear. The return then released
+    the video, the segmenter cut it again exactly as before (nothing copies
+    ground-truth boundaries into the segments file), and the gate, which
+    reads only the marker, could send it straight back."""
+    from .review_gate import _deep_review_cleared as _gate_cleared
+    return _gate_cleared(stem, Path(bundle))
 
 
 def _ensure_durable_review(bundle: Path, stem: str) -> None:

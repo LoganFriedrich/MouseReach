@@ -3028,9 +3028,18 @@ The notes box travels with the video.
         A session flag suppresses nothing here: flagging diverts the video to
         the re-segmentation queue (_flag_session), and the flag record is kept
         as provenance only. (It used to hide every flagged session's videos,
-        so the queue read as empty.)"""
+        so the queue read as empty.)
+
+        In the re-segmentation queue ground truth hides nothing. WHY: a video
+        leaves that queue only through its clear marker (Clear here, or the
+        fixer's save for a video sent for its cuts), never because a
+        ground-truth file exists. Hidden here, a video with ground truth that
+        was sent for a quality hold or a flagged session, or an Easy/Flat
+        tray (which the fixer never lists), had no button anywhere that
+        could clear it."""
         stem = bundle_dir.name
-        if has_gt(stem, extra_dirs=[bundle_dir]):
+        if (not getattr(self, "_deep_review", False)
+                and has_gt(stem, extra_dirs=[bundle_dir])):
             return False  # already ground-truthed -> GT is the correct answer
         if self._bundle_reviewed(bundle_dir):
             return False

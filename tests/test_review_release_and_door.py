@@ -111,16 +111,14 @@ def test_classify_and_release_shared_engine(tmp_path):
     release must touch exactly the finished bundles and nothing else."""
     from mousereach.review.release_cli import classify_queue, release_finished
 
-    def mk(stem, review_segments=None, seg_doc=None, routing=None, gt=False):
+    # Every bundle here was re-segmented by hand after it arrived (a person
+    # saved its cuts in the fixer): nothing leaves the queue un-re-segmented
+    # (review/resegmented.py).
+    HAND = {"boundary_source": "human", "corrected_at": "2099-01-01T00:00:00"}
+
+    def mk(stem, review_segments=None, seg_doc=None, routing=None):
         b = tmp_path / stem
         b.mkdir()
-        if gt:
-            # re-segmented in a ground-truth file: nothing leaves the queue
-            # un-re-segmented (review/resegmented.py)
-            (b / f"{stem}_unified_ground_truth.json").write_text(
-                json.dumps({"segmentation": {"boundaries": [
-                    {"verified": True, "verified_at": "2099-01-01T00:00:00"}]}}),
-                encoding="utf-8")
         if review_segments is not None:
             (b / f"{stem}_causal_review.json").write_text(
                 json.dumps({"segments": review_segments}), encoding="utf-8")
@@ -132,20 +130,23 @@ def test_classify_and_release_shared_engine(tmp_path):
                 json.dumps({"routed_reason": routing}), encoding="utf-8")
         return b
 
-    mk("20990101_ABC9901_P1", gt=True,
+    mk("20990101_ABC9901_P1", seg_doc=HAND,
        review_segments=[{"segment_num": 1, "human": {"outcome": "retrieved"}}])
-    mk("20990101_ABC9902_P1", seg_doc={"boundary_source": "human"},
+    mk("20990101_ABC9902_P1", seg_doc=HAND,
        routing="escalated: bad segmentation")
-    mk("20990101_ABC9903_P1", seg_doc={"boundary_source": "human"},
+    mk("20990101_ABC9903_P1", seg_doc=HAND,
        routing="qc_needs_review")
-    mk("20990101_ABC9904_P1", gt=True,
+    mk("20990101_ABC9904_P1", seg_doc=HAND,
        review_segments=[{"segment_num": 1, "human": {"outcome": None}},
                         {"segment_num": 2, "human": {"outcome": "missed"}}])
 
     c = classify_queue(tmp_path)
     assert [s for s, *_ in c["complete"]] == ["20990101_ABC9901_P1"]
     assert [s for s, *_ in c["fixed_release"]] == ["20990101_ABC9902_P1"]
-    assert [s for s, *_ in c["fixed_held"]] == ["20990101_ABC9903_P1"]
+    # Hand cuts with pellets still open, sent for something a cut-fix does
+    # not answer (9903) or for no recorded reason (9904): held back.
+    assert [s for s, *_ in c["fixed_held"]] == ["20990101_ABC9903_P1",
+                                                "20990101_ABC9904_P1"]
 
     n, failures = release_finished(tmp_path, c)
     assert n == 2 and not failures

@@ -1,25 +1,26 @@
 """Has a person re-segmented this video since it was sent to deep review?
 
 Deep review is where a video's cuts are fixed. A video may leave it only once
-a person has called every boundary -- confirmed or moved, in the segmentation
-fixer or a ground-truth file -- AFTER the video last entered the queue: a video that was not re-segmented
-(no human-called boundary for every boundary somewhere) cannot leave deep
-review. Calls made before
-it entered do not count: a video sent back to deep review is there because
-those very cuts were found wrong. Without this rule a clear marker alone
-released a video, and an old clear from an earlier deep review sent an
-escalated video straight back to triage on the same cuts.
+a person has set or confirmed every boundary in the segmentation fixer AFTER
+the video last entered the queue: a video that was not re-segmented cannot
+leave deep review. Calls made before it entered do not count: a video sent
+back to deep review is there because those very cuts were found wrong.
+Without this rule a clear marker alone released a video, and an old clear
+from an earlier deep review sent an escalated video straight back to triage
+on the same cuts.
 
-Where a person's boundary calls are recorded:
-  - ``{stem}_segments.json`` saved by the segmentation fixer:
-    ``boundary_source == "human"`` and ``corrected_at``. The fixer saves the
-    whole list of cuts the person accepted, so every boundary is theirs.
-  - a ground-truth file (``{stem}*ground_truth*.json``) whose
-    ``segmentation.boundaries`` are ALL determined, each with its time. The
-    ground-truth tool writes ``determined`` / ``determined_at`` (schema 2);
-    files from before that schema say ``verified`` / ``verified_at``. Both
-    are read: reading only the old names meant a ground-truth file saved by
-    the current tool could never count, so this way out did not exist.
+Where a person's boundary calls are recorded: ``{stem}_segments.json`` saved
+by the segmentation fixer, with ``boundary_source == "human"`` and
+``corrected_at``. The fixer saves the whole list of cuts the person accepted,
+and that file is the one the pipeline cuts the video by on the re-run.
+
+A ground-truth file is NOT proof of re-segmentation (it used to be, when every
+one of its boundaries was determined). WHY: nothing writes ground-truth
+boundaries into the segments file, so on the re-run the segmenter cut the
+video again exactly as before and everything after it was computed on the
+cuts the person had replaced. Whether ground-truth boundaries should be
+written through as hand cuts is an open decision; until it is made, cuts
+are set in the fixer.
 
 When the video entered the queue is ``routed_at`` in ``{stem}_routing.json``,
 written by every route into a queue. A bundle without one (older routes) is
@@ -44,17 +45,6 @@ def _read(path: Path) -> Optional[dict]:
     except Exception as err:
         logger.warning('Could not read %s, so it counts as absent: %s', path, err)
         return None
-
-
-def _boundary_called(b) -> bool:
-    """A ground-truth boundary a person called: ``determined`` (schema 2, what
-    the ground-truth tool writes now) or ``verified`` (schema 1)."""
-    return isinstance(b, dict) and bool(b.get("determined") or b.get("verified"))
-
-
-def _boundary_called_at(b):
-    """When that call was made, under either schema's name."""
-    return b.get("determined_at") or b.get("verified_at")
 
 
 def entered_deep_review_at(bundle: Path, stem: str) -> Optional[str]:
@@ -82,14 +72,6 @@ def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
                  "here at %s" % (seg.get("corrected_at"), entered))
     else:
         stale = "nobody has set its cuts by hand"
-
-    for gt_path in sorted(bundle.glob(f"{stem}*ground_truth*.json")):
-        gt = _read(gt_path) or {}
-        bounds = (gt.get("segmentation") or {}).get("boundaries") or []
-        if bounds and all(_boundary_called(b) for b in bounds):
-            latest = max(str(_boundary_called_at(b) or "") for b in bounds) or None
-            if after_entry(latest):
-                return True, "every boundary verified in %s" % gt_path.name
 
     return False, ("not re-segmented: %s. Open it in the segmentation fixer, "
                    "set or confirm every cut and save; it leaves the queue "

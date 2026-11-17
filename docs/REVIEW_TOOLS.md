@@ -55,7 +55,7 @@ A picked video is shown when all of these hold (`_bundle_eligible`; `_bundle_nee
 - it is a directory containing a manifest file,
 - segmentation did not fail — confidence at or below 0, or an anomaly mentioning "reference quality" (`_segmentation_failed`, `:2610`),
 - it has at least one triaged element (`_bundle_has_triage`, `:2626`),
-- no ground-truth file exists for the video anywhere — ground truth counts as the answer (`causal_review_widget.py:2604-2605`; `has_gt`, `causal_review_io.py:596`),
+- no ground-truth file exists for the video anywhere — ground truth counts as the answer (`_bundle_needs_review`; `has_gt` in `causal_review_io.py`). This applies to Triage Review only: in Re-segmentation Review a video is shown whether or not it has ground truth, because ground truth never takes a video out of that queue -- only Clear (or the fixer's save) does, so hiding it there would leave it with no button that could release it (since 2026-11-17),
 - its triaged elements are not already all resolved (`_bundle_reviewed`, `:2539`).
 
 The failed-segmentation skip (`_bundle_eligible`) runs in **both** modes, including re-segmentation. That is a problem for the Re-segmentation Review tool: see [Re-segmentation Review](#re-segmentation).
@@ -206,10 +206,13 @@ the same cuts -- the button seemed to do nothing.
 **Nothing leaves the re-segmentation queue until it has been re-segmented
 (since 2026-10-27).** A clear is not enough on its own: the video stays
 until a person has set or confirmed every cut AFTER it arrived in the queue
--- by saving in the segmentation fixer (which marks the whole list of cuts
-as theirs), or in a ground-truth file with every boundary determined (the
-ground-truth tool's "determined"; files from its older format say "verified",
-which counts the same). Cuts set
+-- by saving in the segmentation fixer, which marks the whole list of cuts
+as theirs and is the file the pipeline cuts the video by. A ground-truth file
+does NOT count, however many of its boundaries are determined (since
+2026-11-17; before that it did): nothing copies ground-truth boundaries into
+the segments file, so a video released that way was cut again by the
+segmenter exactly as before. Set or confirm the cuts in the fixer even when
+you have ground truth for the video. Cuts set
 by hand before it arrived do not count: a video sent back is there because
 those cuts were found wrong. Pressing Clear on a video nobody has
 re-segmented says so ("cannot be cleared yet -- not re-segmented: ...") and
@@ -702,7 +705,7 @@ Two save buttons (`:585-625`):
 - **Save as Ground Truth** (`_save_ground_truth`, `:1980`) writes a filtered copy containing only items a person actually determined: boundaries and outcomes marked determined, reaches with a determined start or end. It keeps your "complete" (exhaustive) marks for boundaries, reaches and outcomes, with who set them and when. (Before this was fixed, this button wrote the file without the marks, so pressing it erased the "complete" marks a Save Progress had written.)
   - **When it refuses.** If you marked a part complete and that part still holds items you have not determined, the save is refused: nothing is written, and a red message names the part and how many of its items are not determined (for example "reaches is marked complete, but 3 of its 40 reaches are not determined and would be left out"). WHY: the finished file keeps only determined items, so "complete" would then claim the shorter list is every item, and the undetermined ones -- detected items you have not got to -- would be read as ruled out. What to do: determine those items (or remove the "complete" mark from that part), then press Save as Ground Truth again. Save Progress always saves, everything included.
 
-Both write `{stem}_unified_ground_truth.json` next to the video (`unified_gt.save_unified_gt`, `unified_gt.py:252`). Ground truth outranks every review downstream, and having one anywhere removes the video from the review queue entirely (`_bundle_needs_review`, `causal_review_widget.py:2604-2605`).
+Both write `{stem}_unified_ground_truth.json` next to the video (`unified_gt.save_unified_gt`, `unified_gt.py:252`). Ground truth outranks every review downstream, and having one anywhere removes the video from the Triage Review queue (`_bundle_needs_review`). It does not take a video out of the re-segmentation queue: that needs the cuts set in the segmentation fixer and a clear (see "Nothing leaves the re-segmentation queue until it has been re-segmented").
 
 **What of your ground truth reaches the results.** Only what you determined. The tool starts from the algorithm's reaches, boundaries and outcomes, and a progress save writes those seeds into the file too; a seed you never set or confirmed is the algorithm's guess, not yours, and the results never use it as ground truth:
 
@@ -752,7 +755,7 @@ For each triaged segment it loads only that segment's frames plus padding (`--pr
 - in `_pellet_outcomes.json`: the same clearing fields plus `human_verified: true`, the person's outcome, interaction frame, outcome-known frame and `causal_reach_id` (`:570-590`);
 - a `{stem}_unified_ground_truth.json` next to the bundle's algorithm JSONs (`:599`; path from `_unified_gt_path_for_video`, `:642`).
 
-Two consequences of that third write are easy to miss. The object it saves is `self.gt`, the *unfiltered* one seeded from the algorithm — rows nobody touched are in it with `determined: false`. The truth layering skips undetermined rows (`truth_resolver.py:138-139`), so no false values leak into the numbers, but **the file's existence alone** makes `has_gt()` true (`causal_review_io.py:596`), which (a) removes the video from the causal review tool's queue as "already ground-truthed" and (b) in a re-segmentation bundle counts as a clearance all by itself (`review_return.py:112-114`).
+Two consequences of that third write are easy to miss. The object it saves is `self.gt`, the *unfiltered* one seeded from the algorithm — rows nobody touched are in it with `determined: false`. The truth layering skips undetermined rows (`truth_resolver.py:138-139`), so no false values leak into the numbers, but **the file's existence alone** makes `has_gt()` true (`causal_review_io.py:596`), which removes the video from Triage Review's queue as "already ground-truthed". (Until 2026-11-17 it also counted as a clearance all by itself in a re-segmentation bundle; now only the clear marker does, `review_return._deep_review_cleared`, the same test the review gate makes.)
 
 `--qc-count N` blends N spot-checks into the same walk (`qc_pool.py`). These are segments the algorithm was **confident** about — segmentation did not fail, the outcome is a committed class, the segment is not flagged, and for touched outcomes a causal reach was committed (`iter_passing_segments`, `qc_pool.py:78-142`) — sampled round-robin across cohort+date strata, never-checked first (`sample`, `:184`). The reviewer gets two buttons instead of the marking UI: *Algo is RIGHT* logs agreement; *Algo is WRONG* logs disagreement **and** sets `flagged_for_review` back on that segment so it re-enters triage (`_flag_segment_for_triage`, `:429-444`). State lives in `<parent of the corpus root>/_QC/qc_state.json` plus an append-only `qc_drift_log.jsonl` (`qc_pool.py:160`, `:167-173`). `--qc-report` prints the agreement rate and exits without opening napari (`triage_clearing.py:729-742`). `--qc-count` is ignored outside corpus-root mode (`:803-804`).
 

@@ -11,8 +11,8 @@ have no tool that could give it that:
 - re-cut and fully answered but sent for another reason: the release check
   held it back, the window would not open it and the fixer would not list it.
 
-And a ground-truth file saved by the current ground-truth tool could never
-count as the proof, because only the old field name was read.
+A ground-truth file is not the proof: its boundaries are never written into
+the segments file the re-run cuts by (review/resegmented.py).
 """
 import json
 
@@ -77,23 +77,15 @@ def test_easy_and_flat_trays_are_never_listed(tmp_path):
     assert needs_recut(b, stem) == (False, "Easy/Flat tray: not segmented")
 
 
-def test_ground_truth_from_the_current_tool_counts_as_the_recut(tmp_path):
+def test_ground_truth_is_not_proof_of_re_segmentation(tmp_path):
+    """Nothing writes ground-truth boundaries into the segments file, so a
+    release on them re-ran the video on the cuts a person had replaced. The
+    video stays listed in the fixer."""
     every = [{"index": i, "frame": f, "determined": True, "determined_at": AFTER}
              for i, f in enumerate((100, 200, 300))]
     b = _bundle(tmp_path, gt_bounds=every)
-    assert resegmented_since_entry(b, STEM)[0]
-    assert not _listed(b)
-
-
-def test_ground_truth_with_an_undetermined_boundary_does_not_count(tmp_path):
-    some = [{"frame": 100, "determined": True, "determined_at": AFTER},
-            {"frame": 200, "determined": False, "determined_at": None}]
-    assert not resegmented_since_entry(_bundle(tmp_path, gt_bounds=some), STEM)[0]
-
-
-def test_ground_truth_determined_before_the_video_arrived_does_not_count(tmp_path):
-    every = [{"frame": f, "determined": True, "determined_at": BEFORE} for f in (100, 200)]
-    assert not resegmented_since_entry(_bundle(tmp_path, gt_bounds=every), STEM)[0]
+    assert not resegmented_since_entry(b, STEM)[0]
+    assert _listed(b)
 
 
 def _answered(n):

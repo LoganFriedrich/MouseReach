@@ -2687,9 +2687,13 @@ What holds now:
    the watcher's own routes into the queue fire only when there is no clear.
 2. **A clear releases a video only if a person has re-segmented it since it arrived**
    (`review/resegmented.py`): the segments file was saved by a person in the segmentation
-   fixer (`boundary_source: "human"`, `corrected_at`) or a ground-truth file has every
-   boundary verified -- in either case after the bundle's `routed_at`. Hand-set cuts from
-   before it arrived do not count. The return scan enforces it (one log line per video per
+   fixer (`boundary_source: "human"`, `corrected_at`) after the bundle's `routed_at`.
+   Hand-set cuts from before it arrived do not count. A ground-truth file does not count
+   either (since 2026-11-17): nothing writes its boundaries into the segments file, so a
+   video released on it was cut again by the segmenter exactly as before. And "cleared"
+   means the clear marker and nothing else -- the return scan
+   (`review_return._deep_review_cleared`) makes the same test as the review gate; a
+   ground-truth file in the bundle used to count as a clear by its presence alone. The return scan enforces it (one log line per video per
    watcher run); the review tool's Clear button and its complete-answers auto-clear refuse
    and say why; `mousereach-review-release` and the Review Queues tab list such videos as
    "not re-segmented since they arrived". Easy and Flat trays are never segmented and are
