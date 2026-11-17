@@ -85,7 +85,7 @@ def queue(tmp_path, monkeypatch):
 
 def _window(triage_only=True):
     return Window(_triage_only=triage_only, _deep_review=False, _worklist=None,
-                  _has_triage_cache={}, _pool_cache=None)
+                  _has_triage_cache={}, _held_logged=set(), _pool_cache=None)
 
 
 def test_each_bundle_is_judged_on_every_copy(queue):

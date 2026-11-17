@@ -117,6 +117,33 @@ def triaged_segments(
     return out
 
 
+def triaged_in_range(
+    outcome_doc: Optional[Dict[str, Any]],
+    assign_doc: Optional[Dict[str, Any]] = None,
+    seg_doc: Optional[Dict[str, Any]] = None,
+) -> Tuple[Set[int], Set[int]]:
+    """``(kept, ghost)``: the triaged segments that exist, and the flags that
+    name a segment the segmentation does not have.
+
+    THE one definition of "this video has something to triage", used by the
+    gate, the return scan and the review window alike. A flag can name a
+    segment that does not exist (a producer numbering by boundary index rather
+    than by segment: a flag on segment 21 of a 20-segment video). Nobody can
+    answer it, so it never counts as triage -- on any side. Counting it on one
+    side only offered the bundle to a reviewer with nothing to ask, and left a
+    bundle whose only flags were such ghosts in the queue for ever (the return
+    scan found "no triage" and the window found "something to ask"). With no
+    segments document nothing is known to be out of range, so nothing is
+    dropped."""
+    tri = triaged_segments(outcome_doc, assign_doc)
+    bounds = (seg_doc or {}).get("boundaries") or []
+    if not bounds:
+        return tri, set()
+    n_segs = max(0, len(bounds) - 1)
+    ghost = {s for s in tri if isinstance(s, int) and s > n_segs}
+    return tri - ghost, ghost
+
+
 def resolved_segments(review_doc: Optional[Dict[str, Any]],
                       seg_doc: Optional[Dict[str, Any]] = None) -> Set[int]:
     """Segment numbers a human review has actively resolved.
@@ -283,6 +310,10 @@ class TriageStatus:
     # triage (causal_review_io.answer_problem); it is a question about the cuts,
     # which deep review fixes.
     too_short: Dict[int, Tuple[int, int]] = field(default_factory=dict)
+    # Flags naming a segment that does not exist (triaged_in_range). Never
+    # part of ``triaged``; kept so a bundle whose ONLY flags are these can be
+    # recognised and returned instead of sitting in triage for ever.
+    ghost: Set[int] = field(default_factory=set)
 
     @property
     def has_triage(self) -> bool:
@@ -357,23 +388,12 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     assign = _load(directory, f"{video_id}_reach_assignments.json")
     review = _load(directory, f"{video_id}_causal_review.json")
 
-    tri = triaged_segments(outcome, assign)
-
-    # A flag can name a segment that does not exist (a producer numbering by
-    # boundary index rather than by segment: seven live bundles carried a flag
-    # on segment 21 of a 20-segment video). An unanswerable question can never
-    # be resolved, so such a bundle could never be released by any human
-    # action. Drop out-of-range flags, loudly -- an unanswerable question is
-    # worse than a missing one.
-    bounds = (seg or {}).get("boundaries") or []
-    if bounds:
-        n_segs = max(0, len(bounds) - 1)
-        ghost = {s for s in tri if isinstance(s, int) and s > n_segs}
-        if ghost:
-            logging.getLogger(__name__).warning(
-                "%s: triage flags name nonexistent segment(s) %s (only %d "
-                "segments exist); ignoring them", video_id, sorted(ghost), n_segs)
-            tri -= ghost
+    tri, ghost = triaged_in_range(outcome, assign, seg)
+    if ghost:
+        logger.warning(
+            "%s: triage flags name nonexistent segment(s) %s (only %d segments "
+            "exist); ignoring them", video_id, sorted(ghost),
+            max(0, len((seg or {}).get("boundaries") or []) - 1))
 
     res = resolved_segments(review, seg)
 
@@ -406,4 +426,67 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
         seg_corrected=segmentation_corrected(review),
         seg_human_fixed=(seg or {}).get("boundary_source") == "human",
         too_short=_too_short_segments(seg),
+        ghost=ghost,
     )
+
+
+def deep_review_cleared(directory: Path, video_id: str) -> bool:
+    """True when a person has cleared this video's deep review: the clear
+    marker ``{video_id}_deep_review_cleared.json`` is in ``directory``. Never
+    raises.
+
+    The marker ONLY. A ground-truth file used to count as a clear by its mere
+    presence -- even a progress save with nothing determined, and without
+    anyone pressing Clear -- and the release then let the segmenter cut the
+    video again exactly as before. The review gate applies the same test
+    (watcher.review_gate._deep_review_cleared). Ground truth that certifies
+    the WHOLE video is a separate, stronger fact; :func:`held_for_segmentation`
+    honours it as the gate does."""
+    try:
+        return (Path(directory) / f"{video_id}_deep_review_cleared.json").is_file()
+    except Exception:
+        return False
+
+
+def held_for_segmentation(directory: Path, video_id: str,
+                          st: Optional["TriageStatus"] = None) -> bool:
+    """True when this video's segmentation must be fixed before anything else
+    can be asked: the segmentation failed (or its file is missing or
+    unreadable -- there is nothing to trust) AND nobody has released it from
+    that: no clear marker (:func:`deep_review_cleared`) and no ground truth
+    certifying the whole video (:func:`gt_resolved_segments`; the gate passes
+    such a video clean even with a failed segmentation, so holding it would
+    hold a video the gate releases).
+
+    THE one definition, used by the return scan (which sends such a triage
+    bundle to deep review) and the review window (which then does not offer
+    it in triage). WHY one: the window had its own copy that read an
+    unreadable segments file as "not failed" and offered the bundle, while the
+    scan read it as failed and moved it to deep review under the reviewer --
+    and the window's copy ignored a person's clear, so a cleared bundle with
+    open pellets was offered by neither. ``st`` saves a second read when the
+    caller already has the status."""
+    failed = (st.seg_failed if st is not None else
+              segmentation_failed(_load(Path(directory), f"{video_id}_segments.json")))
+    if not failed:
+        return False
+    if deep_review_cleared(directory, video_id):
+        return False
+    try:
+        return not gt_resolved_segments(video_id, extra_dirs=(Path(directory),))[0]
+    except Exception as err:
+        logger.warning("%s: could not read its ground truth, so it counts as not "
+                       "certifying the video: %s", video_id, err)
+        return True
+
+
+def bundle_triage(directory: Path, video_id: str) -> Tuple[Set[int], Set[int]]:
+    """``(kept, ghost)`` for the video's files in ``directory`` -- the
+    :func:`triaged_in_range` rule over its outcomes, assignments and segments.
+    A missing or unreadable file counts as absent (``_load``): a missing
+    assignments file skips only the touched-without-causal test, never the
+    algorithm's own flags, exactly as the gate decides."""
+    d = Path(directory)
+    return triaged_in_range(_load(d, f"{video_id}_pellet_outcomes.json"),
+                            _load(d, f"{video_id}_reach_assignments.json"),
+                            _load(d, f"{video_id}_segments.json"))

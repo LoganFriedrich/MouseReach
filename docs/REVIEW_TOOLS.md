@@ -53,8 +53,8 @@ Three more files in `review/` are worth naming, and none of them is a review too
 A picked video is shown when all of these hold (`_bundle_eligible`; `_bundle_needs_review`):
 
 - it is a directory containing a manifest file,
-- segmentation did not fail — confidence at or below 0, or an anomaly mentioning "reference quality" (`_segmentation_failed`, `:2610`),
-- it has at least one triaged element (`_bundle_has_triage`, `:2626`),
+- it is not waiting for its segmentation to be fixed: the segmentation did not fail (confidence at or below 0, or an anomaly mentioning "reference quality"), its segments file is not missing or unreadable — **or** a person has already cleared it: the `_deep_review_cleared.json` marker, or ground truth that certifies the whole video (both exhaustive flags set and every pellet's outcome determined). This is `triage_status.held_for_segmentation`, the **same** rule the watcher's return scan uses to send a triage bundle to deep review, so the window never offers a video the scan is about to move, and a cleared video with open pellets is always offered (`_held_for_segmentation`). A skipped video is named in the window's log.
+- it has at least one triaged element on a segment that exists (`_bundle_has_triage`, which calls `triage_status.bundle_triage` — the same rule the gate and the return scan use),
 - no ground-truth file exists for the video anywhere — ground truth counts as the answer (`_bundle_needs_review`; `has_gt` in `causal_review_io.py`). This applies to Triage Review only: in Re-segmentation Review a video is shown whether or not it has ground truth, because ground truth never takes a video out of that queue -- only Clear (or the fixer's save) does, so hiding it there would leave it with no button that could release it (since 2026-11-17),
 - its triaged elements are not already all resolved (`_bundle_reviewed`, `:2539`).
 
@@ -67,7 +67,11 @@ A segment is triaged when either:
 - the outcome detector wrote `outcome == "triaged"` or `flagged_for_review: true`, or
 - the outcome is a *touched* one — `retrieved`, `displaced_sa`, `displaced_outside` — and the reach-assignment file has no reach marked `is_causal` for that segment. The pellet moved, but nothing says which reach moved it.
 
-That rule exists in `triage_status.triaged_segments` (`triage_status.py:70`) and is written out a second time, identically, inside the widget (`_bundle_has_triage`, `causal_review_widget.py:2626`; the walk's own copy at `:1087-1088`).
+That rule exists once, in `triage_status.triaged_segments`, and the review window, the gate and the return scan all call it (through `triage_status.triaged_in_range` / `bundle_triage`). Two refinements apply everywhere alike:
+
+- **A missing reach-assignment file** skips only the "touched but no causal reach" test. The outcome detector's own flags still count, so a flagged video with no assignment file is still offered for triage. (The window used to have its own copy that treated a missing file as "nothing to triage", hiding such a video from every reviewer while the watcher kept it in the queue.)
+- **A flag on a segment that does not exist** (for example segment 21 of a 20-segment video) is not a question anyone can answer. It is ignored on every side, with a warning in the log. A triage bundle whose **only** flags are such ghosts is returned to the pipeline by the next return scan, exactly like a fully answered one, instead of sitting in the queue for ever.
+- **mousereach-route-to-queue refuses to send a video to triage when there would be nothing to ask**: none of the requested segments exists, and the video has no unanswered flagged segment. Nothing is moved and the refusal is printed.
 
 (A third, different version lived in the worklist builder of the old triage-clearing tool, `triage_queue.py`; that tool is retired and the builder removed, see "Triage Clearing (retired)".)
 
@@ -732,7 +736,7 @@ The same widget with `deep_review=True` (`causal_review_widget.py:198-203`). Dif
 
 It has no console command. It opens from the "Review Queues" launcher tab (`queue_launcher_widget.py:123`) or from the pipeline dashboard for one named video (`dashboard/widget.py`, `_open_review_for_video`; the dashboard's database buttons open only the watcher's existing database and never create one, see PIPELINE_AS_BUILT; its Publication Lock buttons work only on the processing server, or on a GPU PC with also_process on, as `mousereach-crystallize` does).
 
-**It cannot open the videos it exists for.** The bundle pool skips any bundle whose segmentation failed (`:2665-2666`), and "segmentation failed" is the main reason the gate routes a video to re-segmentation in the first place (`review_gate.py:87-88`). Every bundle that meets that test is invisible to the tool; a bundle with no segments file at all is counted as failed by the gate (`triage_status.segmentation_failed`, `triage_status.py:50-51`) but as fine by the widget (`:2610`, which returns `False` on any read error). The Segmentation Fixer below is the tool that can open them.
+**It cannot open the videos it exists for.** The window does not offer a bundle that is waiting for its segmentation to be fixed, in this queue or in triage. "Waiting for its segmentation" is one shared rule, `triage_status.held_for_segmentation`, which the window and the watcher's return scan both call: the segmentation failed, OR its segments file is missing or cannot be read (there are no cuts to trust), AND no person has cleared the video for deep review. "Segmentation failed" is the main reason the gate routes a video to re-segmentation in the first place, so most bundles in this queue are skipped here. A bundle with no segments file is treated the same way everywhere: held, not offered (the window used to have its own copy of the rule that counted such a bundle as fine). Open these with the Segmentation Fixer below; once a person has set or confirmed the cuts and cleared the video, this window offers it again.
 
 ---
 

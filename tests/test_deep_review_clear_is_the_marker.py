@@ -108,8 +108,8 @@ def _window_lists(bundle):
     (no Qt is started)."""
     W = CausalReviewWidget
     stub = SimpleNamespace(_deep_review=True, _triage_only=False, _worklist=None,
-                           _has_triage_cache={})
-    for name in ("_bundle_reviewed", "_segmentation_failed", "_bundle_has_triage"):
+                           _has_triage_cache={}, _held_logged=set())
+    for name in ("_bundle_reviewed", "_held_for_segmentation", "_bundle_has_triage"):
         setattr(stub, name, (lambda f: lambda *a: f(stub, *a))(getattr(W, name)))
     stub._bundle_needs_review = lambda b, r: W._bundle_needs_review(stub, b, r)
     return W._bundle_eligible(stub, bundle, bundle.parent)

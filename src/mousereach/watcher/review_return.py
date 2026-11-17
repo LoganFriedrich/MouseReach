@@ -50,7 +50,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..config import Paths, is_outcome_free_tray
 from . import claim_marker, node_status
-from ..review.triage_status import triage_status
+from ..review.triage_status import held_for_segmentation, triage_status
 from .review_routing import LEFT_NOTE, _safe_move, same_path as _same_path
 
 try:
@@ -1919,7 +1919,10 @@ def scan_review_queues(db, processing_dir: Path,
             # question is ANSWERED, so diverting would only lap the cycle.
             # Fall through instead -- the bundle is an ordinary triage bundle
             # now, waiting for its triaged segments to be answered.
-            if not cleared:
+            if held_for_segmentation(bundle, stem, st):
+                # The SAME rule the review window uses to keep this bundle out
+                # of triage (triage_status.held_for_segmentation): failed
+                # segmentation that no person cleared.
                 # A seg-failed bundle can NEVER satisfy the triage release
                 # condition below, and nothing else moves it -- it sat in the
                 # triage queue with no route out. A failed segmentation makes the whole video
@@ -1973,7 +1976,17 @@ def scan_review_queues(db, processing_dir: Path,
                 _release_return_claim(stem)
             continue
         still_open = set(st.unresolved) - set(short)
-        if not (st.has_triage and not still_open
+        # A bundle whose ONLY flags name segments that do not exist
+        # (st.ghost; triage_status.triaged_in_range) has nothing a person
+        # could answer. It used to read "no triage" here and was skipped on
+        # every scan -- in the queue for ever, while the window offered it with
+        # nothing to ask. It is returned like an answered bundle: the pipeline
+        # resumes and its checks run again on the current outputs.
+        ghost_only = (not st.has_triage) and bool(st.ghost)
+        if ghost_only:
+            logger.info("Return scan: %s has only flags on nonexistent segment(s) %s; "
+                        "nothing to ask, so it is returned", stem, sorted(st.ghost))
+        if not ((st.has_triage or ghost_only) and not still_open
                 and (not st.seg_failed or cleared)):
             continue
         if st.seg_pending_reseg:

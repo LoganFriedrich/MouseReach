@@ -177,7 +177,7 @@ def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
     folder. A pellet reopened ("are you sure?") in the durable copy, or an
     answer only the durable copy held, was judged differently here than by
     the window's own restore and the release check."""
-    from .triage_status import resolved_segments, triaged_segments
+    from .triage_status import resolved_segments, triaged_in_range
     bundle_dir = Path(bundle_dir)
     seg_doc = _seg_doc(bundle_dir, stem)
     doc = effective_review(stem, dirs, seg_doc)
@@ -191,8 +191,11 @@ def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
         od = _rj(bundle_dir / f"{stem}_pellet_outcomes.json")
         ad = _rj(bundle_dir / f"{stem}_reach_assignments.json")
         # An empty triaged set is trivially done; such bundles are filtered
-        # out earlier by _bundle_has_triage.
-        return triaged_segments(od, ad).issubset(resolved)
+        # out earlier by _bundle_has_triage. A flag on a segment that does not
+        # exist is not asked (triaged_in_range), so it cannot keep the review
+        # from reading complete.
+        kept, _ghost = triaged_in_range(od, ad, seg_doc)
+        return kept.issubset(resolved)
     current = segments_from_segmentation(seg_doc) if seg_doc else []
     if current:
         wanted = {s["segment_num"] for s in current}
@@ -423,6 +426,10 @@ class CausalReviewWidget(QWidget):
         # take it up again, and corpus files (flagged_sessions.json) must keep
         # going to the queue root, never beside a video opened by hand.
         self._queue_pending_dir: Optional[Path] = None
+        # Bundles already logged as held for their segmentation: the pool is
+        # scanned on every "next video", and one line per scan per held bundle
+        # filled the log with the same skip over and over.
+        self._held_logged: set = set()
 
         # Video state
         self.video_path: Optional[Path] = None
@@ -3269,51 +3276,41 @@ The notes box travels with the video.
             return False
         return True
 
-    def _segmentation_failed(self, b: Path) -> bool:
-        """True if the segmenter FAILED on this video (overall_confidence 0 / bad
-        reference quality -> uniform-fallback boundaries -- e.g. an over-long
-        recording whose trailing junk frames tank DLC reference tracking). These
-        need manual re-segmentation, not normal outcome review, so they are held
-        OUT of the auto-review queue (pending a proper failed-seg triage flow)."""
-        try:
-            sd = json.loads((b / f"{b.name}_segments.json").read_text(encoding="utf-8"))
-        except Exception as err:
-            logger.warning('Could not read the segments of %s, so it counts as not failed: %s', b, err)
-            return False
-        c = sd.get("overall_confidence")
-        if c is not None and c <= 0.0:
-            return True
-        anoms = sd.get("anomalies") or []
-        return any("reference quality" in str(a).lower() for a in anoms)
+    def _held_for_segmentation(self, b: Path) -> bool:
+        """True if this bundle waits for its segmentation to be fixed (failed,
+        missing or unreadable segments, and no person cleared it) -- those go
+        to deep review, not to triage. The SAME rule the return scan applies
+        (triage_status.held_for_segmentation); the window used to have its own
+        copy, which offered a bundle with an unreadable segments file that the
+        scan then moved to deep review under the reviewer."""
+        from .triage_status import held_for_segmentation
+        stem = b.name
+        held = held_for_segmentation(b, stem)
+        if held and stem not in self._held_logged:
+            self._held_logged.add(stem)
+            logger.info("Skipped %s: its segmentation must be fixed first (deep review)",
+                        stem)
+        return held
 
     def _bundle_has_triage(self, b: Path) -> bool:
-        """True if bundle ``b`` has >=1 triaged element -- SAME definition the
-        segment walk uses (outcome uncertain, or a touched outcome with no
-        committed causal reach). Cached per session: the algo data is static, so
-        a bundle's triage status never changes within a run, which keeps
-        repeated 'next video' pool scans cheap."""
+        """True if bundle ``b`` has >=1 triaged element on a segment that
+        exists -- the ONE rule the gate and the return scan use
+        (triage_status.bundle_triage). A missing assignments file skips only
+        the touched-without-causal test, never the algorithm's own flags (this
+        copy used to answer "nothing to triage" then, hiding a flagged bundle
+        the scan would never release). Cached per session: the algo data is
+        static, so a bundle's triage status never changes within a run, which
+        keeps repeated 'next video' pool scans cheap."""
         key = b.name
         cached = self._has_triage_cache.get(key)
         if cached is not None:
             return cached
-        result = False
+        from .triage_status import bundle_triage
         try:
-            od = json.loads((b / f"{key}_pellet_outcomes.json").read_text(encoding="utf-8"))
-            ad = json.loads((b / f"{key}_reach_assignments.json").read_text(encoding="utf-8"))
-            causal = {int(r["segment_num"]) for r in ad.get("reaches", [])
-                      if r.get("is_causal") and r.get("segment_num") is not None}
-            _T = ("retrieved", "displaced_sa", "displaced_outside")
-            for s in od.get("segments", []):
-                oc = s.get("outcome"); sn = s.get("segment_num")
-                if sn is None:
-                    continue
-                if oc == "triaged" or s.get("flagged_for_review"):
-                    result = True
-                    break
-                if oc in _T and int(sn) not in causal:
-                    result = True
-                    break
-        except Exception:
+            kept, _ghost = bundle_triage(b, key)
+            result = bool(kept)
+        except Exception as err:
+            logger.warning("Skipped %s: its outcomes could not be read (%s)", key, err)
             result = False
         self._has_triage_cache[key] = result
         return result
@@ -3333,7 +3330,7 @@ The notes box travels with the video.
             return False
         if self._worklist:
             return True
-        if self._segmentation_failed(b):
+        if self._held_for_segmentation(b):
             return False   # failed-seg -> manual re-seg queue, not normal review
         if self._triage_only and not self._bundle_has_triage(b):
             return False   # triaged-only: skip videos with no triaged element

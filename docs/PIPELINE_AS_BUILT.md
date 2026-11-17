@@ -5378,3 +5378,34 @@ with 2.6.0: rows stamped 2.5.0 would then keep their missing columns for good.
 **Kinematics-only re-runs.** These values are measurements, not decisions, so a
 kinematics-only re-run of a filed video (previous section) adds them and keeps the
 filed reaches, outcomes and causal reaches exactly as before.
+
+## Update: one rule for "has something to triage" and "waits for its segmentation"
+
+The review window, the review gate and the watcher's return scan used to carry
+their own copies of two rules, and the copies disagreed. Each rule now lives once, in
+`src/mousereach/review/triage_status.py`, and every one of them calls it:
+
+- **Has something to triage** (`triaged_in_range`, `bundle_triage`): a segment the outcome
+  detector flagged, or a touched pellet with no causal reach. A missing reach-assignment file skips
+  only the second test. A flag on a segment the segmentation does not have is ignored everywhere,
+  with a warning in the log.
+- **Waits for its segmentation** (`held_for_segmentation`): the segmentation failed, or its file is
+  missing or unreadable, and nobody has released it from that: no clear marker
+  (`deep_review_cleared`; the marker only, as the gate reads it) and no ground truth certifying the
+  whole video (the gate passes such a video clean even with a failed segmentation).
+
+What an operator sees:
+
+- A flagged video with no reach-assignment file is offered in the triage window (it used to be
+  hidden from every reviewer while the watcher kept it in the queue).
+- A triage bundle with an unreadable segments file is not offered in the window; the return scan
+  moves it to deep review. A video whose failed segmentation a person cleared, and which still has
+  unanswered pellets, IS offered in triage (before, neither side picked it up).
+- A triage bundle whose only flags name segments that do not exist is returned to the pipeline by
+  the next return scan, like an answered bundle, and its checks run again. Before, it stayed in the
+  triage queue for ever. The first scan after this change returns every such bundle already
+  waiting.
+- `mousereach-route-to-queue --queue triage` refuses (nothing moves) when none of the requested
+  segments exists and the video has no unanswered flagged segment.
+
+Tests: `tests/test_one_rule_for_triage_and_held_segmentation.py`.

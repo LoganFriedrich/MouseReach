@@ -330,6 +330,37 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
     return reopened
 
 
+def _triage_would_ask(video_id: str, outcomes: Path, wanted_open) -> bool:
+    """Would a triage bundle of this video hold a question a person can
+    answer? True when a requested segment (``wanted_open``: requested and not
+    already answered, or reopened on purpose) exists in the outcomes and in the
+    segmentation, or when the video already has a flagged segment on a real
+    segment (triage_status.bundle_triage, the release check's rule) that
+    nobody answered. Reads only."""
+    from mousereach.review.triage_status import bundle_triage
+    folder = Path(outcomes).parent
+    try:
+        od = json.loads(Path(outcomes).read_text(encoding="utf-8"))
+    except Exception:
+        od = {}
+    present = {int(x["segment_num"]) for x in (od.get("segments") or [])
+               if isinstance(x, dict) and x.get("segment_num") is not None}
+    sp = folder / f"{video_id}_segments.json"
+    try:
+        bounds = (json.loads(sp.read_text(encoding="utf-8")).get("boundaries") or []
+                  if sp.is_file() else [])
+    except Exception:
+        bounds = []
+    n_segs = len(bounds) - 1 if bounds else None
+    if any(s in present and (n_segs is None or s <= n_segs) for s in wanted_open):
+        return True
+    kept, _ghost = bundle_triage(folder, video_id)
+    if not kept:
+        return False
+    done = answered_segments_of(video_id, folder)
+    return "all" not in done and bool(set(kept) - done)
+
+
 def route_video(video_id: str, queue: str, reason: str,
                 segment_nums: Optional[Iterable[int]] = None, db=None,
                 segment_details: Optional[dict] = None,
@@ -386,6 +417,7 @@ def route_video(video_id: str, queue: str, reason: str,
                                 segment_details, recheck, held)
             return res
         wanted = []
+        wanted_open = []
         if segment_nums:
             # Never ask a person again what they (or ground truth) already
             # answered -- see "A SEGMENT A PERSON HAS ANSWERED" above. Decided
@@ -401,6 +433,16 @@ def route_video(video_id: str, queue: str, reason: str,
             if not [s for s in wanted if s not in answered or s in reopenable]:
                 res["answered"] = answered
                 return res          # nothing left to ask; not routed, not a failure
+            wanted_open = [s for s in wanted if s not in answered or s in reopenable]
+        else:
+            wanted_open = []
+        if queue == "triage" and not _triage_would_ask(video_id, outcomes, wanted_open):
+            # A triage bundle with nothing a person can answer is never
+            # released: the return scan finds no question and skips it on
+            # every pass. So it is refused before anything moves.
+            res["error"] = ("nothing to ask in triage: none of the requested segments "
+                            "exists and the video has no open flagged segment; not routed")
+            return res
         dest_root = Paths.TRIAGE_REVIEW if queue == "triage" else Paths.DEEP_REVIEW
         from mousereach.watcher.review_return import (_claim_return_nested,
                                                       _release_return_claim)
