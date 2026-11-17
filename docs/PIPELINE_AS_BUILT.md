@@ -4812,8 +4812,10 @@ it is missing:
 What a person does when a tool says the database is missing: start the watcher on that machine
 once (`mousereach-watch`, or Start in the Watcher Control panel); if the watcher is already
 running there, check `watcher.db_path` in `~/.mousereach/config.json` (`mousereach-watch-info`
-shows it). A decoy `watcher.db` left beside a configured `db_path` is not read by anything any
-more and may be renamed aside. Tests: `tests/test_tools_never_create_a_decoy_watcher_db.py`,
+shows it). A decoy `watcher.db` left beside a configured `db_path` is not read by anything in a
+login whose config sets `db_path`; before renaming it aside, check every login's config on that
+machine (`mousereach-watch-info` in each), because a login whose own config has no `db_path`
+resolves `<processing_root>/watcher.db` as its real database. Tests: `tests/test_tools_never_create_a_decoy_watcher_db.py`,
 `tests/test_archive_gate.py`.
 
 ## Update: publication locks are set and lifted on the processing server only
