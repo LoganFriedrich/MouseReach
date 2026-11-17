@@ -5186,3 +5186,19 @@ the video in any state but 'processed', and when the features file is missing or
 the stage outputs beside it. A filing it cannot record in a database that knows the video
 exits with code 1. The watcher's own filing does not go through these command checks; it has
 its own (below). `docs/CLI_REFERENCE.md` lists the exact refusals.
+
+**The watcher's own filing step checks that the kinematics are this run's.** The step that
+files a 'processed' video used to check only that a `<video>_features.json` was in the
+Processing folder. A re-run copies the filed generation down, the old features file
+included, so a re-run whose kinematics then failed could still show one. Now the features
+file must also be at least as new as the video's segments, reaches and outcomes files and as
+the start of the run; otherwise the video is marked failed with "not filed: no kinematics"
+and the reason, and nothing moves. And a failed video can no longer be reset straight to
+'processed' (`mousereach-watch-reprocess --from-step processed` is gone): 'processed' means
+"passed every check, file it", so a failed video re-runs from 'processing' or earlier and
+earns it again.
+
+Not done yet (a known leftover): the filing step does not ask the review gate again, and
+does not look for the record of the hand-score comparison itself; it relies on 'processed'
+having been reached through those checks, and a person's reset of a failed video can no
+longer skip them.

@@ -822,8 +822,9 @@ other state the command says what to do instead and exits with code 1.
 
   video_id           The video to reset.
   --all-failed       Reset every video currently in the failed state.
-  --from-step STEP   Restart at this step: dlc_queued, dlc_complete,
-                     processing or processed. Without it the step is read
+  --from-step STEP   Restart at this step: dlc_queued, dlc_complete or
+                     processing ('processed' is not offered: a failed
+                     video earns it again by re-running). Without it the step is read
                      from the files this machine holds (video in its DLC
                      queue: dlc_queued, or dlc_complete with a pose beside it;
                      video and pose in its Processing folder: processing;
@@ -857,7 +858,7 @@ other state the command says what to do instead and exits with code 1.
         print("Options:")
         print("  --all-failed      Reset ALL failed videos")
         print("  --from-step STEP  Restart at this step (dlc_queued, dlc_complete,")
-        print("                    processing, processed)")
+        print("                    processing)")
         print()
         print("Examples:")
         print("  mousereach-watch-reprocess 20250101_CNT0101_P1")

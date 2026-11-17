@@ -451,9 +451,10 @@ def refuse_filing_with_failed_measures(db, video_id, results_dir) -> bool:
 def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     """The archive step's own check that a video has its kinematics: True
     (and the row marked failed, nothing moved) when ``results_dir`` holds the
-    video's files but no ``<stem>_features.json``, or a features file that
-    still holds an undecided pellet (refuse_filing_with_undecided_pellet) or a
-    reach whose measures failed (refuse_filing_with_failed_measures).
+    video's files but no ``<stem>_features.json``, a features file older than
+    this run (stale_features_reason), or a features file that still holds an
+    undecided pellet (refuse_filing_with_undecided_pellet) or a reach whose
+    measures failed (refuse_filing_with_failed_measures).
 
     WHY a second check after _make_features: 'processed' means "file it", and
     a row can reach 'processed' by other ways than a fresh run (a person
@@ -468,8 +469,26 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     if folder is None:
         return False
     if (folder / f"{video_id}_features.json").is_file():
-        return (refuse_filing_with_undecided_pellet(db, video_id, folder)
-                or refuse_filing_with_failed_measures(db, video_id, folder))
+        # Present is not enough: a re-run copies the filed generation down,
+        # the old features file included, so "there is one" can mean an
+        # earlier run's kinematics beside this run's outputs. It must be at
+        # least as new as the stage outputs beside it and as the start of
+        # this run (stale_features_reason).
+        from mousereach.archive.core import stale_features_reason
+        try:
+            started = (db.get_video(video_id) or {}).get('processing_started_at')
+        except Exception:
+            started = None
+        why = stale_features_reason(video_id, folder, started)
+        if why is None:
+            return (refuse_filing_with_undecided_pellet(db, video_id, folder)
+                    or refuse_filing_with_failed_measures(db, video_id, folder))
+        message = (f"{NO_KINEMATICS_REASON} ({why}; the archive step does not "
+                   f"file a video whose kinematics were not made by this run)")
+        db.mark_failed(video_id, message)
+        db.log_step(video_id, 'archive', 'failed', message=message)
+        logger.error(f"{video_id}: {message} -- held as failed, not filed")
+        return True
     if not _has_files_of(folder, video_id):
         return False
     if _filed_by_this_run(db, video_id) is not None:

@@ -70,7 +70,12 @@ VIDEO_TRANSITIONS = {
     #   remade, watcher/resume_point.py): -> 'outdated'/'processing' or
     #   'dlc_queued' (only if the deep fix changed the pose h5).
     'deep_review': ['outdated', 'processing', 'dlc_queued', 'failed'],
-    'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'processed', 'unresolvable'],  # Retry from any prior state
+    # Retry from any prior WORK step. Not 'processed': that state means
+    # "passed every check, file it", and a failed video put straight there was
+    # filed without the checks re-running -- with the features file of an
+    # earlier run, if one had been copied down. A failed video re-runs from
+    # 'processing' (or earlier) and earns 'processed' again.
+    'failed': ['validated', 'dlc_queued', 'dlc_complete', 'processing', 'unresolvable'],
     # --- 'unresolvable': this NODE has no file for this video. ---
     # Not a failure and not a scientific hold: nothing went wrong with the video,
     # it simply is not here. Cross-node recovery reads state out of the shared database,
@@ -1652,7 +1657,8 @@ class WatcherDB:
     # targets from 'failed' that put a video back in front of a work step.
     # 'validated' and 'unresolvable' are left out on purpose (see
     # infer_reset_state for the one case where 'validated' is inferred).
-    RESET_STEP_CHOICES = ('dlc_queued', 'dlc_complete', 'processing', 'processed')
+    # 'processed' is not one (see the 'failed' transitions above).
+    RESET_STEP_CHOICES = ('dlc_queued', 'dlc_complete', 'processing')
 
     @staticmethod
     def infer_reset_state(video_id: str, dlc_queue=None, processing_dir=None,

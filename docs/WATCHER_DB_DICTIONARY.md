@@ -333,8 +333,9 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
                    route, return or divert moves a crystallized video)
   triage        -> outdated, processing, deep_review, failed
   deep_review   -> outdated, processing, dlc_queued, failed
-  failed        -> validated, dlc_queued, dlc_complete, processing, processed,
-                   unresolvable
+  failed        -> validated, dlc_queued, dlc_complete, processing,
+                   unresolvable   (not processed: a failed video re-runs
+                   and earns 'processed', so it is never filed unchecked)
   unresolvable  -> validated, dlc_queued, dlc_complete, processing, processed,
                    archived
 
