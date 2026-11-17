@@ -4659,13 +4659,16 @@ their shared claim still says 'cropping' ... sending 'cropped' again`). Nothing 
 **A cut video that reached neither the share nor the node's queue.** After cutting a collage, a GPU
 node puts each single-animal video in two places: the shared drive (already claimed by this node, so
 another node can take it over) and its own DLC queue. If BOTH failed for one video -- the share could
-not be written and the local copy failed, or no DLC queue is configured -- the working file was the
+not be written and the local copy failed -- the working file was the
 only copy left, yet it was deleted with the working folder while the collage was recorded "cropped"
 here and on the shared claim, so no node ever cut that video again. Now
 (`DLCOrchestrator._process_collage`) such a video counts as a slot that could not be cut: the
 collage is recorded "failed" with an error naming the video (`... was cut, but copied neither to the
 shared drive nor into this node's DLC queue`), it is retried like any failed collage (above), the
-retry cuts that video again, and its working file is kept until a later attempt has placed a copy.
+retry takes the kept file into the queue (a child left 'validated' with its working file kept is first
+offered to the single-adopt path) or cuts it again, and its working file is kept until a later attempt has placed a copy.
 The videos that were placed stay queued. A video that reached the shared drive but not the queue is
-not a failure: the shared copy is claimed by this node and is taken from there. If the retries run
+not a failure: the shared copy is claimed by this node and is taken from there.
+On a node with NO DLC queue configured the video is instead marked unresolvable with the reason 'no local DLC
+queue is configured on this node' and its file is kept; the collage can still finish 'cropped' in that case. If the retries run
 out, the collage is listed in the red panel as described above.

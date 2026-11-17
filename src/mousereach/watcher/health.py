@@ -139,7 +139,7 @@ def health_report(db=None) -> List[str]:
                     "its reason (File Details shows it)." % len(unres))
             # Collages this machine could not crop. WHY here: a failed collage
             # is a whole recording whose sessions are not cut, and until
-            # 2026-11 no screen named one -- only a count in the status
+            # no screen named one -- only a count in the status
             # command. Ones still being retried say so; ones out of retries
             # are also in the red attention panel (orchestrator
             # _list_parked_collages).
