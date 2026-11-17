@@ -1757,7 +1757,9 @@ Set the model once in `~/.mousereach/config.json`:
 It must be the same model the GPU nodes use: a pose from any other model is not
 handed on. Stop it with Ctrl+C (running poses are stopped and their videos given
 back) or by creating `cpu_pose_stop.flag` in the processing root (running poses
-finish and are handed on first). If that flag is already there when the pool
+finish and are handed on first; a finished pose whose hand-on keeps failing is
+tried once more, and any still waiting is named in the log and handed on at the
+next start). If that flag is already there when the pool
 STARTS, the pool gives back or hands on what a previous run left and then
 refuses to run: a warning naming the file and its age, and exit code 3. Delete
 the flag to start it. It reports as `<hostname>-cpu` in

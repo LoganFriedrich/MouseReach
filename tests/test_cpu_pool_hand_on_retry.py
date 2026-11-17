@@ -263,3 +263,71 @@ def test_repeated_hand_on_failures_wait_longer_each_time(env, monkeypatch):
     clock["t"] += 61
     env.pool._retry_hand_ons()               # the wait has doubled
     assert tries["n"] == n2
+
+
+# -------------------------------------------- what is still waiting is shown,
+# -------------------------------------------- tried once more at a stop, and
+# -------------------------------------------- given back after a day of failures
+
+def test_the_status_report_lists_poses_waiting_to_be_handed_on(env, monkeypatch):
+    """Such a pose holds its video while nothing else shows it."""
+    from mousereach.watcher import node_status
+    _finished_and_unhanded(env, monkeypatch)
+    written = {}
+    monkeypatch.setattr(node_status, "write",
+                        lambda root, state, hostname=None, extra=None: written.update(extra or {}))
+    env.pool._status()
+    assert written.get("waiting_hand_on") == [VID]
+
+
+def test_a_stop_tries_a_waiting_hand_on_once_more_before_exiting(env, monkeypatch):
+    """A stopped pool keeps no claim alive, so it does not leave a hand-on
+    that could succeed now waiting for its next start."""
+    real_copy = transfer.safe_copy
+    _finished_and_unhanded(env, monkeypatch)
+    env.pool._hand_on_backoff()[VID] = (5, 10 ** 12)      # next try far away
+    monkeypatch.setattr(transfer, "safe_copy", real_copy)  # the share works again
+    p = env.pool
+    monkeypatch.setattr(p, "recover", lambda: None, raising=False)
+    monkeypatch.setattr(p, "_status", lambda: None, raising=False)
+    monkeypatch.setattr(p, "_stop_requested", lambda: True, raising=False)
+    monkeypatch.setattr(p, "_stop_flag_left", lambda: None, raising=False)
+    monkeypatch.setattr(pool_mod.time, "sleep", lambda s: pytest.fail("did not stop"))
+    import mousereach.watcher.repose as repose
+    monkeypatch.setattr(repose, "declared_scorer", lambda: POSE)
+    p.stopping = True
+    assert p.run() == 0
+    names = {x.name for x in env.posed.iterdir()}
+    assert f"{VID}{POSE}.h5" in names                    # handed on before exiting
+
+
+def _failing_for_a_day(env, monkeypatch, attempts):
+    """A finished pose whose hand-on has failed ``attempts`` times, the first
+    over a day ago, and is due to be tried again."""
+    claimed = _finished_and_unhanded(env, monkeypatch)
+    env.pool.__dict__.setdefault("hand_on_since", {})[VID] = (
+        pool_mod.time.time() - 25 * 3600)
+    env.pool._hand_on_backoff()[VID] = (attempts, 0.0)
+    return claimed
+
+
+def test_a_hand_on_failing_for_a_day_gives_the_video_back_to_every_node(env, monkeypatch):
+    """A failure of this machine's own never clears; the video must not stay
+    held, unposed for everyone, for as long as the pool runs."""
+    claimed = _failing_for_a_day(env, monkeypatch, attempts=20)
+    _run_cycles(env, monkeypatch, 1)
+    assert not claimed.exists()
+    assert (env.door / f"{VID}.mp4").is_file()           # back for any node
+    assert not any(env.work.glob(f"{VID}*"))             # leftovers: copy confirmed
+    assert VID not in env.pool._unhanded()
+    assert not any(env.posed.iterdir())
+    _no_side_folder(env)
+
+
+def test_one_failure_after_a_long_share_outage_does_not_give_up(env, monkeypatch):
+    """No tries are made while the share is down, so a day's wait is not a
+    day of failures."""
+    claimed = _failing_for_a_day(env, monkeypatch, attempts=0)
+    _run_cycles(env, monkeypatch, 1)
+    assert claimed.is_file()
+    assert VID in env.pool._unhanded()

@@ -4729,3 +4729,33 @@ For an operator: if a watcher will not start, read the message; USER_GUIDE.md "T
 CPU pose pool) will not start" says what to do for each. Where it lives: `watcher/singleton.py`,
 `cli.main_watch`, `WatcherControlWidget._take_start_guards`, `CpuPosePool.run`,
 `health.health_report`. Tests in `tests/test_start_guards.py`.
+
+## Update: the CPU pose pool shows the poses it could not hand on, tries them once more at a stop, and gives a video back after a day of failures
+
+Three gaps were left after the CPU pose pool learned to retry a failed hand-on while it runs:
+
+- **Nothing showed such a pose.** Its video stays claimed by the pool, but the pool's status report
+  (`Processing/.node_status/<machine>-cpu.json`, read by `mousereach-watch-status`) listed only
+  running poses. It now also lists them as `waiting_hand_on`. A list that does not empty means
+  the hand-on keeps failing; the pool log says why.
+- **A stop abandoned them.** When the pool stopped (stop flag, running poses finished), finished
+  poses still waiting for their next try were left as they were, their claims no longer kept alive,
+  until the next start. Now the pool tries each of them once more before it exits, whatever its
+  wait. Any still not handed on are named in one warning ("stopping with N finished pose(s) not
+  handed on ..."); the next start hands them on, as before.
+- **A failure of the machine's own held the video for ever.** Some failures never clear by
+  themselves -- a damaged local file, a posed folder this machine may not write -- and the video
+  stayed claimed, unposed for everyone, for as long as the pool ran. Now, once the hand-on has
+  failed for 24 hours AND at least 10 times (`HAND_ON_GIVE_UP_S`, `HAND_ON_GIVE_UP_ATTEMPTS`), the
+  pool gives up: the claimed video goes back to the top of the shared singles folder for any node
+  to pose, this pool leaves it alone for an hour, and the local copies are deleted once the video
+  is confirmed back in the shared folder (otherwise they stay where they are). The pool log says
+  "its hand-on failed N times over H h; the video is given back ...". WHY both conditions: no
+  tries are made while the shared drive cannot be read, so a day-long outage is not a day of
+  failures, and one failed try after the drive comes back does not give up. If the claimed video
+  cannot be given back (a file of that name is already in the singles folder), nothing changes and
+  the hand-on keeps being tried.
+For an operator: nothing to do unless the give-up warning appears or `waiting_hand_on` stays
+filled -- then read the pool log for the hand-on errors and fix what this machine cannot write.
+Where it lives: `watcher/cpu_pose_pool.py` `CpuPosePool._status`, `_retry_hand_ons`,
+`_give_up_hand_on`, `_last_hand_on_try`, `run`. Tests in `tests/test_cpu_pool_hand_on_retry.py`.
