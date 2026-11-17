@@ -290,6 +290,59 @@ def save_unified_gt(gt: UnifiedGroundTruth, video_path: Path,
     return gt_path
 
 
+def finalized_ground_truth(gt: UnifiedGroundTruth) -> Tuple[Optional[UnifiedGroundTruth], List[str]]:
+    """The copy "Save as Ground Truth" writes, or the reasons it must not be
+    written. Returns ``(copy, [])`` or ``(None, problems)``.
+
+    The copy keeps only what a person determined: boundaries and outcomes
+    marked determined, reaches with a determined start or end (algorithm
+    seeds nobody touched are not ground truth). It also keeps the three
+    "this part is complete" (exhaustive) declarations with who made them and
+    when. WHY: the copy used to be built without them, and it overwrites the
+    file "Save Progress" writes, so pressing the finishing button erased the
+    person's declarations; a finished ground truth then read as partial --
+    the results kept reaches the person had ruled out and pellets came back
+    to triage.
+
+    Refused (nothing to write) when a part is marked complete but the filter
+    would drop items from it: "complete" would then claim the shorter list is
+    every item, and the dropped ones -- algorithm items in the video the
+    person did not get to -- would be read as ruled out. The problem names the
+    part and the count; the person determines (or removes) those items, or
+    un-marks the part, and saves again.
+
+    A pure function (no Qt), so the rule is tested without a window."""
+    kept_b = [b for b in gt.boundaries if b.determined]
+    kept_r = [r for r in gt.reaches if r.start_determined or r.end_determined]
+    kept_o = [o for o in gt.outcomes if o.determined]
+    problems = []
+    for part, flag, before, after, noun in (
+            ("segmentation", gt.segmentation_exhaustive, gt.boundaries, kept_b, "boundaries"),
+            ("reaches", gt.reaches_exhaustive, gt.reaches, kept_r, "reaches"),
+            ("outcomes", gt.outcomes_exhaustive, gt.outcomes, kept_o, "outcomes")):
+        dropped = len(before) - len(after)
+        if flag and dropped:
+            problems.append(
+                f"{part} is marked complete, but {dropped} of its {len(before)} {noun} "
+                f"are not determined and would be left out")
+    if problems:
+        return None, problems
+    out = UnifiedGroundTruth(
+        video_name=gt.video_name,
+        schema_version=gt.schema_version,
+        created_by=gt.created_by,
+        created_at=gt.created_at,
+        anomalies=gt.anomalies,
+        anomaly_annotations=gt.anomaly_annotations,
+    )
+    out.boundaries, out.reaches, out.outcomes = kept_b, kept_r, kept_o
+    for part in ("segmentation", "reaches", "outcomes"):
+        for suffix in ("exhaustive", "exhaustive_determined_by", "exhaustive_determined_at"):
+            name = f"{part}_{suffix}"
+            setattr(out, name, getattr(gt, name))
+    return out, []
+
+
 def _dict_to_unified_gt(data: Dict) -> UnifiedGroundTruth:
     """Convert dict from JSON to UnifiedGroundTruth dataclass.
 

@@ -1983,39 +1983,22 @@ class GroundTruthWidget(QWidget):
         GT files only contain items the human explicitly interacted with.
         Algorithm-seeded items the human never touched are NOT saved.
         This makes GT files true training data - only human-provided examples.
+        The "complete" (exhaustive) declarations are kept, and a part marked
+        complete that still holds undetermined items is refused with the
+        part and count named, nothing written
+        (unified_gt.finalized_ground_truth says why).
         """
         if not self.gt or not self.video_path:
             return
 
-        from mousereach.review.unified_gt import UnifiedGroundTruth
+        from mousereach.review.unified_gt import finalized_ground_truth
 
-        # Create filtered copy with only human-interacted items
-        filtered_gt = UnifiedGroundTruth(
-            video_name=self.gt.video_name,
-            schema_version=self.gt.schema_version,
-            created_by=self.gt.created_by,
-            created_at=self.gt.created_at,
-            anomalies=self.gt.anomalies,
-            anomaly_annotations=self.gt.anomaly_annotations,
-        )
-
-        # Filter boundaries: keep if human determined the value
-        filtered_gt.boundaries = [
-            b for b in self.gt.boundaries
-            if b.determined
-        ]
-
-        # Filter reaches: keep if human determined start OR end
-        filtered_gt.reaches = [
-            r for r in self.gt.reaches
-            if r.start_determined or r.end_determined
-        ]
-
-        # Filter outcomes: keep if human determined the value
-        filtered_gt.outcomes = [
-            o for o in self.gt.outcomes
-            if o.determined
-        ]
+        filtered_gt, problems = finalized_ground_truth(self.gt)
+        if problems:
+            show_error("Ground truth NOT saved: " + "; ".join(problems) +
+                       ". Determine those items (or un-mark the part as complete), "
+                       "then save again. Save Progress still saves everything.")
+            return
 
         # Save the filtered GT
         path = save_unified_gt(filtered_gt, self.video_path)

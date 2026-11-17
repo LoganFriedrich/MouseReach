@@ -699,7 +699,8 @@ Question: what really happens in this video. There is no accept/verify step — 
 Two save buttons (`:585-625`):
 
 - **Save Progress** (`_save_progress`, `:1971`) writes everything, including untouched algorithm-seeded rows.
-- **Save as Ground Truth** (`_save_ground_truth`, `:1980`) writes a filtered copy containing only items a person actually determined.
+- **Save as Ground Truth** (`_save_ground_truth`, `:1980`) writes a filtered copy containing only items a person actually determined: boundaries and outcomes marked determined, reaches with a determined start or end. It keeps your "complete" (exhaustive) marks for boundaries, reaches and outcomes, with who set them and when. (Before this was fixed, this button wrote the file without the marks, so pressing it erased the "complete" marks a Save Progress had written.)
+  - **When it refuses.** If you marked a part complete and that part still holds items you have not determined, the save is refused: nothing is written, and a red message names the part and how many of its items are not determined (for example "reaches is marked complete, but 3 of its 40 reaches are not determined and would be left out"). WHY: the finished file keeps only determined items, so "complete" would then claim the shorter list is every item, and the undetermined ones -- detected items you have not got to -- would be read as ruled out. What to do: determine those items (or remove the "complete" mark from that part), then press Save as Ground Truth again. Save Progress always saves, everything included.
 
 Both write `{stem}_unified_ground_truth.json` next to the video (`unified_gt.save_unified_gt`, `unified_gt.py:252`). Ground truth outranks every review downstream, and having one anywhere removes the video from the review queue entirely (`_bundle_needs_review`, `causal_review_widget.py:2604-2605`).
 
