@@ -165,16 +165,34 @@ def _write_marker_once(path: Path, doc: dict) -> bool:
     (another window or machine released it first) is that person's record,
     not something to overwrite."""
     import os
+    import tempfile
     text = json.dumps(doc, indent=2, default=str) + "\n"
-    try:
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-    except (FileNotFoundError, FileExistsError):
+    folder = Path(path).parent
+    if not folder.is_dir():
         return False
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    return True
+    # Write the whole record to a temp file first, then hard-link it to the
+    # marker name: os.link fails if the marker exists (create-only) and the
+    # marker appears complete or not at all, so a crash cannot leave an empty
+    # marker that has lost who cleared the video and when.
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".marker_", suffix=".tmp")
+    except OSError:
+        return False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, str(path))
+        except (FileExistsError, FileNotFoundError):
+            return False
+        return True
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def release_finished(queue_root: Path, cls: Optional[dict] = None):

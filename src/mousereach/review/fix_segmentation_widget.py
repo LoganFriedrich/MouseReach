@@ -68,6 +68,9 @@ def invalidate_stale_downstream(seg_path, video_stem, archive_dir):
                    "_reach_assignments.json", "_features.json"):
         stale = Path(seg_path).parent / (video_stem + suffix)
         if stale.exists():
+            # The folder is made here, only when something goes into it, so a
+            # save that has nothing to archive leaves no empty archive folder.
+            Path(archive_dir).mkdir(parents=True, exist_ok=True)
             shutil.copy2(stale, Path(archive_dir) / stale.name)
             stale.unlink()
             removed.append(stale.name)
@@ -1233,8 +1236,8 @@ automatic.
                    / ("segmentation_before_human_fix_%s"
                       % datetime.now().strftime("%Y%m%d_%H%M%S")))
         try:
-            archive.mkdir(parents=True, exist_ok=True)
             if not uncut:
+                archive.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self.seg_path, archive / self.seg_path.name)
         except Exception as e:
             QMessageBox.critical(self, "Could not archive",
