@@ -90,7 +90,10 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
         return {"held": True, "bundle": str(bundle), "note": "already queued -- left intact"}
     bundle.mkdir(parents=True, exist_ok=True)
     moved = []
-    for f in sorted(work_dir.glob(f"{video_id}*")):
+    # files_of_video: the shared rule (not another video whose stem begins
+    # with this one; never an unfinished copy).
+    from mousereach.pipeline.fsutil import files_of_video
+    for f in sorted(files_of_video(work_dir, video_id)):
         if f.name == Path(dlc_h5).name or f.suffix.lower() in (".h5", ".csv", ".pickle"):
             continue  # pose artifacts stay in DLC Model 4/; bundle references them
         if safe_move(f, bundle / f.name):
@@ -317,7 +320,10 @@ def reprocess_video_to_current(
                              "n_algo": len(sup.get("algo", []))}
     from mousereach.watcher.transfer import safe_move
     moved = []
-    for f in sorted(work_dir.glob(f"{video_id}*")):
+    # files_of_video: the shared rule (not another video whose stem begins
+    # with this one; never an unfinished copy).
+    from mousereach.pipeline.fsutil import files_of_video
+    for f in sorted(files_of_video(work_dir, video_id)):
         if f.name == work_h5.name:
             continue  # the 4.0 pose stays in DLC Model 4/ until relocation phase
         if safe_move(f, video_dir / f.name):

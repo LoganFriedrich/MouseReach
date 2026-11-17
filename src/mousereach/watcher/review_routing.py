@@ -159,30 +159,18 @@ def superseded_by_deep_review(bundle_dir) -> bool:
 def _bundle_files(source_dir: Path, video_id: str) -> List[Path]:
     """Every file in ``source_dir`` that belongs to ``video_id``.
 
-    Uses a prefix-boundary guard so ``CNT0312_P2`` does not also match
-    ``CNT0312_P21``'s files.
+    The one shared rule (pipeline.fsutil.files_of_video): a prefix-boundary
+    guard so ``..._P2`` does not also match ``..._P21``'s files, and an
+    unfinished copy (``<name>.part`` left by an interrupted copy) is never
+    carried into a bundle. The rule tests the name before asking whether the
+    entry is a file -- routing a finished video takes its files from the
+    cohort's Analyzed folder, tens of thousands of entries, and asking the
+    share "is this a file?" for every one cost minutes per video.
     """
-    out: List[Path] = []
+    from mousereach.pipeline.fsutil import files_of_video
     if not source_dir.exists():
-        return out
-    n = len(video_id)
-    # The name is tested BEFORE asking whether the entry is a file, and the
-    # listing's own entry answers that (no extra round trip on Windows). WHY:
-    # routing a finished video takes its files from the cohort's Analyzed
-    # folder -- tens of thousands of entries -- and asking the share "is this a
-    # file?" for every one cost minutes per video; a nightly check ran out of
-    # its time limit with most of its videos left.
-    with os.scandir(source_dir) as entries:
-        for e in entries:
-            name = e.name
-            if not name.startswith(video_id):
-                continue
-            # exact stem match (name == stem, unlikely) or a valid boundary char
-            if not (len(name) == n or name[n] in _BOUNDARY_CHARS):
-                continue
-            if e.is_file():
-                out.append(Path(e.path))
-    return out
+        return []
+    return files_of_video(source_dir, video_id)
 
 
 # ---------------------------------------------------------------------------

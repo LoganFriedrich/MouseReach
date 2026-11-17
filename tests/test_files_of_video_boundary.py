@@ -57,3 +57,12 @@ def test_the_watcher_helpers_use_the_same_rule(tmp_path):
     assert got == {f"{P1}.mp4", f"{P1}DLC_resnet50_X.h5", f"{P1}_features.json"}
     staged = {p.name for p in o._reprocess_copy_set([d], d, P1)}
     assert not any(n.startswith(P10) for n in staged), staged
+
+
+def test_routing_into_a_queue_uses_the_same_rule(tmp_path):
+    from mousereach.watcher.review_routing import _bundle_files
+    _two_videos(tmp_path / "d")
+    d = tmp_path / "d"
+    (d / f"{P1}.mp4.part").write_bytes(b"half")
+    got = {p.name for p in _bundle_files(d, P1)}
+    assert got == {f"{P1}.mp4", f"{P1}DLC_resnet50_X.h5", f"{P1}_features.json"}, got

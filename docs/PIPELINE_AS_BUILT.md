@@ -5152,10 +5152,16 @@ files are `<video>.mp4`, `<video>_<something>.json` and `<video>DLC_<model>.h5`.
 intake, staging, the re-run copy-down, the clean-ups after filing, the bring-current helper
 and the old segmentation triage mover used to take "every file whose name starts with the
 video's name". Tray numbers can have more than one digit, so `..._P1` would also have taken
-`..._P10`'s files and moved or deleted them with its own. All of them now ask one function
+`..._P10`'s files and moved or deleted them with its own. All of the steps just listed now ask one function
 (`pipeline.fsutil.files_of_video`): the character right after the video's name must be `.`,
 `_` or `D`, and an unfinished copy (`.part`, `.tmp`, `.partial`) is never one of the files.
-The review queues already used the same rule; they now share it.
+The review queues' routing (`review_routing._bundle_files`) now uses the same function, so an
+unfinished copy is never carried into a review bundle either. Steps that only LOOK for a file
+(for example the review windows finding a pose file) still search by name pattern; they move
+nothing. Not converted yet (a known leftover): the per-step command-line tools that advance or
+triage one stage's files (the reach and outcome steps' own batch, advance and triage commands)
+and the re-pose helper (`mousereach-repose-videos`) still take files by the bare name prefix.
+The watcher does not use them to move a video's files.
 
 **Filing moves the features file and the provenance file last.** When a finished video is
 filed into its Analyzed cohort folder, every other file moves first. Only when all of them are
