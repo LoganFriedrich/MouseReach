@@ -95,6 +95,10 @@ class ReachFeatures:
     reviewed_by: Optional[str] = None           # reviewer username (when human_review)
     algo_outcome: Optional[str] = None          # the algo's original outcome, preserved on override
     algo_causal_reach_id: Optional[int] = None  # the algo's original causal reach id, preserved on override
+    # Who named this segment's causal reach: 'ground_truth' (the reach holding
+    # the ground truth's interaction frame), 'human_review', 'reach_assignment',
+    # or None (no causal reach, or one from an old outcome file).
+    causal_reach_source: Optional[str] = None
 
     # Extended kinematic feature set (flat dict; keys are stable column names).
     # Populated by FeatureExtractor for v2 outputs. See REACH_KINEMATIC_DATA_DICTIONARY.md.
@@ -420,6 +424,7 @@ class FeatureExtractor:
                     _seg['algo_causal_reach_id'] = _asn['reach_id']
                 continue
             _seg['causal_reach_id'] = _asn['reach_id']
+            _seg['causal_reach_source'] = 'reach_assignment'
             if _seg.get('interaction_frame') is None:
                 _seg['interaction_frame'] = _asn.get('segment_ifr')
         if _unmerged_touched:
@@ -656,6 +661,7 @@ class FeatureExtractor:
         features.reviewed_by = outcome_data.get('reviewed_by')
         features.algo_outcome = outcome_data.get('algo_outcome')
         features.algo_causal_reach_id = outcome_data.get('algo_causal_reach_id')
+        features.causal_reach_source = outcome_data.get('causal_reach_source')
 
         # Check if this is the causal reach
         causal_reach_id = outcome_data.get('causal_reach_id')

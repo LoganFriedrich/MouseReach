@@ -61,6 +61,7 @@ HELP_TEXT = """
 <li><b>No Verify Buttons</b> - When you SET a value, that IS the ground truth</li>
 <li><b>Algorithm as Starting Point</b> - Loads algorithm outputs, you correct them</li>
 <li><b>Single GT File</b> - All annotations saved to unified ground truth file</li>
+<li><b>The interaction frame names the causal reach</b> - for a retrieved or displaced pellet, the reach whose frames contain the interaction frame you set is the reach credited with it in the results. Set the interaction frame inside the reach that touched the pellet.</li>
 </ul>
 
 <h3>Workflow</h3>
@@ -1580,7 +1581,8 @@ class GroundTruthWidget(QWidget):
 
         set_interact_btn = QPushButton("Set (I)")
         set_interact_btn.setMaximumWidth(50)
-        set_interact_btn.setToolTip("Set current frame as interaction frame")
+        set_interact_btn.setToolTip("Set current frame as interaction frame. For a touched pellet, "
+                                    "the reach containing this frame is credited as its causal reach.")
         set_interact_btn.clicked.connect(lambda _, o=outcome: self._set_interaction_frame(o))
         frame_row.addWidget(set_interact_btn)
 

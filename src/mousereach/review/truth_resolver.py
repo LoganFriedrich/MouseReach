@@ -201,9 +201,12 @@ def _seg_overrides_from_gt(gt: Optional[dict], current_segments=None,
         ho = seg.get("outcome")
         if ho is None:
             continue
+        # No causal_reach_id: the id a ground-truth file stores was copied
+        # from the algorithm's reach list of the run it was made on, and no
+        # tool lets a person set it. The causal reach is found by frames
+        # (_apply_outcome_layers).
         out[int(sn)] = {
             "outcome": ho,
-            "causal_reach_id": seg.get("causal_reach_id") if ho in _TOUCHED_OUTCOMES else None,
             "interaction_frame": seg.get("interaction_frame"),
             "reviewer": (gt or {}).get("last_modified_by") or (gt or {}).get("created_by"),
             "source": "ground_truth",
@@ -211,41 +214,139 @@ def _seg_overrides_from_gt(gt: Optional[dict], current_segments=None,
     return out, bool(oc.get("exhaustive"))
 
 
-def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]]) -> dict:
-    """Resolve per-segment outcomes. ``layers`` is ordered LOW -> HIGH; the
-    highest layer with a call for a segment wins. Non-destructive; stamps
+def _reach_holding_frame(reaches: List[dict], frame) -> Optional[dict]:
+    """The reach whose frames (inclusive) contain ``frame``; a ground-truth
+    reach is preferred over a detected one when both do. None when no reach
+    does or there is no frame. The rule triage/gt_resolve._find_causal_by_ifr
+    uses: the reach in progress at the moment of contact is the one that
+    touched the pellet."""
+    if frame is None:
+        return None
+    try:
+        f = int(frame)
+    except (TypeError, ValueError):
+        return None
+    hits = []
+    for r in reaches or []:
+        s, e = r.get("start_frame"), r.get("end_frame")
+        if s is None or e is None:
+            continue
+        if int(s) <= f <= int(e):
+            hits.append(r)
+    if not hits:
+        return None
+    hits.sort(key=lambda r: 0 if r.get("reach_source") == "ground_truth" else 1)
+    return hits[0]
+
+
+def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
+                          reaches_data: Optional[dict] = None) -> dict:
+    """Resolve per-segment outcomes. ``layers`` is ordered LOW -> HIGH.
+
+    Merged per FIELD, not per segment (a higher layer used to replace the
+    lower layer's whole answer, so a ground-truth outcome threw away the
+    review's causal reach, typed reach and ignore windows):
+
+    - outcome, its source and who answered: the highest layer with a call.
+    - interaction frame: the highest layer that gives one.
+    - ignore windows (abnormal_ranges) and a typed reach: from the review,
+      whichever layer wins the outcome -- they say which frames are not
+      behaviour and which reach the detector missed, and ground truth
+      records neither.
+    - causal reach: the review's pick when the review wins. When ground truth
+      wins and the pellet was touched, ground truth stores no causal reach a
+      person chose (the tool has no control for it; any id in the file was
+      copied from the algorithm's reach list of an older run). So, in order:
+      (a) the reach -- in this run's resolved reach list, ``reaches_data`` --
+      whose frames contain the ground truth's interaction frame; (b) the
+      review's pick, when the review gave the same outcome; (c) nothing is
+      set, so the reach assignment's answer is merged by the extractor as on
+      any segment no person decided. The stored id is never used. Which one
+      applied is stamped as ``causal_reach_source`` ("ground_truth",
+      "human_review"; the extractor stamps "reach_assignment" for (c)).
+    - an untouched ground-truth outcome: no causal reach (key present, None:
+      "no reach did this").
+
+    A review and ground truth that disagree on the outcome are logged with the
+    segment, both outcomes and who gave the review. Non-destructive; stamps
     provenance and preserves the algo originals as algo_outcome /
     algo_causal_reach_id."""
     out = copy.deepcopy(outcomes_data)
-    merged: Dict[int, dict] = {}
-    for lay in layers:
-        for sn, ov in lay.items():
-            merged[sn] = ov  # later (higher-priority) layer wins
+    reach_lists: Dict[int, List[dict]] = {}
+    for rseg in (reaches_data or {}).get("segments", []):
+        try:
+            reach_lists[int(rseg.get("segment_num"))] = rseg.get("reaches") or []
+        except (TypeError, ValueError):
+            continue
     for seg in out.get("segments", []):
         if "outcome_source" not in seg:
             seg["outcome_source"] = "algo"
         sn = seg.get("segment_num")
         if sn is None:
             continue
-        ov = merged.get(int(sn))
-        if not ov:
+        ovs = [lay[int(sn)] for lay in layers if lay.get(int(sn))]
+        if not ovs:
             continue
+        top = ovs[-1]
+        review = next((o for o in reversed(ovs) if o.get("source") == "human_review"), None)
         seg["algo_outcome"] = seg.get("outcome")
         seg["algo_causal_reach_id"] = seg.get("causal_reach_id")
-        seg["outcome"] = ov["outcome"]
-        seg["causal_reach_id"] = ov.get("causal_reach_id")
-        if ov.get("review_causal_reach_id") is not None:
-            seg["review_causal_reach_id"] = ov["review_causal_reach_id"]  # the id as reviewed; provenance
-        seg["outcome_source"] = ov["source"]
-        if ov.get("reviewer"):
-            seg["reviewed_by"] = ov["reviewer"]
-        if ov.get("interaction_frame") is not None:
-            seg["interaction_frame"] = ov["interaction_frame"]
-        if ov.get("abnormal_ranges"):
-            seg["abnormal_ranges"] = ov["abnormal_ranges"]
+        seg["outcome"] = top["outcome"]
+        seg["outcome_source"] = top["source"]
+        if top.get("reviewer"):
+            seg["reviewed_by"] = top["reviewer"]
+        ifr = next((o["interaction_frame"] for o in reversed(ovs)
+                    if o.get("interaction_frame") is not None), None)
+        if ifr is not None:
+            seg["interaction_frame"] = ifr
+        ranges = next((o["abnormal_ranges"] for o in reversed(ovs) if o.get("abnormal_ranges")), None)
+        if ranges:
+            seg["abnormal_ranges"] = ranges
+        if review is not None and review.get("review_causal_reach_id") is not None:
+            seg["review_causal_reach_id"] = review["review_causal_reach_id"]  # the id as reviewed; provenance
         seg.pop("review_reach_frames", None)
-        if ov.get("review_reach"):
-            seg["review_reach_frames"] = list(ov["review_reach"])
+        seg.pop("causal_reach_source", None)
+
+        if top.get("source") != "ground_truth":
+            seg["causal_reach_id"] = top.get("causal_reach_id")
+            if seg["causal_reach_id"] is not None:
+                seg["causal_reach_source"] = top.get("source")
+            if top.get("review_reach"):
+                seg["review_reach_frames"] = list(top["review_reach"])
+            continue
+
+        # Ground truth decided the outcome.
+        if review is not None and review.get("outcome") != top["outcome"]:
+            logger.warning("segment %s: ground truth says %s, the review by %s says %s; "
+                           "ground truth is applied", sn, top["outcome"],
+                           review.get("reviewer") or "unknown", review.get("outcome"))
+        if top["outcome"] not in _TOUCHED_OUTCOMES:
+            seg["causal_reach_id"] = None
+        else:
+            held = _reach_holding_frame(reach_lists.get(int(sn), []), ifr)
+            if held is not None and held.get("reach_id") is not None:
+                seg["causal_reach_id"] = held["reach_id"]
+                seg["causal_reach_source"] = "ground_truth"
+            elif review is not None and review.get("outcome") == top["outcome"] and \
+                    (review.get("causal_reach_id") is not None or review.get("review_reach")):
+                if review.get("review_reach"):
+                    # A reach the detector missed: _add_reviewed_reaches adds
+                    # it and makes it the causal reach.
+                    seg["review_reach_frames"] = list(review["review_reach"])
+                else:
+                    seg["causal_reach_id"] = review["causal_reach_id"]
+                seg["causal_reach_source"] = "human_review"
+            elif seg.get("algo_causal_reach_id") is None:
+                # (c): the outcome file named no causal reach (the current
+                # detector writes none), so the key is left out and the
+                # extractor merges the reach assignment's answer.
+                seg.pop("causal_reach_id", None)
+        if review is not None and review.get("review_reach") and "review_reach_frames" not in seg:
+            # The reviewer's typed reach is still a reach that happened: it
+            # joins the reach list, not as the causal reach, unless ground
+            # truth's reach list is complete (_add_reviewed_reaches).
+            seg["review_reach_frames"] = list(review["review_reach"])
+            seg["review_reach_not_causal"] = True
     return out
 
 
@@ -313,7 +414,8 @@ def _merge_reaches(algo_reaches: List[dict], gt_reaches: List[dict]) -> List[dic
     return final
 
 
-def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict) -> dict:
+def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict,
+                          gt_reaches_complete: bool = False) -> dict:
     """Add each reviewer-typed reach the detector missed (the module docstring
     says why) to its segment's reaches, and make it that segment's causal reach.
     It is merged exactly as a supplementary GT reach is (_merge_reaches: it
@@ -323,8 +425,22 @@ def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict) -> dict:
     wanted = {}
     for seg in outcomes_data.get("segments", []):
         frames = seg.get("review_reach_frames")
-        if frames and seg.get("outcome_source") == "human_review" and seg.get("segment_num") is not None:
-            wanted[int(seg["segment_num"])] = (seg, frames)
+        if not frames or seg.get("segment_num") is None:
+            continue
+        if seg.get("outcome_source") == "ground_truth" and gt_reaches_complete:
+            # Ground truth marks its reach list complete: a reach it does not
+            # list is not added. Said so, never silently.
+            logger.warning("segment %s: the review's typed reach %s-%s is not added -- "
+                           "ground truth marks its reach list complete",
+                           seg.get("segment_num"), frames[0], frames[1])
+            seg.pop("review_reach_frames", None)
+            seg.pop("review_reach_not_causal", None)
+            if seg.get("causal_reach_source") == "human_review" and seg.get("causal_reach_id") is None:
+                seg.pop("causal_reach_source", None)
+                if seg.get("algo_causal_reach_id") is None:
+                    seg.pop("causal_reach_id", None)
+            continue
+        wanted[int(seg["segment_num"])] = (seg, frames)
     if not wanted:
         return reaches_data
     out = copy.deepcopy(reaches_data)
@@ -346,7 +462,9 @@ def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict) -> dict:
             if r.get("reach_id") == next_id:
                 r["reach_source"] = "human_review"
         seg["n_reaches"] = len(seg["reaches"])
-        oseg["causal_reach_id"] = next_id
+        if not oseg.pop("review_reach_not_causal", False):
+            oseg["causal_reach_id"] = next_id
+            oseg["causal_reach_source"] = "human_review"
         next_id += 1
     return out
 
@@ -473,7 +591,31 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
         elif gtr:
             seg["reaches"] = _merge_reaches(seg.get("reaches", []), gtr)
             seg["n_reaches"] = len(seg["reaches"])
+    _unique_reach_ids(out)
     return out
+
+
+def _unique_reach_ids(reaches_data: dict) -> None:
+    """Give a ground-truth reach a new id when a detected reach of this run
+    already has its id (in place). WHY: a ground-truth reach keeps the id it
+    had in the run the file was made on, and ids are renumbered on every run,
+    so a merged list could hold two reaches with one id -- and the causal
+    reach is named by id, so both would be marked causal. Detected reaches
+    keep theirs (reviews and the reach assignment name them)."""
+    segs = reaches_data.get("segments", [])
+    taken = {r.get("reach_id") for sg in segs for r in sg.get("reaches", [])
+             if r.get("reach_source", "algo") != "ground_truth" and r.get("reach_id") is not None}
+    next_id = 1 + max([int(i) for i in taken if isinstance(i, int)] +
+                      [int(r.get("reach_id") or 0) for sg in segs for r in sg.get("reaches", [])
+                       if isinstance(r.get("reach_id"), int)] + [0])
+    for sg in segs:
+        for r in sg.get("reaches", []):
+            if r.get("reach_source") != "ground_truth":
+                continue
+            if r.get("reach_id") is None or r.get("reach_id") in taken:
+                r["reach_id"] = next_id
+                next_id += 1
+            taken.add(r["reach_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -542,11 +684,17 @@ def resolve_truth_layers(
         gt_out, _exhaustive_out = _seg_overrides_from_gt(gt, _cur_segs, human_segmentation)
         layers.append(gt_out)                                     # GT tier (top)
 
-    outcomes_out = _apply_outcome_layers(outcomes_data, layers)
-
-    # ---- per-reach layers: GT, then reviewer-typed reaches the detector missed
+    # ---- per-reach GT layer FIRST: a ground-truth pellet's causal reach is
+    # the reach of THIS run's resolved list holding its interaction frame, so
+    # the reach list is resolved before the outcomes.
     reaches_out = _apply_gt_reaches(reaches_data, gt) if gt else reaches_data
-    reaches_out = _add_reviewed_reaches(reaches_out, outcomes_out)
+
+    outcomes_out = _apply_outcome_layers(outcomes_data, layers, reaches_out)
+
+    # ---- then reviewer-typed reaches the detector missed
+    reaches_out = _add_reviewed_reaches(
+        reaches_out, outcomes_out,
+        gt_reaches_complete=bool(((gt or {}).get("reaches") or {}).get("exhaustive")))
 
     if gt:
         logger.info(
