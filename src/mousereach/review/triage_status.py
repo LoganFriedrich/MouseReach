@@ -164,9 +164,10 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
 
     Returns ``(fully_certified, determined_segment_nums)``, the same shape the
     gate's own ``_gt_certification`` returns, so the two sides cannot drift.
-    ``fully_certified`` means GT marks the whole video complete
-    (``completion_status.all_complete``, or reaches AND outcomes both
-    exhaustive) -- such a video has no unanswered element by definition.
+    ``fully_certified`` means reaches AND outcomes are both marked exhaustive
+    AND every wanted pellet's outcome is determined (see the comment at the
+    computation) -- such a video has no unanswered element by definition. A
+    stored ``completion_status`` is ignored.
 
     ``extra_dirs``: folders to look in BEFORE the corpus-wide index -- the
     folder the video's files are in (the processing folder of a run, a review
@@ -190,7 +191,8 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
     Never raises: no GT, unreadable GT, or a missing index all yield
     ``(False, set())``, which leaves the previous behaviour exactly as it was."""
     try:
-        from .causal_review_io import (find_gt, index_gt_outcomes_by_segment,
+        from .causal_review_io import (_seg_span, _too_short, find_gt,
+                                       index_gt_outcomes_by_segment,
                                        segmentation_is_human, segments_from_segmentation)
         p = find_gt(video_id, extra_dirs=tuple(d for d in extra_dirs if d))
         if not p:
@@ -206,13 +208,38 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
                 if human_segmentation is None:
                     human_segmentation = segmentation_is_human(seg_doc)
                 break
-    cs = gt.get("completion_status") or {}
     rr = (gt.get("reaches") or {}).get("exhaustive")
     oo = (gt.get("outcomes") or {}).get("exhaustive")
-    full = bool(cs.get("all_complete")) or bool(rr and oo)
     by_seg, _ = index_gt_outcomes_by_segment(gt, current_segments,
                                              human_segmentation=bool(human_segmentation))
     out: Set[int] = {sn for sn, seg in by_seg.items() if seg.get("determined") is not False}
+    # "Fully certified" is COMPUTED here, never taken from a stored flag. WHY:
+    # a fully certified video passes the gate as clean even with a failed
+    # segmentation, and its ground truth stands in for every element -- so the
+    # claim must be true of the file as it is now. The two "exhaustive" flags
+    # are switches a person sets in the ground-truth tool, which can be set
+    # while some outcomes are still undetermined, and the stored
+    # completion_status (written by unified_gt.update_completion_status) can be
+    # stale against the file or set while outcomes are undetermined. So: both
+    # flags set AND every pellet wanted has an outcome a person determined. The
+    # pellets wanted are the video's CURRENT segments when they are known
+    # (matched by frames above), else every pellet the ground truth lists. A
+    # current segment too short for any pellet presentation (a segmenter
+    # artifact, causal_review_io._too_short) is not wanted: no outcome is ever
+    # mapped onto it, so wanting it would refuse full certification to every
+    # video the segmenter left such a sliver in, with nothing a person could
+    # fix in the ground-truth tool.
+    if current_segments:
+        human = bool(human_segmentation)
+        want = {int(s["segment_num"]) for s in current_segments
+                if s.get("segment_num") is not None
+                and not _too_short(_seg_span(s), human_segmentation=human)}
+    else:
+        want = {int(s["segment_num"])
+                for s in ((gt.get("outcomes") or {}).get("segments") or [])
+                if isinstance(s, dict) and s.get("segment_num") is not None}
+    determined = {sn for sn, seg in by_seg.items() if seg.get("determined") is True}
+    full = bool(rr and oo and want and want <= determined)
     return full, out
 
 

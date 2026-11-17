@@ -302,7 +302,7 @@ THE GATE - WHAT COUNTS AS SUCCESS
 After segmentation, reach detection, outcome detection and reach assignment have run, the code takes a snapshot of provenance, runs a quality check, and then calls a single decision function (watcher/review_gate.py, called at watcher/orchestrator.py:2047 and :1132). It returns one of three answers:
   - deep review, if segmentation failed or the quality check raised something critical;
   - triage, if any flagged item has not been answered by a person;
-  - clean, otherwise. A video with exhaustive human ground truth is treated as clean regardless of what the algorithms flagged.
+  - clean, otherwise. A video whose human ground truth is fully certified (reaches and outcomes both marked exhaustive AND every pellet outcome determined -- worked out when read) is treated as clean regardless of what the algorithms flagged.
 On deep review or triage the whole file bundle is physically moved out of the working folder into a review queue and the code stops there - no kinematics, no database. Only "clean" continues. That part of the description is accurate.
 
 WHAT HAPPENS ON "CLEAN", IN THE ORDER IT ACTUALLY HAPPENS

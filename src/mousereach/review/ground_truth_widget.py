@@ -1846,13 +1846,26 @@ class GroundTruthWidget(QWidget):
                 self.gt.outcomes_exhaustive_determined_at = None
             show_info(f"{component.capitalize()} no longer marked exhaustive")
         else:
-            # Setting exhaustive - strong confirmation
+            # Setting exhaustive - strong confirmation. Undetermined items of
+            # this part are named in the question: the pipeline treats a video
+            # as fully certified only when reaches AND outcomes are exhaustive
+            # AND every outcome is determined
+            # (triage_status.gt_resolved_segments), so marking it now does not
+            # certify the video -- the person should know that. A warning, not
+            # a refusal: marking the list complete is still a true statement.
+            items = {"reaches": self.gt.reaches, "outcomes": self.gt.outcomes}.get(component, [])
+            n_open = sum(1 for it in items if not getattr(it, "determined", False))
+            open_note = (f"\n\nNOTE: {n_open} of the {component} listed are not yet "
+                         f"determined. Until every outcome is determined the pipeline "
+                         f"does NOT treat this video as fully certified."
+                         if n_open else "")
             reply = QMessageBox.warning(
                 self, "Mark Exhaustive",
                 f"Mark {component} as EXHAUSTIVE?\n\n"
                 f"This declares: 'I have determined ALL {component} in this video. "
                 f"There are no others besides what is listed here.'\n\n"
-                f"This enables full precision + recall evaluation against algorithms.",
+                f"This enables full precision + recall evaluation against algorithms."
+                + open_note,
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             )
             if reply != QMessageBox.Yes:

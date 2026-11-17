@@ -69,9 +69,10 @@ TRIAGE_FAILED_REASON = ("triage_failed: the automatic quality check could not ru
 def _gt_certification(video_id: str, processing_dir=None) -> Tuple[bool, set]:
     """``(fully_exhaustive, gt_determined_outcome_segnums)`` for a video's GT.
 
-    ``fully_exhaustive`` is True when GT marks the whole video complete
-    (``completion_status.all_complete`` or both reaches+outcomes exhaustive) --
-    a human has certified every element, so the whole video is human truth. The
+    ``fully_exhaustive`` is True when reaches and outcomes are both marked
+    exhaustive AND every pellet's outcome is determined (computed when read; a
+    stored completion_status is ignored) -- a human has certified every
+    element, so the whole video is human truth. The
     second value is the set of segment_nums whose outcome GT determined, used to
     clear those specific segments when GT is only partial. Never raises.
 

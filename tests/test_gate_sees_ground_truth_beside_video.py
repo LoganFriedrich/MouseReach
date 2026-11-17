@@ -37,9 +37,13 @@ def _flagged_video(folder, flagged=(1,), n_segments=3):
 
 
 def _gt(folder, segs, full=False):
+    """Ground truth determining the outcomes of ``segs``; ``full`` marks reaches
+    and outcomes exhaustive (fully certified only if ``segs`` covers every
+    segment -- triage_status.gt_resolved_segments)."""
     (folder / f"{VID}_unified_ground_truth.json").write_text(json.dumps({
-        "completion_status": {"all_complete": full},
-        "outcomes": {"segments": [{"segment_num": n, "determined": True} for n in segs]}}),
+        "reaches": {"exhaustive": full},
+        "outcomes": {"exhaustive": full,
+                     "segments": [{"segment_num": n, "determined": True} for n in segs]}}),
         encoding="utf-8")
 
 
@@ -72,7 +76,7 @@ def test_the_gate_still_asks_about_a_segment_ground_truth_did_not_answer(tmp_pat
 def test_exhaustive_ground_truth_beside_the_video_clears_it(tmp_path, empty_gt_index):
     import mousereach.watcher.review_gate as rg
     _flagged_video(tmp_path, flagged=(1, 2, 3))
-    _gt(tmp_path, [], full=True)
+    _gt(tmp_path, [1, 2, 3], full=True)
     assert rg.evaluate_gate(VID, tmp_path)[0] == rg.DECISION_CLEAN
 
 

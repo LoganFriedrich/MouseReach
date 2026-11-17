@@ -33,9 +33,14 @@ def _gt(certified):
         {"index": i, "frame": f, "determined": True, "determined_at": AFTER}
         for i, f in enumerate((100, 200, 300))]}}
     if certified:
+        # Certified as the pipeline computes it (triage_status.
+        # gt_resolved_segments): both lists exhaustive AND every pellet's
+        # outcome determined; a stored completion_status alone does not count.
         doc["completion_status"] = {"all_complete": True}
         doc["reaches"] = {"exhaustive": True}
-        doc["outcomes"] = {"exhaustive": True}
+        doc["outcomes"] = {"exhaustive": True, "segments": [
+            {"segment_num": k, "determined": True, "outcome": "untouched"}
+            for k in (1, 2, 3)]}
     return doc
 
 
