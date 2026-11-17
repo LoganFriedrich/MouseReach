@@ -63,7 +63,7 @@ The clean two-role split has an important exception. A second setting, `watcher.
 
 Two further watcher daemons ship in the same package and are genuinely separate programs:
 
-  - `mousereach-backup` (pyproject.toml:197) runs a timed copy of the configured folders to a backup location using robocopy (src/mousereach/watcher/backup.py:25). It only starts if a `backup` section is enabled in the config file (src/mousereach/watcher/backup.py:196).
+  - `mousereach-backup` (pyproject.toml:197) runs a timed copy of the configured folders to a backup location using robocopy (src/mousereach/watcher/backup.py, `BackupWatcher`). It only starts if a `backup` section is enabled in the config file (src/mousereach/watcher/backup.py, `main`).
   - `mousereach-sync-watch` (pyproject.toml:174) watches the Processing folder and pushes new results into the central database (src/mousereach/sync/watcher.py:121). Note that the pipeline watcher already syncs results to that database itself (src/mousereach/watcher/orchestrator.py:1167, :2095), so this daemon is an alternative tool rather than a required part of the flow.
 
 A class called FileWatcher also exists (src/mousereach/watcher/watcher.py:32) but it is a helper used inside both orchestrators, not something anyone launches.
@@ -338,7 +338,7 @@ A separate tool, the "bring current" reprocessor, exists to re-run old videos on
 
 BACKUPS
 
-A periodic job copies the configured folders (backup.sync_dirs, or the built-in default list) from the source root to a backup location using robocopy in add-only mode - newer files are copied over, deleted files are left in place on the backup; claim folders, liveness reports, half-written files and SQLite rollback journals are never copied (see the update below on what the backup leaves out) (watcher/backup.py:28-33, :133-150). That preserves a copy of the connectome.db file, but it is a whole-file disk backup on a timer, not a record of which rows a given sync replaced.
+A periodic job copies the configured folders (backup.sync_dirs, or the built-in default list) from the source root to a backup location using robocopy in add-only mode - newer files are copied over, deleted files are left in place on the backup; claim folders, liveness reports, half-written files and SQLite rollback journals are never copied (see the update below on what the backup leaves out) (watcher/backup.py, `DEFAULT_SYNC_DIRS` and `_sync_dir`). That preserves a copy of the connectome.db file, but it is a whole-file disk backup on a timer, not a record of which rows a given sync replaced.
 
 ---
 

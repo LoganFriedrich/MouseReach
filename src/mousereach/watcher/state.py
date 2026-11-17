@@ -401,7 +401,7 @@ class WatcherStateManager:
                                    f"quarantine but could not be checked again: {e}")
                 continue
             if row is not None:
-                came_back =((row.get('state') == 'unresolvable'
+                came_back = ((row.get('state') == 'unresolvable'
                               and (row.get('error_message') or '').startswith(REDRIVE_REASONS))
                              or self._copy_failed_retry_due(row))
                 if came_back and self._single_is_stable(file_path):
