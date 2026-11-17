@@ -376,17 +376,20 @@ def record_archived(video_id: str) -> bool:
     failure. Returns True if the state was recorded.
     """
     try:
-        from mousereach.watcher.db import WatcherDB
-        from mousereach.config import WatcherConfig
+        from mousereach.watcher.db_location import open_watcher_db_if_present
         # The node's db_path override, not the default. Getting this wrong is
         # how commands can spend months reading a stale database while the
         # daemon writes to a different file; writing to the wrong one would be
-        # worse than reading it.
-        try:
-            override = WatcherConfig.load().db_path
-        except Exception:
-            override = None
-        db = WatcherDB(override) if override else WatcherDB()
+        # worse than reading it. And never CREATE it: a missing database means
+        # a wrong path or a machine whose watcher never ran, and recording the
+        # filing in a new empty file would hide that.
+        db, why = open_watcher_db_if_present()
+        if db is None:
+            __import__("logging").getLogger(__name__).warning(
+                "%s: archived on disk, but its state was not recorded: %s. "
+                "Run mousereach-watch-status on the machine that analysed it.",
+                video_id, why)
+            return False
         row = db.get_video(video_id)
         if row is None:
             return False                      # not this node's video

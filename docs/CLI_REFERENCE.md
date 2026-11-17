@@ -930,6 +930,11 @@ options:
   --report REPORT  also write the per-video report here (JSON)
 ```
 
+It works on this machine's watcher database (the configured `watcher.db_path`
+when set, else `<processing_root>/watcher.db`) and never creates it: if that
+file is not there it prints `ERROR: no watcher database at <path>; nothing
+done` and exits with code 2. Run `mousereach-watch` once on the machine first.
+
 ## Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.
 
 ### `mousereach-field-audit`
@@ -1963,6 +1968,15 @@ another machine already holds for pose is skipped as a second copy. If the
 copy or the state change fails after the claim, the claim goes back to the
 shared singles folder and the DLC-queue copy made by this run is removed.
 
+The watcher database must already exist on this machine. It is checked after
+the list is shown and BEFORE the `Queue N videos for processing? [y/N]`
+question: if it is missing the command prints `ERROR: Watcher database not
+found at <path> ... nothing was queued` and exits with code 1, without asking
+and without copying anything. (It used to create an empty database there and
+queue the videos into it, where the watcher -- writing a different file --
+never saw them.) Run `mousereach-watch` once on the machine first. `--dry-run`
+does not need the database.
+
 ### `mousereach-watch-info`
 
 ```
@@ -2204,6 +2218,10 @@ Unlock crystallized videos so reprocessing can touch them again.
   --label NAME   Unlock every video crystallized under this label.
   --videos LIST  Comma-separated video ids.
 ```
+
+Refuses with `ERROR: Watcher database not found at <path>` (exit code 1) when
+this machine's watcher database is missing, instead of creating an empty one
+and reporting "Uncrystallized 0 videos".
 
 ## Backup watcher
 

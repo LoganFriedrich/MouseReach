@@ -1407,6 +1407,18 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
         print(f"\nDRY RUN - no files will be modified")
         sys.exit(0)
 
+    # The database must already exist, and is checked BEFORE the person is
+    # asked to confirm. WHY: WatcherDB() creates a missing file, so a wrong
+    # path (a db_path override not yet in place, a new machine) used to queue
+    # every video into an empty decoy the watcher never reads -- and the
+    # videos were copied into the DLC queue with no record of them. Only
+    # mousereach-watch (and the Watcher Control panel) creates the database.
+    db_path = _resolve_db_path()
+    if not db_path.exists():
+        print(f"ERROR: Watcher database not found at {db_path}. Run 'mousereach-watch' "
+              f"once on this machine first; nothing was queued.", file=sys.stderr)
+        sys.exit(1)
+
     # Confirm
     print()
     response = input(f"Queue {total} videos for processing? [y/N]: ")
@@ -1414,8 +1426,6 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
         print("Cancelled.")
         sys.exit(0)
 
-    # Initialize database
-    db_path = _resolve_db_path()
     db = WatcherDB(db_path)
 
     dlc_queue = Paths.DLC_QUEUE
@@ -2498,6 +2508,12 @@ Unlock crystallized videos so reprocessing can touch them again.
 
     try:
         db_path = _resolve_db_path()
+        # Never create the database here: an unlock written to a new empty
+        # file unlocks nothing, and says "Uncrystallized 0 videos" as if the
+        # label had no videos.
+        if not db_path.exists():
+            print(f"ERROR: Watcher database not found at {db_path}.", file=sys.stderr)
+            sys.exit(1)
         db = WatcherDB(db_path)
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)

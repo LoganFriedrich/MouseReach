@@ -362,7 +362,14 @@ class WatcherAdapter:
 
     def __init__(self):
         self.processing_root = Paths.PROCESSING_ROOT
-        self.db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
+        # The database the watcher really writes (config db_path first), never
+        # the default <processing_root>/watcher.db, which on a node with an
+        # override is a decoy with stale or no rows.
+        try:
+            from mousereach.watcher.db_location import resolve_watcher_db_path
+            self.db_path = resolve_watcher_db_path()
+        except Exception:
+            self.db_path = None
         self.files: Dict[str, Dict] = {}
 
     def scan(self) -> Dict[str, Dict]:
@@ -989,10 +996,19 @@ class PipelineDashboard(QWidget):
     # ---------------------------------------------------------------- re-run
     def _watcher_db(self):
         """The node's watcher database, resolved the same way the watcher
-        resolves it (config db_path first) -- never the class default."""
-        from mousereach.watcher.cli import _resolve_db_path
-        from mousereach.watcher.db import WatcherDB
-        return WatcherDB(_resolve_db_path())
+        resolves it (config db_path first) -- never the class default.
+
+        Raises RuntimeError when the file is not there: opening WatcherDB on a
+        missing path CREATES an empty database, and every button that used
+        this would then have read or written that empty decoy without a word.
+        Only the watcher itself (and the Watcher Control panel's Start / Run
+        Once) creates the database. Every caller already catches and shows the
+        error."""
+        from mousereach.watcher.db_location import open_watcher_db_if_present
+        db, why = open_watcher_db_if_present()
+        if db is None:
+            raise RuntimeError(why + " -- start the watcher on this machine once to create it")
+        return db
 
     def _rerun_selected(self):
         """Mark ONE archived video for reprocessing, with a required reason.
@@ -1381,12 +1397,11 @@ class PipelineDashboard(QWidget):
             show_info("Reprocess check already running...")
             return
         try:
-            from mousereach.watcher.db import WatcherDB
-            db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
-            if not db_path or not db_path.exists():
-                show_error("No watcher database found on this machine.")
-                return
-            db = WatcherDB(db_path)
+            # The live database (config db_path first). WHY: this used the
+            # default <processing_root>/watcher.db, which on a node with a
+            # db_path override is a decoy -- the videos were marked out of date
+            # in a file the watcher never reads.
+            db = self._watcher_db()
         except Exception as e:
             show_error(f"Could not open the database: {e}")
             return
@@ -1512,12 +1527,8 @@ class PipelineDashboard(QWidget):
             show_info("Import already running...")
             return
         try:
-            from mousereach.watcher.db import WatcherDB
-            db_path = (Paths.PROCESSING_ROOT / "watcher.db") if Paths.PROCESSING_ROOT else None
-            if not db_path:
-                show_error("Processing root is not configured.")
-                return
-            db = WatcherDB(db_path)
+            # The live database, and never a new empty one (see _watcher_db).
+            db = self._watcher_db()
         except Exception as e:
             show_error(f"Could not open the database: {e}")
             return

@@ -243,10 +243,24 @@ class TestFilingIsRecorded:
     def test_it_writes_to_the_configured_database(self, node_db, tmp_path):
         """Not the default path -- this node overrides db_path, and writing to
         the wrong file would be worse than reading the wrong file."""
-        import inspect
-        from mousereach.archive import core
-        src = inspect.getsource(core.record_archived)
-        assert "WatcherConfig" in src and "db_path" in src
+        from mousereach.archive.core import record_archived
+        self._make(node_db, "v1", "processed")
+        assert record_archived("v1") is True
+        assert node_db.get_video("v1")["state"] == "archived"   # the configured file
+        assert not (tmp_path / "watcher.db").exists()
+
+    def test_a_missing_configured_database_is_never_created(self, tmp_path, monkeypatch):
+        """A missing database means a wrong path or a machine whose watcher
+        never ran; recording the filing in a new empty file would hide that."""
+        import mousereach.config as cfg
+        from mousereach.archive.core import record_archived
+        missing = tmp_path / "elsewhere" / "watcher_local.db"
+
+        class FakeCfg:
+            db_path = missing
+        monkeypatch.setattr(cfg.WatcherConfig, "load", staticmethod(lambda: FakeCfg()))
+        assert record_archived("v1") is False
+        assert not missing.exists() and not missing.parent.exists()
 
     def test_both_bulk_paths_record(self):
         import inspect

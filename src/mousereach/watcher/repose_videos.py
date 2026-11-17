@@ -436,11 +436,15 @@ def main(argv=None) -> int:
         print("ERROR: the declared DLC model could not be read from "
               "pipeline_versions.json; nothing done", file=sys.stderr)
         return 2
-    from mousereach.watcher.db import WatcherDB
-    from mousereach.watcher.db_location import resolve_watcher_db_path
-    db_path = resolve_watcher_db_path()
-    print(f"[watcher db] {db_path}")
-    db = WatcherDB(db_path)
+    from mousereach.watcher.db_location import open_watcher_db_if_present
+    # Never create the database: a re-pose recorded in a new empty file is a
+    # request the watcher never sees, while the bundles have already moved.
+    db, why = open_watcher_db_if_present()
+    if db is None:
+        print(f"ERROR: {why}; nothing done. Run 'mousereach-watch' once on this "
+              f"machine first.", file=sys.stderr)
+        return 2
+    print(f"[watcher db] {db.db_path}")
     host = socket.gethostname()
     reports, counts = [], {}
     for vid in ids:

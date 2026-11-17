@@ -4787,3 +4787,31 @@ has stopped is not rewritten, so its age says how current it is). Each part is r
 one that cannot be read prints a `[!]` line and the rest still shows. `--json` carries them under
 `held_and_failed`. The Pipeline Dashboard's health line also names the videos held after a failed
 filing. Tests: `tests/test_status_shows_held_and_failed.py`.
+
+## Update: only the watcher creates its database; other tools refuse a missing one
+
+Opening the watcher database on a path where it does not exist CREATES an empty one there. A
+tool pointed at the wrong file -- the default `<processing_root>/watcher.db` on a node whose
+watcher writes a configured `watcher.db_path`, or a machine whose watcher has never run -- then
+worked silently on that empty decoy. Now only `mousereach-watch` and the Watcher Control panel's
+Start / Run Once create the database. Everything else opens the database the watcher really
+writes (`db_location.resolve_watcher_db_path`: the configured `db_path` first) and refuses when
+it is missing:
+
+- `mousereach-watch-process-animal` checks before its y/N question; nothing is copied or queued.
+- `mousereach-uncrystallize` refuses (exit 1) instead of unlocking nothing in a new file.
+- `mousereach-repose-videos` refuses (exit 2) before any bundle moves.
+- The archive command's filing record (`archive.core.record_archived`) logs a WARNING that the
+  filing was not recorded and returns False.
+- The Pipeline Dashboard's database buttons (Re-run video, the health line, Publication Lock,
+  Reprocess outdated, Import archive) and its video list use the live database and show
+  "no watcher database at <path> -- start the watcher on this machine once to create it" when it
+  is missing. **Reprocess outdated** in particular used the default path, so on a node with a
+  `db_path` override it marked videos out of date in the decoy, where the watcher never looked.
+
+What a person does when a tool says the database is missing: start the watcher on that machine
+once (`mousereach-watch`, or Start in the Watcher Control panel); if the watcher is already
+running there, check `watcher.db_path` in `~/.mousereach/config.json` (`mousereach-watch-info`
+shows it). A decoy `watcher.db` left beside a configured `db_path` is not read by anything any
+more and may be renamed aside. Tests: `tests/test_tools_never_create_a_decoy_watcher_db.py`,
+`tests/test_archive_gate.py`.

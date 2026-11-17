@@ -100,6 +100,7 @@ def test_process_animal_claims_what_it_copies(env, monkeypatch, capsys):
     from mousereach.watcher import cli
     shared = Paths.SINGLE_ANIMAL_OUTPUT / f"{VID}.mp4"
     shared.write_bytes(b"video")
+    WatcherDB(db_path=tmp_path / "w.db")     # the watcher created it (process-animal never does)
     monkeypatch.setattr(cli, "_resolve_db_path", lambda: tmp_path / "w.db")
     monkeypatch.setattr("socket.gethostname", lambda: HOST)
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
@@ -118,6 +119,7 @@ def test_process_animal_skips_a_single_it_cannot_claim(env, monkeypatch, capsys)
     Paths, tmp_path = env
     from mousereach.watcher import cli
     (Paths.SINGLE_ANIMAL_OUTPUT / f"{VID}.mp4").write_bytes(b"video")
+    WatcherDB(db_path=tmp_path / "w.db")     # the watcher created it (process-animal never does)
     monkeypatch.setattr(cli, "_resolve_db_path", lambda: tmp_path / "w.db")
     monkeypatch.setattr("socket.gethostname", lambda: HOST)
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
