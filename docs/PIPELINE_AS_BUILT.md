@@ -4692,3 +4692,40 @@ create-then-write is used, so a claim is still possible there.
 For an operator: nothing to do. A leftover `*.tmp` file in a claims folder is harmless (nothing
 reads it as a claim) and may be deleted. Where it lives: `claim_marker._create`. Tests in
 `tests/test_claim_marker.py`.
+
+## Update: one watcher per machine, its configured role only, and a left-behind stop flag refuses a start
+
+Three ways a machine used to end up running the wrong watcher, or silently none:
+
+- **A second watcher from the Watcher Control panel.** The command-line watcher took a
+  machine-wide lock (a Windows named mutex) so that a second one exits; the panel's Start and Run
+  Once buttons did not. They looked for another watcher only by reading running programs' command
+  lines, which may not show a watcher of another Windows login. Now every start -- command line,
+  scheduled task, Start, Run Once -- takes the SAME lock (`watcher/singleton.py`), and a start that
+  finds it taken refuses ("A watcher is already running on this PC"). The panel keeps the lock while
+  its watcher runs and gives it back when that watcher ends; a process that ends in any other way
+  (a crash, a forced kill) loses it automatically. A lock created by another Windows login may be
+  refused to this one with "access denied"; that also counts as taken. Where there is no such lock
+  (not Windows) a start goes on, as before, and the log says the check is not available.
+- **A watcher of the other role from the panel.** Start and Run Once used whatever the "Run as"
+  drop-down showed instead of the machine's configured role, so a GPU-node watcher could run on a
+  processing machine's database (or the reverse) and treat that machine's videos as work of its
+  own. Now a "Run as" that differs from `mode` in the machine's settings is refused with a message
+  saying how to change the role on purpose (change mode in the settings, Save, start again).
+  Save also moves "Run as" to the saved mode, so that start is not refused a second time.
+- **A stop flag left behind.** `watcher_stop.flag` (`cpu_pose_stop.flag` for the CPU pose pool)
+  makes a running watcher finish its current item and exit. A flag forgotten after a stop or an
+  update made every later start exit on its first turn with one INFO line and exit code 0 -- a
+  scheduled task reported success while the machine did nothing. Now a start that finds the flag
+  refuses: a WARNING (and, on the command line, a line on the error output) naming the file and how
+  long ago it was left, exit code 3 for `mousereach-watch` and `mousereach-cpu-pose`, a message box
+  in the panel, and, while no watcher runs, a line in the Dashboard's health report. The flag is
+  NEVER deleted by a start: the update procedure relies on it keeping a stopped machine stopped
+  until the person updating removes it. The CPU pool first gives back or hands on what a previous
+  run left (as at every start), then refuses. A flag created while a watcher runs still stops it
+  normally, with exit code 0. The Dashboard's Restart button, which a person presses on purpose,
+  still clears the flag before it starts a watcher, as before.
+For an operator: if a watcher will not start, read the message; USER_GUIDE.md "The watcher (or the
+CPU pose pool) will not start" says what to do for each. Where it lives: `watcher/singleton.py`,
+`cli.main_watch`, `WatcherControlWidget._take_start_guards`, `CpuPosePool.run`,
+`health.health_report`. Tests in `tests/test_start_guards.py`.

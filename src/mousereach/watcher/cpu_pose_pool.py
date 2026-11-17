@@ -52,6 +52,8 @@ only after it has been quiet for hours (single_claim.reclaim_stale).
 Run it as ``mousereach-cpu-pose`` (see --help). Stop it with Ctrl+C or by
 creating ``cpu_pose_stop.flag`` in the processing root: it stops taking new
 videos at once, lets the running poses finish and hands them on, then exits.
+A pool STARTED while that flag is there refuses to run (exit code 3, a
+warning naming the file and its age); delete the flag to start it.
 """
 from __future__ import annotations
 
@@ -198,6 +200,14 @@ class CpuPosePool:
             return (Path(Paths.PROCESSING_ROOT) / STOP_FLAG).exists()
         except OSError:
             return False
+
+    def _stop_flag_left(self):
+        """(path, age) when the stop flag is there, else None."""
+        from mousereach.watcher.singleton import stop_flag_left
+        try:
+            return stop_flag_left(Path(Paths.PROCESSING_ROOT) / STOP_FLAG)
+        except Exception:
+            return None
 
     # -- start-up: what a previous run left -----------------------------------
     def recover(self) -> None:
@@ -600,6 +610,21 @@ class CpuPosePool:
         logger.info(f"CPU pose pool {self.holder}: up to {self.workers} poses of "
                     f"{self.threads} threads; model {self.dlc_config}")
         self.recover()
+        # A stop flag already there at start: refuse, loudly, with a non-zero
+        # exit code (watcher/singleton.py says why). The loop below would see
+        # it on its first turn and exit with code 0 and one INFO line, so a
+        # scheduled task showed success while nothing was posed. Checked after
+        # recover(), so what a previous run left is still given back or handed
+        # on. The flag is not deleted: whoever left it decides when it goes.
+        left = self._stop_flag_left()
+        if left:
+            from mousereach.watcher.singleton import (EXIT_STOP_FLAG_LEFT,
+                                                      stop_flag_message)
+            msg = stop_flag_message(*left, what="the CPU pose pool")
+            logger.warning(msg)
+            print(msg, file=sys.stderr)
+            self._status()
+            return EXIT_STOP_FLAG_LEFT
         last_sweep = 0.0
         while True:
             if not self.stopping and self._stop_requested():

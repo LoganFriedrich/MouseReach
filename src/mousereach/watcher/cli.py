@@ -376,23 +376,40 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     # a second instance can go unnoticed: process filters based on command
     # lines miss instances whose command line is not visible. A named mutex
     # is per-machine, costs nothing, and the OS releases it on ANY exit,
-    # force-kill included. Exit code 0 on "already running": an eager
-    # relauncher gets an orderly no-op, not a failure to retry.
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            _mutex = kernel32.CreateMutexW(None, True, "Global\\mousereach-watcher-singleton")
-            ERROR_ALREADY_EXISTS = 183
-            if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
-                logger.warning("Another watcher instance already holds the "
-                               "singleton mutex on this machine -- exiting.")
-                print("Watcher already running on this machine; exiting.")
-                sys.exit(0)
-            # Keep a reference so the handle lives as long as the process.
-            globals()["_watcher_singleton_mutex"] = _mutex
-        except Exception as e:
-            logger.warning(f"Single-instance guard unavailable ({e}); continuing")
+    # force-kill included. The Watcher Control panel takes the same lock
+    # (watcher/singleton.py), so a watcher started there counts too. Exit
+    # code 0 on "already running": an eager relauncher gets an orderly no-op,
+    # not a failure to retry.
+    from mousereach.watcher import singleton
+    try:
+        _mutex = singleton.acquire_watcher_lock()
+        if _mutex is None:
+            logger.warning("Another watcher instance already holds the "
+                           "singleton mutex on this machine -- exiting.")
+            print("Watcher already running on this machine; exiting.")
+            sys.exit(0)
+        # Keep a reference so the handle lives as long as the process.
+        globals()["_watcher_singleton_mutex"] = _mutex
+    except singleton.LockUnavailable as e:
+        logger.warning(f"Single-instance guard unavailable ({e}); continuing")
+
+    # A STOP REQUEST LEFT BEHIND. The loop exits on its first turn when
+    # watcher_stop.flag exists, so a forgotten flag used to make this start
+    # end at once with a single INFO line -- and a scheduled task reported
+    # success. Refuse instead, loudly, naming the file and its age, with a
+    # non-zero exit code. The flag is NOT deleted: the update procedure relies
+    # on it keeping the watcher stopped until the person updating removes it.
+    # Checked after the single-instance lock, so a second start next to a
+    # running watcher that is finishing its stop says "already running".
+    try:
+        _left = singleton.stop_flag_left(require_processing_root() / "watcher_stop.flag")
+    except Exception:
+        _left = None
+    if _left:
+        _msg = singleton.stop_flag_message(*_left)
+        logger.warning(_msg)
+        print(_msg, file=sys.stderr)
+        sys.exit(singleton.EXIT_STOP_FLAG_LEFT)
 
     # Create database
     try:

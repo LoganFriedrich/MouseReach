@@ -1725,6 +1725,18 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
   --quiet     Warnings and errors only.
 ```
 
+Before it starts working it checks two things (watcher/singleton.py):
+- **One watcher per machine.** If a watcher already runs on this machine --
+  started here, by a scheduled task, or from the Watcher Control panel, in any
+  Windows login -- it prints "Watcher already running on this machine;
+  exiting." and exits with code 0.
+- **No stop request waiting.** If `watcher_stop.flag` is in this machine's
+  processing folder, it refuses: a warning naming the file and how long ago it
+  was left, and exit code 3. The file is never deleted for you; delete it once
+  the stop or update that left it is finished. (A flag created while the
+  watcher RUNS is the normal way to stop it: it finishes the current item and
+  exits with code 0.)
+
 ### `mousereach-cpu-pose`
 
 ```
@@ -1745,7 +1757,10 @@ Set the model once in `~/.mousereach/config.json`:
 It must be the same model the GPU nodes use: a pose from any other model is not
 handed on. Stop it with Ctrl+C (running poses are stopped and their videos given
 back) or by creating `cpu_pose_stop.flag` in the processing root (running poses
-finish and are handed on first). It reports as `<hostname>-cpu` in
+finish and are handed on first). If that flag is already there when the pool
+STARTS, the pool gives back or hands on what a previous run left and then
+refuses to run: a warning naming the file and its age, and exit code 3. Delete
+the flag to start it. It reports as `<hostname>-cpu` in
 `mousereach-watch-status`. See PIPELINE_AS_BUILT "posing on a machine's CPUs".
 
 ### `mousereach-watch-status`

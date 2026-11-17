@@ -111,6 +111,16 @@ def pause_line(reason: str) -> str:
             "recording; work starts again by itself a little later." % reason)
 
 
+def _stop_flag_waiting():
+    """(path, age) of this machine's watcher_stop.flag, or None. Never raises."""
+    try:
+        from mousereach.config import require_processing_root
+        from mousereach.watcher.singleton import stop_flag_left
+        return stop_flag_left(require_processing_root() / "watcher_stop.flag")
+    except Exception:
+        return None
+
+
 def health_report(db=None) -> List[str]:
     """Plain-English health lines; the first is always the headline."""
     lines: List[str] = []
@@ -123,6 +133,17 @@ def health_report(db=None) -> List[str]:
     else:
         lines.append("The auto-processor is NOT RUNNING -- videos will wait "
                      "until it is started (Restart button below).")
+        left = _stop_flag_waiting()
+        if left:
+            # WHY here: a forgotten stop flag makes every start refuse (exit
+            # code 3, cli.main_watch), and a person looking at a stopped
+            # watcher must see the reason without opening a log.
+            from mousereach.watcher.singleton import describe_age
+            lines.append(
+                "A stop request is waiting in %s (left %s ago), so the "
+                "watcher will not start. It is left by a stop or an update; "
+                "if that is finished, delete the file and start the watcher."
+                % (left[0], describe_age(left[1])))
     if db is not None:
         try:
             failed = db.get_videos_in_state("failed")

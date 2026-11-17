@@ -217,6 +217,26 @@ def run_once_refusal_text(reason: str) -> str:
             "start a little after it closes." % reason)
 
 
+def role_refusal_text(chosen: str, configured: str) -> str:
+    """Why Start / Run Once refused a "Run as" choice that is not this
+    machine's configured role. WHY refuse: a watcher's role decides what it
+    does with this machine's database and folders; a watcher of the other
+    role on them mixes two kinds of work on one set of rows (a GPU-node
+    watcher on a processing machine's database records that machine's videos
+    as work of its own to recover). The configured role is the machine's job;
+    changing it is a settings change made on purpose, not a drop-down left on
+    the wrong line."""
+    return ("Not started: 'Run as' is set to %s, but this machine is set up as "
+            "%s (mode in its settings). Set 'Run as' back to %s. If this "
+            "machine's job has really changed, change mode in the settings "
+            "below, press Save, and start again." % (chosen, configured, configured))
+
+
+_LOCK_HELD_TEXT = ("A watcher is already running on this PC (it may have been "
+                   "started by another login or another window), so there is "
+                   "nothing to start here -- it keeps working on its own.")
+
+
 def status_headline(panel_running: bool, external_pid: Optional[int],
                     pause_reason: Optional[str],
                     run_error: Optional[str] = None) -> Tuple[str, str]:
@@ -339,7 +359,9 @@ class WatcherControlWidget(QWidget):
             "processing_server")
         self._mode_select.addItem(
             "DLC -- crop collages + run pose estimation (needs a GPU)", "dlc_pc")
-        self._mode_select.setToolTip("Pick which of the two watchers to launch here.")
+        self._mode_select.setToolTip(
+            "The watcher this machine runs. It must match this machine's role "
+            "(mode in the settings below): Start and Run Once refuse the other one.")
         mode_row.addWidget(self._mode_select, 1)
         cl.addLayout(mode_row)
 
@@ -671,9 +693,9 @@ class WatcherControlWidget(QWidget):
     # ------------------------------------------------------------- daemon
     def _refuse_if_external_watcher(self) -> bool:
         """Tell the operator and return True when a watcher already runs
-        outside this panel. WHY: the panel's watcher runs inside this program
-        and does not take the one-watcher-per-PC lock the command-line watcher
-        takes, so starting one here would run two watchers doing the same work.
+        outside this panel. WHY both this and the one-watcher-per-PC lock
+        (_take_start_guards): the lock exists only on Windows, and this check
+        gives the friendlier message where it can see the other watcher.
         """
         self._ext_checked_at = float("-inf")  # a button press deserves a fresh look
         if self._external_watcher_pid():
@@ -685,12 +707,52 @@ class WatcherControlWidget(QWidget):
             return True
         return False
 
+    def _take_start_guards(self, cfg) -> Tuple[bool, object]:
+        """The checks every start from this panel passes -- the command-line
+        watcher's own (cli.main_watch, watcher/singleton.py). Returns
+        (go ahead, lock handle); on a refusal the operator has been told why.
+
+        1. "Run as" must be this machine's configured role (role_refusal_text).
+        2. No stop request may be waiting (watcher_stop.flag): the watcher
+           would stop the moment it started. The file is never deleted here.
+        3. The one-watcher-per-machine lock must be free. The handle is kept
+           until the panel's watcher ends (released in its thread's finally).
+           Where the lock cannot be checked (not Windows) the start goes on,
+           as on the command line.
+        """
+        from mousereach.watcher import singleton
+        select = getattr(self, "_mode_select", None)
+        chosen = select.currentData() if select is not None else None
+        configured = getattr(cfg, "mode", None)
+        if chosen and configured and chosen != configured:
+            show_info(role_refusal_text(chosen, configured))
+            return False, None
+        try:
+            from mousereach.config import require_processing_root
+            left = singleton.stop_flag_left(require_processing_root() / "watcher_stop.flag")
+        except Exception:
+            left = None
+        if left:
+            show_info(singleton.stop_flag_message(*left))
+            return False, None
+        try:
+            handle = singleton.acquire_watcher_lock()
+        except singleton.LockUnavailable as e:
+            logger.warning(f"Single-instance guard unavailable ({e}); continuing")
+            return True, None
+        if handle is None:
+            show_info(_LOCK_HELD_TEXT)
+            return False, None
+        return True, handle
+
     def _start(self):
         if self._is_running():
             show_info("Watcher is already running.")
             return
         if self._refuse_if_external_watcher():
             return
+        from mousereach.watcher import singleton
+        lock = None
         try:
             from mousereach.config import WatcherConfig, Paths, require_processing_root
             from mousereach.watcher.db import WatcherDB
@@ -698,7 +760,12 @@ class WatcherControlWidget(QWidget):
                 ProcessingOrchestrator, DLCOrchestrator,
             )
             cfg = WatcherConfig.load()
-            cfg.mode = self._mode_select.currentData() or cfg.mode  # explicit choice wins
+            # The role is the machine's configured one; a different "Run as"
+            # choice is refused (_take_start_guards), never applied.
+            ok, lock = self._take_start_guards(cfg)
+            if not ok:
+                self._refresh()
+                return
             db_path = cfg.db_path or (require_processing_root() / "watcher.db")
             db = WatcherDB(Path(db_path))
             if cfg.mode == "processing_server":
@@ -708,23 +775,31 @@ class WatcherControlWidget(QWidget):
             self._run_error = None
             self._shutdown_event = threading.Event()
             self._thread = threading.Thread(
-                target=self._run_orchestrator, args=(self._shutdown_event,),
+                target=self._run_orchestrator, args=(self._shutdown_event, lock),
                 daemon=True, name="watcher-daemon",
             )
             self._thread.start()
+            lock = None                    # the thread owns it now
             show_info(f"Watcher started ({cfg.mode}).")
         except Exception as e:
             show_error(f"Could not start watcher: {e}")
             logger.exception("watcher start failed")
+        finally:
+            singleton.release_watcher_lock(lock)
         self._refresh()
 
-    def _run_orchestrator(self, evt: threading.Event):
+    def _run_orchestrator(self, evt: threading.Event, lock=None):
         # NOTE: no signal handlers here -- signal.signal() is main-thread only.
         try:
             self._orchestrator.run(evt)
         except Exception as e:
             self._run_error = str(e)
             logger.exception("watcher daemon crashed")
+        finally:
+            # The one-watcher lock is given back when this watcher ends, so a
+            # watcher can be started again (here or on the command line).
+            from mousereach.watcher import singleton
+            singleton.release_watcher_lock(lock)
 
     def _stop(self):
         if not self._is_running():
@@ -756,8 +831,16 @@ class WatcherControlWidget(QWidget):
             show_info(run_once_refusal_text(reason))
             self._refresh()
             return
-        mode = self._mode_select.currentData()
+        # Same guards as Start: the configured role only, no stop request
+        # waiting, and the one-watcher-per-machine lock, held until the run
+        # ends (released in _once's finally).
+        ok, lock = self._take_start_guards(cfg)
+        if not ok:
+            self._refresh()
+            return
+
         def _once():
+            from mousereach.watcher import singleton
             try:
                 from mousereach.config import WatcherConfig, require_processing_root
                 from mousereach.watcher.db import WatcherDB
@@ -765,7 +848,6 @@ class WatcherControlWidget(QWidget):
                     ProcessingOrchestrator, DLCOrchestrator,
                 )
                 cfg = WatcherConfig.load()
-                cfg.mode = mode or cfg.mode
                 db_path = cfg.db_path or (require_processing_root() / "watcher.db")
                 db = WatcherDB(Path(db_path))
                 orch = (ProcessingOrchestrator(cfg, db) if cfg.mode == "processing_server"
@@ -774,8 +856,15 @@ class WatcherControlWidget(QWidget):
             except Exception as e:
                 self._run_error = str(e)
                 logger.exception("run_once failed")
-        self._thread = threading.Thread(target=_once, daemon=True, name="watcher-runonce")
-        self._thread.start()
+            finally:
+                singleton.release_watcher_lock(lock)
+        try:
+            self._thread = threading.Thread(target=_once, daemon=True, name="watcher-runonce")
+            self._thread.start()
+        except Exception:
+            from mousereach.watcher import singleton
+            singleton.release_watcher_lock(lock)
+            raise
         show_info("Run Once started (one scan + drain).")
         self._refresh()
 
@@ -1000,6 +1089,14 @@ class WatcherControlWidget(QWidget):
         except Exception as e:
             show_error(f"Could not save config: {e}")
             return
+        # Move "Run as" to the role just saved. WHY: Start / Run Once refuse a
+        # "Run as" that differs from the configured role (role_refusal_text),
+        # and that refusal tells the operator to change mode, Save and start
+        # again. Without this the drop-down would still show the old role and
+        # the start would be refused a second time for a change already made.
+        _mi = self._mode_select.findData(str(preserved.get("mode", "")))
+        if _mi >= 0:
+            self._mode_select.setCurrentIndex(_mi)
         programs = preserved.get("pause_while_running") or []
         running, error = check_programs_now(programs) if programs else (None, None)
         show_info("Config saved. %s %s" % (

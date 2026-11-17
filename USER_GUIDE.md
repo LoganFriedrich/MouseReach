@@ -538,6 +538,30 @@ mousereach-export -i Processing/ -o results.xlsx
 - Check DLC model quality with `mousereach-dlc-quality`
 - May need to retrain model or filter bad videos
 
+### The watcher (or the CPU pose pool) will not start
+
+The message, the watcher log and the Dashboard's health line say why. There are
+three reasons a start is refused, and each is on purpose:
+
+- **"Not started: a stop request is waiting in ...\watcher_stop.flag (left ...
+  ago)"** (for the CPU pose pool: `cpu_pose_stop.flag`). That file asks a
+  watcher to stop; it is left by a stop or by an update in progress, and while
+  it is there every new watcher would stop the moment it starts. Nothing
+  deletes it for you. If the stop or update it belongs to is finished, delete
+  the file (it is in this machine's processing folder) and start again. From
+  the command line the refusal ends with exit code 3, so a scheduled task shows
+  it as failed rather than as a success.
+- **"A watcher is already running on this PC"**. Only one watcher may run on a
+  machine, however it was started (command line, scheduled task, or the
+  Watcher Control panel, in any Windows login). Use the one that is running;
+  to restart it, press **Restart processor** on the Dashboard.
+- **"Not started: 'Run as' is set to ..., but this machine is set up as ..."**.
+  The Watcher Control panel runs only the kind of watcher this machine is set
+  up for (`mode` in its settings). Put **Run as** back to that. If the
+  machine's job has really changed, change **mode** in the settings part of the
+  panel, press **Save**, and start again: Save also moves **Run as** to the
+  mode it saved, so nothing else needs changing.
+
 ### Segmentation boundaries incorrect
 - Use Napari review tool to manually adjust
 - Check that pellet delivery mechanism is visible in video
