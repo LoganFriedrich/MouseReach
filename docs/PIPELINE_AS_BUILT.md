@@ -4581,3 +4581,21 @@ location, is a decision still to be made. Where it
 lives: `watcher/locate.py` `held_or_filed_on_share` (moved there from
 `DLCOrchestrator._already_done_or_held`, which now calls it); `watcher/state.py`
 `_held_or_filed_instead`. Tests in `tests/test_posed_scan_asks_held_or_filed.py`.
+
+## Update 2026-11-17: a collage that cannot be cropped, and a crop claim that is stuck, are listed for a person
+
+What this means for an operator: a GPU node that cannot crop a collage now says so where a person
+looks (the Pipeline Dashboard's red "Needs your attention" panel), instead of only in its log.
+Each part below says what you see and what to do.
+
+**An error before the crop starts.** If something fails while a node is still checking a collage
+(its shared claim, or whether its children already exist) the collage has not started cropping, so
+it cannot be recorded `failed` -- the database only lets a collage that was cropping fail. That
+refused write used to escape into the watcher's main loop, and the same collage was picked again on
+the very next pass. Now (`DLCOrchestrator._fail_collage_after_dispatch_error`) the collage is left
+as it was (`stable`), the error is logged at ERROR with the collage's name, and the collage is not
+picked again for 30 minutes (`_CLAIM_RECHECK_S`), so a passing error is retried and a lasting one
+does not spin the loop. A collage that was already cropping is recorded `failed` with the error,
+exactly as before. Nothing to do; if the same ERROR comes back every 30 minutes, its message names
+the cause. The wait is in memory: a watcher restart tries the collage again straight away.
+Tests: `tests/test_collage_crop_failures_are_visible.py`.

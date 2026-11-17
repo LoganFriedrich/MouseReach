@@ -4111,10 +4111,54 @@ class DLCOrchestrator(BaseOrchestrator):
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
 
             if work_type == 'collage':
-                self.db.update_collage_state(work_id, 'failed', validation_error=error_msg)
+                self._fail_collage_after_dispatch_error(work_id, error_msg)
             elif not self._already_failed(work_id):
                 self.db.mark_failed(work_id, error_msg)
             return False
+
+    def _fail_collage_after_dispatch_error(self, collage_filename: str,
+                                           error_msg: str) -> None:
+        """Record a collage error that escaped its handler. Never raises.
+
+        WHY not simply write 'failed': only a collage that got as far as
+        'cropping' may become 'failed' (db.COLLAGE_TRANSITIONS). An error
+        BEFORE the crop started -- while the claim was checked or the children
+        were looked up -- leaves the row 'stable', and 'stable' -> 'failed' is
+        refused with a ValueError. That ValueError used to leave this handler
+        for the main loop, the row stayed 'stable' and the same collage was
+        picked again at once, every poll. So:
+
+          * 'cropping': record 'failed' with the error, as before; the intake
+            scan retries it up to max_retries (state.py).
+          * already 'failed' (the crop's own handler wrote it): nothing more.
+          * anything else ('stable'): write no state, log the error, and do not
+            pick the collage again for _CLAIM_RECHECK_S (the same wait used for
+            a collage another node is cropping), so a passing error is retried
+            and a lasting one does not spin the loop.
+        """
+        try:
+            state = (self.db.get_collage(collage_filename) or {}).get('state')
+        except Exception as e:
+            state = None
+            logger.debug(f"could not read collage {collage_filename}'s state: {e}")
+        try:
+            if state == 'cropping':
+                self.db.update_collage_state(collage_filename, 'failed',
+                                             validation_error=error_msg)
+                return
+            if state == 'failed':
+                return
+        except Exception as e:
+            logger.error(f"Collage {collage_filename}: {error_msg}; and it could not be "
+                         f"recorded as failed ({type(e).__name__}: {e})")
+        backoff = getattr(self, '_claim_backoff', None)
+        if backoff is None:
+            backoff = self._claim_backoff = {}
+        backoff[collage_filename] = time.monotonic() + self._CLAIM_RECHECK_S
+        logger.error(
+            f"Collage {collage_filename}: {error_msg} (before its crop started; row "
+            f"left '{state or 'unknown'}'). Tried again in "
+            f"{self._CLAIM_RECHECK_S // 60} minutes.")
 
     # =========================================================================
     # DRY RUN
