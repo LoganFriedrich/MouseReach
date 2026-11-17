@@ -8672,11 +8672,29 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self._clear_archive_backoff(video_id)
 
             # Remove from staging on NAS (the GPU node's copy)
+            # A posed file is deleted only when the same file (name and size)
+            # is in the filed folder. WHY: the posed folder can hold the only
+            # single-animal copy of a video; a run that went on without one of
+            # its files used to file without it and then delete the posed
+            # copy, leaving the video in no place. A file kept here keeps the
+            # claim (below) and the periodic sweep, so it is seen, not lost.
             left_behind = 0
             if self.staging_dir:
+                try:
+                    from mousereach.archive.core import get_archive_destination
+                    filed_dir = get_archive_destination(video_id)
+                except Exception:
+                    filed_dir = None
                 staging_files = self._get_associated_files(self.staging_dir, video_id)
                 for f in staging_files:
                     try:
+                        twin = Path(filed_dir) / f.name if filed_dir else None
+                        if (twin is None or not twin.is_file()
+                                or twin.stat().st_size != f.stat().st_size):
+                            left_behind += 1
+                            logger.warning(f"{video_id}: kept posed {f.name}: no "
+                                           f"same-size copy in the filed folder")
+                            continue
                         f.unlink()
                         logger.debug(f"Cleaned staging: {f.name}")
                     except Exception:

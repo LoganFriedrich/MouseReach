@@ -5245,3 +5245,11 @@ nothing is analysed, and the posed-folder scan puts it back in line for intake b
 soon as the video and its pose are both in the posed folder (the same rule as for an intake
 that found the posed files incomplete). `mousereach-watch-unresolvable --list` shows such
 videos meanwhile. Every outcomes file now also records `"cv_video": "found"` or `"missing"`.
+
+**After filing, a posed file is deleted only if the same file was filed.** Once a video is
+filed, the processing server removes its copy from the shared posed folder. That copy can be
+the only single-animal copy of the video. Now each posed file is deleted only when a file of
+the same name and size is in the filed cohort folder. A posed file without one stays, the
+video's posed claim stays with it (so no other machine takes it in again), and the log says
+"kept posed <file>: no same-size copy in the filed folder". Such a file needs a person: check
+the filed folder, and delete the posed copy by hand once the filed one is confirmed.

@@ -59,6 +59,17 @@ def _stage(posed, vid):
     (posed / f"{vid}DLC_model.h5").write_bytes(b"p")
 
 
+def _filed(tmp_path, monkeypatch, vid):
+    """A filed folder holding the same files _stage writes (the posed
+    clean-up deletes a posed file only when its twin is filed)."""
+    import mousereach.archive.core as core
+    filed = tmp_path / "filed"
+    filed.mkdir(exist_ok=True)
+    _stage(filed, vid)
+    monkeypatch.setattr(core, "get_archive_destination", lambda v: filed)
+    return filed
+
+
 def _age(path, seconds):
     t = time.time() - seconds
     os.utime(path, (t, t))
@@ -155,6 +166,7 @@ def test_archiving_lets_go_only_after_the_posed_copy_is_removed(share, tmp_path,
         seen.append(sorted(p.name for p in posed.iterdir() if p.is_file()))
         real_release(vid)
     a._release_claim = release
+    _filed(tmp_path, monkeypatch, V1)
 
     ok = {"success": True, "files_moved": [], "destination": "x"}
     with mock.patch("mousereach.archive.core.archive_video", return_value=ok):
@@ -179,6 +191,7 @@ def test_a_posed_file_that_cannot_be_removed_keeps_the_claim(share, tmp_path, mo
             raise PermissionError("in use")
         return real_unlink(self, *args, **kw)
     monkeypatch.setattr(type(posed), "unlink", stuck)
+    _filed(tmp_path, monkeypatch, V1)
 
     ok = {"success": True, "files_moved": [], "destination": "x"}
     with mock.patch("mousereach.archive.core.archive_video", return_value=ok):
@@ -229,3 +242,25 @@ def test_another_nodes_claim_on_a_video_in_hand_is_left_alone(share, tmp_path):
     assert b._claim_video(V1)
     assert a._sweep_posed_claims() == (0, 0)
     assert claim_marker.holder(posed / ".claims", V1, ".claimed") == "NODE-B"
+
+
+def test_a_posed_file_that_was_not_filed_is_kept(share, tmp_path, monkeypatch):
+    """The posed folder can hold the only single-animal copy of a video. A
+    posed file with no same-size copy in the filed folder is kept (and the
+    claim with it), never deleted by the clean-up after filing."""
+    posed, status = share
+    monkeypatch.setattr(Paths, "TRIAGE_REVIEW", tmp_path / "triage")
+    monkeypatch.setattr(Paths, "DEEP_REVIEW", tmp_path / "deep_review")
+    a = _node("NODE-A", posed, tmp_path)
+    _report(status, "NODE-A")
+    _stage(posed, V1)
+    assert a._claim_video(V1)
+    filed = _filed(tmp_path, monkeypatch, V1)
+    (filed / f"{V1}.mp4").unlink()            # filed without its video
+
+    ok = {"success": True, "files_moved": [], "destination": "x"}
+    with mock.patch("mousereach.archive.core.archive_video", return_value=ok):
+        ProcessingOrchestrator._archive_to_nas(a, {"id": V1})
+    assert (posed / f"{V1}.mp4").exists(), "the only copy of the video was deleted"
+    assert not (posed / f"{V1}DLC_model.h5").exists()
+    assert claim_marker.holder(posed / ".claims", V1, ".claimed") == "NODE-A"
