@@ -5253,3 +5253,20 @@ the same name and size is in the filed cohort folder. A posed file without one s
 video's posed claim stays with it (so no other machine takes it in again), and the log says
 "kept posed <file>: no same-size copy in the filed folder". Such a file needs a person: check
 the filed folder, and delete the posed copy by hand once the filed one is confirmed.
+
+**A video is not filed without the provenance of its run.** Every run writes
+`<video>_processing_manifest.json` (which model and which algorithm versions made each
+output) before kinematics, and kinematics stamp their own version onto it. Before, a manifest
+that could not be written was set aside and the video was filed without one, so the version
+scan only counted it as "no manifest" and never checked it; and a stamp that could not be
+written left a filed manifest saying kinematics never ran, which the scan read as "unrecorded"
+and re-ran the video from segmentation. Now either failure holds the video as failed, not
+filed, with the reason "no provenance manifest of this run" or "the kinematic version could
+not be stamped on the provenance manifest"; the failed-video retry runs it again. The filing
+step also refuses a video with no manifest in Processing (one already in the filed folder from
+an earlier part-way attempt counts).
+
+Not done yet (a known leftover, in the version scan): a filed video that has no manifest is
+still only counted, not named in the scan's log line or listed for a person, and a stage whose
+version is unrecorded while its output exists still re-runs from segmentation rather than from
+that stage.

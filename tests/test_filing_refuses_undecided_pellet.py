@@ -32,6 +32,8 @@ class FakeDB:
 def _features(folder, vid, outcomes):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / f"{vid}.mp4").write_bytes(b"x")
+    # The run's provenance: the filing step refuses a video without it.
+    (folder / f"{vid}_processing_manifest.json").write_text("{}", encoding="utf-8")
     (folder / f"{vid}_features.json").write_text(json.dumps({
         "video_name": vid,
         "segments": [{"segment_num": i + 1, "outcome": o, "reaches": []}

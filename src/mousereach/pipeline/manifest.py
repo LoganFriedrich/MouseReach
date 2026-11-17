@@ -386,11 +386,16 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
     review is cleared" gate), the extractor pushes its own version the moment it
     succeeds -- the same writers-push model the version index already uses.
 
-    Best-effort by the same reasoning as the index upsert: bookkeeping must never
-    fail a video whose kinematics actually succeeded.
+    A failure here does not raise, but it is no longer ignorable: the caller
+    treats a False return as a hold (the orchestrator raises, and the video goes
+    to the held-without-kinematics path). WHY: a filed manifest that says
+    kinematics never ran makes the version scan re-run the video from
+    segmentation, so filing it with that gap would send finished work back
+    through the whole pipeline later.
 
     Returns:
-        True if the manifest was updated.
+        True if the manifest was updated; False if it could not be (no
+        manifest, or the write failed), which holds the video.
     """
     manifest_path = Path(processing_dir) / f"{video_id}_processing_manifest.json"
     if not manifest_path.exists():

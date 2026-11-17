@@ -469,6 +469,11 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     if folder is None:
         return False
     if (folder / f"{video_id}_features.json").is_file():
+        # An undecided pellet in the file about to be filed is asked first:
+        # it names the open pellets, which is what a person has to act on,
+        # whatever else is wrong with the run.
+        if refuse_filing_with_undecided_pellet(db, video_id, folder):
+            return True
         # Present is not enough: a re-run copies the filed generation down,
         # the old features file included, so "there is one" can mean an
         # earlier run's kinematics beside this run's outputs. It must be at
@@ -481,8 +486,21 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
             started = None
         why = stale_features_reason(video_id, folder, started)
         if why is None:
-            return (refuse_filing_with_undecided_pellet(db, video_id, folder)
-                    or refuse_filing_with_failed_measures(db, video_id, folder))
+            manifest = f"{video_id}_processing_manifest.json"
+            have_manifest = (folder / manifest).is_file()
+            if not have_manifest:
+                # A retry after a part-way move: the manifest is filed before
+                # the features file (archive_video's order), so it may be
+                # there already.
+                try:
+                    from mousereach.archive.core import get_archive_destination
+                    have_manifest = (Path(get_archive_destination(video_id))
+                                     / manifest).is_file()
+                except Exception:
+                    pass
+            if have_manifest:
+                return refuse_filing_with_failed_measures(db, video_id, folder)
+            why = f"no {manifest} (the provenance of this run)"
         message = (f"{NO_KINEMATICS_REASON} ({why}; the archive step does not "
                    f"file a video whose kinematics were not made by this run)")
         db.mark_failed(video_id, message)
@@ -598,8 +616,11 @@ class BaseOrchestrator:
             features = extractor.extract_session_only(dlc_path, reach_path)
             with open(Path(processing_dir) / f"{video_id}_features.json", 'w') as f:
                 json.dump(features.to_dict(), f, indent=2)
-            record_kinematic_version(video_id, processing_dir, extractor.VERSION,
-                                     review_path=None)
+            if record_kinematic_version(video_id, processing_dir, extractor.VERSION,
+                                            review_path=None) is False:
+                # See _make_features: no provenance stamp, no filing.
+                raise RuntimeError("the kinematic version could not be stamped "
+                                   "on the provenance manifest")
             self.db.log_step(video_id, 'feature_extraction', 'completed',
                              message="session only (Easy/Flat): reaches and attention",
                              duration=time.time() - t0)
@@ -626,6 +647,15 @@ class BaseOrchestrator:
         and be filed with no features file; the caller now holds it instead
         (_hold_without_kinematics)."""
         processing_dir = Path(processing_dir)
+        # Provenance is part of filing: a video is not filed without the
+        # manifest of THIS run. One that could not be written was set aside
+        # (_set_aside_stale_manifest), and a video filed without it is neither
+        # current nor outdated to the version scan -- invisible to it.
+        if not (processing_dir / f"{video_id}_processing_manifest.json").is_file():
+            why = ("no provenance manifest of this run (it could not be written; "
+                   "see the log); not filed without one")
+            self.db.log_step(video_id, 'feature_extraction', 'failed', message=why)
+            return why
         if skip_outcomes:
             if self._write_session_only_features(video_id, processing_dir, dlc_path):
                 return None
@@ -676,11 +706,17 @@ class BaseOrchestrator:
                 record_kinematic_version, NOT_RESOLVED)
             # The review counts as applied only when the extractor says it
             # read every copy of it (FeatureExtractor.review_applied).
-            record_kinematic_version(video_id, processing_dir, extractor.VERSION,
-                                     review_path=(review_path if getattr(
-                                         extractor, "review_applied", False) else None),
-                                     ground_truth_path=getattr(
-                                         extractor, "applied_ground_truth", NOT_RESOLVED))
+            if record_kinematic_version(video_id, processing_dir, extractor.VERSION,
+                                        review_path=(review_path if getattr(
+                                            extractor, "review_applied", False) else None),
+                                        ground_truth_path=getattr(
+                                            extractor, "applied_ground_truth", NOT_RESOLVED)) is False:
+                # A filed manifest saying kinematics never ran is read by the
+                # version scan as "unrecorded" and re-runs the video from
+                # segmentation with every check. Held here instead, and tried
+                # again (_hold_without_kinematics).
+                raise RuntimeError("the kinematic version could not be stamped "
+                                   "on the provenance manifest")
 
             feat_duration = time.time() - step_start
             self.db.log_step(video_id, 'feature_extraction', 'completed',
@@ -2346,7 +2382,9 @@ class BaseOrchestrator:
         keeps its <stem>_processing_manifest.json) would otherwise be stamped
         by record_kinematic_version and archived as the provenance of outputs
         it does not describe -- and reconcile would read the video as current.
-        With no manifest, the video reads as not current and a person sees it.
+        With no manifest of this run the video is not filed: _make_features
+        holds it as failed ("no provenance manifest of this run") and the
+        failed-video retry runs it again.
         Moved into a _stale_manifests/ subfolder (never deleted): archiving
         takes only the stem's files at the top of the folder.
         """

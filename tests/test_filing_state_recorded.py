@@ -67,7 +67,8 @@ def env(tmp_path, monkeypatch):
 
 
 def _finished_run(proc, vid=VID):
-    for name in (f"{vid}.mp4", f"{vid}_segments.json", f"{vid}_features.json"):
+    for name in (f"{vid}.mp4", f"{vid}_segments.json",
+                 f"{vid}_processing_manifest.json", f"{vid}_features.json"):
         (proc / name).write_text("x")
 
 

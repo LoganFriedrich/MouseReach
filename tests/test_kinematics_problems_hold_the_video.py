@@ -69,6 +69,9 @@ def run_dir(tmp_path, monkeypatch):
         {"video_name": VID, "segments": [{"segment_num": 1, "outcome": "untouched",
                                           "start_frame": 0, "end_frame": 99}]}),
         encoding="utf-8")
+    # The run's provenance: neither the kinematics step nor the filing step
+    # goes on without it.
+    (proc / f"{VID}_processing_manifest.json").write_text("{}", encoding="utf-8")
     return proc, pose
 
 

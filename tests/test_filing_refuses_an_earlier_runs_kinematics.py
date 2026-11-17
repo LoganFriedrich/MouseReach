@@ -32,6 +32,7 @@ def _folder(tmp_path, features_age):
     (d / f"{V}.mp4").write_bytes(b"v")
     for s in ("_segments.json", "_reaches.json", "_pellet_outcomes.json"):
         (d / f"{V}{s}").write_text("{}")
+    (d / f"{V}_processing_manifest.json").write_text("{}")
     f = d / f"{V}_features.json"
     f.write_text("{}")
     t = time.time() - features_age

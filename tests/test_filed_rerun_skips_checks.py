@@ -82,7 +82,14 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(reachb, "process_single", _stage("reach", {"total_reaches": 0}))
     monkeypatch.setattr(outb, "process_single", _stage("outcome", {"n_segments": 0}))
     monkeypatch.setattr(assign, "assign_reaches_for_video", _stage("assignment", None))
-    monkeypatch.setattr(man, "create_processing_manifest", lambda **k: {})
+    def _manifest(**k):
+        # A real manifest file of this run: filing requires one.
+        from pathlib import Path as _P
+        m = _P(k["processing_dir"]) / f"{k['video_id']}_processing_manifest.json"
+        if not m.exists():
+            m.write_text("{}")
+        return {}
+    monkeypatch.setattr(man, "create_processing_manifest", _manifest)
     monkeypatch.setattr(man, "record_kinematic_version", lambda *a, **k: None)
 
     class _Triage:
@@ -317,6 +324,7 @@ def test_filing_clears_the_kept_scope(rig, tmp_path, monkeypatch):
     orch.db.export_to_central_db = lambda vid: None
     orch.staging_dir = None
     orch._release_claim = lambda vid: None
+    (rig.folder / f"{VID}_processing_manifest.json").write_text("{}", encoding="utf-8")
     (rig.folder / f"{VID}_features.json").write_text("{}", encoding="utf-8")
     (rig.folder / f"{VID}.mp4").write_bytes(b"x")
     rig.file_it()

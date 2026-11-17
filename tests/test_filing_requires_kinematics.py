@@ -53,6 +53,7 @@ def server(tmp_path, monkeypatch):
 
 def _outputs(proc, vid, *, features=False, reaches=True, outcomes=True):
     (proc / f"{vid}.mp4").write_bytes(b"video")
+    (proc / f"{vid}_processing_manifest.json").write_text("{}")   # this run's provenance
     if reaches:
         (proc / f"{vid}_reaches.json").write_text("{}")
     if outcomes:
