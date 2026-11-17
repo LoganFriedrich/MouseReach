@@ -116,6 +116,13 @@ class WatcherStateManager:
                         logger.info(
                             f"Collage {filename}: recorded path was not a file "
                             f"({recorded!r}); corrected to {file_path}")
+                    # A 'quarantined' collage whose file is back in the
+                    # intake folder was released by a person under its old
+                    # name (_recheck_released_collage).
+                    if known.get('state') == 'quarantined':
+                        if self._recheck_released_collage(file_path, filename):
+                            newly_registered.append(filename)
+                        continue
                     # A 'failed' collage whose file is still present gets
                     # re-validated. 'failed' -> 'validated' is the state
                     # machine's own retry edge, but nothing ever took it: this
@@ -262,6 +269,64 @@ class WatcherStateManager:
         sightings[key] = (size, mtime_ns, change_time)
         return False
 
+    # ------------------------------------------------------------------
+    # Files released from quarantine under their old name
+    #
+    # WHY: a quarantined file keeps its row (state 'quarantined'). Both
+    # intake scans skipped every file that already had a row, so a file a
+    # person released from quarantine WITHOUT renaming it -- the Quarantine
+    # tab pre-fills the old name, and a name can become valid when a
+    # validator rule is corrected -- sat in the intake folder for ever while
+    # the panel had said the watcher would pick it up. Only a new name made a
+    # new row. Now such a file is checked again: a valid name takes the
+    # state machine's own 'quarantined' -> 'validated' edge with its parsed
+    # details and the old error cleared; a name still invalid is quarantined
+    # again, with a fresh note saying why, exactly as a new file would be.
+    # ------------------------------------------------------------------
+
+    def _requarantine(self, file_path: Path, identifier: str, error: str,
+                      is_collage: bool) -> None:
+        quarantine_file(file_path, self.config.get_quarantine_dir(), reason=error)
+        self.db.mark_quarantined(identifier, reason=error, is_collage=is_collage)
+        logger.warning(f"Released file {file_path.name} still has an invalid "
+                       f"name; quarantined again - {error}")
+
+    def _recheck_released_collage(self, file_path: Path, filename: str) -> bool:
+        """Check again a quarantined collage whose file is back in the intake
+        folder. True when it now goes on as 'validated'."""
+        result = validate_collage_filename(filename)
+        if not result.valid:
+            self._requarantine(file_path, filename, result.error, is_collage=True)
+            return False
+        fields = {'source_path': str(file_path), 'validation_error': None}
+        if result.parsed:
+            fields.update(
+                date=result.parsed['date'],
+                animal_ids=','.join(result.parsed['animal_ids']),
+                tray_suffix=f"{result.parsed['tray_type']}{result.parsed['tray_run']}")
+        self.db.update_collage_state(filename, 'validated', **fields)
+        logger.info(f"Collage {filename}: released from quarantine; "
+                    f"quarantined -> validated")
+        return True
+
+    def _recheck_released_single(self, file_path: Path, video_id: str) -> bool:
+        """Check again a quarantined single whose file is back in the intake
+        folder (and stable). True when it now goes on as 'validated'."""
+        result = validate_single_filename(file_path.name)
+        if not result.valid:
+            self._requarantine(file_path, video_id, result.error, is_collage=False)
+            return False
+        fields = {'current_path': str(file_path), 'source_path': str(file_path),
+                  'error_message': None}
+        if result.parsed:
+            for key in ('date', 'animal_id', 'experiment', 'cohort', 'subject',
+                        'tray_type'):
+                fields[key] = result.parsed[key]
+        self.db.update_state(video_id, 'validated', **fields)
+        logger.info(f"Single video {video_id}: released from quarantine; "
+                    f"quarantined -> validated")
+        return True
+
     def discover_new_singles(self, scan_dir: Path) -> List[str]:
         """
         Scan directory for new single-animal videos and register them.
@@ -315,8 +380,15 @@ class WatcherStateManager:
             # row whose copy into this node's DLC queue failed and that may
             # be tried again (_copy_failed_retry_due).
             row = self.db.get_video(video_id)
+            if row is not None and row.get('state') == 'quarantined':
+                # Released from quarantine under its old name: checked again
+                # once the copy back has finished (_recheck_released_single).
+                if (self._single_is_stable(file_path)
+                        and self._recheck_released_single(file_path, video_id)):
+                    newly_registered.append(video_id)
+                continue
             if row is not None:
-                came_back = ((row.get('state') == 'unresolvable'
+                came_back =((row.get('state') == 'unresolvable'
                               and (row.get('error_message') or '').startswith(REDRIVE_REASONS))
                              or self._copy_failed_retry_due(row))
                 if came_back and self._single_is_stable(file_path):

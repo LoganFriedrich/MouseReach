@@ -110,7 +110,7 @@ The watcher polls a folder on the shared network storage. The folder is not call
 
 Name checking happens before anything else
 
-Every newly seen collage has its file name validated (watcher/validator.py:103-229). The name must be DATE_ID1,ID2,ID3,ID4,ID5,ID6,ID7,ID8_TRAYRUN.ext, for example 20250101_CNT0101,CNT0102,CNT0103,CNT0104,CNT0105,CNT0106,CNT0107,CNT0108_P1.mkv. The date must be eight digits, be a real date, and not be in the future. There must be exactly eight comma-separated mouse identifiers, each one letters followed by at least four digits. The trailing label must be one of the letters P, E or F followed by digits (P for the pillar tray, E for easy, F for flat). At least one of the eight positions must be a real mouse. A collage that fails any of these is physically moved into a quarantine folder alongside a small text file recording why, and is marked quarantined in the watcher's own bookkeeping database (watcher/state.py:110-124, watcher/validator.py:408-450). A collage that passes is recorded, then re-checked on later polls until its file size has stopped changing, at which point it is marked ready to crop (watcher/watcher.py:76-82).
+Every newly seen collage has its file name validated (watcher/validator.py:103-229). The name must be DATE_ID1,ID2,ID3,ID4,ID5,ID6,ID7,ID8_TRAYRUN.ext, for example 20250101_CNT0101,CNT0102,CNT0103,CNT0104,CNT0105,CNT0106,CNT0107,CNT0108_P1.mkv. The date must be eight digits, be a real date, and not be in the future. There must be exactly eight comma-separated mouse identifiers, each one letters followed by at least four digits. The trailing label must be one of the letters P, E or F followed by digits (P for the pillar tray, E for easy, F for flat). At least one of the eight positions must be a real mouse. A collage that fails any of these is physically moved into a quarantine folder alongside a small text file recording why, and is marked quarantined in the watcher's own bookkeeping database (watcher/state.py, watcher/validator.py quarantine_file). Released from quarantine (see the update "a file released from quarantine is taken back in"), its name is checked again on the next scan. A collage that passes is recorded, then re-checked on later polls until its file size has stopped changing, at which point it is marked ready to crop (watcher/watcher.py:76-82).
 
 When cropping actually runs
 
@@ -4874,3 +4874,41 @@ the command (`backup.watcher_from_config`) and says "Backup INCOMPLETE" when a f
 copy completely. "Save backup settings" used to replace the whole `backup` section of the
 config, dropping `sync_dirs` and the timings; it now changes only the switch and the two folders.
 Test: `tests/test_backup_leaves_out_state.py`.
+
+## Update: a file released from quarantine is taken back in
+
+A file whose name the watcher cannot read is moved to the quarantine folder (a note
+`<file>.quarantine.json` beside it says why) and keeps its row in the watcher database in state
+'quarantined'. Both intake scans skipped every file that already had a row, so a file released
+under its OLD name -- the Quarantine tab pre-fills the old name, and a name can become valid when
+a validator rule is corrected -- stayed in the intake folder for ever, although the tab had said
+"the watcher will pick it up". Only a new name made a new row.
+
+Now (`watcher/state.py`, `_recheck_released_collage` / `_recheck_released_single`): when an
+intake scan finds a file whose row is 'quarantined' (a single only once its copy has finished,
+the same stability wait as any new single), it checks the name again. A valid name takes the
+state machine's own 'quarantined' -> 'validated' step, with the date, animals and tray read from
+the name and the old error cleared, and the video goes on like any new one. A name that is still
+invalid is quarantined again, with a fresh note, exactly as a new file would be.
+
+The Quarantine tab's "Release selected" now checks the corrected name with the rules of the
+intake chosen under "Release to" BEFORE moving anything (`validator.release_from_quarantine`).
+A name that intake cannot read is refused: the file and its note stay in quarantine, and the
+message says what is wrong and, where it can, suggests a corrected name. The old name is not
+refused -- it may be valid now. A file of the same name already in the intake folder also stops
+the release; nothing is overwritten. Tests: `tests/test_quarantine_release_is_taken_back.py`.
+
+How to release a quarantined file (Watcher Control -> Quarantine tab):
+1. Click Refresh. Each held file is listed with the reason it was held.
+2. In "Corrected name", type the name the file should have (or leave it, if the name is fine
+   now). A single-animal video is named `YYYYMMDD_<animal>_<tray><run>.mp4`; a whole-tray
+   recording `YYYYMMDD_<eight animals, comma-separated>_<tray><run>.mkv`.
+3. Under "Release to", pick the single-animal intake for a one-mouse video or the collage intake
+   for a whole-tray recording.
+4. Click "Release selected". If the name is refused, the message says why; fix the name and try
+   again. Once released, the watcher takes the file in on its next scan.
+
+Not changed here (follow-up): a file released under a NEW name is a new video to the watcher,
+and the row of its old name stays 'quarantined'. `mousereach-watch-quarantine --list` reads those
+rows, so it can still list a file that has already been released under another name; the
+Quarantine tab lists the quarantine folder itself and is the accurate view.

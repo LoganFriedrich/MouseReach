@@ -489,46 +489,101 @@ def get_quarantined_files(quarantine_dir: Path) -> List[dict]:
     return records
 
 
+RELEASE_DESTINATIONS = ('single', 'collage')
+
+
 def release_from_quarantine(
     filename: str,
     quarantine_dir: Path,
-    dest_dir: Path
-) -> bool:
-    """Release file from quarantine back to processing directory.
+    dest_dir: Path,
+    destination: str,
+    new_name: Optional[str] = None,
+) -> tuple:
+    """Release a quarantined file back into an intake folder, under a name
+    the pipeline can read.
+
+    The ONE release routine, used by the Quarantine tab's "Release selected"
+    and by ``mousereach-watch-quarantine --release``.
+
+    The new name (``new_name``, or the old name when none is given) is
+    checked with the validator of the chosen destination BEFORE anything
+    moves. WHY: a file released under a name the watcher cannot read is only
+    quarantined again on the next scan, and the panel used to say "the
+    watcher will pick it up" regardless. An UNCHANGED name is not refused: a
+    file may have been held by a validator rule that has since been
+    corrected, and then its old name is now valid. The watcher takes such a
+    file back in by itself (state.py re-validates a quarantined row whose
+    file is back in the intake folder).
+
+    Nothing is overwritten: a file of the new name already in the intake
+    folder stops the release.
 
     Args:
-        filename: Name of quarantined file (not full path)
+        filename: Name of the quarantined file (not a full path)
         quarantine_dir: Quarantine directory
-        dest_dir: Destination directory to restore file to
+        dest_dir: The intake folder to release into
+        destination: 'single' (one-animal video) or 'collage' (multi-animal
+            recording) -- picks the validator the name must pass
+        new_name: Corrected file name; None keeps the old name
 
     Returns:
-        True on success, False on failure
+        (released, message): released is True only when the file was moved;
+        message says what happened, or why nothing moved and what a valid
+        name looks like.
     """
+    if destination not in RELEASE_DESTINATIONS:
+        return False, (f"Unknown destination {destination!r}; "
+                       f"use one of: {', '.join(RELEASE_DESTINATIONS)}.")
     quarantine_dir = Path(quarantine_dir)
     dest_dir = Path(dest_dir)
+    new_name = (new_name or '').strip() or filename
+
+    # A bare file name only: a name with a folder in it would move the file
+    # somewhere other than the intake folder.
+    if Path(new_name).name != new_name or new_name in ('.', '..'):
+        return False, f"'{new_name}' is not a plain file name; nothing was moved."
 
     quarantined_file = quarantine_dir / filename
-    if not quarantined_file.exists():
-        logger.error(f"Quarantined file not found: {quarantined_file}")
-        return False
+    if not quarantined_file.is_file():
+        return False, f"File not found in quarantine: {filename}"
 
-    # Find associated metadata
-    metadata_file = quarantined_file.with_suffix(quarantined_file.suffix + '.quarantine.json')
+    if destination == 'single':
+        result = validate_single_filename(new_name)
+    else:
+        result = validate_collage_filename(new_name)
+    if not result.valid:
+        hint = suggest_fix(new_name)
+        msg = (f"'{new_name}' is not a valid {destination} name: {result.error}. "
+               f"Nothing was moved.")
+        if hint and hint != new_name:
+            msg += f" Did you mean '{hint}'?"
+        return False, msg
 
-    # Move file back
-    dest_path = dest_dir / filename
+    dest_path = dest_dir / new_name
+    if dest_path.exists():
+        return False, (f"A file named {new_name} is already in the intake "
+                       f"folder; nothing was moved.")
+
+    metadata_file = quarantined_file.with_suffix(
+        quarantined_file.suffix + '.quarantine.json')
     try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.move(str(quarantined_file), str(dest_path))
     except Exception as e:
         logger.error(f"Failed to release {filename} from quarantine: {e}")
-        return False
+        return False, f"Release failed: {e}"
 
-    # Remove metadata
-    if metadata_file.exists():
-        metadata_file.unlink()
+    # The note goes only once the file is out: a failed move keeps both.
+    try:
+        if metadata_file.exists():
+            metadata_file.unlink()
+    except OSError as e:
+        logger.warning(f"Released {filename}, but could not remove its note "
+                       f"{metadata_file.name}: {e}")
 
     logger.info(f"Released from quarantine: {filename} -> {dest_path}")
-    return True
+    return True, (f"Released {filename} as {new_name} into {dest_dir}; "
+                  f"the watcher takes it in on its next scan.")
 
 
 # =============================================================================

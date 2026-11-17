@@ -9,12 +9,17 @@ an operator, without a terminal:
   * correct its name in place, and
   * release it back into the intake folder so the pipeline picks it up again.
 
+Release checks the name first (validator.release_from_quarantine, shared with
+``mousereach-watch-quarantine --release``): a name the chosen intake would not
+accept is refused with the reason and a suggested fix, and nothing moves. The
+old name is allowed -- it may be valid now -- and the watcher takes a file
+released under its old name back in by itself.
+
 ASCII-only console output (Windows cp1252). Qt text may use Unicode.
 """
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -46,7 +51,9 @@ class QuarantineWidget(QWidget):
         intro = QLabel(
             "Files held back because their name could not be read (bad animal IDs, "
             "a single video in the collage folder, etc.). Fix the name in the last "
-            "column, choose where it goes, and Release it back into the pipeline."
+            "column, choose where it goes, and Release it back into the pipeline. "
+            "A name the chosen intake cannot read is refused (nothing moves) and "
+            "the message says what is wrong."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -138,25 +145,21 @@ class QuarantineWidget(QWidget):
             return
         old_name = self._filename(self._records[row])
         new_name = (self._table.item(row, 2).text() or "").strip() or old_name
-        src = Path(qdir) / old_name
-        meta = Path(qdir) / f"{old_name}{_META_SUFFIX}"
-        if not src.exists():
-            show_error(f"File not found in quarantine: {old_name}")
-            self._refresh()
+        # One release routine for the panel and the command line. It checks
+        # the name with the CHOSEN destination's rules before moving anything,
+        # so a name the watcher would only quarantine again is refused here,
+        # with what is wrong and a suggested fix. WHY: the panel moved any
+        # name and always said "the watcher will pick it up".
+        from mousereach.watcher.validator import release_from_quarantine
+        destination = "single" if self._dest.currentData() == "single" else "collage"
+        ok, msg = release_from_quarantine(
+            old_name, Path(qdir), Path(dest), destination, new_name=new_name)
+        if not ok:
+            show_error(msg)
+            if not (Path(qdir) / old_name).exists():
+                self._refresh()
             return
-        try:
-            Path(dest).mkdir(parents=True, exist_ok=True)
-            target = Path(dest) / new_name
-            if target.exists():
-                show_error(f"A file named {new_name} already exists in the intake folder.")
-                return
-            shutil.move(str(src), str(target))
-            if meta.exists():
-                meta.unlink()
-        except Exception as e:
-            show_error(f"Release failed: {e}")
-            return
-        show_info(f"Released {new_name} to the intake folder -- the watcher will pick it up.")
+        show_info(msg)
         self._refresh()
 
 
