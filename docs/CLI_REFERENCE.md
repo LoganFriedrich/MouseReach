@@ -1319,12 +1319,41 @@ Examples:
     mousereach-archive --dry-run          # Preview what would be archived
     mousereach-archive --list             # List ready videos
 
-Requirements:
-    A video can only be archived when ALL stages are validated:
-    - Segmentation: validated
-    - Reach detection: validated
-    - Outcome detection: validated
+Requirements (all of them):
+    - The watcher is not running on this machine (it files videos itself).
+    - This machine's watcher database, if it has one, has the video as
+      'processed' -- it passed every check: quality triage, hand scores,
+      review, kinematics.
+    - <video>_features.json is in the folder and newer than the video's
+      segments, reaches and outcomes files.
+    - Segmentation, reach and outcome files carry an approved verdict.
 ```
+
+What it checks, in plain words. On a machine that runs the watcher you
+normally never need this command: the watcher files each video into its
+Analyzed cohort folder by itself as soon as the video has passed every check
+(quality triage, the hand-score comparison, review, kinematics). The command
+is for filing by hand, and it refuses -- moving nothing and exiting with code
+1 -- when:
+
+- the watcher is running on this machine, or that cannot be checked (two
+  programs filing the same video at once can leave it split between two
+  folders). Stop the watcher first, or leave the filing to it;
+- this machine's watcher database knows the video and does not have it as
+  `processed`. The message names the state it is in (for example
+  `processing` while it waits for its hand scores, `triage` while a person
+  reviews it, `failed`, or `crystallized`). Deal with it through the watcher
+  and the review tools, not with this command;
+- `<video>_features.json` is missing, or is older than the video's
+  segments, reaches or outcomes file -- an earlier run's kinematics, not the
+  ones of these outputs.
+
+A machine with no watcher database at all (the tool used on its own) is
+judged on the files alone. After filing, the command records `archived` in
+this machine's watcher database; if the database knows the video and that
+cannot be recorded, it says so and exits with code 1. `--list` lists only
+videos that pass these checks, and `--status VIDEO_ID` names the reason a
+video would be refused.
 
 ## Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture
 

@@ -428,7 +428,7 @@ storage drive dropping for a moment) clears by itself.
 
 | Command | Description |
 |---------|-------------|
-| `mousereach-archive` | Move validated videos to NAS |
+| `mousereach-archive` | File by hand a video the watcher has passed (refuses while the watcher runs; see docs/CLI_REFERENCE.md) |
 
 ---
 

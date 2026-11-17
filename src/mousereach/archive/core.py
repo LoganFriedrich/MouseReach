@@ -110,6 +110,104 @@ def check_archive_ready(video_id: str, source_dir: Path = None) -> Tuple[bool, D
     return is_ready, status
 
 
+# The stage outputs a features file is made from. A features file older than
+# any of them was not made from them.
+_FEATURES_INPUTS = ("_segments.json", "_reaches.json", "_pellet_outcomes.json")
+
+# The coarsest modified-time step of the file systems involved.
+_MTIME_SLACK_S = 2.0
+
+
+def stale_features_reason(video_id: str, folder, started_at=None) -> Optional[str]:
+    """Why ``<stem>_features.json`` in ``folder`` cannot be the kinematics of
+    the outputs beside it, or None when it can.
+
+    Reasons: it is missing; it is older than one of the stage outputs present
+    (segments, reaches, outcomes); or, when ``started_at`` (the watcher row's
+    ``processing_started_at``, ISO text) is given, it is older than the start
+    of the run. WHY: a re-run copies the filed generation down, the old
+    features file included, and a run whose kinematics then failed -- or a
+    row put back to 'processed' by hand -- would otherwise be filed with new
+    outputs beside old kinematics. A features file this run made is written
+    after every stage output and after the run started, so a fresh one always
+    passes. An unreadable modified time counts as stale (the cautious side).
+    """
+    folder = Path(folder)
+    feats = folder / f"{video_id}_features.json"
+    try:
+        f_mtime = feats.stat().st_mtime
+    except FileNotFoundError:
+        return f"no {feats.name}"
+    except OSError as e:
+        return f"{feats.name} could not be read ({e})"
+    for suffix in _FEATURES_INPUTS:
+        p = folder / f"{video_id}{suffix}"
+        try:
+            m = p.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            return f"{p.name} could not be read ({e})"
+        if m > f_mtime + _MTIME_SLACK_S:
+            return (f"{feats.name} is older than {p.name}: it was not made from "
+                    f"these outputs (an earlier run's kinematics)")
+    if started_at:
+        try:
+            started = datetime.fromisoformat(str(started_at)).timestamp()
+        except (TypeError, ValueError):
+            started = None
+        if started is not None and f_mtime < started - _MTIME_SLACK_S:
+            return (f"{feats.name} is older than the start of this run "
+                    f"({started_at}): an earlier run's kinematics")
+    return None
+
+
+def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[str]:
+    """Why the ``mousereach-archive`` COMMAND may not file this video, or None.
+
+    The watcher files a video only after every check has passed: the quality
+    triage, the hand-score comparison, the review gate and kinematics. The
+    command used to file on the stage files' validation_status alone -- a
+    verdict the quality triage writes BEFORE the hand-score check and the
+    gate run, so a video held for its hand scores, or held as failed for want
+    of kinematics, read 'auto_approved' and was filed. Filing means done for
+    good, so the command now asks what the watcher decided:
+
+      * this node's watcher database knows the video and its row is not
+        'processed' (passed every check, waiting to be filed) -> refused,
+        naming the state;
+      * no ``<stem>_features.json``, or one older than the outputs beside it
+        (stale_features_reason) -> refused.
+
+    No watcher database at all means a machine that does not run the watcher
+    (the tool used on its own); then the files are all there is to go on.
+    Never called by the watcher itself (skip_ready_check), whose own filing
+    step makes these checks.
+    """
+    folder = Path(source_dir) if source_dir else Paths.PROCESSING
+    started_at = None
+    try:
+        from mousereach.watcher.db_location import open_watcher_db_if_present
+        db, _why = open_watcher_db_if_present()
+    except Exception:
+        db = None
+    if db is not None:
+        try:
+            row = db.get_video(video_id)
+        except Exception as e:
+            return f"the watcher database could not be read ({e})"
+        if row is not None:
+            state = row.get("state")
+            if state != "processed":
+                return (f"the watcher has this video as '{state}', not 'processed' "
+                        f"(passed every check); the watcher files it itself when "
+                        f"it has passed")
+            started_at = row.get("processing_started_at")
+    if folder is None:
+        return "no processing folder configured"
+    return stale_features_reason(video_id, folder, started_at)
+
+
 def get_archive_destination(video_id: str) -> Path:
     """Determine archive destination based on project/cohort.
 
@@ -191,7 +289,10 @@ def archive_video(
         "error": None,
     }
 
-    # Check if ready
+    # Check if ready. Only callers OUTSIDE the watcher come here (the
+    # mousereach-archive command, single and bulk); the watcher passes
+    # skip_ready_check because its own filing step has made every check, and a
+    # retry after a part-way move must not be refused for files already filed.
     if not skip_ready_check:
         is_ready, status = check_archive_ready(video_id, source_dir=source_dir)
 
@@ -200,6 +301,12 @@ def archive_video(
             result["error"] = f"Not ready: {', '.join(not_validated)} not validated"
             if verbose:
                 print(f"Cannot archive {video_id}: {result['error']}")
+            return result
+        why = command_filing_refusal(video_id, source_dir=source_dir)
+        if why:
+            result["error"] = f"Not filed: {why}"
+            if verbose:
+                print(f"Cannot archive {video_id}: {why}")
             return result
 
     # Get files
@@ -441,6 +548,16 @@ def record_archived(video_id: str) -> bool:
         return False
 
 
+def _row_known_here(video_id: str) -> bool:
+    """Whether this machine's watcher database has a row for the video."""
+    try:
+        from mousereach.watcher.db_location import open_watcher_db_if_present
+        db, _ = open_watcher_db_if_present()
+        return db is not None and db.get_video(video_id) is not None
+    except Exception:
+        return False
+
+
 def archive_all(
     dry_run: bool = False,
     verbose: bool = True
@@ -473,7 +590,13 @@ def archive_all(
     for video_id in archivable:
         result = archive_video(video_id, dry_run=dry_run, verbose=verbose)
         if result.get("success") and not dry_run:
-            record_archived(video_id)
+            known = _row_known_here(video_id)
+            if not record_archived(video_id) and known:
+                # Filed on disk, and a row that exists could not be moved to
+                # 'archived': counted as a failure so the command exits 1.
+                result["success"] = False
+                result["error"] = ("filed, but the watcher database could not "
+                                   "record it; run mousereach-watch-status")
         results["videos"].append(result)
         if result["success"]:
             results["success"] += 1

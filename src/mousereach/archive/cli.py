@@ -2,8 +2,14 @@
 """
 cli.py - Command line interface for mousereach-archive.
 
-Archive fully validated videos from Processing/ to NAS archive.
-Videos can only be archived when ALL validation statuses are "validated".
+File finished videos from Processing/ into the Analyzed tree, by hand.
+
+On a machine that runs the watcher, the watcher files every video itself as
+soon as it has passed every check, so this command is rarely needed there.
+It files a video only when (1) the watcher is not running on this machine,
+(2) this machine's watcher database, if there is one, has the video as
+'processed' (passed every check), and (3) the video's features file is there
+and newer than its stage outputs. See docs/CLI_REFERENCE.md.
 
 Usage:
     mousereach-archive                    # Archive all ready videos
@@ -16,7 +22,23 @@ import argparse
 import sys
 
 from .core import (archive_video, archive_all, get_archivable_videos,
-                   check_archive_ready, record_archived)
+                   check_archive_ready, record_archived, command_filing_refusal,
+                   _row_known_here as _row_known)
+
+
+def watcher_daemon_running() -> bool:
+    """True when this machine's watcher is running -- or when that cannot be
+    told. WHY refuse then: the watcher files videos itself, and two filers
+    moving the same video's files at once can leave it split between
+    Processing and the filed folder. "Cannot tell" is treated as running
+    because the cost of waiting is nothing and the cost of racing is a split
+    video."""
+    try:
+        from mousereach.watcher.health import _watcher_processes
+        return bool(_watcher_processes(first_only=True))
+    except Exception:
+        return True
+
 
 
 def main():
@@ -31,11 +53,14 @@ Examples:
     mousereach-archive --dry-run          # Preview what would be archived
     mousereach-archive --list             # List ready videos
 
-Requirements:
-    A video can only be archived when ALL stages are validated:
-    - Segmentation: validated
-    - Reach detection: validated
-    - Outcome detection: validated
+Requirements (all of them):
+    - The watcher is not running on this machine (it files videos itself).
+    - This machine's watcher database, if it has one, has the video as
+      'processed' -- it passed every check: quality triage, hand scores,
+      review, kinematics.
+    - <video>_features.json is in the folder and newer than the video's
+      segments, reaches and outcomes files.
+    - Segmentation, reach and outcome files carry an approved verdict.
 """
     )
 
@@ -73,10 +98,13 @@ Requirements:
 
     # List mode
     if args.list:
-        videos = get_archivable_videos()
+        videos = [v for v in get_archivable_videos()
+                   if not command_filing_refusal(v)]
         if not videos:
             print("No videos ready for archive.")
-            print("Videos need ALL validation statuses to be 'validated'.")
+            print("Videos need ALL validation statuses to be 'validated', a")
+            print("'processed' watcher row (if this machine has a watcher database)")
+            print("and an up-to-date features file.")
             return
 
         print(f"Videos ready for archive ({len(videos)}):")
@@ -93,14 +121,24 @@ Requirements:
             marker = "OK" if val == "validated" else "PENDING"
             print(f"  {step:10s}: {val:15s} [{marker}]")
         print("-" * 40)
-        if is_ready:
+        why = command_filing_refusal(args.status)
+        if is_ready and not why:
             print("READY for archive")
-        else:
+        elif not is_ready:
             not_done = [k for k, v in status.items() if v != "validated"]
             print(f"NOT READY - need: {', '.join(not_done)}")
+        if why:
+            print(f"NOT READY - {why}")
         return
 
     verbose = not args.quiet
+
+    if not args.dry_run and watcher_daemon_running():
+        print("The watcher is running on this machine (or that could not be "
+              "checked). It files finished videos itself; this command does "
+              "not file beside it. Stop the watcher first, or leave the filing "
+              "to it. Nothing was moved.")
+        sys.exit(1)
 
     print("=" * 60)
     print("MouseReach Archive Tool")
@@ -115,8 +153,14 @@ Requirements:
         )
 
         # Keep this node's record in step with the disk -- see record_archived.
+        # A row that exists but could not be recorded is a failure the person
+        # must see: the files are filed and the database says otherwise.
         if result["success"] and not args.dry_run:
-            record_archived(args.video_id)
+            known = _row_known(args.video_id)
+            if not record_archived(args.video_id) and known:
+                print(f"{args.video_id}: filed, but the watcher database could "
+                      f"not record it. Run mousereach-watch-status.")
+                sys.exit(1)
 
         if not result["success"] and not args.dry_run:
             sys.exit(1)

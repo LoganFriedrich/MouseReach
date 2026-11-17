@@ -5173,3 +5173,16 @@ that are about to be replaced are moved into `Analyzed/Archive` before the new o
 new file then fails to move, the cohort folder holds neither a whole old nor a whole new result
 until the retry succeeds. Because the features file is held back, the database import and the
 watcher do not treat that folder as filed in the meantime.
+
+**Filing by hand (`mousereach-archive`) files only what the watcher has passed.** The command
+used to file a video on the verdict written into its three stage files alone. The quality
+triage writes that verdict before the hand-score comparison, the review gate and kinematics
+run, so a video the watcher was holding for its hand scores, or one with no kinematics, read
+as approved and could be filed -- and filed means done for good. It also could run beside the
+watcher's own filing of the same video, and when the row was not 'processed' it moved the
+files and recorded nothing. Now the command refuses, moving nothing, while the watcher is
+running on the machine (or that cannot be checked), when this machine's watcher database has
+the video in any state but 'processed', and when the features file is missing or older than
+the stage outputs beside it. A filing it cannot record in a database that knows the video
+exits with code 1. The watcher's own filing does not go through these command checks; it has
+its own (below). `docs/CLI_REFERENCE.md` lists the exact refusals.
