@@ -4889,7 +4889,9 @@ intake scan finds a file whose row is 'quarantined' (a single only once its copy
 the same stability wait as any new single), it checks the name again. A valid name takes the
 state machine's own 'quarantined' -> 'validated' step, with the date, animals and tray read from
 the name and the old error cleared, and the video goes on like any new one. A name that is still
-invalid is quarantined again, with a fresh note, exactly as a new file would be.
+invalid is quarantined again, with a fresh note, exactly as a new file would be. If the check itself fails (for example the database cannot be written), the watcher log
+gets a WARNING naming the file, the rest of the scan goes on, and the file is tried again on the
+next poll.
 
 The Quarantine tab's "Release selected" now checks the corrected name with the rules of the
 intake chosen under "Release to" BEFORE moving anything (`validator.release_from_quarantine`).

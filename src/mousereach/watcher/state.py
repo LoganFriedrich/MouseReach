@@ -120,8 +120,15 @@ class WatcherStateManager:
                     # intake folder was released by a person under its old
                     # name (_recheck_released_collage).
                     if known.get('state') == 'quarantined':
-                        if self._recheck_released_collage(file_path, filename):
-                            newly_registered.append(filename)
+                        try:
+                            if self._recheck_released_collage(file_path, filename):
+                                newly_registered.append(filename)
+                        except Exception as e:
+                            # A WARNING, not the debug line below: the
+                            # file then sits in the intake folder unhandled.
+                            logger.warning(f"Collage {filename}: released from "
+                                           f"quarantine but could not be checked "
+                                           f"again: {e}")
                         continue
                     # A 'failed' collage whose file is still present gets
                     # re-validated. 'failed' -> 'validated' is the state
@@ -383,9 +390,15 @@ class WatcherStateManager:
             if row is not None and row.get('state') == 'quarantined':
                 # Released from quarantine under its old name: checked again
                 # once the copy back has finished (_recheck_released_single).
-                if (self._single_is_stable(file_path)
-                        and self._recheck_released_single(file_path, video_id)):
-                    newly_registered.append(video_id)
+                try:
+                    if (self._single_is_stable(file_path)
+                            and self._recheck_released_single(file_path, video_id)):
+                        newly_registered.append(video_id)
+                except Exception as e:
+                    # One file that cannot be checked must not stop the scan
+                    # for every other single; it is tried again next poll.
+                    logger.warning(f"Single video {video_id}: released from "
+                                   f"quarantine but could not be checked again: {e}")
                 continue
             if row is not None:
                 came_back =((row.get('state') == 'unresolvable'
