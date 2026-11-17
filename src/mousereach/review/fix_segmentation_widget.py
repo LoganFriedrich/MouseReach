@@ -150,6 +150,8 @@ class FixSegmentationWidget(QWidget):
         self.boundaries: List[int] = []
         self.original_boundaries: List[int] = []
         self.n_frames: int = 0
+        self._uncut: bool = False          # no segments file: cut from scratch
+        self._video_fps: Optional[float] = None
         self._video_layer = None
         self._queue: List[Path] = []
         self._gw_idx: int = 0
@@ -537,6 +539,22 @@ automatic.
         from mousereach.review.resegmented import needs_recut
         return needs_recut(bundle, bundle.name)[0]
 
+    @staticmethod
+    def _uncut_bundle(bundle: Path) -> bool:
+        """A queue folder that is a video sent here with no segments file: a
+        Pillar tray (Easy and Flat are never segmented; Clear releases them),
+        with a routing record or review manifest saying a route put it here,
+        and not a hidden folder or a leftover kept for a person."""
+        from mousereach.config import is_outcome_free_tray
+        from mousereach.watcher.review_routing import LEFT_NOTE
+        stem = bundle.name
+        if stem.startswith(".") or is_outcome_free_tray(stem):
+            return False
+        if (bundle / LEFT_NOTE).exists():
+            return False
+        return any((bundle / n).is_file() for n in (
+            "%s_routing.json" % stem, "%s_manifest.json" % stem, "manifest.json"))
+
     def _load_queue(self):
         """Videos that cannot leave the queue until a person sets or confirms
         their cuts (see _needs_reseg)."""
@@ -549,6 +567,13 @@ automatic.
                 continue
             sp = bundle / ("%s_segments.json" % bundle.name)
             if not sp.is_file():
+                # No segments file: the segmenter could not run on this video
+                # and the watcher sent it here to be cut by hand. WHY listed:
+                # every way out of the queue needs cuts a person saved here,
+                # and this tool used to skip such a bundle, so no tool could
+                # make its first cuts. It is marked from scratch, so last.
+                if self._uncut_bundle(bundle) and self._needs_reseg(bundle, {}):
+                    self._queue.append((bundle, 0))
                 continue
             try:
                 seg = read_segmentation(sp)
@@ -599,7 +624,11 @@ automatic.
         stem = bundle.name
         self.video_stem = stem
         self.seg_path = bundle / ("%s_segments.json" % stem)
-        self.seg = read_segmentation(self.seg_path)
+        # No segments file (the segmenter could not run): start from no cuts;
+        # saving writes the first segments file, all of it the person's.
+        self._uncut = not self.seg_path.is_file()
+        self._video_fps = None
+        self.seg = {} if self._uncut else read_segmentation(self.seg_path)
         self.candidates = list(self.seg.get("candidates") or [])
         self.boundaries = sorted(int(b) for b in (self.seg.get("boundaries") or []))
         self.original_boundaries = list(self.boundaries)
@@ -620,7 +649,16 @@ automatic.
             note = (note + "   |   " + extra) if note else extra
         except Exception as err:
             logger.warning('Could not read why %s is in the queue: %s', stem, err)
-        if not self.candidates:
+        if self._uncut:
+            try:
+                from .release_cli import _routing_reason
+                sent_for = _routing_reason(bundle, stem)
+            except Exception:
+                sent_for = ""
+            note = ("The segmenter could not run on this video (%s): there are "
+                    "no cuts yet. Mark every cut by hand from the video, then "
+                    "save." % (sent_for or "no reason was recorded"))
+        elif not self.candidates:
             note += ("   |   No candidate timepoints for this video: the "
                      "segmenter could not track the enclosure well enough to "
                      "propose any, so its cuts are an even grid that means "
@@ -823,6 +861,7 @@ automatic.
         try:
             cap = cv2.VideoCapture(str(mp4))
             n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self._video_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0) or None
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             cap.release()
@@ -1165,12 +1204,23 @@ automatic.
                                 "At least two cuts are needed to make a segment.")
             return
 
+        uncut = not Path(self.seg_path).is_file()
+        if uncut and int(self.n_frames or 0) <= 0:
+            # A first segments file must say how long the video is; every
+            # later step reads the last segment's end from it.
+            QMessageBox.warning(self, "Video length unknown",
+                                "This video has no segments file and its video "
+                                "could not be opened, so its length is not "
+                                "known. Nothing was saved.")
+            return
+
         archive = (Path(self.seg_path).parents[3] / "_archived"
                    / ("segmentation_before_human_fix_%s"
                       % datetime.now().strftime("%Y%m%d_%H%M%S")))
         try:
             archive.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self.seg_path, archive / self.seg_path.name)
+            if not uncut:
+                shutil.copy2(self.seg_path, archive / self.seg_path.name)
         except Exception as e:
             QMessageBox.critical(self, "Could not archive",
                                  "Refusing to overwrite the original: %s" % e)
@@ -1186,6 +1236,16 @@ automatic.
             return
 
         seg = dict(self.seg)
+        if uncut:
+            # The first segments file of a video the segmenter could not cut.
+            # The fields every later step reads; boundary_source "human" keeps
+            # the segmenter from replacing it on the re-run.
+            seg.update({"video_name": self.video_stem,
+                        "total_frames": int(self.n_frames),
+                        "candidates": [],
+                        "note": "No segmenter output: every cut set by hand."})
+            if getattr(self, "_video_fps", None):
+                seg["fps"] = float(self._video_fps)
         seg["boundaries"] = [int(b) for b in self.boundaries]
         seg["algo_boundaries"] = [int(b) for b in self.original_boundaries]
         seg["boundary_source"] = "human"
@@ -1194,6 +1254,13 @@ automatic.
         # The reason this video was queued is answered now. Leaving it set would
         # send the video straight back here on the next pass.
         seg["needs_human_resolved"] = needs_fixing(self.seg)
+        if uncut:
+            try:
+                from .release_cli import _routing_reason
+                why = _routing_reason(Path(self.seg_path).parent, self.video_stem)
+            except Exception:
+                why = ""
+            seg["needs_human_resolved"] = [why or "no segments file"]
         seg["needs_human"] = []
         # The guided walk's per-segment answers: which identities/boundaries
         # the human confirmed vs corrected, with the algo's original numbers.

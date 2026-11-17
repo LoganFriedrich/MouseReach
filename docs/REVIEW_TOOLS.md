@@ -236,6 +236,20 @@ includes a video whose cuts a person fixed on an earlier visit and that was
 sent back -- those earlier cuts no longer count, so the video is listed again.
 Once you save its cuts there, the tool no longer lists it.
 
+**A video the segmenter could not cut is listed too (since 2026-11-17).** When
+the segmenter fails with an error on a Pillar video, the watcher sends it here
+with no segments file at all (its reason starts "segmentation_failed:"). The
+tool lists it after the others, with the note "The segmenter could not run on
+this video (...): there are no cuts yet". There is nothing to confirm: step
+through the video, add every cut by hand ("Add a cut at the current frame" at
+each tray advance)
+and save. Saving writes the video's first segments file, every cut marked as
+yours, and releases the video, which then re-runs from the step after
+segmentation on your cuts. If the video itself cannot be opened, its length is
+unknown and the save is refused with a message saying so (nothing is written);
+fix the video file first. Before this the tool skipped such a video, and since
+every way out of the queue needs cuts saved here, it could never leave.
+
 Until 2026-10-23 each segment also had a box, "Segmentation says this is
 segment N. If that's wrong, which segment is this actually?", which wrote
 `true_segment_num` + `segmentation_wrong` into the record. It was removed
