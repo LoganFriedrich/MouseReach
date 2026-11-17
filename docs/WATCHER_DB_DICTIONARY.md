@@ -304,6 +304,13 @@ processing_log: append-only, one row per step attempt
   id, video_id (NOT NULL), step (NOT NULL), status (NOT NULL), message,
   duration_seconds, machine, created_at
 
+  created_at is UTC (SQLite datetime('now')) while the videos columns are
+  local time, so "the newest row of a video" is the highest id, not the
+  latest created_at. A 'processed' video whose newest row is step 'archive',
+  status 'failed' is one whose filing failed and is waiting out the watcher's
+  in-memory back-off; WatcherDB.get_videos_held_by_failed_archive() lists
+  them for mousereach-watch-status and the dashboard health line.
+
 
 ## 4. STATE VOCABULARY
 

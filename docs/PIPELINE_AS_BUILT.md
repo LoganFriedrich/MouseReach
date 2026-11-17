@@ -4772,3 +4772,18 @@ For an operator: nothing to do unless the give-up warning appears or `waiting_ha
 filled -- then read the pool log for the hand-on errors and fix what this machine cannot write.
 Where it lives: `watcher/cpu_pose_pool.py` `CpuPosePool._status`, `_retry_hand_ons`,
 `_give_up_hand_on`, `_last_hand_on_try`, `run`. Tests in `tests/test_cpu_pool_hand_on_retry.py`.
+
+## Update: the status command and the dashboard health line name the stuck videos
+
+`mousereach-watch-status` printed only counts by state. Three kinds of stuck video were not on
+it: an analysed video whose filing failed (it stays `processed` while the watcher waits out a
+back-off kept only in its memory, so it looked like one about to be filed), a failed video's
+reason (in its row, never printed), and the holds the watchers list for a person in
+`<NAS root>/attention/`. Now, under the counts, the command lists: the videos held after a failed
+filing attempt (found from the log: a `processed` row whose newest log row, by id, is a failed
+`archive` step -- `WatcherDB.get_videos_held_by_failed_archive`), the failed videos with their
+error, and every attention item with its list file and that list's age (a list of a watcher that
+has stopped is not rewritten, so its age says how current it is). Each part is read on its own;
+one that cannot be read prints a `[!]` line and the rest still shows. `--json` carries them under
+`held_and_failed`. The Pipeline Dashboard's health line also names the videos held after a failed
+filing. Tests: `tests/test_status_shows_held_and_failed.py`.

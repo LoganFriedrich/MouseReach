@@ -179,7 +179,23 @@ def health_report(db=None) -> List[str]:
                                     c.get("validation_error") or "no error recorded")
                                  for c in failed_collages[:3]),
                        " ..." if len(failed_collages) > 3 else ""))
-            if not failed and not unres and not failed_collages:
+            # Videos whose filing failed: still 'processed', waiting out a
+            # back-off that only the running watcher knows (db helper says why).
+            held = []
+            held_getter = getattr(db, "get_videos_held_by_failed_archive", None)
+            if held_getter is not None:
+                held = held_getter() or []
+            if held:
+                lines.append(
+                    "%d analysed video(s) could not be filed and wait to be tried "
+                    "again (the watcher retries by itself; if the error repeats, "
+                    "fix its cause): %s%s"
+                    % (len(held),
+                       "; ".join("%s (%s)" % (h.get("video_id"),
+                                              h.get("message") or "no error recorded")
+                                 for h in held[:3]),
+                       " ..." if len(held) > 3 else ""))
+            if not failed and not unres and not failed_collages and not held:
                 lines.append("Nothing is stuck: no failed or parked videos.")
         except Exception as e:
             lines.append("Could not read the pipeline database: %s" % e)

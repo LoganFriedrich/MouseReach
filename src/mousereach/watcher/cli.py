@@ -506,7 +506,9 @@ def main_status():
     _maybe_print_help("""
 usage: mousereach-watch-status [--by-animal] [--json] [--log N]
 
-Show this node's pipeline state: counts by state, recent activity, and the
+Show this node's pipeline state: counts by state; the videos held after a
+failed filing attempt, the failed videos with their errors, and what the
+watchers list for a person (each list with its age); recent activity; and the
 status every node last reported.
 
   --by-animal   Per-animal breakdown with QC.
@@ -550,6 +552,7 @@ status every node last reported.
     if json_output:
         # Add recent log entries
         summary['recent_activity'] = db.get_recent_log(log_limit)
+        summary['held_and_failed'] = _held_and_failed(db)
         print(json.dumps(summary, indent=2))
         return
 
@@ -619,6 +622,8 @@ status every node last reported.
         print("  The next watcher start puts these back in the queue by itself.")
         print("  Nothing is lost and nothing needs doing by hand.")
     print()
+
+    _print_held_and_failed(db)
 
     # Per-animal breakdown
     if by_animal:
@@ -711,6 +716,95 @@ status every node last reported.
         except Exception as e:
             print("Nodes: (could not be read: %s)" % e)
             print()
+
+
+def _held_and_failed(db) -> dict:
+    """What is held, failed or listed for a person, each part read on its own.
+
+    WHY: the counts above say how many videos sit in each state, not which ones
+    are stuck or why. A video whose filing failed stays 'processed' while the
+    watcher waits out a back-off kept only in its memory; a failed video's
+    reason is in its row; hand-score holds and other waits are in the
+    watchers' attention lists on the share. None of that was on this screen.
+    Each part is read in its own try so one unreadable source never hides the
+    others (and never breaks the status command); a part that cannot be read
+    says so.
+    """
+    out = {"archive_held": [], "failed": [], "attention": [], "errors": []}
+    try:
+        out["archive_held"] = list(db.get_videos_held_by_failed_archive())
+    except Exception as e:
+        out["errors"].append("filing holds could not be read: %s" % e)
+    try:
+        out["failed"] = [{"video_id": v.get("video_id"),
+                          "error_message": v.get("error_message")}
+                         for v in db.get_videos_in_state("failed")]
+    except Exception as e:
+        out["errors"].append("failed videos could not be read: %s" % e)
+    try:
+        from mousereach.config import Paths
+        from mousereach.watcher import attention
+        nas = getattr(Paths, "NAS_ROOT", None)
+        if nas:
+            ages = {}
+            for item in attention.read_items(nas):
+                name = item.get("listed_in")
+                if name not in ages:
+                    try:
+                        ages[name] = time.time() - (Path(nas) / "attention" / name).stat().st_mtime
+                    except OSError:
+                        ages[name] = None
+                out["attention"].append(dict(item, list_age_seconds=ages[name]))
+    except Exception as e:
+        out["errors"].append("the attention lists could not be read: %s" % e)
+    return out
+
+
+def _print_held_and_failed(db, limit: int = 20) -> None:
+    """Print _held_and_failed for a person. ASCII only."""
+    from mousereach.watcher.singleton import describe_age
+    data = _held_and_failed(db)
+
+    def _some(rows, fmt):
+        for r in rows[:limit]:
+            print("  " + fmt(r))
+        if len(rows) > limit:
+            print("  ... and %d more" % (len(rows) - limit))
+
+    held = data["archive_held"]
+    if held:
+        print("Held after a failed filing attempt (%d) -- the watcher tries again "
+              "by itself after a wait; if the error repeats, fix its cause:" % len(held))
+        _some(held, lambda r: "%s: %s (failed %s UTC)"
+              % (r.get("video_id"), r.get("message") or "no error recorded",
+                 r.get("failed_at") or "?"))
+        print()
+    failed = data["failed"]
+    if failed:
+        print("Failed (%d) -- each waits for a person: fix the cause, then "
+              "mousereach-watch-reprocess <video_id>:" % len(failed))
+        _some(failed, lambda r: "%s: %s" % (r.get("video_id"),
+                                            r.get("error_message") or "no error recorded"))
+        print()
+    items = data["attention"]
+    if items:
+        print("Listed by the watchers for a person (from <NAS>/attention):")
+
+        def _item(r):
+            age = r.get("list_age_seconds")
+            # A list is rewritten whenever it changes, so an old list may be
+            # from a watcher that has stopped: show its age, never imply it
+            # is current.
+            when = ("list written %s ago" % describe_age(age)) if age is not None else "list age unknown"
+            tag = "NEEDS A PERSON" if r.get("needs_person") else "waiting"
+            return "[%s] %s (%s, %s)" % (tag, r.get("says") or r.get("video_id") or "?",
+                                        r.get("listed_in"), when)
+        _some(items, _item)
+        print()
+    for err in data["errors"]:
+        print("  [!] " + err)
+    if data["errors"]:
+        print()
 
 
 # =============================================================================

@@ -359,6 +359,12 @@ class _FakeWatcherDB:
     def get_recent_log(self, limit):
         return []
 
+    def get_videos_held_by_failed_archive(self):
+        return []
+
+    def get_videos_in_state(self, state):
+        return []
+
 
 @pytest.fixture
 def status_node(node, tmp_path, monkeypatch):

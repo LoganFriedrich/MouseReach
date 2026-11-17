@@ -1770,13 +1770,37 @@ the flag to start it. It reports as `<hostname>-cpu` in
 ```
 usage: mousereach-watch-status [--by-animal] [--json] [--log N]
 
-Show this node's pipeline state: counts by state, recent activity, and the
+Show this node's pipeline state: counts by state; the videos held after a
+failed filing attempt, the failed videos with their errors, and what the
+watchers list for a person (each list with its age); recent activity; and the
 status every node last reported.
 
   --by-animal   Per-animal breakdown with QC.
   --json        JSON output.
   --log N       Show the last N log entries (default 10).
 ```
+
+What the stuck-video lists mean (they appear under the counts, only when they
+have something in them):
+
+- **Held after a failed filing attempt** -- an analysed video (`processed`)
+  whose last step was a filing (archive) attempt that failed. The watcher
+  waits a while and tries again by itself; the line shows the error and when it
+  failed (UTC). If the same error keeps coming back, fix its cause (usually the
+  share being unreachable or a file being open). Before this list existed such
+  a video looked like any other `processed` one.
+- **Failed** -- each failed video with the error recorded on it. Fix the cause,
+  then run `mousereach-watch-reprocess <video_id>` (below).
+- **Listed by the watchers for a person** -- every item of every list in
+  `<NAS root>/attention/` (hand-score holds, collages that could not be cut,
+  failed re-runs ...), tagged `[NEEDS A PERSON]` or `[waiting]`, with the list
+  file it came from and how long ago that list was written. A list is rewritten
+  whenever it changes, so an old one may come from a watcher that has since
+  stopped: check the age before acting on it.
+
+Each list is read on its own; one that cannot be read prints a `[!]` line
+saying so and the rest of the status still shows. `--json` carries the same
+three lists under `held_and_failed`.
 
 ### `mousereach-watch-reprocess`
 

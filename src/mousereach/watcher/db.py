@@ -1240,6 +1240,39 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
+    def get_videos_held_by_failed_archive(self) -> List[dict]:
+        """Analysed videos ('processed') whose last logged step is a FAILED
+        'archive': filing them did not work and the watcher is waiting out a
+        back-off before it tries again.
+
+        WHY this is read from the log: the back-off itself lives only in the
+        running watcher's memory, so without this the status command showed
+        such a video as plain 'processed' -- indistinguishable from one about
+        to be filed -- while it could sit there for hours. The newest log row
+        is taken by id, not by created_at: the log stamps UTC while other
+        columns are local time, and id is the order the rows were written.
+
+        Returns dicts with video_id, message (the archive error) and
+        failed_at (the log row's created_at, UTC).
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute("""
+                    SELECT v.video_id AS video_id, l.message AS message,
+                           l.created_at AS failed_at
+                    FROM videos v
+                    JOIN processing_log l ON l.id = (
+                        SELECT MAX(id) FROM processing_log WHERE video_id = v.video_id)
+                    WHERE v.state = 'processed'
+                      AND l.step = 'archive' AND l.status = 'failed'
+                    ORDER BY l.id
+                """).fetchall()
+                return [dict(row) for row in rows]
+            finally:
+                conn.close()
+
+    @_retry_network_errors
     def get_collages_in_state(self, state: str) -> List[dict]:
         """
         Get all collages in given state.
