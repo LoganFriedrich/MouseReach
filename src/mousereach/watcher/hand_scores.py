@@ -302,15 +302,15 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
 
 def _review_and_segments(video_id: str, folder: Path):
     """(review document or None, segments document or None) for the video, the
-    review found where the answered-segment check finds it."""
-    from mousereach.review.causal_review_io import resolve_review_path
-    review = None
-    rp = resolve_review_path(video_id, primary_dir=folder)
-    if rp is not None:
-        review = json.loads(Path(rp).read_text(encoding="utf-8"))
+    review being every mislabel record in EVERY copy of the review
+    (causal_review_io.mislabel_records) -- never one copy picked by file time,
+    which could miss a correction another copy holds. Only the mislabel
+    records are needed here (unresolved_mislabels)."""
+    from mousereach.review.causal_review_io import mislabel_records, review_dirs
     sp = Path(folder) / f"{video_id}_segments.json"
     seg_doc = json.loads(sp.read_text(encoding="utf-8")) if sp.is_file() else None
-    return review, seg_doc
+    review = mislabel_records(video_id, review_dirs(video_id, folder))
+    return (review if review["segments"] else None), seg_doc
 
 
 def scores_file_stamp() -> Optional[float]:

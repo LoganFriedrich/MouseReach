@@ -177,6 +177,7 @@ import argparse
 import time
 import json
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -244,16 +245,19 @@ def answered_segments_of(video_id: str, folder: Path) -> set:
     (triage_status.resolved_segments + gt_resolved_segments -- the release
     check's own rule). Raises when the review exists but cannot be read: a
     guess here could route a person's answered segment back to them."""
-    from mousereach.review.causal_review_io import resolve_review_path
+    from mousereach.review.causal_review_io import effective_review, review_dirs
     from mousereach.review.triage_status import gt_resolved_segments, resolved_segments
-    review = None
-    rp = resolve_review_path(video_id, primary_dir=folder)
-    if rp is not None:
-        review = json.loads(Path(rp).read_text(encoding="utf-8"))
     seg_doc = None
     sp = Path(folder) / f"{video_id}_segments.json"
     if sp.is_file():
         seg_doc = json.loads(sp.read_text(encoding="utf-8"))
+    # Every copy, merged -- the release check's own reading (one copy picked
+    # by file time could call a pellet open that another copy answered).
+    # strict: a copy that exists but cannot be read RAISES here instead of
+    # being skipped -- it may be the only copy holding the answer, and a
+    # skipped answer would be routed back to the person as a new question.
+    review = effective_review(video_id, review_dirs(video_id, folder), seg_doc,
+                              strict=True)
     answered = set(resolved_segments(review, seg_doc)) if review else set()
     gt_full, gt_segs = gt_resolved_segments(video_id, extra_dirs=(folder,))
     if gt_full:
@@ -278,28 +282,45 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
     marked ``answers.reviewed = False`` -- the established meaning of "not
     answered yet" -- so the video stays in triage until a person answers that
     pellet again. Saving it in the review tool writes a fresh record, which ends
-    the re-check. The review file is copied first to
-    <Analyzed>/Archive/manual_corrections/<name>.before_recheck_<time>."""
+    the re-check.
+
+    WHICH COPY: the decision is made on EVERY copy of the review merged
+    (causal_review_io.effective_review -- the reading the window, the gate and
+    the release check use), and the reopened record is written into BOTH the
+    copy in ``folder`` (the one that travels with the video; created if
+    missing) and the durable copy of record, if it exists. WHY: this used to
+    pick ONE copy by file time and write only there, so a pellet answered in
+    another copy was not reopened, or the recheck sat in a copy the window
+    then out-voted. Each copy written is first backed up to
+    <Analyzed>/Archive/manual_corrections/<name>.before_recheck_<time>.<role>,
+    <role> being ``travelling`` or ``durable``: two separate files, because
+    both copies have the same name and one backup must not replace the other. It is
+    written directly, never through save_causal_review, whose never-drop-an-
+    answer rule would put the reopened answer straight back.
+
+    Raises, writing nothing, when a copy of the review exists but cannot be
+    read (effective_review strict=True)."""
     from datetime import datetime
     from mousereach.config import Paths
-    from mousereach.review.causal_review_io import (index_review_by_segment, is_answered,
-                                                    resolve_review_path,
-                                                    segmentation_is_human,
+    from mousereach.review.causal_review_io import (durable_review_path, effective_review,
+                                                    index_review_by_segment, is_answered,
+                                                    review_dirs, segmentation_is_human,
                                                     segments_from_segmentation)
     wanted = {int(s) for s in segment_nums}
     questions = {int(k): str(v) for k, v in (questions or {}).items()}
-    rp = resolve_review_path(video_id, primary_dir=folder)
-    if rp is None or not Path(rp).is_file():
-        return []
-    rp = Path(rp)
-    review = json.loads(rp.read_text(encoding="utf-8"))
     sp = Path(folder) / f"{video_id}_segments.json"
     seg_doc = json.loads(sp.read_text(encoding="utf-8")) if sp.is_file() else None
     current = segments_from_segmentation(seg_doc) if seg_doc else None
-    mapping, _ = index_review_by_segment(
-        review, current, human_segmentation=bool(seg_doc) and segmentation_is_human(seg_doc))
+    human = bool(seg_doc) and segmentation_is_human(seg_doc)
+    # strict, as in answered_segments_of: an unreadable copy raises, so a
+    # pellet answered only there is never taken for open (or left un-reopened).
+    review = effective_review(video_id, review_dirs(video_id, folder), seg_doc,
+                              strict=True)
+    if not review:
+        return []
+    mapping, _ = index_review_by_segment(review, current, human_segmentation=human)
     now = datetime.now().isoformat(timespec="seconds")
-    reopened = []
+    reopened = {}
     for sn in sorted(wanted):
         rec = mapping.get(sn)
         answers = (rec or {}).get("answers") or {}
@@ -310,24 +331,55 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
         # Who gave the answer being questioned: the record's own values, or
         # the file's for a review saved before records carried them. The
         # reopened record is nobody's answer, so it carries no reviewer.
-        rec["answers"] = {"reviewed": False, "recheck": {
+        new = {k: v for k, v in rec.items() if k not in ("reviewer", "reviewed_at")}
+        new["segment_num"] = sn
+        new["answers"] = {"reviewed": False, "recheck": {
             "asked_at": now, "question": questions.get(sn),
             "previous": {"human": rec.get("human"), "answers": answers,
-                         "reviewer": rec.pop("reviewer", None) or review.get("reviewer"),
-                         "reviewed_at": (rec.pop("reviewed_at", None)
+                         "reviewer": rec.get("reviewer") or review.get("reviewer"),
+                         "reviewed_at": (rec.get("reviewed_at")
                                          or review.get("reviewed_at"))}}}
-        reopened.append(sn)
+        reopened[sn] = new
     if reopened and not dry_run:
-        backup_dir = Path(Paths.ANALYZED_OUTPUT) / "Archive" / "manual_corrections"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(rp, backup_dir / ("%s.before_recheck_%s" % (
-            rp.name, now.replace("-", "").replace(":", "").replace("T", "_"))))
-        # The backup above first, then a one-step replacement of the review:
-        # write_text empties the file before writing, so a crash used to leave
-        # a cut-off review, which every reader takes for "no answers".
         from mousereach.pipeline.fsutil import write_json_atomic
-        write_json_atomic(rp, review, indent=2)
-    return reopened
+        backup_dir = Path(Paths.ANALYZED_OUTPUT) / "Archive" / "manual_corrections"
+        stamp = now.replace("-", "").replace(":", "").replace("T", "_")
+        travelling = Path(folder) / f"{video_id}_causal_review.json"
+        # Each target carries its role, which goes into its backup's name:
+        # both copies share the basename <video>_causal_review.json and the
+        # same stamp, so without the role the durable copy's backup replaced
+        # the travelling copy's and that copy's pre-recheck state was lost.
+        targets = [(travelling, "travelling")]
+        try:
+            durable = durable_review_path(video_id)
+        except Exception:
+            durable = None
+        if durable is not None and Path(durable).is_file() and \
+                os.path.normcase(str(Path(durable).resolve())) != \
+                os.path.normcase(str(travelling.resolve())):
+            targets.append((Path(durable), "durable"))
+        for target, role in targets:
+            if target.is_file():
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                # The backup first, then a one-step replacement: write_text
+                # empties the file before writing, so a crash used to leave a
+                # cut-off review, which every reader takes for "no answers".
+                shutil.copy2(target, backup_dir / ("%s.before_recheck_%s.%s" % (
+                    target.name, stamp, role)))
+                doc = json.loads(target.read_text(encoding="utf-8"))
+            else:
+                doc = {"video_stem": video_id, "segments": []}
+            segs = doc.setdefault("segments", [])
+            tmap, _ = index_review_by_segment(doc, current, human_segmentation=human)
+            for sn, new in reopened.items():
+                old = tmap.get(sn)
+                at = next((i for i, r in enumerate(segs) if r is old), None)
+                if at is None:
+                    segs.append(dict(new))
+                else:
+                    segs[at] = dict(new)
+            write_json_atomic(target, doc, indent=2)
+    return sorted(reopened)
 
 
 def _triage_would_ask(video_id: str, outcomes: Path, wanted_open) -> bool:
@@ -423,20 +475,37 @@ def route_video(video_id: str, queue: str, reason: str,
             # answered -- see "A SEGMENT A PERSON HAS ANSWERED" above. Decided
             # here, reading only: nothing is written before the move.
             wanted = sorted({int(s) for s in segment_nums})
-            done = answered_segments_of(video_id, outcomes.parent)
-            answered = wanted if "all" in done else [s for s in wanted if s in done]
-            # Asked again on purpose ("are you sure?"): an answer that can be
-            # reopened still counts as something to ask (reopen_answered).
-            reopenable = (reopen_answered(video_id, outcomes.parent, answered,
-                                          segment_details, dry_run=True)
-                          if recheck and answered else [])
+            try:
+                done = answered_segments_of(video_id, outcomes.parent)
+                answered = wanted if "all" in done else [s for s in wanted if s in done]
+                # Asked again on purpose ("are you sure?"): an answer that can
+                # be reopened still counts as something to ask (reopen_answered).
+                reopenable = (reopen_answered(video_id, outcomes.parent, answered,
+                                              segment_details, dry_run=True)
+                              if recheck and answered else [])
+            except Exception as e:
+                # A copy of the review (or the cuts) exists but cannot be
+                # read: guessing could ask a person again what they answered
+                # (answered_segments_of says why). Nothing has moved yet.
+                res["error"] = ("its review or cuts could not be read (%s: %s); not routed"
+                                % (type(e).__name__, e))
+                return res
             if not [s for s in wanted if s not in answered or s in reopenable]:
                 res["answered"] = answered
                 return res          # nothing left to ask; not routed, not a failure
             wanted_open = [s for s in wanted if s not in answered or s in reopenable]
         else:
             wanted_open = []
-        if queue == "triage" and not _triage_would_ask(video_id, outcomes, wanted_open):
+        try:
+            would_ask = queue != "triage" or _triage_would_ask(video_id, outcomes,
+                                                               wanted_open)
+        except Exception as e:
+            # Same refusal as above: it reads which flagged segments are
+            # answered, from every copy of the review.
+            res["error"] = ("its review or cuts could not be read (%s: %s); not routed"
+                            % (type(e).__name__, e))
+            return res
+        if not would_ask:
             # A triage bundle with nothing a person can answer is never
             # released: the return scan finds no question and skips it on
             # every pass. So it is refused before anything moves.

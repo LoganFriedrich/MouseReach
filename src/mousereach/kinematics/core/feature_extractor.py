@@ -509,6 +509,9 @@ class FeatureExtractor:
                 video_stem=reaches_data.get('video_name'),
                 primary_dir=review_path,
                 extra_gt_dirs=(Path(reaches_path).parent,),
+                # The copy of the review beside this run is merged in too:
+                # ``review_path`` may be another copy (the durable one).
+                extra_review_dirs=(Path(reaches_path).parent,),
                 human_segmentation=_human_seg,
                 applied=_applied)
             self.applied_ground_truth = _applied.get('ground_truth', NOT_RESOLVED)

@@ -40,8 +40,10 @@ from __future__ import annotations
 
 import filecmp
 import functools
+import json
 import os
 import logging
+import shutil
 import socket
 import threading
 import time
@@ -249,10 +251,16 @@ def _bundles(queue_root: Optional[Path]) -> List[Path]:
 # Each scan read every triage bundle's segments, outcomes, assignments and
 # review files to decide whether it was cleared: seconds of every scan, every two
 # minutes, for a queue that mostly does not change between scans.
-# A bundle's verdict depends only on its own files and on the video's ground
-# truth (triage_status), so it is reused until either changes: the bundle's
-# files are listed with their sizes and modified times (one listing per bundle,
-# about 2 s for the whole queue) and the ground-truth file's path and time.
+# A bundle's verdict (triage_status) depends on its own files, the video's
+# ground truth, and the other copies of its review that triage_status merges in
+# (causal_review_io.review_dirs): the durable copy, the copy in the video's
+# filed folder and the copy in the other review queue. The cache key covers the
+# bundle's files (listed with their sizes and modified times, one listing per
+# bundle, about 2 s for the whole queue), the ground-truth file's path and time,
+# and the durable copy's stamp -- and ONLY those. A change to the filed copy or
+# the other queue's copy alone is not noticed until one of the keyed files
+# changes too. (The review window saves into the bundle and the durable copy,
+# both keyed.)
 _status_cache: Dict[str, tuple] = {}
 
 
@@ -320,8 +328,20 @@ def _gt_signature(stem: str) -> tuple:
         return ()
 
 
+def _durable_signature(stem: str) -> tuple:
+    """(path, mtime) of the durable review copy, or (). triage_status reads it
+    (every copy merged), so a recheck or answer written there must make the
+    cached status stale."""
+    try:
+        from mousereach.review.causal_review_io import durable_review_path
+        p = durable_review_path(stem)
+        return (str(p), p.stat().st_mtime_ns) if p and p.is_file() else ()
+    except Exception:
+        return ()
+
+
 def _cached_triage_status(bundle: Path, stem: str, signature: tuple):
-    key = (signature, _gt_signature(stem))
+    key = (signature, _gt_signature(stem), _durable_signature(stem))
     hit = _status_cache.get(str(bundle))
     if hit is not None and hit[0] == key:
         return hit[1]
@@ -409,11 +429,65 @@ def _gt_certifies_whole_video(bundle: Path, stem: str) -> bool:
         return False
 
 
+def _durable_is_newer(durable_doc, bundle_doc, dest: Path, src: Path) -> bool:
+    """Was the durable copy saved after the bundle's? By the copies' own
+    ``reviewed_at`` when both carry one (ISO times sort as text), else by
+    file time."""
+    a, b = durable_doc.get("reviewed_at"), bundle_doc.get("reviewed_at")
+    if a and b:
+        return str(a) > str(b)
+    try:
+        return dest.stat().st_mtime >= src.stat().st_mtime
+    except OSError:
+        return False
+
+
+def _backup_durable_copy(dest: Path):
+    """Copy the durable review file to
+    <Analyzed>/Archive/manual_corrections/<name>.before_return_merge_<time>.durable
+    (the folder the "are you sure?" reopen backs up into), or, when no
+    Analyzed folder is configured, beside the durable copy under the same
+    name -- never under the exact review name, so no reader takes it for a
+    copy of the review. Returns the backup's path, or None if it could not be
+    made."""
+    from datetime import datetime
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    name = "%s.before_return_merge_%s.durable" % (dest.name, stamp)
+    out = None
+    try:
+        from mousereach.config import Paths
+        root = getattr(Paths, "ANALYZED_OUTPUT", None)
+        folder = (Path(root) / "Archive" / "manual_corrections") if root else dest.parent
+        folder.mkdir(parents=True, exist_ok=True)
+        out = folder / name
+        shutil.copy2(dest, out)
+        return out
+    except Exception as e:
+        # A copy that failed part-way is removed: a cut-off backup is worse
+        # than none, because it looks like the earlier state.
+        if out is not None:
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        logger.error("Could not back up %s: %s", dest, e)
+        return None
+
+
 def _ensure_durable_review(bundle: Path, stem: str) -> None:
-    """Copy this bundle's human review to the durable store before the bundle is
-    emptied. Never raises; a failure is logged and the return still proceeds,
-    because refusing to return the video would strand the reviewer's clearance.
-    """
+    """Merge this bundle's human review into the durable store before the
+    bundle is emptied. Never raises; a failure is logged and the return still
+    proceeds, because refusing to return the video would strand the reviewer's
+    clearance.
+
+    MERGED, not copied (causal_review_io.merge_review_into): the durable copy
+    can hold a statement the bundle lacks -- an "are you sure?" recheck written
+    there, or an answer saved from another window. Replacing the file by file
+    time lost it; now each pellet keeps the newest word a person gave in either
+    copy. The durable copy keeps its own record fields the bundle lacks (a
+    "this segment is really pellet N" record), and, when it is the newer save,
+    every field of its own besides the per-pellet records (reviewer, time,
+    notes ...); it is backed up before it is replaced."""
     src = Path(bundle) / f"{stem}_causal_review.json"
     if not src.is_file():
         return
@@ -425,17 +499,47 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
                 "Return %s: no durable review store configured; the review is "
                 "about to move to this node's local disk only.", stem)
             return
-        if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
-            return
         dest.parent.mkdir(parents=True, exist_ok=True)
-        # One-step replacement (temporary file, then one rename), keeping the
-        # source's modified time as copy2 did -- the newer-than test above
-        # relies on it. WHY not copy2 straight onto dest: that empties the
-        # durable copy first, so a failure part-way left the copy of record
-        # truncated, and a truncated review is read as "no answers".
-        from mousereach.pipeline.fsutil import copy_file_atomic
-        copy_file_atomic(src, dest)
-        logger.info(f"Return {stem}: human review copied to the durable store")
+        from mousereach.pipeline.fsutil import copy_file_atomic, write_json_atomic
+        if not dest.exists():
+            # One-step replacement (temporary file, then one rename): writing
+            # straight onto dest empties it first, so a failure part-way left
+            # the copy of record truncated, read as "no answers".
+            copy_file_atomic(src, dest)
+            logger.info(f"Return {stem}: human review copied to the durable store")
+            return
+        from mousereach.review.causal_review_io import UNMATCHED_ANSWERS_KEY, merge_review_into
+        bundle_doc = json.loads(src.read_text(encoding="utf-8"))
+        durable_doc = json.loads(dest.read_text(encoding="utf-8"))
+        # The bundle's copy is the base (it holds a record for every segment
+        # of the cuts it was reviewed on); the durable copy's newer statements
+        # replace its records, and its answers about other frames are carried.
+        merged = merge_review_into(bundle_doc, [durable_doc])
+        # Every field of the review OTHER than the per-pellet records and the
+        # unmatched answers (which the merge decides statement by statement):
+        # the durable copy's, when it is the newer save. WHY: the bundle being
+        # the merge's base must not let an older save replace a newer one's
+        # fields -- who saved it and when, and also anything else the person
+        # wrote at the top of the review (notes, say). Before merging, a newer
+        # durable copy was left untouched; it still keeps all of those.
+        if _durable_is_newer(durable_doc, bundle_doc, dest, src):
+            for key, value in durable_doc.items():
+                if key not in ("segments", UNMATCHED_ANSWERS_KEY):
+                    merged[key] = value
+        if merged == durable_doc:
+            return
+        # The copy being replaced is kept first, so whatever the merge did
+        # can be undone. No backup, no replacement: the durable copy then
+        # stays exactly as it was.
+        backup = _backup_durable_copy(dest)
+        if backup is None:
+            logger.error(
+                "Return %s: could not back up the durable review copy, so it "
+                "was left as it was; the bundle's copy travels with the video.", stem)
+            return
+        write_json_atomic(dest, merged, indent=2)
+        logger.info(f"Return {stem}: human review merged into the durable store "
+                    f"(previous copy kept as {backup.name})")
     except Exception as e:
         logger.error(
             "Return %s: could NOT make a durable copy of the human review (%s). "

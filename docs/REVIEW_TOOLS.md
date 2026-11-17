@@ -395,7 +395,9 @@ the question; until then the video stays in triage.
 What is kept: the earlier answer is not lost. The review file holds it under
 `answers.recheck.previous` (with the question and when it was asked), and a copy
 of the file as it was is in `Analyzed/Archive/manual_corrections/` named
-`<video>_causal_review.json.before_recheck_<time>`. How a pellet is sent back:
+`<video>_causal_review.json.before_recheck_<time>.travelling` (the copy in the
+video's folder) and `....before_recheck_<time>.durable` (the copy of record) -- one
+file per copy, so neither backup replaces the other. How a pellet is sent back:
 `mousereach-route-to-queue --queue triage --recheck --worklist <file>` (without
 `--recheck`, a pellet a person answered is never sent back).
 
@@ -583,7 +585,7 @@ Every file a review tool or the watcher writes about a person's answers -- the r
 2. it is flushed to disk;
 3. it is swapped in with one rename.
 
-The same holds when the watcher returns a cleared bundle: before the bundle is emptied it copies the bundle's review over the durable copy in `review_records/reviews/` if the bundle's is newer, and that copy also goes to a temporary file first and is swapped in with one rename (keeping the bundle copy's modified time). A copy that fails is logged and the return goes ahead; the earlier durable copy stays complete.
+The same holds when the watcher returns a cleared bundle: before the bundle is emptied it **merges** the bundle's review into the durable copy in `review_records/reviews/` -- for each pellet the newest answer or "are you sure?" recheck either copy holds is kept (`causal_review_io.merge_review_into`); it never replaces one file with the other by modified time, which used to lose a recheck or answer only the durable copy held. Other parts of a record are kept from whichever copy has them: a record saying "this segment is really pellet N", saved with the pellet left open, stays even when only the durable copy held it. When the durable copy is the newer save, everything else it holds stays too -- its "reviewed by" and "reviewed at", and anything a person wrote at the top of the review such as notes -- so an older bundle copy never replaces newer text. Before the durable copy is replaced, the copy as it was is saved to `Analyzed/Archive/manual_corrections/<video>_causal_review.json.before_return_merge_<time>.durable` (beside the durable copy under that name when no Analyzed folder is configured); if that backup cannot be made, the durable copy is left exactly as it was and the log says so. The merged copy goes to a temporary file first and is swapped in with one rename. When there is no durable copy yet, the bundle's is copied. A merge that fails is logged and the return goes ahead; the earlier durable copy stays complete. Re-staging a video into a review bundle merges the other copies into the bundle's copy the same way; before the bundle's copy is replaced it is saved to `Analyzed/Archive/manual_corrections/<video>_causal_review.json.before_restore_merge_<time>.bundle`, and without that backup it is left as it was.
 
 What this means for a person:
 
@@ -926,16 +928,16 @@ Notes are returned to the caller and logged at warning level (`truth_resolver.py
 
 `true_segment_num` / `segmentation_wrong` (found only in records written before 2026-10-23, when the control that wrote them was removed) play no part in any of this.
 
-### Frame matching runs on one path only
+### Frame matching: where a review is read
 
 Frame matching happens where a review is turned into numbers:
 
 - `truth_resolver.resolve_truth_layers` (`truth_resolver.py:289`), called by the feature extractor (`kinematics/core/feature_extractor.py:220-225`), passes the current segmentation from `reaches_data["segments"]` (`truth_resolver.py:312`).
 - The extractor's fallback `load_and_apply_review` does the same (`feature_extractor.py:228-239`).
 
-Every decision about whether a video is **finished with review** still matches by segment number alone — `triage_status.resolved_segments` (`triage_status.py:98`), used by the pipeline gate (`review_gate.py:114`, `_review_resolved_segments` at `:122-135`), by the return scan (`review_return.py:244`), and by the review tool's own "is this bundle done" check (`causal_review_widget.py:2539`).
+Every decision about whether a video is **finished with review** reads the review the same way: `triage_status.triage_status` takes EVERY copy of the video's review (the copy in the bundle or folder, the copy beside the video, the durable copy of record) and merges them with `causal_review_io.effective_review`, which matches each record to a current segment by its frames and keeps, per pellet, the newest thing a person said (an answer or an "are you sure?" recheck). `triage_status.resolved_segments` then counts a segment as answered only on that merged, frame-matched review. The pipeline gate (`review_gate.evaluate_gate`) and the return scan (`review_return`) go through `triage_status`; the review tool's own "is this bundle done" check (`causal_review_widget.bundle_review_complete`) reads the merged review with the same `effective_review` and counts with the same `resolved_segments`.
 
-So after a re-segmentation, a review whose frames no longer match anything is correctly **dropped** from the outcomes — and still counts as a resolution that releases the video from the queue. The video finishes with the algorithm's original `triaged` call in the data and nothing flagging it.
+So after a re-segmentation, an answer whose frames no longer match any current segment does not count as answering any of them: it is kept in the review file as an unmatched answer (never deleted), and the pellets it no longer covers stay open until a person answers them on the new cuts.
 
 ---
 
@@ -1629,9 +1631,10 @@ review saved beside the video. Nothing in the bundle is rewritten.
 
 Two different lookups, with different rules:
 
-- `resolve_review_path` (`causal_review_io.py:55`) returns the **file**, most recently modified wins (`:90`), checking an explicit directory the caller passes (usually the processing directory), then the triage queue's bundle for that video, then the directory holding the canonical video. It never raises; nothing found means the caller does nothing. It does not look in the re-segmentation queue. This is what the gate and every kinematics caller use.
-- `truth_resolver` uses its own set: the triage queue, the re-segmentation queue, and the `primary_dir` it is handed (`truth_resolver.py:315-317`). It needs directories.
+- `resolve_review_path` (`causal_review_io.py:55`) returns the **file**, most recently modified wins, checking an explicit directory the caller passes (usually the processing directory), then the triage queue's bundle for that video, then the directory holding the canonical video, then the durable copy. It never raises. It now only names WHICH file the results step records in the run's manifest (so a later change to that file re-runs the kinematics); **no check decides what is answered from it any more.**
+- `truth_resolver` (the results step) reads every copy through `effective_review`: the folder or file it is handed, the run's own folder, the two queue bundles, the filed folder and the durable copy.
 - The review window, the bulk release check and the census read EVERY copy they know of -- the bundle's, the one beside the video (window only), and the durable copy -- and take, per segment, the newest answer or recheck a person gave about its frames (`causal_review_io.review_copies` + `merge_review_copies`). The window's restore, its "is this video already reviewed?" check (which decides whether the window offers a video at all; `bundle_review_complete`) and the bulk release check all go through one function, `causal_review_io.effective_review`, so they cannot disagree about which pellets are answered. In particular a pellet reopened with "are you sure?" in the durable copy keeps the video on offer, and an answer only the durable copy holds counts. The save reads the same copies before writing and keeps any earlier answer the save itself does not replace (`carry_earlier_answers`).
+- **The pipeline side reads the same way.** The review gate and the return scan (`triage_status`), the hand-score check, and `mousereach-route-to-queue` (which never re-asks an answered pellet) all read every copy merged through `effective_review`. If a copy exists but cannot be read, `mousereach-route-to-queue` refuses the video and moves nothing, saying "its review or cuts could not be read": the unreadable copy may hold the only answer, and routing around it would ask the person again. Fix or restore that copy, then route again. An "are you sure?" reopen decides on every copy merged and writes the reopened pellet into **both** the copy in the video's folder (created if missing) and the durable copy, each backed up first to `Analyzed/Archive/manual_corrections/` under its own name (`.travelling` / `.durable` at the end). Records in which a person said a segment is really another pellet are read from every copy too (`mislabel_records`): the merged review leaves them out when the pellet was left open.
 
 ---
 

@@ -65,11 +65,11 @@ def test_the_release_check_counts_an_answer_about_the_right_frames(tmp_path):
     assert triage_status(b, STEM).fully_resolved
 
 
-def test_the_gate_counts_answers_by_frames(tmp_path, monkeypatch):
-    b = _bundle(tmp_path, flagged={3}, review=REVIEW)
-    monkeypatch.setattr(io, "resolve_review_path",
-                        lambda vid, d=None: b / f"{STEM}_causal_review.json")
-    assert review_gate._review_resolved_segments(STEM, b) == {4}
+def test_the_gate_counts_answers_by_frames(tmp_path):
+    b = _bundle(tmp_path, flagged={3, 4}, review=REVIEW)
+    decision, reason, st = review_gate.evaluate_gate(STEM, b)
+    assert decision == review_gate.DECISION_TRIAGE
+    assert st.unresolved == {3}            # the answer about frames 300-449 is 4's
 
 
 # ------------------------------------------------- a person's short segments

@@ -378,6 +378,30 @@ def _load(dir_: Path, name: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _effective_review_of(directory: Path, video_id: str, seg_doc) -> Optional[Dict[str, Any]]:
+    """Every copy of this video's review, merged (causal_review_io.
+    effective_review over review_dirs with ``directory`` first). Falls back to
+    the copy in ``directory`` alone if the merge itself cannot run."""
+    try:
+        from .causal_review_io import effective_review, review_dirs
+        return effective_review(video_id, review_dirs(video_id, directory), seg_doc)
+    except Exception as err:
+        logger.warning("%s: could not merge the copies of its review (%s); reading "
+                       "the copy in %s only", video_id, err, directory)
+        return _load(directory, f"{video_id}_causal_review.json")
+
+
+def _mislabels_of(directory: Path, video_id: str, merged) -> Optional[Dict[str, Any]]:
+    """The mislabel records of every copy (causal_review_io.mislabel_records):
+    the merged review drops them when the pellet was left open."""
+    try:
+        from .causal_review_io import mislabel_records, review_dirs
+        doc = mislabel_records(video_id, review_dirs(video_id, directory))
+        return doc if doc["segments"] else merged
+    except Exception:
+        return merged
+
+
 def triage_status(directory: Path, video_id: str) -> TriageStatus:
     """Read a video's algo outputs + any review from ``directory`` and return the
     full :class:`TriageStatus`. ``directory`` is the Processing dir (fresh run,
@@ -386,7 +410,13 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     seg = _load(directory, f"{video_id}_segments.json")
     outcome = _load(directory, f"{video_id}_pellet_outcomes.json")
     assign = _load(directory, f"{video_id}_reach_assignments.json")
-    review = _load(directory, f"{video_id}_causal_review.json")
+    # Every copy of the review, merged statement by statement (effective_review
+    # over review_dirs: this folder, the queue bundles, the filed folder and
+    # the durable copy) -- the reading the window, the release check and the
+    # results step use. WHY: this read only the copy in ``directory`` while
+    # the window merged every copy, so a pellet answered (or reopened) in
+    # another copy was open here and answered there, or the reverse.
+    review = _effective_review_of(directory, video_id, seg)
 
     tri, ghost = triaged_in_range(outcome, assign, seg)
     if ghost:
@@ -423,7 +453,7 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
         triaged=tri,
         resolved=res,
         unresolved=tri - res,
-        seg_corrected=segmentation_corrected(review),
+        seg_corrected=segmentation_corrected(_mislabels_of(directory, video_id, review)),
         seg_human_fixed=(seg or {}).get("boundary_source") == "human",
         too_short=_too_short_segments(seg),
         ghost=ghost,

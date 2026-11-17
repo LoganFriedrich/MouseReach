@@ -3597,8 +3597,8 @@ The temporary name starts with a dot on purpose: the router and the archiver tak
 
 Where this applies on the watcher side:
 
-- **Returning a cleared review bundle.** Before the bundle is emptied, its review is copied over the durable copy in `review_records/reviews/` when the bundle's is newer (`review_return._ensure_durable_review`). A copy that fails is logged and the return goes ahead; the earlier durable copy stays complete.
-- **Routing a filed video back to a queue** (`mousereach-route-to-queue`). Flagging segments rewrites the video's `<video>_pellet_outcomes.json`, and `--recheck` rewrites its review file after copying it to `Archive/manual_corrections/<name>.before_recheck_<time>` (`route_cli.flag_segments`, `route_cli.reopen_answered`). Both replace the file in one step. If the write fails, the command stops with an error, the file is exactly as it was, and the command can simply be run again.
+- **Returning a cleared review bundle.** Before the bundle is emptied, its review is MERGED into the durable copy in `review_records/reviews/` (`review_return._ensure_durable_review`, `causal_review_io.merge_review_into`); nothing is copied over by file time. For each pellet the newest statement a person made about its frames in either copy wins (an answer, or an "are you sure?" recheck); answers about frames the current cuts do not have are kept under `unmatched_answers`. A record's other fields (a "this segment is really pellet N" mislabel above all) are filled in from the other copy only when that copy's record is not older than the one chosen, and a mislabel is dropped when a newer answer about the same frames leaves it out. When the durable copy is the newer save, its own top-level fields (reviewer, time, notes) are kept. Before the durable copy is replaced it is backed up to `Analyzed/Archive/manual_corrections/<video>_causal_review.json.before_return_merge_<time>.durable`; if no backup can be made, the durable copy is left exactly as it was. A merge that changes nothing writes nothing. A failure is logged and the return goes ahead; the earlier durable copy stays complete.
+- **Routing a filed video back to a queue** (`mousereach-route-to-queue`). Flagging segments rewrites the video's `<video>_pellet_outcomes.json`, and `--recheck` rewrites its review files after copying each to `Archive/manual_corrections/<name>.before_recheck_<time>.<travelling|durable>` (`route_cli.flag_segments`, `route_cli.reopen_answered`). Both replace the file in one step. If the write fails, the command stops with an error, the file is exactly as it was, and the command can simply be run again.
 - **Stamping the quality verdict.** After the automatic quality check, its verdict (`validation_status`, `triage_reason`) is written into `<video>_segments.json`, `<video>_reaches.json` and `<video>_pellet_outcomes.json` (`orchestrator._run_quality_triage`). Each of the three is replaced in one step; a crash mid-stamp used to leave a cut-off stage output -- the video's actual results. Before stamping, any temporary file an earlier crashed stamp left beside these three is deleted. A stamp that fails is logged and the file keeps its earlier content, as before.
 - **Keeping the hand scores with the video.** The sheet's scores for the session are written into `<video>_pellet_outcomes.json` under `hand_scores` (`hand_scores.record`). This already went through a temporary file, but one named `<video>_pellet_outcomes.json.tmp` -- a name that starts with the video's, so a leftover was carried along by the router and the archiver. It now uses the shared writer: dot-named temporary file, flushed, rename retried while the file is held. A failure holds the video, as before.
 
@@ -5409,3 +5409,56 @@ What an operator sees:
   segments exists and the video has no unanswered flagged segment.
 
 Tests: `tests/test_one_rule_for_triage_and_held_segmentation.py`.
+
+## Update: every check reads every copy of a person's review
+
+A video's review can exist in several copies: the one in a review bundle, the one beside the
+video (in the processing folder, or the filed folder), and the durable copy in
+`review_records/reviews/`. The review window and the results step always read **every** copy,
+taking for each pellet the newest answer or "are you sure?" recheck a person gave about its frames
+(`causal_review_io.effective_review`). The pipeline side used to pick ONE copy by file time, so the
+two sides could disagree about which pellets are answered. Now:
+
+- The review gate and the return scan (`triage_status`), the hand-score check, and
+  `mousereach-route-to-queue` read every copy merged. A pellet answered in any copy is not asked
+  again; a pellet reopened in any copy is open everywhere.
+- `mousereach-route-to-queue` (and its "are you sure?" reopen) REFUSES the video, moving and
+  writing nothing, when a copy of its review exists but cannot be read (cut off, not JSON, a read
+  error on the shared drive): that copy may be the only one holding a person's answer, and reading
+  around it would send the person the same question again. The result says "its review or cuts
+  could not be read" with the error; fix or restore that copy (backups are in
+  `Archive/manual_corrections/`) and route again. The review window and the return scan still read
+  the copies they can and name the unreadable one in their log.
+- When a bundle leaves its queue, its review is MERGED into the durable copy, never written over
+  it (`review_return._ensure_durable_review`). Re-staging a bundle merges the same way
+  (`staging._restore_review_into_bundle`). The merge keeps every record's other fields from
+  whichever copy has them (a "this segment is really pellet N" record survives), but only from a
+  record that is not older than the one chosen, and a mislabel is left out wherever a newer answer
+  about the same frames does not repeat it (a later open-pellet record never cancels one: it says
+  nothing about the pellet). The hand-score check and the release check read mislabels by the same
+  rule (`causal_review_io.mislabel_records`). When the
+  durable copy is the newer save it keeps ALL of its own fields besides the per-pellet records --
+  reviewer, time, and anything else a person wrote at the top of the review, such as notes -- so
+  an older bundle copy never replaces newer text. The durable copy is backed up to
+  `Archive/manual_corrections/<name>.before_return_merge_<time>.durable` before it is replaced
+  (no backup, no replacement). Re-staging backs the bundle's own copy up the same way, to
+  `<name>.before_restore_merge_<time>.bundle`, before merging the other copies into it, so an
+  answer the merge put aside (an older one, or one saved without a time) can be recovered.
+- An "are you sure?" reopen (`route_cli.reopen_answered`) writes the reopened pellet into both the
+  copy in the video's folder and the durable copy, after backing each up under its own name
+  (`<name>.before_recheck_<time>.travelling` and `.durable`). When the answer being reopened was
+  held only by the durable copy and the video's folder has no review file, the reopen CREATES
+  `<video>_causal_review.json` there, holding only the reopened pellets -- for a filed video, a new
+  file in its filed folder.
+- The return scan re-reads a bundle's status when the durable copy changes, not only when the
+  bundle's own files change. A change to the filed folder's copy or the other queue's copy alone
+  is not noticed until the bundle's files, its ground truth or the durable copy change too; the
+  review window saves into the bundle and the durable copy, so a save is always noticed.
+- The file name recorded in a run's manifest as "the review applied" is chosen as before, so this
+  change does not by itself make filed videos run again.
+
+What an operator may see after this is installed: a triage bundle whose open pellets were already
+answered in the durable copy is returned by the next scan; a bundle whose pellet was reopened in
+the durable copy stays in triage until that pellet is answered again.
+
+Tests: `tests/test_every_check_reads_every_review_copy.py`.

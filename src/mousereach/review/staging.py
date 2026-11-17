@@ -207,11 +207,44 @@ def _neutralize_pipeline_side_effects() -> None:
 # ---------------------------------------------------------------------------
 # The stager
 # ---------------------------------------------------------------------------
+def _backup_bundle_review(target: Path):
+    """Copy a bundle's review file to
+    <Analyzed>/Archive/manual_corrections/<name>.before_restore_merge_<time>.bundle
+    (where the return scan and the "are you sure?" reopen back up too), or,
+    when no Analyzed folder is configured, beside the file under that name --
+    never under the exact review name, so no reader takes it for a copy of the
+    review. Returns the backup's path, or None if it could not be made."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    name = "%s.before_restore_merge_%s.bundle" % (target.name, stamp)
+    out = None
+    try:
+        from mousereach.config import Paths
+        root = getattr(Paths, "ANALYZED_OUTPUT", None)
+        folder = (Path(root) / "Archive" / "manual_corrections") if root else target.parent
+        folder.mkdir(parents=True, exist_ok=True)
+        out = folder / name
+        shutil.copy2(target, out)
+        return out
+    except Exception:
+        # A copy that failed part-way is removed: a cut-off backup is worse
+        # than none, because it looks like the earlier state.
+        if out is not None:
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        return None
+
+
 def _restore_review_into_bundle(stem: str, bundle: Path, log) -> None:
     """Put this video's human review into ``bundle`` if it is not already there.
 
-    Never raises and never overwrites a newer review already in the bundle: the
-    bundle copy is the one a reviewer may be actively editing.
+    Never raises. A review already in the bundle is MERGED with the other
+    copies statement by statement (causal_review_io.merge_review_into), never
+    replaced by whichever file is newer: the bundle copy is the one a reviewer
+    may be actively editing, and the other copy can hold a recheck or answer
+    the bundle lacks. The bundle's copy is backed up before it is replaced
+    (_backup_bundle_review); without a backup it is left as it is.
     """
     try:
         from mousereach.review.causal_review_io import resolve_review_path
@@ -222,12 +255,32 @@ def _restore_review_into_bundle(stem: str, bundle: Path, log) -> None:
         found = resolve_review_path(stem, primary_dir=bundle)
         if found is None:
             return
-        if target.exists() and target.stat().st_mtime >= found.stat().st_mtime:
+        if target.exists() and found.resolve() == target.resolve():
+            # The newest copy is the bundle's own; still fold in the others.
+            from mousereach.review.causal_review_io import review_copies, review_dirs
+            others = review_copies(stem, [d for d in review_dirs(stem) if d != bundle])
+        else:
+            others = [json.loads(found.read_text(encoding="utf-8"))]
+        if not target.exists():
+            shutil.copy2(found, target)
+            log(f"carried the human review forward into the bundle (from {found.parent})")
             return
-        if found.resolve() == target.resolve():
-            return
-        shutil.copy2(found, target)
-        log(f"carried the human review forward into the bundle (from {found.parent})")
+        from mousereach.review.causal_review_io import merge_review_into
+        from mousereach.pipeline.fsutil import write_json_atomic
+        own = json.loads(target.read_text(encoding="utf-8"))
+        merged = merge_review_into(own, others)
+        if merged != own:
+            # The bundle's copy is kept first, so a statement the merge put
+            # aside (an older answer, or an answer with no time that lost to a
+            # timed one) can still be recovered. No backup, no replacement.
+            backup = _backup_bundle_review(target)
+            if backup is None:
+                log("WARNING could not back up the bundle's human review, so the "
+                    "other copies were NOT merged into it")
+                return
+            write_json_atomic(target, merged, indent=2)
+            log("merged the other copies of the human review into the bundle's copy "
+                f"(previous copy kept as {backup.name})")
     except Exception as e:
         # A staging run that cannot copy the review must still say so -- silence
         # here is how a review goes missing without anyone noticing.

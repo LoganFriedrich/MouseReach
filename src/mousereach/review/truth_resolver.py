@@ -680,6 +680,7 @@ def resolve_truth_layers(
     extra_gt_dirs=(),
     human_segmentation: bool = False,
     applied: Optional[dict] = None,
+    extra_review_dirs=(),
 ) -> Tuple[dict, dict]:
     """Return (reaches_data, outcomes_data) with every element resolved by
     GT > causal review > triage review > algo (see module docstring).
@@ -725,8 +726,12 @@ def resolve_truth_layers(
     problems: List[str] = []
     if applied is not None:
         applied['problems'] = problems
+    # Plus the folders the caller names (the run's own folder): the copy the
+    # extractor was handed may be the durable one, and the copy beside the run
+    # must still be merged in -- every copy counts, never one picked by time.
+    _dirs = review_dirs(stem, primary) + [Path(d) for d in (extra_review_dirs or ()) if d]
     review_doc = effective_review(
-        stem, review_dirs(stem, primary),
+        stem, _dirs,
         current_segments=[{"segment_num": s.get("segment_num"),
                            "start_frame": s.get("start_frame"),
                            "end_frame": s.get("end_frame")} for s in _cur_segs] or None,

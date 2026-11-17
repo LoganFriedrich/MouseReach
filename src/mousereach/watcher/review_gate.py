@@ -209,13 +209,13 @@ def evaluate_gate(
                 f"deep-review clear exists -- honoring the clear.")
         else:
             return DECISION_DEEP, TRIAGE_FAILED_REASON, st
-    # GT-determined segments are resolved; so are segments a human addressed in a
-    # review saved ANYWHERE the resolver looks (the Pending bundle, or next to the
-    # canonical video) -- not just the fresh work dir triage_status read. Honoring
-    # it lets a re-run of an already-reviewed video finalize CLEAN instead of
-    # re-triaging (and losing the reviewer's resolution).
-    review_resolved = _review_resolved_segments(video_id, processing_dir)
-    unresolved = set(st.unresolved) - gt_segs - review_resolved
+    # GT-determined segments are resolved; so are segments a human addressed in
+    # ANY copy of the review: triage_status reads every copy merged
+    # (effective_review), the reading the window and the results step use, so
+    # a re-run of an already-reviewed video finalizes CLEAN instead of
+    # re-triaging. (The gate used to add its own pick of ONE copy by file time,
+    # which could disagree with the window about what is answered.)
+    unresolved = set(st.unresolved) - gt_segs
     # A triaged segment too short to be a pellet presentation cannot be answered
     # in triage (answer_problem refuses it there): it is a question about the
     # cuts, and only something a person can fix in the GUI may hold a video
@@ -264,26 +264,6 @@ def _deep_review_cleared(video_id: str, processing_dir: Path) -> bool:
         return (Path(processing_dir) / f"{video_id}_deep_review_cleared.json").is_file()
     except Exception:
         return False
-
-
-def _review_resolved_segments(video_id: str, processing_dir: Path):
-    """Resolved segment numbers from a saved human review found ANYWHERE the
-    resolver looks (processing dir, Pending bundle, next to the canonical video).
-    Empty set on any error -- never blocks the gate."""
-    try:
-        import json
-        from ..review.causal_review_io import resolve_review_path
-        from ..review.triage_status import resolved_segments
-        rp = resolve_review_path(video_id, processing_dir)
-        if rp is None or not rp.exists():
-            return set()
-        # Matched by frames against the segmentation these outputs came from,
-        # as the results step applies it (causal_review_io.answered_segments).
-        seg_path = Path(processing_dir) / f"{video_id}_segments.json"
-        seg_doc = json.loads(seg_path.read_text(encoding="utf-8")) if seg_path.is_file() else None
-        return resolved_segments(json.loads(rp.read_text(encoding="utf-8")), seg_doc)
-    except Exception:
-        return set()
 
 
 def _in_staging(path: Path) -> bool:

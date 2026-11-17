@@ -1360,8 +1360,204 @@ def merge_review_copies(docs, current_segments=None, human_segmentation: bool = 
     return merged, notes
 
 
+def merge_review_into(doc, others):
+    """``doc`` (one copy of a video's review) with every segment record
+    replaced by the newest statement -- answer or recheck -- that ``doc`` or
+    any of ``others`` holds about that record's frames (newest_statements),
+    and every copy's unmatched answers carried. Records no copy has a
+    statement for (placeholders) stay as ``doc`` has them, and ``doc``'s other
+    fields are kept, so the result is still a complete copy of the review.
+
+    WHY: a machine that keeps a second copy of a review (the durable copy made
+    when a bundle leaves its queue, the copy put back into a re-staged bundle)
+    used to REPLACE the older-looking file with the newer one by file time. An
+    "are you sure?" recheck, or an answer, that only the other copy held was
+    lost. Merging statement by statement keeps the newest word a person gave
+    about every pellet, whichever copy it is in.
+
+    NON-STATEMENT FIELDS ARE KEPT TOO: a record's other fields -- above all a
+    "this segment is really pellet N" record (``segmentation_wrong`` with
+    ``true_segment_num``), which is usually saved with the pellet left open and
+    so is no statement -- are filled into the result's record for the same
+    frames from whichever copy holds them, when the chosen record has no value
+    of its own; a record about frames the result has no record for at all is
+    added. Without this a mislabel only one copy held was dropped by the merge,
+    and the release check and the hand-score check act on exactly those
+    records."""
+    docs = [d for d in [doc] + list(others or []) if isinstance(d, dict)]
+    if not docs:
+        return None
+    base = docs[0]
+    recs = [r for r in (base.get("segments") or []) if isinstance(r, dict)]
+    current = []
+    for rec in recs:
+        sp = _span_of(rec)
+        if sp is not None and rec.get("segment_num") is not None:
+            current.append({"segment_num": int(rec["segment_num"]),
+                            "start_frame": sp[0], "end_frame": sp[1]})
+    if len(current) != len(recs):
+        current = None
+    chosen, unmatched, _ = newest_statements(docs, current, human_segmentation=True)
+    out = dict(base)
+    segs, used = [], set()
+    for rec in recs:
+        sn = rec.get("segment_num")
+        pick = chosen.get(int(sn)) if sn is not None else None
+        if pick is not None:
+            pick = dict(pick)
+            pick["segment_num"] = int(sn)
+            used.add(int(sn))
+            segs.append(pick)
+        else:
+            segs.append(rec)
+    # A statement about a segment the base copy has no record for at all.
+    for sn in sorted(set(chosen) - used):
+        segs.append(chosen[sn])
+    _carry_record_fields(segs, docs)
+    out["segments"] = segs
+    if unmatched:
+        out[UNMATCHED_ANSWERS_KEY] = unmatched
+    else:
+        out.pop(UNMATCHED_ANSWERS_KEY, None)
+    return out
+
+
+# The fields of a review record that make up a person's STATEMENT (the answer
+# or recheck that merge_review_into chooses per pellet) and the record's
+# identity. Every other field is filled across copies by _carry_record_fields.
+_STATEMENT_FIELDS = frozenset({"segment_num", "segment_span", "human", "answers",
+                               "reviewer", "reviewed_at"})
+
+
+def _same_frames(a, b) -> bool:
+    """Do two review records describe the same segment? By frames when both
+    carry them (segment numbers can differ between two cuts), else by number."""
+    sa, sb = _span_of(a), _span_of(b)
+    if sa is not None and sb is not None:
+        return sa == sb
+    return (a.get("segment_num") is not None
+            and a.get("segment_num") == b.get("segment_num"))
+
+
+def _record_when(rec, doc) -> datetime:
+    """When ``rec`` (a record of copy ``doc``) was written, for deciding which
+    of two records about the same frames is the newer word. A statement's own
+    time (_statement: an answer's ``reviewed_at``, a recheck's ``asked_at``);
+    any other record's own ``reviewed_at``, else its copy's -- the save that
+    wrote it. A time that cannot be read counts as oldest."""
+    st = _statement(rec, doc or {})
+    if st is not None:
+        return st[1] or datetime.min
+    when = (rec or {}).get("reviewed_at") or (doc or {}).get("reviewed_at")
+    return _when(when) or datetime.min
+
+
+def _is_mislabel(rec) -> bool:
+    return (isinstance(rec, dict) and bool(rec.get("segmentation_wrong"))
+            and rec.get("true_segment_num") is not None)
+
+
+def _mislabel_superseded(rec, doc, docs) -> bool:
+    """True when some copy in ``docs`` holds a NEWER statement (answer or
+    recheck) about the same frames as the mislabel record ``rec`` that does
+    not repeat the mislabel. WHY: a person's later word about those frames
+    is their current view; an older "this is really pellet N" must not be
+    brought back over it from a copy that happens to be older -- that sent
+    the video to re-segmentation and steered the hand-score check on a call
+    the person had since replaced. A later placeholder (pellet left open)
+    says nothing about the pellet, so it never supersedes a mislabel."""
+    when = _record_when(rec, doc)
+    for d in docs:
+        for other in (d or {}).get("segments") or []:
+            if (isinstance(other, dict) and other is not rec
+                    and _statement(other, d) is not None
+                    and _same_frames(other, rec)
+                    and not (_is_mislabel(other)
+                             and other.get("true_segment_num") == rec.get("true_segment_num"))
+                    and _record_when(other, d) > when):
+                return True
+    return False
+
+
+def _carry_record_fields(segs, docs) -> None:
+    """Fill, in place, every field of ``segs``' records that the record lacks
+    (or holds as None) from another copy's record about the same frames, the
+    copies read in order; then add any record that carries a mislabel
+    (``segmentation_wrong`` + ``true_segment_num``) about frames none of
+    ``segs`` describes. Statement fields are never touched: which answer counts
+    is decided by newest_statements alone.
+
+    RECENCY: a field is carried only from a record that is not older than the
+    chosen one (_record_when), or onto a chosen record that is no statement at
+    all (a placeholder says nothing to override); and a mislabel is never
+    carried or added when a newer statement about its frames does not repeat
+    it (_mislabel_superseded). Without this, a later answer that no longer
+    says "this is really pellet N" had the older copy's mislabel grafted back
+    and written to disk."""
+    for d in docs:
+        for other in d.get("segments") or []:
+            if not isinstance(other, dict):
+                continue
+            if _is_mislabel(other) and _mislabel_superseded(other, d, docs):
+                other = {k: v for k, v in other.items()
+                         if k not in ("segmentation_wrong", "true_segment_num")}
+            match = [r for r in segs if isinstance(r, dict) and _same_frames(r, other)]
+            if not match:
+                if _is_mislabel(other):
+                    rec = dict(other)
+                    rec.setdefault("reviewer", d.get("reviewer"))
+                    rec.setdefault("reviewed_at", d.get("reviewed_at"))
+                    segs.append(rec)
+                continue
+            other_when = _record_when(other, d)
+            for i, r in enumerate(segs):
+                if not any(r is m for m in match):
+                    continue
+                st = _statement(r, {})
+                if st is not None and other_when < (st[1] or datetime.min):
+                    continue   # an older record never fills a newer statement
+                fill = {k: v for k, v in other.items()
+                        if k not in _STATEMENT_FIELDS and v is not None and r.get(k) is None}
+                if fill:
+                    r = dict(r)
+                    r.update(fill)
+                    segs[i] = r
+
+
+def mislabel_records(video_stem: str, dirs=()) -> Dict[str, Any]:
+    """Every record, in EVERY copy of the review (review_copies), in which a
+    person said the segment is really another pellet (``segmentation_wrong``
+    with ``true_segment_num``) and no newer statement about the same frames
+    replaced it (_mislabel_superseded), as one document ``{"segments": [...]}``.
+    Each record carries its copy's reviewer and time when it has none of its
+    own.
+
+    WHY separate from effective_review: the merged review keeps only answers
+    and rechecks (merge_review_copies), and a mislabel record is usually saved
+    with the pellet left open -- so it is not a statement and the merge drops
+    it. The checks that act on a mislabel (the release check's seg_corrected,
+    the hand-score check) must still see it, from whichever copy holds it --
+    but not after a person's later answer about those frames left it out."""
+    copies = review_copies(video_stem, dirs)
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for doc in copies:
+        for rec in doc.get("segments") or []:
+            if not _is_mislabel(rec) or _mislabel_superseded(rec, doc, copies):
+                continue
+            rec = dict(rec)
+            rec.setdefault("reviewer", doc.get("reviewer"))
+            rec.setdefault("reviewed_at", doc.get("reviewed_at"))
+            key = json.dumps(rec, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                out.append(rec)
+    return {"segments": out}
+
+
 def review_copies(video_stem: str, dirs=(), include_durable: bool = True,
-                  unreadable: Optional[list] = None) -> List[Dict[str, Any]]:
+                  unreadable: Optional[list] = None,
+                  strict: bool = False) -> List[Dict[str, Any]]:
     """Every readable copy of a video's review: ``{stem}_causal_review.json``
     in each of ``dirs`` (in that order), then the durable copy. A copy that
     cannot be read is logged and skipped -- never treated as "no answers"
@@ -1369,7 +1565,14 @@ def review_copies(video_stem: str, dirs=(), include_durable: bool = True,
     it as words for a person: the kinematics step refuses to write features
     while a copy of the person's answers cannot be read
     (truth_resolver.resolve_truth_layers), because the answers in it would be
-    missing from the result."""
+    missing from the result.
+
+    ``strict`` True RAISES instead of skipping, when a copy exists but cannot
+    be read (cut off, not JSON, a read error on the share). WHY: a caller that
+    acts on "this pellet is not answered" -- routing a video back to a person,
+    reopening answers -- must not decide that from the copies it happened to
+    be able to read: the unreadable copy may be the only one holding the
+    person's answer, and skipping it would ask the person again."""
     paths: List[Path] = [Path(d) / f"{video_stem}_causal_review.json" for d in dirs if d]
     if include_durable:
         try:
@@ -1388,6 +1591,8 @@ def review_copies(video_stem: str, dirs=(), include_durable: bool = True,
             if p.is_file():
                 out.append(_read_json(p))
         except Exception as err:
+            if strict:
+                raise
             logger.warning("Could not read the review copy %s: %s", p, err)
             if unreadable is not None:
                 unreadable.append(f"the review copy {p} could not be read ({err})")
@@ -1423,7 +1628,8 @@ def review_dirs(video_stem: str, primary=None) -> List[Path]:
 
 
 def effective_review(video_stem: str, dirs=(), seg_doc=None, current_segments=None,
-                     human_segmentation=None, unreadable: Optional[list] = None):
+                     human_segmentation=None, unreadable: Optional[list] = None,
+                     strict: bool = False):
     """THE way to read a video's review: every copy (``{stem}_causal_review.json``
     in each of ``dirs``, then the durable copy -- review_copies), merged per
     current segment to the newest answer or recheck a person gave about its
@@ -1436,11 +1642,15 @@ def effective_review(video_stem: str, dirs=(), seg_doc=None, current_segments=No
     check and the bulk release check each picked their own copies -- the
     first copy with records, a union over two folders, the bundle copy alone
     -- so one could call a pellet answered that another called open, or miss
-    an answer only the durable copy still held."""
+    an answer only the durable copy still held.
+
+    ``strict`` is passed to review_copies: True raises when a copy exists but
+    cannot be read, for callers that would act on a pellet looking open."""
     current = current_segments or (segments_from_segmentation(seg_doc) if seg_doc else None)
     human = (segmentation_is_human(seg_doc) if human_segmentation is None
              else bool(human_segmentation))
-    doc, _ = merge_review_copies(review_copies(video_stem, dirs, unreadable=unreadable),
+    doc, _ = merge_review_copies(review_copies(video_stem, dirs, unreadable=unreadable,
+                                              strict=strict),
                                  current or None,
                                  human_segmentation=human)
     return doc
