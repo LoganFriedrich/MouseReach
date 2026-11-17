@@ -231,6 +231,43 @@ def split_reaches_by_ignore_windows(reaches, ignore_windows):
     return kept, left_out
 
 
+_TOUCHED = ('retrieved', 'displaced_sa', 'displaced_outside')
+
+
+def causal_reach_owned_by_person(seg: dict) -> bool:
+    """True when a PERSON decided this outcome segment's causal reach, so the
+    reach assignment (algo-4) must not replace it. Read after the truth
+    layering (review.truth_resolver), which stamps who decided each segment.
+
+    Owned by a person:
+      - a review decided the segment (outcome_source "human_review"): its
+        pick, or its None for an untouched pellet or a touched pellet left
+        without a pick, is the person's answer;
+      - ground truth decided it and either the pellet was untouched (no reach
+        did it) or a causal reach was found for it from a person's statement
+        (causal_reach_source "ground_truth" -- the reach holding the ground
+        truth's interaction frame -- or "human_review");
+      - an older file carries an in-file human resolution
+        (clear_guard.is_outcome_locked: triage_cleared / human_verified).
+
+    NOT owned: everything else, including a segment whose file merely holds a
+    causal_reach_id key. WHY: the legacy outcome detector writes that key on
+    every segment, and a ground-truth outcome whose causal reach could not be
+    found by frames keeps whatever the algorithm file said; neither is a
+    person's choice of reach."""
+    from mousereach.review.clear_guard import is_outcome_locked
+    if is_outcome_locked(seg):
+        return True
+    src = seg.get('outcome_source')
+    if src == 'human_review':
+        return True
+    if src == 'ground_truth':
+        if seg.get('outcome') not in _TOUCHED:
+            return True
+        return seg.get('causal_reach_source') in ('ground_truth', 'human_review')
+    return False
+
+
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
@@ -392,20 +429,25 @@ class FeatureExtractor:
         segment_features = []
 
         # Merge the algorithm's causal attribution into the segments that no
-        # higher authority has resolved. Strictly ordered:
+        # person has decided. Strictly ordered:
         #
-        #   1. A segment carrying a 'causal_reach_id' KEY is owned by a human
-        #      review, ground truth, or the pre-v6 detector (which attributed
-        #      causality itself). It is left alone. The test is key-presence,
-        #      not value: a reviewer marking a segment untouched writes
+        #   1. A segment whose causal reach a PERSON decided keeps it
+        #      (causal_reach_owned_by_person says who counts). That includes a
+        #      person's None: a reviewer marking a segment untouched writes
         #      causal_reach_id = None, which MEANS "no reach did this" and must
         #      not be overridden by the algorithm's opinion.
-        #   2. Everything else gets algo-4's answer, if it has one.
+        #   2. Everything else gets algo-4's answer, if it has one -- also a
+        #      segment whose outcome file already names a causal reach, as the
+        #      legacy outcome detector's files do. WHY not "the key is present,
+        #      so someone owns it" (the rule before): the legacy detector and
+        #      the legacy in-place review tools write the key on every segment,
+        #      so its mere presence blocked the reach assignment's answer and
+        #      shipped the old detector's guess as if a person had made it.
         #
-        # This runs AFTER the human-truth layering above, which is what makes
-        # order 1 hold. On human-owned segments the algorithm's original pick is
-        # still recorded under algo_causal_reach_id, so an override remains
-        # visible as an override.
+        # This runs AFTER the human-truth layering above, which stamps who
+        # decided each segment (outcome_source, causal_reach_source). On
+        # person-owned segments the algorithm's original pick is still recorded
+        # under algo_causal_reach_id, so an override remains visible as one.
         _unmerged_touched = 0
         for _seg in outcomes_data.get('segments', []):
             _asn = assignment_by_segment.get(int(_seg.get('segment_num', -1)))
@@ -419,7 +461,7 @@ class FeatureExtractor:
                 if _seg.get('outcome') in ('retrieved', 'displaced_sa', 'displaced_outside'):
                     _unmerged_touched += 1
                 continue
-            if 'causal_reach_id' in _seg:
+            if causal_reach_owned_by_person(_seg):
                 if _seg.get('algo_causal_reach_id') is None:
                     _seg['algo_causal_reach_id'] = _asn['reach_id']
                 continue

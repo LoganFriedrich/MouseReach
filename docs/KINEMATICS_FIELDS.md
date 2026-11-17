@@ -558,10 +558,12 @@ opening the code yourself.** Everything not listed survived two passes.
 Extractor 2.1.0. The extractor loads `{video}_reach_assignments.json`
 (auto-discovered beside the outcomes file; `assignments_path` overrides) and
 marks `causal_reach`, `outcome` and `interaction_frame` on the reach algo-4
-credited -- for segments no higher authority has resolved. The ordering is
-strict and tested: a segment carrying a `causal_reach_id` KEY is owned by human
-review, ground truth or the pre-v6 detector and is never overridden; a
-reviewer's `causal_reach_id: None` means "no reach did this" and stands. On the
+credited -- for segments no person has decided. (Corrected later, same
+extractor version: the rule written here first -- "a segment carrying a
+`causal_reach_id` KEY is owned by human review, ground truth or the pre-v6
+detector" -- let the legacy detector's guess, which carries that key on every
+segment, block the assignment's answer. See "Who owns a causal reach" below.)
+A reviewer's `causal_reach_id: None` means "no reach did this" and stands. On the
 algo-only test video the features now name exactly the reaches the assignment
 file names; on a fully human-reviewed video all causal marks are
 `human_review`-sourced and none land on human-untouched segments.
@@ -576,3 +578,29 @@ row to mark.
 and inventing one was worse than leaving it empty. Corpus backfill and the
 2.1.0 declaration in pipeline_versions.json are deliberately deferred; until
 declared, newly processed videos will read as version-stale.
+
+---
+
+## Who owns a causal reach (the assignment merge)
+
+The extractor puts the reach assignment's causal reach (algo-4,
+`{video}_reach_assignments.json`) on every touched segment that no PERSON has
+decided. Whether a person decided a segment is read from what the truth
+layering stamped on it (`causal_reach_owned_by_person` in
+`kinematics/core/feature_extractor.py`), never from whether the outcome file
+merely holds a `causal_reach_id` key:
+
+| The segment | Its causal reach in the features file |
+|---|---|
+| A review answered it (`outcome_source` = `human_review`) | The reviewer's pick. An untouched answer, or a touched answer with no pick, stays without a causal reach. |
+| Ground truth decided it and the pellet was untouched | No causal reach. |
+| Ground truth decided it, pellet touched, and a reach was found from a person's statement (`causal_reach_source` = `ground_truth`: the reach holding the ground truth's interaction frame; or `human_review`: the review's pick for the same outcome) | That reach. |
+| Ground truth decided it, pellet touched, but no reach holds its interaction frame and no review named one | The reach assignment's pick. |
+| An older file marks the segment resolved by a person in place (`triage_cleared` or `human_verified`) | The reach that file names. |
+| Anything else -- including a legacy outcome file that names a causal reach on every segment | The reach assignment's pick, when it has one; otherwise whatever the outcome file says. |
+
+On every person-owned segment the assignment's pick is still recorded as
+`algo_causal_reach_id`, so an override stays visible as one. No extractor version
+change: the result differs only for a video whose legacy outcome file sits
+beside a reach assignment file, and such a video is re-run by hand if one is
+found.
