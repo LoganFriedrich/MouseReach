@@ -177,6 +177,18 @@ def _repose_request_out(stem: str) -> bool:
             or repose.inflight_path(stem, queue).exists())
 
 
+def _repose_request_failed(stem: str) -> Optional[Path]:
+    """The ``<video>.failed.json`` a GPU node writes when it gives up on a
+    re-pose request, or None."""
+    from mousereach.config import Paths
+    from mousereach.watcher import repose
+    queue = getattr(Paths, "REPOSE_QUEUE", None)
+    if not queue:
+        return None
+    f = repose.failed_path(stem, queue)
+    return f if f.exists() else None
+
+
 def _leftover_folders(nas) -> List[Path]:
     """Every folder at <nas>/Processing/_leftovers_pending_cleanup_*/*.
     Files anywhere in that walk are skipped: only folders are leftovers, and
@@ -344,6 +356,12 @@ def judge(stem: str, where: set, files: dict, scanner, current: dict, nas,
         elif any(w.startswith("waiting:") for w in where) or _repose_request_out(stem):
             return verdict(WAITING, "parked for a new pose in " + parked_rel
                            + "; a GPU node poses it and the server analyses it again")
+        elif _repose_request_failed(stem) is not None:
+            # The request WAS written (and the row marked 'outdated'), so
+            # running mousereach-repose-videos again would only be refused.
+            return verdict(NEEDS_PERSON, "parked for a new pose in " + parked_rel
+                           + ", but the re-pose failed on a GPU node: see "
+                           + _rel(_repose_request_failed(stem), nas))
         else:
             return verdict(NEEDS_PERSON, "parked for a new pose in " + parked_rel
                            + ", but no re-pose request is out: the re-pose run stopped "

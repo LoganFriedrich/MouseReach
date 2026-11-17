@@ -535,6 +535,18 @@ def test_a_parked_video_whose_request_was_never_written_needs_a_person(env, monk
     assert "mousereach-repose-videos again" in row["detail"]
 
 
+def test_a_parked_video_whose_re_pose_failed_names_the_failure(env, monkeypatch):
+    """A GPU node gave up on the request: running repose-videos again cannot
+    help (the row is already marked), so the failure file is named instead."""
+    _parked(env, monkeypatch)
+    queue = env.nas / "Processing" / "Repose_Queue"
+    (queue / f"{PARKED_VID}.failed.json").write_text("{}")
+    row = verdict_of(PARKED_VID)
+    assert row["verdict"] == rc.NEEDS_PERSON
+    assert "re-pose failed on a GPU node" in row["detail"]
+    assert "again" not in row["detail"]
+
+
 def test_a_parked_copy_left_after_the_video_was_filed_is_named(env, monkeypatch):
     _parked(env, monkeypatch)
     put_analyzed(PARKED_VID)

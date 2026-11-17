@@ -2088,7 +2088,8 @@ made by `mousereach-repose-videos`) is one of the places it checks. Such a video
 is "waiting for machine" while its re-pose request is out (or the new pose has
 come back and waits in the posed folder); it is "needs person" when no request
 was written -- the re-pose run stopped part way, so run `mousereach-repose-videos`
-again for that video; and a parked copy left behind after the video was filed
+again for that video -- or when a GPU node gave up on the request (the detail names
+its `Repose_Queue/<video>.failed.json`; running the command again would be refused); and a parked copy left behind after the video was filed
 or held again is named in the video's detail.
 
 ### `mousereach-aspa-import-collages`

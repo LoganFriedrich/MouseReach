@@ -4839,7 +4839,9 @@ the video's only copy. No reader named the folder, so `mousereach-reconcile` rep
 video nowhere. It now reads the parked folder as a place: with a re-pose request in the queue or
 in flight (or the new pose back in the posed folder) the video is "waiting for machine"; with no
 request -- a re-pose run that stopped after parking -- it is "needs person", with the instruction
-to run `mousereach-repose-videos` again for it (that run finishes from the parked folder); and a
+to run `mousereach-repose-videos` again for it (that run finishes from the parked folder); when a
+GPU node gave up on the request it is also "needs person", naming the `<video>.failed.json` in
+the re-pose queue instead (running the command again would be refused, the row being marked); and a
 parked copy still there after the video was filed or held again is named in the video's detail.
 
 Not changed here (follow-ups): the census and the Pipeline Dashboard's scan do not yet name the
