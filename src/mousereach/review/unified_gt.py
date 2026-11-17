@@ -341,6 +341,8 @@ def finalized_ground_truth(gt: UnifiedGroundTruth) -> Tuple[Optional[UnifiedGrou
         anomaly_annotations=gt.anomaly_annotations,
     )
     out.boundaries, out.reaches, out.outcomes = kept_b, kept_r, kept_o
+    # Answers given on cuts the video no longer has: kept, never applied.
+    out.unmatched_outcomes = list(gt.unmatched_outcomes)
     for part in ("segmentation", "reaches", "outcomes"):
         for suffix in ("exhaustive", "exhaustive_determined_by", "exhaustive_determined_at"):
             name = f"{part}_{suffix}"
@@ -1118,21 +1120,31 @@ def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGro
     # saved reach "id 7" is another reach of the new list; matched by id, a
     # determined reach took over (and erased) whichever current reach had its
     # number. A saved reach is matched to the current reach that covers most
-    # of its frames (causal_review_io.typed_reach_match, the rule the review
-    # window uses); the current reach keeps this run's id. A saved reach that
+    # of its frames (largest overlap, as truth_resolver._merge_reaches does);
+    # the current reach keeps this run's id. A saved reach that
     # matches nothing is kept as its own row, with a new id if its old one is
     # taken -- never dropped.
-    from mousereach.review.causal_review_io import typed_reach_match
     free = list(algo_gt.reaches)
     extra = []
     for sr in saved_gt.reaches:
-        pool = [{"start_frame": r.start_frame, "end_frame": r.end_frame, "_r": r} for r in free]
-        hit = typed_reach_match(sr.start_frame, sr.end_frame, pool) \
-            if sr.start_frame is not None and sr.end_frame is not None else None
-        if hit is None:
-            extra.append(sr)
+        best, best_ov = None, 0
+        if sr.start_frame is not None and sr.end_frame is not None:
+            for r in free:
+                if r.start_frame is None or r.end_frame is None:
+                    continue
+                ov = min(sr.end_frame, r.end_frame) - max(sr.start_frame, r.start_frame) + 1
+                if ov > best_ov:
+                    best, best_ov = r, ov
+        if best is None:
+            # No current reach shares a frame. Kept as its own row only when
+            # a person touched it (determined a frame, excluded it or wrote a
+            # comment); an untouched seed of an older run is the algorithm's
+            # old guess and is not carried forward.
+            if (sr.start_determined or sr.end_determined or sr.exclude_from_analysis
+                    or sr.comment):
+                extra.append(sr)
             continue
-        r = hit["_r"]
+        r = best
         free.remove(r)
         r.start_determined = sr.start_determined
         r.start_determined_by = sr.start_determined_by

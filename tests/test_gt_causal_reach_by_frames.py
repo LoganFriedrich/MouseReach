@@ -127,3 +127,20 @@ def test_a_ground_truth_reach_never_shares_an_id_with_a_detected_one(tmp_path):
     assert len(ids) == len(set(ids)) == 3
     causal = [x for x in r["segments"][0]["reaches"] if x["reach_id"] == seg["causal_reach_id"]]
     assert [(x["start_frame"], x["reach_source"]) for x in causal] == [(700, "ground_truth")]
+
+
+def test_a_review_pick_a_ground_truth_reach_replaced_is_not_kept(tmp_path):
+    # The review picked detected reach 31; a determined ground-truth reach
+    # replaced it. With no interaction frame, the dangling id must not block
+    # the reach assignment's pick.
+    (tmp_path / f"{STEM}_unified_ground_truth.json").write_text(json.dumps({
+        "video_name": STEM,
+        "reaches": {"exhaustive": False, "reaches": [
+            {"reach_id": 90, "segment_num": 1, "start_frame": 98, "end_frame": 135,
+             "start_determined": True, "end_determined": True}]},
+        "outcomes": {"exhaustive": False, "segments": [
+            {"segment_num": 1, "outcome": "retrieved", "determined": True}]},
+    }), encoding="utf-8")
+    _review(tmp_path, "retrieved", pick=(31, 100, 130))
+    _, seg = _resolve(tmp_path)
+    assert "causal_reach_id" not in seg

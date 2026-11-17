@@ -328,7 +328,11 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
                 seg["causal_reach_id"] = held["reach_id"]
                 seg["causal_reach_source"] = "ground_truth"
             elif review is not None and review.get("outcome") == top["outcome"] and \
-                    (review.get("causal_reach_id") is not None or review.get("review_reach")):
+                    (review.get("review_reach") or review.get("causal_reach_id") in
+                     {r.get("reach_id") for r in reach_lists.get(int(sn), [])}):
+                # The review's pick counts only while that reach is still in
+                # this run's resolved list: a ground-truth reach may have
+                # replaced it, and a dangling id would block the assignment.
                 if review.get("review_reach"):
                     # A reach the detector missed: _add_reviewed_reaches adds
                     # it and makes it the causal reach.

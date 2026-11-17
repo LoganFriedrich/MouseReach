@@ -97,3 +97,34 @@ def test_an_outcome_that_fits_no_pellet_is_kept_unapplied(tmp_path):
     gt = _open(tmp_path)
     assert not any(o.determined for o in gt.outcomes)
     assert [(o.segment_num, o.outcome) for o in gt.unmatched_outcomes] == [(2, "retrieved")]
+
+
+def test_a_corrected_reach_on_the_same_run_stays_one_row(tmp_path):
+    # Same run: detected 100-120, the person moved it to 115-140 (less than
+    # half of the corrected frames still overlap the detected reach).
+    _algo(tmp_path, [0, 1000], {1: [(6, 100, 120)]})
+    _saved(tmp_path, [0, 1000],
+           [{"reach_id": 6, "segment_num": 1, "start_frame": 115, "end_frame": 140}], [])
+    gt = _open(tmp_path)
+    assert [(r.reach_id, r.start_frame, r.end_frame) for r in gt.reaches] == [(6, 115, 140)]
+
+
+def test_unmatched_answers_survive_the_finishing_save(tmp_path):
+    from types import SimpleNamespace
+    from mousereach.review import ground_truth_widget as gtw
+    _algo(tmp_path, [0, 50, 100, 200, 300], {})
+    _saved(tmp_path, [0, 100, 200, 300], [],
+           [{"segment_num": 2, "outcome": "retrieved"}])
+    gt = _open(tmp_path)
+    win = SimpleNamespace(gt=gt, video_path=tmp_path / f"{VID}.mp4",
+                          data_saved=SimpleNamespace(emit=lambda p: None))
+    import pytest
+    mp = pytest.MonkeyPatch()
+    mp.setattr(gtw, "show_info", lambda m: None)
+    mp.setattr(gtw, "show_error", lambda m: None)
+    try:
+        gtw.GroundTruthWidget._save_ground_truth(win)
+    finally:
+        mp.undo()
+    doc = json.loads((tmp_path / f"{VID}_unified_ground_truth.json").read_text(encoding="utf-8"))
+    assert [(o["segment_num"], o["outcome"]) for o in doc["outcomes"]["unmatched"]] == [(2, "retrieved")]
