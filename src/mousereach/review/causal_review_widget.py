@@ -815,6 +815,15 @@ The notes box travels with the video.
         except Exception:
             reason = ""
         base = "padding:6px; border-radius:3px; font-size:12px;"
+        # WHY every recorded reason is shown: the banner used to show a reason
+        # only when it named segmentation or "qc", and told the reviewer "no
+        # routing reason was recorded" for every other one -- the quality
+        # triage that could not run, a session a reviewer flagged (with their
+        # note), a reason typed on the routing command. The reason is the
+        # only thing that says what is asked of the reviewer.
+        import html as _html
+        shown = _html.escape(reason or "")
+        flagged = "reviewer flagged session"
         if reason and _names_segmentation(reason):
             banner.setStyleSheet(base + "background:#16405a; color:white;")
             banner.setText(
@@ -822,7 +831,20 @@ The notes box travels with the video.
                 "The segment CUTS are in question. Fix them in the "
                 "Re-segmentation tool -- or, if they are actually fine, confirm "
                 "them there -- and save; saving releases the video. Nothing "
-                "leaves this queue until its cuts have been saved there." % reason)
+                "leaves this queue until its cuts have been saved there." % shown)
+        elif reason and reason.lower().startswith("triage_failed"):
+            banner.setStyleSheet(base + "background:#5a4a16; color:white;")
+            banner.setText(
+                "<b>Why this video is here:</b> the pipeline's automatic "
+                "quality check could not run on this video, so nothing has "
+                "checked it (%s).<br>"
+                "<b>Your job:</b> watch enough to judge whether the tracking "
+                "follows the paw and pellet and whether the cuts fall on the "
+                "tray advances. If it does, confirm the cuts in the "
+                "Re-segmentation tool and save, then press Clear -- nothing "
+                "leaves this queue until its cuts have been saved there. If the "
+                "tracking is visibly broken, do NOT Clear: press \"Flag "
+                "Session (needs review)\" instead." % shown)
         elif reason and "qc" in reason.lower():
             banner.setStyleSheet(base + "background:#5a4a16; color:white;")
             banner.setText(
@@ -834,7 +856,26 @@ The notes box travels with the video.
                 "leaves this queue until its cuts have been saved there; the "
                 "flag stays attached to this video's data either way. If the "
                 "tracking is visibly broken, do NOT Clear: press \"Flag "
-                "Session (needs review)\" instead." % reason)
+                "Session (needs review)\" instead." % shown)
+        elif reason and reason.lower().startswith(flagged):
+            # "reviewer flagged session <key> -- <the reviewer's note>"
+            head, _, note = reason.partition(" -- ")
+            banner.setStyleSheet(base + "background:#5a2a16; color:white;")
+            banner.setText(
+                "<b>Why this video is here:</b> a %s.<br>"
+                "<b>The reviewer's note:</b> %s<br>"
+                "<b>Your job:</b> check this video for what the note "
+                "describes. Confirm or fix its cuts in the Re-segmentation "
+                "tool and save, answer anything flagged, then press Clear."
+                % (_html.escape(head), _html.escape(note) if note
+                   else "(none was written)"))
+        elif reason:
+            banner.setStyleSheet(base + "background:#3a3a3a; color:white;")
+            banner.setText(
+                "<b>Why this video is here:</b> %s<br>"
+                "Look it over with that in mind, answer anything flagged, "
+                "confirm or fix its cuts in the Re-segmentation tool and save, "
+                "then press Clear." % shown)
         else:
             banner.setStyleSheet(base + "background:#3a3a3a; color:white;")
             banner.setText(

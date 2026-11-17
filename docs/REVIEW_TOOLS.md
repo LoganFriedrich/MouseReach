@@ -130,6 +130,29 @@ Open: outcome + causal reach (possible tracking artifact)
   session is filled in again if you go back to it, without comment. How
   earlier answers were matched is logged at debug level only.
 
+In **Re-segmentation Review** the banner says why the whole video was sent there
+and what to do (since 2026-11-17 every recorded reason is shown):
+
+- a reason about the **cuts** (it names segmentation or a mislabel): fix or
+  confirm the cuts in the Re-segmentation tool and save; saving releases it;
+- **the automatic quality check could not run** (reason starts
+  `triage_failed`): nothing has checked the video, so watch enough to judge the
+  tracking and the cuts; if they are fine confirm the cuts in the
+  Re-segmentation tool, save, then press Clear; if the tracking is broken press
+  "Flag Session (needs review)" instead;
+- a **quality hold** (`qc_needs_review`): the same, and the flag stays with the
+  video's data;
+- a **flagged session**: the banner shows the session and the note the
+  reviewer wrote when flagging it; check the video for that, confirm or fix the
+  cuts, answer anything flagged, then press Clear;
+- **any other recorded reason** (for example one typed on
+  `mousereach-route-to-queue`) is shown as written, with the same steps.
+
+Only a video with no recorded reason at all says "no routing reason was
+recorded". Before this, every reason except the cuts and quality holds got
+that wording, so a reviewer was never told about a failed quality check or
+shown a flagging reviewer's note.
+
 Part of every triage answer is checking that the event happened to the pellet
 shown. If it did not, answer nothing and press **Escalate: bad segmentation ->
 re-segmentation** (see "Escalating out of triage").
