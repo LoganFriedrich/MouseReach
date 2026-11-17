@@ -231,7 +231,7 @@ def test_missing_scores_are_judged_from_when_the_video_entered_processing(tmp_pa
     assert orch._score_waits[VID]["ready_since"] == "2026-10-26T21:00:00"
     assert not orch._score_waits[VID]["missing"]
     orch._score_waits.clear()
-    _started_at(tmp_path, "2026-10-26T10:00:00")                # before it: missing, still held
+    _started_at(tmp_path, "2026-01-05T10:00:00")                # before it: missing, still held
     assert orch._hand_score_precheck(VID, folder) is False
     assert orch._score_waits[VID]["missing"]
     assert "hand_scores" not in json.loads((folder / f"{VID}_pellet_outcomes.json").read_text())
@@ -242,14 +242,14 @@ def test_the_first_waits_ready_time_is_kept(tmp_path, monkeypatch):
     folder = _setup(tmp_path, monkeypatch, scores={}, last_import="2026-10-26T20:05:00",
                     outcomes={1: "untouched"})
     orch = _orch(tmp_path, monkeypatch)
-    _started_at(tmp_path, "2026-10-26T10:00:00")
+    _started_at(tmp_path, "2026-01-05T10:00:00")
     orch._score_waits = {VID: {"stamp": None, "cohort_id": "ABC_02",
-                               "ready_since": "2026-10-26T10:00:00"}}
+                               "ready_since": "2026-01-05T10:00:00"}}
     _started_at(tmp_path, "2026-10-26T23:00:00")                # re-stamped by something
     assert orch._hand_score_precheck(VID, folder) is False
     # judged from the FIRST wait's time: the import came after it, so the
     # scores are missing (not still awaited)
-    assert orch._score_waits[VID]["ready_since"] == "2026-10-26T10:00:00"
+    assert orch._score_waits[VID]["ready_since"] == "2026-01-05T10:00:00"
     assert orch._score_waits[VID]["missing"]
 
 
