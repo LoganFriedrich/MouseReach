@@ -3890,7 +3890,11 @@ that asks the rules ever searches.
 - The two settings that guard a check read the lab file strictly. "Not set" now means only: the
   shared pipeline folder can be seen and there is no lab file in it, or the file has no such
   section. A lab file that exists but cannot be read or parsed, or a shared pipeline folder that
-  cannot be reached, is an error, never "not set".
+  cannot be reached, is an error, never "not set". So is a lab file that exists but is EMPTY: the
+  lab file is only ever written whole, by a person who put settings in it, so an empty one is a
+  file caught in the middle of being saved by an editor, or blanked by accident -- read as "no
+  settings", that moment switched the hand-score check off for the videos checked in it. (A
+  person's own `config.json` that is empty still just means "not set up yet".)
 - **Hand scores** (`hand_scores.settings`): that error makes the check one that could not run.
   The video is HELD where it is (in 'processing', in the local Processing folder, before triage,
   kinematics and filing), and listed in RED in `<nas_root>/attention/<host>_hand_scores.json`
@@ -3910,7 +3914,8 @@ that asks the rules ever searches.
 **For an operator.** If the Pipeline Dashboard or the attention list shows analysed videos held
 in red because "the check against its hand scores could not run" and the reason names
 `mousereach_lab_config.json`, open that file in a text editor and fix the spot the message names
-(or reconnect the storage drive if it says the folder cannot be reached). The held videos go on by
+(or reconnect the storage drive if it says the folder cannot be reached; if it says the file is
+empty, restore it from a backup or write its settings back in). The held videos go on by
 themselves; nothing else needs doing. A bad edit of that file therefore holds every analysed Pillar
 video, of any project, on every processing machine until it is fixed -- which projects need the
 comparison is itself in that file, so none can be let through. That is intended: none of them can

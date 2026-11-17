@@ -155,9 +155,10 @@ def load_lab_config(user_config: Optional[dict] = None, strict: bool = False) ->
 
     ``strict`` True: {} only when the file is really not there, i.e. the
     shared pipeline folder it lives in IS visible and holds no such file.
-    Raises DamagedSettingsFile when the file exists but cannot be read or is
-    not a JSON object, and when the shared pipeline folder itself cannot be
-    seen (so whether the file exists is not known).
+    Raises DamagedSettingsFile when the file exists but cannot be read, is
+    empty, or is not a JSON object, and when the shared pipeline folder
+    itself cannot be seen (so whether the file exists is not known). Empty
+    counts as damaged here only (read_settings_file says why).
 
     WHY strict exists: some settings guard a check. The hand-score settings
     decide whether a video is compared with the bench before it can be filed,
@@ -185,7 +186,7 @@ def load_lab_config(user_config: Optional[dict] = None, strict: bool = False) ->
                   "this user's own config.json are unset." % path)
         return {}
     try:
-        return read_settings_file(path)
+        return read_settings_file(path, blank_is_damaged=strict)
     except DamagedSettingsFile as e:
         if strict:
             raise

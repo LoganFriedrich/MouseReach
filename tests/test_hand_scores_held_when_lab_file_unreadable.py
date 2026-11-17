@@ -184,3 +184,18 @@ def test_a_video_held_while_the_lab_file_was_damaged_goes_on_in_a_lab_with_no_ha
     assert not orch._waiting_for_hand_scores(VID)    # picked again
     assert orch._hand_score_precheck(VID, lab.folder) is True
     assert _attention(lab)["items"] == []
+
+
+def test_an_empty_lab_file_holds_the_video_instead_of_reading_as_no_settings(lab, tmp_path):
+    """WHY: the lab file is only ever written whole, by a person who put
+    settings in it. An empty one is a file caught mid-save by an editor
+    (truncated, then written) or blanked by accident; read as "no settings",
+    that moment switched the comparison off and the video went on unchecked."""
+    lab.file.write_text("", encoding="utf-8")
+    with pytest.raises(Exception):          # never "no settings, not checked"
+        hs.check(VID, lab.folder)
+    orch = _orch(tmp_path)
+    assert orch._hand_score_precheck(VID, lab.folder) is False     # held, not passed
+    item = _attention(lab)["items"][0]
+    assert item["kind"] == "hand_score_check_failed" and item["needs_person"] is True
+    assert "empty" in item["says"]

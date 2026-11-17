@@ -27,8 +27,17 @@ class DamagedSettingsFile(ConfigurationError, ValueError):
     setting (the filing rules raise ValueError) stops on this the same way."""
 
 
-def read_settings_file(path) -> dict:
+def read_settings_file(path, blank_is_damaged: bool = False) -> dict:
     """The JSON object in ``path``; {} when the file does not exist.
+
+    A file that exists but holds no text is {} too -- unless
+    ``blank_is_damaged``, when it is a DamagedSettingsFile. WHY the choice:
+    a person's own config.json that is empty has simply not been set up yet,
+    but the shared lab settings file is only ever written whole by a person
+    who put settings in it, so an empty one is a file caught mid-save by an
+    editor (truncated, then written) or blanked by accident. Read as "no
+    settings", that moment switched the hand-score check off for the videos
+    checked in it (config.load_lab_config, strict).
 
     Raises DamagedSettingsFile, naming the file, the line and column of a JSON
     error and what to do, when the file exists but cannot be read, is not
@@ -61,6 +70,11 @@ def read_settings_file(path) -> dict:
             "The settings file %s could not be read (%s). Check that the drive it is "
             "on is reachable and that nothing has it locked, then try again." % (path, e))
     if not text.strip():
+        if blank_is_damaged:
+            raise DamagedSettingsFile(
+                "The settings file %s is empty. It may be in the middle of being saved; "
+                "if it stays empty, restore it from a backup or write its settings "
+                "back in a text editor." % path)
         return {}               # an empty file holds no setting to lose
     try:
         data = json.loads(text)
