@@ -4672,3 +4672,23 @@ not a failure: the shared copy is claimed by this node and is taken from there.
 On a node with NO DLC queue configured the video is instead marked unresolvable with the reason 'no local DLC
 queue is configured on this node' and its file is kept; the collage can still finish 'cropped' in that case. If the retries run
 out, the collage is listed in the red panel as described above.
+
+## Update: a claim marker is never left empty
+
+Claim markers (`Processing/Posed/.claims/`, `Review/.return_claims/`, made by
+`watcher/claim_marker.py`) used to be created empty and then filled in with the name of the
+machine holding the claim. A machine that stopped between those two steps -- a crash, a kill, a
+network drive that dropped -- left an EMPTY marker. An empty marker reads as "claimed by an
+unknown machine", so even the machine that made it was refused the claim and could not release
+it, and nobody could touch that video until the marker was three hours old and the sweep broke
+it. Now the marker's text is written first, to a temporary file beside it
+(`<marker>.<machine>.<process>.<random>.tmp`), and the finished file is put in place under the
+marker's name in one step that refuses to replace a marker already there (a rename on Windows, a
+hard link elsewhere). So a marker is either there and names its holder, or is not there at all,
+and the racing rule is unchanged: exactly one machine's marker appears. A machine that cannot
+write the marker (the drive is unreachable) simply does not get the claim and tries again later;
+the temporary file is removed. On a file system with no hard links (not Windows) the old
+create-then-write is used, so a claim is still possible there.
+For an operator: nothing to do. A leftover `*.tmp` file in a claims folder is harmless (nothing
+reads it as a claim) and may be deleted. Where it lives: `claim_marker._create`. Tests in
+`tests/test_claim_marker.py`.

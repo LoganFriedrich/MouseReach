@@ -11,10 +11,14 @@ two nodes both write a marker and both believe they won; it does not close it
 
 THE CLAIM IS AN EXCLUSIVE CREATE
 --------------------------------
-``take`` creates ``<claim dir>/<key><suffix>`` with ``O_CREAT | O_EXCL``. The
-file server performs "create only if it does not exist" as one operation, so
-when several nodes race, exactly one create succeeds and every other one gets
-"file exists". Measured on an SMB share before this was relied on: several
+``take`` creates ``<claim dir>/<key><suffix>`` so that it cannot replace a
+marker already there. The file server performs "create only if it does not
+exist" as one operation, so when several nodes race, exactly one create
+succeeds and every other one gets "file exists". The marker's text (who holds
+it) is written to a temporary file first and the finished file is published
+under the marker's name with a rename (Windows) or hard link (elsewhere) that
+refuses to replace -- so a marker is never seen empty, even when its writer
+stops half way (see _create). Measured on an SMB share before this was relied on: several
 processes racing for each of hundreds of keys, every key won exactly once,
 none twice, none lost. The marker then records which host holds
 it.
@@ -139,16 +143,73 @@ def holder_process(claim_dir, key: str, suffix: str = ".claimed") -> Optional[st
 
 
 def _create(p: Path, host: str, process: Optional[str]) -> bool:
-    """Create the marker exclusively. True when this call created it."""
+    """Create the marker exclusively, already holding its text. True when this
+    call created it; raises FileExistsError when a marker is already there.
+
+    WHY the text is written first, under a temporary name, and then published
+    with one operation that refuses to replace: the marker used to be created
+    empty and filled in afterwards. A process stopped between the two (a
+    crash, a kill, a share that dropped) left an EMPTY marker; holder() reads
+    that as "claimed by an unknown host", so even the node that made it was
+    refused (take) and could not release it, and nobody could touch the item
+    until sweep_gone broke the marker hours later. Published whole, a marker
+    is never visible empty: either it is there with its holder's name, or it
+    is not there at all.
+
+    The publishing step must fail -- not overwrite -- when the marker exists,
+    because that refusal is what makes the claim exclusive:
+      Windows   os.rename refuses to replace an existing file.
+      elsewhere os.link refuses too (os.rename would silently replace). A
+                file system without hard links falls back to the old
+                exclusive create, so a claim is never impossible there -- it
+                only keeps the old, narrow empty-marker window.
+    A temporary file left by a crash is named
+    ``<marker>.<host>.<pid>.<random>.tmp``:
+    it does not end with the marker suffix, so nothing reads it as a claim."""
+    text = f"{host}\n{datetime.now().isoformat()}\n"
+    if process:
+        text += f"{_PROCESS_TAG}{process}\n"
+    data = text.encode("ascii", "replace")
+    import uuid
+    # The random part keeps two threads of one process from sharing a name.
+    tmp = p.with_name(f"{p.name}.{_safe_name(host)}.{os.getpid()}."
+                      f"{uuid.uuid4().hex[:8]}.tmp")
+    fd = os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if os.name == "nt":
+            os.rename(str(tmp), str(p))          # FileExistsError when taken
+            return True
+        try:
+            os.link(str(tmp), str(p))            # FileExistsError when taken
+        except FileExistsError:
+            raise
+        except OSError:
+            _create_in_place(p, data)            # no hard links on this share
+        return True
+    finally:
+        try:
+            os.unlink(str(tmp))                  # gone already after a rename
+        except OSError:
+            pass
+
+
+def _create_in_place(p: Path, data: bytes) -> None:
+    """The old exclusive create, for a file system without hard links."""
     fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     try:
-        text = f"{host}\n{datetime.now().isoformat()}\n"
-        if process:
-            text += f"{_PROCESS_TAG}{process}\n"
-        os.write(fd, text.encode("ascii", "replace"))
+        os.write(fd, data)
     finally:
         os.close(fd)
-    return True
+
+
+def _safe_name(text: str) -> str:
+    """``text`` usable inside a file name."""
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in str(text)) or "host"
 
 
 def take(claim_dir, key: str, host: str, suffix: str = ".claimed",
@@ -289,8 +350,9 @@ def _break_ended(p: Path, key: str, ended: Optional[str]) -> bool:
 
 def holder(claim_dir, key: str, suffix: str = ".claimed") -> Optional[str]:
     """The host holding ``key``; None when unclaimed. An empty or unreadable
-    marker returns "" -- claimed, holder unknown (a node stopped between
-    creating the marker and writing its name)."""
+    marker returns "" -- claimed, holder unknown. (An empty marker comes only
+    from an older version, which created the marker before writing its name;
+    _create now publishes it whole.)"""
     p = _path(claim_dir, key, suffix)
     try:
         text = p.read_text(encoding="ascii", errors="replace")

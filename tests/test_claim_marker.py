@@ -155,3 +155,49 @@ def test_an_empty_marker_counts_as_claimed(tmp_path):
     assert cm.sweep_gone(claims, ME, status) == []
     _age(claims / "vid.claimed", cm.GONE_AFTER_S + 60)
     assert cm.sweep_gone(claims, ME, status) == ["vid"]
+
+
+# ------------------------------------------------- a marker is never empty
+
+def _write_fails(monkeypatch):
+    """os.write fails: a node stopping between making the marker and writing
+    its name into it (a crash, a kill, a share that dropped)."""
+    def boom(fd, data):
+        raise OSError("the share went away mid-write")
+    monkeypatch.setattr(cm.os, "write", boom)
+
+
+def test_a_failed_write_leaves_no_marker_and_the_node_can_claim_again(tmp_path, monkeypatch):
+    """WHY: the marker used to be created empty and filled in after. A stop
+    in between left an empty marker that even its own node could neither take
+    (holder() read it as an unknown host) nor release, for hours."""
+    with monkeypatch.context() as m:
+        _write_fails(m)
+        assert cm.take(tmp_path, "vid", ME) is False
+    assert cm.holder(tmp_path, "vid") is None            # no marker at all
+    assert list(tmp_path.iterdir()) == []                # and no temporary file
+    assert cm.take(tmp_path, "vid", ME) is True          # the node is not locked out
+    assert cm.holder(tmp_path, "vid") == ME
+
+
+def test_a_published_marker_already_names_its_holder(tmp_path, monkeypatch):
+    """Whoever sees the marker sees who holds it: the marker's name appears
+    only once its text is complete."""
+    seen = []
+    real_rename, real_link = os.rename, getattr(os, "link", None)
+
+    def watch(src, dst):
+        # the moment the marker appears, its text must already be there
+        seen.append(open(src, encoding="ascii").read())
+        return (real_rename if os.name == "nt" else real_link)(src, dst)
+
+    monkeypatch.setattr(cm.os, "rename" if os.name == "nt" else "link", watch)
+    assert cm.take(tmp_path, "vid", ME) is True
+    assert seen and seen[0].splitlines()[0] == ME
+
+
+def test_a_lost_race_leaves_the_winner_and_no_temporary_file(tmp_path):
+    assert cm.take(tmp_path, "vid", OTHER) is True
+    assert cm.take(tmp_path, "vid", ME) is False
+    assert cm.holder(tmp_path, "vid") == OTHER
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["vid.claimed"]
