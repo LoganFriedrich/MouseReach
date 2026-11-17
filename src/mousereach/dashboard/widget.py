@@ -677,6 +677,18 @@ class PipelineDashboard(QWidget):
             items = [{"needs_person": True, "says": "The attention lists could not be read (%s)." % e}]
         urgent = [i for i in items if i.get("needs_person")]
         waiting = [i for i in items if not i.get("needs_person")]
+        self._attention_items = urgent
+        # The Resolve button shows when an item can be resolved from here
+        # (watcher/attention_actions.py): a review-queue folder that needs a
+        # decision is never something to sort out in a file browser.
+        try:
+            from mousereach.watcher.attention_actions import actions_for
+            resolvable = any(actions_for(i) for i in urgent)
+        except Exception:
+            resolvable = False
+        btn = getattr(self, "resolve_btn", None)
+        if btn is not None:
+            btn.setVisible(resolvable)
         if urgent:
             lines = ["<b>Needs your attention (%d)</b>" % len(urgent)]
             lines += ["&bull; %s" % i.get("says", "") for i in urgent[:self.ATTENTION_SHOWN]]
@@ -688,13 +700,37 @@ class PipelineDashboard(QWidget):
         else:
             self.attention_label.hide()
         if waiting:
-            self.waiting_label.setText(
-                "%d analysed video(s) are held before triage and kinematics until their "
-                "hand scores arrive; they go on by themselves after the sheet's next "
-                "import." % len(waiting))
+            # Grey, not an alarm: each line is something that goes on by itself.
+            pose = [i for i in waiting if i.get("kind") == "waiting_for_pose"]
+            scores = [i for i in waiting if i.get("kind") != "waiting_for_pose"]
+            lines = []
+            if scores:
+                lines.append(
+                    "%d analysed video(s) are held before triage and kinematics until "
+                    "their hand scores arrive; they go on by themselves after the "
+                    "sheet's next import." % len(scores))
+            if pose:
+                lines.append(
+                    "%d video(s) wait for a new pose: their pose file could not be "
+                    "used by the analysis (%s). They are not sent to a review queue -- "
+                    "no review fixes a pose." % (
+                        len(pose), ", ".join(i.get("video_id", "?") for i in pose[:5])
+                        + (" ..." if len(pose) > 5 else "")))
+            self.waiting_label.setText("<br>".join(lines))
             self.waiting_label.show()
         else:
             self.waiting_label.hide()
+
+    def _open_resolve(self):
+        """Open the Resolve window over the current attention items."""
+        from mousereach.dashboard.attention_dialog import AttentionResolveDialog
+
+        def reread():
+            self._update_attention()
+            return getattr(self, "_attention_items", [])
+        AttentionResolveDialog(getattr(self, "_attention_items", []), self,
+                               on_change=reread).exec_()
+        self._update_attention()
 
     def _refresh_clicked(self):
         """Refresh button: re-scan the folders (folder adapter) or reload."""
@@ -738,6 +774,14 @@ class PipelineDashboard(QWidget):
             "padding:6px; background:#8b1a1a; color:white; font-size:11px;")
         self.attention_label.hide()
         main_layout.addWidget(self.attention_label)
+        self.resolve_btn = QPushButton("Resolve...")
+        self.resolve_btn.setToolTip(
+            "Finish a review bundle that a route left without all its files: move "
+            "the missing files in now, or accept a bundle whose file is gone for "
+            "good. Every button asks first.")
+        self.resolve_btn.clicked.connect(self._open_resolve)
+        self.resolve_btn.hide()
+        main_layout.addWidget(self.resolve_btn)
         self.waiting_label = QLabel("")
         self.waiting_label.setWordWrap(True)
         self.waiting_label.setStyleSheet("color:#aaa; font-size:10px; padding:2px 6px;")

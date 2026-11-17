@@ -222,7 +222,7 @@ Once a video is claimed, its files are copied - copied, not moved, so the handof
 
 What the second watcher does NOT check before running the algorithms: it does not verify that the pose file was produced by the currently declared DeepLabCut model. There is no version comparison anywhere in the run-the-algorithms path (src/mousereach/watcher/orchestrator.py:1811-2120). The only thing resembling a version check at this point is tie-breaking: if a video has more than one pose file, the code prefers the one from the declared model, and otherwise takes the newest and logs a warning that the video should be re-posed - but it still proceeds (src/mousereach/pipeline/manifest.py:89-134). Version currency is checked later and after the fact, by the staleness scanner walking already-archived videos in the Analyzed folder.
 
-The second watcher's full job list, in priority order, is: archive a finished video to the network drive (first since 2026-08-30, so results reach the share continuously); take in a newly discovered video from the handoff folder; run the algorithms on a video sitting in its local Processing folder; and re-run an "outdated" video (`ProcessingOrchestrator._select_work_item`). Within each kind of job, which video goes next follows the configured work order (docs/WORK_PRIORITY.md; since 2026-10-22 including session lists and "not until nothing else is waiting" work, which comes last everywhere). For that last case, if the staleness scanner decided the video genuinely needs a NEW pose, the server cannot help - it has no suitable graphics card. Until 2026-08-24 it pushed the video into the 'dlc_queued' state and left it, which went nowhere: the server's own job list never selects that state, the GPU node's queue folder is local and invisible to the server, and the only thing that crossed machines was the state itself, through connectome.db, where it became a pathless row that crashed the GPU node's stager. It now holds those videos in 'outdated', names them once in the log, and lets the videos that CAN be re-run here through - so one un-poseable video no longer blocks the rest of the queue. Otherwise it pulls that video's pose file and video back out of the Analyzed folder into its local Processing folder and re-runs from the earliest stale stage (:1540-1605). Its local Processing folder is also refilled from a third direction: roughly every ten poll cycles it scans the two human review queues and moves any bundle a human has finished clearing back into Processing so the pipeline re-runs it (:1388-1397; src/mousereach/watcher/review_return.py:118-260). The review queues are shared storage, so when more than one node runs this scan, every queue mutation (return, retire, divert) first takes a per-video claim marker in Review/.return_claims/ -- an exclusive create, so exactly one node's claim succeeds (watcher/claim_marker.py); broken only when its holder has stopped writing its status report for 3 hours by the file server's clock, never for its age; no claim is needed when no shared root is configured, and none is taken (the move is skipped) when the claim folder cannot be made (review_return.py, _claim_return; changed 2026-10-21 from write, wait, read back and a 2-hour age rule). Intake is throttled by watcher.max_local_pending (default 2 since 2026-10-21; it was 200): once that many videos are sitting in the local Processing folder, no new videos are taken in until one is analysed, archived or cleared (:1444-1465). WHY 2: intake is visited before the pipeline, so with 200 the server took videos in for hours before analysing any, and every video it held was one no other node could take.
+The second watcher's full job list, in priority order, is: archive a finished video to the network drive (first since 2026-08-30, so results reach the share continuously); take in a newly discovered video from the handoff folder; run the algorithms on a video sitting in its local Processing folder; and re-run an "outdated" video (`ProcessingOrchestrator._select_work_item`). Within each kind of job, which video goes next follows the configured work order (docs/WORK_PRIORITY.md; since 2026-10-22 including session lists and "not until nothing else is waiting" work, which comes last everywhere). For that last case, if the staleness scanner decided the video genuinely needs a NEW pose, the server cannot help - it has no suitable graphics card. Until 2026-08-24 it pushed the video into the 'dlc_queued' state and left it, which went nowhere: the server's own job list never selects that state, the GPU node's queue folder is local and invisible to the server, and the only thing that crossed machines was the state itself, through connectome.db, where it became a pathless row that crashed the GPU node's stager. It now holds those videos in 'outdated', names them once in the log, and lets the videos that CAN be re-run here through - so one un-poseable video no longer blocks the rest of the queue. Otherwise it pulls that video's pose file and video back out of the Analyzed folder into its local Processing folder and re-runs from the earliest stale stage (:1540-1605). Its local Processing folder is also refilled from a third direction: roughly every ten poll cycles it scans the two human review queues and moves any bundle a human has finished clearing back into Processing so the pipeline re-runs it (:1388-1397; src/mousereach/watcher/review_return.py:118-260). The review queues are shared storage, so when more than one node runs this scan, every queue mutation (return, retire, divert, a route-to-queue question or move) first takes a per-video claim marker in Review/.return_claims/ -- an exclusive create, so exactly one node's claim succeeds (watcher/claim_marker.py); the marker names the holding process (id and start time), so another live process of the same machine is refused too and a crashed process's claim is taken over (`claim_marker.take(..., process=this_process())`) -- by renaming the old marker to a name of its own first and deleting it only if it still names the ended process, so two processes that both saw the crashed holder can never both end up holding the claim; a marker of the same machine that names no process (an older version's) counts as another process's until it is `claim_marker.LEGACY_MARKER_TAKEOVER_S` (one hour) old, so an old review window and an updated watcher never both hold it; and within a process the claim is counted per thread so a route started by the scan does not drop the scan's claim; broken only when its holder has stopped writing its status report for 3 hours by the file server's clock, never for its age; no claim is needed when no shared root is configured, and none is taken (the move is skipped) when the claim folder cannot be made (review_return.py, _claim_return; changed 2026-10-21 from write, wait, read back and a 2-hour age rule). Intake is throttled by watcher.max_local_pending (default 2 since 2026-10-21; it was 200): once that many videos are sitting in the local Processing folder, no new videos are taken in until one is analysed, archived or cleared (:1444-1465). WHY 2: intake is visited before the pipeline, so with 200 the server took videos in for hours before analysing any, and every video it held was one no other node could take.
 
 ---
 
@@ -747,8 +747,9 @@ empty-folder grace below covers it only while it is completely empty.
 
 AN EMPTY QUEUE FOLDER IS LEFT ALONE FOR 30 MINUTES
 
-The return scan still files an empty triage folder away to `_Problematic`
-(residue of an earlier divert or return), but only once the folder's
+The return scan still removes an empty triage folder (residue of an earlier
+divert or return; earlier versions filed it away to `_Problematic`), but
+only once the folder's
 modification time is 30 minutes old (`review_return.EMPTY_DIR_GRACE_SECONDS`).
 WHY: "empty" is not "abandoned". A router may have just created the folder and
 still be moving files in (a bundle that already exists, and a failed rename, are
@@ -1870,6 +1871,8 @@ found". Tests: `tests/test_no_pose_reprocess.py`.
 
 ## Update 2026-10-22: a queue bundle of an archived video is filed away
 
+(No longer so: nothing is moved to `_Problematic` any more, which is only for cases the pipeline cannot process at all. Such a folder is now a leftover: what has a current copy elsewhere is deleted, and what does not stays where it is, with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md.)
+
 The return scan reads every queued video's state in one query per queue
 (`WatcherDB.states_of`). For a video this node has `archived`, a bundle holding
 nothing a person wrote is moved to `_Problematic` with a note when it holds no
@@ -1884,6 +1887,8 @@ that one stops new husks from derailing a run; this one clears the ones already
 sitting in a person's queue. Tests: `tests/test_review_return_superseded.py`.
 
 ## Update 2026-10-22: a leftover triage copy of a deep-review bundle is filed away
+
+(No longer so: nothing is moved to `_Problematic` any more, which is only for cases the pipeline cannot process at all. Such a folder is now a leftover: what has a current copy elsewhere is deleted, and what does not stays where it is, with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md.) A triage folder that differs from the deep-review bundle does NOT stay whole any more either: it is emptied as a leftover the way a route into deep review empties it -- what the deep-review bundle or the review store holds byte for byte, queue records and machine results are deleted, and only what a person wrote with no copy elsewhere is kept, listed.
 
 When a video has a folder in both review queues and its segmentation failed, the return scan
 used to skip it with "exists in BOTH queues; divert skipped (duplicate needs deliberate
@@ -1951,7 +1956,8 @@ until a person cleared each one. The return scan now re-checks every deep-review
 `qc_needs_review` that holds no file a person wrote: the pose-tracking layer's stored flags are
 carried over (that layer reads the whole pose file; a hold it made stays, except a ruler-variation
 hold -- see the 2026-10-23 update), the file-based layers are recomputed. A bundle with nothing critical left goes back to the posed folder for a fresh run
-(mp4 and pose files; its other files are set aside under `_Problematic/_released_qc_holds_<date>/`)
+(mp4 and pose files; its other files used to be set aside under `_Problematic/_released_qc_holds_<date>/`
+-- now they are cleared as a leftover, see "Queue leftovers" under "Update: routing into and out of the review queues" below)
 and its row becomes `dlc_complete`, so intake takes it in its priority turn -- not `processing`,
 which would block intake of new work. The first use: Easy/Flat bundles held only for the
 outcomes file they never get. Bounded to 30 s of each scan; one re-check
@@ -2305,7 +2311,9 @@ What each answer does now:
   another pellet's hand score and flag, or pass, the wrong one.
 
 Held videos do not count against `max_local_pending` (`_held_for_hand_scores`): they are analysed
-already, and a night of them would otherwise stop all intake until the next sheet import. They
+already, and a night of them would otherwise stop all intake until the next sheet import. Videos
+whose route into a review queue was refused are left out of the count for the same reason
+(`_held_for_refused_route`; see "A refused route never fails the video"). They
 occupy local disk exactly as the waiting 'processed' videos did before. The list of held videos lived
 only in the watcher's memory: after a restart it was empty, every held video was picked once more,
 ran in full and was checked again. (Changed: the processing server now rebuilds the list from its
@@ -2519,7 +2527,9 @@ test decides it everywhere: `config.is_outcome_free_tray` (tray letter E or F).
 * **Never held.** The gate passes them (`review_gate.evaluate_gate`); the quality check no longer counts
   their segments. Videos already held by the machine (a quality flag or failed segmentation) are
   released by the review-return scan even when a person's file is in the bundle -- what a person can
-  answer there is an outcome -- and that file is kept with the set-aside outputs. A session a person
+  answer there is an outcome -- and that file is kept where it is, in the bundle folder, with a
+  note, listed under 'Folders left for a person' in the Review Queues tab (earlier versions kept
+  it with the set-aside outputs). A session a person
   flagged by hand stays.
 * **Reaches and attention, no kinematics or outcomes.** After the gate, `FeatureExtractor.
   extract_session_only` writes the features file: each reach's id and frames and the span's
@@ -3267,7 +3277,9 @@ once the video has moved on, as for its own claims.
 ## Update 2026-11-15: deep review supersedes triage
 
 The rule: **a video in the deep-review queue is not allowed to be in the triage queue as well.**
-Deep review always wins; a triage copy of such a video is deleted, not kept.
+Deep review always wins; a triage copy of such a video is emptied without losing a person's
+file: what has a current copy elsewhere is deleted and the rest stays where it is, listed (see
+below).
 
 **Routing.** Every route into a review queue goes through `review_gate.route_to_queue`:
 - into triage while the video has a deep-review bundle (published, or being built in
@@ -3275,14 +3287,26 @@ Deep review always wins; a triage copy of such a video is deleted, not kept.
   refusal is logged, and the deep-review bundle is returned. When the gate itself asked (a re-run
   of a video that is in deep review), that run's files are then taken out of the local Processing
   folder so the video is in one place only (`review_gate.discard_run_outputs`): the run's outputs
-  are deleted (they are made again when the video leaves deep review), the video or a pose file is
-  deleted only when the deep-review bundle holds the same file, and one that could be the only
-  copy is set aside, never deleted, to `<processing root>/_finished_elsewhere/<date>/Processing/`.
-  The log says what was deleted and what was set aside. A route from anywhere else (a filed
-  folder, a queue) never deletes anything;
+  are deleted (they are made again when the video leaves deep review); the video or a pose file is
+  deleted only when the deep-review bundle holds the same file, and one that could be the only copy
+  is set aside, never deleted, to `<processing root>/_finished_elsewhere/<date>/Processing/` (the
+  folder the watcher already used for such copies); a person's file (review, ground truth, clear
+  marker, hand-set cuts -- `review_routing.is_person_file`) is deleted only when the deep-review
+  bundle holds it byte for byte, and otherwise stays where it is and is listed
+  (`note_for_a_person`, kind `person_file_left`). A route from anywhere else (a filed folder, a
+  queue) never deletes anything;
 - into deep review: after the bundle is complete (its routing record lists no file that failed to
-  move), the video's triage bundle is deleted (`_drop_triage_copy`). With a failed file the triage
-  folder is kept and the log names it for a person.
+  move), the video's triage folder is emptied (`_drop_triage_copy` -> `_empty_triage_copy`): the
+  video or a pose file is moved into the deep-review bundle when that bundle has no file of that
+  kind (`review_routing.input_kind`); then the folder is cleared as a leftover against the
+  deep-review bundle (`review_routing.clear_leftover`, see "queue leftovers" below). No review,
+  ground truth, hand-set cuts or clear marker is carried into the deep-review bundle this way.
+  With a failed file the triage folder is kept untouched and listed (`queue_folder_in_the_way`);
+  `repair_unfinished_routes` empties it as above on every pass once the deep-review bundle's route
+  is whole (its record has `finished_later` and no `failed_files` left), whoever moved the missing
+  file in. Escalate and the return scan's mislabel divert are not this path: they route the
+  triage bundle itself, and its review and ground truth travel with it into deep review (unchanged;
+  the re-segmentation-voids-answers work will change it).
 
 `mousereach-route-to-queue --queue triage` checks the rule before it flags any segment and
 reports such a video as `deep` (`"in_deep_review": true` with `--json`); it is not counted as a
@@ -3327,7 +3351,7 @@ placeholder file cannot be written, the video is marked failed instead (never pa
 
 Several watcher steps rewrite a JSON file that already exists. They used to open the file for writing, which empties it first, so a crash or a lost share connection part-way through left a cut-off file. A cut-off review is read as "no answers"; a cut-off stage output fails the next step. Each of these writes now goes to a hidden temporary file beside the real one (`.<file name>.<random>.tmp`), is flushed to disk, and is swapped in with one rename (`pipeline/fsutil.py`: `write_json_atomic`, `copy_file_atomic`). Anyone reading the file sees the old complete version or the new complete version, never a mix. If Windows refuses the rename because another program has the file open, it is tried again for about ten seconds and then the step fails loudly with the old file unchanged.
 
-The temporary name starts with a dot on purpose: the router and the archiver take every file whose name starts with the video's name, and a dot-name never matches, so a temporary file left by a crash is never carried along as one of the video's outputs. The one mover that takes EVERY file in a folder -- returning a cleared review bundle to Processing (`review_return._return_to_processing`) -- deletes such leftovers before it moves anything and logs a warning naming each; nothing would ever remove one from Processing. If a leftover cannot be deleted (held open, e.g. by a review window saving into the bundle), the return moves nothing, logs an error naming it and is retried later, so the video is never left half in the queue and half in Processing. (A bundle released to the posed folder sets everything that is not an input aside in the `_Problematic` archive, leftovers included.) Elsewhere a leftover can be deleted by hand.
+The temporary name starts with a dot on purpose: the router and the archiver take every file whose name starts with the video's name, and a dot-name never matches, so a temporary file left by a crash is never carried along as one of the video's outputs. The one mover that takes EVERY file in a folder -- returning a cleared review bundle to Processing (`review_return._return_to_processing`) -- deletes such leftovers before it moves anything and logs a warning naming each; nothing would ever remove one from Processing. If a leftover cannot be deleted (held open, e.g. by a review window saving into the bundle), the return moves nothing, logs an error naming it and is retried later, so the video is never left half in the queue and half in Processing. (A bundle released to the posed folder is then cleared as a leftover, temporary files included: copies and machine results are deleted, and a person's file stays where it is with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md. Nothing goes to `_Problematic`.) Elsewhere a leftover can be deleted by hand.
 
 Where this applies on the watcher side:
 
@@ -4054,3 +4078,248 @@ empty list; its held videos run in full once after a restart, as before.
 held video.
 
 Tests: `tests/test_hand_score_hold_survives_restart.py`.
+
+## Update: routing into and out of the review queues is all-or-nothing and never deletes a person's file
+
+Every route into a queue goes through `review_gate.route_to_queue` (which calls
+`review_routing.move_video_bundle`), and every return out of one through
+`review_return._return_to_processing`. The rules below are what those functions do; the
+operator-level description is in `docs/REVIEW_TOOLS.md`, "Moving a video into or out of a
+queue never deletes or overwrites a person's file".
+
+- **Routing onto itself.** When the source folder IS the destination bundle (a video already in
+  the queue it is sent to), `route_to_queue` moves nothing, rewrites neither the routing record
+  nor the review manifest, and only records the queue's state in the watcher database.
+  `move_video_bundle` returns at once in that case too, and `_safe_move` does nothing when source
+  and destination are the same file. Before, each file was "moved" onto itself and the overwrite
+  step deleted it. Tests: `tests/test_route_onto_itself_moves_nothing.py`.
+- **Flag Session in the re-segmentation queue.** `CausalReviewWidget._flag_session` checks the
+  folder the bundle is in (not the window's mode); when that is the deep-review queue it records
+  the flag, sets aside any earlier clear and does not route. Test:
+  `test_flag_session_in_the_resegmentation_queue_keeps_every_file`.
+- **No merge into an existing folder.** When `<queue>/<video>` exists and the source is any
+  other folder, `route_to_queue` calls `review_gate._clear_the_way` before anything moves: an
+  empty folder is removed; the video's live bundle (`review_gate.queue_folder_is_live`: live when
+  the row is held in THAT queue -- 'triage' for the triage queue, 'deep_review' for the
+  deep-review queue -- or there is no database, or the folder holds a queue record or a person's
+  file and the route is not a pipeline run whose `processing_started_at` is later than the
+  folder's `routed_at` and newest file time, `folder_last_touched`) raises `AlreadyInQueueError`
+  and is listed (`note_folder_in_the_way`, kind `queue_folder_in_the_way`); any other folder
+  (records only, or not the live bundle, or a folder already holding the leftover note) is cleared
+  as a leftover under the return claim, with the files the route brings as the live copy
+  (`review_routing.clear_leftover`) -- when it is gone the route goes on, when something was kept
+  the route raises `AlreadyInQueueError` (listed by the leftover's own item). The route command
+  reports a held video as `held` before touching anything (`route_cli._held_in_a_queue`) and
+  writes any requested flags into the held triage bundle's outcomes under the return claim
+  (`route_cli._ask_in_held_bundle`; never into a folder holding the leftover note); a question it
+  cannot record is `unrecorded` and fails the exit code. For a video it does route, it decides
+  what to ask by reading only, takes the return claim, routes (all or nothing), and only then
+  writes the flags into the BUNDLE's outcomes (`route_cli._record_question`), so a failed or
+  refused route leaves the filed folder byte for byte as it was. The attention lists are written
+  only when the review root lies inside the NAS root (`review_routing.attention_dir`). WHY the
+  folder and not the row alone: rows of bundles escalated before the window recorded the move
+  stayed 'triage' while the reviewer's bundle sat in deep review, and a row-only test would have
+  cleared that bundle away. Tests: `tests/test_route_never_merges_into_a_held_bundle.py`,
+  `tests/test_queue_folder_never_blocks_a_route.py`, `tests/test_live_bundle_judged_by_its_folder.py`.
+- **Queue leftovers are deleted once a current copy exists, never set aside.**
+  `review_routing.clear_leftover(folder, video, live, why, what_to_do)` is the one rule for every
+  leftover queue folder: the old copy a route meets (`_clear_the_way`), a triage copy of a video in
+  deep review (`_empty_triage_copy`, also reached from the return scan the first time it sees such
+  a copy), a stale or superseded bundle and an empty folder (`review_return._retire_stale_bundle`,
+  `live` = the deep-review twin, or `_live_copy_of`: this machine's processing folder, then the
+  filed results), and a released quality hold (`_release_to_posed`, `live` = the posed folder).
+  Deleted: queue records; a file `live` holds byte for byte; the review when the durable store holds
+  it byte for byte (`review_held_by_store` only compares; nothing is written into the store --
+  WHY: a leftover's answers were made on cuts that are being or have been redone, and the review
+  readers match the store's copy to the current cuts by frame span, so a copy put there would
+  carry old answers onto new cuts; and replacing a different stored review could put an older
+  answer where every reader looks); machine outputs when `live` is not empty. Kept where it is: anything
+  else. A folder left with something kept gets the note `LEFT_FOR_A_PERSON.json` and an item
+  (`left_for_a_person`) in this machine's `<NAS root>/attention/<host>_queue_folders_for_a_person.json`;
+  the return scan skips a folder holding the note (triage loop: from the listing it already takes;
+  deep loop: one existence check per bundle), `repair_unfinished_routes` skips it, and
+  `refresh_for_a_person` drops the item once the folder or its note is gone (it looks only at
+  listed folders). The list is changed only under its lock file (`causal_review_io._locked_update`;
+  WHY: the watcher, a review window and the dashboard on one machine all write it). WHY at all:
+  machine leftovers went to `_Problematic`, which is only for cases the pipeline cannot process at
+  all, and a person's files went there unseen or were deleted. Tests:
+  `tests/test_queue_folder_never_blocks_a_route.py`, `tests/test_person_files_are_kept_apart.py`,
+  `tests/test_review_return_stale.py`, `tests/test_review_return_superseded.py`,
+  `tests/test_release_lifted_qc_holds.py`, `tests/test_deep_review_keeps_triage_person_files.py`.
+- **A leftover is never a hold.** `review_routing.is_queue_bundle(folder)` (a folder, not holding
+  `LEFT_NOTE`) is the one test every reader of the queue folders uses for "the video is held here":
+  `deep_review_stems`, `in_deep_review` and `superseded_by_deep_review` (so `route_to_queue` takes
+  its triage-to-deep-review branch only when a LIVE deep-review bundle exists), `route_cli.
+  _held_in_a_queue` and its held-bundle question, `DLCOrchestrator._already_done_or_held` (also the
+  CPU pose pool's rule, and what `_record_finished_child` records), `_retire_claim_after_hold`,
+  `ProcessingOrchestrator._no_pose_for_reprocess`, `repose._held_in_triage_on_disk` (which still
+  answers True when the share cannot be read), `review_gate._drop_triage_copy`, `census.runner.
+  bundles_in` (also the consistency check's `reconcile`) and the dashboard's `folder_scan`. The
+  return scan already skipped such folders. WHY: a later triage route of a video whose deep-review
+  folder was only a leftover took "deep review supersedes triage", set the row to 'deep_review',
+  moved nothing and returned the leftover; the run's files stayed in Processing and the video had no
+  live bundle. Tests: `tests/test_leftover_is_not_a_hold.py`.
+- **A person's results file is read, not judged by name.** `review_routing.is_person_file` reads
+  `<video>_segments.json`, `_reaches.json` and `_pellet_outcomes.json` (`_REVIEWED_IN_PLACE`) and
+  counts one as a person's when it holds `validation_status` 'validated', `boundary_source` 'human',
+  or `human_verified` / `human_corrected` / `triage_cleared` true anywhere inside (top level, per
+  segment, per reach), or a segment `review/clear_guard` counts as locked; an unreadable one counts as
+  a person's. Other machine outputs (features, processing manifest, triage record, assignments) are
+  judged by name: they are derived and made again. Every caller (`clear_leftover`,
+  `_move_keeping_person_files`, `review_return._files_in_the_way`, `queue_folder_is_live`,
+  `discard_run_outputs`) still deletes or replaces a byte-identical copy. WHY: the review tools save
+  into the machine-named files (the segmentation review writes 'validated' with no
+  `boundary_source`), so a name rule deleted or replaced a person's corrections. Tests:
+  `tests/test_reviewed_results_are_a_persons_files.py`.
+- **Leftovers are listed in the review tool.** `review_routing.leftover_folders()` lists every
+  folder holding `LEFT_NOTE` directly in either queue, read from the folders (not from any machine's
+  attention list); the Review Queues tab's "Folders left for a person" panel shows them, plus
+  `queue_folder_in_the_way` items from the attention lists, in `dashboard/attention_dialog.py`'s
+  window. `attention_actions.actions_for` gives `left_for_a_person` (and `queue_folder_in_the_way`
+  over such a folder) one action, 'delete_leftover' -> `review_routing.delete_leftover_folder`: only
+  a folder named for the video, directly in a configured queue, holding the note, under the video's
+  return claim; the note is deleted last, so a delete that stops part-way leaves a folder still
+  marked as a leftover. A `queue_folder_in_the_way` over a live bundle gets a `note:` line (finish
+  its review). Tests: `tests/test_leftovers_are_listed_in_the_review_tool.py`.
+- **The dashboard's Resolve window.** `route_unfinished` items have these actions
+  (`watcher/attention_actions.py`, `actions_for` / `perform`, shown by `dashboard/attention_dialog.py`):
+  'finish_now' (the watcher's `_finish_failed_moves`, with this computer's watcher record) and
+  'accept_missing:<file>' (only when the file is in neither place; crosses it off under the bundle
+  claim, keeping the whole entry under `resolved_by_a_person`). Two differing copies, or a file at
+  the source of a video not held in the bundle's queue (`_source_not_held` ->
+  `review_return._held_in_this_queue`), get a `note:` line instead of a button. WHY no other
+  button: every earlier action set a copy aside or deleted one, and which copy is right is a
+  person's call. Test: `tests/test_attention_items_are_resolved_in_the_gui.py`.
+- **An unusable pose of a filed older-model video is sent for a new pose.**
+  `BaseOrchestrator._pose_check_before_segmentation` runs `pipeline.pose_check.check_pose` before
+  segmentation in both pipelines (the processing server's `_run_pipeline` and a GPU node's local
+  pipeline). Unusable (does not load as a pose table, no frames, or lacks SABL/SABR, plus
+  BOXL/BOXR on a segmented tray) -> `_pose_is_unusable(video_id, why, pose_path)`, which logs a
+  `pose_check failed` step and then acts only in the one settled case,
+  `_new_pose_requestable`: a filed video (row `archived_at` set and `repose.archived_video` found)
+  whose unusable pose is from another model than the declared one (`repose.scorer_of(pose_path) !=
+  repose.declared_scorer()`) is set `outdated` with `reprocess_scope='full'` and `mark_reason='pose
+  unusable: ...'` (the existing re-pose round trip then publishes a request:
+  `declared_pose_in_archive` finds no declared-model pose), the run stops, and the row is listed
+  grey in `attention/<host>_waiting_for_pose.json` (`_write_pose_attention`, 'outdated' rows only);
+  a later usable pose clears `mark_reason`. Every other case returns 'as_before' and the run goes on
+  exactly as before the check existed. The quality triage's 'Could not read DLC file' and 'Missing
+  SABL or SABR' flags carry category `pose_unusable` (`pose_check.POSE_UNUSABLE`);
+  `_run_quality_triage` returns `review_gate.QC_POSE_UNUSABLE` for them only when
+  `_new_pose_requestable` holds, and the verdict as before otherwise. A file that cannot be opened
+  stays with `segmentation_could_not_run`. OPEN (lab decisions, not implemented): what to do with
+  a filed video whose unusable pose is the declared model's own (the round trip matches a
+  declared-model pose by file name only, so it would find the same file and never write a
+  request), how a video that is not filed gets a new pose, and after how many unusable poses a
+  video is listed red. Test: `tests/test_unusable_pose_is_never_sent_to_review.py`.
+- **A refused route never fails the video.** In the watcher's pipeline (the processing server's
+  `_gate_held` and segmentation-failed route, and the same two places of a GPU node that also
+  processes), `AlreadyInQueueError` is caught: nothing has moved, the video stays 'processing' with
+  its files in Processing, one line `review_gate refused` goes into its processing log, and the
+  pipeline does not pick it again for 30 minutes (`ROUTE_REFUSED_WAIT_S`,
+  `_note_route_refused` / `_route_refused_waiting`). WHY: a refusal is a passing state of the
+  shared folders (a file held open in a review window, another program holding the claim), and
+  `mark_failed` counted it towards the video's retry limit, so an open window could leave the video
+  failed for good. The refusal is listed in the attention panel.
+  The wait repeats every 30 minutes for as long as the cause lasts (a live bundle in the queue, or
+  an old folder kept for a person: until a person has dealt with that folder). A refusal after the analysis (`_gate_held`, the local
+  pipeline's gate, `_route_pellet_numbers_unknown`) is noted `analysed=True`
+  (`_refused_after_analysis`), and the next run reuses the stage outputs in Processing exactly as
+  a video held for its hand scores does (`_forget_route_refusal` returns True; both pipelines'
+  resume test) -- no re-segmentation every half hour. The segmentation-failed route's refusal is
+  not, so its next run segments again. The list is in memory: after a restart the video runs in
+  full once (`tests/test_refused_route_reuses_the_analysis.py`).
+  The route the hand-score check makes (pellet numbers in doubt -> manual segmentation,
+  `_route_pellet_numbers_unknown`) is handled the same way: a refusal there is a refused route,
+  not "the hand-score check could not run". A video waiting after a refused route does not count
+  against `max_local_pending` (`_held_for_refused_route`), from the refusal until the pipeline
+  next starts on it (`_forget_route_refusal`), exactly as videos held for their hand scores do not:
+  it is analysed already and only waits for a queue folder, and a refusal can last a weekend (a
+  window holding a file open) or until a person deals with a folder. Counted, two of them stopped all
+  intake with the default limit of 2. Like the hand-score holds, the list lives only in the
+  watcher's memory: after a restart each such video is run once more and, if still refused,
+  listed again. Test: `tests/test_refused_route_does_not_fail_the_video.py`.
+- **Hold recorded before the manifest.** `route_to_queue` sets the database state right after
+  `move_video_bundle`, then writes the review manifest with the one-step writer
+  (`fsutil.write_json_atomic`, retried on a passing hold); a failure there is logged, not raised.
+  `review_return.repair_unfinished_routes` (called by every return scan, acting at most every
+  `ROUTE_REPAIR_INTERVAL_S` = 10 minutes) writes a missing manifest again for any bundle in either
+  queue that has a routing record and some file of the video, under the return claim, with the
+  step that sent the video (`route_to_queue` keeps `held_at_step` in the routing record too), so
+  the return still resumes just after that step. Whether a manifest is missing is read from the
+  bundle's listing (the triage scan's own listing is reused); a routing record is opened only when
+  its size or modified time changed since the last pass (`_record_flags`, `_record_flags_cache`).
+  WHY: opening a record on the share costs several times a listing, and reading every record of a
+  queue of thousands of bundles every ten minutes kept the watcher on the share for minutes.
+  Tests: `tests/test_route_records_hold_before_manifest.py`,
+  `tests/test_unfinished_routes_are_finished.py::test_a_routing_record_is_read_only_when_it_changed`.
+- **Returns are all or nothing.** `_return_to_processing` plans every move (inputs first, the
+  clear marker last), records each one done, and sets 'processing' (`_set_processing_state`) in
+  the same try. Any failure puts every moved file back (`_undo_return_moves`, newest first; a
+  partial copy at the destination of the move that failed is deleted when its source is still in
+  the bundle and the move created it -- the destination was not there before, or is identical --
+  so a file of another run already in Processing is never deleted), backs the bundle off for
+  `RETURN_RETRY_S`, and returns False. The queue records are
+  deleted only after the state is set. Before any move, `_files_in_the_way` checks every planned
+  destination: a different same-named file in the processing folder that is a person's file or an
+  input stops the return (nothing moves; backed off; listed as `return_blocked`, dropped when a
+  return of that bundle goes through); an identical file or an older run's machine output is
+  replaced. WHY: the move replaced it (a person's hand-set cuts were lost), and setting it aside in
+  a hidden folder hid it from everyone. Tests: section (f) of `tests/test_review_return_safety.py`.
+- **Person's files.** `review_routing.is_person_file` / `is_machine_output` / `is_input_file`
+  classify a video's files: machine outputs are `archive.supersede._ALGO_SUFFIXES` plus the queue
+  records; anything else not an input, and a `_segments.json` with `boundary_source` 'human' (or
+  unreadable), is a person's. `move_video_bundle` (and its publish fallback) never replaces a
+  person's file with a different one (`PersonFileInTheWay`, listed in `failed_files`).
+  `review_return._retire_stale_bundle` clears a stale bundle as a leftover against the live copy
+  the caller names (see "Queue leftovers" above). Tests:
+  `tests/test_person_files_are_kept_apart.py`, `tests/test_queue_folder_never_blocks_a_route.py`.
+- **Deep review beats triage without deleting a person's file.** `_drop_triage_copy` no longer
+  removes the triage folder whole, and `discard_run_outputs` keeps a person's file where it is
+  (listed) unless the deep-review bundle holds it byte for byte (see "deep review supersedes
+  triage" above). No answer is carried into the deep-review bundle by `_empty_triage_copy`. WHY:
+  re-segmentation voids every answer after it; a review or ground truth moved into the deep-review
+  bundle travelled back into Processing with it. NOT YET DONE: the review's copy in the durable
+  store is still read by the review readers (`causal_review_io.find_review`, `truth_resolver`),
+  which match it to the new cuts by frame span (`index_review_by_segment` drops it when its frames
+  no longer fall in one segment); and Escalate and the mislabel divert still carry the triage
+  bundle's review and ground truth into deep review. Voiding answers made on the old cuts is
+  separate work. Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
+- **Queue folder check reads the dict entries.** `orchestrator.queue_folder_holds_this_run`
+  reads each `failed_files` entry's `name` (entries are dicts with `name`, `error`, `source`; the
+  oldest records hold bare names), so a route that could not move the run's processing manifest is
+  recognised as holding this run. Before, the str() of the dict was taken for a file name and the
+  check never matched. Tests: `tests/test_queue_folder_holds_this_run.py`.
+- **Unfinished routes.** `move_video_bundle(..., all_or_nothing=True)` (passed through
+  `route_to_queue` / `route_deep_review`) puts every moved file back and raises
+  `RouteIncompleteError` when any file fails; `route_cli.route_video` and the reprocessor's
+  mislabel divert use it, since their source is the filed folder. The pipeline's own routes out of
+  Processing keep going and record each failed file with its `source`;
+  `review_return.repair_unfinished_routes` (the same ten-minute pass as the manifest repair) moves
+  each one in under the return claim when it is still at its recorded place and no newer than
+  `routed_at` (+60 s), records it under `finished_later` -- the whole entry (its `error` and
+  `source`) with `finished` (how), `finished_at` and `finished_on` -- and lists every bundle still missing a
+  file in `<NAS root>/attention/<host>_unfinished_routes.json` (written only when the list
+  changes, and only when there is something to list or an earlier list to empty). A move that
+  fails leaves no copy at its destination (`review_routing._move_leaving_no_copy`: a file held
+  open is copied and then not deleted by `shutil.move`; the copy is deleted when it is new there
+  or identical). `_finish_failed_moves` handles a listed file that is in the bundle AND still at
+  its source: identical -- the source copy is deleted and recorded under `finished_later`;
+  different -- listed, nothing deleted. A listed file that is in the bundle and at none of its
+  candidate places (the entry's `source`, `<source_dir>/<name>`, `.incoming/<video>/<name>`; a
+  candidate that is the bundle's own file is skipped) is crossed off as finished too -- a person
+  moved it in, as the attention panel asks. The record is rewritten with `os.utime` putting back
+  its old modified time, because `_superseded_by_archive` judges a bundle by its files' times. Every
+  write of a routing record replaces it in one step (`review_routing._write_routing_manifest` ->
+  `fsutil.write_json_atomic`): a rewrite cut off part-way leaves the old record whole instead of a
+  truncated one that reads as no record (`tests/test_routing_record_rewrite_is_atomic.py`). Every routing record names the machine that made it
+  (`routed_by`); a source not under the NAS or review root is finished only by that machine
+  (`_on_shared_storage`), and an entry of a record without `routed_by` whose local source file
+  exists is listed, never acted on. With a watcher database (`scan_review_queues` passes its `db`
+  to `repair_unfinished_routes`, and on to `_finish_failed_moves`), a file at a source is moved or
+  deleted only while the row says the video is held in that bundle's queue
+  (`_held_in_this_queue`); otherwise, or when the row is missing, the entry is listed for a person
+  and nothing moves. WHY: intake and returns keep a file's modified time, so a re-run's mp4 at the
+  source looks older than the route and the newer-than-the-route rule cannot protect it. Tests:
+  `tests/test_unfinished_routes_are_finished.py` (the held-file tests hold a real open handle).
+

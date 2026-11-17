@@ -11,6 +11,12 @@ queue and opens the right review tool for each:
     a CLEAR button that writes {stem}_deep_review_cleared.json so the watcher
     re-injects the video just after segmentation).
 
+A third panel, 'Folders left for a person', lists every folder in either
+queue that is NOT a video's live bundle but holds something a person did with
+no current copy anywhere else (a leftover kept for a person, watcher/
+review_routing.clear_leftover), and every route refused because of a queue
+folder, each with its reason and what can be done about it from here.
+
 Each queue opens in ITS OWN napari viewer window. The causal review widget owns
 the viewer's single playhead, layers, and single-key shortcuts, so two of them
 cannot share one viewer -- a separate window per queue avoids the collision.
@@ -66,6 +72,14 @@ Refresh button.
   fixed after it was sent for its cuts. A video with open pellets that was
   sent for another reason is not touched; Re-segmentation Review shows its
   open pellets.
+
+* Folders left for a person -- a folder in a queue that is not a video's
+  live bundle but holds a person's work with no copy anywhere else (an
+  older review, ground truth, checked results). The machine never deletes
+  those. "Show and resolve..." lists each one with why it was left; look at
+  it, and when nothing in it is needed press "Nothing in it is needed:
+  delete this folder". A route refused because the queue holds the video's
+  live bundle is listed there too: finish that bundle's review.
 
 Each tool opens in its own window and has its own ? guide.
 """
@@ -149,6 +163,22 @@ Each tool opens in its own window and has its own ? guide.
         dl.addWidget(self._release_btn)
         root.addWidget(deep)
 
+        # --- Folders left for a person ---
+        left = QGroupBox("Folders left for a person  (not a live bundle; a person's "
+                         "work inside)")
+        ll = QVBoxLayout(left)
+        self._left_count = QLabel("(counting...)")
+        self._left_count.setWordWrap(True)
+        ll.addWidget(self._left_count)
+        self._left_btn = QPushButton("Show and resolve...")
+        self._left_btn.setToolTip(
+            "Lists every folder in the queues that is not a video's live bundle but "
+            "holds a person's work with no copy anywhere else, and every route "
+            "refused because of a queue folder, with why and what you can do.")
+        self._left_btn.clicked.connect(self._open_left_for_a_person)
+        ll.addWidget(self._left_btn)
+        root.addWidget(left)
+
         rbtn = QPushButton("Refresh counts")
         rbtn.clicked.connect(self._refresh_counts)
         root.addWidget(rbtn)
@@ -192,6 +222,45 @@ Each tool opens in its own window and has its own ? guide.
             else:
                 lbl.setText(f"{name}: {n} video(s) waiting")
         self._refresh_release_info()
+        n_left = len(self._left_items())
+        self._left_count.setText(
+            f"{n_left} folder(s) or refused route(s) need a person" if n_left
+            else "Nothing left for a person.")
+
+    @staticmethod
+    def _left_items() -> list:
+        """The rows of 'Folders left for a person': every leftover in the
+        queues (read from the folders, review_routing.leftover_folders) and
+        every route refused because of a queue folder that is not already
+        listed (from the machines' lists, watcher/attention.read_items)."""
+        items = []
+        try:
+            from mousereach.watcher.review_routing import leftover_folders
+            items = leftover_folders()
+        except Exception as e:
+            logger.warning(f"could not list the leftover queue folders: {e}")
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.attention import read_items
+            nas = getattr(Paths, "NAS_ROOT", None)
+            seen = {i["folder"] for i in items}
+            for i in (read_items(nas) if nas else []):
+                if (i.get("kind") == "queue_folder_in_the_way"
+                        and i.get("folder") not in seen
+                        and Path(str(i.get("folder") or "")).is_dir()):
+                    items.append(i)
+                    seen.add(i.get("folder"))
+        except Exception as e:
+            logger.warning(f"could not read the refused routes: {e}")
+        return items
+
+    def _open_left_for_a_person(self):
+        """The same Resolve window the Pipeline Dashboard uses, over the rows
+        of 'Folders left for a person'."""
+        from mousereach.dashboard.attention_dialog import AttentionResolveDialog
+        AttentionResolveDialog(self._left_items(), self,
+                               on_change=self._left_items).exec_()
+        self._refresh_counts()
 
     def _refresh_release_info(self):
         """Populate the release panel: how many videos this button would
