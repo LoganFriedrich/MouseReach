@@ -99,9 +99,15 @@ def test_marker_and_fixer_cuts_release_it(tmp_path, monkeypatch):
 
 def _window_lists(bundle):
     """What the review window decides for this bundle in the re-segmentation
-    queue (a stub stands in for the window: no Qt is started)."""
-    stub = SimpleNamespace(_deep_review=True, _bundle_reviewed=lambda b: False)
-    return CausalReviewWidget._bundle_needs_review(stub, bundle, bundle.parent)
+    queue: its own eligibility rule, run on a stub standing in for the window
+    (no Qt is started)."""
+    W = CausalReviewWidget
+    stub = SimpleNamespace(_deep_review=True, _triage_only=False, _worklist=None,
+                           _has_triage_cache={})
+    for name in ("_bundle_reviewed", "_segmentation_failed", "_bundle_has_triage"):
+        setattr(stub, name, (lambda f: lambda *a: f(stub, *a))(getattr(W, name)))
+    stub._bundle_needs_review = lambda b, r: W._bundle_needs_review(stub, b, r)
+    return W._bundle_eligible(stub, bundle, bundle.parent)
 
 
 def _fixer_lists(bundle):
@@ -128,3 +134,66 @@ def test_triage_window_still_treats_ground_truth_as_the_answer(tmp_path):
     b = _bundle(tmp_path)
     stub = SimpleNamespace(_deep_review=False, _bundle_reviewed=lambda b: False)
     assert not CausalReviewWidget._bundle_needs_review(stub, b, tmp_path)
+
+
+def _seg_failed_triage_bundle(triage, certified):
+    """A triage bundle whose segmentation reports failure, its one triaged
+    pellet answered, ground truth beside it and NO clear marker."""
+    b = triage / PILLAR
+    b.mkdir(parents=True)
+    (b / f"{PILLAR}_segments.json").write_text(
+        json.dumps({"overall_confidence": 0.0, "boundaries": []}), encoding="utf-8")
+    (b / f"{PILLAR}_pellet_outcomes.json").write_text(
+        json.dumps({"segments": [{"segment_num": 3, "outcome": "triaged"}]}),
+        encoding="utf-8")
+    (b / f"{PILLAR}_causal_review.json").write_text(json.dumps({"segments": [
+        {"segment_num": 3, "human": {"outcome": "untouched"},
+         "answers": {"reviewed": True}}]}), encoding="utf-8")
+    (b / f"{PILLAR}_unified_ground_truth.json").write_text(
+        json.dumps(_gt(certified)), encoding="utf-8")
+    return b
+
+
+@pytest.mark.parametrize("certified, diverted", [(True, False), (False, True)])
+def test_triage_scan_honours_only_ground_truth_the_gate_honours(
+        tmp_path, monkeypatch, certified, diverted):
+    """Ground truth certifying the whole video passes the gate clean even with
+    a failed segmentation, so the triage scan does not divert it to
+    re-segmentation; partial ground truth does not stop the divert (the gate
+    would send that video to re-segmentation anyway)."""
+    import mousereach.watcher.review_gate as rg
+    from mousereach.review import causal_review_io as cio
+    triage = tmp_path / "Review" / "triage"
+    deep = tmp_path / "Review" / "deep_review"
+    deep.mkdir(parents=True)
+    _seg_failed_triage_bundle(triage, certified)
+    monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
+    monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
+    monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")
+    monkeypatch.setattr(rr, "_return_retry_after", {})
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    routed = []
+    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
+    monkeypatch.setattr(rr, "_return_to_processing", lambda *a, **k: True)
+
+    class _DB:
+        def get_video(self, vid):
+            return {"video_id": vid, "state": "triage"}
+
+        def force_state(self, *a, **k):
+            pass
+
+    rr.scan_review_queues(_DB(), tmp_path / "proc")
+    assert bool(routed) is diverted
+
+
+@pytest.mark.parametrize("certified", [True, False])
+def test_recut_for_another_reason_with_ground_truth_still_has_clear(tmp_path, certified):
+    """After the fixer save (which does not release a video sent for a quality
+    hold), the window still lists it, so Clear is reachable."""
+    b = _bundle(tmp_path, reason="qc_needs_review", certified=certified)
+    (b / f"{PILLAR}_segments.json").write_text(json.dumps(
+        {"boundaries": [100, 200, 300], "boundary_source": "human",
+         "corrected_at": AFTER}), encoding="utf-8")
+    assert not _fixer_lists(b)
+    assert _window_lists(b)

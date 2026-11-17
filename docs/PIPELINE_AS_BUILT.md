@@ -2697,7 +2697,11 @@ What holds now:
    video released on it was cut again by the segmenter exactly as before. And "cleared"
    means the clear marker and nothing else -- the return scan
    (`review_return._deep_review_cleared`) makes the same test as the review gate; a
-   ground-truth file in the bundle used to count as a clear by its presence alone. The return scan enforces it (one log line per video per
+   ground-truth file in the bundle used to count as a clear by its presence alone.
+   In the triage queue's scan, a bundle whose segmentation reported failure is diverted to
+   re-segmentation unless it has a clear marker or ground truth certifying the WHOLE video
+   (the gate passes such a video clean, `review_gate.evaluate_gate`); partial ground truth
+   no longer stops the divert (the gate would send that video to re-segmentation anyway). The return scan enforces it (one log line per video per
    watcher run); the review tool's Clear button and its complete-answers auto-clear refuse
    and say why; `mousereach-review-release` and the Review Queues tab list such videos as
    "not re-segmented since they arrived". Easy and Flat trays are never segmented and are

@@ -396,6 +396,19 @@ def _deep_review_cleared(bundle: Path, stem: str) -> bool:
     return _gate_cleared(stem, Path(bundle))
 
 
+def _gt_certifies_whole_video(bundle: Path, stem: str) -> bool:
+    """True when ground truth certifies every element of this video -- the
+    test the review gate makes (triage_status.gt_resolved_segments, the one
+    reading of ground truth). Never raises."""
+    try:
+        from mousereach.review.triage_status import gt_resolved_segments
+        return bool(gt_resolved_segments(stem, extra_dirs=(Path(bundle),))[0])
+    except Exception as err:
+        logger.warning("%s: could not read its ground truth, so it counts as not "
+                       "certifying the video: %s", stem, err)
+        return False
+
+
 def _ensure_durable_review(bundle: Path, stem: str) -> None:
     """Copy this bundle's human review to the durable store before the bundle is
     emptied. Never raises; a failure is logged and the return still proceeds,
@@ -1809,7 +1822,15 @@ def scan_review_queues(db, processing_dir: Path,
         # triage, this scan sees raw seg_failed and diverts to deep review,
         # the clear marker instantly releases it, the pipeline re-runs, repeat
         # (one video made dozens of laps).
-        cleared = _deep_review_cleared(bundle, stem)
+        # Ground truth certifying the WHOLE video counts here too, because the
+        # gate passes such a video clean even with a failed segmentation
+        # (review_gate.evaluate_gate, "ground_truth_exhaustive"): diverting
+        # it to re-segmentation would hold a video the gate releases. Partial
+        # ground truth does not: the gate sends that video to re-segmentation
+        # anyway, so it goes there now instead of after a re-run. (A ground-
+        # truth file of any kind used to count, through _deep_review_cleared.)
+        cleared = (_deep_review_cleared(bundle, stem)
+                   or _gt_certifies_whole_video(bundle, stem))
         # DEEP REVIEW SUPERSEDES TRIAGE (review_routing): whatever this triage
         # copy's status, a video that is in deep review is never returned,
         # released or diverted from the triage queue -- the deep-review copy is
