@@ -524,8 +524,9 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
     "ground truth" stamped an old algorithm guess reach_source ground_truth,
     and an exhaustive set built from them dropped real detected reaches.
     A reach the person flagged exclude_from_analysis is a person's statement
-    whatever its frame flags, so it still removes the reach it covers when
-    the segment is replaced.
+    whatever its frame flags: every detected reach it overlaps is taken out
+    of the segment, exhaustive set or not, and recorded under
+    ``excluded_reaches`` with the person's reason (_drop_excluded_reaches).
 
     Each GT reach goes to the CURRENT segment its frames lie in, not to the
     segment NUMBER it was labelled with: a re-cut renumbers segments, and a
@@ -540,7 +541,8 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
     # Undetermined, not excluded: they keep a segment from being replaced.
     open_reaches = [r for r in listed
                     if not r.get("exclude_from_analysis") and not gt_reach_is_determined(r)]
-    if not exhaustive and not gt_reaches:
+    excluded = [r for r in listed if r.get("exclude_from_analysis")]
+    if not exhaustive and not gt_reaches and not excluded:
         return reaches_data  # nothing GT can say about reaches
 
     out = copy.deepcopy(reaches_data)
@@ -571,9 +573,19 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
         sn = _place(r, log=False)
         open_by_seg[sn] = open_by_seg.get(sn, 0) + 1
 
+    excl_windows = []
+    for r in excluded:
+        try:
+            a, b = int(r["start_frame"]), int(r["end_frame"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        excl_windows.append((min(a, b), max(a, b), r.get("exclude_reason")))
+
     for seg in out.get("segments", []):
         for a in seg.get("reaches", []):
             a.setdefault("reach_source", "algo")
+        if excl_windows:
+            _drop_excluded_reaches(seg, excl_windows)
         try:
             sn = int(seg.get("segment_num"))
         except (TypeError, ValueError):
@@ -597,6 +609,41 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
             seg["n_reaches"] = len(seg["reaches"])
     _unique_reach_ids(out)
     return out
+
+
+def _drop_excluded_reaches(seg: dict, windows) -> None:
+    """Take every detected reach of ``seg`` whose frames overlap a reach a
+    person marked "exclude from analysis" in the ground-truth tool out of the
+    segment's reaches, and record it under ``excluded_reaches`` (in place).
+
+    WHY: the exclusion is a person's statement that those frames are not a
+    valid reach. It used to remove only the ground-truth copy of the reach;
+    the detected reach over the same frames stayed and was measured like any
+    other, unless the reach set was marked complete. It now works like a
+    reviewer's ignore window (feature_extractor.split_reaches_by_ignore_windows):
+    every detected reach that overlaps it (inclusive, by one frame is enough)
+    is left out, and the features file lists it in the segment's
+    ``reaches_left_out`` with the person's reason, so the file still says the
+    reach happened. A reach a person determined in the ground truth is never
+    removed by this -- it is applied after, by the merge below."""
+    kept, gone = [], []
+    for r in seg.get("reaches", []) or []:
+        try:
+            rs, re_ = int(r.get("start_frame")), int(r.get("end_frame"))
+        except (TypeError, ValueError):
+            kept.append(r)
+            continue
+        hit = next((w for w in windows if rs <= w[1] and re_ >= w[0]), None)
+        if hit is None:
+            kept.append(r)
+            continue
+        gone.append({"reach_id": r.get("reach_id"), "start_frame": rs, "end_frame": re_,
+                     "excluded_by_person": {"start_frame": hit[0], "end_frame": hit[1],
+                                            "reason": hit[2]}})
+    if gone:
+        seg["reaches"] = kept
+        seg["n_reaches"] = len(kept)
+        seg["excluded_reaches"] = (seg.get("excluded_reaches") or []) + gone
 
 
 def _unique_reach_ids(reaches_data: dict) -> None:

@@ -497,9 +497,15 @@ class FeatureExtractor:
             # positioning and the per-reach features all see the same list.
             measured_reaches, left_out = split_reaches_by_ignore_windows(
                 seg_data['reaches'], outcome_data.get('abnormal_ranges'))
+            # Reaches a person excluded in the ground-truth tool were already
+            # taken out of seg_data['reaches'] by the truth layering
+            # (truth_resolver._drop_excluded_reaches); they are listed here
+            # beside the ignore-window ones, so the file says they happened
+            # and why they carry no kinematics.
+            left_out = list(seg_data.get('excluded_reaches') or []) + left_out
             if left_out:
                 print(f"[feature_extractor] segment {seg_num}: {len(left_out)} reach(es) "
-                      f"left out of the measurements by a reviewer's ignore window(s)")
+                      f"left out of the measurements by a person (ignore window or exclusion)")
 
             # Compute temporal context
             temporal_context = self._compute_temporal_context(
