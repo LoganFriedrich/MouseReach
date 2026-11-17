@@ -4599,3 +4599,28 @@ does not spin the loop. A collage that was already cropping is recorded `failed`
 exactly as before. Nothing to do; if the same ERROR comes back every 30 minutes, its message names
 the cause. The wait is in memory: a watcher restart tries the collage again straight away.
 Tests: `tests/test_collage_crop_failures_are_visible.py`.
+
+**A collage that has used up its retries.** A collage whose crop failed is tried again while its
+file is still in the intake folder (Unanalyzed\Multi-Animal), up to `watcher.max_retries` (3) times.
+After that it used to be "left parked" with a DEBUG line that nobody reads, and the sessions on it
+were never cut. Now:
+- the watcher log says it once per watcher run at WARNING, with the last error (`state.py`
+  `discover_new_collages`, which records every such collage in `parked_collages` on each scan);
+- every scan, the GPU node lists it in `<NAS root>/attention/<host>_collages.json`
+  (`DLCOrchestrator._list_parked_collages`), so it appears in the Pipeline Dashboard's red "Needs
+  your attention" panel with its name and last error. The item's kind is `collage_crop_parked`; it
+  names the recording in `collage` and has no cohort (`cohort_id` empty), because a collage holds
+  several animals and must not be filed under one animal's cohort;
+- before listing, the node asks the shared claim: if another node has already cropped the collage,
+  the row here is set `cropped` (the processing log names the node) and nothing is listed; if
+  another node is cropping it right now (a claim younger than 24 hours), it is left to that node;
+- the dashboard's health line now also names every collage this machine could not crop, with how
+  often it was retried and the last error (`watcher/health.py`).
+
+What to do when one is listed: read its error. Fix the cause, then on the machine named in the list
+(the file name starts with it) open Watcher Control, raise `max_retries` by one in "Configuration
+(applies on next start)", press Save config, and restart the watcher (Stop, then Start). The collage
+is tried once more (failed videos on that machine get one more try too). When the collage crops, it drops off the
+list at the next scan; it also drops off if its file is taken out of the intake folder. The list
+file is rewritten only when it changes, and a list that cannot be written is a WARNING in the log,
+never a stop of the scan.

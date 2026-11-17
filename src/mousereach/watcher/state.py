@@ -65,6 +65,15 @@ class WatcherStateManager:
         # In memory on purpose: the videos table has no size columns, and a
         # watcher restart simply waits the stability time again.
         self._single_sightings: Dict[str, Tuple[int, int, float]] = {}
+        # Collages that failed and used up their retries while their file is
+        # still in the intake folder: {filename: last validation_error}.
+        # Rebuilt by every discover_new_collages, so a collage whose file was
+        # taken away, or that was fixed, drops off. The DLC watcher lists them
+        # for a person (DLCOrchestrator._list_parked_collages). WHY: such a
+        # collage used to be parked with a DEBUG line only -- no screen named
+        # it, and the sessions on it were never cut.
+        self.parked_collages: Dict[str, str] = {}
+        self._parked_warned: set = set()
 
     def discover_new_collages(self, scan_dir: Path) -> List[str]:
         """
@@ -81,6 +90,7 @@ class WatcherStateManager:
             return []
 
         newly_registered = []
+        parked: Dict[str, str] = {}
 
         for file_path in scan_dir.iterdir():
             if not file_path.is_file():
@@ -125,9 +135,17 @@ class WatcherStateManager:
                                 f"Collage {filename}: failed -> validated "
                                 f"(retry {retries + 1}/{max_r}; file present)")
                         else:
-                            logger.debug(
-                                f"Collage {filename}: failed and out of "
-                                f"retries ({retries}/{max_r}); leaving parked")
+                            error = known.get('validation_error') or 'no error recorded'
+                            parked[filename] = error
+                            # WARNING once per collage per watcher run: it
+                            # needs a person, but the scan runs every poll.
+                            if filename not in self._parked_warned:
+                                self._parked_warned.add(filename)
+                                logger.warning(
+                                    f"Collage {filename}: failed and out of "
+                                    f"retries ({retries}/{max_r}); left in the "
+                                    f"intake folder for a person. Last error: "
+                                    f"{error}")
                 except Exception as e:
                     logger.debug(f"Could not check collage path for {filename}: {e}")
                 continue
@@ -176,6 +194,7 @@ class WatcherStateManager:
 
                 logger.warning(f"Quarantined collage: {filename} - {result.error}")
 
+        self.parked_collages = parked
         return newly_registered
 
     @staticmethod

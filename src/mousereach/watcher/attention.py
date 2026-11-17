@@ -10,7 +10,10 @@ items of this shape:
 "needs_person" true is something a person must fix (e.g. a hand-score check
 that cannot run); false is something that is only waiting, shown, never as
 an alarm (e.g. an analysed video held before triage and kinematics until its
-cohort's sheet is next imported). The lists are rewritten whenever
+cohort's sheet is next imported). A GPU node's lists about COLLAGES
+(<host>_collages.json, <host>_collage_claims.json) name the recording in
+"collage" and carry cohort_id None, because a collage holds several animals.
+The lists are rewritten whenever
 they change and empty when nothing is listed, so reading them all is the
 current picture. Read by the Pipeline Dashboard's red panel, and by any other
 tool that shows the lab what needs doing.
@@ -71,3 +74,47 @@ def write_failed_reruns(nas_root, hostname: str, rows) -> None:
     except Exception as e:
         logging.getLogger(__name__).warning(
             "Could not write the failed re-runs attention list: %s", e)
+
+
+def write_list(nas_root, hostname: str, kind: str, items) -> bool:
+    """Replace this machine's list ``<nas_root>/attention/<host>_<kind>.json``
+    with ``items`` (an empty list when nothing is listed). Written to a
+    temporary file and swapped in, so a reader never sees half a list.
+    True when written. Never raises: it is called from the watcher's scan,
+    and a list that cannot be written must not stop the work it describes
+    (the failure is logged at WARNING instead).
+
+    Every item a watcher lists about a COLLAGE (kinds collage_crop_parked and
+    collage_claim_stuck) carries "collage" and a cohort_id of None. WHY None:
+    a collage holds several animals, and a tool that copies items into a
+    cohort's own to-do list must not file a recording-level problem under
+    one animal's cohort."""
+    import logging
+    try:
+        from mousereach.pipeline.fsutil import write_json_atomic
+        d = Path(nas_root) / "attention"
+        d.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(d / f"{hostname}_{kind}.json",
+                          {"written_by": hostname, "items": list(items)}, indent=1)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Could not write the attention list %s_%s.json: %s", hostname, kind, e)
+        return False
+
+
+def without_repeats(items) -> List[dict]:
+    """``items`` with repeats of the same collage problem dropped, keeping the
+    first. WHY: every GPU node that asks about a stuck crop claim lists the
+    same collage, and a person should see it once. Items that name no
+    collage are all kept."""
+    seen = set()
+    out: List[dict] = []
+    for i in items:
+        key = (i.get("kind"), i.get("collage")) if i.get("collage") else None
+        if key is not None:
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(i)
+    return out

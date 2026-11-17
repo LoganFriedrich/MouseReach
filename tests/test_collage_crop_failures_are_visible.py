@@ -149,3 +149,96 @@ def test_an_error_during_the_crop_still_records_failed(env):
     assert env.o._dispatch_work(work) is False
     row = env.db.get_collage(COLLAGE)
     assert row["state"] == "failed" and "bad" in (row.get("validation_error") or "")
+
+
+# --------------------------------------------------------- MRP-02e / D2-8
+
+def _scanning_node(env, monkeypatch):
+    """The node's scan with everything but the collage intake stubbed out."""
+    from mousereach.watcher.state import WatcherStateManager
+    from mousereach.watcher.watcher import FileWatcher
+    monkeypatch.setattr(orch.Paths, "SINGLE_ANIMAL_OUTPUT", None, raising=False)
+    import mousereach.watcher.watcher as watcher_mod
+    monkeypatch.setattr(watcher_mod.Paths, "SINGLE_ANIMAL_OUTPUT", None, raising=False)
+    monkeypatch.setattr(watcher_mod.Paths, "MULTI_ANIMAL_SOURCE",
+                        env.multi_animal_source, raising=False)
+    o = env.o
+    o.state = WatcherStateManager(o.db, o.config)
+    o.file_watcher = FileWatcher(o.config, o.state)
+    for name in ("_single_claim_upkeep", "_retry_failed_shared_writes",
+                 "_finish_shared_record_fill", "_scan_for_dlc_completions",
+                 "_adopt_untracked_queue_files", "_repose_heartbeat"):
+        setattr(o, name, lambda *a, **k: None)
+    o._retry_coordinator = lambda: True
+    o._is_paused = lambda: True          # stop before the re-pose requests
+    return o
+
+
+def _out_of_retries(env):
+    _collage(env, "failed")
+    env.db.update_collage_state(COLLAGE, "validated", retry_count=3)
+    for s in ("stable", "cropping"):
+        env.db.update_collage_state(COLLAGE, s)
+    env.db.update_collage_state(COLLAGE, "failed",
+                                validation_error="crop failed: unreadable stream")
+
+
+def test_a_collage_out_of_retries_is_listed_for_a_person(env, monkeypatch):
+    _out_of_retries(env)
+    env.o.coordinator = FakeCoordinator(claim_state=None)     # nobody holds it
+    o = _scanning_node(env, monkeypatch)
+
+    o._scan_phase()
+
+    assert env.db.get_collage(COLLAGE)["state"] == "failed"
+    items = _attention(env, "collages")
+    assert items is not None, "a parked collage must reach the attention lists"
+    assert len(items) == 1
+    item = items[0]
+    assert item["kind"] == "collage_crop_parked" and item["needs_person"] is True
+    assert item["collage"] == COLLAGE
+    assert item["cohort_id"] is None, (
+        "a collage problem must never be filed under one animal's cohort")
+    assert "unreadable stream" in item["says"] and "max_retries" in item["says"]
+
+
+def test_a_collage_cropped_elsewhere_is_recorded_not_listed(env, monkeypatch):
+    _out_of_retries(env)
+    env.o.coordinator = FakeCoordinator(claim_state="cropped", holder=OTHER)
+    o = _scanning_node(env, monkeypatch)
+
+    o._scan_phase()
+
+    assert env.db.get_collage(COLLAGE)["state"] == "cropped"
+    assert _attention(env, "collages") in (None, [])
+
+
+def test_a_collage_another_node_is_cropping_now_is_not_listed(env, monkeypatch):
+    _out_of_retries(env)
+    env.o.coordinator = FakeCoordinator(claim_state="cropping", holder=OTHER)
+    o = _scanning_node(env, monkeypatch)
+
+    o._scan_phase()
+
+    assert env.db.get_collage(COLLAGE)["state"] == "failed"
+    assert _attention(env, "collages") in (None, [])
+
+
+def test_a_list_that_cannot_be_written_never_stops_the_scan(env, monkeypatch):
+    _out_of_retries(env)
+    env.o.coordinator = FakeCoordinator(claim_state=None)
+    import mousereach.pipeline.fsutil as fsutil
+
+    def refuse(*a, **k):
+        raise PermissionError("share is read-only")
+    monkeypatch.setattr(fsutil, "write_json_atomic", refuse)
+    o = _scanning_node(env, monkeypatch)
+    o._scan_phase()                      # must not raise
+
+
+def test_the_health_line_names_a_collage_that_could_not_be_cropped(env):
+    from mousereach.watcher import health
+    _out_of_retries(env)
+    text = "\n".join(health.health_report(env.db))
+    assert COLLAGE in text and "unreadable stream" in text
+    assert "Nothing is stuck" not in text

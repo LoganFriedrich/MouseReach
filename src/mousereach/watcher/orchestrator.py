@@ -31,7 +31,7 @@ from mousereach.gpu import setup_gpu_env
 setup_gpu_env()
 from pathlib import Path
 from typing import Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from mousereach.watcher import claim_marker, node_status
 from mousereach.watcher.cycle_timer import CycleTimer
@@ -2817,6 +2817,92 @@ class DLCOrchestrator(BaseOrchestrator):
                 logger.debug(f"could not log the claim skip for {collage_filename}: {e}")
         logger.info(f"Collage {collage_filename}: {reason}")
 
+    @staticmethod
+    def _claim_is_stale(claim: dict) -> bool:
+        """True when a 'cropping' claim is older than COLLAGE_CLAIM_STALE_S (or
+        its time cannot be read). The same test the claim takeover uses."""
+        from mousereach.watcher.coordination import (COLLAGE_CLAIM_STALE_S,
+                                                     _parse_claimed_at)
+        when = _parse_claimed_at(claim.get('claimed_at'))
+        if when is None:
+            return True
+        return when < datetime.now() - timedelta(seconds=COLLAGE_CLAIM_STALE_S)
+
+    def _list_parked_collages(self) -> None:
+        """List, for a person, every collage this node gave up on: failed, out
+        of retries, and still in the intake folder (state.py records them as
+        parked_collages on every scan). Never raises.
+
+        WHY: such a collage used to sit 'failed' with only a DEBUG line, so the
+        sessions on it were never cut and no screen said so. It is now an item
+        in ``<NAS root>/attention/<host>_collages.json`` (kind
+        collage_crop_parked, needs_person true), which the Pipeline Dashboard
+        shows in its red panel with the last error.
+
+        Before listing, the shared claim is asked about each one (one row
+        each):
+          * another node FINISHED it ('cropped'/'archived'): it is not this
+            node's problem any more. The row here is set 'cropped' for good
+            and the processing log says who cropped it; not listed.
+          * another node is cropping it now (a 'cropping' claim that is not
+            stale): left to that node; not listed.
+          * anything else (no claim, a stale claim, this node's own claim, or
+            the claim could not be read): listed.
+        The list file is rewritten only when its contents change, and once at
+        the first scan so a list left by an earlier run is brought up to date.
+        """
+        try:
+            parked = dict(getattr(getattr(self, 'state', None), 'parked_collages', None) or {})
+            coordinator = getattr(self, 'coordinator', None)
+            items = []
+            for name in sorted(parked):
+                claim = None
+                if coordinator is not None:
+                    try:
+                        claim = coordinator.get_collage_claim(name)
+                    except Exception as e:
+                        logger.debug(f"could not read the claim on {name}: {e}")
+                claim = claim or {}
+                holder = claim.get('hostname')
+                if claim.get('state') in ('cropped', 'archived'):
+                    reason = (f"out of retries here, but already cropped by "
+                              f"{holder or 'another node'} (shared claim is "
+                              f"'{claim.get('state')}'); recorded here as 'cropped'")
+                    try:
+                        self.db.force_collage_state(name, 'cropped')
+                        self.db.log_step(name, 'claim', 'skipped', message=reason)
+                        logger.info(f"Collage {name}: {reason}")
+                    except Exception as e:
+                        logger.warning(f"Collage {name}: {reason}, but the row here "
+                                       f"could not be recorded ({e})")
+                    continue
+                if (claim.get('state') == 'cropping' and holder
+                        and holder != self.hostname and not self._claim_is_stale(claim)):
+                    continue
+                items.append({
+                    "kind": "collage_crop_parked",
+                    "needs_person": True,
+                    "collage": name,
+                    "video_id": None,
+                    "cohort_id": None,
+                    "says": (
+                        "Collage %s could not be cropped and has used up its "
+                        "retries (watcher.max_retries); it stays in the intake "
+                        "folder and none of its sessions are cut. Last error: %s. "
+                        "Fix the cause, then on that machine raise max_retries "
+                        "by one in Watcher Control > Configuration, press Save "
+                        "config and restart the watcher: the collage is tried "
+                        "once more (failed videos get one more try too)."
+                        % (name, parked[name])),
+                })
+            if (items != getattr(self, '_parked_collages_listed', None)
+                    and Paths.NAS_ROOT):
+                from mousereach.watcher.attention import write_list
+                if write_list(Paths.NAS_ROOT, self.hostname, "collages", items):
+                    self._parked_collages_listed = items
+        except Exception as e:
+            logger.warning(f"Could not list the collages that ran out of retries: {e}")
+
     def _note_unsynced_collage_claim(self, collage_filename: str, singles_created: int,
                                      error) -> None:
         """Remember a 'cropped' that did not reach the shared claim table, so
@@ -3783,6 +3869,10 @@ class DLCOrchestrator(BaseOrchestrator):
                 f"{scan_result.new_singles} new singles, "
                 f"{scan_result.stable_ready} now stable"
             )
+
+        # Collages that used up their retries: listed for a person
+        # (_list_parked_collages), not left with a DEBUG line.
+        self._list_parked_collages()
 
         # Phase B: Check for DLC completions (h5 files appearing)
         self._scan_for_dlc_completions()

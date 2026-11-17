@@ -137,7 +137,28 @@ def health_report(db=None) -> List[str]:
                 lines.append(
                     "%d video(s) are parked as unresolvable -- each carries "
                     "its reason (File Details shows it)." % len(unres))
-            if not failed and not unres:
+            # Collages this machine could not crop. WHY here: a failed collage
+            # is a whole recording whose sessions are not cut, and until
+            # 2026-11 no screen named one -- only a count in the status
+            # command. Ones still being retried say so; ones out of retries
+            # are also in the red attention panel (orchestrator
+            # _list_parked_collages).
+            failed_collages = []
+            getter = getattr(db, "get_collages_in_state", None)
+            if getter is not None:
+                failed_collages = getter("failed") or []
+            if failed_collages:
+                lines.append(
+                    "%d collage(s) could not be cropped on this machine (each is "
+                    "retried while its file is in the intake folder, up to "
+                    "watcher.max_retries): %s%s"
+                    % (len(failed_collages),
+                       "; ".join("%s (retried %s time(s); %s)"
+                                 % (c.get("filename"), c.get("retry_count") or 0,
+                                    c.get("validation_error") or "no error recorded")
+                                 for c in failed_collages[:3]),
+                       " ..." if len(failed_collages) > 3 else ""))
+            if not failed and not unres and not failed_collages:
                 lines.append("Nothing is stuck: no failed or parked videos.")
         except Exception as e:
             lines.append("Could not read the pipeline database: %s" % e)
