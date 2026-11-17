@@ -55,6 +55,9 @@ def _bundle(root, stem=PILLAR, reason="segmentation: cuts in question",
 
 
 def _scan(tmp_path, monkeypatch, bundle_root):
+    # A failed return earlier in the run backs a stem off for a while; start
+    # this scan with none.
+    monkeypatch.setattr(rr, "_return_retry_after", {})
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", bundle_root)
     monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", tmp_path / "Review" / "triage")
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")
