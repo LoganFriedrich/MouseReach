@@ -122,39 +122,44 @@ def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
     if _same_file(src, dst):
         logger.debug(f"{src.name} is already at {dst.parent}; nothing to copy")
         return True
+    # The copy is written under a temporary name beside the destination and
+    # renamed onto the final name only once it is complete (and, with
+    # verify, the right size). WHY: a copy interrupted mid-file (the process
+    # killed, the machine restarted, the share dropped) used to leave a
+    # truncated video under its FINAL name; the next pass found a file of the
+    # expected name, took it for the video and could queue it for pose. A
+    # leftover '<name>.part' is never taken for a video: every picker skips
+    # the temporary suffixes (watcher.state.TEMP_SUFFIXES).
+    part = dst.with_name(dst.name + PART_SUFFIX)
     for attempt in range(1, COPY_RETRY_ATTEMPTS + 1):
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
 
             logger.info(f"Copying {src.name} -> {dst.parent}")
-            shutil.copy2(str(src), str(dst))
+            shutil.copy2(str(src), str(part))
 
             if verify:
                 src_size = src.stat().st_size
-                dst_size = dst.stat().st_size
-                if src_size != dst_size:
+                part_size = part.stat().st_size
+                if src_size != part_size:
                     logger.error(
-                        f"Size mismatch after copy: src={src_size}, dst={dst_size} "
+                        f"Size mismatch after copy: src={src_size}, dst={part_size} "
                         f"for {src.name}"
                     )
-                    # Clean up bad copy (best-effort)
-                    try:
-                        dst.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    _discard(part, dst)
                     return False
                 logger.debug(f"Copy verified: {src_size} bytes for {src.name}")
 
+            # One rename: the final name holds either the old file or the
+            # whole new one, never part of it.
+            os.replace(str(part), str(dst))
             return True
 
         except OSError as e:
-            # Clean up partial copy (best-effort -- the destination may be
-            # held by the very lock that failed the copy)
-            try:
-                if dst.exists():
-                    dst.unlink(missing_ok=True)
-            except OSError:
-                pass
+            # Clean up the partial copy, and the destination name as _discard
+            # says (best-effort -- the destination may be held by the very
+            # lock that failed the copy)
+            _discard(part, dst)
             if attempt < COPY_RETRY_ATTEMPTS and _is_transient_lock(e):
                 delay = COPY_RETRY_BASE_DELAY * attempt
                 logger.warning(
@@ -165,6 +170,32 @@ def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
             logger.error(f"Copy failed {src} -> {dst}: {e}")
             return False
     return False
+
+
+# The temporary suffix safe_copy writes under. It must stay in
+# watcher.state.TEMP_SUFFIXES, which every picker skips.
+PART_SUFFIX = ".part"
+
+
+def _discard(part: Path, dst: Path) -> None:
+    """Best-effort removal after a failed copy: the temporary file, and any
+    file already under the destination name. Never raises.
+
+    The destination is still INTACT when this runs: the copy went to
+    ``<name>.part``, so a file that was there before is the older file, not a
+    truncated one. It is removed all the same, so the result is what it was
+    before copies went through ``.part`` (then the copy wrote straight onto
+    the destination and the older file was gone from the first byte): a
+    caller that sees False never finds a file under the final name and takes
+    it for the copy it asked for -- an older generation's output there would
+    read as this run's. A caller that must keep an older file moves it aside
+    before copying (filing does: Analyzed/Archive)."""
+    for p in (part, dst):
+        try:
+            if p.exists():
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def safe_move(src: Path, dst: Path) -> bool:

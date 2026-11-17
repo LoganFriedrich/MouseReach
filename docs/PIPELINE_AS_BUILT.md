@@ -5134,3 +5134,15 @@ same release with buttons and is the easier way. `--release` uses the same routi
   any refusal exits 1.
 
 Example: `mousereach-watch-quarantine --release 20250101_badname.mp4 --to single --as 20250101_ABC0101_P1.mp4`
+
+## Update: filing is one step, and nothing half-copied or half-filed looks complete
+
+**A copy is never half a file under the real name.** Every copy the watcher makes
+(`transfer.safe_copy`: intake, staging, re-runs, the pose queue) is written first as
+`<name>.part` beside the destination, checked for size, and only then renamed onto the real
+name in one step. If the copy is cut off part-way -- the program stopped, the machine
+restarted, the network share dropped -- what is left is a `<name>.part` file, never a short
+video under the video's own name that a later pass would take for the real thing and send for
+pose. A failed copy removes its `.part` file. A `.part` (or `.tmp` / `.partial`) file left
+behind by a crash is ignored by every step that picks up a video's files; it can be deleted
+by hand once nothing is copying.
