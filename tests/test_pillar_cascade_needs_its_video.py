@@ -30,3 +30,11 @@ def test_a_video_elsewhere_on_the_node_is_copied_beside_the_pose(rig, tmp_path, 
     assert "outcome" in calls, calls
     assert (rig.folder / f"{VID}.mp4").exists()
     assert (filed / f"{VID}.mp4").exists(), "the filed copy was moved"
+
+
+def test_the_unresolvable_row_comes_back_by_the_posed_folder_rule(rig, monkeypatch):
+    from mousereach.watcher.db import INTAKE_MISS_REASON
+    (rig.folder / f"{VID}.mp4").unlink()
+    monkeypatch.setattr(o, "locate_video_file", lambda *a, **k: None)
+    rig.run(None)
+    assert (rig.orch.db.get_video(VID)["error_message"] or "").startswith(INTAKE_MISS_REASON)

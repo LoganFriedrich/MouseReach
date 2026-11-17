@@ -8249,8 +8249,18 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # failure of the video (_video_beside_pose).
             why = self._video_beside_pose(video_id, video_data.get('current_path'))
             if why:
+                # The reason starts with db.INTAKE_MISS_REASON so the
+                # posed-folder scan brings the row back ('dlc_complete', a
+                # fresh intake) by itself once the video and its pose are
+                # both in the posed folder; the posed claim is let go so any
+                # node can take it then.
+                reason = f"{INTAKE_MISS_REASON} ({why})"
                 self.db.log_step(video_id, 'outcome_detection', 'skipped', message=why)
-                self.db.mark_unresolvable(video_id, why)
+                self.db.mark_unresolvable(video_id, reason)
+                try:
+                    self._release_claim(video_id)
+                except Exception as e:
+                    logger.warning(f"{video_id}: could not let go of the posed claim ({e})")
                 logger.warning(f"{video_id}: {why}")
                 return
 

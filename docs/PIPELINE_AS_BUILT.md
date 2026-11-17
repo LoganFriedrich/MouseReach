@@ -5241,5 +5241,7 @@ makes sure `<video>.mp4` is in its Processing folder: if not, it looks where the
 on this machine (the recorded path, the posed folder, a review bundle, the filed cohort
 folder) and COPIES it in -- a filed or queued copy is never moved. If the video is nowhere on
 this machine, the row is set to 'unresolvable' with the reason "no <video>.mp4 on this node",
-nothing is analysed, and the video comes back once its file is found, as for any unresolvable
-video. Every outcomes file now also records `"cv_video": "found"` or `"missing"`.
+nothing is analysed, and the posed-folder scan puts it back in line for intake by itself as
+soon as the video and its pose are both in the posed folder (the same rule as for an intake
+that found the posed files incomplete). `mousereach-watch-unresolvable --list` shows such
+videos meanwhile. Every outcomes file now also records `"cv_video": "found"` or `"missing"`.
