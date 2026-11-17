@@ -913,9 +913,13 @@ In the log (INFO): `<stem>: already analysed and filed in the archive;
 recorded as 'archived', not queued for DLC`, and `Collage <name>: not cropped:
 all N expected child video(s) are already analysed or held for review`. When a
 refused video's copy is still in DLC_Queue, a WARNING names the file and says
-it is not removed automatically. WHY not delete it: a hold is judged from a
-folder existing, and a leftover empty queue folder must not be enough to
-destroy a crop. Delete such a file by hand to free the space.
+it is not removed automatically. A hold is a queue folder (or the
+`.incoming` folder of a route still being written) that holds at least one
+bundle file; an EMPTY queue folder is residue, not a hold. WHY not delete the
+copy all the same: the check only sees that the queue folder holds files, not
+that they are this same video, complete -- and a crop is deleted only once a
+copy elsewhere is verified. Delete such a file by hand to free the space (the
+same leftover existed before; it is not closed here).
 
 Re-pose requests: a GPU node copies 'triage' into its own rows, but only the
 processing server's review-return scan ever moves a video out of triage. So a
@@ -4541,3 +4545,39 @@ then find where the video went (a person moved it, or another machine lost it); 
 `CPU_Pose` is kept until a current copy exists elsewhere. Where it lives: `watcher/cpu_pose_pool.py`
 `CpuPosePool._retry_hand_ons`, `_current_copy_elsewhere`, `recover`, `run`. Tests in
 `tests/test_cpu_pool_hand_on_retry.py`.
+
+**The processing server asks the shared drive before taking in a posed video it has no row for.**
+A video's posed copy stays in Processing/Posed while the video is analysed, held in a review queue
+or failed; it is removed only once the video is filed. A server whose database has no row for such a
+video (a rebuilt or replaced database, a row never written) used to register the posed copy as new
+work, analyse the video again and route it into the queue folder that already held it. The
+posed-folder scan (`state.discover_dlc_staged`) now asks the same question a GPU node asks before
+every pose (`locate.held_or_filed_on_share`):
+- the video's bundle is in the triage or deep-review queue (or being routed into one, `.incoming`):
+  the row is recorded in that queue's state and nothing is taken in. The queue folder must hold
+  bundle files (any file apart from dot-files and file-manager leftovers such as `desktop.ini`); an
+  EMPTY folder is residue, not a hold, and the video is taken in as usual. WHY: counted as a hold,
+  an empty folder made the row 'triage' or 'deep_review'; the review return scan then removed the
+  empty folder, and the row stayed held for good with nothing in any review tool. This NARROWS the
+  hold rule everywhere it is used -- before, a queue folder counted as a hold as soon as it existed.
+  A folder kept for a person (one holding the left-over note) is not a hold either, as in every
+  other reader of the review queues (`review_routing.is_queue_bundle`).
+  The same rule now applies to a GPU node's check before a pose
+  (`DLCOrchestrator._already_done_or_held`) and to the CPU pose pool: an empty queue folder no
+  longer stops a pose. Only files directly in the queue folder count: real bundles are flat files
+  (the review routing writes them that way), so a folder holding only sub-folders or dot-files is
+  not a bundle;
+- the video is filed and the posed pose is the one it was filed with (same DLC scorer as the filed
+  manifest): the row is recorded `archived` and nothing is taken in;
+- the video is filed but the posed pose is a different one: new pose information, taken in as
+  before.
+The processing log shows step `intake`, status `skipped`, with the reason. For an operator: nothing
+to do.
+Known leftovers (not closed here): the intake of a video that already HAS a row does not ask this
+question; and a held, failed or being-analyzed video's posed copy still stays in Processing/Posed,
+so that folder does not yet hold only waiting work -- whether that copy is removed once the review
+bundle is published with the same video and pose, or kept somewhere that is not a waiting-work
+location, is a decision still to be made. Where it
+lives: `watcher/locate.py` `held_or_filed_on_share` (moved there from
+`DLCOrchestrator._already_done_or_held`, which now calls it); `watcher/state.py`
+`_held_or_filed_instead`. Tests in `tests/test_posed_scan_asks_held_or_filed.py`.

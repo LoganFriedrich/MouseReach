@@ -174,12 +174,14 @@ def _archive(stem):
 
 
 def _hold(env, where, stem):
-    """Put a bundle folder for this video where a review hold would be."""
+    """Put a bundle folder for this video where a review hold would be. It
+    holds a bundle file: an empty folder is residue, not a hold."""
     from mousereach.watcher.review_routing import INCOMING_DIR_NAME
     folder = {"triage": env.triage_review / stem,
               "deep_review": env.deep_review / stem,
               "deep_incoming": env.deep_review / INCOMING_DIR_NAME / stem}[where]
     folder.mkdir(parents=True)
+    (folder / f"{stem}_segments.json").write_text("{}")
     return folder
 
 
@@ -804,3 +806,11 @@ def test_the_retry_cuts_what_is_missing_and_leaves_the_rest(env, monkeypatch):
     assert env.db.get_collage(COLLAGE)["state"] == "cropped"
     assert env.db.get_video(KID1)["state"] == "dlc_queued"   # untouched by the retry
     assert env.db.get_video(KID2)["state"] == "dlc_queued"   # cut this time
+
+
+def test_an_empty_queue_folder_does_not_stop_a_pose(env):
+    """A queue folder with no bundle files is residue: the video is not
+    recorded as held (nothing in any review tool would list it)."""
+    from mousereach.watcher.locate import held_or_filed_on_share
+    (env.triage_review / "20240101_ABC9901_P1").mkdir(parents=True)
+    assert held_or_filed_on_share("20240101_ABC9901_P1") is None

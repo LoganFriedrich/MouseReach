@@ -43,6 +43,7 @@ from mousereach.watcher.transfer import safe_copy, safe_move
 from mousereach.watcher import single_claim
 from mousereach.watcher.locate import (
     resolve_pose_input, locate_pose_file, locate_video_file, node_search_dirs,
+    held_or_filed_on_share,
 )
 from mousereach.pipeline.manifest import select_pose_file
 from mousereach.watcher.work_priority import load_lab_policy, LAB_PRIORITY_HINT
@@ -2578,66 +2579,11 @@ class DLCOrchestrator(BaseOrchestrator):
 
     def _already_done_or_held(self, video_id: str) -> Optional[Tuple[str, str]]:
         """Is this video finished, or held for a person? ``(state, reason)`` if
-        so, None if it genuinely still needs a pose.
-
-        ``state`` is what this node's row should say instead: 'archived', or
-        the review queue's state ('triage' / 'deep_review').
-
-        WHY ask the shared drive instead of this node's database: the database
-        is exactly what cannot be trusted here. A new GPU node, or one whose
-        database was rebuilt, knows nothing about the thousands of videos
-        already analysed, and a pose costs ~14 GPU-minutes that then feeds
-        duplicate processing downstream. The shared drive is the authority:
-
-          * a bundle folder in Processing/Review/triage/<stem> or
-            deep_review/<stem> means a person holds the video -- posing it again
-            would build a second result beside the one under review;
-          * <queue>/.incoming/<stem> is a route into that queue still being
-            written (review_routing publishes it with one rename) -- the same
-            hold, a moment earlier;
-          * <stem>_processing_manifest.json in the video's archive folder means
-            it was analysed and filed.
-
-        The queues are checked first because a held video can ALSO have an
-        older manifest in the archive (a reprocess under review), and the hold
-        is the more current truth -- the same order _archive_to_nas uses.
-        A leftover kept for a person (a queue folder holding the note
-        review_routing.LEFT_NOTE) is not a hold (review_routing.
-        is_queue_bundle): it is not the video's live copy, and counting it
-        kept a video that needs a pose from ever getting one.
-        Never raises: an unreadable location counts as "not there".
-        """
-        try:
-            from mousereach.watcher.review_routing import (INCOMING_DIR_NAME,
-                                                           is_queue_bundle)
-        except ImportError:
-            INCOMING_DIR_NAME = ".incoming"
-
-            def is_queue_bundle(folder):
-                return Path(folder).is_dir()
-        # Deep review first: it supersedes triage (review_routing.py).
-        for qroot, qstate in ((getattr(Paths, 'DEEP_REVIEW', None), 'deep_review'),
-                              (getattr(Paths, 'TRIAGE_REVIEW', None), 'triage')):
-            if not qroot:
-                continue
-            try:
-                if is_queue_bundle(Path(qroot) / video_id):
-                    return qstate, f"its bundle is held for a person in the {qstate} queue"
-                if is_queue_bundle(Path(qroot) / INCOMING_DIR_NAME / video_id):
-                    return qstate, (f"its bundle is being routed into the {qstate} "
-                                    f"queue ({INCOMING_DIR_NAME})")
-            except OSError:
-                continue
-        try:
-            from mousereach.archive.core import get_archive_destination
-            archived_here = get_archive_destination(video_id)
-            if (archived_here is not None
-                    and (Path(archived_here) / f"{video_id}_processing_manifest.json").is_file()):
-                return 'archived', "already analysed and filed in the archive"
-        except Exception as err:
-            logger.warning('%s: could not check the archive, so it counts as not filed: %s', video_id, err)
-            pass
-        return None
+        so, None if it genuinely still needs a pose. The rule lives in
+        locate.held_or_filed_on_share (the processing server's posed-folder
+        scan asks it too); its docstring says why the shared drive, not this
+        node's database, is asked. Never raises."""
+        return held_or_filed_on_share(video_id)
 
     def _record_finished_child(self, video_id: str, verdict: Tuple[str, str],
                                collage_filename: str, metadata: dict) -> bool:
@@ -4782,9 +4728,13 @@ class DLCOrchestrator(BaseOrchestrator):
                 local = (Path(Paths.DLC_QUEUE) / f"{video_id}.mp4") if Paths.DLC_QUEUE else None
                 if local is not None and local.is_file():
                     # Not deleted automatically: the finished or held copy lives
-                    # elsewhere, but a hold is judged from a folder's existence,
-                    # and a leftover empty queue folder must not be enough to
-                    # destroy a crop. Named, so a person can free the space.
+                    # elsewhere, but a hold is judged from a queue folder (or its
+                    # .incoming twin) holding at least one bundle file
+                    # (locate._holds_a_bundle) -- not from a check that the
+                    # bundle holds this same video, complete. An empty folder is
+                    # residue, not a hold, and never gets this far. A crop is
+                    # deleted only on a verified copy elsewhere, so it is kept
+                    # and named, for a person to delete to free the space.
                     logger.warning(f"{video_id}: {why}; not posing it. Its copy "
                                    f"{local} is not needed for that and is NOT "
                                    f"removed automatically; delete it by hand to "

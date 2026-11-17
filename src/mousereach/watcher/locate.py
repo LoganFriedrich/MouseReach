@@ -38,7 +38,7 @@ the folder from the search AND refuses a recorded path that points into it.
 import logging
 import os
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from mousereach.pipeline.manifest import select_pose_file
 
@@ -187,6 +187,105 @@ def _recorded_path_allowed(raw, search_archive: bool, search_staging: bool) -> b
     if not search_archive and is_in_archive(raw):
         return False
     return True
+
+
+# Files a file manager may leave in any folder; they are not part of a bundle.
+_NOT_BUNDLE_FILES = frozenset({"desktop.ini", "thumbs.db", ".ds_store"})
+
+
+def _holds_a_bundle(folder: Path) -> bool:
+    """True when ``folder`` exists and holds at least one file of a bundle
+    (any regular file, apart from file-manager leftovers and dot-files).
+    Raises OSError when the folder cannot be read.
+
+    WHY not just "the folder exists": an empty or leftover residue folder
+    (a route that never got its files, a bundle emptied by hand) is not a
+    hold. Counted as one, the processing server recorded a video it had no
+    row for as 'triage' / 'deep_review' and took nothing in; the review
+    return scan then retired the empty folder, and the row stayed held for
+    good with no bundle and no review tool listing it."""
+    if not folder.is_dir():
+        return False
+    with os.scandir(folder) as it:
+        for e in it:
+            name = e.name
+            if name.startswith('.') or name.lower() in _NOT_BUNDLE_FILES:
+                continue
+            if e.is_file():
+                return True
+    return False
+
+
+def held_or_filed_on_share(video_id: str) -> Optional[Tuple[str, str]]:
+    """Is this video finished, or held for a person? ``(state, reason)`` if
+    so, None if it is not.
+
+    ``state`` is what a row for it should say: 'archived', or the review
+    queue's state ('triage' / 'deep_review').
+
+    WHY ask the shared drive instead of a node's database: the database is
+    exactly what cannot be trusted here. A new node, or one whose database was
+    rebuilt, knows nothing about the videos already analysed or held. The
+    shared drive is the authority:
+
+      * a bundle folder in Processing/Review/triage/<stem> or
+        deep_review/<stem> means a person holds the video -- taking it in
+        again would build a second result beside the one under review;
+      * <queue>/.incoming/<stem> is a route into that queue still being
+        written (review_routing publishes it with one rename) -- the same
+        hold, a moment earlier;
+      * <stem>_processing_manifest.json in the video's archive folder means
+        it was analysed and filed.
+    A queue folder counts only when it holds bundle files (_holds_a_bundle):
+    an empty one is residue, not a hold. A leftover kept for a person (a
+    folder holding the note review_routing.LEFT_NOTE) is not a hold either
+    (review_routing.is_queue_bundle): it is not the video's live copy, and
+    counting it kept a video that needs a pose from ever getting one.
+
+    The queues are checked first because a held video can ALSO have an older
+    manifest in the archive (a reprocess under review), and the hold is the
+    more current truth -- the same order the filing step uses. Deep review
+    first: it supersedes triage. Never raises: an unreadable location counts
+    as "not there".
+
+    Used by a GPU node before it poses a video (DLCOrchestrator.
+    _already_done_or_held), by the CPU pose pool, and by the processing
+    server before it registers a posed video it has no row for
+    (state.WatcherStateManager.discover_dlc_staged).
+    """
+    from mousereach.config import Paths
+    try:
+        from mousereach.watcher.review_routing import (INCOMING_DIR_NAME,
+                                                       is_queue_bundle)
+    except ImportError:
+        INCOMING_DIR_NAME = ".incoming"
+
+        def is_queue_bundle(folder):
+            return True
+    for qroot, qstate in ((getattr(Paths, 'DEEP_REVIEW', None), 'deep_review'),
+                          (getattr(Paths, 'TRIAGE_REVIEW', None), 'triage')):
+        if not qroot:
+            continue
+        try:
+            if (is_queue_bundle(Path(qroot) / video_id)
+                    and _holds_a_bundle(Path(qroot) / video_id)):
+                return qstate, f"its bundle is held for a person in the {qstate} queue"
+            if (is_queue_bundle(Path(qroot) / INCOMING_DIR_NAME / video_id)
+                    and _holds_a_bundle(Path(qroot) / INCOMING_DIR_NAME / video_id)):
+                return qstate, (f"its bundle is being routed into the {qstate} "
+                                f"queue ({INCOMING_DIR_NAME})")
+        except OSError:
+            continue
+    try:
+        from mousereach.archive.core import get_archive_destination
+        archived_here = get_archive_destination(video_id)
+        if (archived_here is not None
+                and (Path(archived_here) / f"{video_id}_processing_manifest.json").is_file()):
+            return 'archived', "already analysed and filed in the archive"
+    except Exception as err:
+        logger.warning('%s: could not check the archive, so it counts as not filed: %s',
+                       video_id, err)
+    return None
 
 
 def archive_dir_for(video_id: str) -> Optional[Path]:

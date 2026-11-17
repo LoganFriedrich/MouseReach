@@ -353,6 +353,7 @@ def test_a_video_that_needs_no_pose_is_never_claimed(env, where, state):
         _archive(VID)
     else:
         (env.triage_review / VID).mkdir()
+        (env.triage_review / VID / f"{VID}_segments.json").write_text("{}")
 
     assert _adopt(env, a) is True
     assert a.db.get_video(VID)["state"] == state

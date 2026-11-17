@@ -418,6 +418,50 @@ class WatcherStateManager:
             return True                     # no time recorded: nothing to wait for
         return (datetime.now() - last).total_seconds() >= self.COPY_RETRY_WAIT_S
 
+    def _held_or_filed_instead(self, video_id: str, mp4_path: Path,
+                               staging_dir: Path) -> bool:
+        """For a posed video this server has NO row for: record it as held
+        or filed, instead of taking it in, when the shared drive says so.
+        True when a row was recorded (the caller then takes nothing in).
+
+          * its bundle is in a review queue (or being routed into one): the
+            row gets that queue's state -- a person holds the video;
+          * it is filed and the posed pose is the one it was filed with (same
+            DLC scorer): the row is 'archived' -- nothing new to analyse.
+        A filed video with a DIFFERENT pose in the posed folder is new pose
+        information and is taken in as before.
+
+        WHY: a held or filed video's posed copy stays in the posed folder
+        (the intake copies it and does not remove it). A server whose
+        database has no row for it -- rebuilt, replaced, or a row never
+        written -- used to register that copy as new work, analyse the video
+        again and route it into the queue folder that already held it. The
+        GPU side has asked the shared drive this question before every pose
+        for a long time (locate.held_or_filed_on_share)."""
+        from mousereach.watcher.locate import held_or_filed_on_share
+        verdict = held_or_filed_on_share(video_id)
+        if not verdict:
+            return False
+        state, why = verdict
+        if state == 'archived':
+            from mousereach.pipeline.manifest import select_pose_file
+            from mousereach.watcher import repose
+            posed_h5 = select_pose_file(staging_dir.glob(f"{video_id}DLC*.h5"),
+                                        expected_scorer=repose.declared_scorer() or None)
+            filed_with = repose._archived_scorer(video_id)
+            if not filed_with or posed_h5 is None or repose.scorer_of(posed_h5) != filed_with:
+                return False            # a new pose of a filed video: taken in
+            why = f"{why}, with this same pose"
+        self.db.register_video(video_id=video_id, source_path=str(mp4_path),
+                               current_path=str(mp4_path))
+        self.db.force_state(video_id, state,
+                            reason=f"posed copy found with no row, but {why}; "
+                                   f"recorded as such rather than taken in")
+        self.db.log_step(video_id, 'intake', 'skipped', message=why)
+        logger.info(f"{video_id}: in the posed folder, but {why}; recorded as "
+                    f"'{state}', not taken in")
+        return True
+
     def discover_dlc_staged(self, staging_dir: Path) -> List[str]:
         """
         Scan DLC staging directory for new DLC-complete video+h5 pairs.
@@ -487,6 +531,11 @@ class WatcherStateManager:
             mp4_path = staging_dir / f"{video_id}.mp4"
             if not mp4_path.exists():
                 logger.debug(f"No matching video for DLC output: {h5_path.name}")
+                continue
+
+            # A posed video with no row may be held for a person or already
+            # filed; ask the shared drive first (_held_or_filed_instead).
+            if self._held_or_filed_instead(video_id, mp4_path, staging_dir):
                 continue
 
             # Validate filename
