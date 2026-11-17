@@ -365,6 +365,12 @@ READ THIS BEFORE INTERPRETING A STATE
   written; the video is NOT filed, its files stay in Processing, and the
   processing server's failed-video retry runs it again.
 
+  'failed' with an error starting "not filed: a pellet is still undecided in
+  its kinematics" means the features file of a Pillar video still holds a
+  pellet with no decided outcome; the video is NOT filed and is retried the
+  same way (docs/PIPELINE_AS_BUILT.md, "a video is filed only with its
+  kinematics").
+
   'processing' can also mean "analysed, and HELD for its hand scores": since
   2026-10-28 the hand-score comparison runs after the analysis and before the
   review gate, and a video whose session has no hand scores yet stays in

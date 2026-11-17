@@ -3159,6 +3159,21 @@ On a GPU machine with `also_process` true a failed video waits for a person in t
 the filed folder. Before this, a failed extraction was only a warning: the video went on to
 `processed` and was filed with no features file, i.e. filed as finished with no kinematics.
 
+**A pellet left undecided is not filed either.** The archive step also reads the features file it
+is about to file. If a Pillar video's file still holds a pellet with no decided outcome (the
+algorithm's `triaged`, an older tool's `uncertain`, or none), the video is not filed: its row goes
+to `failed` with an error starting `not filed: a pellet is still undecided in its kinematics`,
+naming the pellets. The same retry as above runs it again, through the review gate, which holds it
+in triage if the pellet really is open; if it is refused after the last retry it stays `failed`
+for a person (`mousereach-watch-status` lists it). A re-run of a video that is already filed and is
+refused this way leaves the filed copy as it was. Easy and Flat trays are never checked (no outcome
+is computed for them). **Why:** the gate and the kinematics read a person's answers separately; when
+they disagreed (the gate saw ground truth beside the video that the kinematics did not), the gate
+passed the video and the algorithm's `triaged` was filed and exported as the pellet's outcome. The
+check sits where the file is filed, so no later disagreement between two readers can file an open
+question. (`refuse_filing_with_undecided_pellet`, `orchestrator.py`; test
+`tests/test_filing_refuses_undecided_pellet.py`.)
+
 **The archive step checks too.** Before it moves anything, the archive step (both
 `_archive_to_nas` on the server and `_archive_locally_processed` on a GPU machine) refuses a video
 whose results folder holds its files but no `<video>_features.json`, and marks it failed the same

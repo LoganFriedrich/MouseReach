@@ -275,6 +275,9 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
 # no kinematics. Read by people (mousereach-watch-status, the dashboard) and by
 # the tests; keep it plain words.
 NO_KINEMATICS_REASON = "not filed: no kinematics"
+# What a video's row says when its features file still holds a pellet nobody
+# decided (refuse_filing_with_undecided_pellet says why).
+UNDECIDED_PELLET_REASON = "not filed: a pellet is still undecided in its kinematics"
 
 # How long a video held because its hand-score check could not run waits
 # before it is checked again even though the scores file has not changed.
@@ -342,10 +345,68 @@ def _has_files_of(directory, video_id) -> bool:
         return False
 
 
+def undecided_pellets_in_features(features_path, video_id):
+    """Segment numbers of a Pillar video's features file whose pellet outcome
+    is still undecided (the algorithm's "triaged", an older tool's
+    "uncertain", or none) -- causal_review_io.UNDECIDED_OUTCOMES, the one
+    definition every check of an answer uses. Empty for an Easy or Flat tray
+    (no outcome is ever computed for them) and for a file that cannot be read
+    (the features check proper reports a missing file; an unreadable one is
+    not this check's question)."""
+    from mousereach.config import is_outcome_free_tray
+    from mousereach.review.causal_review_io import UNDECIDED_OUTCOMES
+    if is_outcome_free_tray(video_id):
+        return []
+    try:
+        with open(features_path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for seg in (doc or {}).get("segments") or []:
+        if isinstance(seg, dict) and seg.get("outcome") in UNDECIDED_OUTCOMES:
+            out.append(seg.get("segment_num"))
+    return out
+
+
+def refuse_filing_with_undecided_pellet(db, video_id, results_dir) -> bool:
+    """True (and the row marked failed, nothing moved) when the video's
+    features file still holds a pellet whose outcome nobody decided.
+
+    WHY: filing means done for good, and an undecided pellet is an open
+    question. The review gate holds a video with an open pellet in triage, so
+    one should never reach this step -- but the gate and the kinematics read
+    the answers separately, and when they disagreed (the gate found ground
+    truth beside the video that the kinematics did not) the gate passed the
+    video and the kinematics wrote the algorithm's "triaged" into the filed
+    results. This check is the last word on the filed file itself, whatever
+    the reason two readers disagreed. The row is marked failed with the
+    pellets named: the failed-video retry runs the video again (through the
+    gate), and if it is still refused after the last retry it stays failed,
+    listed by mousereach-watch-status, for a person. A re-run of an already
+    filed video that is refused leaves the filed copy as it was."""
+    folder = Path(results_dir) if results_dir else None
+    if folder is None:
+        return False
+    open_segs = undecided_pellets_in_features(folder / f"{video_id}_features.json", video_id)
+    if not open_segs:
+        return False
+    names = ", ".join(str(n) for n in open_segs)
+    message = (f"{UNDECIDED_PELLET_REASON} (pellet(s) {names} in {video_id}_features.json "
+               f"have no decided outcome; the review gate passed the video, so the "
+               f"gate and the kinematics read different answers -- the archive step "
+               f"does not file an open question)")
+    db.mark_failed(video_id, message)
+    db.log_step(video_id, 'archive', 'failed', message=message)
+    logger.error(f"{video_id}: {message} -- held as failed, not filed")
+    return True
+
+
 def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     """The archive step's own check that a video has its kinematics: True
     (and the row marked failed, nothing moved) when ``results_dir`` holds the
-    video's files but no ``<stem>_features.json``.
+    video's files but no ``<stem>_features.json``, or a features file that
+    still holds an undecided pellet (refuse_filing_with_undecided_pellet).
 
     WHY a second check after _make_features: 'processed' means "file it", and
     a row can reach 'processed' by other ways than a fresh run (a person
@@ -357,8 +418,10 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     nothing of the video in it (the archive step reports that itself).
     """
     folder = Path(results_dir) if results_dir else None
-    if folder is None or (folder / f"{video_id}_features.json").is_file():
+    if folder is None:
         return False
+    if (folder / f"{video_id}_features.json").is_file():
+        return refuse_filing_with_undecided_pellet(db, video_id, folder)
     if not _has_files_of(folder, video_id):
         return False
     if _filed_by_this_run(db, video_id) is not None:

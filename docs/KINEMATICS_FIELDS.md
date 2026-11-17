@@ -483,6 +483,7 @@ Two things segments do **not** control. Reach frame windows are never clipped to
 | Database sync fails, from the CLI | `except Exception: pass` — and the call cannot raise anyway, so nothing is printed either way | `kinematics/cli.py:143-144` |
 | Database sync fails, from the watcher | `logger.debug("Database sync skipped ... subject not in DB or DB unavailable")` — the wrong cause | `orchestrator.py:2126-2130`; the other watcher path (`:1166-1170`) logs nothing at all on a `False` return |
 | Feature extraction fails, from either watcher role | Since 2026-11-15: the row is marked `failed` ("not filed: no kinematics ...") and the video is NOT filed; before that it was logged as a warning and filed anyway | `BaseOrchestrator._make_features` / `_hold_without_kinematics` in `orchestrator.py` |
+| The features file of a Pillar video still holds a pellet with no decided outcome (`triaged`, `uncertain` or none) when it is about to be filed | The row is marked `failed` ("not filed: a pellet is still undecided in its kinematics ...", pellets named) and the video is NOT filed; the failed-video retry runs it again through the review gate. Before, it was filed with `outcome: triaged` | `refuse_filing_with_undecided_pellet` in `orchestrator.py` |
 | The reach file and the outcome file describe different segments | Nothing checks | `feature_extractor.py:248` |
 | `ruler_pixels` is 0 or negative | Every millimetre value in the segment becomes exactly `0.0`, not null | `:606`, `:689`, `:884`, `:1048`, `:1246` |
 
