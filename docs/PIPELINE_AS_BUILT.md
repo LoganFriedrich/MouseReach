@@ -2283,7 +2283,10 @@ What each answer does now:
   now stays held, in red, as missing its scores -- see "a video whose hand scores cannot be found
   is held as a defect" below.)
 - **The check cannot run**: held the same way, listed in red (`needs_person`, kind
-  `hand_score_check_failed`), and tried again when the scores file changes.
+  `hand_score_check_failed`), and tried again when the scores file changes -- and also every 10 minutes even when nothing changed
+  (`HAND_SCORE_ERROR_RETRY_S`): a check that failed on a passing fault, such as the storage drive
+  dropping for a moment while the scores file was read, used to keep the video held in red until
+  the next import rewrote the scores file, up to a day later.
 - **The pellet numbers are in doubt**: a review record says a segment is really another pellet
   (`true_segment_num` with `segmentation_wrong`, written by the review tool's old mislabel box) and
   the current cuts still number that stretch of frames otherwise. Segment N is then not known to be

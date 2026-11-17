@@ -410,7 +410,9 @@ SHA-256 of the CSV it was written with; when it does and the CSV read does not
 match it (the writing tool is between replacing the two files), MouseReach reads
 both again a few times, a second apart, and if they still do not match the video
 is held as a check that could not run (red) until they do. A held video is
-checked again whenever EITHER file changes.
+checked again whenever EITHER file changes; a video held because its check
+could not run is also checked again every 10 minutes, so a passing fault (the
+storage drive dropping for a moment) clears by itself.
 
 ---
 

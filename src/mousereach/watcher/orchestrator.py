@@ -271,6 +271,16 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
 # the tests; keep it plain words.
 NO_KINEMATICS_REASON = "not filed: no kinematics"
 
+# How long a video held because its hand-score check could not run waits
+# before it is checked again even though the scores file has not changed.
+# WHY a timer as well as the scores-file stamp: the stamp is taken before the
+# check, so a check that fails on a passing fault (the storage drive dropping
+# for a moment while the scores file is read) is kept with the normal stamp of
+# an unchanged scores file. The fault clears, nothing about the file changes,
+# and the video stayed held -- in red, with an error that was no longer true --
+# until the next import rewrote the scores file, up to a day later.
+HAND_SCORE_ERROR_RETRY_S = 600
+
 
 def filed_this_run(video_id, processing_started_at, dest=None):
     """The filed folder when it already holds THIS run's results, else None.
@@ -707,11 +717,16 @@ class BaseOrchestrator:
     def _waiting_for_hand_scores(self, video_id: str) -> bool:
         """True while this video is held for its hand scores and neither the
         scores file nor its manifest has changed since it was checked
-        (hand_scores.scores_pair_stamp): running it again could only give the
+        (hand_scores.scores_pair_stamp) -- and, for a check that could not
+        run, its retry time has not come: running it again could only give the
         same answer, and an analysed video in 'processing' would otherwise be
         picked by the pipeline step every cycle (watcher/hand_scores.py)."""
         w = getattr(self, "_score_waits", {}).get(video_id)
         if not w:
+            return False
+        # A check that could not run is tried again every
+        # HAND_SCORE_ERROR_RETRY_S even with no change (that constant says why).
+        if w.get("error") and time.time() >= w.get("retry_at", 0):
             return False
         from mousereach.watcher import hand_scores
         return w.get("stamp") == hand_scores.scores_pair_stamp()
@@ -883,7 +898,8 @@ class BaseOrchestrator:
                                f"hand-score check could not run ({e}); trying again when "
                                f"the scores file changes")
             self._score_waits[video_id] = {"stamp": stamp, "error": str(e),
-                                           "ready_since": prev.get("ready_since")}
+                                           "ready_since": prev.get("ready_since"),
+                                           "retry_at": time.time() + HAND_SCORE_ERROR_RETRY_S}
             self._write_score_attention()
             return False
         if self._score_waits.pop(video_id, None) is not None:

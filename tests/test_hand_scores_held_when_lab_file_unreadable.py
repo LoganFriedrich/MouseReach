@@ -199,3 +199,51 @@ def test_an_empty_lab_file_holds_the_video_instead_of_reading_as_no_settings(lab
     item = _attention(lab)["items"][0]
     assert item["kind"] == "hand_score_check_failed" and item["needs_person"] is True
     assert "empty" in item["says"]
+
+
+def test_a_check_that_failed_on_a_passing_fault_is_tried_again_without_a_scores_change(
+        lab, tmp_path, monkeypatch):
+    """WHY: the scores-file stamp is taken before the check. A check that
+    failed on a passing fault (the drive dropping while the scores file was
+    read) was kept with the normal stamp of an unchanged scores file, so the
+    video stayed held in red until the next import rewrote that file."""
+    import mousereach.watcher.orchestrator as o
+    retry_s = getattr(o, "HAND_SCORE_ERROR_RETRY_S", 600)
+    real_check = hs.check
+    calls = []
+
+    def flaky(video_id, folder):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("the network name is no longer available")
+        return real_check(video_id, folder)
+    monkeypatch.setattr(hs, "check", flaky)
+    now = [1_000_000.0]
+    monkeypatch.setattr(o.time, "time", lambda: now[0])
+
+    orch = _orch(tmp_path)
+    assert orch._hand_score_precheck(VID, lab.folder) is False     # held
+    assert orch._waiting_for_hand_scores(VID)                     # not every cycle
+    now[0] += retry_s - 1
+    assert orch._waiting_for_hand_scores(VID)
+    now[0] += 2                                                    # retry time reached
+    assert not orch._waiting_for_hand_scores(VID)                 # picked again
+    assert orch._hand_score_precheck(VID, lab.folder) is True
+    assert _attention(lab)["items"] == []
+
+
+def test_a_wait_for_the_sheet_is_not_retried_on_the_error_timer(lab, tmp_path, monkeypatch):
+    """Only a check that could not run is retried on the timer; a video
+    waiting for its sheet's import is still checked again only when the
+    scores file changes."""
+    import mousereach.watcher.orchestrator as o
+    now = [1_000_000.0]
+    monkeypatch.setattr(o.time, "time", lambda: now[0])
+    orch = _orch(tmp_path)
+    # A wait as the precheck itself stores it (whatever stamp this version keeps).
+    orch._score_waits = {}
+    monkeypatch.setattr(hs, "check", lambda v, f: hs.Verdict(
+        hs.WAITING, "not imported yet", cohort_id="ABC_02"))
+    assert orch._hand_score_precheck(VID, lab.folder) is False
+    now[0] += 10 * getattr(o, "HAND_SCORE_ERROR_RETRY_S", 600)
+    assert orch._waiting_for_hand_scores(VID)
