@@ -306,3 +306,41 @@ def test_every_node_listing_the_same_stuck_claim_is_shown_once(tmp_path):
     shown = without_repeats(read_items(tmp_path))
     assert [i["says"] for i in shown if i["kind"] == "collage_claim_stuck"] == ["stuck"]
     assert len([i for i in shown if i["kind"] == "x"]) == 2
+
+
+# ------------------------------------------------------------------ MRP-03c
+
+@pytest.fixture
+def shared(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    from mousereach.watcher.coordination import PipelineCoordinator
+    c = PipelineCoordinator(db_path=tmp_path / "central" / "watcher_central.db")
+    c.ensure_tables()
+    return c
+
+
+def test_a_cropped_mark_lost_at_a_restart_is_sent_again(env, shared):
+    """The node cropped the collage, but its 'cropped' never reached the
+    shared claim before the watcher stopped. A fresh watcher (nothing in
+    memory) must find and send it from the two records."""
+    _collage(env, "cropped")
+    assert shared.try_claim_collage(COLLAGE, HOST) is True       # left 'cropping'
+    env.o.coordinator = shared                                  # a fresh process
+
+    env.o._retry_unsynced_collage_claims()
+
+    assert shared.get_collage_claim(COLLAGE)["state"] == "cropped"
+
+
+def test_another_nodes_claim_and_an_uncropped_collage_are_left_alone(env, shared):
+    _collage(env, "stable")
+    assert shared.try_claim_collage(COLLAGE, HOST) is True
+    other = "20250101_TST0201,TST0001,TST0002,TST0003,TST0004,TST0005,TST0006,TST0007_P1.mkv"
+    assert shared.try_claim_collage(other, OTHER) is True
+    env.o.coordinator = shared
+
+    env.o._retry_unsynced_collage_claims()
+
+    assert shared.get_collage_claim(COLLAGE)["state"] == "cropping"
+    assert shared.get_collage_claim(other)["state"] == "cropping"
+    assert shared.get_collage_claim(other)["hostname"] == OTHER

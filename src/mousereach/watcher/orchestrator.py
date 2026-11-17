@@ -2316,6 +2316,7 @@ class DLCOrchestrator(BaseOrchestrator):
         reclaimed = super()._reclaim_orphaned_work()
         self._set_aside_finished_copies()
         self._put_missing_on_shared_record()
+        self._seed_unsynced_collage_claims()
         return reclaimed
 
     # A row in one of these states is a video this node has no work left on.
@@ -2692,6 +2693,9 @@ class DLCOrchestrator(BaseOrchestrator):
         self.coordinator = coordinator
         self._coordinator_init_error = None
         self._coordinator_unavailable_since = None
+        # Look again for 'cropped' marks owed to the shared claim table: any
+        # crop finished while it was unreachable (_seed_unsynced_collage_claims).
+        self._unsynced_claims_seeded = False
         self._claims_unavailable_warned_at = None
         # Everything this node did while the record was unreachable is in its
         # local database and in the queue of failed writes; the next scan
@@ -3009,8 +3013,62 @@ class DLCOrchestrator(BaseOrchestrator):
             f"be marked 'cropped' ({type(error).__name__}: {error}). It is sent again "
             f"each poll until it lands; until then other nodes see an unfinished claim.")
 
+    def _seed_unsynced_collage_claims(self) -> None:
+        """Find the 'cropped' marks this node owes the shared claim table from
+        the two records themselves, and queue them for
+        _retry_unsynced_collage_claims. Never raises.
+
+        WHY: the list of unsent marks lives in memory, so a watcher restart
+        (or crash) before a mark landed forgot it. The shared claim then stayed
+        'cropping' under this node's name although the collage was cropped
+        here, and a day later another node could take it over and crop it
+        again (or, with its children on record, it waited for ever). Both
+        facts survive a restart: this node's 'cropping' rows in the shared
+        table, and the local row saying 'cropped'. One read of the shared
+        table finds them all.
+
+        Runs at startup (after the shared-record fill), after every reconnect
+        to the shared database, and before the first resend otherwise. A run
+        that cannot read the shared table is tried again at the next resend.
+        """
+        coordinator = getattr(self, 'coordinator', None)
+        if coordinator is None:
+            return
+        try:
+            rows = coordinator.get_all_collage_states() or {}
+        except Exception as e:
+            logger.debug(f"could not read the shared collage claims to resend "
+                         f"'cropped' marks: {e}")
+            return
+        pending = getattr(self, '_unsynced_collage_claims', None)
+        if pending is None:
+            pending = self._unsynced_collage_claims = {}
+        found = 0
+        for name, row in rows.items():
+            if (row or {}).get('hostname') != self.hostname or row.get('state') != 'cropping':
+                continue
+            try:
+                local = self.db.get_collage(name) or {}
+            except Exception as e:
+                logger.debug(f"could not read collage {name} here: {e}")
+                continue
+            if local.get('state') in ('cropped', 'archived') and name not in pending:
+                pending[name] = int(local.get('videos_created') or 0)
+                found += 1
+        self._unsynced_claims_seeded = True
+        if found:
+            logger.warning(
+                f"{found} collage(s) were cropped here but their shared claim still "
+                f"says 'cropping' (a mark lost at an earlier stop); sending 'cropped' "
+                f"again")
+
     def _retry_unsynced_collage_claims(self) -> None:
-        """Send again every 'cropped' that did not reach the shared table."""
+        """Send again every 'cropped' that did not reach the shared table,
+        after finding the ones an earlier run of the watcher left unsent
+        (_seed_unsynced_collage_claims). Called on every scan and before a
+        collage is picked."""
+        if not getattr(self, '_unsynced_claims_seeded', False):
+            self._seed_unsynced_collage_claims()
         pending = getattr(self, '_unsynced_collage_claims', None)
         if not pending or getattr(self, 'coordinator', None) is None:
             return
@@ -3964,6 +4022,10 @@ class DLCOrchestrator(BaseOrchestrator):
         # (_list_parked_collages), not left with a DEBUG line.
         self._list_parked_collages()
         self._list_stuck_collage_claims()
+        # 'cropped' marks still owed to the shared claim table, on every scan:
+        # until now they were resent only when a collage came up for
+        # selection, which a node with no collage left to crop never reached.
+        self._retry_unsynced_collage_claims()
 
         # Phase B: Check for DLC completions (h5 files appearing)
         self._scan_for_dlc_completions()

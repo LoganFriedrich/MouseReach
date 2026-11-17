@@ -4643,3 +4643,15 @@ What to do when one is listed: start the watcher on the machine named as the hol
 it crops the collage again, records it as cropped (see the next paragraph), or lists it as a
 collage it could not crop. If that machine will never run again, a person has to decide what is
 left to crop: no button releases a claim yet.
+
+**A "cropped" mark lost at a restart.** When a node finishes cropping a collage it marks its shared
+claim "cropped"; if that write fails it is resent until it lands (rule 6 of the 2026-09-15 update).
+The list of marks still to send was kept only in memory, so a watcher stopped or crashed before the
+mark landed forgot it, and the shared claim stayed "cropping" under that node's name -- after a day
+another node could take it over and crop the collage again, or, with its videos on record, it waited
+for ever. Now (`DLCOrchestrator._seed_unsynced_collage_claims`) the node rebuilds that list from the
+records themselves: every shared claim that is this node's and still "cropping" while the collage is
+"cropped" (or later) here. It does this at startup, after every reconnect to the shared database,
+and before the first resend; the resend (`_retry_unsynced_collage_claims`) now runs on every scan,
+not only when a collage is about to be picked. The log says so at WARNING (`were cropped here but
+their shared claim still says 'cropping' ... sending 'cropped' again`). Nothing to do.
