@@ -61,6 +61,9 @@ def test_process_animal_refuses_before_asking_and_queues_nothing(missing, tmp_pa
 
 
 def test_uncrystallize_refuses_a_missing_database(missing, monkeypatch, capsys):
+    from mousereach.pipeline import versions
+    # The processing server, where locks are lifted (test_publication_lock_gate.py).
+    monkeypatch.setattr(versions, "publication_lock_gate", lambda: (True, None), raising=False)
     code = _run(monkeypatch, cli.main_uncrystallize,
                 "mousereach-uncrystallize", "--label", "LABEL_A")
     assert code == 1

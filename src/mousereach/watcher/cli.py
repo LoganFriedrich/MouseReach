@@ -2383,6 +2383,17 @@ Lock archived videos against automatic reprocessing (for publications).
         elif arg == '--videos' and i + 1 < len(args):
             video_ids = [v.strip() for v in args[i + 1].split(',')]
 
+    if not list_mode:
+        # Locks are set where videos are filed (pipeline/versions.py
+        # publication_lock_gate says why); --list only reads, anywhere.
+        from mousereach.pipeline.versions import publication_lock_gate
+        allowed, note = publication_lock_gate()
+        if not allowed:
+            print(f"ERROR: {note}", file=sys.stderr)
+            sys.exit(1)
+        if note:
+            print(note)
+
     if not list_mode and not cohort and not video_ids:
         print("Usage: mousereach-crystallize [options]", file=sys.stderr)
         print()
@@ -2481,6 +2492,16 @@ Unlock crystallized videos so reprocessing can touch them again.
   --label NAME   Unlock every video crystallized under this label.
   --videos LIST  Comma-separated video ids.
 """)
+    # Locks are lifted where they were set: the processing server
+    # (pipeline/versions.py publication_lock_gate says why).
+    from mousereach.pipeline.versions import publication_lock_gate
+    allowed, note = publication_lock_gate()
+    if not allowed:
+        print(f"ERROR: {note}", file=sys.stderr)
+        sys.exit(1)
+    if note:
+        print(note)
+
     args = sys.argv[1:]
     label = None
     video_ids = None

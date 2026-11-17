@@ -2208,6 +2208,16 @@ Lock archived videos against automatic reprocessing (for publications).
   --list        Show what is crystallized, by label.
 ```
 
+Run it on the **processing server**. A lock is written only to the watcher
+database of the machine that runs the command, and only that machine's version
+scan reads it; the processing server is the machine that files videos and
+re-runs them when they go out of date. On a GPU PC that only poses, the command
+refuses (exit code 1, "Publication locks are set and lifted on the processing
+server ... Nothing was changed") -- a lock there would protect nothing. A GPU PC
+with `watcher.also_process` on (a lab with no processing server) may lock, and
+prints a note that the lock is known to that machine only. `--list` works on any
+machine. The Pipeline Dashboard's Publication Lock buttons follow the same rule.
+
 ### `mousereach-uncrystallize`
 
 ```
@@ -2221,7 +2231,9 @@ Unlock crystallized videos so reprocessing can touch them again.
 
 Refuses with `ERROR: Watcher database not found at <path>` (exit code 1) when
 this machine's watcher database is missing, instead of creating an empty one
-and reporting "Uncrystallized 0 videos".
+and reporting "Uncrystallized 0 videos". Like `mousereach-crystallize`, it runs
+on the processing server only (or on a GPU PC with `also_process` on, with a
+note); elsewhere it refuses and changes nothing.
 
 ## Backup watcher
 

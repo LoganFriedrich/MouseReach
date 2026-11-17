@@ -288,6 +288,45 @@ def compare_manifest_to_current(manifest: dict, current: dict) -> dict:
     return result
 
 
+def publication_lock_gate(config=None):
+    """May a publication lock be set or lifted on THIS machine?
+
+    Returns ``(allowed, message)``. ``message`` is the refusal when not
+    allowed, a caveat to show when allowed with one, or None.
+
+    WHY: a lock ('crystallized') is written only to the watcher database of
+    the machine that runs the command, and only that machine's version scan
+    reads it. Videos are filed -- and re-run when outdated -- by the machine
+    that analyses them, which is the processing server ('processing_server'
+    mode). A lock set on a GPU PC that only poses lands in a database whose
+    rows say 'pose handed on', protects nothing, and looks done. So locks are
+    set and lifted on the processing server. A lab whose only analysing
+    machine is a GPU PC with ``also_process`` on (no processing server) may
+    lock there, with a caveat that the lock is known to that machine only.
+    An unreadable configuration refuses: the role cannot be told.
+    """
+    if config is None:
+        try:
+            from mousereach.config import WatcherConfig
+            config = WatcherConfig.load()
+        except Exception as e:
+            return False, ("Publication locks are set on the processing server, and this "
+                           "machine's role could not be read (%s). Nothing was changed." % e)
+    mode = getattr(config, "mode", None)
+    if mode == "processing_server":
+        return True, None
+    if mode == "dlc_pc" and getattr(config, "also_process", False):
+        return True, ("Note: this machine analyses and files videos itself (also_process), "
+                      "so the lock is set in its own database. It is known to this machine "
+                      "only: a processing server or another analysing machine does not see it.")
+    return False, ("Publication locks are set and lifted on the processing server, the "
+                   "machine that files and re-runs videos. This machine is configured as "
+                   "'%s'%s, so a lock here would be written to a database no version scan "
+                   "of the filed videos reads. Nothing was changed; run the command on the "
+                   "processing server." % (mode, "" if getattr(config, "also_process", False)
+                                           else " (pose only)"))
+
+
 def crystallize_videos(
     db,
     video_ids: List[str] = None,

@@ -4815,3 +4815,18 @@ running there, check `watcher.db_path` in `~/.mousereach/config.json` (`mouserea
 shows it). A decoy `watcher.db` left beside a configured `db_path` is not read by anything any
 more and may be renamed aside. Tests: `tests/test_tools_never_create_a_decoy_watcher_db.py`,
 `tests/test_archive_gate.py`.
+
+## Update: publication locks are set and lifted on the processing server only
+
+A publication lock (`mousereach-crystallize`, state `crystallized`) is written only to the
+watcher database of the machine that runs the command, and only that machine's version scan
+reads it. Videos are filed and re-run by the machine that analyses them -- the processing
+server. A lock made on a pose-only GPU PC landed in a database whose rows mean "pose handed on",
+protected nothing, and looked done. Now `mousereach-crystallize` (except `--list`),
+`mousereach-uncrystallize` and the Pipeline Dashboard's Lock / Unlock buttons refuse unless the
+machine's `watcher.mode` is `processing_server`; a GPU PC with `watcher.also_process` on (a lab
+with no processing server) may lock, with a printed note that the lock is known to that machine
+only. An unreadable configuration refuses. The rule and its reason are in
+`pipeline/versions.py` `publication_lock_gate`. Tests: `tests/test_publication_lock_gate.py`.
+A lock written to the file filed results sit beside (so every machine sees it) is a later step,
+not built.

@@ -1179,12 +1179,27 @@ class PipelineDashboard(QWidget):
                          f"by {vs[0].get('crystallized_by') or '?'}")
         self._locks_view.setPlainText("\n".join(lines))
 
+    def _lock_allowed_here(self) -> bool:
+        """Refuse a lock or unlock on a machine that does not file videos
+        (pipeline/versions.py publication_lock_gate says why); show the
+        caveat when one applies."""
+        from mousereach.pipeline.versions import publication_lock_gate
+        allowed, note = publication_lock_gate()
+        if not allowed:
+            QMessageBox.warning(self, "Publication Lock", note)
+            return False
+        if note:
+            QMessageBox.information(self, "Publication Lock", note)
+        return True
+
     def _lock_cohort(self):
         cohort = self._lock_cohort_edit.text().strip()
         label = self._lock_label_edit.text().strip()
         if not cohort or not label:
             QMessageBox.information(self, "Publication Lock",
                                     "Enter both a cohort and a label.")
+            return
+        if not self._lock_allowed_here():
             return
         try:
             db = self._watcher_db()
@@ -1221,6 +1236,8 @@ class PipelineDashboard(QWidget):
         if not label:
             QMessageBox.information(self, "Publication Lock",
                                     "Enter the label to unlock.")
+            return
+        if not self._lock_allowed_here():
             return
         if QMessageBox.question(
                 self, "Publication Lock",
