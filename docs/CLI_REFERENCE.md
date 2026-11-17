@@ -1862,14 +1862,38 @@ command. `mousereach-watch-status` lists the failed videos.
 ### `mousereach-watch-quarantine`
 
 ```
-usage: mousereach-watch-quarantine [--list] [--release FILE] [--purge]
+usage: mousereach-watch-quarantine [--list]
+                                   [--release FILE --to single|collage [--as NEW_NAME]]
+                                   [--purge]
 
 Manage files the watcher quarantined instead of processing.
 
   --list          Show what is quarantined and why.
-  --release FILE  Move one file back into the normal flow.
+  --release FILE  Move one file out of quarantine, back into an intake folder.
+    --to single   ... into the single-animal intake (a one-mouse video), or
+    --to collage  ... into the multi-animal intake (a whole-tray recording).
+    --as NEW_NAME Release it under this corrected name (default: its own name).
+                  The name is checked first; an invalid name moves nothing.
   --purge         Permanently delete everything quarantined (confirm first).
 ```
+
+The Quarantine tab in Watcher Control does the same release with buttons and is
+the easier way. `--release` uses the same routine:
+
+- `FILE` is the name of the file in the quarantine folder (as `--list` or the
+  tab shows it). `--to` is required: it says which intake folder the file goes
+  back to, and which naming rules the name must pass.
+- The name (`--as NEW_NAME`, or the file's own name) is checked BEFORE anything
+  moves. If the chosen intake cannot read it, nothing moves; the error says
+  what is wrong and, where it can, suggests a corrected name. The old name is
+  allowed -- it may be valid now.
+- A file of that name already in the intake folder stops the release; nothing
+  is overwritten.
+- On success the file is in the intake folder, its `.quarantine.json` note is
+  removed, and the watcher takes it in on its next scan. The command exits 0;
+  any refusal exits 1.
+
+Example: `mousereach-watch-quarantine --release 20250101_badname.mp4 --to single --as 20250101_ABC0101_P1.mp4`
 
 ### `mousereach-watch-unresolvable`
 

@@ -4912,3 +4912,14 @@ Not changed here (follow-up): a file released under a NEW name is a new video to
 and the row of its old name stays 'quarantined'. `mousereach-watch-quarantine --list` reads those
 rows, so it can still list a file that has already been released under another name; the
 Quarantine tab lists the quarantine folder itself and is the accurate view.
+
+## Update: mousereach-watch-quarantine --release works
+
+`mousereach-watch-quarantine --release FILE` imported a class that does not exist in
+`watcher/validator.py`, so it printed an import error and exited 1 every time; it also had no way
+to say which intake the file should go back to. It is now `--release FILE --to single|collage
+[--as NEW_NAME]` and calls the same routine as the Quarantine tab
+(`validator.release_from_quarantine`): the name is checked with the chosen intake's rules before
+anything moves, nothing in the intake folder is overwritten, and a refusal exits 1 with the
+reason. The usage and the operator steps are in docs/CLI_REFERENCE.md. Test:
+`tests/test_quarantine_release_cli.py`.

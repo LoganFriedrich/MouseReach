@@ -974,37 +974,56 @@ def _reprocess_next_step(state: str) -> str:
 def main_quarantine():
     """Manage quarantined files."""
     _maybe_print_help("""
-usage: mousereach-watch-quarantine [--list] [--release FILE] [--purge]
+usage: mousereach-watch-quarantine [--list]
+                                   [--release FILE --to single|collage [--as NEW_NAME]]
+                                   [--purge]
 
 Manage files the watcher quarantined instead of processing.
 
   --list          Show what is quarantined and why.
-  --release FILE  Move one file back into the normal flow.
+  --release FILE  Move one file out of quarantine, back into an intake folder.
+    --to single   ... into the single-animal intake (a one-mouse video), or
+    --to collage  ... into the multi-animal intake (a whole-tray recording).
+    --as NEW_NAME Release it under this corrected name (default: its own name).
+                  The name is checked first; an invalid name moves nothing.
   --purge         Permanently delete everything quarantined (confirm first).
 """)
     # Parse args
     args = sys.argv[1:]
     list_files = '--list' in args
-    release_file = None
     purge = '--purge' in args
 
-    # Check for --release
-    for i, arg in enumerate(args):
-        if arg == '--release' and i + 1 < len(args):
-            release_file = args[i + 1]
+    def _value(flag):
+        # The word after the flag; None when the flag is absent or last.
+        for i, arg in enumerate(args):
+            if arg == flag and i + 1 < len(args):
+                return args[i + 1]
+        return None
+
+    release_file = _value('--release')
+    release_to = _value('--to')
+    release_as = _value('--as')
 
     if not list_files and not release_file and not purge:
         print("Usage: mousereach-watch-quarantine [options]", file=sys.stderr)
         print()
         print("Options:")
-        print("  --list           Show quarantined files with reasons")
-        print("  --release FILE   Release a file from quarantine (after renaming)")
-        print("  --purge          Delete all quarantined files (with confirmation)")
+        print("  --list                              Show quarantined files with reasons")
+        print("  --release FILE --to single|collage  Release a file back into an intake folder")
+        print("      [--as NEW_NAME]                 ... under a corrected name")
+        print("  --purge                             Delete all quarantined files (with confirmation)")
         print()
         print("Examples:")
         print("  mousereach-watch-quarantine --list")
-        print("  mousereach-watch-quarantine --release 20250101_badname.mkv")
+        print("  mousereach-watch-quarantine --release 20250101_badname.mp4 --to single --as 20250101_ABC0101_P1.mp4")
         print("  mousereach-watch-quarantine --purge")
+        sys.exit(1)
+
+    if (release_file or release_to or release_as) and (
+            not release_file or release_to not in ('single', 'collage')):
+        print("ERROR: --release needs a file name and --to single or --to collage "
+              "(which intake folder it goes back to). Nothing was moved.",
+              file=sys.stderr)
         sys.exit(1)
 
     # Load database and config
@@ -1057,16 +1076,26 @@ Manage files the watcher quarantined instead of processing.
 
         return
 
-    # Release file from quarantine
+    # Release file from quarantine. The same routine as the Quarantine tab:
+    # the name is checked with the destination's rules before anything moves,
+    # nothing in the intake folder is overwritten, and the result is checked.
+    # WHY: this option imported a class that does not exist, so it failed
+    # every time, and it never asked where the file should go.
     if release_file:
-        try:
-            from mousereach.watcher.validator import FileValidator
-            validator = FileValidator(quarantine_dir)
-            validator.release_from_quarantine(release_file)
-            print(f"Released: {release_file}")
-        except Exception as e:
-            print(f"ERROR: Failed to release file: {e}", file=sys.stderr)
+        from mousereach.config import Paths
+        from mousereach.watcher.validator import release_from_quarantine
+        dest_dir = (Paths.SINGLE_ANIMAL_OUTPUT if release_to == 'single'
+                    else Paths.MULTI_ANIMAL_SOURCE)
+        if not dest_dir:
+            print("ERROR: the intake folder is not configured (nas_root). "
+                  "Run mousereach-setup. Nothing was moved.", file=sys.stderr)
             sys.exit(1)
+        ok, msg = release_from_quarantine(
+            release_file, quarantine_dir, dest_dir, release_to, new_name=release_as)
+        if not ok:
+            print(f"ERROR: {msg}", file=sys.stderr)
+            sys.exit(1)
+        print(msg)
 
     # Purge all quarantined files
     if purge:
