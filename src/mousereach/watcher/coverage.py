@@ -20,10 +20,24 @@ Each listed session is placed in exactly one stage, first match wins:
                         posed, waiting for analysis, ...)
     waiting to be posed the cut video is at the top of the shared singles folder
     being posed         a node holds it in the shared singles claim folder
+    taken in for analysis  a processing node holds its claim in the posed folder
     posed, waiting      its pose is in the posed-video folder
+    handed on; not in Posed, review or Analyzed
+                        a posing node recorded the hand-on, but the pose is
+                        in none of those places (worth a person's look)
     recording waiting / being cut / cut   from the recording's own record
     not imported        no recording holding it is in the intake folder (this
                         includes a session that has no recording at all)
+
+WHY 'archived' is read two ways: the shared record has two tables. ``videos``
+holds a copy of a node's row made when that node FILED the video into Analyzed
+(an audit copy), so 'archived' there means filed. ``pipeline_videos`` is the
+live coordination record every node writes, and there a posing node (a GPU PC
+or the CPU pose pool) writes 'archived' when it HANDS the pose on to the posed
+folder -- nothing has been analysed yet. The word is kept as stored because
+recovery relies on it to stop a second pose of the same video; this report
+alone translates it. So 'archived' from ``pipeline_videos`` is never read as
+"analysed": it is placed by where the pose actually is (step 4).
 
 Read-only: it lists folders and reads the shared coordination database
 (``watcher_central.db``) without writing. The list format is the one
@@ -144,7 +158,10 @@ def session_coverage(sessions: List[str], nas_root: Path) -> Dict[str, str]:
                     stage.setdefault(s, "review, parked")
 
     # 3. the shared record of every node's videos and recordings
-    rows, collages = {}, {}
+    # 'archived' means FILED in ``videos`` (an audit copy written at filing)
+    # but "pose handed on" in ``pipeline_videos`` (see the module docstring);
+    # a hand-on is placed in step 4 by where its pose is, never as analysed.
+    rows, collages, handed_on = {}, {}, set()
     db = Path(nas_root) / "watcher_central.db"
     if db.is_file():
         # Read from a local copy, never in place (see _settled_copy).
@@ -155,7 +172,12 @@ def session_coverage(sessions: List[str], nas_root: Path) -> Dict[str, str]:
                 for vid, state in con.execute("SELECT video_id, state FROM videos"):
                     rows[vid] = state
                 for vid, state in con.execute("SELECT video_id, state FROM pipeline_videos"):
-                    rows.setdefault(vid, state)
+                    if vid in rows:
+                        continue
+                    if state == "archived":
+                        handed_on.add(vid)
+                    else:
+                        rows[vid] = state
                 for fn, state in con.execute("SELECT filename, state FROM pipeline_collages"):
                     collages[Path(fn).stem] = state
             finally:
@@ -180,9 +202,20 @@ def session_coverage(sessions: List[str], nas_root: Path) -> Dict[str, str]:
                 stage[s] = "waiting to be posed"
     if Paths.DLC_STAGING:
         posed = _names(Paths.DLC_STAGING)
+        # A processing node claims a posed video with <id>.claimed in
+        # Posed/.claims and keeps the files in Posed until filing, so the claim
+        # is what tells "taken in" from "waiting".
+        claimed = _names(Path(Paths.DLC_STAGING) / ".claims")
         for s in wanted:
-            if s not in stage and f"{s}.mp4" in posed:
+            if s in stage:
+                continue
+            if f"{s}.claimed" in claimed:
+                stage[s] = "taken in for analysis"
+            elif f"{s}.mp4" in posed:
                 stage[s] = "posed, waiting for analysis"
+    for s in wanted:
+        if s not in stage and s in handed_on:
+            stage[s] = "handed on; not in Posed, review or Analyzed"
 
     # 5. the recording that holds it
     if Paths.MULTI_ANIMAL_SOURCE:

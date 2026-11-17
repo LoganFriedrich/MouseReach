@@ -1829,6 +1829,19 @@ written to every time", and that line appears wherever the report's output is lo
 The temporary copy is deleted when the report finishes. Tests: `tests/test_session_coverage.py` (a copy between writes, none
 while a write is under way, a copy a write overtook is taken again).
 
+**Fix: a pose that was handed on is no longer reported as analysed.** The shared record has two
+tables, and the word `archived` means different things in them. In `videos` (a copy of a node's
+row made when that node files a video into Analyzed) it means filed. In `pipeline_videos` (the
+live record every node writes) a posing node -- a GPU PC or the CPU pose pool -- writes `archived`
+when it hands the finished pose on to the posed folder; nothing has been analysed yet. The report
+used to read both as "analysed", so a posed video waiting for (or in) analysis counted as done.
+Now an `archived` from `pipeline_videos` is placed by where the pose actually is: a processing
+node's claim in `Posed/.claims/<video>.claimed` -> "taken in for analysis"; the video in `Posed`
+-> "posed, waiting for analysis"; neither, and not in review or Analyzed -> "handed on; not in
+Posed, review or Analyzed" (a stage worth a person's look). The stored word is unchanged:
+recovery relies on it to stop a second pose of the same video. Test:
+`test_a_pose_hand_on_is_never_reported_as_analysed`.
+
 ## Update 2026-10-22: a GPU node retries the shared-record writes that failed
 
 A GPU node writes each video's state to the shared record (`watcher_central.db`,

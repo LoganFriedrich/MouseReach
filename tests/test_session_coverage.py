@@ -134,3 +134,36 @@ def test_a_copy_that_a_write_overtook_is_taken_again(tmp_path, monkeypatch):
     copy = coverage._settled_copy(db, tmp_path / "copy.db", tries=3, pause=0)
     assert len(calls) == 2
     assert sqlite3.connect(copy).execute("SELECT COUNT(*) FROM t").fetchone()[0] == 2
+
+
+def _record_with(nas, videos=(), pipeline=()):
+    db = sqlite3.connect(nas / "watcher_central.db")
+    db.execute("CREATE TABLE videos (video_id TEXT, state TEXT)")
+    db.execute("CREATE TABLE pipeline_videos (video_id TEXT, state TEXT)")
+    db.execute("CREATE TABLE pipeline_collages (filename TEXT, state TEXT)")
+    db.executemany("INSERT INTO videos VALUES (?, ?)", videos)
+    db.executemany("INSERT INTO pipeline_videos VALUES (?, ?)", pipeline)
+    db.commit()
+    db.close()
+
+
+def test_a_pose_hand_on_is_never_reported_as_analysed(tmp_path, monkeypatch):
+    """A posing node writes 'archived' to pipeline_videos when it hands the
+    pose on; only the filing audit copy in ``videos`` means filed. A handed-on
+    pose is placed by where it actually is."""
+    nas, d = _share(tmp_path, monkeypatch)
+    waiting, taken, lost, filed = S[0], S[1], S[2], S[3]
+    (d["DLC_STAGING"] / f"{waiting}.mp4").write_bytes(b"v")
+    (d["DLC_STAGING"] / f"{taken}.mp4").write_bytes(b"v")
+    (d["DLC_STAGING"] / ".claims").mkdir()
+    (d["DLC_STAGING"] / ".claims" / f"{taken}.claimed").write_text("SERVER-A", encoding="utf-8")
+    _record_with(nas, videos=[(filed, "archived")],
+                 pipeline=[(v, "archived") for v in (waiting, taken, lost, filed)])
+
+    stage = cov.session_coverage([waiting, taken, lost, filed], nas)
+    assert stage == {
+        waiting: "posed, waiting for analysis",
+        taken: "taken in for analysis",
+        lost: "handed on; not in Posed, review or Analyzed",
+        filed: "analysed",
+    }

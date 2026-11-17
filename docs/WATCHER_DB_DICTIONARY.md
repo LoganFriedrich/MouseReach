@@ -88,6 +88,12 @@ state it set was lost).
       'processed', 'archived'. Read at a GPU node's startup by cross-node
       recovery, and by the claim takeover check above. A GPU node's 'archived'
       means that node staged or filed it, not that the analysis is finished.
+      (A GPU PC or the CPU pose pool writes 'archived' here when it HANDS the
+      pose on to Processing/Posed. Only the 'videos' table above, written at
+      filing, means filed. mousereach-session-coverage reads it that way: an
+      'archived' here is reported by where the pose is -- "taken in for
+      analysis", "posed, waiting for analysis", or "handed on; not in Posed,
+      review or Analyzed" -- never as "analysed".)
       Recovery moves a node's own row forward to match, but never replaces a
       'triage' or 'deep_review' row with a record written before it (since
       2026-10-22; before, an older 'archived' here cleared a newer hold).
