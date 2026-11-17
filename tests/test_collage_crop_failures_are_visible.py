@@ -344,3 +344,58 @@ def test_another_nodes_claim_and_an_uncropped_collage_are_left_alone(env, shared
     assert shared.get_collage_claim(COLLAGE)["state"] == "cropping"
     assert shared.get_collage_claim(other)["state"] == "cropping"
     assert shared.get_collage_claim(other)["hostname"] == OTHER
+
+
+# ------------------------------------------------------------------- D1-12
+
+def _fake_crop(monkeypatch):
+    """Stand in for ffmpeg: write one small file per non-blank slot."""
+    import mousereach.video_prep.core.cropper as cropper
+
+    def crop(input_path, output_dir, verbose=True):
+        info = cropper.parse_collage_filename(Path(input_path).name)
+        results = []
+        for pos, aid in enumerate(info["animal_ids"], start=1):
+            if cropper.is_blank_animal(aid):
+                results.append({"position": pos, "animal_id": aid, "status": "skipped"})
+                continue
+            out = Path(output_dir) / f"{info['date']}_{aid}_{info['last_part']}.mp4"
+            out.write_bytes(b"cut " + aid.encode("ascii"))
+            results.append({"position": pos, "animal_id": aid,
+                            "output_path": str(out), "status": "success"})
+        return results
+
+    monkeypatch.setattr(cropper, "crop_collage", crop)
+
+
+def test_a_child_placed_nowhere_fails_the_collage_and_keeps_its_cut(env, monkeypatch):
+    """The share cannot be written and the copy into the DLC queue fails: the
+    working file is the only copy of the cut. It used to be deleted while the
+    collage was recorded 'cropped' here and on the shared claim, so no node
+    ever cut that child again."""
+    _fake_crop(monkeypatch)
+    from mousereach.watcher import single_claim
+    monkeypatch.setattr(single_claim.Paths, "SINGLE_ANIMAL_OUTPUT", None, raising=False)
+    monkeypatch.setattr(orch.Paths, "SINGLE_ANIMAL_OUTPUT", None, raising=False)
+    real_copy = orch.safe_copy
+
+    def copy(src, dst, *a, **k):
+        if Path(dst).parent == env.dlc_queue and Path(src).stem == KID2:
+            return False                         # this child's queue copy fails
+        return real_copy(src, dst, *a, **k)
+    monkeypatch.setattr(orch, "safe_copy", copy)
+    env.o._hand_out_instead_of_keeping = lambda *a, **k: False
+    work = _collage(env, "stable")
+
+    assert env.o._dispatch_work(work) is False
+
+    row = env.db.get_collage(COLLAGE)
+    assert row["state"] == "failed", "a child with no copy anywhere is not 'cropped'"
+    assert KID2 in (row.get("validation_error") or "")
+    assert not any(u[1] == "cropped" for u in env.o.coordinator.updates), (
+        "the shared claim must not say 'cropped' either")
+    assert (env.o.working_dir / f"{KID2}.mp4").is_file(), (
+        "the only copy of the cut must not be deleted")
+    assert (env.dlc_queue / f"{KID1}.mp4").is_file()
+    assert env.db.get_video(KID1)["state"] == "dlc_queued"
+    assert env.db.get_video(KID2)["state"] == "validated"     # re-driven on the retry

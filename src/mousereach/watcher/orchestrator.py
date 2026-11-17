@@ -4613,6 +4613,10 @@ class DLCOrchestrator(BaseOrchestrator):
             # Register each cropped single and move to DLC_Queue
             videos_created = 0
             videos_skipped = 0
+            # Cut children that reached neither the share nor this node's DLC
+            # queue (see below): they fail the collage like a slot ffmpeg
+            # could not cut.
+            unplaced = []
 
             for result in crop_results:
                 if result['status'] == 'skipped':
@@ -4685,7 +4689,8 @@ class DLCOrchestrator(BaseOrchestrator):
 
                 # Put the ARTEFACT where another node could take it over, not just
                 # the fact that it exists (see _publish_cropped_single).
-                self._publish_cropped_single(output_path, video_id)
+                published = self._publish_cropped_single(output_path, video_id)
+                queued = False
 
                 # Move single to DLC_Queue on local drive. Copied from the LOCAL
                 # working file, not from the shared copy just made: this node
@@ -4707,10 +4712,32 @@ class DLCOrchestrator(BaseOrchestrator):
                                                  source_path=str(dlc_queue_path))
                         logger.info(f"Created and queued: {video_id}")
                         videos_created += 1
+                        queued = True
                     else:
                         logger.error(f"Failed to copy {video_id} to DLC_Queue")
                 else:
                     logger.error("DLC_QUEUE path not configured")
+
+                # Neither copy exists: the working file is the ONLY copy of
+                # this cut, and the cleanup below deletes the working files.
+                # WHY it fails the collage: it used to be recorded 'cropped'
+                # anyway (here and on the shared claim), so no node ever cut
+                # this child again and its session was lost. Counted as a
+                # failed slot, the collage is retried like a slot ffmpeg could
+                # not cut; the retry re-drives this 'validated' child. Its
+                # working file is kept (not deleted with the others) until a
+                # later attempt places a copy. A child that reached the share
+                # but not the queue is placed: the share copy is claimed by
+                # this node and is adopted from there.
+                if published is None and not queued:
+                    unplaced.append({
+                        'position': result.get('position'),
+                        'animal_id': animal_id,
+                        'output_path': str(output_path),
+                        'status': 'failed',
+                        'error': (f"{video_id} was cut, but copied neither to the "
+                                  f"shared drive nor into this node's DLC queue"),
+                    })
 
             # A slot ffmpeg could not cut is a collage NOT cropped. WHY: it was
             # recorded 'cropped' anyway ("0 singles" when every slot failed), so
@@ -4721,13 +4748,17 @@ class DLCOrchestrator(BaseOrchestrator):
             # max_retries), the singles already cut are skipped on the retry, and
             # the shared claim is kept while this node carries any of them.
             failed_slots = [r for r in crop_results if r.get('status') == 'failed']
+            failed_slots += unplaced
             if failed_slots:
+                keep = {Path(u['output_path']) for u in unplaced}
                 local_collage.unlink(missing_ok=True)
                 for result in crop_results:
-                    if result['status'] == 'success':
+                    if (result['status'] == 'success'
+                            and Path(result['output_path']) not in keep):
                         Path(result['output_path']).unlink(missing_ok=True)
                 raise RuntimeError(
-                    "%d slot(s) could not be cut (%s); the %d cut this time are queued "
+                    "%d slot(s) could not be cut or placed (%s); the %d placed this time "
+                    "are queued "
                     "and the collage will be retried" % (
                         len(failed_slots),
                         "; ".join("position %s %s: %s" % (r.get('position'),

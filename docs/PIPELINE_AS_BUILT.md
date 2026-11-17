@@ -4655,3 +4655,17 @@ records themselves: every shared claim that is this node's and still "cropping" 
 and before the first resend; the resend (`_retry_unsynced_collage_claims`) now runs on every scan,
 not only when a collage is about to be picked. The log says so at WARNING (`were cropped here but
 their shared claim still says 'cropping' ... sending 'cropped' again`). Nothing to do.
+
+**A cut video that reached neither the share nor the node's queue.** After cutting a collage, a GPU
+node puts each single-animal video in two places: the shared drive (already claimed by this node, so
+another node can take it over) and its own DLC queue. If BOTH failed for one video -- the share could
+not be written and the local copy failed, or no DLC queue is configured -- the working file was the
+only copy left, yet it was deleted with the working folder while the collage was recorded "cropped"
+here and on the shared claim, so no node ever cut that video again. Now
+(`DLCOrchestrator._process_collage`) such a video counts as a slot that could not be cut: the
+collage is recorded "failed" with an error naming the video (`... was cut, but copied neither to the
+shared drive nor into this node's DLC queue`), it is retried like any failed collage (above), the
+retry cuts that video again, and its working file is kept until a later attempt has placed a copy.
+The videos that were placed stay queued. A video that reached the shared drive but not the queue is
+not a failure: the shared copy is claimed by this node and is taken from there. If the retries run
+out, the collage is listed in the red panel as described above.
