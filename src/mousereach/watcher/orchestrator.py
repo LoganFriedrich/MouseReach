@@ -2754,6 +2754,7 @@ class DLCOrchestrator(BaseOrchestrator):
             self._park_collage_claimed_elsewhere(collage_filename)
             return False
         getattr(self, '_claim_backoff', {}).pop(collage_filename, None)
+        self._note_stuck_collage_claim(collage_filename, None)
         return True
 
     def _park_collage_claimed_elsewhere(self, collage_filename: str) -> None:
@@ -2787,6 +2788,7 @@ class DLCOrchestrator(BaseOrchestrator):
         holder = claim.get('hostname') or "another node"
         state = claim.get('state')
         if state in ('cropped', 'archived'):
+            self._note_stuck_collage_claim(collage_filename, None)
             reason = (f"already cropped by {holder} (shared claim is '{state}'); "
                       f"not cropped again here")
             try:
@@ -2798,6 +2800,16 @@ class DLCOrchestrator(BaseOrchestrator):
                 return
             logger.info(f"Collage {collage_filename}: {reason}; recorded here as 'cropped'")
             return
+
+        # A 'cropping' claim of another node that is older than
+        # COLLAGE_CLAIM_STALE_S and was still not taken over: the takeover
+        # refused it because children of the collage are on record
+        # (coordination.try_claim_collage). It waits for its holder for ever,
+        # so it is listed for a person; any other claim is not (or no longer).
+        stuck = (state == 'cropping' and claim.get('hostname')
+                 and claim.get('hostname') != self.hostname
+                 and self._claim_is_stale(claim))
+        self._note_stuck_collage_claim(collage_filename, claim if stuck else None)
 
         backoff = getattr(self, '_claim_backoff', None)
         if backoff is None:
@@ -2902,6 +2914,84 @@ class DLCOrchestrator(BaseOrchestrator):
                     self._parked_collages_listed = items
         except Exception as e:
             logger.warning(f"Could not list the collages that ran out of retries: {e}")
+
+    def _note_stuck_collage_claim(self, collage_filename: str, claim) -> None:
+        """Remember (``claim`` a row) or forget (``claim`` None) a stuck crop
+        claim of another node, and rewrite the list if that changed it.
+        Never raises."""
+        try:
+            stuck = getattr(self, '_stuck_collage_claims', None)
+            if stuck is None:
+                stuck = self._stuck_collage_claims = {}
+            if claim is None:
+                if stuck.pop(collage_filename, None) is None:
+                    return
+            else:
+                entry = {'holder': claim.get('hostname'),
+                         'claimed_at': claim.get('claimed_at')}
+                if stuck.get(collage_filename) == entry:
+                    return
+                stuck[collage_filename] = entry
+            self._list_stuck_collage_claims()
+        except Exception as e:
+            logger.warning(f"Could not note the crop claim on {collage_filename}: {e}")
+
+    def _list_stuck_collage_claims(self) -> None:
+        """Rewrite ``<NAS root>/attention/<host>_collage_claims.json``: every
+        collage whose crop claim another node has held in 'cropping' for more
+        than COLLAGE_CLAIM_STALE_S and that this node may not take over
+        because children of it are on record. Never raises.
+
+        WHY: such a collage waits for its holder for ever. If the holder never
+        runs again, nothing crops the rest of it, and the only trace was a log
+        WARNING on each node that asked. Now it is an item (kind
+        collage_claim_stuck, needs_person true) in the dashboard's red panel.
+        Every node that asks lists the same collage; the dashboard shows it
+        once (attention.without_repeats).
+
+        Only collages whose row here is still 'stable' (still waiting to be
+        cropped by this node) are listed: one that was cropped, or failed,
+        here has left the question. Called on every scan and whenever the list
+        changes; the file is written when its contents change and once at the
+        first call, so a list left by an earlier run is emptied.
+        """
+        try:
+            stuck = getattr(self, '_stuck_collage_claims', None)
+            if stuck is None:
+                stuck = self._stuck_collage_claims = {}
+            for name in list(stuck):
+                try:
+                    row = self.db.get_collage(name) or {}
+                except Exception:
+                    continue
+                if row.get('state') != 'stable':
+                    stuck.pop(name, None)
+            items = [{
+                "kind": "collage_claim_stuck",
+                "needs_person": True,
+                "collage": name,
+                "video_id": None,
+                "cohort_id": None,
+                "holder": e['holder'],
+                "claimed_at": e['claimed_at'],
+                "says": (
+                    "Collage %s: %s has held its crop claim since %s without "
+                    "finishing, and some of its videos are already on record, so "
+                    "no other machine crops it (that would pose them twice). "
+                    "Start the watcher on %s: it crops the collage again, records "
+                    "it as cropped, or lists it as one it could not crop. If %s "
+                    "will not run again, a person decides "
+                    "what is left to crop; no button releases the claim yet."
+                    % (name, e['holder'], e['claimed_at'] or '?', e['holder'],
+                       e['holder'])),
+            } for name, e in sorted(stuck.items())]
+            if (items != getattr(self, '_stuck_claims_listed', None)
+                    and Paths.NAS_ROOT):
+                from mousereach.watcher.attention import write_list
+                if write_list(Paths.NAS_ROOT, self.hostname, "collage_claims", items):
+                    self._stuck_claims_listed = items
+        except Exception as e:
+            logger.warning(f"Could not list the stuck crop claims: {e}")
 
     def _note_unsynced_collage_claim(self, collage_filename: str, singles_created: int,
                                      error) -> None:
@@ -3873,6 +3963,7 @@ class DLCOrchestrator(BaseOrchestrator):
         # Collages that used up their retries: listed for a person
         # (_list_parked_collages), not left with a DEBUG line.
         self._list_parked_collages()
+        self._list_stuck_collage_claims()
 
         # Phase B: Check for DLC completions (h5 files appearing)
         self._scan_for_dlc_completions()

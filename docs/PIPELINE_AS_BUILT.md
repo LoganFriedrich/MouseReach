@@ -4624,3 +4624,22 @@ is tried once more (failed videos on that machine get one more try too). When th
 list at the next scan; it also drops off if its file is taken out of the intake folder. The list
 file is rewritten only when it changes, and a list that cannot be written is a WARNING in the log,
 never a stop of the scan.
+
+**A crop claim that waits for its holder for ever.** A GPU node takes over another node's crop
+claim once it has stayed unfinished ("cropping") for more than 24 hours -- except when videos cut
+from that collage are already on record, because a second crop would pose them twice (see "Stale
+claims" in the 2026-09-15 update above). Such a collage then waits for the node that holds the
+claim, and if that node never runs again it is never finished; the only trace used to be a log
+WARNING on each node that asked. Now every GPU node that meets such a claim lists it in
+`<NAS root>/attention/<host>_collage_claims.json` (`DLCOrchestrator._list_stuck_collage_claims`;
+kind `collage_claim_stuck`, with `holder` and `claimed_at`, no cohort), and the dashboard's red
+panel shows it -- once, even when several nodes list it (`attention.without_repeats`). It leaves the
+list when the claim is finished, given back or taken over, when the claim is younger than 24 hours
+again, or when the collage is no longer waiting on this node (cropped or failed here); the list is
+emptied at each watcher's first scan and rebuilt as claims are asked about (each collage is asked
+about at most every 30 minutes).
+
+What to do when one is listed: start the watcher on the machine named as the holder. At its start
+it crops the collage again, records it as cropped (see the next paragraph), or lists it as a
+collage it could not crop. If that machine will never run again, a person has to decide what is
+left to crop: no button releases a claim yet.

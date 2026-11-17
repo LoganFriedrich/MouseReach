@@ -242,3 +242,67 @@ def test_the_health_line_names_a_collage_that_could_not_be_cropped(env):
     text = "\n".join(health.health_report(env.db))
     assert COLLAGE in text and "unreadable stream" in text
     assert "Nothing is stuck" not in text
+
+
+# ------------------------------------------------------------------ MRP-03b
+
+def _hours_ago(h):
+    return (datetime.now() - timedelta(hours=h)).isoformat()
+
+
+def test_a_stale_claim_that_is_not_taken_over_is_listed_for_a_person(env):
+    """Another node has held the claim in 'cropping' for over a day and the
+    takeover is refused (its children are on record): it waits for its holder
+    for ever, so a person must see it."""
+    work = _collage(env, "stable")
+    env.o.coordinator = FakeCoordinator(claim=False, holder=OTHER,
+                                        claim_state="cropping",
+                                        claimed_at=_hours_ago(30))
+
+    assert env.o._process_collage(work) is False
+
+    items = _attention(env, "collage_claims")
+    assert items is not None and len(items) == 1
+    item = items[0]
+    assert item["kind"] == "collage_claim_stuck" and item["needs_person"] is True
+    assert item["collage"] == COLLAGE and item["holder"] == OTHER
+    assert item["cohort_id"] is None
+    assert OTHER in item["says"]
+
+
+def test_a_live_claim_of_another_node_is_not_listed(env):
+    work = _collage(env, "stable")
+    env.o.coordinator = FakeCoordinator(claim=False, holder=OTHER,
+                                        claim_state="cropping",
+                                        claimed_at=_hours_ago(1))
+    assert env.o._process_collage(work) is False
+    assert _attention(env, "collage_claims") in (None, [])
+
+
+def test_a_stuck_claim_leaves_the_list_once_it_is_finished(env):
+    work = _collage(env, "stable")
+    coord = env.o.coordinator = FakeCoordinator(claim=False, holder=OTHER,
+                                                claim_state="cropping",
+                                                claimed_at=_hours_ago(30))
+    env.o._process_collage(work)
+    assert len(_attention(env, "collage_claims")) == 1
+
+    coord.claim_state = "cropped"                # the holder came back and finished
+    env.o._claim_backoff.clear()
+    env.o._process_collage(work)
+
+    assert _attention(env, "collage_claims") == []
+    assert env.db.get_collage(COLLAGE)["state"] == "cropped"
+
+
+def test_every_node_listing_the_same_stuck_claim_is_shown_once(tmp_path):
+    from mousereach.watcher.attention import read_items, without_repeats, write_list
+    item = {"kind": "collage_claim_stuck", "needs_person": True,
+            "collage": COLLAGE, "says": "stuck"}
+    write_list(tmp_path, "NODE-A", "collage_claims", [item])
+    write_list(tmp_path, "NODE-C", "collage_claims", [item])
+    write_list(tmp_path, "NODE-A", "other", [{"kind": "x", "says": "a"},
+                                             {"kind": "x", "says": "b"}])
+    shown = without_repeats(read_items(tmp_path))
+    assert [i["says"] for i in shown if i["kind"] == "collage_claim_stuck"] == ["stuck"]
+    assert len([i for i in shown if i["kind"] == "x"]) == 2

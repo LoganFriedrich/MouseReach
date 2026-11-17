@@ -671,8 +671,10 @@ class PipelineDashboard(QWidget):
         """Fill the red panel from the watchers' lists (watcher/attention.py)."""
         try:
             from mousereach.config import Paths
-            from mousereach.watcher.attention import read_items
-            items = read_items(Paths.NAS_ROOT) if Paths.NAS_ROOT else []
+            from mousereach.watcher.attention import read_items, without_repeats
+            # without_repeats: every GPU node lists the same stuck crop claim;
+            # a person sees it once.
+            items = without_repeats(read_items(Paths.NAS_ROOT)) if Paths.NAS_ROOT else []
         except Exception as e:
             items = [{"needs_person": True, "says": "The attention lists could not be read (%s)." % e}]
         urgent = [i for i in items if i.get("needs_person")]
