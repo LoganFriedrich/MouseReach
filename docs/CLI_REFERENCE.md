@@ -2083,6 +2083,14 @@ options:
   --all       also list every video that is fine, and every leftover copy
 ```
 
+A review bundle parked for a new pose (`Processing/Repose_Queue/_parked/<video>/`,
+made by `mousereach-repose-videos`) is one of the places it checks. Such a video
+is "waiting for machine" while its re-pose request is out (or the new pose has
+come back and waits in the posed folder); it is "needs person" when no request
+was written -- the re-pose run stopped part way, so run `mousereach-repose-videos`
+again for that video; and a parked copy left behind after the video was filed
+or held again is named in the video's detail.
+
 ### `mousereach-aspa-import-collages`
 
 ```

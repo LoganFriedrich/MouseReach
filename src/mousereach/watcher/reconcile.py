@@ -136,6 +136,47 @@ def _waiting_folders() -> List[Path]:
     return [Path(p) for p in (Paths.SINGLE_ANIMAL_OUTPUT, Paths.DLC_STAGING) if p]
 
 
+PARKED_FOR_REPOSE = "parked_for_repose"
+
+
+def _parked_for_repose() -> Dict[str, Path]:
+    """``{video_id: folder}`` for every review bundle parked for a new pose.
+
+    WHY a place of its own: mousereach-repose-videos takes a HELD video's
+    bundle out of its review queue as one rename to
+    ``<Repose_Queue>/_parked/<video_id>/`` (repose_videos.py says why), and
+    during the round trip that folder holds the video's only copy. No other
+    reader named it, so the video was reported nowhere -- and a re-pose run
+    that stopped after the rename left the video outside both queues with a
+    row that still says it is in one."""
+    from mousereach.config import Paths
+    from mousereach.watcher.repose_videos import PARKED
+    queue = getattr(Paths, "REPOSE_QUEUE", None)
+    out: Dict[str, Path] = {}
+    if not queue:
+        return out
+    try:
+        with os.scandir(Path(queue) / PARKED) as it:
+            for e in it:
+                if e.is_dir():
+                    out[e.name] = Path(e.path)
+    except OSError:
+        pass
+    return out
+
+
+def _repose_request_out(stem: str) -> bool:
+    """True when a re-pose request for ``stem`` waits in the queue or is held
+    by a GPU node (in flight)."""
+    from mousereach.config import Paths
+    from mousereach.watcher import repose
+    queue = getattr(Paths, "REPOSE_QUEUE", None)
+    if not queue:
+        return False
+    return (repose.queue_path(stem, queue).exists()
+            or repose.inflight_path(stem, queue).exists())
+
+
 def _leftover_folders(nas) -> List[Path]:
     """Every folder at <nas>/Processing/_leftovers_pending_cleanup_*/*.
     Files anywhere in that walk are skipped: only folders are leftovers, and
@@ -288,6 +329,29 @@ def judge(stem: str, where: set, files: dict, scanner, current: dict, nas,
     person = sorted(where & {"failed", "quarantine"})
     manifests = files.get("manifest") or []
 
+    # A bundle parked for a new pose (_parked_for_repose says why it is a
+    # place). Three cases: the round trip is under way (a request is out, or
+    # the new pose has come back and waits for analysis); the re-pose run
+    # stopped after parking and wrote no request, so nothing will ever come
+    # back without a person; or the round trip finished and the parked copy
+    # was left behind.
+    parked_note = ""
+    if PARKED_FOR_REPOSE in where:
+        parked_rel = _rel(_parked_for_repose().get(stem, Path(".")), nas)
+        if manifests or queues:
+            parked_note = ("an old copy of its review bundle is still parked for a "
+                           "re-pose in " + parked_rel)
+        elif any(w.startswith("waiting:") for w in where) or _repose_request_out(stem):
+            return verdict(WAITING, "parked for a new pose in " + parked_rel
+                           + "; a GPU node poses it and the server analyses it again")
+        else:
+            return verdict(NEEDS_PERSON, "parked for a new pose in " + parked_rel
+                           + ", but no re-pose request is out: the re-pose run stopped "
+                           "part way. Run mousereach-repose-videos again for this video "
+                           "to finish it")
+        if parked_note:
+            claim_note = parked_note + ("; " + claim_note if claim_note else "")
+
     # Only in a queue's build folder: the router has taken the files out of
     # Analyzed and not yet renamed the bundle into the queue. Judged before the
     # analysis, because whatever is still in Analyzed is the route's half-moved
@@ -434,6 +498,7 @@ def reconcile() -> dict:
             mark(bundles_in(Path(root) / INCOMING_DIR_NAME), "incoming:" + queue)
     mark(ids_in_dir(Paths.FAILED), "failed")
     mark(ids_in_dir(_quarantine_dir()), "quarantine")
+    mark(_parked_for_repose().keys(), PARKED_FOR_REPOSE)
     analyzed = walk_analyzed(Paths.ANALYZED_OUTPUT)
     mark(analyzed.keys(), "analyzed")
 

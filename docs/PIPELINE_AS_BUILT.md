@@ -4830,3 +4830,19 @@ only. An unreadable configuration refuses. The rule and its reason are in
 `pipeline/versions.py` `publication_lock_gate`. Tests: `tests/test_publication_lock_gate.py`.
 A lock written to the file filed results sit beside (so every machine sees it) is a later step,
 not built.
+
+## Update: mousereach-reconcile sees a bundle parked for a new pose
+
+`mousereach-repose-videos` takes a held video's review bundle out of its queue as one rename to
+`Processing/Repose_Queue/_parked/<video>/`, and during the re-pose round trip that folder holds
+the video's only copy. No reader named the folder, so `mousereach-reconcile` reported such a
+video nowhere. It now reads the parked folder as a place: with a re-pose request in the queue or
+in flight (or the new pose back in the posed folder) the video is "waiting for machine"; with no
+request -- a re-pose run that stopped after parking -- it is "needs person", with the instruction
+to run `mousereach-repose-videos` again for it (that run finishes from the parked folder); and a
+parked copy still there after the video was filed or held again is named in the video's detail.
+
+Not changed here (follow-ups): the census and the Pipeline Dashboard's scan do not yet name the
+parked folder; a stopped re-pose run still leaves the video's row saying it is in its review
+queue; and nothing yet removes a parked folder once the re-posed video has been filed. Test:
+`tests/test_reconcile.py` (the `parked` tests).

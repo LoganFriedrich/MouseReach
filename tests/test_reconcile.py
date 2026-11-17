@@ -497,3 +497,47 @@ def test_aspa_sync_skips_superseded_folders_as_cohort_and_as_video(tmp_path):
     expected = [("H", stem, "H01", cohort)]
     assert list(find_reprocessed_videos(tmp_path)) == expected
     assert list(find_reprocessed_videos(tmp_path, cohort="H")) == expected
+
+
+# ---- a review bundle parked for a new pose (mousereach-repose-videos) ----
+# WHY: during the re-pose round trip the parked folder holds a held video's
+# only copy, and no reader named it, so the video was reported nowhere.
+
+PARKED_VID = "20250101_ABC9904_P1"
+
+
+def _parked(env, monkeypatch, request=None):
+    queue = env.nas / "Processing" / "Repose_Queue"
+    folder = queue / "_parked" / PARKED_VID
+    folder.mkdir(parents=True)
+    (folder / f"{PARKED_VID}.mp4").write_bytes(b"video")
+    monkeypatch.setattr(rc_paths(), "REPOSE_QUEUE", queue, raising=False)
+    if request == "queued":
+        (queue / f"{PARKED_VID}.json").write_text("{}")
+    elif request == "inflight":
+        (queue / ".inflight").mkdir()
+        (queue / ".inflight" / f"{PARKED_VID}.json").write_text("{}")
+    return folder
+
+
+@pytest.mark.parametrize("request_state", ["queued", "inflight"])
+def test_a_parked_video_with_its_request_out_is_waiting(env, monkeypatch, request_state):
+    _parked(env, monkeypatch, request=request_state)
+    row = verdict_of(PARKED_VID)
+    assert row["verdict"] == rc.WAITING
+    assert "parked for a new pose" in row["detail"]
+
+
+def test_a_parked_video_whose_request_was_never_written_needs_a_person(env, monkeypatch):
+    _parked(env, monkeypatch)
+    row = verdict_of(PARKED_VID)
+    assert row["verdict"] == rc.NEEDS_PERSON
+    assert "mousereach-repose-videos again" in row["detail"]
+
+
+def test_a_parked_copy_left_after_the_video_was_filed_is_named(env, monkeypatch):
+    _parked(env, monkeypatch)
+    put_analyzed(PARKED_VID)
+    row = verdict_of(PARKED_VID)
+    assert row["verdict"] == rc.DONE
+    assert "still parked for a re-pose" in row["detail"]
