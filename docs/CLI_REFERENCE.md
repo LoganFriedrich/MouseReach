@@ -37,7 +37,7 @@ walkthroughs of the review tools themselves.
 - [Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes into per-reach permanent output for kinematic analysis)](#step-4b-reach-assignment-joins-v8-reaches-v6-cascade-outcomes-into-per-reach-permanent-output-for-kinematic-analysis) -- `mousereach-assign-reaches`
 - [Step 5 - Grasp Kinematics](#step-5-grasp-kinematics) -- `mousereach-grasp-analyze`, `mousereach-grasp-triage`, `mousereach-grasp-review`
 - [Step 6 - Export](#step-6-export) -- `mousereach-export`, `mousereach-summary`
-- [Archive - Move validated videos to NAS](#archive-move-validated-videos-to-nas) -- `mousereach-archive`
+- [Archive - File by hand a video the watcher has passed](#archive-file-by-hand-a-video-the-watcher-has-passed) -- `mousereach-archive`
 - [Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture](#migration-one-time-migration-from-old-multi-folder-to-v2-3-single-folder-architecture) -- `mousereach-migrate`
 - [Algorithm Evaluation](#algorithm-evaluation) -- `mousereach-eval`, `mousereach-eval-direct`, `mousereach-update-algo-ref`, `mousereach-algo-vs-human`
 - [Export Utilities](#export-utilities) -- `mousereach-quick-summary`, `mousereach-features-csv`
@@ -1291,7 +1291,7 @@ options:
                         Output JSON file
 ```
 
-## Archive - Move validated videos to NAS
+## Archive - File by hand a video the watcher has passed
 
 ### `mousereach-archive`
 
@@ -1300,7 +1300,7 @@ usage: mousereach-archive [-h] [--dry-run] [--list] [--status VIDEO_ID]
                           [--quiet]
                           [video_id]
 
-Archive fully validated videos to NAS
+File by hand a finished video into its Analyzed cohort folder
 
 positional arguments:
   video_id              Video ID to archive (default: all ready videos)
@@ -1319,41 +1319,26 @@ Examples:
     mousereach-archive --dry-run          # Preview what would be archived
     mousereach-archive --list             # List ready videos
 
-Requirements (all of them):
-    - The watcher is not running on this machine (it files videos itself).
-    - This machine's watcher database, if it has one, has the video as
-      'processed' -- it passed every check: quality triage, hand scores,
-      review, kinematics.
-    - <video>_features.json is in the folder and newer than the video's
-      segments, reaches and outcomes files.
-    - Segmentation, reach and outcome files carry an approved verdict.
+On a machine that runs the watcher you normally never need this command:
+the watcher files each video by itself as soon as it has passed every check
+(quality triage, the hand-score comparison, review, kinematics). This
+command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
+    - the watcher is running on this machine, or that cannot be checked
+      (two programs filing one video at once can split it between two
+      folders). Stop the watcher first, or leave the filing to it;
+    - this machine's watcher database knows the video and does not have it
+      as 'processed'. The message names the state (e.g. 'processing' while
+      it waits for its hand scores, 'triage', 'failed', 'crystallized');
+      deal with it through the watcher and the review tools instead;
+    - <video>_features.json is missing, or older than the video's segments,
+      reaches or outcomes file (an earlier run's kinematics);
+    - a segmentation, reach or outcome file lacks an approved verdict.
+A machine with no watcher database (the tool used on its own) is judged on
+the files alone. After filing, 'archived' is recorded in this machine's
+watcher database; if the database knows the video and that cannot be
+recorded, the command says so and exits 1. --list shows only videos that
+pass these checks; --status VIDEO_ID names the reason one would be refused.
 ```
-
-What it checks, in plain words. On a machine that runs the watcher you
-normally never need this command: the watcher files each video into its
-Analyzed cohort folder by itself as soon as the video has passed every check
-(quality triage, the hand-score comparison, review, kinematics). The command
-is for filing by hand, and it refuses -- moving nothing and exiting with code
-1 -- when:
-
-- the watcher is running on this machine, or that cannot be checked (two
-  programs filing the same video at once can leave it split between two
-  folders). Stop the watcher first, or leave the filing to it;
-- this machine's watcher database knows the video and does not have it as
-  `processed`. The message names the state it is in (for example
-  `processing` while it waits for its hand scores, `triage` while a person
-  reviews it, `failed`, or `crystallized`). Deal with it through the watcher
-  and the review tools, not with this command;
-- `<video>_features.json` is missing, or is older than the video's
-  segments, reaches or outcomes file -- an earlier run's kinematics, not the
-  ones of these outputs.
-
-A machine with no watcher database at all (the tool used on its own) is
-judged on the files alone. After filing, the command records `archived` in
-this machine's watcher database; if the database knows the video and that
-cannot be recorded, it says so and exits with code 1. `--list` lists only
-videos that pass these checks, and `--status VIDEO_ID` names the reason a
-video would be refused.
 
 ## Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture
 

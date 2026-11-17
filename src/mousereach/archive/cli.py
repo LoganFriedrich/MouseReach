@@ -44,7 +44,7 @@ def watcher_daemon_running() -> bool:
 def main():
     """CLI entry point for mousereach-archive."""
     parser = argparse.ArgumentParser(
-        description="Archive fully validated videos to NAS",
+        description="File by hand a finished video into its Analyzed cohort folder",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -53,14 +53,25 @@ Examples:
     mousereach-archive --dry-run          # Preview what would be archived
     mousereach-archive --list             # List ready videos
 
-Requirements (all of them):
-    - The watcher is not running on this machine (it files videos itself).
-    - This machine's watcher database, if it has one, has the video as
-      'processed' -- it passed every check: quality triage, hand scores,
-      review, kinematics.
-    - <video>_features.json is in the folder and newer than the video's
-      segments, reaches and outcomes files.
-    - Segmentation, reach and outcome files carry an approved verdict.
+On a machine that runs the watcher you normally never need this command:
+the watcher files each video by itself as soon as it has passed every check
+(quality triage, the hand-score comparison, review, kinematics). This
+command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
+    - the watcher is running on this machine, or that cannot be checked
+      (two programs filing one video at once can split it between two
+      folders). Stop the watcher first, or leave the filing to it;
+    - this machine's watcher database knows the video and does not have it
+      as 'processed'. The message names the state (e.g. 'processing' while
+      it waits for its hand scores, 'triage', 'failed', 'crystallized');
+      deal with it through the watcher and the review tools instead;
+    - <video>_features.json is missing, or older than the video's segments,
+      reaches or outcomes file (an earlier run's kinematics);
+    - a segmentation, reach or outcome file lacks an approved verdict.
+A machine with no watcher database (the tool used on its own) is judged on
+the files alone. After filing, 'archived' is recorded in this machine's
+watcher database; if the database knows the video and that cannot be
+recorded, the command says so and exits 1. --list shows only videos that
+pass these checks; --status VIDEO_ID names the reason one would be refused.
 """
     )
 

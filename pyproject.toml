@@ -154,7 +154,7 @@ mousereach-grasp-review = "mousereach.kinematics.cli:main_review"
 mousereach-export = "mousereach.export.cli:main_export"
 mousereach-summary = "mousereach.export.cli:main_summary"
 
-# Archive - Move validated videos to NAS
+# Archive - File by hand a video the watcher has passed
 mousereach-archive = "mousereach.archive.cli:main"
 
 # Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture
