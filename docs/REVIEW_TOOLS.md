@@ -268,9 +268,10 @@ through the video, add every cut by hand ("Add a cut at the current frame" at
 each tray advance)
 and save. Saving writes the video's first segments file, every cut marked as
 yours, and releases the video, which then re-runs from the step after
-segmentation on your cuts. If the video itself cannot be opened, its length is
-unknown and the save is refused with a message saying so (nothing is written);
-fix the video file first. Before this the tool skipped such a video, and since
+segmentation on your cuts. The video's length is taken from its pose file, as
+the segmenter takes it (from the video's own frame count only when no pose file
+is found); if neither can be read, the length is unknown and the save is
+refused with a message saying so (nothing is written) -- fix the files first. Before this the tool skipped such a video, and since
 every way out of the queue needs cuts saved here, it could never leave.
 
 Until 2026-10-23 each segment also had a box, "Segmentation says this is

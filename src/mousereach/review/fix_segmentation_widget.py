@@ -151,7 +151,7 @@ class FixSegmentationWidget(QWidget):
         self.original_boundaries: List[int] = []
         self.n_frames: int = 0
         self._uncut: bool = False          # no segments file: cut from scratch
-        self._video_fps: Optional[float] = None
+        self._pose_frames: Optional[int] = None  # frames in the pose file shown
         self._video_layer = None
         self._queue: List[Path] = []
         self._gw_idx: int = 0
@@ -221,6 +221,17 @@ cuts were fixed on an earlier visit and that was sent back. The orange line
 under the video name says why it was sent and why it cannot leave yet. If
 the cuts already look right, answer Yes at every boundary and Save: confirming
 them is the step the queue is waiting for.
+
+A VIDEO WITH NO CUTS AT ALL: when the segmenter failed with an error, the
+video arrives with no segments file. It is listed after the others, with the
+note "The segmenter could not run on this video". Add every cut by hand with
+"Add a cut at the current frame" at each tray advance, then Save: that writes
+its first segments file. If neither its pose file nor its video can be read,
+its length is unknown and Save says so and writes nothing.
+
+GROUND TRUTH DOES NOT COUNT HERE: a ground-truth file with every boundary
+determined does not release a video or stand in for this step. Set or confirm
+the cuts here even when the video has ground truth.
 
 FINISHING: saving releases a video that was sent here for its cuts. A video
 sent for another reason (a flagged session, a quality hold) is released once
@@ -627,7 +638,7 @@ automatic.
         # No segments file (the segmenter could not run): start from no cuts;
         # saving writes the first segments file, all of it the person's.
         self._uncut = not self.seg_path.is_file()
-        self._video_fps = None
+        self._pose_frames = None
         self.seg = {} if self._uncut else read_segmentation(self.seg_path)
         self.candidates = list(self.seg.get("candidates") or [])
         self.boundaries = sorted(int(b) for b in (self.seg.get("boundaries") or []))
@@ -861,7 +872,6 @@ automatic.
         try:
             cap = cv2.VideoCapture(str(mp4))
             n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            self._video_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0) or None
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             cap.release()
@@ -909,6 +919,7 @@ automatic.
             df = pd.read_hdf(pose)
             df.columns = ['_'.join(str(c) for c in col[1:]) for col in df.columns]
             n = len(df)
+            self._pose_frames = n
             bodyparts = sorted({c[:-2] for c in df.columns if c.endswith('_x')})
             colors_base = [
                 [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1],
@@ -1205,7 +1216,11 @@ automatic.
             return
 
         uncut = not Path(self.seg_path).is_file()
-        if uncut and int(self.n_frames or 0) <= 0:
+        # A first segments file takes the video's length from its pose file,
+        # as the segmenter does (len of the pose table); the video's own
+        # frame count only when no pose was found.
+        length = int(getattr(self, "_pose_frames", None) or self.n_frames or 0)
+        if uncut and length <= 0:
             # A first segments file must say how long the video is; every
             # later step reads the last segment's end from it.
             QMessageBox.warning(self, "Video length unknown",
@@ -1240,12 +1255,12 @@ automatic.
             # The first segments file of a video the segmenter could not cut.
             # The fields every later step reads; boundary_source "human" keeps
             # the segmenter from replacing it on the re-run.
+            # fps: the segmenter's own default (it never reads the video's).
             seg.update({"video_name": self.video_stem,
-                        "total_frames": int(self.n_frames),
+                        "total_frames": length,
+                        "fps": 60.0,
                         "candidates": [],
                         "note": "No segmenter output: every cut set by hand."})
-            if getattr(self, "_video_fps", None):
-                seg["fps"] = float(self._video_fps)
         seg["boundaries"] = [int(b) for b in self.boundaries]
         seg["algo_boundaries"] = [int(b) for b in self.original_boundaries]
         seg["boundary_source"] = "human"

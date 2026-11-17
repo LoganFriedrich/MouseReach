@@ -77,11 +77,12 @@ class _Box:
         cls.calls.append(("critical",) + a[1:])
 
 
-def _save(bundle, boundaries, n_frames):
+def _save(bundle, boundaries, n_frames, pose_frames=None):
     stub = SimpleNamespace(
         seg_path=bundle / f"{STEM}_segments.json", seg={}, video_stem=STEM,
         boundaries=list(boundaries), original_boundaries=[], n_frames=n_frames,
-        _gw_records={}, _video_fps=30.0, status=_Label(), _next_video=lambda: None)
+        _gw_records={}, _pose_frames=pose_frames, status=_Label(),
+        _next_video=lambda: None)
     FixSegmentationWidget._save(stub)
     return stub
 
@@ -90,13 +91,14 @@ def test_saving_writes_the_first_segments_file_and_releases_it(tmp_path, monkeyp
     monkeypatch.setattr(fsw, "QMessageBox", _Box)
     _Box.calls = []
     b = _uncut_bundle(tmp_path / "Processing" / "Review" / "deep_review")
-    _save(b, [120, 900, 1700], n_frames=2400)
+    _save(b, [120, 900, 1700], n_frames=2401, pose_frames=2400)
     assert _Box.calls == []
     seg = json.loads((b / f"{STEM}_segments.json").read_text(encoding="utf-8"))
     assert seg["boundaries"] == [120, 900, 1700]
     assert seg["boundary_source"] == "human"
     assert seg["total_frames"] == 2400 and seg["video_name"] == STEM
-    assert seg["fps"] == 30.0
+    # Length from the pose file, as the segmenter takes it; its fps default.
+    assert seg["fps"] == 60.0
     # The readers downstream take it as a person's cuts, not a failed run.
     assert not segmentation_failed(seg)
     assert resegmented_since_entry(b, STEM)[0]

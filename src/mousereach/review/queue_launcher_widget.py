@@ -71,7 +71,9 @@ Refresh button.
   whose every pellet is answered (whoever cut it), or one whose cuts were
   fixed after it was sent for its cuts. A video with open pellets that was
   sent for another reason is not touched; Re-segmentation Review shows its
-  open pellets.
+  open pellets. When you confirm, the queue is checked again: a video that
+  left the queue, was sent back or was released by someone else since the
+  list was made is skipped, and the message says how many.
 
 * Folders left for a person -- a folder in a queue that is not a video's
   live bundle but holds a person's work with no copy anywhere else (an
