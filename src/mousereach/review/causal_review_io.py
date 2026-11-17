@@ -1052,8 +1052,29 @@ def gt_segments(gt) -> List[Dict[str, Any]]:
     start_frame, end_frame}]``, from its own ``segmentation.boundaries``
     (segment N runs from boundary N-1 to the frame before boundary N, the
     rule every other reader uses). Empty when the file records no usable
-    boundaries."""
-    return segments_from_segmentation((gt or {}).get("segmentation") or {})
+    boundaries.
+
+    Each boundary is placed by its own ``index`` (0 = the first cut), not by
+    its position in the list: segment N exists only when the boundaries with
+    index N-1 and N are both in the file. WHY: "Save as Ground Truth" writes
+    only the boundaries a person determined, so a file can hold cuts 3, 4 and
+    9; numbered by position they made "segment 1" of cuts 3-4 and "segment 2"
+    of cuts 4-9, and the outcomes of pellets 1 and 2 were matched to the
+    footage of pellets 4 and 5-9. A segment whose two cuts are not both in
+    the file has no frames here; its outcome then falls back to its number
+    (index_gt_outcomes_by_segment). A file whose boundaries carry no index
+    (an older format) is numbered by position, as before."""
+    bounds = ((gt or {}).get("segmentation") or {}).get("boundaries") or []
+    by_index = {}
+    for b in bounds:
+        if not isinstance(b, dict) or b.get("index") is None or b.get("frame") is None:
+            return segments_from_segmentation((gt or {}).get("segmentation") or {})
+        try:
+            by_index[int(b["index"])] = int(b["frame"])
+        except (TypeError, ValueError):
+            return []
+    return [{"segment_num": i + 1, "start_frame": by_index[i], "end_frame": by_index[i + 1] - 1}
+            for i in sorted(by_index) if i + 1 in by_index]
 
 
 def index_gt_outcomes_by_segment(gt, current_segments=None,
