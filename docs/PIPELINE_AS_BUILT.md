@@ -2355,10 +2355,11 @@ ignore it. Tests: `tests/test_hand_score_check_before_filing.py` (the `record` t
 ## Update 2026-10-26: checked against the hand scores before filing
 
 (Superseded 2026-10-28: the check now runs before the review gate, not before filing -- see the
-update of that date above. This section is kept as the record of what ran from 2026-10-26. The
-"never scored by hand, so filed without the comparison" outcome it describes no longer exists: such
-a video is now held as missing its scores -- see "a video whose hand scores cannot be found is held
-as a defect".)
+update of that date above. This section is kept as the record of what ran from 2026-10-26.)
+
+(Earlier versions filed a video with no hand scores without the comparison; that no longer happens:
+such a video is now held as missing its scores -- see "a video whose hand scores cannot be found is
+held as a defect".)
 
 The last step before a video is filed (`_archive_to_nas` on the processing server,
 `_archive_locally_processed` on a node that also analyses) is now a comparison of its pellets with
