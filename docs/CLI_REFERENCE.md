@@ -2251,12 +2251,60 @@ note); elsewhere it refuses and changes nothing.
 ```
 usage: mousereach-backup [--once] [--dry-run] [--verbose]
 
-Backup watcher: mirrors pipeline data to the backup NAS via robocopy (add-only).
+Backup watcher: copies pipeline data to the backup NAS via robocopy, add-only: nothing on the backup is ever removed.
+Claim folders and half-written files are not copied.
 
   --once      One sync cycle, then exit (default: run as a daemon).
   --dry-run   Show what would be synced without copying.
   --verbose   Debug-level logging.
 ```
+
+**What it copies.** The folders listed in `backup.sync_dirs` in
+`~/.mousereach/config.json` (paths relative to `backup.source_root`), or the
+built-in default list when that is not set. New and changed files are copied;
+a file that is later moved or deleted on the source stays on the backup, at
+every place it passed through. Nothing on the backup is ever removed.
+
+**What it never copies, and why.** These are machine state or files still
+being written, and a copy of them would be wrong the moment it is restored:
+
+| Left out | What it is | Why a restored copy would do harm |
+|---|---|---|
+| `.claims`, `.return_claims` folders | "this machine is working on that video" markers | a restored marker blocks every other machine from the video |
+| `.node_status` folder | each machine's "I was alive at this time" report | a restored report makes a dead machine look alive |
+| `*.tmp`, `*.part`, `*.partial` | a file another job is still writing | a truncated file under a name nothing reads; the finished file is copied next run |
+| `*.db-journal` | SQLite's record of a write in progress | restored beside its database, SQLite "undoes" writes that in fact finished long ago |
+| `*.db-shm` | an index SQLite rebuilds itself | none needed |
+| `__pycache__`, `.git`, `.pytest_cache`, `pytest-cache-files-*`, `*.pyc` | code and test leftovers | not data |
+
+Still copied on purpose: the `.inflight` and `.incoming` folders (they hold real
+videos in the middle of a hand-over -- possibly the only copy at that moment) and
+SQLite `*-wal` files (they hold finished writes not yet folded into the `.db`
+file; a database restored without its `-wal` loses them).
+
+**The panel button.** Watcher Control -> Backups -> "Back up now" runs the same
+backup as `mousereach-backup --once`, with the same scope (`backup.sync_dirs`)
+and time limit, using the two folders typed in the panel. When a folder did not
+copy completely the panel says "Backup INCOMPLETE" (the watcher log names the
+files); run it again. "Save backup settings" changes only the on/off switch and
+the two folders; the scope and the other backup settings in the config file are
+kept.
+
+**Restoring from the backup.** A restore gives you FILES, not the pipeline's
+state. Do it in this order:
+
+1. Stop the watcher on every machine that uses the restored folders.
+2. Copy the files back.
+3. Before opening any restored database (`*.db`), delete any `*.db-journal`
+   file beside it. Backups made before this rule may still hold one, and
+   SQLite would use it to undo finished writes.
+4. Run `mousereach-reconcile` and read what it reports. Be aware: a restore
+   can put a video in two places (its filed copy, and an old copy restored
+   into a waiting or review-queue folder it passed through). Reconcile calls
+   such a video done because its filed copy is complete; it does not point
+   at the old copy. So after a restore, a copy of an already-filed video in a
+   waiting or queue folder is an old one from the backup, not new work.
+5. Start the watchers again.
 
 ## Archive migration - One-time Sort/ -> project/cohort restructure
 

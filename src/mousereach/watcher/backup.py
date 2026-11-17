@@ -164,13 +164,35 @@ class BackupWatcher:
                 # Exclude dirs. pytest-cache-files-* are test-run residue that
                 # pytest leaves unreadable on a network share; they are never
                 # data, and copying them failed every night.
-                "/XD", "__pycache__", ".git", ".claims", ".pytest_cache",
-                "pytest-cache-files-*",
-                # *.tmp: a file another job is still writing (the nightly export
-                # writes each CSV as .tmp, then renames it). Copying one fails
-                # once it is renamed mid-copy, which marked the sync failed;
-                # the finished file is copied on the next run.
-                "/XF", "*.pyc", "watcher.db-journal", "*.tmp",     # Exclude files
+                #
+                # Claim and liveness folders are left out because they are
+                # STATE, not data: a claim marker (.claims, .return_claims)
+                # says "this machine is working on that video right now", and
+                # a .node_status report says "this machine was alive at that
+                # time". Restored from the backup, either one lies -- a
+                # restored claim blocks every other machine from the video,
+                # and a restored status report makes a dead machine look
+                # alive. .inflight and .incoming are deliberately NOT left
+                # out: they hold real video files in the middle of a hand-over,
+                # and at the moment of the backup that may be the only copy.
+                "/XD", "__pycache__", ".git", ".claims", ".return_claims",
+                ".node_status", ".pytest_cache", "pytest-cache-files-*",
+                # Half-written files:
+                # *.tmp, *.part, *.partial: a file another job is still writing
+                # (the nightly export writes each CSV as .tmp, a hand-over
+                # copies into .part, then renames). Copying one fails once it
+                # is renamed mid-copy, which marked the sync failed, and a copy
+                # that does succeed is a truncated file under a name nothing
+                # reads. The finished file is copied on the next run.
+                # *.db-journal: SQLite's rollback journal of a transaction in
+                # progress. Restored next to its database, SQLite treats it as
+                # a crashed transaction and "rolls back" changes that in fact
+                # committed long ago. *.db-shm is a shared-memory index SQLite
+                # rebuilds itself. The *-wal file is NOT left out: it holds
+                # committed writes not yet folded into the .db file, and a
+                # database restored without it loses them.
+                "/XF", "*.pyc", "*.tmp", "*.part", "*.partial",
+                "*.db-journal", "*.db-shm",
             ], capture_output=True, text=True, timeout=self.robocopy_timeout)
 
             # Robocopy exit codes: 0=no changes, 1=files copied, 2=extra files,
@@ -208,12 +230,46 @@ class BackupWatcher:
             return 0, 1
 
 
+def watcher_from_config(backup_config: dict, source_root=None,
+                        backup_root=None) -> "BackupWatcher":
+    """Build the BackupWatcher the config describes.
+
+    The ONE place the config's backup settings become a watcher, used by
+    ``mousereach-backup`` and by the Watcher Control panel's "Back up now"
+    button. WHY: the button built its own watcher from the two folder boxes
+    and nothing else, so it ignored ``backup.sync_dirs`` and copied the
+    default three-tree scope -- the scope a lab narrows precisely because it
+    does not fit on the backup volume -- and ignored the time limit too.
+
+    source_root / backup_root override the config's (the panel passes what is
+    typed in its boxes). Raises ValueError for a malformed ``sync_dirs``.
+    """
+    # Optional scope override: backup.sync_dirs (list of paths relative to
+    # source_root). WHY: the default three-tree scope can exceed the backup
+    # volume's free space; a lab must be able to protect what fits rather than have
+    # robocopy fill the disk and fail partway with no complete tree.
+    sync_dirs = backup_config.get('sync_dirs') or None
+    if sync_dirs is not None and (not isinstance(sync_dirs, list)
+                                  or not all(isinstance(s, str) for s in sync_dirs)):
+        raise ValueError("backup.sync_dirs must be a list of strings "
+                         "(paths relative to source_root)")
+    return BackupWatcher(
+        source_root=source_root or backup_config.get('source_root'),
+        backup_root=backup_root or backup_config.get('backup_root'),
+        poll_interval=backup_config.get('poll_interval_seconds', 600),
+        stability_seconds=backup_config.get('stability_seconds', 300),
+        sync_dirs=sync_dirs,
+        robocopy_timeout=backup_config.get('robocopy_timeout_seconds', 3600),
+    )
+
+
 def main():
     """CLI entry point for mousereach-backup."""
     if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
         print("usage: mousereach-backup [--once] [--dry-run] [--verbose]\n\n"
-              "Backup watcher: mirrors pipeline data to the backup NAS "
-              "via robocopy (add-only).\n\n"
+              "Backup watcher: copies pipeline data to the backup NAS "
+              "via robocopy, add-only: nothing on the backup is ever removed.\n"
+              "Claim folders and half-written files are not copied.\n\n"
               "  --once      One sync cycle, then exit (default: run as a daemon).\n"
               "  --dry-run   Show what would be synced without copying.\n"
               "  --verbose   Debug-level logging.")
@@ -256,25 +312,11 @@ def main():
         print("ERROR: backup.source_root and backup.backup_root must be set in config", file=sys.stderr)
         sys.exit(1)
 
-    # Optional scope override: backup.sync_dirs (list of paths relative to
-    # source_root). WHY: the default three-tree scope can exceed the backup
-    # volume's free space; a lab must be able to protect what fits rather than have
-    # robocopy fill the disk and fail partway with no complete tree.
-    sync_dirs = backup_config.get('sync_dirs') or None
-    if sync_dirs is not None and (not isinstance(sync_dirs, list)
-                                  or not all(isinstance(s, str) for s in sync_dirs)):
-        print("ERROR: backup.sync_dirs must be a list of strings "
-              "(paths relative to source_root)", file=sys.stderr)
+    try:
+        watcher = watcher_from_config(backup_config)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
-
-    watcher = BackupWatcher(
-        source_root=source_root,
-        backup_root=backup_root,
-        poll_interval=backup_config.get('poll_interval_seconds', 600),
-        stability_seconds=backup_config.get('stability_seconds', 300),
-        sync_dirs=sync_dirs,
-        robocopy_timeout=backup_config.get('robocopy_timeout_seconds', 3600),
-    )
 
     if dry_run_mode:
         watcher.dry_run()

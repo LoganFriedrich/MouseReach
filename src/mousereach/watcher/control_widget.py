@@ -61,6 +61,32 @@ from napari.utils.notifications import show_info, show_error
 logger = logging.getLogger(__name__)
 
 
+def _run_backup_once(src: str, dst: str) -> str:
+    """One backup run for the panel's button; returns the line to show.
+
+    Uses the same settings as the nightly ``mousereach-backup`` (the scope in
+    backup.sync_dirs, the time limit), with the folders typed in the panel.
+    WHY: the button used the default scope whatever the config said, and
+    said "Backup complete." even when robocopy failed on a folder -- the
+    failure count run_once returns was thrown away.
+    """
+    try:
+        from mousereach.config import _load_config
+        from mousereach.watcher.backup import watcher_from_config
+        try:
+            cfg = (_load_config() or {}).get("backup", {}) or {}
+        except Exception:
+            cfg = {}
+        failed = watcher_from_config(cfg, source_root=src,
+                                     backup_root=dst).run_once()
+    except Exception as e:
+        return f"Backup failed: {e}"
+    if failed:
+        return (f"Backup INCOMPLETE: {failed} folder(s) did not copy completely. "
+                f"The watcher log names the files; run the backup again.")
+    return "Backup complete."
+
+
 class _BackupWorker(QObject):
     """Carries the backup-finished message from the worker thread to the GUI."""
     done = Signal(str)
@@ -1243,11 +1269,19 @@ class WatcherControlWidget(QWidget):
             existing = {}
             if cfg_path.exists():
                 existing = json.loads(cfg_path.read_text(encoding="utf-8"))
-            existing["backup"] = {
+            # Merge into the existing backup settings, never replace them:
+            # the panel edits only these three; the scope (sync_dirs), the
+            # time limit and the poll timings are set in the config file, and
+            # Save used to wipe them -- after which the nightly backup copied
+            # the default, larger scope.
+            bkp = existing.get("backup")
+            bkp = dict(bkp) if isinstance(bkp, dict) else {}
+            bkp.update({
                 "enabled": self._bkp_enabled.isChecked(),
                 "source_root": self._bkp_source.text().strip(),
                 "backup_root": self._bkp_dest.text().strip(),
-            }
+            })
+            existing["backup"] = bkp
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
             cfg_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
             show_info("Backup settings saved.")
@@ -1269,12 +1303,7 @@ class WatcherControlWidget(QWidget):
         self._bkp_worker = worker
 
         def job():
-            try:
-                from mousereach.watcher.backup import BackupWatcher
-                BackupWatcher(source_root=src, backup_root=dst).run_once()
-                worker.done.emit("Backup complete.")
-            except Exception as e:
-                worker.done.emit(f"Backup failed: {e}")
+            worker.done.emit(_run_backup_once(src, dst))
 
         self._bkp_thread = threading.Thread(target=job, daemon=True, name="backup-run")
         self._bkp_thread.start()

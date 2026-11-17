@@ -338,7 +338,7 @@ A separate tool, the "bring current" reprocessor, exists to re-run old videos on
 
 BACKUPS
 
-A periodic job mirrors the configured folders (backup.sync_dirs, or the built-in default list) from the source root to a backup location using robocopy in add-only mode - newer files are copied over, deleted files are left in place on the backup (watcher/backup.py:28-33, :133-150). That preserves a copy of the connectome.db file, but it is a whole-file disk backup on a timer, not a record of which rows a given sync replaced.
+A periodic job copies the configured folders (backup.sync_dirs, or the built-in default list) from the source root to a backup location using robocopy in add-only mode - newer files are copied over, deleted files are left in place on the backup; claim folders, liveness reports, half-written files and SQLite rollback journals are never copied (see the update below on what the backup leaves out) (watcher/backup.py:28-33, :133-150). That preserves a copy of the connectome.db file, but it is a whole-file disk backup on a timer, not a record of which rows a given sync replaced.
 
 ---
 
@@ -4850,3 +4850,27 @@ Not changed here (follow-ups): the census and the Pipeline Dashboard's scan do n
 parked folder; a stopped re-pose run still leaves the video's row saying it is in its review
 queue; and nothing yet removes a parked folder once the re-posed video has been filed. Test:
 `tests/test_reconcile.py` (the `parked` tests).
+
+## Update: the backup leaves out claim folders and half-written files
+
+The backup (`mousereach-backup`, and the Watcher Control panel's "Back up now") is add-only:
+whatever it copies once stays on the backup for good. It used to copy the claim markers of
+returns from review (`.return_claims`), each machine's liveness report (`.node_status`), files
+still being written (`*.part`, `*.partial`) and SQLite rollback journals (`*.db-journal`).
+Restored, a claim marker blocks every other machine from that video, a status report makes a
+dead machine look alive, and a journal makes SQLite undo writes that finished long ago. Now
+(`watcher/backup.py`, `_sync_dir`) robocopy leaves out the folders `.claims`, `.return_claims`
+and `.node_status` and the files `*.tmp`, `*.part`, `*.partial`, `*.db-journal` and `*.db-shm`.
+The hand-over folders `.inflight` and `.incoming` and SQLite `*-wal` files are still copied:
+they hold real data. Nothing already on the backup is removed (the lab's rule for the backup), so
+a backup made before this change may still hold such files; the restore steps in
+docs/CLI_REFERENCE.md ("Backup watcher") say to delete a restored `*.db-journal` before opening
+its database and to run `mousereach-reconcile` after any restore.
+
+The panel's "Back up now" built its own backup from the two folder boxes and ignored
+`backup.sync_dirs` and the time limit, so it copied the full default scope; it also said
+"Backup complete." when a folder failed. It now builds the backup through the same function as
+the command (`backup.watcher_from_config`) and says "Backup INCOMPLETE" when a folder did not
+copy completely. "Save backup settings" used to replace the whole `backup` section of the
+config, dropping `sync_dirs` and the timings; it now changes only the switch and the two folders.
+Test: `tests/test_backup_leaves_out_state.py`.
