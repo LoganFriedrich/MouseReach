@@ -2688,7 +2688,11 @@ What holds now:
 2. **A clear releases a video only if a person has re-segmented it since it arrived**
    (`review/resegmented.py`): the segments file was saved by a person in the segmentation
    fixer (`boundary_source: "human"`, `corrected_at`) after the bundle's `routed_at`.
-   Hand-set cuts from before it arrived do not count. A ground-truth file does not count
+   Hand-set cuts from before it arrived do not count. With no readable `routed_at` the
+   arrival is the latest of the routing record's modified time, the review manifest's
+   `provenance.staged_at` and the bundle folder's creation time
+   (`resegmented.entered_deep_review_at`); it used to be "any time", so any hand cut ever
+   saved counted. A bundle that cannot be dated cannot leave. A ground-truth file does not count
    either (since 2026-11-17): nothing writes its boundaries into the segments file, so a
    video released on it was cut again by the segmenter exactly as before. And "cleared"
    means the clear marker and nothing else -- the return scan

@@ -23,13 +23,16 @@ written through as hand cuts is an open decision; until it is made, cuts
 are set in the fixer.
 
 When the video entered the queue is ``routed_at`` in ``{stem}_routing.json``,
-written by every route into a queue. A bundle without one (older routes) is
-judged on the boundary calls alone.
+written by every route into a queue. A bundle whose ``routed_at`` cannot be
+read is dated by entered_deep_review_at's fallbacks (never "any time ever"),
+and one that cannot be dated at all cannot leave until that is put right.
 
 Easy and Flat trays are never segmented and are not
 subject to this rule; callers check ``is_outcome_free_tray`` first.
 """
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -47,10 +50,68 @@ def _read(path: Path) -> Optional[dict]:
         return None
 
 
+def _epoch(text) -> Optional[float]:
+    """Seconds since the epoch for an ISO time written by this package
+    (``datetime.now().isoformat()``), or None when it cannot be read."""
+    try:
+        return datetime.fromisoformat(str(text)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _created(path: Path) -> Optional[float]:
+    """When ``path`` was created, where the file system records it:
+    ``st_birthtime`` where it exists, else ``st_ctime`` on Windows (creation
+    time there). Elsewhere ``st_ctime`` is the last metadata change, not the
+    creation, so it is not used."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    t = getattr(st, "st_birthtime", None)
+    if t is None and os.name == "nt":
+        t = st.st_ctime
+    return t
+
+
 def entered_deep_review_at(bundle: Path, stem: str) -> Optional[str]:
-    """ISO time the bundle last entered its queue, or None if unrecorded."""
-    doc = _read(Path(bundle) / f"{stem}_routing.json")
-    return str(doc["routed_at"]) if doc and doc.get("routed_at") else None
+    """ISO time the bundle last entered its queue, or None if it cannot be
+    told at all.
+
+    ``routed_at`` in ``{stem}_routing.json`` when it can be read. Otherwise
+    the LATEST of: the routing record's modified time (it is written when the
+    video is routed), the review manifest's ``provenance.staged_at`` (written
+    when the bundle is staged), and the bundle folder's creation time.
+
+    WHY a fallback, and why the latest: with no readable ``routed_at`` the
+    rule used to accept ANY hand cut ever saved -- including the very cuts a
+    video was sent back here to have fixed. Each fallback is a time at or
+    after the video arrived, so the latest of them is the safe side: a cut
+    saved after it is certainly a new one, and at worst a person confirms
+    the cuts once more."""
+    bundle = Path(bundle)
+    routing = bundle / f"{stem}_routing.json"
+    doc = _read(routing)
+    if doc and _epoch(doc.get("routed_at")) is not None:
+        return str(doc["routed_at"])
+    times = []
+    try:
+        times.append(routing.stat().st_mtime)
+    except OSError:
+        pass
+    for name in (f"{stem}_manifest.json", "manifest.json"):
+        man = _read(bundle / name)
+        if man:
+            t = _epoch((man.get("provenance") or {}).get("staged_at"))
+            if t is not None:
+                times.append(t)
+            break
+    t = _created(bundle)
+    if t is not None:
+        times.append(t)
+    if not times:
+        return None
+    return datetime.fromtimestamp(max(times)).isoformat()
 
 
 def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
@@ -59,9 +120,18 @@ def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
     person who has to act on it."""
     bundle = Path(bundle)
     entered = entered_deep_review_at(bundle, stem)
+    if entered is None:
+        return False, ("not re-segmented: when this video arrived in the queue "
+                       "cannot be told (no routing record, review manifest or "
+                       "folder date could be read), so no saved cuts can be "
+                       "shown to be new. Check that its folder can be read, "
+                       "then set or confirm every cut in the segmentation "
+                       "fixer and save.")
+    entered_t = _epoch(entered)
 
     def after_entry(when) -> bool:
-        return entered is None or (when is not None and str(when) >= entered)
+        t = _epoch(when)
+        return t is not None and t >= entered_t
 
     seg = _read(bundle / f"{stem}_segments.json")
     if seg and seg.get("boundary_source") == "human":

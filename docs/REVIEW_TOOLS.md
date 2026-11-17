@@ -214,7 +214,12 @@ the segments file, so a video released that way was cut again by the
 segmenter exactly as before. Set or confirm the cuts in the fixer even when
 you have ground truth for the video. Cuts set
 by hand before it arrived do not count: a video sent back is there because
-those cuts were found wrong. Pressing Clear on a video nobody has
+those cuts were found wrong. When it arrived is read from its routing record
+(`routed_at`); for a video whose routing record is missing or unreadable it is
+the latest of the routing record's file date, its review manifest's
+`staged_at` and the date its folder was created (since 2026-11-17 -- before,
+such a video accepted any cuts ever saved by hand, even the ones it was sent
+back to have fixed). A video that cannot be dated at all says so and stays. Pressing Clear on a video nobody has
 re-segmented says so ("cannot be cleared yet -- not re-segmented: ...") and
 leaves it in place; a complete answer-save there keeps the answers and says
 the same. The Review Queues tab and `mousereach-review-release` list these
