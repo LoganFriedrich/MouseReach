@@ -4862,10 +4862,10 @@ dead machine look alive, and a journal makes SQLite undo writes that finished lo
 (`watcher/backup.py`, `_sync_dir`) robocopy leaves out the folders `.claims`, `.return_claims`
 and `.node_status` and the files `*.tmp`, `*.part`, `*.partial`, `*.db-journal` and `*.db-shm`.
 The hand-over folders `.inflight` and `.incoming` and SQLite `*-wal` files are still copied:
-they hold real data. Nothing already on the backup is removed (the lab's rule for the backup), so
-a backup made before this change may still hold such files; the restore steps in
-docs/CLI_REFERENCE.md ("Backup watcher") say to delete a restored `*.db-journal` before opening
-its database and to run `mousereach-reconcile` after any restore.
+they hold real data. Nothing already on the backup is removed (the backup is add-only by design), so
+a backup made before this change may still hold such files; the restore steps below say to
+delete a restored `*.db-journal` before opening its database and to run `mousereach-reconcile`
+after any restore.
 
 The panel's "Back up now" built its own backup from the two folder boxes and ignored
 `backup.sync_dirs` and the time limit, so it copied the full default scope; it also said
@@ -4874,6 +4874,53 @@ the command (`backup.watcher_from_config`) and says "Backup INCOMPLETE" when a f
 copy completely. "Save backup settings" used to replace the whole `backup` section of the
 config, dropping `sync_dirs` and the timings; it now changes only the switch and the two folders.
 Test: `tests/test_backup_leaves_out_state.py`.
+
+**What it copies.** The folders listed in `backup.sync_dirs` in
+`~/.mousereach/config.json` (paths relative to `backup.source_root`), or the
+built-in default list when that is not set. New and changed files are copied;
+a file that is later moved or deleted on the source stays on the backup, at
+every place it passed through. Nothing on the backup is ever removed.
+
+**What it never copies, and why.** These are machine state or files still
+being written, and a copy of them would be wrong the moment it is restored:
+
+| Left out | What it is | Why a restored copy would do harm |
+|---|---|---|
+| `.claims`, `.return_claims` folders | "this machine is working on that video" markers | a restored marker blocks every other machine from the video |
+| `.node_status` folder | each machine's "I was alive at this time" report | a restored report makes a dead machine look alive |
+| `*.tmp`, `*.part`, `*.partial` | a file another job is still writing | a truncated file under a name nothing reads; the finished file is copied next run |
+| `*.db-journal` | SQLite's record of a write in progress | restored beside its database, SQLite "undoes" writes that in fact finished long ago |
+| `*.db-shm` | an index SQLite rebuilds itself | none needed |
+| `__pycache__`, `.git`, `.pytest_cache`, `pytest-cache-files-*`, `*.pyc` | code and test leftovers | not data |
+
+Still copied on purpose: the `.inflight` and `.incoming` folders (they hold real
+videos in the middle of a hand-over -- possibly the only copy at that moment) and
+SQLite `*-wal` files (they hold finished writes not yet folded into the `.db`
+file; a database restored without its `-wal` loses them).
+
+**The panel button.** Watcher Control -> Backups -> "Back up now" runs the same
+backup as `mousereach-backup --once`, with the same scope (`backup.sync_dirs`)
+and time limit, using the two folders typed in the panel. When a folder did not
+copy completely the panel says "Backup INCOMPLETE" (the watcher log names the
+files); run it again. "Save backup settings" changes only the on/off switch and
+the two folders; the scope and the other backup settings in the config file are
+kept.
+
+**Restoring from the backup.** A restore gives you FILES, not the pipeline's
+state. Do it in this order:
+
+1. Stop the watcher on every machine that uses the restored folders.
+2. Copy the files back.
+3. Before opening any restored database (`*.db`), delete any `*.db-journal`
+   file beside it. Backups made before this rule may still hold one, and
+   SQLite would use it to undo finished writes.
+4. Run `mousereach-reconcile` and read what it reports. Be aware: a restore
+   can put a video in two places (its filed copy, and an old copy restored
+   into a waiting or review-queue folder it passed through). Reconcile calls
+   such a video done because its filed copy is complete; it does not point
+   at the old copy. So after a restore, a copy of an already-filed video in a
+   waiting or queue folder is an old one from the backup, not new work.
+5. Start the watchers again.
 
 ## Update: a file released from quarantine is taken back in
 
@@ -4900,7 +4947,7 @@ message says what is wrong and, where it can, suggests a corrected name. The old
 refused -- it may be valid now. A file of the same name already in the intake folder also stops
 the release; nothing is overwritten. Tests: `tests/test_quarantine_release_is_taken_back.py`.
 
-How to release a quarantined file (Watcher Control -> Quarantine tab):
+How to release a quarantined file (the "Quarantine" panel of the MouseReach window):
 1. Click Refresh. Each held file is listed with the reason it was held.
 2. In "Corrected name", type the name the file should have (or leave it, if the name is fine
    now). A single-animal video is named `YYYYMMDD_<animal>_<tray><run>.mp4`; a whole-tray
@@ -4910,10 +4957,12 @@ How to release a quarantined file (Watcher Control -> Quarantine tab):
 4. Click "Release selected". If the name is refused, the message says why; fix the name and try
    again. Once released, the watcher takes the file in on its next scan.
 
-Not changed here (follow-up): a file released under a NEW name is a new video to the watcher,
-and the row of its old name stays 'quarantined'. `mousereach-watch-quarantine --list` reads those
-rows, so it can still list a file that has already been released under another name; the
-Quarantine tab lists the quarantine folder itself and is the accurate view.
+Not changed here (follow-ups): `mousereach-watch-quarantine --list` reads the quarantined rows
+of the watcher database of the machine it runs on, not the quarantine folder. So it does not list
+a file another machine quarantined (each machine keeps its own rows; the folder is shared), and
+it still lists a file already released under a NEW name, because the row of the old name stays
+'quarantined' (the new name is a new video to the watcher). The Quarantine panel lists the
+quarantine folder itself and is the accurate view.
 
 ## Update: mousereach-watch-quarantine --release works
 
@@ -4923,5 +4972,22 @@ to say which intake the file should go back to. It is now `--release FILE --to s
 [--as NEW_NAME]` and calls the same routine as the Quarantine tab
 (`validator.release_from_quarantine`): the name is checked with the chosen intake's rules before
 anything moves, nothing in the intake folder is overwritten, and a refusal exits 1 with the
-reason. The usage and the operator steps are in docs/CLI_REFERENCE.md. Test:
-`tests/test_quarantine_release_cli.py`.
+reason. The usage is in docs/CLI_REFERENCE.md. Test: `tests/test_quarantine_release_cli.py`.
+
+The Quarantine panel (its own panel in the MouseReach window, named "Quarantine") does the
+same release with buttons and is the easier way. `--release` uses the same routine:
+
+- `FILE` is the name of the file in the quarantine folder (as the Quarantine
+  panel shows it, or as it appears in that folder). `--to` is required: it says which intake folder the file goes
+  back to, and which naming rules the name must pass.
+- The name (`--as NEW_NAME`, or the file's own name) is checked BEFORE anything
+  moves. If the chosen intake cannot read it, nothing moves; the error says
+  what is wrong and, where it can, suggests a corrected name. The old name is
+  allowed -- it may be valid now.
+- A file of that name already in the intake folder stops the release; nothing
+  is overwritten.
+- On success the file is in the intake folder, its `.quarantine.json` note is
+  removed, and the watcher takes it in on its next scan. The command exits 0;
+  any refusal exits 1.
+
+Example: `mousereach-watch-quarantine --release 20250101_badname.mp4 --to single --as 20250101_ABC0101_P1.mp4`
