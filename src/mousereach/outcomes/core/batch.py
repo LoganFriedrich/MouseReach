@@ -144,11 +144,8 @@ def _extract_reaches(reach_data):
 
 def _find_video_dir(search_dir: Path, video_name: str) -> Optional[Path]:
     """Directory holding the source video (for v6 Stage 98 CV checks), or None."""
-    search_dir = Path(search_dir)
-    for ext in (".avi", ".mp4", ".mkv"):
-        if (search_dir / f"{video_name}{ext}").exists():
-            return search_dir
-    return None
+    from mousereach.outcomes.v6_cascade.cv_artifact_gate import resolve_video
+    return Path(search_dir) if resolve_video(search_dir, video_name) else None
 
 
 def process_single(

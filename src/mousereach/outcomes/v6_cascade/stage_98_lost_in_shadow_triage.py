@@ -119,12 +119,9 @@ class Stage98LostInShadowTriage(Stage):
         self.transition_zone_half = transition_zone_half
 
     def _video_path(self, video_id: str) -> Optional[Path]:
-        if self.video_dir is None:
-            return None
-        candidate = self.video_dir / f"{video_id}.mp4"
-        if candidate.exists():
-            return candidate
-        return None
+        # The rule the CV-artifact gate uses too (cv_artifact_gate.resolve_video).
+        from mousereach.outcomes.v6_cascade.cv_artifact_gate import resolve_video
+        return resolve_video(self.video_dir, video_id)
 
     def decide(self, seg: SegmentInput) -> StageDecision:
         clean_end = seg.seg_end - self.transition_zone_half

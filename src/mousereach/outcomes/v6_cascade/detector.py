@@ -40,6 +40,7 @@ Returns a dict with the standard pellet_outcomes JSON shape::
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -91,6 +92,9 @@ from .guards import (
     wrap_sa_presence_guard,
 )
 from .cv_artifact_gate import wrap_cv_artifact_guard
+
+
+logger = logging.getLogger(__name__)
 
 
 def _build_production_stages(
@@ -292,9 +296,21 @@ def _detect_outcomes_v6_cascade_impl(
                 "flag_reason": reason,
             })
 
+    # Whether the video checks could run. WHY recorded: without the video,
+    # the CV-artifact gate and Stage 98 do nothing, so a displaced_sa call
+    # is committed unchecked -- a different answer from the same pose. The
+    # outcomes file used to give no sign of which it was; now it says, and the
+    # watcher refuses to run a Pillar tray's cascade without its video.
+    from mousereach.outcomes.v6_cascade.cv_artifact_gate import resolve_video
+    cv_video = "found" if resolve_video(video_dir, video_id) else "missing"
+    if cv_video == "missing":
+        logger.warning(
+            "%s: no video beside the pose (looked in %s); the outcome cascade "
+            "ran without its video checks (cv_video: missing)", video_id, video_dir)
     return {
         "video_id": video_id,
         "detector": "v6_cascade",
         "detector_version": VERSION,
+        "cv_video": cv_video,
         "segments": output_segments,
     }

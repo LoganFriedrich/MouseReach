@@ -52,7 +52,7 @@ The rest of this document describes v6 unless it says otherwise.
 | Pose data (`dlc_df`) | the DeepLabCut `.h5`, loaded by `mousereach.reach.v8.features.load_dlc_h5` | hard failure; the whole video fails |
 | `segments` | `{video}_segments.json`. Boundary frames become inclusive pairs `(b[j], b[j+1]-1)` at `core/batch.py:197-198`. Segment numbers are 1-based array positions (`detector.py:217`), **not** read from the segments file | hard failure |
 | `reaches` | `{video}_reaches.json` | silently becomes an empty list (`core/batch.py:199-202`). The cascade still runs — see below for exactly what changes |
-| `video_dir` | searched for `{video}.avi/.mp4/.mkv` next to the output directory (`core/batch.py:145-151`, called at `:203-204`) | the two pixel-reading checks become no-ops. Nothing is printed |
+| `video_dir` | searched for `{video}.avi/.mp4/.mkv` next to the output directory (`core/batch.py:145-151`, called at `:203-204`) | the two pixel-reading checks become no-ops. The outcomes file records `"cv_video": "missing"` and a warning is logged (before, nothing was printed) |
 
 A reach belongs to a segment if its **start** frame falls inside the segment (`detector.py:166-180`). A reach that runs past the segment end is still assigned to the segment it started in.
 
@@ -298,7 +298,9 @@ Stage 98 is the only stage whose purpose is to give a triage a *specific* reason
 
 An earlier block at `:231-233` computes the same late-zone count using a 0.75 cut-point and stores it under the same feature key; `:281-283` overwrites it with the 0.5 version. The 0.75 computation has no effect.
 
-**It only looks for `{video_id}.mp4`** (`stage_98_lost_in_shadow_triage.py:121-127`). The directory search that supplies `video_dir` accepts `.avi`, `.mp4` and `.mkv` (`core/batch.py:148`). For a video stored as `.avi`, `video_dir` is found, this stage reports `video_unavailable`, and the segment falls to stage 99 with the generic reason. The pixel guard on displaced commits does not have this problem — it checks `.mp4` and `.avi` (`cv_artifact_gate.py:164`).
+**Update:** Stage 98, the CV-artifact guard and the batch runner now find the video by one rule (`cv_artifact_gate.resolve_video`: `.mp4`, `.avi`, `.mkv`), so the paragraph below describes the earlier behaviour.
+
+**It only looked for `{video_id}.mp4`** (`stage_98_lost_in_shadow_triage.py:121-127`). The directory search that supplies `video_dir` accepts `.avi`, `.mp4` and `.mkv` (`core/batch.py:148`). For a video stored as `.avi`, `video_dir` is found, this stage reports `video_unavailable`, and the segment falls to stage 99 with the generic reason. The pixel guard on displaced commits does not have this problem — it checks `.mp4` and `.avi` (`cv_artifact_gate.py:164`).
 
 Every failure inside stage 98 becomes a `continue`: `cv2` not installed (`:336-343`), video will not open (`:345-351`), tray box degenerate (`:324-329`). Nothing is logged. The result is indistinguishable from "not a shadow case".
 
@@ -313,6 +315,7 @@ Written by `core/batch.py:210-211` (pipeline) or `cli.py:189-191` (command line)
   "video_id": "20250101_CNT0101_P1",
   "detector": "v6_cascade",
   "detector_version": "6.1.0",
+  "cv_video": "found",
   "segments": [
     {
       "segment_num": 1,
@@ -333,6 +336,7 @@ Top level — exactly four keys, no more. Every archived v6 file has exactly thi
 | `video_id` | whatever the caller passed; the pipeline derives it from the pose filename by splitting on `"DLC"` (`core/batch.py:193`) |
 | `detector` | the constant string `"v6_cascade"` |
 | `detector_version` | `"6.1.0"`. Read by `pipeline/manifest.py:152-158` to decide whether a video needs reprocessing |
+| `cv_video` | `"found"` or `"missing"`: whether the video file was beside the pose, i.e. whether the two pixel-reading checks (the CV-artifact guard and Stage 98) could run. Files written before this field existed do not carry it. The watcher never runs a Pillar tray's cascade without the video (it fetches a copy, or records the video as unresolvable); a hand run of `mousereach-detect-outcomes` without the video still runs, writes `"missing"` and logs a warning |
 | `segments` | the list |
 
 Per segment, committed case — exactly six keys (every archived committed segment has this key set):

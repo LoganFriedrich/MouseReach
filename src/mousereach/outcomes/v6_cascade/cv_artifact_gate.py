@@ -173,15 +173,27 @@ def landing_change(dlc_df, seg_start, seg_end, reach_windows, video_path):
     return (A - Bmed) / R
 
 
-def _resolve_video(video_dir, video_id):
+# The one rule for finding a segment's video, shared by this gate, Stage 98
+# and the batch runner. WHY one rule: the gate looked for .mp4/.avi, Stage 98
+# for .mp4 only and the batch runner for .avi/.mp4/.mkv, so the same folder
+# could give the gate a video and Stage 98 none -- a cascade answer that
+# depended on the file's extension.
+VIDEO_EXTENSIONS = (".mp4", ".avi", ".mkv")
+
+
+def resolve_video(video_dir, video_id):
+    """The video file for ``video_id`` in ``video_dir``, or None."""
     if video_dir is None or not video_id:
         return None
     d = Path(video_dir)
-    for ext in (".mp4", ".avi"):
+    for ext in VIDEO_EXTENSIONS:
         p = d / f"{video_id}{ext}"
         if p.exists():
             return p
     return None
+
+
+_resolve_video = resolve_video
 
 
 def wrap_cv_artifact_guard(stage, video_dir):
