@@ -260,7 +260,11 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
     try:
         r = json.loads(record.read_text(encoding="utf-8"))
         routed = datetime.fromisoformat(r["routed_at"]).timestamp()
-        failed = [Path(str(f)).name for f in r.get("failed_files") or []]
+        # Each entry is a dict ({"name", "error", "source"}); the oldest
+        # records hold bare names. WHY read "name": the str() of a dict is
+        # not a file name, so this check never matched a dict entry.
+        failed = [str(f.get("name") or "") if isinstance(f, dict) else Path(str(f)).name
+                  for f in r.get("failed_files") or []]
     except Exception:
         return True
     return routed >= run_time and manifest_name in failed
@@ -665,6 +669,25 @@ class BaseOrchestrator:
                     except Exception as err:
                         logger.warning('%s: could not write the triage verdict into %s: %s', video_id, json_path, err)
             triage_result.save(processing_dir / f"{video_id}_triage.json")
+            from mousereach.pipeline.pose_check import POSE_UNUSABLE
+            pose_flags = [f.description for f in triage_result.flags
+                          if f.category == POSE_UNUSABLE]
+            if pose_flags and not self._new_pose_requestable(video_id, dlc_path):
+                # Not a case the watcher may send for a new pose by itself
+                # (_new_pose_requestable says which are): the verdict stands
+                # as before, so the gate holds the video for a person.
+                logger.warning(f"Triage: {video_id} -> the pose is unusable "
+                               f"({'; '.join(pose_flags)}); no new pose can be "
+                               f"requested by the watcher for it, so it is held "
+                               f"as before")
+                pose_flags = []
+            if pose_flags:
+                from mousereach.watcher.review_gate import QC_POSE_UNUSABLE
+                self._pose_unusable_reason = getattr(self, "_pose_unusable_reason", {})
+                self._pose_unusable_reason[video_id] = "; ".join(pose_flags)
+                logger.warning(f"Triage: {video_id} -> the pose is unusable "
+                               f"({'; '.join(pose_flags)}); not a review question")
+                return QC_POSE_UNUSABLE
             logger.info(
                 f"Triage: {video_id} -> {triage_result.verdict} "
                 f"({triage_result.n_critical} critical, {triage_result.n_warnings} warnings)"
@@ -690,6 +713,221 @@ class BaseOrchestrator:
     def _clear_archive_backoff(self, video_id: str) -> None:
         """Forget a video's failure history once it archives."""
         getattr(self, "_archive_backoff", {}).pop(video_id, None)
+
+    # How long a video whose route into a review queue was refused waits
+    # before the pipeline runs it again (_note_route_refused).
+    ROUTE_REFUSED_WAIT_S = 1800
+
+    def _note_route_refused(self, video_id: str, err, analysed: bool = False) -> None:
+        """A route into a review queue was refused before anything moved
+        (review_gate.AlreadyInQueueError): another program held the video's
+        claim, a queue folder of the video could not be set aside (a file in
+        it open in a review window), or the queue already holds the video's
+        live bundle. The video stays 'processing' with its files where they
+        are, and is run again after ROUTE_REFUSED_WAIT_S.
+
+        WHY not mark_failed: these are passing conditions of the shared
+        folders, not a result about the video. mark_failed counts towards
+        max_retries, so a review window left open over a weekend would use up
+        the video's retries and leave it failed for good. The refusal itself
+        is listed for a person in the attention panel (review_routing.
+        note_folder_in_the_way) and recorded in the video's processing log.
+        WHY wait: running the pipeline again at once could only meet the same
+        refusal, and would take the pipeline step every cycle.
+
+        ``analysed`` True: the refusal came after every analysis stage had
+        run (at the review gate, or the hand-score check after it). The next
+        run then reuses those stage outputs (_reuse_after_refusal) and only
+        repeats the checks and the route. WHY: a refusal because the queue
+        holds the video's live bundle lasts until that bundle's review is
+        finished and it returns (or a leftover folder kept for a person is
+        deleted from the Review Queues tab);
+        re-segmenting every half hour for that long re-did the same work
+        each time. A refusal of the route after a FAILED segmentation is not
+        ``analysed``: the next run must segment again to route again.
+        The list is in memory: after a watcher restart the video simply runs
+        in full once (as a video held for its hand scores does)."""
+        if not hasattr(self, "_route_refusals"):
+            self._route_refusals = {}
+        if not hasattr(self, "_refused_after_analysis"):
+            self._refused_after_analysis = set()
+        if analysed:
+            self._refused_after_analysis.add(video_id)
+        else:
+            self._refused_after_analysis.discard(video_id)
+        self._route_refusals[video_id] = time.time() + self.ROUTE_REFUSED_WAIT_S
+        logger.warning(f"{video_id}: not routed to a review queue ({err}); left in "
+                       f"Processing, run again in "
+                       f"{self.ROUTE_REFUSED_WAIT_S // 60} minutes")
+        try:
+            self.db.log_step(video_id, 'review_gate', 'refused', message=str(err))
+        except Exception as e:
+            logger.debug(f"{video_id}: could not log the refused route: {e}")
+
+    POSE_UNUSABLE_PREFIX = "pose unusable"
+
+    def _pose_check_before_segmentation(self, video_id: str, pose_path,
+                                        row: Optional[dict] = None) -> bool:
+        """The one 'is this pose usable?' test (pipeline/pose_check.py), run
+        before segmentation on every tray and every run. True: go on. False:
+        the pose is unusable and the video was sent for a new pose
+        (_pose_is_unusable); the caller stops this run. An unusable pose the
+        watcher may not send for a new pose by itself goes on as before (see
+        _pose_is_unusable). A pose that cannot even be opened is left to the
+        existing 'could not run' handling."""
+        from mousereach.pipeline.pose_check import check_pose
+        usable, why = check_pose(pose_path, video_id)
+        if usable is False:
+            return self._pose_is_unusable(video_id, why, pose_path) != 'needs_pose'
+        if usable and str((row or {}).get('mark_reason') or '').startswith(
+                self.POSE_UNUSABLE_PREFIX):
+            # A new pose arrived and is usable: the video no longer waits.
+            try:
+                self.db.set_fields(video_id, mark_reason=None)
+            except Exception as e:
+                logger.debug(f"{video_id}: could not clear its pose note: {e}")
+            self._write_pose_attention()
+        return True
+
+    def _new_pose_requestable(self, video_id: str, pose_path) -> bool:
+        """True when the watcher may send this video for a new pose by itself:
+        the video is filed (its video is in Analyzed) AND the unusable pose is
+        not from the declared (current) model. The existing re-pose round trip
+        (watcher/repose.py) then asks a GPU node for a pose from the declared
+        model -- a different file -- and adopts it when it arrives. Never
+        raises (False on any doubt).
+
+        Every other case is an open lab decision and is left exactly as it
+        was (the video goes on and is held where it fails, as before):
+          * a filed video whose unusable pose IS the current model's own: the
+            round trip would find this same pose in the archive and never
+            write a request, and a new pose from the same model may be the
+            same pose;
+          * a video not filed yet: there is no way built for a GPU node to
+            reach its video for a new pose;
+          * how many unusable poses before a video is listed red.
+        WHY left as before and not failed or listed: what should happen then
+        is for the lab to decide; deciding it here would be guessing."""
+        try:
+            from mousereach.watcher import repose
+            row = self.db.get_video(video_id) or {}
+            if not (row.get('archived_at') and repose.archived_video(video_id) is not None):
+                return False
+            declared = repose.declared_scorer()
+            scorer = repose.scorer_of(Path(pose_path)) if pose_path else ""
+            return bool(declared and scorer and scorer != declared)
+        except Exception as e:
+            logger.debug(f"{video_id}: could not tell whether a new pose can be "
+                         f"requested: {e}")
+            return False
+
+    def _pose_is_unusable(self, video_id: str, why: str, pose_path=None) -> str:
+        """The video's pose cannot be used by the steps (pipeline/pose_check.py
+        says what that means). ``pose_path``: the pose that was judged.
+        Returns what was done:
+
+          * 'needs_pose': a case the watcher may send for a new pose by itself
+            (_new_pose_requestable: filed, and the pose is not the current
+            model's). It is marked for a new pose -- state 'outdated' with
+            reprocess_scope 'full' -- never sent to a review queue (nothing a
+            person does in the review window fixes a pose); the reason goes
+            into its row (mark_reason 'pose unusable: ...') and it is listed
+            as waiting for a pose (grey) in this machine's attention file
+            <NAS root>/attention/<host>_waiting_for_pose.json;
+          * 'as_before': any other case. Only the finding is recorded (the
+            processing log); the video goes on exactly as it did before this
+            check existed (_new_pose_requestable says why)."""
+        try:
+            self.db.log_step(video_id, 'pose_check', 'failed', message=why)
+        except Exception as e:
+            logger.debug(f"{video_id}: could not log the pose check: {e}")
+        if not self._new_pose_requestable(video_id, pose_path):
+            logger.warning(f"{video_id}: the pose is unusable ({why}); the watcher may "
+                           f"not request a new pose for it by itself, so it goes on "
+                           f"as before")
+            return 'as_before'
+        note = f"{self.POSE_UNUSABLE_PREFIX}: {why}"
+        try:
+            self.db.set_fields(video_id, reprocess_scope='full', mark_reason=note)
+            self.db.force_state(video_id, 'outdated',
+                                reason=f"{note}; a new pose is requested")
+        except Exception as e:
+            logger.warning(f"{video_id}: could not mark it for a new pose ({e}); it "
+                           f"goes on as before")
+            return 'as_before'
+        logger.warning(f"{video_id}: {note} -- not sent to a review queue; marked "
+                       f"for a new pose from the current model")
+        self._write_pose_attention()
+        return 'needs_pose'
+
+    def _write_pose_attention(self) -> None:
+        """Rewrite <NAS root>/attention/<host>_waiting_for_pose.json from the
+        database: every 'outdated' row whose note says its pose is unusable
+        (a re-pose request for it is published and its new pose is adopted by
+        itself -- grey, nothing to do). Never raises."""
+        try:
+            if not Paths.NAS_ROOT:
+                return
+            from mousereach.watcher.review_routing import attention_dir
+            d = attention_dir()
+            if d is None:
+                return
+            items = []
+            for v in self.db.get_videos_in_state('outdated'):
+                reason = str(v.get('mark_reason') or '')
+                if not reason.startswith(self.POSE_UNUSABLE_PREFIX):
+                    continue
+                vid = v['video_id']
+                items.append({
+                    "kind": "waiting_for_pose",
+                    "needs_person": False,
+                    "video_id": vid,
+                    "says": (f"{vid}: {reason}. It is not sent to a review queue (no "
+                             f"review fixes a pose); a pose from the current model is "
+                             f"requested from the GPU PCs and used when it arrives -- "
+                             f"nothing to do."),
+                })
+            target = d / f"{self.hostname}_waiting_for_pose.json"
+            if not items and not target.exists():
+                return
+            from mousereach.pipeline.fsutil import write_json_atomic
+            d.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(target, {"written_by": self.hostname, "items": items},
+                              indent=1)
+        except Exception as e:
+            logger.warning(f"Could not write the waiting-for-pose list: {e}")
+
+    def _route_refused_waiting(self, video_id: str) -> bool:
+        """True while a video whose route was refused waits to run again."""
+        until = getattr(self, "_route_refusals", {}).get(video_id)
+        return until is not None and time.time() < until
+
+    def _held_for_refused_route(self, video_id: str) -> bool:
+        """True for a video left in 'processing' because its route into a
+        review queue was refused (_note_route_refused), from the refusal until
+        the pipeline next starts on it (_forget_route_refusal) -- including
+        once its wait is over and it is due again.
+
+        WHY its own question, like _held_for_hand_scores: such a video is
+        analysed already and only waits for the queue folder to be dealt
+        with. A refusal can last a weekend (a file in an old queue folder
+        held open by a review window) or until the queue's live bundle of the
+        video is reviewed and returns, or a person deletes a leftover folder
+        listed under 'Folders left for a person' in the Review Queues tab. Counted against
+        max_local_pending, two such videos with the default limit stopped all
+        intake on this machine for as long as they waited."""
+        return video_id in getattr(self, "_route_refusals", {})
+
+    def _forget_route_refusal(self, video_id: str) -> bool:
+        """The pipeline starts on the video again: it is work, not a wait.
+        If the route is refused once more, _note_route_refused records it
+        again. Returns True when the refusal came after every analysis stage
+        had run, so this run may reuse their outputs (_note_route_refused)."""
+        getattr(self, "_route_refusals", {}).pop(video_id, None)
+        analysed = getattr(self, "_refused_after_analysis", set())
+        was = video_id in analysed
+        analysed.discard(video_id)
+        return was
 
     def _already_failed(self, video_id: str) -> bool:
         """True when this row is already recorded failed.
@@ -919,12 +1157,29 @@ class BaseOrchestrator:
         video waited for the next scores file, where no review tool could
         reach it and nothing could change the answer. In the queue the
         segmentation fixer lists it (its cuts were not set since it arrived),
-        a person sets or confirms them, and the video re-runs from there."""
-        from mousereach.watcher.review_gate import route_deep_review
+        a person sets or confirms them, and the video re-runs from there.
+
+        A route that is REFUSED before anything moves (review_gate.
+        AlreadyInQueueError: the queue holds the video's live bundle, another
+        program holds its claim, an old queue folder cannot be set aside) is
+        a refused route like any other (_note_route_refused): the video stays
+        in Processing, is logged as 'review_gate refused' and runs again in
+        ROUTE_REFUSED_WAIT_S. WHY caught here: left to the precheck's own
+        error handling it was listed as "the hand-score check could not run"
+        -- the wrong reason -- and not tried again until the scores file
+        changed."""
+        from mousereach.watcher.review_gate import AlreadyInQueueError, route_deep_review
         reason = "segmentation: %s" % err
         mp4 = Path(folder) / f"{video_id}.mp4"
-        route_deep_review(video_id, folder, reason, db=self.db,
-                          extra_sources=[mp4] if mp4.is_file() else None)
+        try:
+            route_deep_review(video_id, folder, reason, db=self.db,
+                              extra_sources=[mp4] if mp4.is_file() else None)
+        except AlreadyInQueueError as refused:
+            # After the analysis: the next run reuses its outputs.
+            self._note_route_refused(video_id, refused, analysed=True)
+            if self._score_waits.pop(video_id, None) is not None or prev:
+                self._write_score_attention()
+            return False
         self.db.log_step(video_id, 'hand_score_check', 'routed', message=reason)
         logger.info(f"{video_id}: pellet numbers in doubt -- sent to manual "
                     f"segmentation ({err})")
@@ -2345,21 +2600,29 @@ class DLCOrchestrator(BaseOrchestrator):
         The queues are checked first because a held video can ALSO have an
         older manifest in the archive (a reprocess under review), and the hold
         is the more current truth -- the same order _archive_to_nas uses.
+        A leftover kept for a person (a queue folder holding the note
+        review_routing.LEFT_NOTE) is not a hold (review_routing.
+        is_queue_bundle): it is not the video's live copy, and counting it
+        kept a video that needs a pose from ever getting one.
         Never raises: an unreadable location counts as "not there".
         """
         try:
-            from mousereach.watcher.review_routing import INCOMING_DIR_NAME
+            from mousereach.watcher.review_routing import (INCOMING_DIR_NAME,
+                                                           is_queue_bundle)
         except ImportError:
             INCOMING_DIR_NAME = ".incoming"
+
+            def is_queue_bundle(folder):
+                return Path(folder).is_dir()
         # Deep review first: it supersedes triage (review_routing.py).
         for qroot, qstate in ((getattr(Paths, 'DEEP_REVIEW', None), 'deep_review'),
                               (getattr(Paths, 'TRIAGE_REVIEW', None), 'triage')):
             if not qroot:
                 continue
             try:
-                if (Path(qroot) / video_id).is_dir():
+                if is_queue_bundle(Path(qroot) / video_id):
                     return qstate, f"its bundle is held for a person in the {qstate} queue"
-                if (Path(qroot) / INCOMING_DIR_NAME / video_id).is_dir():
+                if is_queue_bundle(Path(qroot) / INCOMING_DIR_NAME / video_id):
                     return qstate, (f"its bundle is being routed into the {qstate} "
                                     f"queue ({INCOMING_DIR_NAME})")
             except OSError:
@@ -3330,14 +3593,17 @@ class DLCOrchestrator(BaseOrchestrator):
     def _retire_claim_after_hold(self, video_id: str) -> bool:
         """A video routed to a review queue took its mp4 into the bundle
         (``<queue>/<stem>/<stem>.mp4``, watcher/review_routing.py): retire the
-        claimed copy against that. Without a bundle mp4 the copy is kept."""
+        claimed copy against that. Without a bundle mp4 the copy is kept.
+        An mp4 in a leftover kept for a person (review_routing.
+        is_queue_bundle) is not the hold's copy and is never used."""
+        from mousereach.watcher.review_routing import is_queue_bundle
         for qroot in (getattr(Paths, 'TRIAGE_REVIEW', None),
                       getattr(Paths, 'DEEP_REVIEW', None)):
             if not qroot:
                 continue
             candidate = Path(qroot) / video_id / f"{video_id}.mp4"
             try:
-                if candidate.is_file():
+                if is_queue_bundle(candidate.parent) and candidate.is_file():
                     return self._retire_claimed_single(video_id, candidate)
             except OSError:
                 continue
@@ -3676,7 +3942,8 @@ class DLCOrchestrator(BaseOrchestrator):
             # file changes (_waiting_for_hand_scores): running it again could
             # only hold it again.
             processing = [v for v in self.db.get_videos_in_state('processing')
-                          if not self._waiting_for_hand_scores(v['video_id'])]
+                          if not self._waiting_for_hand_scores(v['video_id'])
+                          and not self._route_refused_waiting(v['video_id'])]
             pick = self._pick_from_pool(processing, priority_animal, 'animal_id')
             if pick is not None:
                 return {
@@ -4637,10 +4904,14 @@ class DLCOrchestrator(BaseOrchestrator):
         from mousereach.assignment.run import assign_reaches_for_video
         from mousereach.pipeline.manifest import create_processing_manifest
         from mousereach.pipeline.triage import triage_video
-        from mousereach.watcher.review_gate import run_gate, route_deep_review, DECISION_CLEAN
+        from mousereach.watcher.review_gate import (run_gate, route_deep_review,
+                                                    DECISION_CLEAN, AlreadyInQueueError)
 
         video_id = work['id']
         video_data = work['data']
+        # Running again: work, not a wait. True when a route refused after the
+        # analysis left this video's stage outputs to reuse (_note_route_refused).
+        reuse_after_refusal = self._forget_route_refusal(video_id)
 
         # dlc_output_path has bitten this pipeline twice, in opposite directions:
         # Path(None) raised and failed nearly every video on a GPU node, and the
@@ -4706,13 +4977,15 @@ class DLCOrchestrator(BaseOrchestrator):
                         video_id, f"could not stage video locally from {src_mp4}")
                     return False
         logger.info(f"Running local pipeline on {video_id} (also_process mode)")
+        if not self._pose_check_before_segmentation(video_id, dlc_path, video_data):
+            return True             # sent for a new pose (_pose_is_unusable)
 
         # A video held for its hand scores (_hand_score_precheck) is analysed
         # already; when the scores file changes it is picked again only to be
         # checked again, so the stage outputs it has are reused, not redone.
         # After a watcher restart the list of held videos is empty and the
         # video simply runs in full once.
-        resume = (self._held_for_hand_scores(video_id)
+        resume = ((self._held_for_hand_scores(video_id) or reuse_after_refusal)
                   and all((processing_dir / f"{video_id}{sfx}").exists()
                           for sfx in ("_segments.json", "_reaches.json")))
         # Already 'processing' (a held video picked again): leave the row as
@@ -4728,7 +5001,8 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.log_step(video_id, 'segmentation', 'started')
             step_start = time.time()
             if resume:
-                logger.info(f"Reusing analysis outputs for {video_id} (held for hand scores)")
+                logger.info(f"Reusing analysis outputs for {video_id} (held for hand "
+                            f"scores, or its route was refused after the analysis)")
                 seg_result = {'success': True, 'status': 'reused', 'n_boundaries': 0}
             else:
                 seg_result = seg_single(dlc_path)
@@ -4760,6 +5034,9 @@ class DLCOrchestrator(BaseOrchestrator):
                         f"segmentation_failed: {error}", db=self.db,
                         extra_sources=[processing_dir / f"{video_id}.mp4"],
                     )
+                except AlreadyInQueueError as refused:
+                    self._note_route_refused(video_id, refused)
+                    return True
                 except Exception as route_err:
                     logger.warning(f"Deep-review routing failed for {video_id}: {route_err}")
                     self.db.mark_failed(video_id, f"Segmentation failed: {error}")
@@ -4838,12 +5115,21 @@ class DLCOrchestrator(BaseOrchestrator):
             # Unified QC triage -- fails closed (_run_quality_triage)
             qc_verdict = self._run_quality_triage(video_id, processing_dir,
                                                   dlc_path, triage_video)
+            from mousereach.watcher.review_gate import QC_POSE_UNUSABLE
+            if qc_verdict == QC_POSE_UNUSABLE:
+                self._pose_is_unusable(
+                    video_id, getattr(self, "_pose_unusable_reason", {}).pop(
+                        video_id, "the quality check could not use the pose"),
+                    dlc_path)
+                return True     # sent for a new pose, not to a queue
 
             # Hand scores, before the gate (_hand_score_precheck): a
             # disagreeing pellet is flagged so the gate sends it to triage
             # with every other open question; a session whose scores have not
             # come is held here, in Processing, until they do.
             if not self._hand_score_precheck(video_id, processing_dir):
+                if self._held_for_refused_route(video_id):
+                    return True         # route refused, logged (_note_route_refused)
                 if video_id in getattr(self, "_routed_at_precheck", ()):
                     # Sent to manual segmentation: the bundle took the mp4.
                     self._retire_claim_after_hold(video_id)
@@ -4854,11 +5140,16 @@ class DLCOrchestrator(BaseOrchestrator):
             # GATE: nothing reaches kinematics / the central database until it is CLEAN.
             # seg soft-fail / QC-critical -> DEEP_REVIEW; unresolved triage ->
             # TRIAGE. A held video's whole bundle is MOVED out of Processing; STOP.
-            decision = run_gate(
-                video_id, processing_dir, self.db,
-                qc_verdict=qc_verdict,
-                mp4_path=processing_dir / f"{video_id}.mp4",
-            )
+            try:
+                decision = run_gate(
+                    video_id, processing_dir, self.db,
+                    qc_verdict=qc_verdict,
+                    mp4_path=processing_dir / f"{video_id}.mp4",
+                )
+            except AlreadyInQueueError as refused:
+                # Held, not failed: nothing moved (_note_route_refused).
+                self._note_route_refused(video_id, refused, analysed=True)
+                return True
             if decision != DECISION_CLEAN:
                 logger.info(f"Local pipeline held: {video_id} -> {decision} "
                             f"(no kinematics until cleared)")
@@ -5809,9 +6100,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # Videos held for their hand scores are analysed already and only
             # wait in 'processing' (_held_for_hand_scores): they are not work
             # waiting for the pipeline, so they do not use up the limit.
+            # The same holds for videos whose route into a review queue was
+            # refused (_held_for_refused_route): they wait for a queue folder,
+            # not for the pipeline.
             processing_count = sum(
                 1 for v in self.db.get_videos_in_state('processing')
-                if not self._held_for_hand_scores(v['video_id']))
+                if not self._held_for_hand_scores(v['video_id'])
+                and not self._held_for_refused_route(v['video_id']))
             if processing_count >= self.config.max_local_pending:
                 # The normal state, not a fault: the node holds only what it is
                 # about to start (config.max_local_pending), so the pipeline runs
@@ -5843,7 +6138,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # changes (_waiting_for_hand_scores): running it again could only hold
         # it again, and it would take the pipeline step every cycle.
         videos = [v for v in self.db.get_videos_in_state('processing')
-                  if not self._waiting_for_hand_scores(v['video_id'])]
+                  if not self._waiting_for_hand_scores(v['video_id'])
+                  and not self._route_refused_waiting(v['video_id'])]
         if videos:
             pick = self._pick_from_pool(videos, priority_animal, 'animal_id')
             if pick is not None:
@@ -6570,7 +6866,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         that means instead of failing the video; returns what was done.
 
           * its review bundle, pose inside, sits in a review queue: the video
-            is held for a person, so take that queue's state;
+            is held for a person, so take that queue's state (a leftover kept
+            for a person is not a bundle -- review_routing.is_queue_bundle);
           * its video is in Analyzed: it needs a NEW pose -- mark it so
             (reprocess_scope 'full'); the version scan then asks the GPU nodes
             for one over the shared Repose_Queue (watcher/repose.py), and the
@@ -6586,10 +6883,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
         a scientific outcome.
         """
         # Deep review first: it supersedes triage (review_routing.py).
+        from mousereach.watcher.review_routing import is_queue_bundle
         for qdir, qstate in ((Paths.DEEP_REVIEW, 'deep_review'),
                              (Paths.TRIAGE_REVIEW, 'triage')):
             try:
-                held = bool(qdir) and any((Path(qdir) / video_id).glob(f"{video_id}DLC*.h5"))
+                held = (bool(qdir) and is_queue_bundle(Path(qdir) / video_id)
+                        and any((Path(qdir) / video_id).glob(f"{video_id}DLC*.h5")))
             except OSError:
                 held = False
             if held:
@@ -7065,10 +7364,14 @@ class ProcessingOrchestrator(BaseOrchestrator):
         from mousereach.assignment.run import assign_reaches_for_video
         from mousereach.pipeline.manifest import create_processing_manifest
         from mousereach.pipeline.triage import triage_video
-        from mousereach.watcher.review_gate import run_gate, route_deep_review, DECISION_CLEAN
+        from mousereach.watcher.review_gate import (run_gate, route_deep_review,
+                                                    DECISION_CLEAN, AlreadyInQueueError)
 
         video_id = work['id']
         video_data = work['data']
+        # Running again: work, not a wait. True when a route refused after the
+        # analysis left this video's stage outputs to reuse (_note_route_refused).
+        reuse_after_refusal = self._forget_route_refusal(video_id)
 
         # dlc_output_path has bitten this pipeline twice, in opposite directions:
         # Path(None) raised and failed nearly every video on a GPU node, and the
@@ -7098,6 +7401,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             dlc_path = local
 
         logger.info(f"Running pipeline on {video_id}")
+        # The pose must be usable before any step runs on it; a pose that is
+        # not goes for a new pose, never to a review queue.
+        if not self._pose_check_before_segmentation(video_id, dlc_path, video_data):
+            return
         pipeline_start = time.time()
 
         # Dependency-aware reprocessing: reuse a stage's existing output when it is
@@ -7168,11 +7475,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # analysed by an earlier process, possibly by older code: its outputs
         # are reused only up to the first one that is not current
         # (_restored_hold_start); from there every step runs again.
-        if self._held_for_hand_scores(video_id):
+        # The same for a video whose route was refused after the analysis
+        # (_note_route_refused): it is picked again only to try the route
+        # again, so every output it has is reused.
+        _held_for_scores = self._held_for_hand_scores(video_id)
+        if _held_for_scores or reuse_after_refusal:
             _hold_from = _STAGE_IDX["checks"]       # same process: reuse all it has
             if _resumed is not None:
                 _hold_from = _STAGE_IDX[_resumed]   # a review return's own resume point
-            elif (self._score_waits.get(video_id) or {}).get("restored"):
+            elif _held_for_scores and (self._score_waits.get(video_id) or {}).get("restored"):
                 _hold_from = _STAGE_IDX[self._restored_hold_start(video_id, dlc_path)]
             _run_seg = _hold_from <= 0 or not _seg_out.exists()
             _run_reach = _run_seg or _hold_from <= 1 or not _reach_out.exists()
@@ -7245,6 +7556,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         f"segmentation_failed: {error}", db=self.db,
                         extra_sources=[self.processing_dir / f"{video_id}.mp4"],
                     )
+                except AlreadyInQueueError as refused:
+                    self._note_route_refused(video_id, refused)
+                    return
                 except Exception as route_err:
                     logger.warning(f"Deep-review routing failed for {video_id}: {route_err}")
                     self.db.mark_failed(video_id, f"Segmentation failed: {error}")
@@ -7474,6 +7788,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # (_run_quality_triage says why).
         qc_verdict = self._run_quality_triage(video_id, self.processing_dir,
                                               dlc_path, triage_video)
+        from mousereach.watcher.review_gate import QC_POSE_UNUSABLE
+        if qc_verdict == QC_POSE_UNUSABLE:
+            self._pose_is_unusable(
+                video_id, getattr(self, "_pose_unusable_reason", {}).pop(
+                    video_id, "the quality check could not use the pose"),
+                dlc_path)
+            return True         # held: sent for a new pose, not to a queue
 
         # --- Hand scores, before the gate (_hand_score_precheck) ---
         # A disagreeing pellet is flagged, so the gate below sends the video to
@@ -7481,6 +7802,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # have not come is held here -- 'processing', files in place -- and
         # this run stops: no gate, no kinematics, no filing until it goes on.
         if not self._hand_score_precheck(video_id, self.processing_dir):
+            if self._held_for_refused_route(video_id):
+                return True     # route refused, logged (_note_route_refused)
             if video_id in getattr(self, "_routed_at_precheck", ()):
                 return True     # sent to manual segmentation (logged there)
             logger.info(f"Pipeline held for hand scores: {video_id} "
@@ -7492,18 +7815,25 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     def _gate_held(self, video_id, run_gate, DECISION_CLEAN, qc_verdict,
                    pipeline_duration) -> bool:
-        """Run the review gate; True when it held the video (moved to a queue)."""
+        """Run the review gate; True when it held the video (moved to a queue,
+        or left in Processing because the route was refused)."""
+        from mousereach.watcher.review_gate import AlreadyInQueueError
         # --- GATE: nothing reaches kinematics / the central database until it is CLEAN ---
         # seg soft-fail or QC-critical -> DEEP_REVIEW; any unresolved triaged
         # element -> TRIAGE. A held video's whole bundle is MOVED out of
         # Processing into the queue; STOP here -- no kinematics, no DB sync, no
         # 'processed'. It re-enters via the review -> reprocess path once cleared.
         from mousereach.watcher import review_gate as _rg
-        decision = run_gate(
-            video_id, self.processing_dir, self.db,
-            qc_verdict=qc_verdict,
-            mp4_path=self.processing_dir / f"{video_id}.mp4",
-        )
+        try:
+            decision = run_gate(
+                video_id, self.processing_dir, self.db,
+                qc_verdict=qc_verdict,
+                mp4_path=self.processing_dir / f"{video_id}.mp4",
+            )
+        except AlreadyInQueueError as refused:
+            # Held, not failed: nothing moved (_note_route_refused says why).
+            self._note_route_refused(video_id, refused, analysed=True)
+            return True
         if decision == getattr(_rg, 'DECISION_STALE', None):
             # The outputs are out of step with the cuts (review_gate says how):
             # the next pick must recompute them, so a kept kinematics-only

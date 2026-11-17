@@ -122,8 +122,14 @@ def check_dlc_coherence(
     try:
         df = pd.read_hdf(h5_path)
     except Exception as e:
+        # A pose-level problem, not a question for a reviewer: category
+        # POSE_UNUSABLE lets the watcher send the video for a new pose instead
+        # of to a review queue, where it may request one by itself
+        # (orchestrator._new_pose_requestable; pipeline/pose_check.py says why).
+        # Otherwise the verdict holds the video as before.
+        from mousereach.pipeline.pose_check import POSE_UNUSABLE
         flags.append(TriageFlag(
-            category='dlc_coherence',
+            category=POSE_UNUSABLE,
             severity='critical',
             description=f'Could not read DLC file: {e}'
         ))
@@ -295,8 +301,9 @@ def check_dlc_coherence(
                     )
                 ))
     except KeyError:
+        from mousereach.pipeline.pose_check import POSE_UNUSABLE
         flags.append(TriageFlag(
-            category='dlc_coherence',
+            category=POSE_UNUSABLE,     # see 'Could not read DLC file' above
             severity='critical',
             description='Missing SABL or SABR — cannot compute ruler'
         ))

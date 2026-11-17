@@ -987,3 +987,15 @@ def test_consume_never_overwrites_a_claim_already_in_flight(env):
     assert (env.queue / f"{VID}.json").exists(), "the leftover request is left alone"
     assert env.db.get_video(VID)["state"] == "archived"
 
+
+
+@pytest.fixture(autouse=True)
+def _the_stand_in_pose_counts_as_usable(monkeypatch):
+    """These tests use a stand-in pose file that is not a real pose table;
+    the pose check before segmentation (pipeline/pose_check.py) is not what
+    they test."""
+    try:
+        from mousereach.pipeline import pose_check
+    except ImportError:         # code without the pose check: nothing to stand in for
+        return
+    monkeypatch.setattr(pose_check, "check_pose", lambda *a, **k: (True, ""))

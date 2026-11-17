@@ -980,11 +980,13 @@ class ReprocessingScanner:
                     "pellet_outcomes.json found in the archive to route from",
                     video_id)
                 return
+            # All or nothing: the source is the filed folder (see
+            # review_routing.move_video_bundle, all_or_nothing).
             route_deep_review(
                 video_id, outcomes.parent,
                 reason="pending human review declares segment mislabel "
                        "(true_segment_num set) -- needs re-segmentation",
-                db=self.db)
+                db=self.db, all_or_nothing=True)
             logger.info(
                 "%s: pending review declares a segment mislabel -- routed to "
                 "deep review instead of a kinematics-only re-run", video_id)

@@ -58,6 +58,10 @@ ASSIGNMENT_FAILED_KEY = "assignment_failed"
 # 'auto_approved' when triage crashed). The reason below is what the review
 # tools show as the routed reason.
 QC_TRIAGE_FAILED = "triage_failed"
+# The quality triage found the POSE unusable (pipeline/pose_check.py). Never
+# given to the gate: the watcher sends such a video for a new pose instead
+# (orchestrator._pose_is_unusable), because no review queue can fix a pose.
+QC_POSE_UNUSABLE = "pose_unusable"
 TRIAGE_FAILED_REASON = ("triage_failed: the automatic quality check could not run "
                         "on this video -- a person checks it")
 
@@ -386,7 +390,11 @@ def _write_review_manifest(bundle: Path, video_id: str, reason: str,
             "held_at_step": held_at_step,
         },
     }
-    (bundle / f"{video_id}_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    # One-step write retried while the share holds the file (pipeline/fsutil):
+    # a plain write_text failed on a passing hold, and a cut-off manifest is
+    # unreadable to the review tools.
+    from mousereach.pipeline.fsutil import write_json_atomic
+    write_json_atomic(bundle / f"{video_id}_manifest.json", manifest, indent=2)
 
 
 def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Path]:
@@ -440,6 +448,226 @@ def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
                           reason=reason, db=db, db_state="deep_review")
 
 
+class AlreadyInQueueError(RuntimeError):
+    """Raised by route_to_queue, before anything moves, when the destination
+    queue already holds the video's LIVE bundle (the video is held there) and
+    the source is somewhere else. See route_to_queue for why nothing is
+    merged, and _clear_the_way for the folders that are not a live bundle."""
+
+
+# Watcher states in which a bundle in a queue is the video's live copy.
+HELD_STATES = ("triage", "deep_review")
+
+
+def _inside(path, root) -> bool:
+    if not path or not root:
+        return False
+    try:
+        r = os.path.normcase(os.path.abspath(str(root))).rstrip("\\/")
+        q = os.path.normcase(os.path.abspath(str(path)))
+        return q == r or q.startswith(r + os.sep)
+    except (TypeError, ValueError):
+        return False
+
+
+def _iso_epoch(text) -> Optional[float]:
+    try:
+        return datetime.fromisoformat(str(text)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def folder_last_touched(folder: Path, video_id: str) -> Optional[float]:
+    """When ``folder`` was last routed or written: the later of its routing
+    record's ``routed_at`` and its newest file's modified time. None when
+    neither can be read."""
+    from .review_routing import read_routing_manifest
+    times = []
+    t = _iso_epoch((read_routing_manifest(folder, video_id) or {}).get("routed_at"))
+    if t is not None:
+        times.append(t)
+    try:
+        for f in Path(folder).iterdir():
+            try:
+                if f.is_file():
+                    times.append(f.stat().st_mtime)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return max(times) if times else None
+
+
+def queue_folder_is_live(video_id: str, existing: Path, processing_dir, row,
+                         live_states=HELD_STATES):
+    """``(live, why)``: whether ``existing`` = <queue>/<video> is the video's
+    LIVE bundle, which a route from ``processing_dir`` must not replace.
+    ``row`` is the watcher row (None when there is no database to ask).
+
+    Live when any of these holds:
+      * there is no database to ask (the safe side);
+      * the row says the video is held in this queue (``live_states``);
+      * the folder is a published bundle (it holds the queue's routing record
+        or review manifest) or holds a file a person wrote -- UNLESS this
+        route is a newer run of the video: the source is a processing folder
+        (not a review queue, not the filed results) and the row's
+        ``processing_started_at`` is later than the folder was last routed or
+        written (folder_last_touched).
+    Otherwise (only machine outputs and inputs, no queue records, nothing a
+    person wrote) it is an old copy.
+
+    WHY not the row alone: the row is one machine's view, and it can be
+    wrong. A bundle escalated from the triage window before the window
+    recorded the move kept the row at 'triage' while the video, and the
+    reviewer's saved review, sat in deep review. Judged by the row alone,
+    the next route of that video into deep review from anywhere else took the
+    reviewer's live bundle for an old copy and moved it out of the queue.
+    What the folder holds (a routing record, a person's file) and when it was
+    last touched are on the shared folder, where every machine sees the same
+    thing. Only a pipeline run that started after the folder was last touched
+    shows the folder has been superseded."""
+    from .review_routing import is_queue_record, person_entries
+    if row is None:
+        return True, "there is no watcher database to ask"
+    state = row.get("state")
+    if state in live_states:
+        return True, f"its watcher state is '{state}'"
+    try:
+        names = [f.name for f in Path(existing).iterdir() if f.is_file()]
+        person = person_entries(existing, video_id)
+    except OSError as e:
+        return True, f"the folder could not be read ({e})"
+    published = any(is_queue_record(video_id, n) for n in names)
+    if not published and not person:
+        return False, "it holds no queue record and nothing a person wrote"
+    what = ("a person's file (" + ", ".join(person) + ")") if person else \
+        "the queue's routing record or review manifest"
+    from_a_run = not (_inside(processing_dir, getattr(Paths, "REVIEW_ROOT", None))
+                      or _inside(processing_dir, getattr(Paths, "ANALYZED_OUTPUT", None)))
+    started = _iso_epoch(row.get("processing_started_at"))
+    touched = folder_last_touched(Path(existing), video_id)
+    if from_a_run and started is not None and touched is not None and started > touched:
+        return False, (f"it holds {what}, but this route is a pipeline run that "
+                       f"started after the folder was last routed or written")
+    return True, (f"it holds {what} and this route is not a run that started after "
+                  f"the folder was last routed or written")
+
+
+def _clear_the_way(video_id: str, existing: Path, processing_dir, reason: str,
+                   db, extra_sources: Optional[Iterable[Path]] = None) -> None:
+    """Deal with a folder ``existing`` = <queue>/<video> met by a route from
+    somewhere else, BEFORE anything moves. Returns when the route may go on;
+    raises AlreadyInQueueError when it may not.
+
+      * empty: removed (a return whose last step failed leaves one; if it
+        cannot be removed the route fills it -- there is nothing to replace);
+      * the video's LIVE bundle (queue_folder_is_live: held in this queue by
+        its watcher state, no database to ask, or a published bundle or a
+        person's file that no later pipeline run has superseded):
+        AlreadyInQueueError, and the refusal is listed for a person in the
+        attention panel (review_routing.note_folder_in_the_way);
+      * otherwise a leftover (only queue records; machine outputs and inputs;
+        or a folder a later pipeline run of the video has superseded):
+        review_routing.clear_leftover, with the files this route brings as
+        the live copy -- what has a current copy elsewhere is deleted, the
+        rest stays where it is and is listed. When nothing is kept the route
+        goes on; when something is kept the folder is still there, so the
+        route is refused (AlreadyInQueueError) rather than merged into it.
+
+    WHY: refusing every existing folder would fail later runs of a video for
+    good -- an empty residue, a records-only folder or an old bundle of
+    machine outputs would make the gate raise on every run. Merging into the
+    folder (what routes used to do) replaced a held run's files and a
+    person's saved review. The state is matched to THIS queue because a
+    video held in triage can have a stale deep-review folder of machine
+    outputs (and the other way round); refusing on the other queue's state
+    blocked a person's Escalate until someone cleaned up by hand. The folder's
+    own contents are read as well as the row (queue_folder_is_live says why)."""
+    from .review_routing import (_bundle_files, clear_leftover, is_queue_record,
+                                 left_for_a_person, note_folder_in_the_way)
+    from .review_return import _claim_return_nested, _release_return_claim
+
+    def _refuse(why: str, what_to_do: str, listed: bool = False):
+        says = (f"{video_id} could not be routed to {existing.parent.name} "
+                f"({reason}): {why}. Nothing was moved from {processing_dir}. "
+                f"{what_to_do}")
+        if not listed:
+            note_folder_in_the_way(video_id, existing, says)
+        raise AlreadyInQueueError(says)
+
+    try:
+        entries = list(existing.iterdir())
+    except OSError as e:
+        _refuse(f"the folder {existing} is there and cannot be read ({e})",
+                "Check that folder, then let the video run again.")
+    if not entries:
+        try:
+            existing.rmdir()
+        except OSError:
+            pass
+        return
+    records_only = all(e.is_file() and is_queue_record(video_id, e.name)
+                       for e in entries)
+    if not records_only and not left_for_a_person(existing):
+        row = None
+        if db is not None:
+            try:
+                row = db.get_video(video_id) or {}
+            except Exception:
+                row = {}
+        if _same_folder(existing.parent, getattr(Paths, "TRIAGE_REVIEW", None)):
+            live_states = ("triage",)
+        elif _same_folder(existing.parent, getattr(Paths, "DEEP_REVIEW", None)):
+            live_states = ("deep_review",)
+        else:
+            live_states = HELD_STATES           # a queue not configured here
+        live, why = queue_folder_is_live(video_id, existing, processing_dir, row,
+                                         live_states)
+        if live:
+            _refuse(f"the queue already holds its live bundle {existing} ({why})",
+                    "A video is in one place at a time, and nothing is merged into "
+                    "a live bundle. If the bundle in the queue is the copy to keep, "
+                    "finish its review as usual. If the newer run should replace it, "
+                    "a person must first take that bundle out of the queue.")
+    claimed, release = _claim_return_nested(video_id)
+    if not claimed:
+        _refuse(f"another program is moving the folder {existing} right now",
+                "It is routed on its next try once that move is done.")
+    try:
+        what = "queue records only" if records_only else "an older copy of the video"
+        # The live copy: the files this route brings. A leftover file the route
+        # brings byte for byte is deleted; machine outputs are deleted because
+        # this run makes its own.
+        live: dict = {}
+        try:
+            for f in _bundle_files(Path(processing_dir), video_id):
+                live[f.name] = f
+        except OSError:
+            pass
+        for f in extra_sources or []:
+            if Path(f).is_file():
+                live.setdefault(Path(f).name, Path(f))
+        kept = clear_leftover(
+            existing, video_id, live,
+            why=(f"{what} was in the queue when a later run of the video was routed "
+                 f"there ({reason}); a video is in one place at a time"),
+            what_to_do=("look at what is kept; the answers here (review, ground truth, "
+                        "cuts) belong to this older copy's cuts. While this folder is "
+                        "there, the video cannot be routed into this queue: it waits "
+                        "and the route is tried again."))
+    finally:
+        if release:
+            _release_return_claim(video_id)
+    if kept:
+        _refuse(f"an older folder of the video, {existing}, holds "
+                f"{', '.join(kept)}, which has no current copy anywhere else, and it "
+                f"is left where it is",
+                "It is listed for a person; the route is tried again once the "
+                "folder is gone.", listed=True)
+    logger.warning(f"Routing {video_id}: {existing} was not the live bundle ({what}); "
+                   f"cleared before routing")
+
+
 def route_to_queue(
     video_id: str,
     processing_dir: Path,
@@ -449,6 +677,7 @@ def route_to_queue(
     db_state: Optional[str] = None,
     extra_sources: Optional[Iterable[Path]] = None,
     held_at_step: Optional[str] = None,
+    all_or_nothing: bool = False,
 ) -> Path:
     """Move a video bundle into a review queue, write the review manifest, and
     set the DB hold state. Returns the bundle dir.
@@ -459,6 +688,11 @@ def route_to_queue(
     stands for: 'segmentation' for deep review (where cuts are fixed),
     'outcome' for triage (pellet outcomes and causal reaches).
 
+    ``all_or_nothing`` True (routes out of the FILED folder): if any file
+    cannot be moved, everything is put back and
+    review_routing.RouteIncompleteError is raised, with nothing routed and no
+    state changed (review_routing.move_video_bundle says why).
+
     Raises CrystallizedError, before anything moves, when ``db`` says the
     video is crystallized (publication-locked; db.crystallized_refusal).
 
@@ -467,9 +701,30 @@ def route_to_queue(
       * into triage while the video has a deep-review bundle: nothing is moved
         or created; the video stays in deep review, its row is set to
         'deep_review', and the deep-review bundle is returned. Files at the
-        source stay where they are (logged).
+        source stay where they are (logged). Only a live deep-review bundle
+        counts (review_routing.in_deep_review / is_queue_bundle): a deep-
+        review folder that is a leftover kept for a person is not one, and
+        the route into triage goes on as usual. WHY: taking a leftover for
+        the hold relabelled the row, moved nothing, and left the video with
+        no live bundle anywhere.
       * into deep review: once the deep-review bundle is complete (no file
-        failed to move), the video's triage bundle, if any, is deleted."""
+        failed to move), the video's triage bundle, if any, is emptied
+        without losing a person's file (_drop_triage_copy).
+
+    A VIDEO IS NEVER MERGED INTO A FOLDER IT ALREADY HAS IN THAT QUEUE:
+      * the source IS that folder (routed onto itself): nothing moves, only
+        the database state is recorded (see below);
+      * the source is anywhere else (Processing, the filed folder, the other
+        queue): _clear_the_way decides, before anything moves -- a folder that
+        is not the live bundle (empty, records only, or an old copy of a video
+        that is no longer held) is cleared as a leftover (review_routing.
+        clear_leftover) and the route goes on, unless something in it has no
+        current copy elsewhere: that stays where it is, listed for a person,
+        and the route raises AlreadyInQueueError; so does the live bundle of
+        a held video. WHY: the move used to pour the source's files into the
+        existing bundle, replacing same-named files -- an older filed
+        generation replaced the held run's results, and a review a person had
+        saved in the bundle could be replaced by an older one."""
     from .db import CrystallizedError, crystallized_refusal
     from .review_routing import in_deep_review
     locked = crystallized_refusal(db, video_id, "routed to a review queue")
@@ -510,6 +765,18 @@ def route_to_queue(
                     f"DB state could not be set ({e2}). Disk and DB now disagree.")
 
     dest_root = Path(dest_root)
+    if _same_folder(processing_dir, dest_root / video_id):
+        # The video is ALREADY in this queue: the source folder is the bundle
+        # itself (e.g. Flag Session pressed in the re-segmentation window).
+        # Nothing is moved and neither the routing record nor the review
+        # manifest is rewritten -- the bundle is already where the caller
+        # wants it. Only the database is brought in line. WHY: moving each
+        # file onto itself used to delete it (review_routing._safe_move).
+        logger.warning(
+            f"Routing {video_id}: already in {dest_root} ({reason}); nothing "
+            f"moved")
+        _record_state(db_state, "routed onto its own bundle: already in this queue")
+        return dest_root / video_id
     if (_same_folder(dest_root, getattr(Paths, "TRIAGE_REVIEW", None))
             and in_deep_review(video_id)):
         deep_bundle = Path(Paths.DEEP_REVIEW) / video_id
@@ -521,14 +788,44 @@ def route_to_queue(
                       f"routing into triage refused: the video is in deep review")
         return deep_bundle
 
+    existing = dest_root / video_id
+    if existing.is_dir():
+        _clear_the_way(video_id, existing, processing_dir, reason, db,
+                       extra_sources=extra_sources)
+
+    is_deep = _same_folder(dest_root, getattr(Paths, "DEEP_REVIEW", None))
+    step = _step_for("deep_review" if is_deep else (db_state or "triage"))
+    extra = {"db_state": db_state} if db_state else {}
+    if step:
+        # Kept in the routing record too, so a review manifest the route could
+        # not write is rebuilt with it (review_return._repair_missing_manifest)
+        # and the return still resumes just after the step that sent it.
+        extra["held_at_step"] = step
     bundle, moved = move_video_bundle(
         video_id, processing_dir, dest_root, reason,
         extra_sources=extra_sources,
-        extra_manifest={"db_state": db_state} if db_state else None,
+        extra_manifest=extra or None,
+        all_or_nothing=all_or_nothing,
     )
-    _write_review_manifest(bundle, video_id, reason, held_at_step=_step_for(
-        "deep_review" if _same_folder(dest_root, getattr(Paths, "DEEP_REVIEW", None))
-        else (db_state or "triage")))
+    # The hold is recorded the moment the bundle is in the queue, BEFORE the
+    # review manifest is written. WHY this order: a manifest write that failed
+    # (a passing hold on the share) used to raise out of here with the files
+    # already in the queue and the row never set -- the dispatcher then
+    # marked the video failed, and its retry needed an mp4 that had moved.
+    _record_state(db_state, f"review gate moved bundle to '{reason}'")
+    from .review_routing import clear_folder_in_the_way
+    clear_folder_in_the_way(video_id)     # an earlier refusal is resolved
+    try:
+        _write_review_manifest(bundle, video_id, reason, held_at_step=step)
+    except Exception as e:
+        # The bundle is published and the row says so; only the file the
+        # review tools list a bundle by is missing. The return scan rebuilds
+        # it from the routing record (review_return.repair_unfinished_routes),
+        # so this is logged, not raised.
+        logger.error(
+            f"Routing {video_id}: the bundle is in {bundle} and its state is "
+            f"recorded, but its review manifest could not be written ({e}); "
+            f"the return scan writes it again shortly")
     # If the SOURCE was a per-video bundle dir (a queue-to-queue divert) and
     # the move emptied it, remove it: an empty date-named dir left behind in
     # a queue reads as a seg-failed bundle and re-diverts "(0 files)" forever
@@ -540,7 +837,6 @@ def route_to_queue(
             processing_dir.rmdir()
     except OSError:
         pass
-    _record_state(db_state, f"review gate moved bundle to '{reason}'")
     if _same_folder(dest_root, getattr(Paths, "DEEP_REVIEW", None)):
         _drop_triage_copy(video_id, bundle)
     return bundle
@@ -570,22 +866,32 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
     A video is in one place at a time, and the deep-review bundle is its live
     copy. So, for each of the video's files in ``processing_dir`` (only there:
     a file elsewhere, e.g. a filed copy, is never touched):
-      * an output of this run (segments, reaches, outcomes, assignment,
-        manifest, triage record ...) is deleted -- it is made again when the
-        video leaves deep review and is analysed again;
+      * a machine output of this run (segments, reaches, outcomes, assignment,
+        manifest, triage record ... -- review_routing.is_machine_output) is
+        deleted -- it is made again when the video leaves deep review and is
+        analysed again;
+      * a file a person wrote (a review, ground truth, a clear marker, cuts
+        set by hand -- review_routing.is_person_file) is deleted only when the
+        deep-review bundle holds the same file byte for byte; otherwise it
+        stays where it is and is listed for a person in the attention panel
+        (review_routing.note_for_a_person, kind 'person_file_left'). WHY:
+        "not an input, so an output of this run" counted a person's files as
+        outputs and deleted them; and a person's work is never moved away
+        where nobody looks;
       * an input (the video or a pose file) is deleted only when the
         deep-review bundle holds the same file (same name and content); one
         that could be the only copy is set aside, never deleted, to
         ``<processing root>/_finished_elsewhere/<date>/<folder>/`` -- the set-
         aside folder the watcher already uses for local copies of videos held
         or finished elsewhere.
-    Returns ``{"deleted": [...], "set_aside": [...], "failed": [...]}`` and
-    logs what it did. Never raises."""
+    Returns ``{"deleted": [...], "set_aside": [...], "kept": [...],
+    "failed": [...]}`` and logs what it did. Never raises."""
     import shutil
     from datetime import date as _date
     from mousereach.archive.core import _same_file
-    from .review_routing import _bundle_files
-    out = {"deleted": [], "set_aside": [], "failed": []}
+    from .review_routing import (_bundle_files, _same_content, is_person_file,
+                                 note_for_a_person)
+    out = {"deleted": [], "set_aside": [], "kept": [], "failed": []}
     try:
         files = list(_bundle_files(Path(processing_dir), video_id))
     except OSError:
@@ -595,7 +901,27 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
     for f in files:
         try:
             twin = Path(deep_bundle) / f.name
-            if not _is_input_file(video_id, f.name) or (twin.is_file() and _same_file(f, twin)):
+            if is_person_file(f, video_id):
+                if twin.is_file() and _same_content(f, twin):
+                    f.unlink()
+                    out["deleted"].append(f.name)
+                else:
+                    out["kept"].append(f.name)
+                    note_for_a_person(
+                        "person_file_left", video_id, f,
+                        says=(f"{video_id} is in deep review ({deep_bundle}), so this "
+                              f"run's files were taken out of {processing_dir}; but "
+                              f"{f.name} is a person's file that the deep-review "
+                              f"bundle does not hold, so it was left at {f}. Look at "
+                              f"it; delete it when it is not needed (this line then "
+                              f"goes away by itself). While it is there, the video's "
+                              f"return from deep review into this folder waits."))
+                continue
+            if _is_input_file(video_id, f.name):
+                deletable = twin.is_file() and _same_file(f, twin)
+            else:
+                deletable = True        # a machine output of this run
+            if deletable:
                 f.unlink()
                 out["deleted"].append(f.name)
             else:
@@ -607,22 +933,85 @@ def discard_run_outputs(video_id: str, processing_dir: Path, deep_bundle: Path) 
             out["failed"].append(f"{f.name} ({e})")
     logger.warning(
         f"{video_id}: in deep review, so this run's files were taken out of "
-        f"{processing_dir}: {len(out['deleted'])} deleted (outputs, or inputs the "
-        f"deep-review bundle holds identically), {len(out['set_aside'])} set aside "
-        f"to {aside} (inputs that could be the only copy)"
+        f"{processing_dir}: {len(out['deleted'])} deleted (outputs, or files the "
+        f"deep-review bundle holds identically), {len(out['set_aside'])} input(s) "
+        f"that could be the only copy set aside to {aside}"
+        + (f"; a person's file(s) left in place and listed: {', '.join(out['kept'])}"
+           if out["kept"] else "")
         + (f"; could not remove: {', '.join(out['failed'])}" if out["failed"] else ""))
     return out
 
 
 def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
-    """Delete ``<triage>/<video>`` once the video's deep-review bundle is
-    complete. Deep review supersedes triage: the triage copy is deleted, not
-    kept. Never deleted while the deep-review bundle's routing record lists a
-    file that failed to move (those files may still be in the triage folder,
-    and may be the video's only copy) -- logged for a person instead. Never
-    raises."""
-    import shutil
-    from .review_routing import read_routing_manifest
+    """Empty the triage copy under the video's bundle claim (see
+    _empty_triage_copy for what it does). Never raises.
+
+    WHY the claim: emptying the copy is several moves and deletes, and the
+    return scan on another machine acts on the same folder under the claim
+    (a byte-identical triage leftover of a video in deep review is cleared
+    there). Without the claim both could work on one folder at once. When the
+    claim is refused, nothing is touched: the return scan meets the leftover
+    on its next pass and deals with it under the claim.
+
+    A triage folder that is already a leftover kept for a person (it holds
+    review_routing.LEFT_NOTE) is not a triage copy and is left as it is: what
+    it holds was already judged to have no current copy elsewhere, and it is
+    listed for a person (review_routing.is_queue_bundle)."""
+    from .review_return import _claim_return_nested, _release_return_claim
+    from .review_routing import is_queue_bundle
+    triage_root = getattr(Paths, "TRIAGE_REVIEW", None)
+    if not triage_root or not is_queue_bundle(Path(triage_root) / video_id):
+        return                          # no triage copy: nothing to claim
+    claimed, release = _claim_return_nested(video_id)
+    if not claimed:
+        logger.warning(f"Routing {video_id}: its triage copy is being moved by "
+                       f"another process right now; left for the return scan")
+        return
+    try:
+        _empty_triage_copy(video_id, deep_bundle)
+    finally:
+        if release:
+            _release_return_claim(video_id)
+
+
+def _empty_triage_copy(video_id: str, deep_bundle: Path) -> None:
+    """Empty ``<triage>/<video>`` once the video's deep-review bundle is
+    complete (deep review supersedes triage), without losing anything a
+    person wrote. Never raises.
+
+    Never touched while the deep-review bundle's routing record lists a file
+    that failed to move (those files may still be in the triage folder, and
+    may be the video's only copy): it is listed for a person in the attention
+    panel, and the return scan empties it once the deep-review bundle is whole
+    (review_return.repair_unfinished_routes). Otherwise:
+      * the video, or a pose file, when the deep-review bundle has no file of
+        that kind at all (review_routing.input_kind), is MOVED into it: it may
+        be the video's only copy, and the live bundle needs it;
+      * then the folder is a leftover, with the deep-review bundle as the live
+        copy (review_routing.clear_leftover): its queue records and machine
+        outputs, any file the deep-review bundle holds byte for byte, and a
+        review the durable review store already holds byte for byte are
+        deleted (nothing is written into the store: these answers were made
+        on cuts that are about to be redone); anything else -- ground truth,
+        a review the store does not hold byte for byte, a clear marker, hand-set
+        cuts, a video or pose that differs from the deep-review bundle's --
+        stays where it is, with a note, listed for a person. Every reader
+        ignores a triage folder of a video in deep review (deep review
+        supersedes triage) and the return scan skips a folder holding the
+        note.
+    No answer is carried into the deep-review bundle here. WHY: re-segmentation
+    voids every answer after it, so no answer file is re-homed into the bundle
+    whose cuts are being redone. (Escalate and the return scan's mislabel
+    divert are different: they route the triage bundle ITSELF into deep
+    review, and its review and ground truth travel with it -- see
+    docs/REVIEW_TOOLS.md.) NOT YET DONE: the durable store's copy of the
+    review is still read and matched to the new cuts by frame span
+    (causal_review_io.index_review_by_segment); voiding it is separate work.
+    WHY at all: the whole folder used to be deleted (shutil.rmtree), a
+    person's ground truth and clear markers with it; only reviews had a
+    durable copy."""
+    from .review_routing import (read_routing_manifest, input_kind, clear_leftover,
+                                 _safe_move, note_folder_in_the_way)
     triage_root = getattr(Paths, "TRIAGE_REVIEW", None)
     if not triage_root:
         return
@@ -634,29 +1023,65 @@ def _drop_triage_copy(video_id: str, deep_bundle: Path) -> None:
         return
     record = read_routing_manifest(deep_bundle, video_id) or {}
     if record.get("failed_files"):
-        logger.error(
-            f"Routing {video_id}: in deep review now, but {len(record['failed_files'])} "
-            f"file(s) failed to move into it; its triage folder {copy} is left for a "
-            f"person (deep review supersedes triage -- delete it once the files are in "
-            f"{deep_bundle})")
+        says = (f"{video_id} is in deep review, but {len(record['failed_files'])} "
+                f"file(s) failed to move into its bundle {deep_bundle}; its triage "
+                f"folder {copy} is kept until they are in (the watcher moves them in "
+                f"by itself when it can, then empties this folder). If it stays "
+                f"listed, see the line that lists the files missing from the "
+                f"deep-review bundle.")
+        logger.error(f"Routing {video_id}: {says}")
+        note_folder_in_the_way(video_id, copy, says)
         return
+    deep_bundle = Path(deep_bundle)
+    carried = []
     try:
-        shutil.rmtree(copy)
-        logger.info(f"Routing {video_id}: triage copy {copy} deleted -- the video is "
-                    f"in deep review, which supersedes triage")
+        held = {input_kind(video_id, g.name) for g in deep_bundle.iterdir()
+                if g.is_file()}
+        for f in sorted(copy.iterdir()):
+            kind = input_kind(video_id, f.name) if f.is_file() else None
+            if kind is None or kind in held or (deep_bundle / f.name).exists():
+                continue
+            try:
+                _safe_move(f, deep_bundle / f.name)
+                carried.append(f.name)
+                held.add(kind)
+            except OSError as e:
+                logger.warning(f"Routing {video_id}: could not move {f.name} from the "
+                               f"triage copy into the deep-review bundle ({e}); it "
+                               f"stays in {copy}")
+        live = {g.name: g for g in deep_bundle.iterdir() if g.is_file()}
     except OSError as e:
-        logger.error(f"Routing {video_id}: could not delete the triage copy {copy} "
-                     f"({e}); deep review supersedes it -- delete it by hand")
+        says = (f"{video_id} is in deep review; its triage folder {copy} or the "
+                f"deep-review bundle could not be read ({e}), so the triage folder is "
+                f"left where it is. The watcher tries again on its next check.")
+        logger.error(f"Routing {video_id}: {says}")
+        note_folder_in_the_way(video_id, copy, says)
+        return
+    if carried:
+        logger.info(f"Routing {video_id}: carried {', '.join(carried)} from the triage "
+                    f"copy into the deep-review bundle {deep_bundle}")
+    clear_leftover(
+        copy, video_id, live,
+        why=(f"the video moved into deep review ({deep_bundle}), which supersedes "
+             f"triage"),
+        what_to_do=(f"the video's live bundle is {deep_bundle}; its cuts are being "
+                    f"redone, so the answer files here (review, ground truth, cuts, "
+                    f"clear marker) are kept only as a record and are not moved into "
+                    f"it. (The review's copy in the durable review store is still "
+                    f"matched to the new cuts by frame span.) Every reader ignores this "
+                    f"folder while the video is in deep review."))
 
 
 def route_deep_review(
     video_id: str, processing_dir: Path, reason: str, db=None,
     extra_sources: Optional[Iterable[Path]] = None,
+    all_or_nothing: bool = False,
 ) -> Path:
     """Route a video to DEEP_REVIEW (segmentation failed / QC-critical / escalated)."""
     return route_to_queue(
         video_id, processing_dir, Paths.DEEP_REVIEW, reason,
         db=db, db_state="deep_review", extra_sources=extra_sources,
+        all_or_nothing=all_or_nothing,
     )
 
 

@@ -506,3 +506,15 @@ def test_the_census_says_how_many_analysed_videos_wait_for_hand_scores(capsys):
     out.encode("ascii")
     assert set(runner.HAND_SCORE_HOLD_KINDS) == {"hand_scores_waiting", "hand_scores_missing",
                                                  "hand_score_check_failed"}
+
+
+@pytest.fixture(autouse=True)
+def _the_stand_in_pose_counts_as_usable(monkeypatch):
+    """These tests use a stand-in pose file that is not a real pose table;
+    the pose check before segmentation (pipeline/pose_check.py) is not what
+    they test."""
+    try:
+        from mousereach.pipeline import pose_check
+    except ImportError:         # code without the pose check: nothing to stand in for
+        return
+    monkeypatch.setattr(pose_check, "check_pose", lambda *a, **k: (True, ""))

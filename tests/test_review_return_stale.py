@@ -4,8 +4,10 @@ WHY: videos re-completed CLEAN (review applied, features
 extracted, state 'processed') and seconds later the return scan diverted their
 STALE seg-failed triage husks to deep_review -- flipping the healthy videos'
 state and blocking their archive. The guard checks the video's live state:
-an actively-handled video's bundle is a leftover, retired to _Problematic
-(never deleted), and the video is left alone.
+an actively-handled video's bundle is a leftover, and the video is left
+alone. A leftover's files with a current copy elsewhere are deleted; the
+rest stays where it is, listed for a person -- nothing goes to an archive
+folder.
 """
 import json
 import os
@@ -13,6 +15,10 @@ import time
 
 import mousereach.watcher.review_return as rr
 import mousereach.watcher.review_gate as rg
+
+# Named here, not imported, so these tests also run (and fail by what they
+# assert) on code without the leftover rule.
+LEFT_NOTE = "LEFT_FOR_A_PERSON.json"      # review_routing.LEFT_NOTE
 
 
 class FakeDB:
@@ -54,7 +60,25 @@ def _wire_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", tmp_path, raising=False)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    import mousereach.archive.core as ac
+    monkeypatch.setattr(ac, "get_archive_destination",
+                        lambda stem: tmp_path / "Analyzed" / "PROJ" / "PROJ01")
     return triage, deep
+
+
+def _nothing_archived(tmp_path):
+    assert not (tmp_path / "Review" / "_Problematic").exists()
+
+
+def _running_copy(tmp_path, stem):
+    """The video's current copy: this machine's processing folder."""
+    proc = tmp_path / "proc"
+    proc.mkdir(exist_ok=True)
+    (proc / f"{stem}.mp4").write_bytes(b"video")
+    return proc
 
 
 def test_stale_bundle_is_retired_not_diverted(tmp_path, monkeypatch):
@@ -66,18 +90,15 @@ def test_stale_bundle_is_retired_not_diverted(tmp_path, monkeypatch):
                         lambda *a, **k: routed.append(a))
 
     db = FakeDB("processed")
-    summary = rr.scan_review_queues(db, tmp_path / "proc")
+    summary = rr.scan_review_queues(db, _running_copy(tmp_path, stem))
 
     assert summary.get("stale_retired") == 1
     assert not routed                          # no divert attempted
     assert not db.forced                       # video state untouched
-    assert not (triage / stem).exists()        # left the queue
-    retired = list((tmp_path / "Review" / "_Problematic").rglob(
-        f"{stem}_routing.json"))
-    assert retired                             # archived, not deleted
-    note = list((tmp_path / "Review" / "_Problematic").rglob(
-        f"{stem}_stale_retire.json"))
-    assert note and "re-handled" in note[0].read_text(encoding="utf-8")
+    # Machine outputs and records only, and a current copy of the video
+    # exists: deleted, not archived.
+    assert not (triage / stem).exists()
+    _nothing_archived(tmp_path)
 
 
 def test_empty_dir_is_retired_not_routed(tmp_path, monkeypatch):
@@ -117,7 +138,14 @@ def test_parked_unresolvable_video_is_never_unparked(tmp_path, monkeypatch):
 
     assert summary.get("stale_retired") == 1
     assert not routed and not db.forced
-    assert not (triage / stem).exists()
+    # No current copy of the video can be found anywhere, so its machine
+    # output is not deleted either: the folder stays, with a note, listed --
+    # and the next scan leaves it alone.
+    assert (triage / stem / f"{stem}_segments.json").is_file()
+    assert (triage / stem / LEFT_NOTE).is_file()
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+    assert not summary.get("stale_retired") and not routed
+    _nothing_archived(tmp_path)
 
 
 def test_genuinely_held_video_still_diverts(tmp_path, monkeypatch):
@@ -146,9 +174,9 @@ def _split_escalation(triage, deep, stem, triage_mp4=b"video"):
     return t, d
 
 
-def test_byte_identical_leftover_in_triage_is_retired(tmp_path, monkeypatch):
+def test_byte_identical_leftover_in_triage_is_deleted(tmp_path, monkeypatch):
     """A triage copy holding only byte-identical copies of deep-review files
-    carries nothing the reviewer's copy lacks: archived, never routed, and the
+    carries nothing the reviewer's copy lacks: deleted, never routed, and the
     deep-review bundle is untouched."""
     triage, deep = _wire_paths(monkeypatch, tmp_path)
     stem = "20240101_ABC0105_P1"
@@ -164,15 +192,13 @@ def test_byte_identical_leftover_in_triage_is_retired(tmp_path, monkeypatch):
     assert not routed and not db.forced
     assert not t.exists()
     assert sorted(p.name for p in d.iterdir()) == before
-    archived = list((tmp_path / "Review" / "_Problematic").rglob(f"{stem}.mp4"))
-    assert archived and archived[0].read_bytes() == b"video"
-    note = list((tmp_path / "Review" / "_Problematic").rglob(f"{stem}_stale_retire.json"))
-    assert note and "byte-identical" in note[0].read_text(encoding="utf-8")
+    _nothing_archived(tmp_path)
 
 
 def test_duplicate_that_differs_is_left_for_a_person(tmp_path, monkeypatch):
-    """Same names and sizes but different bytes: not a leftover. It stays,
-    nothing is routed, and its files are read once, not on every scan."""
+    """Same names and sizes but different bytes: not a byte-identical
+    leftover. The file that differs stays where it is, listed; nothing is
+    routed, and its files are read once, not on every scan."""
     triage, deep = _wire_paths(monkeypatch, tmp_path)
     stem = "20240101_ABC0106_P1"
     t, d = _split_escalation(triage, deep, stem, triage_mp4=b"VIDEO")
@@ -187,8 +213,9 @@ def test_duplicate_that_differs_is_left_for_a_person(tmp_path, monkeypatch):
         assert not summary.get("leftover_retired")
 
     assert (t / f"{stem}.mp4").read_bytes() == b"VIDEO"
+    assert (t / LEFT_NOTE).is_file()
     assert not routed
-    assert not (tmp_path / "Review" / "_Problematic").exists()
+    _nothing_archived(tmp_path)
     first_scan = len(hashed)
     assert first_scan and first_scan <= 2 * 3          # one pass over the files
 
@@ -200,7 +227,16 @@ def test_duplicate_with_a_file_the_twin_lacks_is_left(tmp_path, monkeypatch):
     (t / f"{stem}_causal_review.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: None)
 
+    (tmp_path / "review_records" / "reviews").mkdir(parents=True)
+    (tmp_path / "review_records" / "reviews" / f"{stem}_causal_review.json").write_text(
+        '{"a later": "answer"}', encoding="utf-8")
+
     summary = rr.scan_review_queues(FakeDB("deep_review"), tmp_path / "proc")
 
     assert not summary.get("leftover_retired")
-    assert (t / f"{stem}_causal_review.json").is_file()
+    # The durable store holds a DIFFERENT review: the triage copy's is never
+    # written over it, and is kept where it is.
+    assert (t / f"{stem}_causal_review.json").read_text(encoding="utf-8") == "{}"
+    assert (tmp_path / "review_records" / "reviews" / f"{stem}_causal_review.json"
+            ).read_text(encoding="utf-8") == '{"a later": "answer"}'
+    _nothing_archived(tmp_path)

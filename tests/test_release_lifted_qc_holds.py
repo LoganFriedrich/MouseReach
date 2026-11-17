@@ -6,10 +6,12 @@ Once the check is corrected, such a hold -- made by the machine alone, with no
 file a person wrote -- is re-checked, and a bundle the check now passes goes
 back to the posed folder for a fresh run in its priority turn. Anything a
 person touched, any other reason for the hold, and any hold the current check
-still makes stays where it is.
+still makes stays where it is. What is left in a released bundle is deleted
+once the video is back in the posed folder (machine outputs, records, copies
+of the posed files) -- never moved to an archive folder; a person's file
+stays where it is, listed for a person.
 """
 import json
-from datetime import datetime
 
 import mousereach.watcher.review_gate as rg
 import mousereach.watcher.review_return as rr
@@ -43,6 +45,9 @@ def _wire(monkeypatch, tmp_path):
     monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", review)
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", tmp_path, raising=False)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
     monkeypatch.setattr(rr.Paths, "DLC_STAGING", posed, raising=False)
     monkeypatch.setattr(rr.Paths, "ANALYZED_OUTPUT", None, raising=False)
     monkeypatch.setattr(rr, "_qc_recheck_cache", {})
@@ -88,9 +93,7 @@ def test_a_lifted_hold_goes_back_to_the_posed_folder(tmp_path, monkeypatch):
     assert not b.exists()
     assert sorted(p.name for p in posed.iterdir()) == sorted(
         [f"{stem}.mp4"] + [f"{stem}{POSE}{e}" for e in (".h5", ".csv", "_meta.pickle")])
-    kept = review / "_Problematic" / f"_released_qc_holds_{datetime.now():%Y-%m-%d}" / stem
-    assert (kept / f"{stem}_triage.json").is_file()       # machine outputs set aside
-    assert (kept / f"{stem}_release_note.json").is_file()
+    assert not (review / "_Problematic").exists()         # machine outputs deleted
     assert db.forced == [(stem, "dlc_complete", {
         "current_path": str(posed / f"{stem}.mp4"),
         "dlc_output_path": str(posed / f"{stem}{POSE}.h5")})]
@@ -160,8 +163,8 @@ def test_each_bundle_is_rechecked_once_until_it_changes(tmp_path, monkeypatch):
 def test_identical_copies_already_in_the_posed_folder_stay_the_one_copy(tmp_path, monkeypatch):
     """Intake leaves a video's posed files in the posed folder until it is
     archived, so a held video usually still has them there (most early
-    releases were refused for it). Identical copies there are the
-    one live copy; the bundle's duplicates go, its outputs are set aside."""
+    archived. Identical copies there are the
+    one live copy; the bundle's duplicates and outputs are deleted."""
     deep, posed, review = _wire(monkeypatch, tmp_path)
     stem = "20250101_CNT9915_F4"
     b = _bundle(deep, stem)
@@ -174,10 +177,8 @@ def test_identical_copies_already_in_the_posed_folder_stay_the_one_copy(tmp_path
 
     assert not b.exists()
     assert len(list(posed.iterdir())) == 4
-    kept = review / "_Problematic" / f"_released_qc_holds_{datetime.now():%Y-%m-%d}" / stem
-    names = {p.name for p in kept.iterdir()}
-    assert f"{stem}.mp4" not in names and f"{stem}{POSE}.h5" not in names   # no duplicates
-    assert f"{stem}_triage.json" in names and f"{stem}_release_note.json" in names
+    assert (posed / f"{stem}.mp4").read_bytes() == b"video"
+    assert not (review / "_Problematic").exists()
     assert db.forced[0][1] == "dlc_complete"
 
 
@@ -266,7 +267,8 @@ def test_the_check_records_ruler_variation_without_holding():
 def test_an_easy_or_flat_machine_hold_is_released_even_with_a_persons_file(tmp_path, monkeypatch):
     # Easy and Flat are never held for a person; what a
     # person can answer is a pellet outcome, and those do not matter for them.
-    # The person's file is set aside with the other outputs, not lost.
+    # The person's file is not lost: it stays in the bundle folder, with a
+    # note, listed for a person; the machine outputs beside it are deleted.
     deep, posed, review = _wire(monkeypatch, tmp_path)
     released = [
         _bundle(deep, "20250101_CNT9911_F1", person=True),
@@ -275,6 +277,8 @@ def test_an_easy_or_flat_machine_hold_is_released_even_with_a_persons_file(tmp_p
             {"category": "dlc_coherence", "severity": "critical",
              "description": "Missing SABL or SABR — cannot compute ruler"},)),
     ]
+    (released[0] / "20250101_CNT9911_F1_seg_validation.json").write_text(
+        '{"by": "person-a"}', encoding="utf-8")
     flagged_by_hand = _bundle(deep, "20250101_CNT9914_F4",
                               reason="reviewer flagged session 20250101_CNT9914")
     db = FakeDB()
@@ -282,7 +286,16 @@ def test_an_easy_or_flat_machine_hold_is_released_even_with_a_persons_file(tmp_p
     summary = rr.scan_review_queues(db, tmp_path / "proc")
 
     assert summary["qc_released"] == 3
-    assert not any(b.exists() for b in released)
+    LEFT_NOTE = "LEFT_FOR_A_PERSON.json"  # review_routing.LEFT_NOTE
+    # The review and the validation file have no copy elsewhere: they stay
+    # where they are (nothing is written into the durable review store).
+    assert not (tmp_path / "review_records" / "reviews"
+                / "20250101_CNT9911_F1_causal_review.json").exists()
+    assert {p.name for p in released[0].iterdir()} == {
+        "20250101_CNT9911_F1_seg_validation.json",
+        "20250101_CNT9911_F1_causal_review.json", LEFT_NOTE}
+    assert not any(b.exists() for b in released[1:])
     assert flagged_by_hand.exists()                     # a person's own flag stays
-    kept = review / "_Problematic" / f"_released_qc_holds_{datetime.now():%Y-%m-%d}"
-    assert (kept / "20250101_CNT9911_F1" / "20250101_CNT9911_F1_causal_review.json").is_file()
+    assert not (review / "_Problematic").exists()
+    # A released bundle kept for a person is never released again.
+    assert rr.scan_review_queues(db, tmp_path / "proc")["qc_released"] == 0

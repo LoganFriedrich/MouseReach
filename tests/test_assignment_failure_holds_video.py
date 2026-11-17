@@ -132,3 +132,15 @@ def test_an_older_assignment_file_is_replaced(tmp_path):
     o.db = mock.Mock()
     o._hold_for_failed_assignment(VID, tmp_path, "boom")
     assert triage_status(tmp_path, VID).unresolved == {1}
+
+
+@pytest.fixture(autouse=True)
+def _the_stand_in_pose_counts_as_usable(monkeypatch):
+    """These tests use a stand-in pose file that is not a real pose table;
+    the pose check before segmentation (pipeline/pose_check.py) is not what
+    they test."""
+    try:
+        from mousereach.pipeline import pose_check
+    except ImportError:         # code without the pose check: nothing to stand in for
+        return
+    monkeypatch.setattr(pose_check, "check_pose", lambda *a, **k: (True, ""))

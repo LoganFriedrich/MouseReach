@@ -13,16 +13,31 @@ gets exactly the same routing the pipeline uses itself.
 
 What it does, in order:
   1. finds the video's results in the configured Analyzed tree,
-  2. optionally flags specific segments (flagged_for_review=True with the
-     given reason, triage_cleared cleared) in {video}_pellet_outcomes.json --
-     that is what the triage review tool walks. A worklist item may carry
-     "segment_details" ({segment number: words}); each flagged segment's
-     reason is then "<reason>: <its words>", and the review tool shows it on
-     screen beside that pellet (WHY: all a reviewer sees is the tool, so a
-     pellet sent back must say why -- a reviewer met finished videos coming
-     back with no reason given),
-  3. moves the video's bundle into the queue with a routing manifest
-     (review_gate.route_to_queue), updating the watcher database.
+  2. moves the video's bundle into the queue with a routing manifest
+     (review_gate.route_to_queue), updating the watcher database -- all or
+     nothing (below),
+  3. optionally flags specific segments (flagged_for_review=True with the
+     given reason, triage_cleared cleared) in the BUNDLE's
+     {video}_pellet_outcomes.json -- that is what the triage review tool
+     walks. A worklist item may carry "segment_details" ({segment number:
+     words}); each flagged segment's reason is then "<reason>: <its words>",
+     and the review tool shows it on screen beside that pellet (WHY: all a
+     reviewer sees is the tool, so a pellet sent back must say why -- a
+     reviewer met finished videos coming back with no reason given).
+Steps 2 and 3 are done under the bundle's claim (review_return._claim_return),
+so the watcher's return scan -- another process -- cannot return the bundle
+between the move and the flag.
+
+THE FILED FOLDER IS NEVER CHANGED BY A ROUTE THAT DOES NOT HAPPEN
+-----------------------------------------------------------------
+The flags are written only after the move has succeeded, into the bundle's
+copy. WHY: they used to be written into the FILED outcomes file first; a
+route that then failed (a file held open, so every file went back), or was
+refused because the video is held, left the filed results carrying review
+flags although nothing had been routed. A failed or refused route now leaves
+every filed file byte for byte as it was. If the move succeeds and the flag
+cannot be written, the video is in the queue and is reported FAIL "question
+not recorded" (exit code 1): route it again to ask.
 
 A SEGMENT A PERSON HAS ANSWERED IS NEVER FLAGGED
 ------------------------------------------------
@@ -72,7 +87,10 @@ the pipeline's own 'processing' -> 'processed' write an illegal transition, and
 the daemon marks the video failed with fresh outputs in Processing and old ones
 in the queue; a processed or archiving video's Analyzed copy is older than the
 outputs the daemon is about to archive, so a reviewer would judge stale data.
-A deferral is not a failure: offer the video again on a later run.
+A deferral is not a failure: offer the video again on a later run. A video
+whose bundle another process is moving right now (it holds the bundle's
+claim, review_return._claim_return -- the watcher's return scan, say) is
+deferred the same way.
 
 A VIDEO IN DEEP REVIEW IS NEVER SENT TO TRIAGE
 ---------------------------------------------
@@ -81,8 +99,46 @@ is not flagged and not routed to triage; it is reported as "deep" (in_deep_revie
 true with --json) and stays where it is. Not a failure for the exit code. WHY:
 the filed results this command routes from are older than what deep review
 holds, and a triage copy beside the deep-review bundle had a reviewer answer
-the wrong copy. Routing into deep_review deletes the video's triage bundle
-once the deep-review bundle is complete (review_gate.route_to_queue).
+the wrong copy. Routing into deep_review empties the video's triage bundle
+once the deep-review bundle is complete, without losing a person's file
+(review_gate._drop_triage_copy): a video or pose file the deep-review bundle
+has none of is moved in; then what has a current copy elsewhere -- machine
+outputs, files the deep-review bundle holds byte for byte, the triage review
+when the durable review store already holds it byte for byte -- is
+deleted; ground truth, hand-set cuts,
+clear markers and a review the store does not hold byte for byte are never carried
+into the deep-review bundle and never deleted: they stay where they are,
+with a note, listed in the dashboard's "Needs your attention" panel.
+
+A VIDEO ALREADY HELD IN A QUEUE IS NOT MOVED -- ITS QUESTION GOES IN ITS BUNDLE
+--------------------------------------------------------------------------------
+A video whose watcher state is 'triage' or 'deep_review', or that has a bundle
+in either queue (published, or still being built in the queue's .incoming
+folder), is not moved and its filed copy is not touched; it is reported as
+"held" (held: true with --json). WHY: the held bundle is the video's live copy,
+and it can hold a person's answers and cuts. Routing used to take the OLDER
+filed results and move them into that bundle, replacing the held run's video,
+pose, results -- and a review a person had saved there -- with the filed ones.
+
+A question asked about a held video (--flag-segments, or a worklist's
+segment_nums) is not dropped: it is written into the HELD bundle's
+pellet_outcomes.json -- the file the triage review tool walks -- exactly as for
+a routed video (a segment a person already answered is skipped, --recheck
+reopens it). That is the path the hand-score check uses for videos already
+waiting in a queue. Exit code:
+  * held, and every requested segment flagged in the held bundle (or none was
+    requested, or every one was already answered): 0;
+  * held, and the question could NOT be recorded: 1, with "question not
+    recorded" and why. That happens when the video is held in deep review (its
+    results are made again after re-segmentation, so a flag would be thrown
+    away), when only the watcher state says it is held and no published triage
+    bundle is reachable from here, when the held triage bundle has no outcomes
+    file or not the requested segments, when deep review was asked for a video
+    held in triage (escalate it from the triage review tool instead), when
+    the triage folder is an old copy kept for a person (listed under 'Folders
+    left for a person' in the Review Queues tab), or when the bundle is being moved by the return scan right
+    now. Ask again later --
+    after the video is filed again, a normal route takes the question.
 
 A CRYSTALLIZED VIDEO IS NEVER MOVED
 -----------------------------------
@@ -100,14 +156,18 @@ Usage:
         worklist.json: [{"video_id": "...", "segment_nums": [3, 7]}, ...]
 
 Exit codes:
-    0  every requested video was routed, was already not in Analyzed, or was
+    0  every requested video was routed (with its question, if any, written
+       into its bundle), was already not in Analyzed, or was
        deferred because the watcher is working on it, or had
        every requested segment already answered by a person ("done"), or is
        crystallized ("lock"), or is in deep review and was asked for triage
-       ("deep")
-    1  some video could not be routed, OR routing was refused because the
-       watcher database could not be resolved, does not exist, or cannot be
-       opened (then no video was touched)
+       ("deep"), or is already held in a queue with its question (if any)
+       written into the held bundle ("held")
+    1  some video could not be routed, or a held or routed video's question
+       could not be recorded (printed as FAIL "... question not recorded:
+       <why>"), OR
+       routing was refused because the watcher database could not be resolved,
+       does not exist, or cannot be opened (then no video was touched)
 ASCII-only output. With --json, stdout carries only the JSON results; the
 "[watcher db]" line and any refusal message go to stderr.
 """
@@ -202,9 +262,11 @@ def answered_segments_of(video_id: str, folder: Path) -> set:
 
 
 def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
-                    questions: Optional[dict] = None) -> List[int]:
+                    questions: Optional[dict] = None, dry_run: bool = False) -> List[int]:
     """Ask a person again about pellets a person already answered ("are you
-    sure?"). Returns the segments reopened.
+    sure?"). Returns the segments reopened. ``dry_run`` True writes nothing
+    and returns the segments that would be reopened (route_video decides with
+    it whether there is anything to ask before it moves the video).
 
     WHY: a person's answer is the truth for a pellet -- until there is reason to
     think a review slipped -- e.g. answers of "retrieved" where the frames show
@@ -255,7 +317,7 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
                          "reviewed_at": (rec.pop("reviewed_at", None)
                                          or review.get("reviewed_at"))}}}
         reopened.append(sn)
-    if reopened:
+    if reopened and not dry_run:
         backup_dir = Path(Paths.ANALYZED_OUTPUT) / "Archive" / "manual_corrections"
         backup_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(rp, backup_dir / ("%s.before_recheck_%s" % (
@@ -274,11 +336,11 @@ def route_video(video_id: str, queue: str, reason: str,
                 recheck: bool = False) -> dict:
     """Flag (optional) and route one video. Returns a result dict; never raises."""
     from mousereach.config import Paths
-    from mousereach.watcher.review_gate import route_to_queue
+    from mousereach.watcher.review_gate import AlreadyInQueueError, route_to_queue
 
     res = {"video_id": video_id, "queue": queue, "flagged": [], "answered": [],
            "routed": False, "deferred": False, "error": None, "reopened": [],
-           "locked": False, "in_deep_review": False}
+           "locked": False, "in_deep_review": False, "held": False}
     try:
         analyzed = Paths.ANALYZED_OUTPUT
         if not analyzed or not Path(analyzed).exists():
@@ -315,30 +377,212 @@ def route_video(video_id: str, queue: str, reason: str,
                 res["error"] = ("in deep review, which supersedes triage; not "
                                 "routed to triage")
                 return res
+        held = _held_in_a_queue(video_id, db)
+        if held:
+            # Already held -- see "A VIDEO ALREADY HELD IN A QUEUE" above.
+            # Checked before any flag is written or file moved; the question,
+            # if any, goes into the held bundle.
+            _ask_in_held_bundle(res, video_id, queue, reason, segment_nums,
+                                segment_details, recheck, held)
+            return res
+        wanted = []
         if segment_nums:
             # Never ask a person again what they (or ground truth) already
-            # answered -- see "A SEGMENT A PERSON HAS ANSWERED" above.
+            # answered -- see "A SEGMENT A PERSON HAS ANSWERED" above. Decided
+            # here, reading only: nothing is written before the move.
             wanted = sorted({int(s) for s in segment_nums})
             done = answered_segments_of(video_id, outcomes.parent)
-            res["answered"] = wanted if "all" in done else [s for s in wanted if s in done]
-            if recheck and res["answered"]:
-                # Asked again on purpose ("are you sure?"): reopen the person's
-                # answers rather than skip them -- see reopen_answered.
-                res["reopened"] = reopen_answered(video_id, outcomes.parent,
-                                                  res["answered"], segment_details)
-                res["answered"] = [s for s in res["answered"] if s not in res["reopened"]]
-            segment_nums = [s for s in wanted if s not in res["answered"]]
-            if not segment_nums:
+            answered = wanted if "all" in done else [s for s in wanted if s in done]
+            # Asked again on purpose ("are you sure?"): an answer that can be
+            # reopened still counts as something to ask (reopen_answered).
+            reopenable = (reopen_answered(video_id, outcomes.parent, answered,
+                                          segment_details, dry_run=True)
+                          if recheck and answered else [])
+            if not [s for s in wanted if s not in answered or s in reopenable]:
+                res["answered"] = answered
                 return res          # nothing left to ask; not routed, not a failure
-            res["flagged"] = flag_segments(outcomes, segment_nums, reason,
-                                           details=segment_details)
         dest_root = Paths.TRIAGE_REVIEW if queue == "triage" else Paths.DEEP_REVIEW
-        route_to_queue(video_id, outcomes.parent, dest_root, reason=reason,
-                       db=db, db_state=queue)
-        res["routed"] = True
+        from mousereach.watcher.review_return import (_claim_return_nested,
+                                                      _release_return_claim)
+        claimed, release = _claim_return_nested(video_id)
+        if not claimed:
+            res["deferred"] = True
+            res["error"] = ("its bundle is being moved by another process right now; "
+                            "not routed -- offer it again on a later run")
+            return res
+        try:
+            try:
+                # All or nothing: the source is the FILED folder, and a filed
+                # generation must never be left half moved (a file still there
+                # would go on counting as a filed result).
+                bundle = route_to_queue(video_id, outcomes.parent, dest_root,
+                                        reason=reason, db=db, db_state=queue,
+                                        all_or_nothing=True)
+            except AlreadyInQueueError as e:
+                # A bundle appeared between the check above and the move (or
+                # the check could not see it): nothing moved and nothing was
+                # written. The question goes into the held bundle.
+                _ask_in_held_bundle(res, video_id, queue, reason, wanted,
+                                    segment_details, recheck, str(e))
+                return res
+            res["routed"] = True
+            if wanted:
+                # The flags go into the bundle's copy now that it is in the
+                # queue (THE FILED FOLDER IS NEVER CHANGED ... above).
+                _record_question(res, video_id, Path(bundle), reason, wanted,
+                                 segment_details, recheck, "routed")
+        finally:
+            if release:
+                _release_return_claim(video_id)
     except Exception as e:  # never break the caller; report instead
         res["error"] = f"{type(e).__name__}: {e}"
     return res
+
+
+HELD_STATES = ("triage", "deep_review")
+
+
+def _ask_in_held_bundle(res: dict, video_id: str, queue: str, reason: str,
+                        segment_nums, segment_details, recheck: bool,
+                        held_why: str) -> None:
+    """Record a question about a HELD video inside its held triage bundle (see
+    "A VIDEO ALREADY HELD IN A QUEUE" in the module docstring). Fills ``res``:
+    held True always; flagged / answered / reopened as for a routed video;
+    ``unrecorded`` lists the segments whose question could not be recorded,
+    with the reason in ``error`` (a failure for the exit code). Never raises
+    (route_video's except reports anything unexpected).
+
+    Done under the bundle's claim, which belongs to one process
+    (review_return._claim_return): the outcomes file is never rewritten while
+    the watcher's return scan -- another process, on this machine or another --
+    is moving the bundle (that would leave a flag in a file already gone from
+    the queue)."""
+    from mousereach.config import Paths
+    res["held"] = True
+    res["error"] = held_why
+    wanted = sorted({int(s) for s in (segment_nums or [])})
+    if not wanted:
+        return                              # nothing asked; already held
+    bundle = (Path(Paths.TRIAGE_REVIEW) / video_id
+              if getattr(Paths, "TRIAGE_REVIEW", None) else None)
+    outcomes = bundle / f"{video_id}_pellet_outcomes.json" if bundle else None
+
+    def _not_recorded(why: str) -> None:
+        res["unrecorded"] = wanted
+        res["error"] = "%s; question not recorded: %s" % (held_why, why)
+
+    from mousereach.watcher.review_routing import in_deep_review
+    if in_deep_review(video_id):
+        return _not_recorded("it is in deep review, whose results are made again "
+                             "after re-segmentation; ask again once it is filed")
+    if queue != "triage":
+        return _not_recorded(
+            "deep review was asked for a video held in triage -- escalate it from "
+            "the triage review tool, or route it again once it is filed")
+    if bundle is None or not bundle.is_dir():
+        return _not_recorded("no published triage bundle of it is reachable from "
+                             "here")
+    from mousereach.watcher.review_routing import is_queue_bundle
+    if not is_queue_bundle(bundle):
+        # Not a bundle: an old folder of the video kept for a person
+        # (review_routing.clear_leftover). A question written there would
+        # never be asked.
+        return _not_recorded("its triage folder is an old copy kept for a person "
+                             "(listed under 'Folders left for a person' in the "
+                             "Review Queues tab); ask again once that folder is "
+                             "dealt with")
+    if not outcomes.is_file():
+        return _not_recorded("its triage bundle has no pellet outcomes file")
+    from mousereach.watcher.review_return import (_claim_return_nested,
+                                                  _release_return_claim)
+    claimed, release = _claim_return_nested(video_id)
+    if not claimed:
+        return _not_recorded("the return scan is moving its bundle right now")
+    try:
+        if not bundle.is_dir() or not outcomes.is_file():
+            return _not_recorded("its triage bundle left the queue meanwhile")
+        _record_question(res, video_id, bundle, reason, wanted, segment_details,
+                         recheck, held_why)
+    finally:
+        if release:
+            _release_return_claim(video_id)
+
+
+def _record_question(res: dict, video_id: str, bundle: Path, reason: str,
+                     wanted: List[int], segment_details, recheck: bool,
+                     why: str) -> None:
+    """Write the question about ``wanted`` into ``bundle``'s outcomes file:
+    a segment a person (or ground truth) answered is skipped, or reopened with
+    ``recheck``; every other one is flagged. Fills ``res`` (answered,
+    reopened, flagged; ``unrecorded`` and ``error`` "<why>; question not
+    recorded ..." for what could not be written). The caller holds the
+    bundle's claim. Never raises."""
+    outcomes = Path(bundle) / f"{video_id}_pellet_outcomes.json"
+
+    def _not_recorded(text: str) -> None:
+        res["unrecorded"] = wanted
+        res["error"] = "%s; question not recorded: %s" % (why, text)
+
+    if not outcomes.is_file():
+        return _not_recorded("its bundle has no pellet outcomes file")
+    try:
+        done = answered_segments_of(video_id, bundle)
+    except Exception as e:
+        # A review or cuts file that cannot be read: guessing could ask a
+        # person again what they answered (answered_segments_of says why).
+        return _not_recorded("its review or cuts could not be read (%s: %s)"
+                             % (type(e).__name__, e))
+    answered = wanted if "all" in done else [s for s in wanted if s in done]
+    try:
+        if recheck and answered:
+            res["reopened"] = reopen_answered(video_id, bundle, answered,
+                                              segment_details)
+            answered = [s for s in answered if s not in res["reopened"]]
+        res["answered"] = answered
+        ask = [s for s in wanted if s not in answered]
+        flagged = (flag_segments(outcomes, ask, reason, details=segment_details)
+                   if ask else [])
+    except Exception as e:
+        return _not_recorded("its review or outcomes file could not be updated "
+                             "(%s: %s)" % (type(e).__name__, e))
+    res["flagged"] = flagged
+    missing = [s for s in ask if s not in flagged]
+    if missing:
+        res["unrecorded"] = missing
+        res["error"] = ("%s; question not recorded for segment(s) %s: the "
+                        "bundle's outcomes have no such segment"
+                        % (why, ", ".join(str(m) for m in missing)))
+    else:
+        res["error"] = None
+
+
+def _held_in_a_queue(video_id: str, db) -> str:
+    """Why ``video_id`` counts as already held in a review queue, or "".
+
+    Held = the watcher row says 'triage' or 'deep_review', or a bundle of the
+    video exists in either queue, published or in the queue's ``.incoming``
+    build folder (a route in progress, or one that was interrupted). The
+    folders are checked as well as the row because the row is this machine's
+    view and a bundle may have been routed from another. A leftover kept for
+    a person (a folder holding review_routing.LEFT_NOTE) is not a bundle and
+    does not count (review_routing.is_queue_bundle): the route goes on, and
+    the gate deals with that folder (review_gate._clear_the_way)."""
+    from mousereach.config import Paths
+    from mousereach.watcher.review_routing import INCOMING_DIR_NAME, is_queue_bundle
+    if db is not None:
+        state = (db.get_video(video_id) or {}).get("state")
+        if state in HELD_STATES:
+            return ("already held for review (watcher state '%s'); not routed -- "
+                    "the held bundle is the live copy" % state)
+    for name, root in (("triage", getattr(Paths, "TRIAGE_REVIEW", None)),
+                       ("deep review", getattr(Paths, "DEEP_REVIEW", None))):
+        if not root:
+            continue
+        for folder in (Path(root) / video_id, Path(root) / INCOMING_DIR_NAME / video_id):
+            if is_queue_bundle(folder):
+                return ("already has a bundle in the %s queue (%s); not routed -- "
+                        "the held bundle is the live copy" % (name, folder))
+    return ""
 
 
 def _open_watcher_db(out):
@@ -382,7 +626,7 @@ def _open_watcher_db(out):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("video_id", nargs="?", help="e.g. 20250624_CNT0115_P2")
+    ap.add_argument("video_id", nargs="?", help="e.g. 20990101_ABC9901_P1")
     ap.add_argument("--worklist", type=Path,
                     help='JSON list of {"video_id", "segment_nums", optional '
                          '"segment_details": {segment: words}} to route in one go')
@@ -426,9 +670,11 @@ def main(argv=None) -> int:
         r["seconds"] = round(time.time() - started, 1)
         results.append(r)
         if not args.json:
-            tag = ("OK  " if r["routed"] else "wait" if r["deferred"]
+            tag = ("FAIL" if r.get("unrecorded")
+                   else "OK  " if r["routed"] else "wait" if r["deferred"]
                    else "lock" if r.get("locked")
                    else "deep" if r.get("in_deep_review")
+                   else "held" if r.get("held")
                    else "done" if (r["answered"] and not r["error"])
                    else ("skip" if r["error"] and "not found" in r["error"] else "FAIL"))
             print("%s %s -> %s  flagged=%s  %s%s%s  (%.0f s)" % (
@@ -438,8 +684,10 @@ def main(argv=None) -> int:
                 r["error"] or "", r["seconds"]), flush=True)
     if args.json:
         print(json.dumps(results, indent=1))
-    bad = [r for r in results if not r["routed"] and not r["deferred"]
+    bad = [r for r in results if r.get("unrecorded")
+           or not r["routed"] and not r["deferred"]
            and not r.get("locked") and not r.get("in_deep_review")
+           and not (r.get("held") and not r.get("unrecorded"))
            and not (r["answered"] and not r["error"])
            and not (r["error"] and "not found" in r["error"])]
     return 1 if bad else 0

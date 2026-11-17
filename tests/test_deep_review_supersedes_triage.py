@@ -31,6 +31,12 @@ def queues(tmp_path, monkeypatch):
     deep.mkdir(parents=True)
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", triage.parent)
+    monkeypatch.setattr(Paths, "NAS_ROOT", triage.parent.parent, raising=False)
+    # A triage copy's review goes to the durable store before the copy is
+    # removed; keep that store under tmp_path.
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
     db = WatcherDB(db_path=tmp_path / "w.db")
     db.register_video(video_id=VID, source_path="x")
     for st in ("validated", "dlc_queued", "dlc_running", "dlc_complete",
@@ -75,8 +81,14 @@ def test_the_route_command_does_not_flag_or_route_it(queues, monkeypatch):
 
 
 def test_routing_into_deep_review_deletes_the_triage_copy(queues):
+    """Everything in the triage copy has a current copy elsewhere (the video in
+    the deep-review bundle, the review in the durable store), so it is all
+    deleted."""
     tmp_path, triage, deep, db = queues
     stale = _bundle(triage / VID, f"{VID}.mp4", f"{VID}_causal_review.json")
+    store = tmp_path / "review_records" / "reviews"
+    store.mkdir(parents=True)
+    (store / f"{VID}_causal_review.json").write_text("x")
     source = _bundle(tmp_path / "Processing", f"{VID}.mp4", f"{VID}_segments.json")
     route_to_queue(VID, source, deep, "segmentation_failed", db=db,
                    db_state="deep_review")

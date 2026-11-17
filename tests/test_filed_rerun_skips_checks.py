@@ -416,3 +416,15 @@ def test_the_narrowed_scope_is_the_earliest_recomputed_stage():
     assert f(["reach", "outcome", "assignment"]) == "reach"
     assert f(["segmentation"]) == "segmentation"
     assert f([]) == "segmentation"
+
+
+@pytest.fixture(autouse=True)
+def _the_stand_in_pose_counts_as_usable(monkeypatch):
+    """These tests use a stand-in pose file that is not a real pose table;
+    the pose check before segmentation (pipeline/pose_check.py) is not what
+    they test."""
+    try:
+        from mousereach.pipeline import pose_check
+    except ImportError:         # code without the pose check: nothing to stand in for
+        return
+    monkeypatch.setattr(pose_check, "check_pose", lambda *a, **k: (True, ""))

@@ -34,18 +34,20 @@ ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
 """
 from __future__ import annotations
 
+import filecmp
 import functools
 import os
 import logging
 import socket
+import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..config import Paths, is_outcome_free_tray
 from . import claim_marker, node_status
 from ..review.triage_status import triage_status
-from .review_routing import _safe_move
+from .review_routing import LEFT_NOTE, _safe_move, same_path as _same_path
 
 try:
     from .review_routing import INCOMING_DIR_NAME
@@ -418,18 +420,35 @@ def _ensure_durable_review(bundle: Path, stem: str) -> None:
             stem, e)
 
 
-# --- cross-node bundle claims -------------------------------------------
+# --- bundle claims: one PROCESS at a time, across machines --------------
 # With several watchers scanning the SAME shared queues, two nodes that spot
 # the same cleared bundle in one pass would both start moving its files and
 # tear the bundle in half across machines -- the split-bundle failure class,
 # cross-node edition. Claimed only at MUTATION time (returns, diverts,
-# retires), never for mere scanning, with the same exclusive-create marker the
-# posed-video intake uses (watcher/claim_marker.py): exactly one node's create
-# succeeds. A claim is broken only when its holder has stopped reporting
-# (claim_marker.GONE_AFTER_S, by the file server's clock), never for its age.
+# retires, clean-ups, a question written into a held bundle), never for mere
+# scanning, with the same exclusive-create marker the posed-video intake uses
+# (watcher/claim_marker.py): exactly one node's create succeeds. A claim is
+# broken only when its holder has stopped reporting (claim_marker.GONE_AFTER_S,
+# by the file server's clock), never for its age.
+#
+# The claim belongs to ONE PROCESS (claim_marker.this_process), and within it
+# to one thread. WHY: on the machine where review happens, the watcher's
+# return scan, a review window and mousereach-route-to-queue are separate
+# processes of the same host. A claim that belonged to the host let any of
+# them act while another was half-way through moving the same bundle (a flag
+# written into an outcomes file the scan was copying out, then lost). A
+# claim whose process has ended is taken over (crash leftovers). The same
+# thread may take it again while holding it (a divert started by the scan
+# routes the bundle, and the route takes the claim too): it is counted, and
+# the marker goes only when the outermost holder releases it.
+#
 # The rule this replaced was a check, write, sleep and read-back (not
 # atomic), went ahead unclaimed when the claim folder could not be made, and
 # broke another node's marker after two hours by age alone.
+
+_claims_lock = threading.Lock()
+# stem -> [holding thread id, depth]: this process's claims.
+_claims_held: Dict[str, list] = {}
 
 
 def _return_claims_dir():
@@ -437,26 +456,64 @@ def _return_claims_dir():
     return (Path(root) / ".return_claims") if root else None
 
 
-def _claim_return(stem: str) -> bool:
-    d = _return_claims_dir()
-    if d is None:
-        return True                            # no shared queues configured
-    host = socket.gethostname()
-    if claim_marker.take(d, stem, host, suffix=".claim"):
+def _take_marker(d: Path, stem: str) -> bool:
+    host, me = socket.gethostname(), claim_marker.this_process()
+    if claim_marker.take(d, stem, host, suffix=".claim", process=me):
         return True
     # Held by another node. If that node has stopped running, its claim is a
     # crashed move's leftover: break it and try once more.
     if stem in claim_marker.sweep_gone(d, host, node_status.status_dir(Paths.NAS_ROOT),
                                        suffix=".claim"):
-        return claim_marker.take(d, stem, host, suffix=".claim")
+        return claim_marker.take(d, stem, host, suffix=".claim", process=me)
     return False
 
 
+def _claim_return(stem: str) -> bool:
+    """Take the claim on ``stem``'s bundle for this thread (see the block
+    comment above). True when held afterwards; every True must be matched by
+    one _release_return_claim. False while another machine, another process
+    or another thread of this process holds it."""
+    me = threading.get_ident()
+    with _claims_lock:
+        held = _claims_held.get(stem)
+        if held is not None:
+            if held[0] != me:
+                return False
+            held[1] += 1
+            return True
+        d = _return_claims_dir()
+        if d is not None and not _take_marker(d, stem):
+            return False
+        _claims_held[stem] = [me, 1]
+        return True
+
+
+def _claim_return_nested(stem: str):
+    """``(claimed, release)`` for callers that may run inside a holder of the
+    claim (a route the return scan started). The claim is counted per thread,
+    so ``release`` is simply ``claimed``: releasing an inner claim never drops
+    the outer one."""
+    ok = _claim_return(stem)
+    return ok, ok
+
+
 def _release_return_claim(stem: str) -> None:
-    d = _return_claims_dir()
-    if d is None:
-        return
-    claim_marker.release(d, stem, socket.gethostname(), suffix=".claim")
+    """Give back one _claim_return of this thread; the marker goes with the
+    outermost one. A claim this thread does not hold is never touched."""
+    me = threading.get_ident()
+    with _claims_lock:
+        held = _claims_held.get(stem)
+        if held is None or held[0] != me:
+            return
+        held[1] -= 1
+        if held[1] > 0:
+            return
+        _claims_held.pop(stem, None)
+        d = _return_claims_dir()
+        if d is None:
+            return
+        claim_marker.release(d, stem, socket.gethostname(), suffix=".claim",
+                             process=claim_marker.this_process())
 
 
 def _with_return_claim(fn):
@@ -471,6 +528,111 @@ def _with_return_claim(fn):
         finally:
             _release_return_claim(stem)
     return wrapper
+
+
+def _set_processing_state(db, stem: str, h5_dest: Optional[Path],
+                          resume: Optional[str] = None) -> None:
+    """Set ``stem`` to 'processing' after a return; raise when that cannot be
+    done (the caller then puts the files back).
+
+    NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a SECOND
+    ENTRY POINT into 'processing', beside intake. Any guard or invariant of the
+    form "videos in processing got there through intake, so a check at intake
+    is sufficient" is wrong because of this path -- a human-cleared review
+    re-enters here, bypassing intake entirely. (An orchestrator work-selection
+    guard was designed on that assumption and had to be redone; hence this
+    sign.)
+
+    A cleared review routinely returns a video whose row has no legal path to
+    'processing' (typically 'archived': the bundle sat in a review queue while
+    the row was closed out). That is exactly what force_state exists for -- go
+    straight there instead of letting update_state log an ERROR first and then
+    forcing anyway. The WARNING force_state writes is the honest audit line."""
+    kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
+    # Where the run resumes: just after the step that sent the video here
+    # (resume_point.resume_stage_for; the caller reads it before the moves,
+    # since the bundle's manifest is queue metadata and is dropped by them).
+    kw['resume_stage'] = resume
+    # A re-run scope left on the row (a filed video's kinematics-only re-run
+    # that the gate sent to a queue) is cleared: a person has just answered
+    # questions about this video, so its next run must go through every check
+    # (a resumed run always does), and the pipeline must not read a kept
+    # 'kinematics' scope back from the row (orchestrator.kept_rerun_start_stage)
+    # in place of the resume point.
+    kw['reprocess_scope'] = None
+    reason = "review cleared; returned to Processing"
+    state = None
+    try:
+        row = db.get_video(stem)
+        state = row['state'] if row else None
+    except Exception:
+        state = None
+    from .db import VIDEO_TRANSITIONS
+    try:
+        if state is not None and "processing" not in VIDEO_TRANSITIONS.get(state, []):
+            db.force_state(stem, "processing", reason=reason, **kw)
+        else:
+            db.update_state(stem, "processing", **kw)
+    except Exception:
+        # The row exists (registered before the moves), so a legal-transition
+        # failure is what lands here; force_state is the documented escape
+        # hatch. If it fails too, this raises and the files go back.
+        db.force_state(stem, "processing", reason=reason, **kw)
+
+
+def _undo_return_moves(stem: str, done, current) -> None:
+    """Put back every file a failed return moved (newest first). ``current``
+    is the (source, destination, destination existed before) of the move that
+    raised: when its source is still in the bundle, a copy the move left at
+    the destination is deleted (a move across drives copies, then deletes the
+    source -- a held source leaves a full copy behind) -- but only when the
+    move made it: the destination was not there before, or it is byte for
+    byte the bundle's file. WHY: a same-named file already in Processing,
+    which the move's overwrite could not delete in time, is not this move's
+    copy and may be the only one of its kind. A file that will not go back is
+    logged as an ERROR naming both places: the bundle is then split and a
+    person must finish it."""
+    if current is not None:
+        src, dst, existed = current
+        try:
+            if (Path(src).is_file() and Path(dst).is_file() and not _same_path(src, dst)
+                    and (not existed or filecmp.cmp(str(src), str(dst), shallow=False))):
+                Path(dst).unlink()
+        except OSError as err:
+            logger.error("Return %s: could not delete the partial copy %s of %s: %s",
+                         stem, dst, src, err)
+    for src, dst in reversed(done):
+        try:
+            _safe_move(dst, src)
+        except Exception as err:
+            logger.error("Return %s: could not move %s back to %s while undoing a "
+                         "failed return, so this bundle is now split -- move it back "
+                         "by hand: %s", stem, dst, src, err)
+
+
+def _files_in_the_way(stem: str, plan) -> List[str]:
+    """The planned destinations a return may not replace: a different file
+    of the same name already in the processing folder that is a person's
+    file (review_routing.is_person_file -- a review, ground truth, a clear
+    marker, cuts set by hand ...) or an input (the video, a pose file). An
+    identical file is replaced (nothing is lost), and so is a machine output
+    of an earlier run (the bundle's own file is the current copy of it: the
+    video's live copy is the bundle). Never raises; a file that cannot be
+    compared counts as in the way."""
+    from .review_routing import is_input_file, is_person_file
+    out = []
+    for src, dst in plan:
+        dst = Path(dst)
+        try:
+            if not dst.is_file() or _same_path(src, dst):
+                continue
+            if filecmp.cmp(str(src), str(dst), shallow=False):
+                continue
+            if is_person_file(dst, stem) or is_input_file(stem, dst.name):
+                out.append(dst.name)
+        except OSError:
+            out.append(dst.name)
+    return out
 
 
 @_with_return_claim
@@ -592,17 +754,29 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # wrong -- often the old -- pose. A selected pose inside the bundle is
     # recorded at its destination; one outside the bundle (legacy manifest,
     # Analyzed, staging) is used in place, so pose_src stands.
+    #
+    # ALL OR NOTHING. Every move is planned first, each one done is recorded,
+    # and the state is set inside the same try: if any move -- or the state
+    # write -- fails, every file already moved goes back into the bundle and
+    # the return is retried after RETURN_RETRY_S. The queue records (manifest,
+    # routing) are deleted only after the state is set. WHY: the moves used to
+    # stop at the first failure (a file held open by a review window, an
+    # indexer, a backup pass) with earlier files -- the video, its pose, the
+    # reviewer's answers, possibly the clear marker -- already in Processing
+    # and the queue records already deleted. The half left in the queue then
+    # read as unanswered and no review tool listed it; only a person could
+    # put it back together. Inputs move first and the clear marker LAST, so
+    # even an undo that cannot finish never leaves a clear in the queue
+    # beside a bundle missing its files.
     h5_dest: Optional[Path] = pose_src
     resume = _resume_stage(bundle, stem, db, reason)
-    moved = 0
+    metadata: List[Path] = []
+    plan: List[tuple] = []
     for f in list(bundle.iterdir()):
         if not f.is_file():
             continue
         if _is_queue_metadata(f.name, stem):
-            try:
-                f.unlink()
-            except OSError:
-                pass
+            metadata.append(f)
             continue
         if is_leftover_temp(f.name):
             # One that appeared after the check above (a save that started in
@@ -613,74 +787,73 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
                                f"appeared during the return and could not be "
                                f"deleted; it is left in {bundle}")
             continue
-        dest = processing_dir / f.name
-        try:
-            _safe_move(f, dest)
-            moved += 1
-            if Path(f) == Path(pose_src):
-                h5_dest = dest
-        except Exception as e:
-            logger.warning(f"Return {stem}: could not move {f.name}: {e}")
-            return False
+        plan.append((f, processing_dir / f.name))
 
-    if moved == 0:
+    def _move_order(item):
+        name = item[0].name
+        if name == f"{stem}_deep_review_cleared.json":
+            return 2
+        if name == f"{stem}.mp4" or name.startswith(f"{stem}DLC"):
+            return 0
+        return 1
+    plan.sort(key=_move_order)
+
+    if not plan:
         return False
 
-    kw = {'dlc_output_path': str(h5_dest)} if h5_dest is not None else {}
-    # Where the run resumes: just after the step that sent the video here
-    # (resume_point.resume_stage_for; read before the moves, since the
-    # bundle's manifest is queue metadata and is dropped by them).
-    kw['resume_stage'] = resume
-    # A re-run scope left on the row (a filed video's kinematics-only re-run
-    # that the gate sent to a queue) is cleared: a person has just answered
-    # questions about this video, so its next run must go through every check
-    # (a resumed run always does), and the pipeline must not read a kept
-    # 'kinematics' scope back from the row (orchestrator.kept_rerun_start_stage)
-    # in place of the resume point.
-    kw['reprocess_scope'] = None
+    # A different same-named file already in the processing folder that is
+    # a person's, or an input, is never replaced: the whole return waits and
+    # the folder is listed for a person. WHY: the move replaced it, and an
+    # undo could restore only what this return had brought -- a person's
+    # same-named file (hand-set cuts, a review) was gone for good. Setting it
+    # aside in a hidden folder hid it from everyone instead.
+    blocking = _files_in_the_way(stem, plan)
+    if blocking:
+        from .review_routing import note_for_a_person
+        says = (f"{stem} is ready to leave its review queue ({bundle}), but the "
+                f"processing folder {processing_dir} already holds a different "
+                f"{', '.join(blocking)} -- a person's file or the video's video or "
+                f"pose -- which a return never replaces. Nothing was moved; the "
+                f"bundle stays in the queue. Look at the file(s) in "
+                f"{processing_dir}: delete them when they are not needed (or move "
+                f"them somewhere you keep such files). The return is tried again "
+                f"within {RETURN_RETRY_S // 60} minutes and this line then goes "
+                f"away by itself.")
+        logger.error(f"Return {stem}: {says}")
+        note_for_a_person("return_blocked", stem, bundle, says)
+        _return_failed(stem)
+        return False
+
+    done: List[tuple] = []
+    current = None
     try:
-        # NOTE FOR ANYONE REASONING ABOUT THE 'processing' POOL: this is a
-        # SECOND ENTRY POINT into 'processing', beside intake. Any guard or
-        # invariant of the form "videos in processing got there through
-        # intake, so a check at intake is sufficient" is wrong because of
-        # this path -- a human-cleared review re-enters here, bypassing
-        # intake entirely. (An orchestrator work-selection guard was designed
-        # on that assumption and had to be redone; hence this sign.)
-        #
-        # A cleared review routinely returns a video whose row has no legal
-        # path to 'processing' (typically 'archived': the bundle sat in a
-        # review queue while the row was closed out). That is exactly what
-        # force_state exists for -- go straight there instead of letting
-        # update_state log an ERROR first and then forcing anyway. The WARNING
-        # force_state writes is the honest audit line; the ERROR was noise
-        # that fired on every legitimate return.
-        state = None
+        for src, dst in plan:
+            current = (src, dst, Path(dst).exists())
+            _safe_move(src, dst)
+            done.append((src, dst))
+            current = None
+            if Path(src) == Path(pose_src):
+                h5_dest = dst
+        _set_processing_state(db, stem, h5_dest, resume)
+    except Exception as e:
+        _undo_return_moves(stem, done, current)
+        logger.error(
+            f"Return {stem}: could not complete ({e}); every file moved so far "
+            f"was put back and the bundle stays in the queue. (Tried again in "
+            f"{RETURN_RETRY_S // 60} min.)")
+        _return_failed(stem)
+        return False
+    moved = len(done)
+    from .review_routing import drop_for_a_person
+    drop_for_a_person(folder=bundle, kind="return_blocked")
+
+    # The queue records go last, once the video is back in Processing and its
+    # state says so (see ALL OR NOTHING above).
+    for f in metadata:
         try:
-            row = db.get_video(stem)
-            state = row['state'] if row else None
-        except Exception:
-            state = None
-        from .db import VIDEO_TRANSITIONS
-        if state is not None and "processing" not in VIDEO_TRANSITIONS.get(state, []):
-            db.force_state(stem, "processing",
-                           reason="review cleared; returned to Processing", **kw)
-        else:
-            db.update_state(stem, "processing", **kw)
-    except Exception:
-        # The row exists (registered above), so a legal-transition failure is
-        # what lands here. force_state is the documented escape hatch and logs
-        # the bypass; without it the video would sit in Processing unreferenced.
-        try:
-            db.force_state(stem, "processing",
-                           reason="review cleared; returned to Processing", **kw)
-        except Exception as e2:
-            # Do NOT delete the bundle -- the files are already in Processing but
-            # the queue entry is the only remaining pointer to this work.
-            logger.error(
-                f"Return {stem}: could not set 'processing' state ({e2}). "
-                f"Bundle kept in the queue so the clearance is not lost."
-            )
-            return False
+            f.unlink()
+        except OSError:
+            pass
 
     # Remove the now-empty bundle dir so it leaves the queue.
     try:
@@ -722,47 +895,69 @@ def _resume_stage(bundle: Path, stem: str, db, reason: str) -> str:
     return resume
 
 
+def _live_copy_of(stem: str, processing_dir=None) -> Dict[str, Path]:
+    """The files of ``stem``'s current copy outside the review queues: this
+    machine's processing folder first, then its filed results in Analyzed.
+    Empty when neither holds a file of it (or neither can be read). Used as
+    the "current copy elsewhere" a leftover's files are checked against
+    (review_routing.clear_leftover). Never raises."""
+    from .review_routing import _bundle_files
+    out: Dict[str, Path] = {}
+    folders = []
+    if processing_dir is not None:
+        folders.append(Path(processing_dir))
+    try:
+        from mousereach.archive.core import get_archive_destination
+        dest = get_archive_destination(stem)
+        if dest:
+            folders.append(Path(dest))
+    except Exception:
+        pass
+    for d in folders:
+        try:
+            for f in _bundle_files(d, stem):
+                out.setdefault(f.name, f)
+        except OSError:
+            continue
+    return out
+
+
 @_with_return_claim
 def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
-                         why: str = None) -> bool:
-    """Move a stale queue bundle into the _Problematic archive (never delete).
+                         why: str = None, live: Optional[Dict[str, Path]] = None) -> bool:
+    """Clear a stale queue bundle as a leftover (review_routing.clear_leftover).
 
     A bundle is STALE when the pipeline has re-handled its video since it was
     staged -- the video's live state says processing/processed/archiving/
-    archived while the bundle still carries the old era's flags. Leaving it
-    would re-divert (and re-flip a healthy video) on every scan; deleting it
-    would destroy provenance. Archive it beside the other reconciled bundles,
-    with a note saying why. Never raises; False means the bundle stayed put
-    (it will be re-attempted next scan).
-    """
-    import json
-    from datetime import datetime
+    archived while the bundle still carries the old era's flags -- or it is an
+    empty folder, or a byte-identical copy of the video's deep-review bundle.
+    Leaving it as a bundle would re-divert (and re-flip a healthy video) on
+    every scan. ``live`` names the video's current copy (the caller's choice:
+    the deep-review bundle, or _live_copy_of); what in the bundle has a
+    current copy there is deleted, and anything else -- what a person wrote, a
+    video or pose with no identical copy, every file when no current copy can
+    be named -- stays where it is, with a note, listed for a person. A
+    bundle with the note is skipped by every later scan.
 
+    WHY not the archive folder it used to go to: that folder is only for
+    cases the pipeline cannot process at all, and a stale bundle is a machine
+    leftover -- worth nothing once a current copy exists, and a person's work
+    in it is never moved where nobody looks.
+
+    Returns True when the bundle no longer acts as a bundle (removed, or kept
+    with its note); False when it could not be dealt with (tried again next
+    scan). Never raises."""
     try:
-        root = Paths.REVIEW_ROOT
-        if not root:
-            return False
-        dest = (Path(root) / "_Problematic"
-                / f"_stale_seg_failed_bundles_{datetime.now():%Y-%m-%d}" / stem)
-        dest.mkdir(parents=True, exist_ok=True)
-        note = {
-            "retired_at": datetime.now().isoformat(),
-            "video_state_at_retirement": video_state,
-            "why": why or (
-                    "triage bundle carried seg-failed flags from an earlier "
-                    "era, but the pipeline has since re-handled this video; "
-                    "diverting it would have flipped a healthy video into "
-                    "deep_review and blocked its archive"),
-        }
-        (dest / f"{stem}_stale_retire.json").write_text(
-            json.dumps(note, indent=2), encoding="utf-8")
-        for f in list(bundle.iterdir()):
-            if f.is_file():
-                _safe_move(f, dest / f.name)
-        bundle.rmdir()
+        from .review_routing import clear_leftover
+        clear_leftover(
+            bundle, stem, live or {},
+            why=(why or "stale bundle") + f" (the video's state is '{video_state}')",
+            what_to_do=("the video no longer waits in this queue. Look at what is "
+                        "kept here; if the video should be reviewed again, route it "
+                        "again (mousereach-route-to-queue)."))
         return True
     except Exception as e:
-        logger.warning("Return scan: could not retire stale bundle %s: %s",
+        logger.warning("Return scan: could not clear the stale bundle %s: %s",
                        stem, e)
         return False
 
@@ -784,8 +979,10 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
 # remains, the video goes back to the posed folder and re-runs in its priority
 # turn -- NOT straight into 'processing', because anything there blocks intake
 # (max_local_pending), and released low-priority videos would hold up new
-# work. The bundle's machine outputs are archived under _Problematic, never
-# deleted.
+# work. The bundle's machine outputs are deleted once the video is back in the
+# posed folder: that is the video's current copy, and its fresh run makes them
+# again. (They used to be moved to an archive folder that is meant only for
+# cases the pipeline cannot process at all.)
 QC_RECHECK_BUDGET_S = 30            # seconds of re-checks per scan
 _qc_recheck_cache: Dict[str, tuple] = {}
 # Cleared videos held because nobody re-segmented them: logged once per watcher
@@ -879,7 +1076,8 @@ def _qc_hold_lifted(bundle: Path, stem: str, signature: tuple) -> Optional[bool]
         # hold, which the current check no longer makes (triage.
         # RULER_UNSTABLE_DESC): those videos go back for a run.
         from mousereach.pipeline.triage import RULER_UNSTABLE_DESC
-        if any(f.get("category") == "dlc_coherence" and f.get("severity") == "critical"
+        if any(f.get("category") in ("dlc_coherence", "pose_unusable")
+               and f.get("severity") == "critical"
                and not str(f.get("description", "")).startswith(RULER_UNSTABLE_DESC)
                for f in stored.get("flags", [])):
             verdict = False
@@ -895,11 +1093,13 @@ def _qc_hold_lifted(bundle: Path, stem: str, signature: tuple) -> Optional[bool]
 @_with_return_claim
 def _release_to_posed(bundle: Path, stem: str, db) -> bool:
     """Send a lifted hold back to the posed folder for a fresh run (see the
-    block comment above). The mp4 and pose files go to the posed folder; every
-    other file goes to _Problematic/_released_qc_holds_<date>/<stem>/ with a
-    note. Nothing in the posed folder is ever replaced. Never raises."""
-    import json
-    from datetime import datetime
+    block comment above). The mp4 and pose files go to the posed folder; once
+    the row says so, what is left in the bundle is a leftover
+    (review_routing.clear_leftover): machine outputs, queue records and
+    copies of the posed files are deleted, and a person's file (an Easy or
+    Flat tray is released even with one, see the scan) stays where it is,
+    with the note, listed under 'Folders left for a person' in the Review
+    Queues tab. Nothing in the posed folder is ever replaced. Never raises."""
     posed = getattr(Paths, "DLC_STAGING", None)
     root = getattr(Paths, "REVIEW_ROOT", None)
     if not posed or not root or db is None:
@@ -959,13 +1159,7 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
         from mousereach.pipeline.manifest import select_pose_file
         pose = select_pose_file(poses, expected_scorer=_declared_scorer() or None)
 
-        dest = (Path(root) / "_Problematic"
-                / f"_released_qc_holds_{datetime.now():%Y-%m-%d}" / stem)
-        if dest.exists():       # released once already today: keep that copy too
-            dest = dest.with_name(f"{stem}_{datetime.now():%H%M%S}")
-        dest.mkdir(parents=True, exist_ok=True)
-        plan = ([(f, dest / f.name) for f in files if f not in inputs or f in twins]
-                + [(f, posed / f.name) for f in inputs if f not in twins])
+        plan = [(f, posed / f.name) for f in inputs if f not in twins]
         done = []
         try:
             for src, dst in plan:
@@ -984,33 +1178,20 @@ def _release_to_posed(bundle: Path, stem: str, db) -> bool:
                 except Exception as err:
                     logger.error('%s: could not move %s back to %s while undoing a release, so this bundle is now split: %s', stem, dst, src, err)
                     pass
-            try:
-                dest.rmdir()            # only if the undo left it empty
-            except OSError:
-                pass
             logger.error("Release %s: could not complete (%s); bundle kept", stem, e)
             _return_failed(stem)
             return False
-        for f in twins:                 # the same file as the posed copy (see above)
-            try:
-                (dest / f.name).unlink()
-            except OSError:
-                pass
-        try:
-            (dest / f"{stem}_release_note.json").write_text(json.dumps({
-                "released_at": datetime.now().isoformat(),
-                "why": "held in deep review by the quality check alone, with no "
-                       "file a person wrote; the current check no longer holds "
-                       "it, so the video was sent back to the posed folder for a "
-                       "fresh run and these machine outputs were set aside here",
-                "returned_to": str(posed),
-            }, indent=2), encoding="utf-8")
-        except OSError:
-            pass
-        try:
-            bundle.rmdir()
-        except OSError:
-            pass
+        # The video's current copy is now in the posed folder, so what is left
+        # in the bundle is a leftover (review_routing.clear_leftover): its
+        # machine outputs, queue records and copies of the posed files are
+        # deleted; a person's file (an Easy or Flat tray is released even with
+        # one, see the scan) stays where it is, listed for a person.
+        from .review_routing import _bundle_files, clear_leftover
+        clear_leftover(
+            bundle, stem, {f.name: f for f in _bundle_files(posed, stem)},
+            why="the quality hold was lifted by the current check and the video "
+                "was sent back to the posed folder for a fresh run",
+            what_to_do="nothing here is used by the fresh run. Look at what is kept.")
         _return_retry_after.pop(stem, None)
         logger.info("Released %s: quality hold lifted by the current check; back "
                     "in the posed folder for a fresh run", stem)
@@ -1074,6 +1255,451 @@ def _warn_stale_incoming() -> None:
                 d, EMPTY_DIR_GRACE_SECONDS // 60)
 
 
+# ---------------------------------------------------------------------------
+# Finishing routes that did not finish
+# ---------------------------------------------------------------------------
+# Two things a route can leave undone, both finished here:
+#   * The review manifest. A route publishes the bundle, records the hold in
+#     the database, and only then writes the review manifest -- the file the
+#     review tools list a bundle by. If that last write fails, the bundle is in
+#     the queue, the row says so, and no review tool offers it. The scan
+#     writes such a missing manifest again from the routing record.
+#   * Files that could not be moved. A route out of Processing goes on when a
+#     file cannot be moved (most often the mp4, still held open) and lists it
+#     under failed_files in the routing record. Nothing moved such files in
+#     afterwards: the reviewer's bundle lacked them, and Processing kept a file
+#     of a video whose row said it was in a queue. The scan now moves each one
+#     in from where the record says it is, and lists every bundle still
+#     missing a file in <NAS root>/attention/<host>_unfinished_routes.json (the
+#     dashboard's "needs your attention" panel) until it is whole.
+# Checked at most every ROUTE_REPAIR_INTERVAL_S, not on every scan. Each pass
+# lists every bundle once (the triage scan's listing is reused for the triage
+# queue), and a bundle's routing record is READ only when its size or modified
+# time changed since the last pass (_record_flags). WHY: opening a record on
+# the share costs tens of milliseconds, several times a listing, and reading
+# every record of a queue of thousands of bundles every ten minutes kept the
+# watcher's loop on the share for minutes at a time. Both cases are rare, and
+# whether a manifest is missing is read from the listing alone.
+ROUTE_REPAIR_INTERVAL_S = 600
+_route_repair_due = [0.0]
+# bundle path -> ((size, mtime) of its routing record, has failed_files,
+# has finished_later)
+_record_flags_cache: Dict[str, tuple] = {}
+
+
+def _record_flags(bundle: Path, stem: str, signature: tuple) -> tuple:
+    """``(has failed_files, has finished_later)`` of ``bundle``'s routing
+    record, read only when the record's (size, modified time) in
+    ``signature`` changed since it was last read. (False, False) when there
+    is no record."""
+    from .review_routing import read_routing_manifest
+    key = next(((size, mtime) for name, size, mtime in signature
+                if name == f"{stem}_routing.json"), None)
+    if key is None:
+        _record_flags_cache.pop(str(bundle), None)
+        return False, False
+    hit = _record_flags_cache.get(str(bundle))
+    if hit is not None and hit[0] == key:
+        return hit[1], hit[2]
+    record = read_routing_manifest(bundle, stem) or {}
+    flags = (bool(record.get("failed_files")), bool(record.get("finished_later")))
+    _record_flags_cache[str(bundle)] = (key, flags[0], flags[1])
+    return flags
+
+
+def _repair_missing_manifest(bundle: Path, stem: str,
+                             signature: Optional[tuple] = None) -> bool:
+    """Write ``{stem}_manifest.json`` into a published bundle that has a
+    routing record but no manifest. True when one was written. Never raises.
+
+    Only a bundle that still holds a file of the video besides its routing
+    record is repaired -- a return empties a bundle by removing the queue
+    records last, and a folder down to its records is on its way out, not a
+    bundle missing its manifest. Done under the return claim, so a return on
+    another node never has a manifest written back into a folder it is
+    emptying. ``signature`` (_bundle_signature) saves listing the bundle
+    again. The step that sent the video is taken from the routing record
+    (route_to_queue keeps it there), so the return still resumes just after
+    it."""
+    try:
+        if signature is not None:
+            names = {name for name, size, _ in signature if size >= 0}
+        else:
+            names = {p.name for p in bundle.iterdir() if p.is_file()}
+    except OSError:
+        return False
+    if f"{stem}_routing.json" not in names or f"{stem}_manifest.json" in names:
+        return False
+    if not any(n for n in names if not _is_queue_metadata(n, stem)):
+        return False
+    if not _claim_return(stem):
+        return False
+    try:
+        from .review_gate import _write_review_manifest
+        from .review_routing import read_routing_manifest
+        record = read_routing_manifest(bundle, stem) or {}
+        _write_review_manifest(bundle, stem, record.get("routed_reason") or "",
+                               held_at_step=record.get("held_at_step"))
+        logger.warning("Return scan: %s had no review manifest (its route could not "
+                       "write it); written again so the review tools list it", stem)
+        return True
+    except Exception as e:
+        logger.error("Return scan: %s has no review manifest and it could not be "
+                     "written (%s); the review tools do not list it until it is", stem, e)
+        return False
+    finally:
+        _release_return_claim(stem)
+
+
+def _iso_to_epoch(text) -> Optional[float]:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(text)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _on_shared_storage(path) -> bool:
+    """True when ``path`` is on the shared storage every machine sees (under
+    the NAS root or the review root); False for a machine's own disk."""
+    for root in (getattr(Paths, "NAS_ROOT", None), getattr(Paths, "REVIEW_ROOT", None)):
+        if not root:
+            continue
+        try:
+            r = os.path.normcase(os.path.abspath(str(root))).rstrip("\\/")
+            q = os.path.normcase(os.path.abspath(str(path)))
+            if q == r or q.startswith(r + os.sep):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _held_in_this_queue(bundle: Path, stem: str, db) -> Tuple[bool, str]:
+    """``(held, why_not)``: whether the watcher row says the video is held in
+    the queue ``bundle`` is in ('triage' for the triage queue, 'deep_review'
+    for the deep-review queue). No database: True (nothing to ask). A row
+    this machine does not have, or that cannot be read: False."""
+    if db is None:
+        return True, ""
+    from .review_gate import _same_folder
+    if _same_folder(bundle.parent, getattr(Paths, "DEEP_REVIEW", None)):
+        wanted = "deep_review"
+    elif _same_folder(bundle.parent, getattr(Paths, "TRIAGE_REVIEW", None)):
+        wanted = "triage"
+    else:
+        return False, "the bundle is not in a configured review queue"
+    try:
+        row = db.get_video(stem)
+    except Exception as e:
+        return False, "the watcher record could not be read (%s)" % e
+    if not row:
+        return False, "this machine's watcher has no record of the video"
+    if row.get("state") != wanted:
+        return False, ("the watcher record says the video is '%s', not held in this "
+                       "queue" % row.get("state"))
+    return True, ""
+
+
+def _finish_failed_moves(bundle: Path, stem: str, db=None):
+    """Finish what the routing record of ``bundle`` lists as failed_files.
+    Returns ``(still_missing, moved_count)``: the entries this machine lists
+    for a person (empty when the bundle is whole, or what is left belongs to
+    another machine) and how many files this call finished. Never raises.
+
+    ONLY WHILE THE VIDEO IS HELD IN THAT QUEUE: with a watcher database
+    (``db``), a file at the source is moved in, or deleted as a copy, only
+    when the video's row says it is held in the bundle's queue
+    (_held_in_this_queue). Otherwise every entry with a file at its source is
+    listed for a person and nothing is moved or deleted. WHY: the source is
+    the processing folder the video was routed from, and the video may be
+    running there again (a row and folder that disagree -- a bundle left in a
+    queue while the video went back to Processing). A re-run's video and
+    pose keep their modified times when they are copied in or returned, so
+    the "newer than the route" rule below cannot tell them from the routed
+    files: without this check the scan could move the running video's mp4
+    into the old bundle, or delete it as an "identical copy". Without a
+    database (the dashboard's Resolve button on a machine with no watcher) a
+    person asked for it, and it proceeds.
+
+    For each listed file, by where its copies are:
+      * not in the bundle, still at the source: moved in -- unless the source
+        file is newer than the route (modified more than a minute after
+        ``routed_at``): that is a later run's file, and moving it in would mix
+        generations, so it stays listed for a person;
+      * in the bundle AND still at the source: the move copied it but could
+        not delete the original (a file held open cannot be renamed, so a
+        move copies and then deletes). Byte-identical: the copy at the source
+        is deleted and the file counts as finished. Different: the bundle's
+        copy may be cut off -- listed for a person, nothing deleted;
+      * in the bundle only: whole (a person moved it in by hand, as the
+        attention panel asks, or an earlier pass could not update the
+        record) -- counted as finished, so it leaves the record;
+      * nowhere: listed (missing).
+
+    WHICH MACHINE: a source on shared storage is finished by any machine. A
+    source on a machine's own disk (its Processing folder) is finished only
+    by the machine that made the route (``routed_by`` in the record); another
+    machine leaves that entry alone and does not list it -- the same path on
+    its own disk is a different file (it may be its own run of the same
+    video). An entry of a record written before records named the machine is
+    never acted on when its source is on a machine's own disk: if a file is at
+    that path here, the entry is listed for a person.
+
+    Done under the return claim. The routing record is rewritten (in one step)
+    only when this call finished a file, and keeps its modified time. WHY:
+    readers judge a bundle by its files' times (_superseded_by_archive), and
+    crossing an entry off the list is not new content."""
+    from .review_routing import (INCOMING_DIR_NAME as _INC, _move_leaving_no_copy,
+                                 _same_content, read_routing_manifest,
+                                 _write_routing_manifest, same_path)
+    from mousereach.pipeline.fsutil import retry_transient
+    record = read_routing_manifest(bundle, stem) or {}
+    failed = list(record.get("failed_files") or [])
+    if not failed:
+        return [], 0
+    here = socket.gethostname()
+    routed_by = record.get("routed_by")
+    if not _claim_return(stem):
+        return [], 0                      # another machine is on it; next pass
+    try:
+        held, why_not = _held_in_this_queue(bundle, stem, db)
+        routed = _iso_to_epoch(record.get("routed_at"))
+        keep, listed, finished = [], [], []
+        finished_entries = []
+        for entry in failed:
+            name = str(entry.get("name") or "")
+            target = bundle / name
+            candidates = [entry.get("source"),
+                          str(Path(record.get("source_dir") or "") / name)
+                          if record.get("source_dir") else None,
+                          str(bundle.parent / _INC / stem / name)]
+            src, foreign = None, None
+            for c in candidates:
+                if not c or same_path(c, target):
+                    continue
+                if not _on_shared_storage(c) and routed_by != here:
+                    # Another machine's disk. A record without the machine:
+                    # only a file that is actually here is in question.
+                    if routed_by is not None or Path(c).is_file():
+                        foreign = foreign or c
+                    continue
+                if Path(c).is_file():
+                    src = Path(c)
+                    break
+            in_bundle = target.is_file()
+            try:
+                if src is None and foreign is not None:
+                    keep.append(entry)
+                    if routed_by is None:
+                        listed.append(dict(entry, error=(
+                            "routed before routing records named the machine; "
+                            "check %s on the machine that routed it%s" % (
+                                foreign, " -- the bundle has a copy, so delete that "
+                                "one if identical" if in_bundle else ""))))
+                    continue                   # the routing machine finishes it
+                if src is None:
+                    if not in_bundle:
+                        keep.append(entry)
+                        listed.append(entry)
+                    else:
+                        # In the bundle only: whole -- moved in by a person
+                        # (the attention panel asks for exactly that) or by
+                        # a pass whose record update failed. The entry is
+                        # dropped from the record like a file moved here, so
+                        # the bundle stops counting as unfinished.
+                        finished.append(name)
+                        finished_entries.append(dict(entry, finished="found in the bundle"))
+                    continue
+                if not held:
+                    err = ("%s; the file at %s was neither moved nor deleted -- a "
+                           "person decides" % (why_not, src))
+                    keep.append(dict(entry, error=err))
+                    listed.append(dict(entry, error=err))
+                    continue
+                if in_bundle:
+                    if _same_content(src, target):
+                        retry_transient(src.unlink, what=src.name)
+                        finished.append(name)
+                        finished_entries.append(dict(
+                            entry, finished="identical copy at the source deleted"))
+                    else:
+                        err = ("a different copy is still at %s; the bundle's copy "
+                               "may be incomplete -- a person decides which is "
+                               "right" % src)
+                        keep.append(dict(entry, error=err))
+                        listed.append(dict(entry, error=err))
+                    continue
+                if routed is not None and src.stat().st_mtime > routed + 60:
+                    err = ("the file at the source is newer than the route; not moved "
+                           "-- a person decides which copy belongs in the bundle")
+                    keep.append(dict(entry, error=err))
+                    listed.append(dict(entry, error=err))
+                    continue
+                _move_leaving_no_copy(src, target, stem)
+                finished.append(name)
+                finished_entries.append(dict(entry, finished="moved in"))
+            except Exception as e:
+                keep.append(dict(entry, error=str(e)))
+                listed.append(dict(entry, error=str(e)))
+        if finished:
+            record["failed_files"] = keep
+            # The whole entry is kept (its error and where the file was), with
+            # how and when it was finished. WHY: the entry is the evidence of
+            # what the route could not do; a bare name lost it.
+            from datetime import datetime
+            stamp = datetime.now().isoformat(timespec="seconds")
+            record["finished_later"] = (list(record.get("finished_later") or [])
+                                        + [dict(e, finished_at=stamp, finished_on=here)
+                                           for e in finished_entries])
+            record_path = bundle / f"{stem}_routing.json"
+            try:
+                before = record_path.stat()
+            except OSError:
+                before = None
+            try:
+                _write_routing_manifest(bundle, stem, record)
+                if before is not None:
+                    # The record keeps its modified time. WHY: readers judge
+                    # a bundle by its files' times (_superseded_by_archive:
+                    # "every file predates the archived results"), and
+                    # crossing a file off this list is not new content.
+                    os.utime(record_path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            except Exception as e:
+                logger.error("Return scan: %s: finished %s but could not update its "
+                             "routing record: %s", stem, ", ".join(finished), e)
+            logger.warning("Return scan: %s: finished %s -- left behind by a route "
+                           "that could not move %s at the time",
+                           stem, ", ".join(finished),
+                           "it" if len(finished) == 1 else "them")
+        return listed, len(finished)
+    finally:
+        _release_return_claim(stem)
+
+
+_unfinished_listed: List = [None]
+
+
+def _write_unfinished_attention(unfinished: Dict[str, List[Dict[str, str]]],
+                                folders: Optional[Dict[str, str]] = None) -> None:
+    """List the bundles still missing a file in this machine's attention file
+    (watcher/attention.py), rewritten only when the list changes. Each item
+    names the bundle (``folder``) and this machine (``host``), which the
+    dashboard's Resolve dialog acts on (watcher/attention_actions.py). Never
+    raises."""
+    from .review_routing import attention_dir
+    d = attention_dir()            # None: no NAS root, or queues outside it
+    if d is None:
+        return
+    items = []
+    for stem, missing in sorted(unfinished.items()):
+        names = ", ".join(f"{m.get('name')} ({m.get('error') or 'not moved'})"
+                          for m in missing)
+        items.append({
+            "kind": "route_unfinished", "needs_person": True, "video_id": stem,
+            "folder": (folders or {}).get(stem), "host": socket.gethostname(),
+            "says": (f"{stem} is in a review queue without all its files: {names}. "
+                     f"The watcher moves a file in by itself once it can; if it stays "
+                     f"listed, press 'Resolve...' in the Pipeline Dashboard (on the "
+                     f"machine named in the item when the file is on that machine's "
+                     f"own disk)."),
+        })
+    if _unfinished_listed[0] == items:
+        return
+    try:
+        from mousereach.pipeline.fsutil import write_json_atomic
+        host = socket.gethostname()
+        target = d / f"{host}_unfinished_routes.json"
+        if not items and not target.exists():
+            # Nothing to list and no earlier list to empty: write nothing (a
+            # machine that never had an unfinished route gets no file).
+            _unfinished_listed[0] = items
+            return
+        d.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(target,
+                          {"written_by": host, "items": items}, indent=1)
+        _unfinished_listed[0] = items
+    except Exception as e:
+        logger.warning("Return scan: could not write the unfinished-routes attention "
+                       "list: %s", e)
+
+
+def repair_unfinished_routes(force: bool = False, db=None,
+                             signatures: Optional[Dict[str, tuple]] = None) -> Dict[str, int]:
+    """Finish what an interrupted route left undone, in both queues (see the
+    block comment above). Runs at most every ROUTE_REPAIR_INTERVAL_S unless
+    ``force``. ``db``: the watcher database; a file at a route's source is
+    moved or deleted only while it says the video is held in that queue
+    (_finish_failed_moves). ``signatures``: bundle path -> _bundle_signature
+    already taken this scan (saves listing those bundles again). Never
+    raises."""
+    out = {"manifests_written": 0, "route_files_finished": 0}
+    now = time.monotonic()
+    if not force and now < _route_repair_due[0]:
+        return out
+    _route_repair_due[0] = now + ROUTE_REPAIR_INTERVAL_S
+    unfinished: Dict[str, List[Dict[str, str]]] = {}
+    folders: Dict[str, str] = {}
+    seen = set()
+    for queue_root in (getattr(Paths, "TRIAGE_REVIEW", None),
+                       getattr(Paths, "DEEP_REVIEW", None)):
+        try:
+            bundles = _bundles(queue_root)
+        except OSError:
+            continue
+        for bundle in bundles:
+            stem = bundle.name
+            seen.add(str(bundle))
+            try:
+                signature = (signatures or {}).get(str(bundle))
+                if signature is None:
+                    signature = _bundle_signature(bundle)
+            except OSError:
+                continue
+            if any(name == LEFT_NOTE for name, _, _ in signature):
+                continue            # a leftover kept for a person, not a bundle
+            try:
+                failed, finished_later = _record_flags(bundle, stem, signature)
+                if failed:
+                    still, n_moved = _finish_failed_moves(bundle, stem, db=db)
+                    out["route_files_finished"] += n_moved
+                    if still:
+                        unfinished[stem] = still
+                        folders[stem] = str(bundle)
+                    if n_moved:
+                        _record_flags_cache.pop(str(bundle), None)
+                        finished_later = True
+                        failed = bool(still)
+                if queue_root == getattr(Paths, "DEEP_REVIEW", None):
+                    triage = getattr(Paths, "TRIAGE_REVIEW", None)
+                    if (finished_later and not failed
+                            and triage and (Path(triage) / stem).is_dir()
+                            and not (Path(triage) / stem / LEFT_NOTE).exists()):
+                        # A deep-review route that was unfinished is whole
+                        # now (finished by the watcher or by a person): the
+                        # triage copy kept while its files were missing is
+                        # emptied (review_gate._drop_triage_copy). Checked on
+                        # every pass, not only the pass that finished it, so
+                        # a triage copy that could not be emptied then (a
+                        # file held open) is emptied once it can be.
+                        from .review_gate import _drop_triage_copy
+                        _drop_triage_copy(stem, bundle)
+            except Exception as e:
+                logger.warning("Return scan: could not finish the route of %s: %s",
+                               stem, e)
+            if _repair_missing_manifest(bundle, stem, signature):
+                out["manifests_written"] += 1
+    for gone in [k for k in _record_flags_cache if k not in seen]:
+        _record_flags_cache.pop(gone, None)
+    _write_unfinished_attention(unfinished, folders)
+    # The list of queue folders that need a person is checked against disk
+    # here (only the listed folders), so a folder a person dealt with drops
+    # off by itself.
+    from .review_routing import refresh_for_a_person
+    refresh_for_a_person()
+    return out
+
+
 def scan_review_queues(db, processing_dir: Path,
                        limit: int = MAX_RETURNS_PER_SCAN) -> Dict[str, int]:
     """Re-inject human-cleared held bundles, at most ``limit`` per scan.
@@ -1101,18 +1727,21 @@ def scan_review_queues(db, processing_dir: Path,
 
     def _retire_if_superseded(bundle, stem, row, signature, queue):
         """True when the bundle is a leftover of an archived video (it is
-        filed away, or left for the next scan if a file is still held open)."""
+        cleared against the filed results, or left for the next scan if that
+        could not be done)."""
         why = _superseded_by_archive(bundle, stem, row, signature)
         if not why:
             return False
-        if _retire_stale_bundle(bundle, stem, "archived", why=why):
+        if _retire_stale_bundle(bundle, stem, "archived", why=why,
+                                live=_live_copy_of(stem)):
             summary["superseded_retired"] = summary.get("superseded_retired", 0) + 1
-            logger.info("Return scan: %s %s bundle retired to _Problematic: %s",
+            logger.info("Return scan: %s %s bundle cleared as a leftover: %s",
                         stem, queue, why)
         return True
 
     # TRIAGE: every triaged element resolved (and segmentation sound).
     seen_bundles = set()
+    triage_signatures: Dict[str, tuple] = {}
     triage_bundles = _bundles(Paths.TRIAGE_REVIEW)
     triage_states = _states(triage_bundles)
     from .review_routing import deep_review_stems
@@ -1125,6 +1754,11 @@ def scan_review_queues(db, processing_dir: Path,
         seen_bundles.add(str(bundle))
         try:
             signature = _bundle_signature(bundle)
+            triage_signatures[str(bundle)] = signature
+            if any(name == LEFT_NOTE for name, _, _ in signature):
+                # A leftover kept for a person (review_routing.clear_leftover):
+                # not a bundle, never returned, diverted or cleared again here.
+                continue
             if not signature:
                 # An EMPTY dir is not a bundle -- it is residue of an earlier
                 # divert/return that moved the files and left the folder.
@@ -1146,7 +1780,7 @@ def scan_review_queues(db, processing_dir: Path,
                             "divert/return; not a bundle"):
                     summary["empty_retired"] = summary.get("empty_retired", 0) + 1
                     logger.info("Return scan: %s is an EMPTY dir, not a "
-                                "bundle; retired to _Problematic", stem)
+                                "bundle; removed", stem)
                 continue
         except OSError:
             continue
@@ -1170,8 +1804,10 @@ def scan_review_queues(db, processing_dir: Path,
         # copy's status, a video that is in deep review is never returned,
         # released or diverted from the triage queue -- the deep-review copy is
         # the one that counts. Since the rule was made, any move into deep
-        # review deletes the triage copy (review_gate.route_to_queue); a copy
-        # left from before is handled here as below.
+        # review empties the triage copy without losing a person's file --
+        # what remains leaves the queue, kept for a person
+        # (review_gate._drop_triage_copy); a copy left from before is handled
+        # here as below.
         if stem in deep_stems:
             _dr = getattr(Paths, "DEEP_REVIEW", None)
             if _dr:
@@ -1182,32 +1818,44 @@ def scan_review_queues(db, processing_dir: Path,
                 # scan consumed the whole return budget -- the queue
                 # live-locked with human-cleared releases
                 # starved behind it. A triage copy that is only a byte-identical
-                # leftover of the deep-review bundle is archived (it holds
-                # nothing the reviewer's copy lacks); any other duplicate is
-                # left for a person -- one info line, no budget spent, no
-                # route attempted.
+                # leftover of the deep-review bundle is deleted (it holds
+                # nothing the reviewer's copy lacks); any other copy is emptied
+                # the way a route into deep review empties it
+                # (review_gate._drop_triage_copy): what has a current copy
+                # elsewhere is deleted, the rest stays where it is, listed for
+                # a person. No budget is spent and no route is attempted.
                 try:
                     leftover = _is_leftover_copy(bundle, Path(_dr) / stem,
                                                  signature)
                 except OSError:
                     leftover = False
-                if leftover and _retire_stale_bundle(
-                        bundle, stem, "(copy in deep review)",
-                        why="leftover of a split escalation: every file is a "
-                            "byte-identical copy of one in the deep review "
-                            "bundle, which is the copy being reviewed"):
-                    summary["leftover_retired"] = summary.get("leftover_retired", 0) + 1
-                    logger.info("Return scan: %s triage copy is a byte-identical "
-                                "leftover of its deep review bundle; retired to "
-                                "_Problematic", stem)
-                    continue
+                twin = Path(_dr) / stem
+                if leftover:
+                    try:
+                        live = {g.name: g for g in twin.iterdir() if g.is_file()}
+                    except OSError:
+                        live = {}
+                    if live and _retire_stale_bundle(
+                            bundle, stem, "(copy in deep review)",
+                            why="leftover of a split escalation: every file is a "
+                                "byte-identical copy of one in the deep review "
+                                "bundle, which is the copy being reviewed",
+                            live=live):
+                        summary["leftover_retired"] = summary.get("leftover_retired", 0) + 1
+                        logger.info("Return scan: %s triage copy is a byte-identical "
+                                    "leftover of its deep review bundle; deleted", stem)
+                        continue
                 if stem not in _both_queues_logged:
                     _both_queues_logged.add(stem)
                     logger.warning(
                         "Return scan: %s is in deep review and has a triage copy "
                         "that differs from it; the triage copy is ignored (deep "
-                        "review supersedes triage) -- delete it once nothing in "
-                        "it is needed", stem)
+                        "review supersedes triage) and emptied as a leftover: what "
+                        "has no current copy elsewhere stays, listed under 'Folders "
+                        "left for a person' in the Review Queues tab", stem)
+                    from .review_gate import _drop_triage_copy
+                    if twin.is_dir():
+                        _drop_triage_copy(stem, twin)
                 continue
         if st.seg_failed:
             # STALE-BUNDLE GUARD: if the video's CURRENT state says the
@@ -1217,8 +1865,8 @@ def scan_review_queues(db, processing_dir: Path,
             # would flip a healthy video into deep_review and block its
             # archive. That has happened: videos re-completed
             # CLEAN seconds earlier were dragged back by their own stale
-            # triage husks. Retire the husk to the _Problematic archive
-            # (never delete) and leave the video alone.
+            # triage husks. Clear the husk as a leftover against the video's
+            # current copy (_retire_stale_bundle) and leave the video alone.
             try:
                 row = db.get_video(stem) if db else None
                 cur_state = (row or {}).get('state')
@@ -1228,11 +1876,12 @@ def scan_review_queues(db, processing_dir: Path,
             # reason, and a husk must never un-park it.
             if cur_state in ('processing', 'processed', 'archiving',
                              'archived', 'unresolvable'):
-                if _retire_stale_bundle(bundle, stem, cur_state):
+                if _retire_stale_bundle(bundle, stem, cur_state,
+                                        live=_live_copy_of(stem, processing_dir)):
                     summary["stale_retired"] = summary.get("stale_retired", 0) + 1
                     logger.info(
                         "Return scan: %s triage bundle is STALE (video is now "
-                        "'%s'); retired to _Problematic instead of diverting",
+                        "'%s'); cleared as a leftover instead of diverting",
                         stem, cur_state)
                 continue
             # A human already cleared the failed segmentation: the deep-review
@@ -1331,6 +1980,12 @@ def scan_review_queues(db, processing_dir: Path,
             summary["triage_returned"] += 1
     for gone in [k for k in _status_cache if k not in seen_bundles]:
         _status_cache.pop(gone, None)
+    # Routes that did not finish (block comment at ROUTE_REPAIR_INTERVAL_S),
+    # reusing the triage listings this pass already took.
+    try:
+        summary.update(repair_unfinished_routes(db=db, signatures=triage_signatures))
+    except Exception as e:      # never stops the returns
+        logger.warning("Return scan: could not check for unfinished routes: %s", e)
 
     # DEEP_REVIEW: an explicit clear marker or in-bundle GT.
     # Own budget, NOT shared with the triage loop's: the triage loop's
@@ -1346,6 +2001,10 @@ def scan_review_queues(db, processing_dir: Path,
             summary["deferred"] += 1
             continue
         stem = bundle.name
+        # A leftover kept for a person (review_routing.clear_leftover) is not a
+        # bundle: never returned or released.
+        if (bundle / LEFT_NOTE).exists():
+            continue
         # No empty-dir retire here: an empty folder has no clear marker, so it
         # is never acted on, and EMPTY_DIR_GRACE_SECONDS has nothing to guard.
         if _deep_review_cleared(bundle, stem):
@@ -1389,8 +2048,8 @@ def scan_review_queues(db, processing_dir: Path,
         # machine-made hold on one -- a quality flag or a failed segmentation
         # -- is released even when a person's file sits in the bundle: what a
         # person can answer there is a pellet outcome, and outcomes do not
-        # matter for these trays. The person's file is not lost; it is set
-        # aside with the other outputs (_release_to_posed). A session a person
+        # matter for these trays. The person's file is not lost: it stays in
+        # the bundle folder, listed for a person (_release_to_posed). A session a person
         # flagged by hand ("reviewer flagged session ...") is their call and
         # stays.
         outcome_free = is_outcome_free_tray(stem)

@@ -260,7 +260,10 @@ def claimed_singles(folder=None) -> Dict[str, str]:
 def bundles_in(d) -> Set[str]:
     """Review-bundle stems in a queue folder. Only date-named directories
     count: dot-dirs, underscore-prefixed archives and other scratch folders
-    land inside queues and would otherwise be phantom videos."""
+    land inside queues and would otherwise be phantom videos. A leftover kept
+    for a person (a folder holding the note watcher/review_routing.LEFT_NOTE)
+    is not a bundle either: it is not the video's live copy, and counting it
+    showed the video as held in a queue it is not held in."""
     d = Path(d) if d else None
     # is_dir(), not exists(): a guard FILE at a retired queue name (e.g. the
     # old deep-review folder name) is not a queue and holds no bundles --
@@ -268,9 +271,11 @@ def bundles_in(d) -> Set[str]:
     if not d or not d.is_dir():
         return set()
     # scandir: the listing says which entries are folders (see ids_in_dir).
+    from mousereach.watcher.review_routing import LEFT_NOTE
     with os.scandir(d) as it:
         return {e.name for e in it
-                if e.is_dir() and _BUNDLE_NAME.match(e.name)}
+                if e.is_dir() and _BUNDLE_NAME.match(e.name)
+                and not os.path.isfile(os.path.join(e.path, LEFT_NOTE))}
 
 
 def project_of(stem: str) -> str:

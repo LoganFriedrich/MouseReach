@@ -65,8 +65,12 @@ def test_routing_sends_a_left_open_pellet_back(tmp_path, monkeypatch):
         "segments": [_rec(1, "triaged", triage_kind="both_uncertain"),
                      _rec(2, "untouched", outcome_pick="untouched")]}))
     monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed", raising=False)
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review", raising=False)
     routed = []
     import mousereach.watcher.review_gate as rg
-    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
+    # The stand-in route leaves the files where they are and names that folder
+    # as the bundle, so the question is written there.
+    monkeypatch.setattr(rg, "route_to_queue",
+                        lambda vid, src, *a, **k: routed.append(src) or src)
     r = rc.route_video(VID, "triage", "no outcome was picked", [1, 2])
     assert r["answered"] == [2] and r["flagged"] == [1] and r["routed"]

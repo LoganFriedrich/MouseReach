@@ -1,4 +1,6 @@
-"""A queue bundle of a video that has since been archived is filed away.
+"""A queue bundle of a video that has since been archived is cleared as a
+leftover: what the filed results hold too is deleted, the rest stays where it
+is, listed for a person -- nothing goes to an archive folder.
 
 WHY: videos a person had
 cleared were sent back to deep review as a bare .mp4 (a file a return could
@@ -29,6 +31,9 @@ def _setup(tmp_path, monkeypatch, state="archived", archived_manifest=True):
     monkeypatch.setattr(rr.Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", review)
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", tmp_path, raising=False)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
     analyzed = tmp_path / "Analyzed" / "ABC01"
     analyzed.mkdir(parents=True)
     monkeypatch.setattr(archive_core, "get_archive_destination", lambda vid: analyzed)
@@ -67,9 +72,13 @@ FULL = [f"{STEM}.mp4", f"{STEM}_segments.json", f"{STEM}_reaches.json",
         f"{STEM}_pellet_outcomes.json", f"{STEM}_manifest.json"]
 
 
-def _note():
-    return " ".join(p.read_text(encoding="utf-8")
-                    for p in (rr.Paths.REVIEW_ROOT / "_Problematic").rglob("*_stale_retire.json"))
+def _filed(tmp_path, names):
+    """The filed results hold byte-identical copies of ``names``."""
+    _files(tmp_path / "Analyzed" / "ABC01", names, age_s=7200)
+
+
+def _nothing_archived(tmp_path):
+    assert not (tmp_path / "Review" / "_Problematic").exists()
 
 
 def test_a_results_free_husk_of_an_archived_video_leaves_deep_review(tmp_path, monkeypatch):
@@ -77,21 +86,39 @@ def test_a_results_free_husk_of_an_archived_video_leaves_deep_review(tmp_path, m
     # the archived results -- what marks it is that it holds no results.
     triage, deep, db = _setup(tmp_path, monkeypatch)
     _files(deep / STEM, HUSK, age_s=60)
+    _filed(tmp_path, HUSK[:2])                  # the filed video and pose
     summary = rr.scan_review_queues(db, tmp_path / "proc")
     assert summary.get("superseded_retired") == 1
     assert not (deep / STEM).exists()
-    assert list((tmp_path / "Review" / "_Problematic").rglob(f"{STEM}.mp4"))
-    assert "holds no results" in _note()
+    _nothing_archived(tmp_path)
     assert db.get_video(STEM)["state"] == "archived"
+
+
+def test_a_husk_whose_video_the_filed_results_lack_stays_listed(tmp_path, monkeypatch):
+    """The filed results hold no copy of the husk's video: the video is never
+    deleted; it stays where it is, with a note, and the scan leaves it alone."""
+    LEFT_NOTE = "LEFT_FOR_A_PERSON.json"  # review_routing.LEFT_NOTE
+    triage, deep, db = _setup(tmp_path, monkeypatch)
+    _files(deep / STEM, HUSK, age_s=60)
+    summary = rr.scan_review_queues(db, tmp_path / "proc")
+    assert summary.get("superseded_retired") == 1
+    assert (deep / STEM / f"{STEM}.mp4").is_file()
+    assert (deep / STEM / LEFT_NOTE).is_file()
+    note = json.loads((deep / STEM / LEFT_NOTE).read_text(encoding="utf-8"))
+    assert "holds no results" in note["why"]
+    rr._superseded_cache.clear()
+    assert not rr.scan_review_queues(db, tmp_path / "proc").get("superseded_retired")
+    _nothing_archived(tmp_path)
 
 
 def test_a_full_bundle_older_than_the_archived_results_leaves_triage(tmp_path, monkeypatch):
     triage, deep, db = _setup(tmp_path, monkeypatch)
     _files(triage / STEM, FULL, age_s=86400)
+    _filed(tmp_path, [f"{STEM}.mp4"])
     summary = rr.scan_review_queues(db, tmp_path / "proc")
     assert summary.get("superseded_retired") == 1
     assert not (triage / STEM).exists()
-    assert "predates" in _note()
+    _nothing_archived(tmp_path)
 
 
 def test_a_bundle_routed_after_the_archive_stays(tmp_path, monkeypatch):

@@ -193,6 +193,7 @@ def queues(tmp_path, monkeypatch):
     deep.mkdir(parents=True)
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review", raising=False)
     return triage
 
 

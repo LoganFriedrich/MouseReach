@@ -19,6 +19,8 @@ import logging
 import os
 import time
 
+import pytest
+
 import mousereach.pipeline.manifest as pm
 import mousereach.watcher.review_gate as rg
 import mousereach.watcher.review_return as rr
@@ -361,3 +363,176 @@ def test_an_undeletable_leftover_stops_the_return_before_anything_moves(
     assert (bundle / f"{stem}_causal_review.json").is_file()
     assert not proc.exists() or not any(proc.iterdir())
     assert leftover in caplog.text and str(bundle) in caplog.text
+
+
+# --- (f) a return is all or nothing --------------------------------------------
+# The moves used to stop at the first file that could not move, with earlier
+# files (video, pose, the reviewer's answers) already in Processing and the
+# queue records already deleted: the bundle was split, nothing retried it, and
+# no review tool listed what was left.
+
+def _cleared_bundle(triage, stem):
+    bundle = triage / stem
+    bundle.mkdir()
+    names = [f"{stem}.mp4", _pose_name(stem, "ModelA", 100),
+             f"{stem}_causal_review.json", f"{stem}_pellet_outcomes.json",
+             f"{stem}_segments.json", f"{stem}_deep_review_cleared.json",
+             f"{stem}_manifest.json", f"{stem}_routing.json"]
+    for n in names:
+        (bundle / n).write_text(n, encoding="utf-8")
+    return bundle, {n: n for n in names}
+
+
+def _whole(bundle, expected):
+    return {p.name: p.read_text(encoding="utf-8") for p in bundle.iterdir()} == expected
+
+
+def test_a_move_failing_part_way_puts_every_file_back(tmp_path, monkeypatch):
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    monkeypatch.setattr(rr, "_return_retry_after", {})
+    stem = "20990101_PRJ0113_P1"
+    bundle, expected = _cleared_bundle(triage, stem)
+    proc = tmp_path / "proc"
+    real = rr._safe_move
+    calls = []
+
+    def third_fails(src, dst):
+        calls.append(src)
+        if len(calls) == 3:
+            raise PermissionError(32, "being used by another process")
+        return real(src, dst)
+
+    monkeypatch.setattr(rr, "_safe_move", third_fails)
+    db = FakeDB()
+    assert not rr._return_to_processing(bundle, stem, proc, db, "triage_cleared")
+    assert _whole(bundle, expected)                    # every file back, records too
+    assert not proc.exists() or not any(proc.iterdir())
+    assert all(state != "processing" for _, state, _ in db.state_writes)
+    assert rr._return_backing_off(stem)                # retried later, not every scan
+
+
+def test_a_state_that_cannot_be_set_puts_every_file_back(tmp_path, monkeypatch):
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    monkeypatch.setattr(rr, "_return_retry_after", {})
+    stem = "20990101_PRJ0114_P1"
+    bundle, expected = _cleared_bundle(triage, stem)
+    proc = tmp_path / "proc"
+
+    class Refuses(FakeDB):
+        def update_state(self, vid, state, **kw):
+            raise RuntimeError("database is locked")
+
+        def force_state(self, vid, state, reason=None, **kw):
+            raise RuntimeError("database is locked")
+
+    assert not rr._return_to_processing(bundle, stem, proc, Refuses(), "triage_cleared")
+    assert _whole(bundle, expected)
+    assert not proc.exists() or not any(proc.iterdir())
+
+
+def test_the_clear_marker_moves_last(tmp_path, monkeypatch):
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    stem = "20990101_PRJ0115_P1"
+    bundle, _ = _cleared_bundle(triage, stem)
+    order = []
+    real = rr._safe_move
+    monkeypatch.setattr(rr, "_safe_move", lambda s, d: (order.append(s.name), real(s, d)))
+    assert rr._return_to_processing(bundle, stem, tmp_path / "proc", FakeDB(), "deep_review_cleared")
+    assert order[-1] == f"{stem}_deep_review_cleared.json"
+    assert order[0] in (f"{stem}.mp4", _pose_name(stem, "ModelA", 100))
+    assert not bundle.exists()
+
+
+def test_an_undo_never_deletes_a_file_that_was_in_processing_before(tmp_path, monkeypatch):
+    """A same-named file already in Processing that the move could not
+    replace is not the move's copy: the undo leaves it where it is."""
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    monkeypatch.setattr(rr, "_return_retry_after", {})
+    stem = "20990101_PRJ0116_P1"
+    bundle, expected = _cleared_bundle(triage, stem)
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / f"{stem}_segments.json").write_text('{"boundary_source": "algo"}',
+                                                encoding="utf-8")
+    real = rr._safe_move
+
+    def segments_cannot_be_replaced(src, dst):
+        if src.name == f"{stem}_segments.json":
+            raise PermissionError(32, "being used by another process")
+        return real(src, dst)
+
+    monkeypatch.setattr(rr, "_safe_move", segments_cannot_be_replaced)
+    assert not rr._return_to_processing(bundle, stem, proc, FakeDB(), "triage_cleared")
+    assert _whole(bundle, expected)
+    assert (proc / f"{stem}_segments.json").read_text(
+        encoding="utf-8") == '{"boundary_source": "algo"}'
+
+
+def _listed(tmp_path, kind):
+    from mousereach.watcher.attention import read_items
+    return [i["video_id"] for i in read_items(tmp_path) if i.get("kind") == kind]
+
+
+@pytest.mark.parametrize("name, text", [
+    ("_causal_review.json", "an earlier review"),
+    ("_segments.json", '{"boundary_source": "human", "boundaries": [1, 2]}'),
+    (".mp4", "another video"),
+])
+def test_a_persons_or_an_input_file_in_processing_stops_the_return(
+        tmp_path, monkeypatch, name, text):
+    """A different same-named file already in Processing that is a person's
+    (a review, cuts a person set) or an input is never replaced, moved aside
+    or deleted: nothing moves, the bundle stays whole in the queue, and the
+    return is listed for a person. The return used to replace it -- or set it
+    aside in a hidden folder nobody looks in -- and a person's hand-set cuts
+    were deleted after a return that went through."""
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", tmp_path, raising=False)
+    monkeypatch.setattr(rr, "_return_retry_after", {})
+    stem = "20990101_PRJ0117_P1"
+    bundle, expected = _cleared_bundle(triage, stem)
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / f"{stem}{name}").write_text(text, encoding="utf-8")
+    db = FakeDB()
+    assert not rr._return_to_processing(bundle, stem, proc, db, "triage_cleared")
+    assert _whole(bundle, expected)
+    assert {p.name: p.read_text(encoding="utf-8") for p in proc.iterdir()} == {
+        f"{stem}{name}": text}
+    assert all(state != "processing" for _, state, _ in db.state_writes)
+    assert _listed(tmp_path, "return_blocked") == [stem]
+    assert rr._return_backing_off(stem)
+    # A person deals with the file: the next return goes through and the
+    # line goes away.
+    (proc / f"{stem}{name}").unlink()
+    rr._return_retry_after.clear()
+    assert rr._return_to_processing(bundle, stem, proc, db, "triage_cleared")
+    assert _listed(tmp_path, "return_blocked") == []
+
+
+def test_a_machine_output_of_an_earlier_run_is_replaced(tmp_path, monkeypatch):
+    """The bundle is the video's live copy: an older run's machine output of
+    the same name in Processing is replaced by the bundle's (nothing hidden,
+    nothing kept)."""
+    triage, _ = _wire(monkeypatch, tmp_path)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    stem = "20990101_PRJ0118_P1"
+    bundle, _ = _cleared_bundle(triage, stem)
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / f"{stem}_pellet_outcomes.json").write_text('{"run": "earlier"}', encoding="utf-8")
+    assert rr._return_to_processing(bundle, stem, proc, FakeDB(), "triage_cleared")
+    assert (proc / f"{stem}_pellet_outcomes.json").read_text(
+        encoding="utf-8") == f"{stem}_pellet_outcomes.json"
+    assert all(not p.name.startswith(".") for p in proc.iterdir())

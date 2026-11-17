@@ -136,6 +136,7 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
 
     if progress:
         progress("Scanning the review queues...")
+    from mousereach.watcher.review_routing import LEFT_NOTE
     for root, state in ((Paths.TRIAGE_REVIEW, "triage"), (Paths.DEEP_REVIEW, "deep_review")):
         if root and Path(root).exists():
             for d in Path(root).iterdir():
@@ -143,8 +144,12 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
                 # video), so tool/OS scratch dirs would otherwise be listed as
                 # phantom videos awaiting review -- e.g. a stray ".omc/" (agent
                 # state) showed up in the dashboard as a triage entry. Dot-dirs
-                # are never review bundles; skip them.
-                if d.is_dir() and not d.name.startswith("."):
+                # are never review bundles; skip them. A leftover kept for a
+                # person (it holds review_routing.LEFT_NOTE) is not a bundle
+                # either: it is listed in the Review Queues tab, and counting
+                # it showed the video as held in a queue it is not held in.
+                if (d.is_dir() and not d.name.startswith(".")
+                        and not (d / LEFT_NOTE).is_file()):
                     add(d.name, state, d)
 
     try:

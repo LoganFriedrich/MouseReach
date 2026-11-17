@@ -41,6 +41,14 @@ def _wire(monkeypatch, tmp_path):
     monkeypatch.setattr(rr.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rr.Paths, "REVIEW_ROOT", tmp_path / "Review")
     monkeypatch.setattr(rr.time, "sleep", lambda s: None)
+    # A review leaving the queue is copied to the durable store first; keep
+    # that store under tmp_path.
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    monkeypatch.setattr(rr.Paths, "NAS_ROOT", tmp_path, raising=False)
+    import mousereach.archive.core as ac
+    monkeypatch.setattr(ac, "get_archive_destination",
+                        lambda stem: tmp_path / "Analyzed" / "PROJ" / "PROJ01")
     return triage, deep
 
 
@@ -106,9 +114,12 @@ def test_cleared_bundle_releases_once_segments_are_answered(tmp_path, monkeypatc
     assert summary.get("triage_returned") == 1
 
 
-def test_cleared_husk_is_still_retired(tmp_path, monkeypatch):
+def test_cleared_husk_is_never_reinjected_and_its_person_files_are_kept(tmp_path, monkeypatch):
     """The stale-bundle guard applies to cleared bundles too: a husk whose
-    video was re-handled must be retired, never re-injected."""
+    video was re-handled is never re-injected. It holds what a person wrote
+    (a review, a clear marker), neither of which has a copy elsewhere: both
+    stay where they are, with a note, listed for a person (nothing is written
+    into the durable review store). Nothing goes to an archive folder."""
     triage, deep = _wire(monkeypatch, tmp_path)
     stem = "20240101_ABC0203_P1"
     _cleared_seg_failed_bundle(triage, stem, resolved=True)
@@ -123,4 +134,13 @@ def test_cleared_husk_is_still_retired(tmp_path, monkeypatch):
 
     assert summary.get("stale_retired") == 1
     assert not routed and not returned
-    assert not (triage / stem).exists()
+    LEFT_NOTE = "LEFT_FOR_A_PERSON.json"  # review_routing.LEFT_NOTE
+    kept = triage / stem
+    assert not (tmp_path / "review_records" / "reviews" / f"{stem}_causal_review.json").exists()
+    assert (kept / f"{stem}_causal_review.json").is_file()
+    assert (kept / f"{stem}_deep_review_cleared.json").is_file()
+    assert (kept / LEFT_NOTE).is_file()
+    assert not (tmp_path / "Review" / "_Problematic").exists()
+    # Never acted on again by a later scan.
+    assert not rr.scan_review_queues(db, tmp_path / "proc").get("stale_retired")
+    assert not routed and not returned
