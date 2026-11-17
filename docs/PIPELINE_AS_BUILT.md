@@ -1869,13 +1869,13 @@ the row stays `outdated`, and the next version scan publishes a re-pose request 
 serves; (3) only when no video can be found either, marks it failed with "no pose and no video
 found". Tests: `tests/test_no_pose_reprocess.py`.
 
-## Update 2026-10-22: a queue bundle of an archived video is filed away
+## Update 2026-10-22 (historical; superseded): a queue bundle of an archived video was moved to a side folder
 
 (No longer so: nothing is moved to `_Problematic` any more, which is only for cases the pipeline cannot process at all. Such a folder is now a leftover: what has a current copy elsewhere is deleted, and what does not stays where it is, with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md.)
 
 The return scan reads every queued video's state in one query per queue
-(`WatcherDB.states_of`). For a video this node has `archived`, a bundle holding
-nothing a person wrote is moved to `_Problematic` with a note when it holds no
+(`WatcherDB.states_of`). For a video this node had `archived`, a bundle holding
+nothing a person wrote WAS moved to `_Problematic` with a note when it held no
 results at all (no `<stem>_segments.json` -- a file a return could not take
 along) or when every file in it is older than the video's processing manifest in
 Analyzed (`_superseded_by_archive`, `review_return.py`; both queues, under the
@@ -1886,17 +1886,18 @@ archive. Companion to the archive-step fix above (`queue_folder_holds_this_run`)
 that one stops new husks from derailing a run; this one clears the ones already
 sitting in a person's queue. Tests: `tests/test_review_return_superseded.py`.
 
-## Update 2026-10-22: a leftover triage copy of a deep-review bundle is filed away
+## Update 2026-10-22 (historical; superseded): a leftover triage copy of a deep-review bundle was moved to a side folder
 
 (No longer so: nothing is moved to `_Problematic` any more, which is only for cases the pipeline cannot process at all. Such a folder is now a leftover: what has a current copy elsewhere is deleted, and what does not stays where it is, with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md.) A triage folder that differs from the deep-review bundle does NOT stay whole any more either: it is emptied as a leftover the way a route into deep review empties it -- what the deep-review bundle or the review store holds byte for byte, queue records and machine results are deleted, and only what a person wrote with no copy elsewhere is kept, listed.
 
 When a video has a folder in both review queues and its segmentation failed, the return scan
 used to skip it with "exists in BOTH queues; divert skipped (duplicate needs deliberate
-cleanup)" -- every scan, for good, because nothing ever did that cleanup. The scan now compares the two folders (`_is_leftover_copy`,
-`review_return.py`): if every file in the triage folder has a byte-identical file of the same
-name in the deep-review folder, the triage folder is moved to `_Problematic` with a note, under
-a return claim like every other move, and the deep-review bundle is untouched. A pair that
-differs in anything stays for a person, as before. Sizes are compared before any bytes are
+cleanup)" -- every scan, for good, because nothing ever did that cleanup. The scan then compared the two folders (`_is_leftover_copy`,
+`review_return.py`): if every file in the triage folder had a byte-identical file of the same
+name in the deep-review folder, the triage folder was moved to `_Problematic` with a note, under
+a return claim like every other move, and the deep-review bundle was untouched. A pair that
+differed in anything stayed for a person. (Both outcomes are replaced by the leftover rule in
+the banner above: a person's unsuperseded files are kept and listed, everything else is deleted.) Sizes are compared before any bytes are
 read, and a pair's verdict is kept until either folder changes. Tests:
 `tests/test_review_return_stale.py`.
 

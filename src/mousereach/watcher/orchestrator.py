@@ -721,8 +721,9 @@ class BaseOrchestrator:
     def _note_route_refused(self, video_id: str, err, analysed: bool = False) -> None:
         """A route into a review queue was refused before anything moved
         (review_gate.AlreadyInQueueError): another program held the video's
-        claim, a queue folder of the video could not be set aside (a file in
-        it open in a review window), or the queue already holds the video's
+        claim, a queue folder of the video could not be cleared (it is
+        deleted when a current copy is verified, otherwise kept in place and
+        listed; a file in it may be open in a review window), or the queue already holds the video's
         live bundle. The video stays 'processing' with its files where they
         are, and is run again after ROUTE_REFUSED_WAIT_S.
 
@@ -1161,7 +1162,7 @@ class BaseOrchestrator:
 
         A route that is REFUSED before anything moves (review_gate.
         AlreadyInQueueError: the queue holds the video's live bundle, another
-        program holds its claim, an old queue folder cannot be set aside) is
+        program holds its claim, an old queue folder cannot be cleared) is
         a refused route like any other (_note_route_refused): the video stays
         in Processing, is logged as 'review_gate refused' and runs again in
         ROUTE_REFUSED_WAIT_S. WHY caught here: left to the precheck's own
