@@ -1326,8 +1326,9 @@ command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
     - the watcher is running on this machine, or that cannot be checked
       (two programs filing one video at once can split it between two
       folders). Stop the watcher first, or leave the filing to it;
-    - this machine's watcher database knows the video and does not have it
-      as 'processed'. The message names the state (e.g. 'processing' while
+    - this machine's watcher database is there but cannot be read, or it
+      knows the video and does not have it as 'processed'. The message
+      names the state (e.g. 'processing' while
       it waits for its hand scores, 'triage', 'failed', 'crystallized');
       deal with it through the watcher and the review tools instead;
     - <video>_features.json is missing, or older than the video's segments,

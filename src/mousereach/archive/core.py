@@ -162,6 +162,16 @@ def stale_features_reason(video_id: str, folder, started_at=None) -> Optional[st
     return None
 
 
+def _watcher_db_file_exists() -> bool:
+    """Whether this machine's configured watcher database file exists. A
+    machine with no watcher configured at all has none (False)."""
+    try:
+        from mousereach.watcher.db_location import resolve_watcher_db_path
+        return Path(resolve_watcher_db_path()).is_file()
+    except Exception:
+        return False
+
+
 def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[str]:
     """Why the ``mousereach-archive`` COMMAND may not file this video, or None.
 
@@ -188,9 +198,14 @@ def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[s
     started_at = None
     try:
         from mousereach.watcher.db_location import open_watcher_db_if_present
-        db, _why = open_watcher_db_if_present()
-    except Exception:
-        db = None
+        db, why_none = open_watcher_db_if_present()
+    except Exception as e:
+        db, why_none = None, f"the watcher database could not be opened ({e})"
+    if db is None and _watcher_db_file_exists():
+        # A database that is there but cannot be opened is not "no watcher on
+        # this machine": the row that would refuse the filing cannot be read,
+        # so the cautious answer is to refuse.
+        return f"{why_none}; not filing without reading the watcher's row"
     if db is not None:
         try:
             row = db.get_video(video_id)

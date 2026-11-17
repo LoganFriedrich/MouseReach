@@ -133,3 +133,18 @@ def test_the_bulk_command_skips_a_held_video(env, monkeypatch):
         cli.main()
     assert e.value.code == 1
     assert not any(dest.iterdir())
+
+
+def test_a_watcher_database_that_cannot_be_read_refuses(env, monkeypatch):
+    proc, dest, db = env
+    _outputs(proc)
+    import mousereach.config as cfg
+    broken = proc.parent / "broken.db"
+    broken.write_bytes(b"this is not a database" * 100)
+
+    class Broken:
+        db_path = broken
+    monkeypatch.setattr(cfg.WatcherConfig, "load", staticmethod(lambda: Broken()))
+    r = core.archive_video(V, verbose=False)
+    assert not r["success"]
+    assert not any(dest.iterdir()), "filed without reading the watcher's row"
