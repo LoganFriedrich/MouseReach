@@ -177,4 +177,9 @@ def test_the_folder_is_listed_once_per_pass_not_once_per_video(server, monkeypat
     monkeypatch.setattr(orch.Path, "glob", lambda *a, **k: pytest.fail(
         "the staging folder must not be globbed once per video"))
     assert server._rescue_misfiled_singles() == 0
-    assert len(listings) == 1
+    # Only the staging folder's listings count here: reading the claim area
+    # (single_claim.inflight_claims, one listing per claim folder) is a
+    # different folder and is read the same way.
+    staging = os.path.normcase(os.path.abspath(str(server.staging)))
+    assert len([p for p in listings
+                if os.path.normcase(os.path.abspath(str(p))) == staging]) == 1
