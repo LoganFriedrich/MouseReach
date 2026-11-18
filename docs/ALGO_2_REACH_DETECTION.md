@@ -4,6 +4,8 @@ Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mouser
 
 Verified against: b65fcf0 (2026-08-23)
 
+Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+
 Observations in this document were measured on the live working folder `<nas_root>\Processing` (every reach file stamped `8.1.0` there) unless another source is named.
 
 ---
@@ -45,7 +47,7 @@ DLC .h5 + {video}_segments.json
 
 Two places call `detect_video_reaches`:
 
-- **`reach/core/batch.py:163`**, inside `process_single`. This is the busy one. It is reached from `process_batch` (`batch.py:244`, which is what `mousereach-detect-reaches` runs), from both watcher pipelines (`watcher/orchestrator.py:1052` and `:1949`; the Run All Steps tab, `pipeline/run_all.py`, reaches it only through the watcher's own handlers, `watcher/run_one.py`), and from `pipeline/reprocess_to_current.py:212`.
+- **`reach/core/batch.py:163`**, inside `process_single`. This is the busy one. It is reached from `process_batch` (`batch.py:244`, which is what `mousereach-detect-reaches` runs), from both watcher pipelines (`watcher/orchestrator.py`, the two places that import `reach.core.batch.process_single`; the Run All Steps tab, `pipeline/run_all.py`, reaches it only through the watcher's own handlers, `watcher/run_one.py`), and from `pipeline/reprocess_to_current.py`.
 - **`review/staging.py:304`**, building a review bundle.
 
 Both then call `ReachDetector.save_results` (`batch.py:168`, `staging.py:305`). The napari "Run Pipeline" tab used to be a third caller with its own processor (`pipeline/core.py`); it was removed, and the tab now runs one pass of the watcher, which goes through `process_single` like every other watcher run. `span_to_reaches` itself writes nothing to disk.
@@ -152,13 +154,13 @@ Limits worth writing down:
 
 **Where the boundaries come from.** `geometry.load_segments` (`:141-146`) reads the key `boundaries`, falling back to `validated_boundaries`, and otherwise returns an empty list. The outcome stage reads the same file with a *different* reader (`outcomes/core/batch.py:90-104`) that also understands a `segmentation.boundaries[].frame` shape. Every segments file in the working folder uses the plain `boundaries` key, so the two readers currently agree — but a file in that third shape would give the outcome stage 21 boundaries and give reach detection zero, silently.
 
-**Segment convention** (`segments_from_boundaries`, `:269-293`): each boundary frame **starts** a segment, so the number of segments equals the number of boundaries, and the last segment runs to the end of the video. `seg_start` is inclusive, `seg_end` is exclusive — segment *n*'s `end_frame` is exactly segment *n+1*'s `start_frame`. Confirmed on every shipped file: 21 segments each, every `end_frame` equal to the next `start_frame`, and the last `end_frame` equal to `total_frames`.
+**Segment convention** (`segments_from_boundaries`, `:269-293`): each boundary frame **starts** a segment, so the number of segments equals the number of boundaries, and the last segment runs to the end of the video. `seg_start` is inclusive, `seg_end` is exclusive — segment *n*'s `end_frame` is exactly segment *n+1*'s `start_frame`, and the last segment's `end_frame` equals `total_frames`. A pillar-tray video's segments file has 21 boundaries, so its reach file has 21 segments. (Update 2026-11-18.) Easy and Flat tray videos are not segmented: their segments file holds the single boundary `[0]`, so the reach file has ONE segment, from frame 0 (inclusive) to `total_frames` (exclusive), covering the whole video.
 
 A reach belongs to the segment containing its **start** frame (`_segment_index_for_span_start`, `:296-312`).
 
 **Frames before the first boundary belong to no segment.** In a typical file the first boundary comes some way into the recording, so the lead-in frames before it are outside every segment. A reach detected there is an orphan: it is attached to the nearest segment by frame distance and never dropped (`:126-138`), and that segment gets `flagged_for_review: true` with `flag_reason: "reach_start_outside_all_segments"`. Ties go to the earlier segment (`:315-337`).
 
-**Every reach in a flagged segment gets the review note, not just the orphan.** `:165-168` tests the segment's flag, not the individual span. Measured over the shipped files: most of the reaches that carry the note do not actually start outside every segment. They are ordinary reaches that happened to share a segment with an orphan.
+**Every reach in a flagged segment gets the review note, not just the orphan.** `:165-168` tests the segment's flag, not the individual span. So most reaches that carry the note can be ordinary reaches that happened to share a segment with an orphan.
 
 One segment entry is emitted per boundary, in order, including empty ones (loop at `:152-195`). The module docstring at `:28-41` explains why: the kinematics step pairs segments by number and holds a video whose reach segments skip a pellet the outcomes file has.
 
@@ -203,9 +205,9 @@ Written by `ReachDetector.save_results` (`reach_detector.py:1104-1140`), which s
 | `detected_at` | Local timestamp, ISO format. |
 | `validated` | `false` at write time. Set `true` only by the napari review window (`review_widget.py:2028`). |
 | `validated_by`, `validated_at` | `null` at write time; filled by the review window (`:2029-2030`). |
-| `corrections_made`, `reaches_added`, `reaches_removed` | **0 from the detector, always.** They are *not* dead fields: the napari review window increments them as a person works — `reaches_added` at `review_widget.py:1854`, `reaches_removed` at `:1896`, `corrections_made` via `_increment_corrections` (`:1904-1906`) called from `_set_reach_start` (`:1697`) and `_set_reach_end` (`:1722`) — and writes them back into the file when the reviewer validates (`:2019-2021`, `:2037-2038`). Nothing in the automated pipeline touches them. Every shipped file read 0, because none had been reviewed. |
-| `segments_flagged` | Count of segments with `flagged_for_review: true`. A small share of files have 1; the rest have 0. |
-| `validation_status` | `"needs_review"` as written (`reach_detector.py:1115`, the default of `save_results`). In the watcher, a later unified triage step overwrites it (`watcher/orchestrator.py:1109-1124`). Every shipped file read `auto_approved`. |
+| `corrections_made`, `reaches_added`, `reaches_removed` | **0 from the detector, always.** They are *not* dead fields: the napari review window increments them as a person works — `reaches_added` at `review_widget.py:1854`, `reaches_removed` at `:1896`, `corrections_made` via `_increment_corrections` (`:1904-1906`) called from `_set_reach_start` (`:1697`) and `_set_reach_end` (`:1722`) — and writes them back into the file when the reviewer validates (`:2019-2021`, `:2037-2038`). Nothing in the automated pipeline touches them. |
+| `segments_flagged` | Count of segments with `flagged_for_review: true`. |
+| `validation_status` | `"needs_review"` as written (`reach_detector.py:1115`, the default of `save_results`). In the watcher, a later unified triage step overwrites it (the watcher's unified triage step in `watcher/orchestrator.py`). |
 | `validation_timestamp` | Local timestamp of the write. |
 
 Shipped files also carry a top-level `triage_reason`, added by that later triage step, not by this subsystem.
@@ -219,7 +221,7 @@ Shipped files also carry a top-level `triage_reason`, added by that later triage
 | `reaches_per_segment_mean` | Real, 1 decimal place. |
 | `reaches_per_segment_std` | Real. |
 | `mean_duration_frames` | Real. |
-| `mean_extent_ruler` | **Always 0.0.** The list it averages is created at `span_to_reaches.py:150` and never appended to — see the comment at `:199`. Confirmed 0.0 on every shipped file. |
+| `mean_extent_ruler` | **Always 0.0.** The list it averages is created at `span_to_reaches.py:150` and never appended to — see the comment at `:199`. |
 
 ### Per segment
 
@@ -272,7 +274,7 @@ Filled with real values:
 - **`reach_detector.py:1121-1133`.** After the file is written, `save_results` tries to record it in the pipeline index. Line `:1127` reads `results.summary.total_reaches`, but `summary` is a plain dict (`span_to_reaches.py:202-209`), so this raises `AttributeError` on every run. The `except Exception: pass` at `:1132-1133` hides it. Verified by calling `save_results` with the index class stubbed out: the JSON is written, and the index records nothing. **The pipeline index is never updated by reach detection.**
 - **`reach_detector.py:1136-1140`.** The database sync immediately after is wrapped the same way (`except Exception: pass`), so a sync failure is equally invisible.
 - **An empty or unrecognised boundaries list produces an empty result, not an error.** If `load_segments` returns `[]`, `build_video_reaches` has nothing to attach spans to, so the loop at `span_to_reaches.py:126-138` hits the `continue` at `:135` for every span and discards them all. The output is a structurally valid file with zero segments and zero reaches.
-- **The watcher paths are better.** Both `watcher/orchestrator.py:1182-1186` and `:1962-1966` log the step as failed, mark the video failed, and re-raise.
+- **The watcher paths are better.** Both watcher reach-detection steps in `watcher/orchestrator.py` log the step as failed, mark the video failed, and re-raise.
 - **`review_widget.py:1077-1080`** shows the error and prints a traceback.
 
 ## Commands and code that do not work
@@ -301,7 +303,7 @@ Treat these as wrong, not as history:
 
 **No test exercises the v8 detector, its feature builder, or its post-processing.** There is no test for `extract_features`, `probabilities_to_reaches`, either trim, `apex_split_at_trough`, `build_video_reaches`, or the segment-filing rules.
 
-The repository is not untested in general: there are suites for outcomes, segmentation, tray motion and the version simulator. The `tests/` directory itself holds one file, `test_watcher_integration.py`. None of them touch the detector. (The reach-matching evaluation suite lived under the improvement subsystem, which has moved out of this repo as an accessory.)
+The repository is not untested in general: there are suites for outcomes, segmentation, tray motion and the version simulator. (Update 2026-11-18: the `tests/` directory now holds the main suite, about 300 test files.) None of them test the detector's own decisions; the few that import reach code replace the detector with a stand-in. (The reach-matching evaluation suite lived under the improvement subsystem, which has moved out of this repo as an accessory.)
 
 ## How performance is measured, when it is measured
 
@@ -310,32 +312,6 @@ The repository is not untested in general: there are suites for outcomes, segmen
 It is called by `v8/train.py:123`. It is not part of the production run — nothing in the pipeline scores a reach file against ground truth.
 
 Note that the improvement framework (now a separate accessory tool) carries a *different* matcher with its own tolerances. The two are not interchangeable; check which one a reported number came from.
-
----
-
-## Contested claims
-
-This document was written from the source, then checked by a second reader
-whose job was to disprove it. The statements below are ones they disputed and
-that were not resolved. Neither side is authoritative: spot-checking found the
-checker wrong at least once. **Do not rely on anything listed here without
-opening the code yourself.** Everything not listed survived two passes.
-
-- **"New saves stamp the document schema_version: '1.1' ... so **no existing review file carries 1.1**"**
-  - disputed because: Some review files sitting in the re-segmentation queue carry schema_version 1.1. They were written after the field was added, by the current save path. The supporting sentence (every file under Analyzed says 1.0) is correct, but it only covers the archive, so the generalisation to "no existing review file" is false.
-- **"build_segment_record stores segment_span - the exact {start, end} frames the reviewer was shown", and the record-format table's "segment_span ... the frames the reviewer saw"**
-  - disputed because: segment_span is the SEGMENT's frame range, not the frames displayed. _segment_span reads seg['start_frame'] and seg['end_frame'] verbatim. What the reviewer is actually shown is much narrower - the relevant reach plus 45 frames of padding, clamped to the segment - which the same document states correctly two sections earlier. The re-anchoring logic is unaffected; only the description of the field 
-- **"a higher layer replaces the whole override for that segment - outcome, causal reach id and interaction frame together ... Only a segment that no layer covers keeps the algorithm's values."**
-  - disputed because: A review override never carries an interaction frame, and the merge only writes interaction_frame when the override has one. So a segment covered by a review layer DOES keep the algorithm's interaction_frame - it is the one per-segment field a human review cannot change. Only ground truth carries interaction_frame into the merge. Outcome and causal_reach_id are replaced as described.
-  - superseded: truth layers now merge per field (the truth resolver keeps, for each field, the answer from the highest layer that determined it), so a higher layer no longer replaces the whole override for a segment. The claim and this dispute both describe the older replace-whole-override model.
-- **"Across a sample of features files in the local Processing folder, outcome_source is 'algo' on every reach and 'human_review' on none"**
-  - disputed because: The 'human_review on none' half is correct and in fact stronger than stated. The 'algo on every reach' half is not: a large minority of reaches carry no outcome_source at all (the field is absent, not 'algo'), because they were written by an older extractor before the field existed. The folder also holds more features files than the sample covered.
-- **"comparison_panel.py - a shared side-by-side panel used by the outcome step's own review widget (outcomes/review_widget.py:481-487), not by anything in this folder."**
-  - disputed because: Understates the consumers: three per-step review widgets use ComparisonPanel, not one. The citation resolves and the 'not by anything in this folder' half is correct, but naming only the outcome step reads as exclusive - and the parallel bullet about SimpleSavePanel correctly says 'the three per-step review widgets'.
-- citation could not be resolved: `causal_review_widget.py:2665-2666 - cited twice (in 'How a video is chosen' and in 'Re-segmentation Review') as 'the failed-segmentation skip'. Those two lines are `for b `
-- citation could not be resolved (and `_push_review_index` has since been removed with the queue index): `reprocess_to_current.py:108 - cited for `_push_review_index`. Line 108 is blank; the def is at :109. (The companion citation ':114-115' for the re-segmentation skip`
-- citation could not be resolved: `pyproject.toml:106 - cited for the `mousereach-review-tool` command name (twice: 'Command names come from pyproject.toml:106...' and 'that name has pointed at t`
-- citation could not be resolved: `review/__init__.py:116-119 - cited for the base.py re-export. The import statement spans :117-120; :116 is blank. Separately, the bullet lists AlgoGTReviewMixin`
 
 ---
 
