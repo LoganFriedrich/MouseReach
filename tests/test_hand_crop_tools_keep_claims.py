@@ -66,6 +66,11 @@ def test_crop_queue_hands_only_what_this_run_cut_to_the_shared_folder(folders, t
         return [{"position": 1, "status": "success", "output_path": str(made)}]
 
     monkeypatch.setattr(core, "crop_collage", fake_crop)
+    try:                               # the stand-in collage is not a real recording
+        from mousereach.watcher import recording_issue
+        monkeypatch.setattr(recording_issue, "refuse_if_issue", lambda path: None)
+    except ImportError:
+        pass
     monkeypatch.setattr(sys, "argv", ["mousereach-crop", "-i", str(collage), "-o", str(out),
                                       "--queue", "-q"])
     cli.main_crop()
