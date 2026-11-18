@@ -6049,10 +6049,13 @@ ended:
 waiting in the posed folder is taken in (registered by the watcher's own scan of that folder if it
 is new, then the multi-machine claim, then the copy), then analysed (segmentation, reach detection,
 outcome detection, reach assignment), then the quality check, the hand-score comparison, the review
-gate and the kinematics, then filed. A failed video is first given its retries back (as
-`mousereach-watch-reprocess` does); a filed video's re-run that has failed for good is put back as
-filed, as the watcher does. The watcher state is read again after each step, and the run stops as
-soon as the video is filed, held, failed, or did not move on. The run works on the watcher's own
+gate and the kinematics, then filed. A video that had failed BEFORE the run is first given its
+retries back, once (as `mousereach-watch-reprocess` does); a filed video's re-run that has failed
+for good is put back as filed, as the watcher does. A step that fails DURING the run is not run
+again by the tab: it shows [FAIL] with the error, and the watcher's own retry rules apply from
+there. The watcher state is read again after each step, and the run stops as soon as the video is
+filed, held, failed, or did not move on (then the line names the step and what the watcher
+record says). The run works on the watcher's own
 copy of the video, wherever the file picked in Browse sits. Nothing is pushed into any database.
 
 **What is refused (NOT RUN), and why.**

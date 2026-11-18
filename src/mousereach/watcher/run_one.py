@@ -45,12 +45,14 @@ WHAT RUNS, BY THE VIDEO'S WATCHER STATE
   'dlc_complete' (posed, waiting)  -> take it in, then analyse, then file
   'processing'   (taken in)        -> analyse, then file
   'processed'    (passed, unfiled) -> file
-  'failed'                         -> given its retries back, as
+  'failed' (before the run)        -> given its retries back once, as
                                       mousereach-watch-reprocess does, then
                                       from the step that reset gives it
 After each step the record is read again; the run stops when the video is
 filed, held (a review queue, or waiting in Processing for its hand scores or
-for a queue folder to be cleared), failed, or did not move on.
+for a queue folder to be cleared), failed, or did not move on. A step that
+fails during the run is not retried here: the run reports [FAIL] and the
+watcher's own retry rules apply.
 
 The same guards as Run Once: one watcher per machine (the lock is held for
 the whole run), no stop request, not paused. The hand-score holds this
@@ -267,9 +269,16 @@ def run_one_video(video, progress: Optional[Callable[[str, str], None]] = None) 
         relay = _VideoLogRelay(video_id, _p)
         root_logger = logging.getLogger("mousereach")
         root_logger.addHandler(relay)
+        # The launcher configures no logging, so the package's INFO lines
+        # (the watcher's own account of each step) would never be made; they
+        # are let through for this run only, for the window's log.
+        old_level = root_logger.level
+        if root_logger.getEffectiveLevel() > logging.INFO:
+            root_logger.setLevel(logging.INFO)
         try:
             return _drive(video_id, video, cfg, result, _p, _refuse)
         finally:
+            root_logger.setLevel(old_level)
             root_logger.removeHandler(relay)
             singleton.release_watcher_lock(lock)
     except Exception as e:
@@ -318,36 +327,44 @@ def _drive(video_id, video, cfg, result, _p, _refuse) -> Dict:
     if why:
         return _refuse(why)
 
-    for _ in range(_MAX_STEPS):
-        row = db.get_video(video_id) or {}
-        state = row.get("state")
-        if state == "failed":
-            if orch._filed_rerun_gave_up(row):
-                _p("failed", "a filed video's re-run that has failed for good: put back "
-                             "as filed, as the watcher does")
-                orch._restore_filed_after_failed_rerun(
-                    video_id, f"run by hand after it failed for good; last error: "
-                              f"{row.get('error_message') or '?'}")
-                break
+    # A video that had FAILED before this run is given its retries back once
+    # (mousereach-watch-reprocess's reset) -- pressing Run on it is a person
+    # asking for it to be run again. A failure DURING this run is never reset
+    # here: the run stops and says [FAIL], and the watcher's own retry rules
+    # apply from there (resetting it in a loop ran the failing step again and
+    # again and wiped its retry count).
+    if row.get("state") == "failed":
+        if orch._filed_rerun_gave_up(row):
+            _p("failed", "a filed video's re-run that has failed for good: put back "
+                         "as filed, as the watcher does")
+            orch._restore_filed_after_failed_rerun(
+                video_id, f"run by hand after it failed for good; last error: "
+                          f"{row.get('error_message') or '?'}")
+        else:
             new_state = db.reset_failed(video_id, dlc_queue=None,
                                         processing_dir=orch.processing_dir)
             if not new_state:
-                result["error"] = (f"it failed ({row.get('error_message') or '?'}) and "
-                                   f"could not be reset")
-                break
-            _p("reset", f"failed before ({row.get('error_message') or '?'}); retries given "
-                        f"back, starts again at '{new_state}'")
-            continue
+                result["error"] = (f"it failed before ({row.get('error_message') or '?'}) "
+                                   f"and could not be reset")
+            else:
+                _p("reset", f"failed before ({row.get('error_message') or '?'}); retries "
+                            f"given back, starts again at '{new_state}'")
+
+    stalled = None
+    for _ in range(_MAX_STEPS if not result["error"] else 0):
+        row = db.get_video(video_id) or {}
+        state = row.get("state")
         work_type = WORK_FOR_STATE.get(state)
         if work_type is None:
-            break
+            break                      # filed, held, failed, or not work for this run
         if orch._run_once_blocked(f"before its '{work_type}' step"):
             result["error"] = "stopped: the watcher was paused or a stop was requested"
             break
         _p(work_type, "running")
         orch._dispatch_work({"type": work_type, "id": video_id, "data": row})
-        after = (db.get_video(video_id) or {}).get("state")
-        if after == state:
+        after = db.get_video(video_id) or {}
+        if after.get("state") == state:
+            stalled = (work_type, after)
             break                      # held where it is, or did not move on
 
     final = db.get_video(video_id) or {}
@@ -377,7 +394,16 @@ def _drive(video_id, video, cfg, result, _p, _refuse) -> Dict:
         result["error"] = final.get("error_message") or "failed"
         _p("failed", result["error"])
     elif not result["error"]:
-        _p("stopped", f"watcher state now '{state}'")
+        # Stopped without moving on (e.g. the intake found the video claimed
+        # by another machine, or filing waits out an earlier failure): say
+        # which step and what the record says, never only the state.
+        if stalled is not None:
+            work_type, after = stalled
+            result["error"] = (f"its '{work_type}' step did not move it on (watcher state "
+                               f"still '{state}'): {after.get('error_message') or 'see the log above'}")
+            _p("stopped", result["error"])
+        else:
+            _p("stopped", f"watcher state now '{state}'")
     return result
 
 

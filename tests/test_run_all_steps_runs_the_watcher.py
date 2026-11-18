@@ -285,3 +285,38 @@ def test_the_tab_never_says_the_database_was_pushed_to():
         text.encode("ascii")
         assert "database" not in text
     assert status_text({"refused": "why"}).startswith("[NOT RUN]")
+
+
+def test_a_step_that_fails_is_run_once_and_reported_as_failed(env, monkeypatch):
+    """A failure during the run stops it with [FAIL]; it is not reset and run
+    again (that wiped the retry count and ran the failing step three times)."""
+    from mousereach.watcher import orchestrator as orch_mod
+
+    def _pipeline_fails(self, work):
+        env["dispatched"].append("pipeline")
+        raise RuntimeError("a step broke")
+
+    monkeypatch.setattr(orch_mod.ProcessingOrchestrator, "_run_pipeline", _pipeline_fails)
+    from mousereach.pipeline.run_all import run_all_steps
+    proc = env["roots"]["PROCESSING"]
+    mp4 = _video_folder(proc)
+    db = env["db"]()
+    db.register_video(video_id=V, source_path=str(mp4))
+    db.force_state(V, "processing", reason="test fixture")
+    res = run_all_steps(mp4)
+    assert env["dispatched"] == ["pipeline"]
+    row = env["db"]().get_video(V)
+    assert row["state"] == "failed"
+    assert res.get("error") and not res.get("held") and not res.get("done")
+
+
+def test_a_video_that_failed_before_is_reset_once_then_run(env):
+    from mousereach.pipeline.run_all import run_all_steps
+    proc = env["roots"]["PROCESSING"]
+    mp4 = _video_folder(proc)
+    db = env["db"]()
+    db.register_video(video_id=V, source_path=str(mp4))
+    db.force_state(V, "failed", reason="test fixture", error_message="earlier error")
+    res = run_all_steps(mp4)
+    assert env["dispatched"] == ["pipeline", "archive"], res
+    assert res.get("done") is True
