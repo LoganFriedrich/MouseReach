@@ -1,17 +1,30 @@
 # MouseReach Algorithm Reference
 
-> Auto-generated reference for the MouseReach analysis pipeline algorithms.
-> For the most current parameter values, see the source files referenced in each section.
+> **Update 2026-11-18 -- read this first.** Only the "Pipeline Overview" and the
+> "Version Summary" below describe the code that runs today. The detailed sections
+> 1-3 (Segmentation v2.1.0, Reach Detection v3.5.0, Outcome Classification v2.4.4)
+> and "Algorithm Evolution and Evidence" are HISTORY: they describe detectors that
+> have been replaced and no longer run. They are kept for the record, not as a
+> description of current behavior. For the current algorithms read:
+>
+> - `docs/ALGO_1_SEGMENTATION.md` -- segmentation
+> - `docs/ALGO_2_REACH_DETECTION.md` -- reach detection (where each reach starts and ends)
+> - `docs/ALGO_3_OUTCOME_CASCADE.md` -- outcome classification
+> - `docs/ALGO_4_REACH_ASSIGNMENT.md` -- which reach caused each pellet's outcome
+> - `docs/KINEMATICS_FIELDS.md` -- the kinematic values computed for each reach
 
 ## Pipeline Overview
 
-The MouseReach pipeline analyzes high-speed video (60 fps) of mice performing a single-pellet reaching task. A DeepLabCut model tracks 18 body parts frame-by-frame, producing x/y coordinates and confidence scores for each point. Three sequential algorithms process this tracking data:
+The MouseReach pipeline analyzes video of mice performing a single-pellet reaching task. A DeepLabCut model tracks body parts frame by frame, producing x/y coordinates and a confidence score (likelihood) for each point. Four algorithms then run in order on this tracking data:
 
-1. **Segmentation** identifies the 21 pellet presentation events per session
-2. **Reach Detection** identifies individual reaching attempts within each presentation
-3. **Outcome Classification** determines what happened to each pellet
+1. **Segmentation** finds the 21 pellet presentations on a pillar tray. Easy and Flat tray videos are not segmented: the whole video is one span.
+2. **Reach Detection** finds every reach in the whole video. It is a trained classifier (a scikit-learn gradient-boosted model) that scores every frame; it is not a set of hand-written rules.
+3. **Outcome Classification** decides what happened to each pellet (retrieved, displaced in the scoring area, or untouched). It is an ordered cascade of 33 rule-based stages; a pellet no stage can decide is sent to a person for review (triage).
+4. **Reach Assignment** decides which reach caused each pellet's outcome.
 
-Each algorithm is rule-based (no machine learning beyond the DLC pose estimation). All spatial measurements use a "ruler unit" defined as the distance between SABL and SABR (scoring area bottom-left and bottom-right), which corresponds to 9mm in physical space.
+Kinematics (speeds, distances, timing) are then computed for each reach. The kinematics read the frame rate from each video (or from the pose tool's record of it) and assume no fixed rate. (Segmentation still records a fixed 60 frames per second in its output file; it does not measure the rate.)
+
+All spatial measurements use a "ruler unit" defined as the distance between SABL and SABR (scoring area bottom-left and bottom-right), which corresponds to 9mm in physical space.
 
 ---
 
@@ -245,127 +258,20 @@ All spatial measurements use ruler units (1 ruler = SABL-to-SABR distance = 9mm)
 
 ---
 
-<!-- AUTO-GENERATED PERFORMANCE SECTION START -->
-## Current Performance
+## Evaluation Results
 
-Evaluated 2026-01-30 against 19 ground truth videos with human-verified annotations. Run `python -m mousereach.eval.report_cli` to regenerate these numbers and produce plots. In this copy the ground-truth video names are replaced with placeholders (`GT_VIDEO_01` ...); a regenerated section prints your own video names.
-
-### Aggregate Metrics
-
-| Metric | Value | Corpus Size |
-|--------|-------|-------------|
-| Segmentation boundary recall | 98.7% | 19 videos (399 boundaries) |
-| Reach detection precision | 81.0% | 16 videos (1,071 matched reaches) |
-| Reach detection recall | 93.1% | 16 videos |
-| Reach detection F1 | 85.2% | 16 videos |
-| Outcome classification accuracy | 95.8% | 19 videos (380 outcomes) |
-
-Three videos were excluded from reach evaluation because they lack reach ground truth annotations (GT_VIDEO_01, GT_VIDEO_02, GT_VIDEO_03).
-
-### Segmentation: Per-Video Boundary Recall
-
-15 of 19 videos achieved 100% boundary detection. The 4 remaining videos each missed 1 boundary (20/21 detected = 95.2%).
-
-| Video | Recall | Matched/Total |
-|-------|--------|---------------|
-| GT_VIDEO_04 | 95.2% | 20/21 |
-| GT_VIDEO_05 | 95.2% | 20/21 |
-| GT_VIDEO_06 | 95.2% | 20/21 |
-| GT_VIDEO_07 | 95.2% | 20/21 |
-| All others (15 videos) | 100% | 21/21 |
-
-**Boundary timing accuracy** (394 matched boundaries):
-
-| Tolerance | Count | Percentage |
-|-----------|-------|------------|
-| Exact match (0 frames) | 191 | 48.5% |
-| Within 1 frame | 266 | 67.5% |
-| Within 2 frames | 354 | 89.8% |
-| Mean error | -0.64 frames | Slightly early |
-| Standard deviation | 1.35 frames | |
-
-The negative mean error indicates the algorithm tends to detect boundaries slightly before the human-marked frame — consistent with detecting the onset of tray motion rather than the moment the pellet reaches final position.
-
-### Reach Detection: Per-Video Precision/Recall
-
-Performance varies substantially across videos. Some videos achieve perfect detection; others have high false positive rates.
-
-| Video | Precision | Recall | F1 | True Positives | False Positives | False Negatives |
-|-------|-----------|--------|-----|----------------|-----------------|-----------------|
-| GT_VIDEO_05 | 100% | 100% | 100% | 5 | 0 | 0 |
-| GT_VIDEO_08 | 100% | 100% | 100% | 6 | 0 | 0 |
-| GT_VIDEO_09 | 100% | 100% | 100% | 21 | 0 | 0 |
-| GT_VIDEO_10 | 100% | 100% | 100% | 1 | 0 | 0 |
-| GT_VIDEO_11 | 98% | 98% | 98% | 83 | 2 | 2 |
-| GT_VIDEO_12 | 98% | 93% | 95% | 50 | 1 | 4 |
-| GT_VIDEO_07 | 94% | 100% | 97% | 29 | 2 | 0 |
-| GT_VIDEO_13 | 97% | 91% | 94% | 84 | 3 | 8 |
-| GT_VIDEO_06 | 92% | 91% | 92% | 220 | 19 | 21 |
-| GT_VIDEO_04 | 78% | 100% | 88% | 7 | 2 | 0 |
-| GT_VIDEO_14 | 88% | 82% | 85% | 165 | 22 | 35 |
-| GT_VIDEO_15 | 75% | 95% | 84% | 18 | 6 | 1 |
-| GT_VIDEO_16 | 52% | 100% | 68% | 126 | 118 | 0 |
-| GT_VIDEO_17 | 50% | 83% | 62% | 124 | 126 | 26 |
-| GT_VIDEO_18 | 41% | 79% | 54% | 57 | 83 | 15 |
-| GT_VIDEO_19 | 34% | 78% | 48% | 75 | 143 | 21 |
-
-**Three problematic videos** (GT_VIDEO_19, GT_VIDEO_18, GT_VIDEO_17) have precision below 50%, meaning the algorithm detects more false reaches than real ones. These videos likely have challenging DLC tracking conditions (hand flicker, frequent paw-at-slit without reaching).
-
-**Reach timing accuracy** (1,071 matched reaches):
-
-| Metric | Start Frame | End Frame |
-|--------|-------------|-----------|
-| Exact match (0 frames) | 1,011 (94.4%) | 16 (1.5%) |
-| Within 1 frame | 1,015 (94.8%) | 900 (84.0%) |
-| Within 2 frames | 1,033 (96.5%) | 915 (85.4%) |
-| Mean error | -0.10 frames | -1.30 frames |
-
-**Start frames are highly accurate** — 94.4% exact match. This is because reach start is well-defined (hand first appears above confidence threshold).
-
-**End frames have a systematic early bias** — mean error of -1.30 frames, with only 1.5% exact matches. The algorithm ends reaches ~1 frame before the human-marked end, consistent with DLC confidence dipping before the hand fully retracts. This is the most significant measurement concern because kinematic features (velocity, trajectory) are computed over the detected reach window. A 1-frame early end means the final phase of retraction is excluded from analysis.
-
-### Outcome Classification: Per-Video Accuracy
-
-13 of 19 videos achieved 100% accuracy. The remaining 6 videos:
-
-| Video | Accuracy | Errors | Error Details |
-|-------|----------|--------|---------------|
-| GT_VIDEO_19 | 80% | 4 | 3 retrieved misclassified (2 as displaced_sa, 1 as uncertain), 1 displaced_outside as untouched |
-| GT_VIDEO_01 | 80% | 4 | Mixed: displaced_sa/untouched confusion in both directions |
-| GT_VIDEO_06 | 80% | 4 | 4 retrieved misclassified as displaced_sa |
-| GT_VIDEO_16 | 95% | 1 | 1 retrieved as untouched |
-| GT_VIDEO_13 | 95% | 1 | 1 untouched as displaced_sa |
-| GT_VIDEO_12 | 95% | 1 | 1 untouched as displaced_sa |
-| GT_VIDEO_14 | 95% | 1 | 1 displaced_outside as displaced_sa |
-
-**Confusion matrix** (380 total classifications):
-
-| GT \ Algorithm | retrieved | displaced_sa | displaced_outside | untouched |
-|----------------|-----------|-------------|-------------------|-----------|
-| **retrieved** | **33** | 6 | 0 | 1 |
-| **displaced_sa** | 1 | **151** | 0 | 1 |
-| **displaced_outside** | 0 | 1 | **1** | 1 |
-| **untouched** | 0 | 4 | 0 | **179** |
-
-**Key error pattern:** The dominant misclassification is `retrieved` being called `displaced_sa` (6 instances). This occurs when the mouse grabs the pellet quickly and the pellet tracker briefly shows displacement before the pellet disappears. The algorithm sees "pellet moved" before "pellet gone" and classifies the initial movement as displacement.
-
-The secondary pattern is `untouched` being called `displaced_sa` (4 instances). This is the tray wobble problem — the pellet shifts slightly during tray advancement and the algorithm interprets it as mouse-caused displacement.
-
-### Summary of Weaknesses
-
-| Issue | Severity | Affected Videos | Impact |
-|-------|----------|----------------|--------|
-| Reach false positives (precision < 50%) | High | 3 of 16 | Corrupts kinematic analysis with non-reach data |
-| Reach end frame 1-frame early bias | Medium | All | Systematic bias in kinematic measurements |
-| retrieved → displaced_sa misclassification | Medium | 3 of 19 | Wrong outcome for 6/40 retrieval events |
-| untouched → displaced_sa (tray wobble) | Low | 3 of 19 | 4 false displacement events |
-<!-- AUTO-GENERATED PERFORMANCE SECTION END -->
+Accuracy figures measured against a lab's own hand-labeled videos describe that lab's
+data, not the tool, so they are not kept in this repository. Keep your evaluation
+results with your own data. (Update 2026-11-18: the table that stood here described
+detector versions that no longer run.)
 
 ---
 
-## Algorithm Evolution and Evidence
+## Algorithm Evolution and Evidence (history, pre-v8)
 
-This section documents why the current algorithm versions are what they are — what was tried, what failed, and what the data showed.
+> Update 2026-11-18: everything in this section describes detectors that no longer run (reach detection v1-v3.5, segmentation v1-v2.1, outcome classification v1-v2.4.4). Where it says "current", read "current at the time". The rules found here shaped the retired rule-based reach detectors; the v8 detector learns reach frames from annotated videos and applies no nose gate.
+
+This section documents why the algorithm versions of that time were what they were — what was tried, what failed, and what the data showed.
 
 ### Reach Detection: From Naive to Data-Driven
 
@@ -380,7 +286,7 @@ Reach detection underwent the most significant evolution, driven by a ground tru
 | v3.0.0 | Extent >= 5px + duration >= 10 | 91.3% | 48.1% | 0.63 | Strict filtering: high precision but missed half of real reaches. Too conservative. |
 | v3.3.0 | Extent >= 0px (BUG) | 93.1% | **14.7%** | 0.25 | **Catastrophic regression.** A filter intended to remove negative-extent reaches (`extent >= 0`) inadvertently rejected valid reaches where the hand approaches but doesn't fully cross the slit. Lost 85% of detected reaches. |
 | v3.4.0 | Duration >= 2 only | 78.9% | **98.3%** | 0.88 | **Recovery.** Removed all extent filtering. Kept only minimum duration. Recall jumped from 15% to 98%. Accepted the precision trade-off. |
-| v3.5.0 | Duration >= 4, extent >= -15px | 81.0% | 93.1% | 0.85 | **Current.** Re-introduced a conservative negative extent filter (-15px) after GT analysis showed 44% of false positives had extent below -10px. Added minimum duration of 4 frames after finding 42% of FPs were 3 frames or shorter. |
+| v3.5.0 | Duration >= 4, extent >= -15px | 81.0% | 93.1% | 0.85 | Re-introduced a conservative negative extent filter (-15px) after GT analysis showed 44% of false positives had extent below -10px. Added minimum duration of 4 frames after finding 42% of FPs were 3 frames or shorter. |
 
 **The critical lesson from v3.3.0:** Negative extent values are scientifically valid. A mouse can reach toward the slit without its hand crossing the slit plane. Filtering these out destroys recall. The current v3.5.0 only filters reaches where the hand is far behind the slit (< -15 pixels), preserving approach-but-no-cross reaches.
 
@@ -412,9 +318,8 @@ Segmentation has been stable since v2.0. The SABL-centered crossing method works
 
 - **v1.0:** Initial SABL crossing detection. Worked for most videos but failed when SABL tracking quality was poor.
 - **v2.0:** Added multi-anchor validation (checking SABR, SATL, SATR for correlated motion) and fallback peak-finding when the primary method failed. Also added the grid-fitting step to enforce exactly 21 boundaries.
-- **v2.1.0 (current):** Refined velocity thresholds and improved handling of late-start videos where the first boundary occurs after frame 1000.
+- **v2.1.0:** Refined velocity thresholds and improved handling of late-start videos where the first boundary occurs after frame 1000.
 
-Performance has been at 95-100% boundary recall since v2.0, now at 98.7% across 19 GT videos.
 
 ### Outcome Classification: Progressive Refinement
 
@@ -423,7 +328,7 @@ Outcome classification evolved through iterative refinement of the pellet tracki
 - **v1.0:** Initial geometric classification based on pellet distance from pillar. High false positive rate for `displaced_sa` because tray wobble caused apparent pellet motion.
 - **v2.0:** Added pillar geometry calculation using the 55-degree isosceles triangle model. Improved displacement threshold from pixel-based to ruler-unit-based, making it robust to different camera magnifications.
 - **v2.3:** Added tray-relative motion filtering (Stage 3) to distinguish real displacement from tray wobble. Added causal reach attribution using the interaction frame.
-- **v2.4.4 (current):** Improved handling of pellet start/end position for cases where the pellet starts slightly off-pillar (operator error) or is retrieved very quickly. Fixed edge cases with pellets that disappear immediately on contact.
+- **v2.4.4:** Improved handling of pellet start/end position for cases where the pellet starts slightly off-pillar (operator error) or is retrieved very quickly. Fixed edge cases with pellets that disappear immediately on contact.
 
 The remaining failure mode is over-calling `displaced_sa` on videos with unusual tray dynamics (notably one ground-truth video at 70% accuracy, vs. 95-100% for the others).
 
@@ -435,17 +340,30 @@ A version simulator (`src/mousereach/eval/version_simulator.py`) can replay hist
 python -m mousereach.eval.version_simulator Processing Processing
 ```
 
-This produces a table showing precision, recall, and F1 for each historical version, confirming that the current versions represent the best validated performance.
+This produces a table showing precision, recall, and F1 for each historical version.
+
+> **Update 2026-11-18 -- WARNING, run it only on a copy.** The simulator replays the
+> filters of the old rule-based reach detectors (v0.5-v3.4) over existing reach files. While
+> it runs it deletes each `{video}_reaches.json` in the folder you give it, puts a filtered
+> file in its place, and writes the original back from memory afterwards. If it is stopped
+> part-way (window closed, crash), the original file is left filtered or missing. Copy the
+> reach and ground-truth files to a scratch folder and point it there -- never at a live
+> pipeline folder such as `Processing`. Old versions that filter on reach extent stop with
+> an error on reach files written by the current (v8) detector, which leaves extent empty.
 
 ---
 
 ## Version Summary
 
-| Component | Version | Key Changes |
-|-----------|---------|-------------|
-| Segmentation | v2.1.0 | SABL-centered crossing with multi-strategy fallback |
-| Reach Detection | v3.5.0 | Data-driven thresholds from ground truth reaches |
-| Outcome Classification | v2.4.4 | Improved pellet start/end position handling |
+Versions that run today (Update 2026-11-18; each is the version constant in the code):
+
+| Component | Version | Where it is described |
+|-----------|---------|-----------------------|
+| Segmentation | 2.2.4 | `docs/ALGO_1_SEGMENTATION.md` |
+| Reach Detection | 8.1.0 (v8 trained classifier) | `docs/ALGO_2_REACH_DETECTION.md` |
+| Outcome Classification | 6.1.0 (33-stage v6 cascade) | `docs/ALGO_3_OUTCOME_CASCADE.md` |
+| Reach Assignment | 2.1.0 | `docs/ALGO_4_REACH_ASSIGNMENT.md` |
+| Kinematics extractor | 2.6.0 | `docs/KINEMATICS_FIELDS.md` |
 
 ---
 
