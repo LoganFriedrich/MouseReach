@@ -3555,8 +3555,8 @@ below).
   is whole (its record has `finished_later` and no `failed_files` left), whoever moved the missing
   file in. Escalate and the return scan's mislabel divert are not this path: they route the
   triage bundle itself, and its review and ground truth travel with it into deep review; once a
-  person saves new cuts there, every answer in that review given before the save counts only on a
-  pellet whose frames did not move (REVIEW_TOOLS.md, "A re-cut voids the answers given before it").
+  person saves new cuts there, no answer in that review given before the save counts, on any
+  pellet (REVIEW_TOOLS.md, "A re-cut voids the answers given before it").
 
 `mousereach-route-to-queue --queue triage` checks the rule before it flags any segment and
 reports such a video as `deep` (`"in_deep_review": true` with `--json`); it is not counted as a
@@ -4052,8 +4052,8 @@ work and extra ways to fail a cleared video.
    **A re-cut by a person voids the answers given before it.** Re-segmentation voids everything
    after it, a person's earlier outcome and causal-reach answers included. When a person saves new
    cuts (the segmentation fixer writes `corrected_at` into the segments file), an answer given
-   before then (`reviewed_at`) counts only on a pellet whose frames are exactly unchanged; every
-   other one is void -- not used by the review window, the release check, the review gate, the
+   before then (`reviewed_at`) counts on no pellet, also not one whose frames did not move (since
+   2026-11-18; `causal_review_io.answer_survives_recut`); each is void -- not used by the review window, the release check, the review gate, the
    hand-score check or kinematics -- and is kept in the review file as a record
    (`causal_review_io.index_review_by_segment`). Only a PERSON's cuts void answers. A voided
    pellet counts as unanswered: a video sent to deep review for another reason has it open in
@@ -4538,8 +4538,8 @@ queue never deletes or overwrites a person's file".
   triage" above). No answer is carried into the deep-review bundle by `_empty_triage_copy`. WHY:
   re-segmentation voids every answer after it; a review or ground truth moved into the deep-review
   bundle travelled back into Processing with it. The review's copy in the durable store is still
-  read by the review readers, but once a person has saved new cuts, every answer in it given
-  before then counts only on a pellet whose frames did not move; the rest are void, kept in the
+  read by the review readers, but once a person has saved new cuts, no answer in it given
+  before then counts, on any pellet; each is void, kept in the
   file as a record, and the pellet counts as unanswered again (`index_review_by_segment`, keyed on the segments file's `corrected_at`;
   see REVIEW_TOOLS.md, "A re-cut voids the answers given before it"). Escalate and the mislabel
   divert still carry the triage bundle's review and ground truth into deep review, where the same
@@ -5660,3 +5660,53 @@ alone any video this machine's watcher database calls crystallized.
 Not covered (known leftovers): `mousereach-assign-reaches` walks folders it is given and writes
 beside each video it finds; the review commands and the other backfill commands were not checked
 line by line.
+
+## Update 2026-11-18: one pellet frame and one re-cut rule for the gate, the window and the results step
+
+WHAT WAS WRONG. 0bd388d (2026-11-18) kept an answer given before a person's re-cut when its
+frames exactly matched a current pellet. The review gate and the review window build a video's
+pellets from the segments file, where a pellet ends the frame before the next cut; the results
+step (`truth_resolver.resolve_truth_layers`, called by the feature extractor) built them from the
+reaches file, where the reach detector ends a segment AT the next cut and adds one more segment
+after the last cut (`reach_detector.py`, `reach_detector_v8.py`). On any video a person had re-cut,
+the gate saw an exact match on every pellet whose cuts did not move, counted the answer and passed
+the video CLEAN; the results step saw no exact match anywhere, voided every earlier answer and
+wrote the algorithm's call over the person's, with only a log line. The merged tests missed it
+because their reaches file ended the segment the frame before the cut.
+
+WHAT HOLDS NOW.
+- **One pellet frame.** `causal_review_io.pellet_span(cuts, i)` -- pellet i+1 runs from cut i to
+  the frame before cut i+1 -- is the only definition. `segments_from_segmentation`, `gt_segments`,
+  `unified_gt._segments_of` and the review window's pellet list use it. The results step takes its
+  pellets from the segments file beside the run (`current_pellets`), with the reach detector's
+  reaches attached by number; it falls back to the reaches file's list only when there is no
+  segments file (then there are no person's cuts and no re-cut). A segments file a person saved
+  whose cuts cannot be read stops the kinematics (no features file) instead of guessing.
+- **One re-cut rule, as the owner ruled it (R2).** `causal_review_io.answer_survives_recut`
+  decides it for every reader (through `index_review_by_segment`; `hand_scores` calls it directly):
+  once a person has saved the current cuts, no answer given before then stands, on any pellet,
+  including one whose frames did not move. Answers persist only through re-runs on the same cuts.
+  Saving in the fixer is a re-cut even if no cut moved (the save also discards every result built
+  on the old cuts).
+- **Never dropped silently.** The gate sends such pellets to triage, flagged
+  `answered_before_recut`, as before. The results step now checks the same thing itself
+  (`recut_voided_segments` on its own reading of every review copy, less pellets ground truth
+  decides): if any is open it raises `feature_extractor.RecutVoidedAnswers` and writes no features
+  file. The watcher's kinematics step (`orchestrator._make_features`, both the processing server and
+  a node that analyses locally) answers it by flagging those pellets and routing the video to
+  triage (`review_gate.route_recut_voided_to_triage`), a hold, not a failure. The step command,
+  bring-current and the kinematic backfill treat it like any KinematicsProblem: no features file,
+  and the reason printed.
+- Ground truth is unchanged: it is matched to the same pellets by frames and put back only where its
+  own cuts match (`index_gt_outcomes_by_segment`, `unified_gt`); the review-answer re-cut rule is
+  not applied to it.
+
+WHAT IT MEANS FOR STORED ANSWERS. Every answer given before a person's re-cut is now asked again
+the next time its video passes the gate (a review return or a re-run), including those on pellets
+whose cuts did not move. A filed video is affected only when it is run again. The count of such
+answers is in the lab's work record.
+
+Tests: `tests/test_recut_one_span_rule.py` (reaches file written by the reach detector itself;
+fails on 5546de0: gate CLEAN where it must be TRIAGE, results step drops a moved pellet's answer
+without refusing), `tests/test_recut_voids_earlier_answers.py`,
+`tests/test_recut_voided_pellets_are_asked_again.py`.

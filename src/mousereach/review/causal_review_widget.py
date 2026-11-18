@@ -57,6 +57,7 @@ from .causal_review_io import (
     merge_review_copies,
     review_copies,
     effective_review,
+    pellet_span,
     segments_from_segmentation,
     segmentation_is_human,
     answer_problem,
@@ -1451,8 +1452,8 @@ The notes box travels with the video.
         A segment counts as done when a person's answer covers its frames
         (segment_answered), whatever the algorithm has said since: a person's
         answer is what happened in those frames. An answer given before a
-        person re-cut the video counts only on a pellet whose frames did not
-        move (index_review_by_segment).
+        person re-cut the video does not count on any pellet
+        (causal_review_io.answer_survives_recut).
         """
         self._review_records = {}
         # Check next to the video (canonical) first, then the bundle dir, so a
@@ -1474,7 +1475,7 @@ The notes box travels with the video.
         # reviewed" placeholders.
         copies = review_copies(self._video_stem, candidates)
         # cuts_set_at: answers given before a person set these cuts are void
-        # unless their pellet's cuts did not move (index_review_by_segment).
+        # (causal_review_io.answer_survives_recut).
         _cut = cuts_set_at(getattr(self, "_segments_data", None))
         current = [dict({"segment_num": s["segment_num"],
                          "start_frame": s.get("start_frame"),
@@ -1613,8 +1614,10 @@ The notes box travels with the video.
 
         for seg_idx in range(n_segments):
             seg_num = seg_idx + 1
-            start_frame = boundaries[seg_idx]
-            end_frame = boundaries[seg_idx + 1] - 1
+            # The one definition of a pellet's frames (pellet_span): the
+            # frames saved on every answer, and the frames the gate and the
+            # results step match answers against.
+            start_frame, end_frame = pellet_span(boundaries, seg_idx)
 
             # The segmenter emits one segment per pellet presentation and drops
             # the pre/post no-pellet brackets, so EVERY segment is a real pellet
@@ -3190,8 +3193,9 @@ The notes box travels with the video.
         the deep-review queue for manual re-segmentation, right now.
 
         Saves the review first so any per-element answers already given travel
-        with the bundle (they re-attach by frame span after the boundaries are
-        fixed). The notes text becomes the routing reason so the person doing
+        with the bundle as a record. Once a person saves new cuts they are void
+        and their pellets are asked again in triage
+        (causal_review_io.answer_survives_recut). The notes text becomes the routing reason so the person doing
         the re-seg knows what was seen."""
         bundle = getattr(self, "_bundle_dir", None)
         if not self._video_stem or not bundle:

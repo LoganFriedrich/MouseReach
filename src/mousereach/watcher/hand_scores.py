@@ -283,13 +283,13 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     if not records:
         return {}
     current = segments_from_segmentation(seg_doc) if seg_doc else None
-    from mousereach.review.causal_review_io import _when, segment_reviewer
-    cut_at = (_when((seg_doc or {}).get("corrected_at"))
-              if segmentation_is_human(seg_doc) else None)
+    from mousereach.review.causal_review_io import answer_survives_recut, recut_time
+    # The one re-cut rule (causal_review_io.answer_survives_recut): a person's
+    # statement made before a person set the current cuts is settled by them.
+    cut_at = recut_time(current)
     out: Dict[int, Optional[int]] = {}
     for rec in records:
-        said_at = _when(segment_reviewer(rec, review_doc)[1])
-        if cut_at is not None and said_at is not None and cut_at > said_at:
+        if not answer_survives_recut(rec, review_doc, cut_at):
             continue
         mapping, _ = index_review_by_segment(
             {"segments": [rec]}, current or None,

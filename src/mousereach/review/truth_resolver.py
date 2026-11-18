@@ -695,7 +695,7 @@ def resolve_truth_layers(
     human_segmentation: bool = False,
     applied: Optional[dict] = None,
     extra_review_dirs=(),
-    cuts_set_at: Optional[str] = None,
+    segments_doc: Optional[dict] = None,
 ) -> Tuple[dict, dict]:
     """Return (reaches_data, outcomes_data) with every element resolved by
     GT > causal review > triage review > algo (see module docstring).
@@ -725,10 +725,30 @@ def resolve_truth_layers(
     stem = (video_stem or reaches_data.get("video_name")
             or outcomes_data.get("video_name") or "")
 
-    # The segmentation these results were produced from. Reviews are matched
-    # against these frame ranges, so a human judgement follows the footage it
-    # was made about even when a re-cut renumbers the segments around it.
-    _cur_segs = reaches_data.get("segments") or []
+    # The pellets these results were produced from. Reviews are matched
+    # against their frames, so a human judgement follows the footage it was
+    # made about even when a re-cut renumbers the segments around it.
+    # Their frames come from the segments file through the one definition
+    # (causal_review_io.pellet_span, via current_pellets) -- the frames the
+    # review window saved on each answer and the review gate matches against.
+    # NOT from the reaches file's own segment list, which ends each segment
+    # one frame later (at the next cut) and adds a segment after the last cut:
+    # matched against that, the results step and the gate disagreed about
+    # which answers count (pellet_span says what that cost). The reaches file
+    # supplies each pellet's detected reaches, by number. Only a run with no
+    # segments file falls back to the reaches file's list; it has no person's
+    # cuts, so no re-cut to honour.
+    from mousereach.review.causal_review_io import (current_pellets,
+                                                    recut_voided_segments,
+                                                    segmentation_is_human)
+    _cur_segs = current_pellets(segments_doc, reaches_data) if segments_doc else []
+    _recut_cuts_unreadable = False
+    if _cur_segs:
+        human_segmentation = human_segmentation or segmentation_is_human(segments_doc)
+    else:
+        _recut_cuts_unreadable = bool(segments_doc) and segmentation_is_human(segments_doc)
+        _cur_segs = [{k: v for k, v in s.items() if k != "cuts_set_at"}
+                     for s in (reaches_data.get("segments") or []) if isinstance(s, dict)]
 
     # ---- per-segment OUTCOME layers, low -> high --------------------------
     # The human layer: every copy of the review, newest answer per segment
@@ -741,25 +761,28 @@ def resolve_truth_layers(
     problems: List[str] = []
     if applied is not None:
         applied['problems'] = problems
+        applied['recut_voided'] = []
+    if _recut_cuts_unreadable:
+        # A person cut this video, but their cuts cannot be read: which of
+        # their answers a re-cut voided cannot be told, so nothing is applied
+        # as if it could (the extractor refuses while problems is not empty).
+        problems.append("the segments file a person saved holds no usable cuts, so "
+                        "which of their answers still stand cannot be told")
     # Plus the folders the caller names (the run's own folder): the copy the
     # extractor was handed may be the durable one, and the copy beside the run
     # must still be merged in -- every copy counts, never one picked by time.
     _dirs = review_dirs(stem, primary) + [Path(d) for d in (extra_review_dirs or ()) if d]
-    # When a person set the current cuts (the segments file's corrected_at):
-    # answers given before then count only on a pellet whose cuts did not move
-    # (causal_review_io.index_review_by_segment: a re-cut voids them).
-    _when_cut = {"cuts_set_at": cuts_set_at} if cuts_set_at else {}
+    # When a person set the current cuts (the segments file's corrected_at,
+    # carried on each pellet as cuts_set_at): no answer given before then
+    # counts (causal_review_io.answer_survives_recut, the one rule).
+    _plain = [{k: s.get(k) for k in ("segment_num", "start_frame", "end_frame", "cuts_set_at")
+               if s.get(k) is not None} for s in _cur_segs]
     review_doc = effective_review(
-        stem, _dirs,
-        current_segments=[dict({"segment_num": s.get("segment_num"),
-                                "start_frame": s.get("start_frame"),
-                                "end_frame": s.get("end_frame")}, **_when_cut)
-                          for s in _cur_segs] or None,
+        stem, _dirs, current_segments=_plain or None,
         human_segmentation=human_segmentation, unreadable=problems) if stem else None
 
     layers: List[Dict[int, dict]] = [
-        _seg_overrides_from_review(review_doc, "human_review",
-                                   [dict(s, **_when_cut) for s in _cur_segs],
+        _seg_overrides_from_review(review_doc, "human_review", _cur_segs,
                                    human_segmentation),
     ]
 
@@ -780,8 +803,26 @@ def resolve_truth_layers(
                          gt_path, err)
             problems.append(f"the ground-truth file {gt_path} could not be read ({err})")
     if gt:
-        gt_out, _exhaustive_out = _seg_overrides_from_gt(gt, _cur_segs, human_segmentation)
+        # Ground truth is matched by frames on the same pellets, but the re-cut
+        # rule for review answers is not applied to it (unchanged here): a
+        # ground-truth file carries its own cuts and is put back on a pellet
+        # only where they match (index_gt_outcomes_by_segment, unified_gt).
+        gt_out, _exhaustive_out = _seg_overrides_from_gt(
+            gt, [{k: v for k, v in s.items() if k != "cuts_set_at"} for s in _cur_segs],
+            human_segmentation)
         layers.append(gt_out)                                     # GT tier (top)
+    # ---- answers a re-cut voided, still unasked ---------------------------
+    # The pellets whose person's answer a re-cut voided and that nobody has
+    # answered on the new cuts (recut_voided_segments -- the review gate's own
+    # check), less those ground truth decides. Not applied, and NOT left to
+    # the algorithm's call either: the caller is told (applied['recut_voided'])
+    # and the extractor refuses to write features until they are asked again
+    # in triage. WHY: voiding used to be a log line here, and a pellet the
+    # gate had not asked about took the algorithm's call over the person's.
+    if _cur_segs and review_doc and applied is not None:
+        open_ = recut_voided_segments(review_doc, _plain, human_segmentation=human_segmentation)
+        open_ -= set((gt_out if gt else {}).keys())
+        applied['recut_voided'] = sorted(open_)
 
     # ---- per-reach GT layer FIRST: a ground-truth pellet's causal reach is
     # the reach of THIS run's resolved list holding its interaction frame, so

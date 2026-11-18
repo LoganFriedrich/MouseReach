@@ -63,8 +63,9 @@ def test_a_pellet_answered_again_on_the_new_cuts_is_not_asked():
     assert _voided(doc) == set()
 
 
-def test_an_unchanged_pellet_keeps_its_answer_and_is_not_asked():
-    assert _voided({"segments": [_rec((2000, 2999), BEFORE, num=2)]}) == set()
+def test_an_unchanged_pellet_is_asked_again_too():
+    # its frames did not move, but the answer was given before the re-cut
+    assert _voided({"segments": [_rec((2000, 2999), BEFORE, num=2)]}) == {2}
 
 
 def test_an_answer_with_no_frames_names_the_pellet_with_its_number():

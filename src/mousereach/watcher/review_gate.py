@@ -300,13 +300,15 @@ def recut_voided_open(video_id: str, processing_dir: Path) -> set:
         return set()
 
 
-def flag_recut_voided(video_id: str, processing_dir: Path) -> list:
-    """Flag every pellet recut_voided_open names in the video's outcomes file
+def flag_recut_voided(video_id: str, processing_dir: Path, segments=None) -> list:
+    """Flag every pellet recut_voided_open names (or ``segments``, when the
+    caller already knows them) in the video's outcomes file
     (flagged_for_review, reason RECUT_FLAG_REASON), so the triage window walks
     it; returns the pellets flagged. Raises when the outcomes file cannot be
     written: sent to triage unflagged, the pellet would not be shown, the
     release check would pass, and the video would come straight back here."""
-    voided = recut_voided_open(video_id, processing_dir)
+    voided = (set(int(s) for s in segments) if segments is not None
+              else recut_voided_open(video_id, processing_dir))
     if not voided:
         return []
     from .route_cli import flag_segments
@@ -319,6 +321,39 @@ def flag_recut_voided(video_id: str, processing_dir: Path) -> list:
         raise RuntimeError("segment(s) %s are not in %s_pellet_outcomes.json, so they "
                            "cannot be flagged to be asked again" % (missing, video_id))
     return flagged
+
+
+def route_recut_voided_to_triage(video_id: str, processing_dir: Path, segments,
+                                 db=None, mp4_path: Optional[Path] = None) -> Path:
+    """Send a video to TRIAGE because the results step found pellets whose
+    person's answer a re-cut voided and that nobody has answered on the new
+    cuts (feature_extractor.RecutVoidedAnswers names them): each is flagged
+    first (flag_recut_voided), then the bundle is routed exactly as run_gate
+    routes a triage decision. Returns the folder the bundle went to (the
+    deep-review bundle when triage was refused because the video is there).
+
+    WHY a second route besides run_gate: the gate runs first and normally
+    catches these, but the results step checks again from its own reading of
+    the answers. If the two ever disagree the video must still be asked, not
+    filed with the algorithm's call and not left failing and retrying for
+    ever. Raises what route_to_queue raises (AlreadyInQueueError: nothing
+    moved)."""
+    segs = sorted(int(s) for s in segments)
+    flagged = flag_recut_voided(video_id, processing_dir, segments=segs)
+    reason = (f"{len(segs)} triaged segment(s) unresolved: "
+              f"{', '.join(str(s) for s in segs)} ({RECUT_FLAG_REASON}: "
+              f"{', '.join(str(s) for s in segs)})")
+    extra = [mp4_path] if mp4_path else None
+    bundle = route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
+                            db=db, db_state="triage", extra_sources=extra,
+                            held_at_step="outcome")
+    if _same_folder(Path(bundle).parent, getattr(Paths, "DEEP_REVIEW", None)):
+        discard_run_outputs(video_id, Path(processing_dir), Path(bundle))
+        logger.info(f"Kinematics: {video_id} stays in DEEP_REVIEW (triage refused)")
+    else:
+        logger.info(f"Kinematics: {video_id} segment(s) {flagged} answered before the "
+                    f"cuts were redone by a person -> TRIAGE, asked again")
+    return Path(bundle)
 
 
 def _assignment_failure(video_id: str, processing_dir: Path) -> str:
@@ -1173,8 +1208,7 @@ def _empty_triage_copy(video_id: str, deep_bundle: Path) -> None:
     review, and its review and ground truth travel with it -- see
     docs/REVIEW_TOOLS.md.) The durable store's copy of the review is still
     read, but once a person has set the new cuts every answer in it given
-    before then counts only on a pellet whose frames did not move
-    (causal_review_io.index_review_by_segment: a re-cut voids the rest).
+    before then does not count (causal_review_io.answer_survives_recut).
     WHY at all: the whole folder used to be deleted (shutil.rmtree), a
     person's ground truth and clear markers with it; only reviews had a
     durable copy."""

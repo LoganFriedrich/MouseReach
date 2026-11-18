@@ -307,6 +307,29 @@ class KinematicsProblem(Exception):
         super().__init__("kinematics not written: " + "; ".join(self.problems))
 
 
+class RecutVoidedAnswers(KinematicsProblem):
+    """Raised by FeatureExtractor.extract when a person's re-cut voided their
+    earlier answer on one or more pellets and nobody has answered those pellets
+    on the new cuts (causal_review_io.recut_voided_segments).
+    ``segments`` lists the pellets.
+
+    WHY a refusal and not the algorithm's call: the person had overruled that
+    call; filing it unasked would put it back in their place with only a log
+    line to show for it. The watcher's review gate normally sends such a
+    video to triage before kinematics; this is the second, independent check
+    at the step that writes the numbers. The watcher answers it by routing
+    the video to triage with those pellets flagged
+    (review_gate.route_recut_voided_to_triage); every other caller treats it
+    as "no features file", like any KinematicsProblem."""
+
+    def __init__(self, segments):
+        self.segments = sorted(int(s) for s in segments)
+        super().__init__([
+            "segment(s) %s: a person's answer was given before the cuts were redone "
+            "by a person, so it no longer stands, and nobody has answered on the new "
+            "cuts -- ask again in triage" % ", ".join(str(s) for s in self.segments)])
+
+
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
@@ -492,21 +515,25 @@ class FeatureExtractor:
         # fallback, because those features would be filed as the result.
         # Whether a person made this segmentation: their cuts are logged as
         # made, however short (causal_review_io.index_review_by_segment).
-        # And when that person set them: answers given before then are void
-        # unless their pellet's cuts did not move (a re-cut voids them).
+        # And the pellets themselves: their frames come from the segments file
+        # (causal_review_io.pellet_span, the definition the review window and
+        # the gate use), together with when a person set those cuts -- answers
+        # given before then are void (causal_review_io.answer_survives_recut).
         _human_seg = False
-        _cuts_set_at = None
-        try:
-            from mousereach.review.causal_review_io import cuts_set_at, segmentation_is_human
-            _seg_file = Path(reaches_path).with_name(
-                Path(reaches_path).name.replace("_reaches.json", "_segments.json"))
-            if _seg_file.is_file():
-                _seg_doc = json.loads(_seg_file.read_text(encoding="utf-8"))
+        _seg_doc = None
+        _seg_file = Path(reaches_path).with_name(
+            Path(reaches_path).name.replace("_reaches.json", "_segments.json"))
+        if _seg_file.is_file():
+            try:
+                from mousereach.review.causal_review_io import segmentation_is_human
+                _seg_doc = json.loads(_seg_file.read_text(encoding="utf-8-sig"))
                 _human_seg = segmentation_is_human(_seg_doc)
-                _cuts_set_at = cuts_set_at(_seg_doc)
-        except Exception:
-            _human_seg = False
-            _cuts_set_at = None
+            except Exception as _e:
+                # Unreadable cuts: whether a person re-cut the video, and so
+                # which of their answers stand, cannot be told.
+                self.problems.append(
+                    f"the segments file {_seg_file.name} could not be read ({_e}), so "
+                    f"which of a person's answers still stand cannot be told")
         # Ground truth BESIDE THIS RUN is looked for first (extra_gt_dirs), then
         # the corpus index. WHY: the index (causal_review_io.gt_index) is built
         # once per process. In a long-running watcher it predates a ground-truth
@@ -526,7 +553,7 @@ class FeatureExtractor:
                 extra_review_dirs=(Path(reaches_path).parent,),
                 human_segmentation=_human_seg,
                 applied=_applied,
-                cuts_set_at=_cuts_set_at)
+                segments_doc=_seg_doc)
             self.applied_ground_truth = _applied.get('ground_truth', NOT_RESOLVED)
             self.problems.extend(_applied.get('problems') or [])
             self.review_applied = not _applied.get('problems')
@@ -535,6 +562,8 @@ class FeatureExtractor:
                 f"the person's answers (review and ground truth) could not be applied: {_e}")
         if self.problems:
             raise KinematicsProblem(self.problems)
+        if _applied.get('recut_voided'):
+            raise RecutVoidedAnswers(_applied['recut_voided'])
 
         video_name = reaches_data['video_name']
         total_frames = reaches_data['total_frames']

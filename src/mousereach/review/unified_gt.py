@@ -1084,9 +1084,11 @@ def load_or_create_unified_gt(video_path: Path,
 
 def _segments_of(gt: UnifiedGroundTruth):
     """[(segment_num, start, end)] from a ground truth's boundaries (by their
-    index: segment N runs from cut N-1 to the frame before cut N)."""
+    index: segment N runs from cut N-1 to the frame before cut N --
+    causal_review_io.pellet_span, the one definition)."""
+    from mousereach.review.causal_review_io import pellet_span
     by_index = {b.index: b.frame for b in gt.boundaries if b.frame is not None}
-    return [(i + 1, by_index[i], by_index[i + 1] - 1) for i in sorted(by_index) if i + 1 in by_index]
+    return [(i + 1,) + pellet_span(by_index, i) for i in sorted(by_index) if i + 1 in by_index]
 
 
 def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGroundTruth):

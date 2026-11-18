@@ -11,17 +11,20 @@ Before: every reader matched earlier answers to the new cuts by frame overlap
 (and span-less ones by number), so a person's answer about one stretch of video
 was applied to a differently cut pellet.
 
-Now: when a person set the current cuts (the segments file records when), an
-answer given before that time counts only on a pellet whose frames are exactly
-the frames it was given for. Answers given after, and every answer on a video
-whose cuts are the segmenter's own, are matched as before.
+Now: when a person set the current cuts (the segments file records when), no
+answer given before that time counts, on any pellet -- also one whose frames
+did not move (causal_review_io.answer_survives_recut). Answers given after,
+and every answer on a video whose cuts are the segmenter's own, are matched as
+before.
 
 Built under tmp_path with invented ids; no real folder or configuration.
 """
 import json
 
+import pytest
+
 import mousereach.review.causal_review_io as io
-from mousereach.kinematics.core.feature_extractor import FeatureExtractor
+from mousereach.kinematics.core.feature_extractor import FeatureExtractor, RecutVoidedAnswers
 
 from test_causal_ownership_by_source import VID, _outcomes, run_dir  # noqa: F401
 
@@ -61,9 +64,10 @@ def test_an_answer_given_before_a_recut_on_moved_cuts_is_void():
     assert any("re-cut voids it" in n for n in notes)
 
 
-def test_an_answer_on_a_pellet_whose_cuts_did_not_move_still_counts():
+def test_an_answer_on_a_pellet_whose_cuts_did_not_move_is_void_too():
+    # pellet 2 is 2000-2999 before and after the re-cut: still void (rule R2)
     doc = {"segments": [_rec((2000, 2999), BEFORE, num=2)]}
-    assert _answered(doc) == {2}
+    assert _answered(doc) == set()
 
 
 def test_an_answer_given_after_the_recut_is_matched_as_usual():
@@ -81,9 +85,11 @@ def test_on_the_segmenters_own_cuts_matching_is_unchanged():
     assert _answered(doc, human=False) == {1}
 
 
-def test_the_results_leave_out_an_answer_voided_by_a_recut(run_dir, monkeypatch):
+def test_the_results_neither_apply_nor_drop_an_answer_voided_by_a_recut(run_dir, monkeypatch):
     """Kinematics: the person re-cut the video after answering; the old answer
-    (frames 0-120, pellet 1 is now 0-99) is not applied."""
+    (frames 0-120, pellet 1 is now 0-99) is not applied -- and the algorithm's
+    call is not written in its place either: the extractor refuses until the
+    pellet is asked again (RecutVoidedAnswers names it)."""
     folder, pose = run_dir
     monkeypatch.setattr(io, "review_dirs", lambda *a, **k: [folder])
     _outcomes(folder, outcome="retrieved")
@@ -95,11 +101,11 @@ def test_the_results_leave_out_an_answer_voided_by_a_recut(run_dir, monkeypatch)
             "segment_num": 1, "segment_span": {"start": 0, "end": 120},
             "reviewer": "reviewer_a", "reviewed_at": BEFORE,
             "human": {"outcome": "untouched"}, "answers": {}}]}), encoding="utf-8")
-    seg = FeatureExtractor().extract(
-        pose, folder / f"{VID}_reaches.json", folder / f"{VID}_pellet_outcomes.json",
-        review_path=folder / f"{VID}_causal_review.json").to_dict()["segments"][0]
-    assert seg["outcome"] == "retrieved"
-    assert seg.get("outcome_source") != "human_review"
+    with pytest.raises(RecutVoidedAnswers) as refused:
+        FeatureExtractor().extract(
+            pose, folder / f"{VID}_reaches.json", folder / f"{VID}_pellet_outcomes.json",
+            review_path=folder / f"{VID}_causal_review.json")
+    assert refused.value.segments == [1]
 
 
 def test_the_voiding_note_has_a_plain_wording():

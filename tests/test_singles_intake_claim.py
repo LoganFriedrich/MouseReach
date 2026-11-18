@@ -738,13 +738,14 @@ def test_an_mp4_the_server_already_took_counts_only_if_this_stage_wrote_it(env, 
 
 def test_every_review_hold_in_the_local_pipeline_retires_the_claimed_copy():
     """Segmentation-failure routing, a hand-score check that sends the video
-    to manual segmentation, and a non-clean review decision each hand the
+    to manual segmentation, a non-clean review decision, and the kinematics
+    step sending a video to triage (answers a re-cut voided) each hand the
     video to a review bundle; each must retire the claimed copy. Driving the
-    whole local pipeline here would need every algorithm, so the three call
+    whole local pipeline here would need every algorithm, so the four call
     sites are held by their source (the helper itself is tested above)."""
     import inspect
     source = inspect.getsource(DLCOrchestrator._run_local_pipeline)
-    assert source.count("self._retire_claim_after_hold(video_id)") == 3
+    assert source.count("self._retire_claim_after_hold(video_id)") == 4
 
 
 # ------------------------------------------- a stopped node's videos come back

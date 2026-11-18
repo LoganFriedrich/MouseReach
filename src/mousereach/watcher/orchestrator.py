@@ -276,6 +276,19 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
 # no kinematics. Read by people (mousereach-watch-status, the dashboard) and by
 # the tests; keep it plain words.
 NO_KINEMATICS_REASON = "not filed: no kinematics"
+
+
+class RoutedToReview(str):
+    """What _make_features returns when the kinematics step sent the video to
+    a review queue instead of writing features (a person's answers that a
+    re-cut voided must be asked again: feature_extractor.RecutVoidedAnswers).
+    A reason like any other, so a caller that only checks "no features" still
+    never files the video; the two pipeline callers check for it and hold the
+    video in the queue instead of marking it failed."""
+
+
+class _NeverRaised(Exception):
+    """Stands in for an exception class whose module could not be imported."""
 # What a video's row says when its features file still holds a pellet nobody
 # decided (refuse_filing_with_undecided_pellet says why).
 UNDECIDED_PELLET_REASON = "not filed: a pellet is still undecided in its kinematics"
@@ -683,6 +696,11 @@ class BaseOrchestrator:
         self.db.log_step(video_id, 'feature_extraction', 'started')
         step_start = time.time()
         try:
+            from mousereach.kinematics.core.feature_extractor import RecutVoidedAnswers
+        except Exception:
+            # The import below fails the same way and is reported there.
+            RecutVoidedAnswers = _NeverRaised
+        try:
             from mousereach.kinematics.core.feature_extractor import FeatureExtractor
             from mousereach.review.causal_review_io import resolve_review_path
             extractor = FeatureExtractor()
@@ -738,6 +756,25 @@ class BaseOrchestrator:
             # No database push here: a database integrator pulls features
             # files from the Analyzed tree (the tool stands alone).
             return None
+        except RecutVoidedAnswers as voided:
+            # A person's answers that a re-cut voided, on pellets nobody has
+            # answered on the new cuts: asked again in triage, exactly as the
+            # review gate routes them -- never filed with the algorithm's call,
+            # never held as failed to be retried into the same refusal.
+            self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(voided),
+                             duration=time.time() - step_start)
+            from mousereach.watcher.review_gate import (AlreadyInQueueError,
+                                                        route_recut_voided_to_triage)
+            try:
+                route_recut_voided_to_triage(
+                    video_id, processing_dir, voided.segments, db=self.db,
+                    mp4_path=processing_dir / f"{video_id}.mp4")
+            except AlreadyInQueueError as refused:
+                self._note_route_refused(video_id, refused, analysed=True)
+            except Exception as e:
+                # Not routed: held as failed (the caller), never filed.
+                return f"feature extraction refused ({voided}); routing to triage failed: {e}"
+            return RoutedToReview(str(voided))
         except Exception as e:
             self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(e),
                              duration=time.time() - step_start)
@@ -5782,6 +5819,9 @@ class DLCOrchestrator(BaseOrchestrator):
             # the session file. No features file -> held as failed, not filed
             # (_make_features; the same step the processing server runs).
             why = self._make_features(video_id, processing_dir, dlc_path, skip_outcomes)
+            if isinstance(why, RoutedToReview):
+                self._retire_claim_after_hold(video_id)
+                return True
             if why:
                 self._hold_without_kinematics(video_id, why)
                 return True
@@ -8617,6 +8657,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # --- Step 4/5: Feature Extraction (CLEAN videos ONLY) ---
         why = self._make_features(video_id, self.processing_dir, dlc_path, skip_outcomes,
                                   keep_filed_decisions=keep_filed_decisions)
+        if isinstance(why, RoutedToReview):
+            # Sent to triage (_make_features): held for a person, not failed.
+            logger.info(f"Pipeline held: {video_id} -> triage from the kinematics step ({why})")
+            return
         if why:
             self._hold_without_kinematics(video_id, why)
             return

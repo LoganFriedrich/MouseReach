@@ -35,7 +35,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -876,26 +876,81 @@ def plain_review_note(note: str, span=None) -> Optional[str]:
     return note
 
 
-def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
-    """The current segments ``[{segment_num, start_frame, end_frame}]`` from a
-    ``*_segments.json`` document's boundaries -- the same rule the review tool
-    uses to show them (segment N runs from boundary N-1 to the frame before
-    boundary N). Empty when the document has no usable boundaries."""
+def pellet_span(boundaries, i) -> Tuple[int, int]:
+    """THE frames of pellet ``i + 1``: from cut ``i`` to the frame before cut
+    ``i + 1``, both ends included.
+
+    The one definition of where a pellet starts and ends. Every reader that
+    matches a person's answer to a pellet builds its pellets with it -- the
+    review window (which stamps these frames on each answer it saves), the
+    review gate, the release check, the results step (truth_resolver, through
+    current_pellets) and the ground-truth readers.
+
+    WHY one definition: the reach detector writes its own segment list into
+    the reaches file with a different end -- a segment there ends AT the next
+    cut, and it adds a last segment from the last cut to the end of the video
+    (reach_detector.py). The results step used to match answers against that
+    list while the window and the gate used this one, so the two disagreed by
+    one frame on every pellet; under the re-cut rule (answer_survives_recut)
+    the gate passed a video as answered while the results step dropped every
+    one of its answers and filed the algorithm's calls, with only a log line.
+    The reaches file's list is still where each pellet's detected reaches are
+    found (by number); never where a pellet's frames come from."""
+    return int(boundaries[i]), int(boundaries[i + 1]) - 1
+
+
+def _cut_frames(seg_doc) -> Optional[List[int]]:
+    """The cut frames of a ``*_segments.json`` document, or None when one of
+    them cannot be read."""
     bounds = []
     for b in (seg_doc or {}).get("boundaries") or []:
         try:
             bounds.append(int(b.get("frame", b.get("index", 0))) if isinstance(b, dict) else int(b))
         except (TypeError, ValueError):
-            return []
-    if len(bounds) < 2:
+            return None
+    return bounds
+
+
+def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
+    """The current pellets ``[{segment_num, start_frame, end_frame}]`` from a
+    ``*_segments.json`` document's boundaries, framed by pellet_span (the one
+    definition). Each carries ``cuts_set_at`` when a person set these cuts.
+    Empty when the document has no usable boundaries."""
+    bounds = _cut_frames(seg_doc)
+    if not bounds or len(bounds) < 2:
         return []
     when = cuts_set_at(seg_doc)
-    segs = [{"segment_num": i + 1, "start_frame": bounds[i], "end_frame": bounds[i + 1] - 1}
-            for i in range(len(bounds) - 1)]
+    segs = []
+    for i in range(len(bounds) - 1):
+        start, end = pellet_span(bounds, i)
+        segs.append({"segment_num": i + 1, "start_frame": start, "end_frame": end})
     if when:
         for s in segs:
             s[CUTS_SET_AT_KEY] = when
     return segs
+
+
+def current_pellets(seg_doc, reaches_doc=None) -> List[Dict[str, Any]]:
+    """The current pellets for the results step: segments_from_segmentation's
+    frames (pellet_span), each with the reach detector's ``reaches`` of the
+    same-numbered segment of ``reaches_doc`` attached (a causal pick is placed
+    on a reach by frames, truth_resolver). The reaches file's own segment
+    frames are NOT used (pellet_span says why). Empty when the segments
+    document has no usable cuts: the caller then has no person's cuts and no
+    re-cut to honour."""
+    pellets = segments_from_segmentation(seg_doc)
+    if not pellets:
+        return []
+    reaches_by_num = {}
+    for s in (reaches_doc or {}).get("segments") or []:
+        if isinstance(s, dict) and s.get("segment_num") is not None:
+            try:
+                reaches_by_num[int(s["segment_num"])] = s.get("reaches") or []
+            except (TypeError, ValueError):
+                continue
+    for p in pellets:
+        p["reaches"] = reaches_by_num.get(p["segment_num"], [])
+    return pellets
 
 
 def segmentation_is_human(seg_doc) -> bool:
@@ -915,6 +970,42 @@ def cuts_set_at(seg_doc) -> Optional[str]:
     if not segmentation_is_human(seg_doc):
         return None
     return (seg_doc or {}).get("corrected_at") or None
+
+
+def recut_time(current_segments) -> Optional[datetime]:
+    """When a person set the current cuts (the newest ``cuts_set_at`` the
+    current pellets carry), or None for the segmenter's own cuts."""
+    return max((t for t in (_when((s or {}).get(CUTS_SET_AT_KEY))
+                            for s in current_segments or [])
+                if t is not None), default=None)
+
+
+def answer_survives_recut(rec, review_doc, recut) -> bool:
+    """Does a person's saved answer still stand on the current cuts?
+
+    THE re-cut rule, decided here and nowhere else: the review window, the
+    review gate, the release check, the hand-score check and the results step
+    all reach it through index_review_by_segment.
+
+    The rule (owner ruling R2, 2026-11-15): re-segmentation voids everything
+    after it, a person's earlier outcome and causal-reach answers included,
+    and they are asked again. Never carry, re-home or restore an answer across
+    a re-cut, by frames or by number; answers persist only through re-runs on
+    the SAME cuts. So once a person has set the current cuts (``recut``, from
+    the segments file's ``corrected_at``), an answer given before then does
+    not stand -- on any pellet, including one whose frames happen to be the
+    same: the person judged it as part of a cutting that turned out wrong.
+    WHY not "unchanged pellets keep theirs" (built 2026-11-18 in 0bd388d):
+    it decided survival by comparing frames, and the results step and the
+    gate framed pellets differently by one frame (pellet_span), so the gate
+    kept answers the results step then dropped, unasked.
+
+    True: no person's re-cut (``recut`` None), or the answer was given at or
+    after it. An answer whose time cannot be read counts as given before."""
+    if recut is None:
+        return True
+    given = _when((rec or {}).get("reviewed_at") or (review_doc or {}).get("reviewed_at"))
+    return given is not None and given >= recut
 
 
 def answered_segments(review_doc, current_segments=None,
@@ -960,20 +1051,14 @@ def index_review_by_segment(review_doc, current_segments=None,
     segmentation could not be recovered -- fall back to matching by number,
     which is all that has ever been available for them.
 
-    A RE-CUT VOIDS THE ANSWERS GIVEN BEFORE IT. When a person set the current
-    cuts (a current segment carries ``cuts_set_at``, from the segments file's
-    ``corrected_at``), an answer given before that time counts only if its
-    frames are EXACTLY the frames of a current segment -- that pellet's cuts
-    did not move. Any other earlier answer -- overlapping, shifted, split, or
-    recording no frames at all -- is not applied, and the pellet is asked
-    again; the answer stays in the file as a record (restore_review_for_segments
-    keeps it under ``unmatched_answers``). WHY: the rule is that
-    re-segmentation voids everything after it, a person's answers included:
-    they were given on cuts that turned out wrong, and fitting them onto new
-    cuts by overlap or by number is a guess about footage nobody judged on the
-    new cuts. The same rule puts ground-truth outcomes back only on unchanged
-    cuts (unified_gt). An answer given after the cuts were set is matched as
-    below.
+    A RE-CUT VOIDS THE ANSWERS GIVEN BEFORE IT (answer_survives_recut, the
+    one place the rule is decided). When a person set the current cuts (a
+    current segment carries ``cuts_set_at``, from the segments file's
+    ``corrected_at``), no answer given before that time is applied, whatever
+    its frames; the pellet is asked again (recut_voided_segments) and the
+    answer stays in the file as a record (restore_review_for_segments keeps it
+    under ``unmatched_answers``). An answer given after the cuts were set is
+    matched as below.
 
     A segment shorter than MIN_REAL_SEGMENT_FRAMES is treated as a segmenter
     artifact -- unless ``human_segmentation`` is set: a person who cut the video
@@ -1023,9 +1108,7 @@ def index_review_by_segment(review_doc, current_segments=None,
     if not spans:
         return by_num, notes
 
-    recut = max((t for t in (_when(s.get(CUTS_SET_AT_KEY)) for s in current_segments)
-                 if t is not None), default=None)
-    exact = set(spans.values())
+    recut = recut_time(current_segments)
 
     mapping = {}
     claimed = {}
@@ -1039,18 +1122,16 @@ def index_review_by_segment(review_doc, current_segments=None,
                 "footage (a zero-length-segment artifact); dropped"
                 % (old_num, rspan[0], rspan[1]))
             continue
-        if recut is not None and rspan not in exact:
-            given = _when(rec.get("reviewed_at") or (review_doc or {}).get("reviewed_at"))
-            if given is None or given < recut:
-                notes.append(
-                    "segment %s answer (frames %s) was given before a person set the "
-                    "current cuts (%s) and is not on a pellet whose cuts stayed the "
-                    "same; a re-cut voids it -- not applied, the pellet is unanswered again"
-                    % (old_num, "%d-%d" % rspan if rspan else "not recorded",
-                       recut.isoformat(timespec="seconds")))
-                if voided is not None:
-                    voided.append(rec)
-                continue
+        if not answer_survives_recut(rec, review_doc, recut):
+            notes.append(
+                "segment %s answer (frames %s) was given before a person set the "
+                "current cuts (%s); a re-cut voids it -- not applied, the pellet "
+                "is unanswered again"
+                % (old_num, "%d-%d" % rspan if rspan else "not recorded",
+                   recut.isoformat(timespec="seconds")))
+            if voided is not None:
+                voided.append(rec)
+            continue
         if rspan is None:
             # No frames recorded; the number is the only handle there is.
             if old_num is not None and int(old_num) in spans:
@@ -1150,7 +1231,7 @@ def recut_voided_segments(review_doc, current_segments=None,
     nobody has answered since: the pellets that must be ASKED AGAIN.
 
     index_review_by_segment voids an answer given before a person set the
-    current cuts (unless its pellet's frames did not move). Voiding alone only
+    current cuts (answer_survives_recut). Voiding alone only
     makes the pellet unanswered, and an unanswered pellet the algorithm did not
     flag takes the algorithm's call -- so a person's answer would silently be
     replaced by the very call they had overruled. This names those pellets so
@@ -1216,8 +1297,7 @@ def recut_voided_segments(review_doc, current_segments=None,
 def gt_segments(gt) -> List[Dict[str, Any]]:
     """The segments a ground-truth file was made on, ``[{segment_num,
     start_frame, end_frame}]``, from its own ``segmentation.boundaries``
-    (segment N runs from boundary N-1 to the frame before boundary N, the
-    rule every other reader uses). Empty when the file records no usable
+    (pellet_span, the rule every other reader uses). Empty when the file records no usable
     boundaries.
 
     Each boundary is placed by its own ``index`` (0 = the first cut), not by
@@ -1239,8 +1319,12 @@ def gt_segments(gt) -> List[Dict[str, Any]]:
             by_index[int(b["index"])] = int(b["frame"])
         except (TypeError, ValueError):
             return []
-    return [{"segment_num": i + 1, "start_frame": by_index[i], "end_frame": by_index[i + 1] - 1}
-            for i in sorted(by_index) if i + 1 in by_index]
+    out = []
+    for i in sorted(by_index):
+        if i + 1 in by_index:
+            start, end = pellet_span(by_index, i)
+            out.append({"segment_num": i + 1, "start_frame": start, "end_frame": end})
+    return out
 
 
 def index_gt_outcomes_by_segment(gt, current_segments=None,
