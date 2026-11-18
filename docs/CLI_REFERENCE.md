@@ -1190,6 +1190,11 @@ options:
   -q, --quiet           Suppress per-video output.
 ```
 
+Refuses an input folder inside the filed (Analyzed) tree, before reading or
+writing anything ("ERROR: <folder> is inside the filed tree ... Nothing was
+written.", exit code 1): it rewrites the outcomes and reaches files of every
+video in the folder. Use it on a copy in a folder of your own.
+
 ## Step 4b - Reach Assignment (joins v8 reaches + v6 cascade outcomes into per-reach permanent output for kinematic analysis)
 
 ### `mousereach-assign-reaches`

@@ -152,7 +152,16 @@ def refuse_filed_output(output, input_path) -> None:
     """For a step command: print why and exit 1 when its output folder -- the
     ``-o`` folder, or by default the input folder (the input file's folder) --
     is inside the filed tree (filed_tree_refusal says why). Nothing has been
-    written when it exits."""
+    written when it exits.
+
+    The ONE guard every hand step command calls before it reads or writes
+    anything: mousereach-segment, -detect-reaches, -detect-outcomes,
+    -grasp-analyze, -assign-reaches, -resolve-triage-from-gt, and the triage
+    and advance commands of each step. There is no override: a
+    step command run in a filed folder would leave its one new output beside
+    the older outputs of every later step, so the folder would no longer be
+    one run's results. Filed videos are brought up to date by the watcher's
+    re-run, which keeps the earlier generation and every check."""
     import sys
     folder = output
     if folder is None and input_path is not None:

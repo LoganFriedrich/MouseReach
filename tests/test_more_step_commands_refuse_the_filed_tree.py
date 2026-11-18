@@ -66,3 +66,21 @@ def test_triage_and_advance_commands_refuse_the_filed_tree(filed, monkeypatch, m
         getattr(cli, func)()
     assert e.value.code == 1
     assert ran == []
+
+
+def test_resolve_triage_from_gt_refuses_the_filed_tree(filed, monkeypatch):
+    """It rewrote a filed video's outcomes and reaches files in place."""
+    (filed / f"{V}_pellet_outcomes.json").write_text(json.dumps(
+        {"segments": [{"segment_num": 1, "outcome": "triaged", "triaged": True}]}))
+    (filed / f"{V}_unified_ground_truth.json").write_text(json.dumps(
+        {"outcomes": {"segments": [{"segment_num": 1, "outcome": "retrieved"}]}}))
+    before = {p.name: p.read_bytes() for p in filed.iterdir()}
+    from mousereach.triage import gt_resolve
+    monkeypatch.setattr(sys, "argv", ["mousereach-resolve-triage-from-gt", "-i", str(filed)])
+    code = 0
+    try:
+        gt_resolve.main()
+    except SystemExit as e:
+        code = e.code
+    assert code == 1
+    assert {p.name: p.read_bytes() for p in filed.iterdir()} == before

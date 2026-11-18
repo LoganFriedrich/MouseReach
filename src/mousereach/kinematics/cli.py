@@ -64,11 +64,8 @@ def main_batch():
         sys.exit(1)
 
     # Never into the filed tree (analyzed_tree.filed_tree_refusal says why).
-    from mousereach.pipeline.analyzed_tree import filed_tree_refusal
-    why = filed_tree_refusal(output_dir)
-    if why:
-        print(f"ERROR: {why} Nothing was written.")
-        sys.exit(1)
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(output_dir, None)
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)

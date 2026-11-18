@@ -6758,3 +6758,20 @@ machine's watcher database or the lock record beside its filed results
 (`<video>_crystallized.json`) says it is locked, or when the lock record cannot be checked; and a
 login that cannot name its watcher database is refused before anything changes ("[FAIL] ...; no
 manifest was changed", exit code 1). Without `--apply` it only reports, as before.
+
+## Update 2026-11-18: mousereach-resolve-triage-from-gt refuses the filed tree too
+
+`mousereach-resolve-triage-from-gt -i <folder>` copies answers from ground-truth files into the
+outcomes and reaches files of every video in the folder, rewriting them in place. Pointed at a
+filed folder it changed filed results with no earlier generation kept. It now refuses a folder
+inside the configured Analyzed tree before reading or writing anything, with the same message
+and exit code 1 as every other hand step command.
+
+Every hand step command now calls the same guard (`pipeline/analyzed_tree.refuse_filed_output`):
+`mousereach-segment`, `mousereach-detect-reaches`, `mousereach-detect-outcomes`,
+`mousereach-grasp-analyze`, `mousereach-assign-reaches`, `mousereach-resolve-triage-from-gt`, and
+the triage and advance commands of segmentation, reaches and outcomes. (`mousereach-reject-tray`
+is retired and moves nothing; the Run All Steps tab runs the watcher's own steps and refuses a
+filed video itself.) None of them has an option to write into the filed tree anyway: one step's
+new output beside the older outputs of the later steps would no longer be one run's results.
+Filed videos are brought up to date by the watcher's re-run (`mousereach-version-check --mark`).

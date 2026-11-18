@@ -352,6 +352,12 @@ def main():
     parser.add_argument("-q", "--quiet", action="store_true",
                         help="Suppress per-video output.")
     args = parser.parse_args()
+    # Never into the filed tree (analyzed_tree.filed_tree_refusal says why):
+    # this rewrites the outcomes and reaches files of every video in the
+    # folder, and in a filed folder they are the record of the run that
+    # passed every check.
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(None, args.input)
 
     results = resolve_dir(args.input, gt_dir=args.gt_dir, verbose=not args.quiet)
     n_videos = len(results)
