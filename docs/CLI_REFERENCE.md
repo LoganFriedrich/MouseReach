@@ -1,9 +1,16 @@
 # MouseReach CLI Reference
 
-Generated 2026-10-22 by `python -m mousereach.docs.generate_cli_reference` --
-every entry below is the command's own `--help` output, harvested from
-the installed executables, so this file cannot say something the code
-does not. **Do not edit by hand; rerun the generator.**
+Generated 2026-10-22 by `python -m mousereach.docs.generate_cli_reference`.
+What the generator writes: the ``` blocks, each a command's own `--help`
+output harvested from the installed executables, and the section headings
+and italic one-line captions, which come from the comments in
+`pyproject.toml`'s `[project.scripts]`, plus this introduction and the
+Contents list. Everything else -- the paragraphs between the blocks, and the
+whole `mousereach-label-mismatch` entry -- was written by hand afterwards. The generator keeps none of it: it rewrites the
+whole file, so rerunning it deletes every hand-written paragraph. Before
+regenerating, move each such paragraph into its command's help text. Some
+blocks were also edited by hand, so a block may not match `--help` word for
+word; run the command with `--help` to see what the installed version says.
 
 All commands exist only inside the mousereach conda environment:
 
@@ -47,7 +54,7 @@ walkthroughs of the review tools themselves.
 - [Algorithm Documentation](#algorithm-documentation) -- `mousereach-docs`
 - [Analysis Dashboard](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
-- [Database Sync - Automatic sync to central database](#database-sync-automatic-sync-to-central-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
+- [Database Sync - optional sync to a central database](#database-sync-optional-sync-to-a-central-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
 - [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`, `mousereach-send-recordings`, `mousereach-recording-issue`
 - [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-reconcile`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
@@ -261,11 +268,11 @@ Crop 8-camera collages into single-animal videos
 options:
   -h, --help            show this help message and exit
   -i INPUT, --input INPUT
-                        Input file or directory (default: <path>
-                        vior\MouseReach_Pipeline\Unanalyzed\Multi-Animal)
+                        Input file or directory (default:
+                        <nas_root>\Unanalyzed\Multi-Animal)
   -o OUTPUT, --output OUTPUT
-                        Output directory (default: <path>
-                        useReach_Pipeline\Unanalyzed\Single_Animal)
+                        Output directory (default:
+                        <nas_root>\Unanalyzed\Single_Animal)
   --queue               Also hand the cut videos to the pose step: each video
                         this run cut goes into the shared singles folder, where
                         a graphics-card PC's watcher claims and poses it (never
@@ -392,7 +399,13 @@ options:
 
 **No `--help` available** (timeout): --help did not return within 45s (likely a GUI entry point with no argument parsing)
 
-Entry point: `mousereach.fpfn_review.widget:main`. Read its module docstring for usage.
+Entry point: `mousereach.fpfn_review.widget:main`. It opens a napari window
+with the FP/FN Reach Review widget: load a per-video JSON manifest of the reach
+detector's true-positive / false-positive / false-negative reach events (format:
+`src/mousereach/fpfn_review/SCHEMA.md`) and scrub the video; red, green and blue
+squares mark the FP, TP and FN windows, and a table lists every event with a
+Jump button. Read-only: it writes nothing. It takes no options, and `--help`
+opens the window.
 
 ## Step 2 - Segmentation
 
@@ -488,6 +501,8 @@ nothing processed them again. Easy and Flat are processed by the watcher now -- 
 else, never segmented or held -- so the command only prints that and exits.
 Its old options (`--dry-run`, `--folder`, `--quiet`) are still accepted so an
 old script calling it does not break.
+
+## Step 3 - Reach Detection
 
 ### `mousereach-detect-reaches`
 
@@ -753,9 +768,11 @@ mousereach-label-mismatch --decisions
 ### `mousereach-route-to-queue`
 
 ```
-usage: -c [-h] [--worklist WORKLIST] --queue {triage,deep_review} --reason
-          REASON [--flag-segments FLAG_SEGMENTS] [--recheck] [--json]
-          [video_id]
+usage: mousereach-route-to-queue [-h] [--worklist WORKLIST] --queue
+                                 {triage,deep_review} --reason REASON
+                                 [--flag-segments FLAG_SEGMENTS] [--recheck]
+                                 [--json]
+                                 [video_id]
 
 mousereach-route-to-queue -- put an archived video into a review queue.
 
@@ -897,8 +914,8 @@ waiting in a queue. Exit code:
     bundle is reachable from here, when the held triage bundle has no outcomes
     file or not the requested segments, when deep review was asked for a video
     held in triage (escalate it from the triage review tool instead), when
-    the triage folder is an old copy kept for a person (listed in the Pipeline
-    Dashboard), or when the bundle is being moved by the return scan right
+    the triage folder is an old copy kept for a person (listed under 'Folders
+    left for a person' in the Review Queues tab), or when the bundle is being moved by the return scan right
     now. Ask again later --
     after the video is filed again, a normal route takes the question.
 
@@ -1037,6 +1054,10 @@ options:
   --markdown MARKDOWN   Also write the report as a markdown document
 ```
 
+`--snapshot` defaults to the folder in the `MOUSEREACH_SNAPSHOT_DIR` environment
+variable. With neither set, the database part of the audit is skipped with a
+`[!]` note and the file side is still reported.
+
 ### `mousereach-doc-check`
 
 ```
@@ -1065,13 +1086,13 @@ segmenter found but did not use.
 options:
   -h, --help            show this help message and exit
   --queue-dir QUEUE_DIR
-                        Queue of bundles to work through (default: the deep-
-                        review queue)
+                        Queue of bundles to work through (default: the re-
+                        segmentation queue)
 ```
 
 ### `mousereach-backfill-manifest-versions`
 
-*Causal review, triaged-only (walk only unresolved elements)*
+*Fill in pipeline stage versions a manifest never recorded (dry run unless --apply)*
 
 ```
 usage: mousereach-backfill-manifest-versions [-h] [--root ROOT]
@@ -1678,8 +1699,8 @@ options:
                         detect)
   --no-brainglobe       Skip loading BrainGlobe connectomics data
   -t TRACKING_DIR, --tracking-dir TRACKING_DIR
-                        Directory with Connectome_XX_Animal_Tracking.xlsx
-                        files (adds Test_Phase, Weight, surgery)
+                        Directory with the cohort tracking workbooks
+                        (*.xlsx; adds Test_Phase, Weight, surgery)
   --no-surgery          Skip loading surgery/mouse-level metadata
   --derive-outcomes     Derive per-reach outcomes (miss_on_pillar,
                         miss_off_pillar, causal reach)
@@ -1757,14 +1778,18 @@ options:
   --json                Output as JSON
 ```
 
-## Database Sync - Automatic sync to central database
+## Database Sync - optional sync to a central database
+
+Runs only by hand (`mousereach-sync`) or after each features file
+`mousereach-grasp-analyze` writes, and only when `central_db` is set. The
+watcher never syncs.
 
 ### `mousereach-sync`
 
 ```
 usage: mousereach-sync [-h] [--force] [--dry-run] [--verbose]
 
-Sync MouseReach features to reach_data table in connectome database
+Sync MouseReach features to reach_data table in the central database
 
 options:
   -h, --help     show this help message and exit
@@ -1772,6 +1797,12 @@ options:
   --dry-run, -n  Show what would be synced without actually syncing
   --verbose, -v  Show detailed output
 ```
+
+Sync is off unless `central_db` is set in `~/.mousereach/config.json` (or the
+`MOUSEREACH_CENTRAL_DB` environment variable). Without it, `mousereach-sync`
+prints the reason after `Error:`, writes nothing and exits with code 1
+(`mousereach-sync-status` shows the same reason and exits with code 0). See
+docs/SYNC_TO_DATABASE.md.
 
 ### `mousereach-sync-watch`
 
@@ -1947,6 +1978,13 @@ after the failure, while the video has retries left (`watcher.max_retries`, 3 by
 default) and its video and pose files are still in its Processing folder. Only a
 video that has used up its retries, or whose files are gone, still needs this
 command. `mousereach-watch-status` lists the failed videos.
+A failed re-run of a video that was already filed is put back to `archived` once
+its retries are used up (or its working files are gone): its filed results
+stand and it does not need this command. It stays `failed` when its filed
+results are no longer in its filed folder (for example after
+`mousereach-repose-videos`), or when its folder holds a file a person made that
+has no other copy (hand-set cuts, ground truth, a clear marker, a review's
+answers; the reason is added to its error message).
 
 ### `mousereach-watch-quarantine`
 
@@ -2202,6 +2240,8 @@ options:
               whose watcher is not running
 ```
 
+Exit code 1 when any recording is held (listed with its reason), else 0.
+
 ### `mousereach-recording-issue`
 
 ```
@@ -2281,7 +2321,7 @@ options:
                         Archive/historical/ASPA).
   --dest DEST           Intake dir (default: Unanalyzed/Multi-Animal).
   --cohorts COHORTS     Comma-separated cohort dirs to import (default:
-                        OptD,OptE,OptF,OptG,H,I,J,K,L,M).
+                        the in-scope cohorts).
   --limit LIMIT         Only act on the first N sessions (testing).
   --sessions-file SESSIONS_FILE
                         Import only the recordings holding at least one
@@ -2415,7 +2455,8 @@ machine's database still gets its record.
 On a GPU PC that only poses, the command refuses (exit code 1, "Publication
 locks are set and lifted on the processing server ... Nothing was changed"). A
 GPU PC with `watcher.also_process` on (a lab with no processing server) may
-lock, with a note. `--list` works on any machine and also lists lock records
+lock, with a note. `--list` works on any machine that has a watcher database (without one it
+prints "ERROR: Watcher database not found." and exits with code 1) and also lists lock records
 that have no locked row on this machine (set from another machine). The
 Pipeline Dashboard's Publication Lock buttons follow the same rules and show
 the videos that were not locked.
@@ -2474,9 +2515,8 @@ Old structure:
   Analyzed/Sort/Multi-Animal/    (collage MKVs)
 
 New structure:
-  Analyzed/Connectome/CNT01/
-  Analyzed/Connectome/CNT01/Multi-Animal/
-  Analyzed/Connectome/CNT02/
+  Analyzed/<project folder>/<cohort folder>/
+  Analyzed/<project folder>/<cohort folder>/Multi-Animal/
   ...
 
 options:
@@ -2488,7 +2528,7 @@ options:
 Examples:
   mousereach-migrate-archive              # Dry run - show plan
   mousereach-migrate-archive --execute    # Actually move files
-  mousereach-migrate-archive --nas-root <path>
+  mousereach-migrate-archive --nas-root <nas_root>
 ```
 
 ## ASPA reprocessing tools
