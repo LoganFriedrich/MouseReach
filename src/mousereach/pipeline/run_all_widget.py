@@ -1,10 +1,14 @@
-"""Run All Steps tab -- push one opened video through the whole pipeline.
+"""Run All Steps tab -- run one chosen video through the watcher's own steps.
 
-An operator picks a single-animal video and clicks Run; the driver
-(mousereach.pipeline.run_all.run_all_steps) runs segmentation -> reaches ->
-outcomes -> causal reach (algo-4) -> gate -> kinematics, streaming per-stage
-progress into the log. The video must already have its DLC pose (.h5) beside it
-(DLC is a GPU step -- run it in the '1 - DLC Analysis' tab first if missing).
+A person picks a single-animal video and clicks Run. The run is the watcher's
+own (mousereach.watcher.run_one.run_one_video): take it in from the posed
+folder, analyse it, run the quality check, the hand-score comparison and the
+review gate, make its kinematics and file it -- or hold it in a review queue,
+exactly as the automatic watcher would. A filed video, a video held in a review
+queue, a crystallized one, one the watcher does not know, and any run while a
+watcher already runs on this machine are refused, with the reason on screen;
+nothing is run or moved then. Progress lines are the watcher's own log lines
+about that video.
 
 The work runs on a background thread; progress is marshalled back to the GUI via
 Qt signals (thread-safe queued connections).
@@ -47,9 +51,14 @@ class RunAllStepsWidget(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
         intro = QLabel(
-            "Run ONE video through every step: segmentation -> reaches -> "
-            "outcomes -> causal reach -> kinematics. The video must already have "
-            "its DLC pose (.h5) next to it (run DLC first if it does not)."
+            "Run ONE chosen video through the watcher's own steps, now: take it "
+            "in, segmentation -> reaches -> outcomes -> causal reach, the quality "
+            "check, the hand-score comparison and the review gate, then "
+            "kinematics and filing -- or a review queue, as the watcher would. "
+            "Runs on the processing machine only, and only when no watcher is "
+            "running there. Not run (the reason is shown): a filed video, a video "
+            "in a review queue, a crystallized video, or one the watcher does not "
+            "know (a posed video waits in the posed folder with its pose)."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -107,7 +116,8 @@ class RunAllStepsWidget(QWidget):
                 from mousereach.pipeline.run_all import run_all_steps
                 res = run_all_steps(path, progress=lambda s, m: worker.progress.emit(s, m))
             except Exception as e:
-                res = {"error": str(e), "stages": [], "held": None, "done": False}
+                res = {"error": str(e), "stages": [], "held": None, "done": False,
+                       "refused": None}
             worker.finished.emit(res)
 
         self._thread = threading.Thread(target=job, daemon=True, name="run-all-steps")
@@ -118,21 +128,33 @@ class RunAllStepsWidget(QWidget):
 
     def _on_finished(self, result: dict):
         self._run_btn.setEnabled(True)
-        if result.get("error"):
-            self._status.setText(f"[FAIL] {result['error']}")
-            self._status.setStyleSheet("color:#a33; font-weight:bold;")
-        elif result.get("held"):
-            self._status.setText(
-                f"[HOLD] Would be held for review ({result['held']}): "
-                f"{result.get('hold_reason', '')}. Kinematics skipped -- resolve in "
-                f"the Review Queues tab to finish."
-            )
+        self._status.setText(status_text(result))
+        if result.get("refused") or result.get("held"):
             self._status.setStyleSheet("color:#c80; font-weight:bold;")
+        elif result.get("error"):
+            self._status.setStyleSheet("color:#a33; font-weight:bold;")
         elif result.get("done"):
-            self._status.setText("[OK] All steps complete -- kinematics synced to the database.")
             self._status.setStyleSheet("color:#1a5; font-weight:bold;")
-        else:
-            self._status.setText("Finished.")
+
+
+def status_text(result: dict) -> str:
+    """The one line the tab shows when a run ends. WHY its own function: the
+    words say what happened to the video (filed, held where, refused why), and
+    a test reads them without a display."""
+    if result.get("refused"):
+        return f"[NOT RUN] {result['refused']}"
+    if result.get("held") in ("triage", "deep_review"):
+        where = result["held"].replace("_", " ")
+        return (f"[HELD] Sent to the {where} queue: {result.get('hold_reason') or ''}. "
+                f"It goes on by itself once reviewed (Review Queues tab).")
+    if result.get("held") == "processing":
+        return (f"[HELD] Waiting in Processing: {result.get('hold_reason') or ''}. "
+                f"Not filed until that is resolved.")
+    if result.get("error"):
+        return f"[FAIL] {result['error']}"
+    if result.get("done"):
+        return "[OK] Passed every check and filed."
+    return f"Finished (watcher state now '{result.get('state_after') or '?'}')."
 
 
 def main():

@@ -45,7 +45,7 @@ DLC .h5 + {video}_segments.json
 
 Two places call `detect_video_reaches`:
 
-- **`reach/core/batch.py:163`**, inside `process_single`. This is the busy one. It is reached from `process_batch` (`batch.py:244`, which is what `mousereach-detect-reaches` runs), from both watcher pipelines (`watcher/orchestrator.py:1052` and `:1949`), from `pipeline/run_all.py:83`, and from `pipeline/reprocess_to_current.py:212`.
+- **`reach/core/batch.py:163`**, inside `process_single`. This is the busy one. It is reached from `process_batch` (`batch.py:244`, which is what `mousereach-detect-reaches` runs), from both watcher pipelines (`watcher/orchestrator.py:1052` and `:1949`; the Run All Steps tab, `pipeline/run_all.py`, reaches it only through the watcher's own handlers, `watcher/run_one.py`), and from `pipeline/reprocess_to_current.py:212`.
 - **`review/staging.py:304`**, building a review bundle.
 
 Both then call `ReachDetector.save_results` (`batch.py:168`, `staging.py:305`). The napari "Run Pipeline" tab used to be a third caller with its own processor (`pipeline/core.py`); it was removed, and the tab now runs one pass of the watcher, which goes through `process_single` like every other watcher run. `span_to_reaches` itself writes nothing to disk.

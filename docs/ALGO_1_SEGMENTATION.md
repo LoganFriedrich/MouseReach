@@ -52,7 +52,7 @@ Seven call sites, in three groups.
 2. (removed) The old "Run Pipeline" tab's own runner, `pipeline/core.py`. The tab now runs one pass of the watcher (call site 3), so it no longer has a call site of its own.
 3. The watcher, local-pipeline path -> `watcher/orchestrator.py:1010`
 4. The watcher, dependency-aware reprocess path -> `watcher/orchestrator.py:1891`
-5. A manual single-video run -> `pipeline/run_all.py:74`
+5. (no call site of its own) A manual single-video run, the Run All Steps tab (`pipeline/run_all.py`): it drives the watcher's own handlers for the one chosen video (`watcher/run_one.py`), so it reaches segmentation through call site 3.
 6. Reprocessing to current versions -> `pipeline/reprocess_to_current.py:211`
 
 A person's cuts (a segments file marked `boundary_source: "human"`) survive every one of these: `process_single` keeps such a file when it finds one in its output folder, bring-current copies it from beside the filed video into its work folder first, and the stager (7) keeps it as it is and does not segment.
@@ -65,7 +65,7 @@ One more script re-runs the segmenter without using its boundaries: a backfill s
 
 ### Who sets `validation_status`
 
-Only three of those paths ever write `validation_status` into the file: `process_batch` (`core/batch.py:191-198`), the old Run Pipeline tab's runner (`pipeline/core.py`, removed; files it wrote still carry the key), and human review. **The watcher does not.** `orchestrator.py:1846` imports `add_validation_status` and never calls it -- that import is the only mention of the name in the file. `run_all.py`, `reprocess_to_current.py` and `staging.py` do not set it either. In the archive, a large share of files have no `validation_status` key at all.
+Only three of those paths ever write `validation_status` into the file: `process_batch` (`core/batch.py:191-198`), the old Run Pipeline tab's runner (`pipeline/core.py`, removed; files it wrote still carry the key), and human review. **The watcher does not.** `orchestrator.py:1846` imports `add_validation_status` and never calls it -- that import is the only mention of the name in the file. `reprocess_to_current.py` and `staging.py` do not set it either (and the Run All Steps tab runs the watcher's own steps). In the archive, a large share of files have no `validation_status` key at all.
 
 ### Two constants with the same name and different values
 

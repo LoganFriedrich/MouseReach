@@ -1091,7 +1091,7 @@ This is the most important thing in this document.
 2. `Processing/Review/deep_review/<stem>/<stem>_causal_review.json`
 3. whatever the caller passes as `primary_dir`
 
-`_review_doc` (`truth_resolver.py:72-88`) reads a review by appending a filename to what it is given. It accepts a **directory**. Every production caller passes the result of `resolve_review_path` (`run_all.py:120-124`, `orchestrator.py:1151-1155`, `orchestrator.py:2100-2104`, `reprocess_to_current.py:258-260`), and `resolve_review_path` returns the path to the JSON **file** (`causal_review_io.py:83-90`). Appending a filename to a file path yields nothing, so **lookup 3 never contributes**.
+`_review_doc` (`truth_resolver.py:72-88`) reads a review by appending a filename to what it is given. It accepts a **directory**. Every production caller passes the result of `resolve_review_path` (`orchestrator.py:1151-1155`, which the Run All Steps tab runs through `watcher/run_one.py`; `orchestrator.py:2100-2104`, `reprocess_to_current.py:258-260`), and `resolve_review_path` returns the path to the JSON **file** (`causal_review_io.py:83-90`). Appending a filename to a file path yields nothing, so **lookup 3 never contributes**.
 
 The `except` branch that would rescue this (`feature_extractor.py:226-239`) calls `load_and_apply_review`, which does accept a file path (`causal_review_io.py:526-527`). It only runs if `resolve_truth_layers` raises, and `resolve_truth_layers` is written not to raise.
 

@@ -22,7 +22,7 @@ There are two detectors in this directory.
 
 **v6 cascade** (`v6_cascade/`, version string `6.1.0` at `v6_cascade/__init__.py:16`). This is what the batch pipeline and the watcher run:
 
-- `outcomes/core/batch.py:154` `process_single()` runs v6 unless the caller passes `legacy=True`. Every caller of it uses the default: `watcher/orchestrator.py:1068` and `:1981`, `pipeline/run_all.py:91`, `pipeline/reprocess_to_current.py:213`.
+- `outcomes/core/batch.py:154` `process_single()` runs v6 unless the caller passes `legacy=True`. Every caller of it uses the default: `watcher/orchestrator.py:1068` and `:1981` (also the Run All Steps tab, `pipeline/run_all.py`, which runs the watcher's own handlers through `watcher/run_one.py`), `pipeline/reprocess_to_current.py:213`.
 - `mousereach-detect-outcomes` runs v6 through the same `process_batch` -> `process_single` path (`outcomes/cli.py` `main_batch`). Since 2026-08 it has no detection or input-reading code of its own.
 
 **Legacy detector** (`core/pellet_outcome.py`; its `VERSION` constant is `"4.0.0_step2"` at line 110). Its output has a completely different shape (see "What is not in the file").
@@ -39,7 +39,7 @@ Nothing announces which detector produced a given file except the `detector_vers
 
 The rest of this document describes v6 unless it says otherwise.
 
-**Outcome detection is skipped entirely for tray types E and F.** `pipeline/run_all.py:87-95`, `watcher/orchestrator.py:1062` and `:1971` all check the tray letter parsed from the filename and skip the step, because those trays have no reliable pellet. No outcomes file is produced at all for those videos.
+**Outcome detection is skipped entirely for tray types E and F.** `watcher/orchestrator.py:1062` and `:1971` (and so the Run All Steps tab, which runs the watcher's steps) check the tray letter parsed from the filename and skip the step, because those trays have no reliable pellet. No outcomes file is produced at all for those videos.
 
 ---
 
@@ -423,7 +423,7 @@ The only things that vary at runtime:
 |---|---|---|
 | `legacy=True` | `core/batch.py` `process_single`, passed through by `process_batch` | Runs the old geometric detector: different algorithm, different output shape, different version string. Reached by `process_single(..., legacy=True)` from Python or by `mousereach-detect-outcomes --legacy` (since 2026-08; before that the flag did not reach it) |
 | `video_dir` | `core/batch.py:145-151`, defaults to searching the output directory | If no video file is found, the pixel-based artefact guard and stage 98 both become no-ops. Displaced commits that would have been triaged are committed instead. Nothing reports that this happened |
-| Tray type | `pipeline/run_all.py:87-95`, `watcher/orchestrator.py:1062`, `:1971` | Tray `E` or `F` → the whole step is skipped, no file written |
+| Tray type | `watcher/orchestrator.py:1062`, `:1971` (the Run All Steps tab runs these) | Tray `E` or `F` → the whole step is skipped, no file written |
 | Whether reaches exist | `core/batch.py:199-202` | No reach file → empty reach list → stage 7 and most touched stages defer, stage 4 loosens; net shift toward `untouched` and toward triage |
 
 The stage list itself (`detector.py:112-146`) is hard-coded and identical for every video. There is no way to enable, disable or reorder a stage without editing `detector.py` or the stage's constants.

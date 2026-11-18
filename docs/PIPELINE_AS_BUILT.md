@@ -2290,9 +2290,10 @@ node that also analyses in `_run_local_pipeline`). WHY: at filing, a video with 
 went to the queue, was answered, came back, and only then met the hand score -- a disagreement sent
 it to the queue a second time. Before the gate, every question about a video reaches a person in one
 visit, and no video gets kinematics before it has been compared. The check is NOT inside
-`review_gate.evaluate_gate`, which stays pure and is also used by `pipeline/run_all.py` and
-`pipeline/reprocess_to_current.py`. `run_all.py` does not compare with hand scores;
-`reprocess_to_current.py` does (it calls `hand_scores.check` before the gate).
+`review_gate.evaluate_gate`, which stays pure and is also used by
+`pipeline/reprocess_to_current.py`, which compares too (it calls `hand_scores.check` before the
+gate). The Run All Steps tab (`pipeline/run_all.py`) runs the watcher's own pipeline handler, so it
+compares exactly here (update 2026-11-18 below).
 
 What each answer does now:
 
@@ -5594,18 +5595,15 @@ ways to run something by hand that keep every check:
 - one filed video on new versions: the watcher's version re-run -- change the declared versions
   (Watcher Control tab) or run `mousereach-version-check --mark`; that re-run keeps every
   person's cuts and answers;
-- one chosen video through every step: the **Run All Steps** tab, which is a separate, older path
-  (see the leftover below -- no hand-score comparison, and its quality check lets a video through
-  when the check cannot run; the tab's note says so too).
+- one chosen video through every step: the **Run All Steps** tab, which runs the watcher's own
+  steps for that video (update 2026-11-18 below).
 
 The question for the owner: should the Run Pipeline tab offer choosing specific videos
 again, and if so, what should happen to a chosen video that is filed, in a review queue or
 crystallized?
 
-**Not changed:** the "Run All Steps" tab (`pipeline/run_all.py`), which runs one chosen video
-through its own copy of the steps, is a separate path and still differs from the watcher (its
-quality check fails open, it has no hand-score comparison, and it pushes kinematics to a
-database itself). It is a known leftover.
+**Changed since (2026-11-18):** the "Run All Steps" tab no longer runs its own copy of the steps;
+see "Update 2026-11-18: the Run All Steps tab runs the watcher's own steps" below.
 
 ## Update 2026-11-17: no bulk path replaces a person's cuts with the algorithm's
 
@@ -6026,3 +6024,58 @@ node's claims.
 
 Tests: tests/test_split_gone_singles_no_per_row_request.py,
 tests/test_inflight_claims_one_listing.py.
+
+## Update 2026-11-18: the Run All Steps tab runs the watcher's own steps
+
+**What a person does.** Open the launcher's **Run All Steps** tab on the processing machine, press
+**Browse...**, pick the video (the `.mp4`), press **Run All Steps**. The log under the button
+shows the watcher's own log lines about that video as it goes; the line above it says how the run
+ended:
+
+- **[OK] Passed every check and filed.** -- the video went through every step and is in Analyzed.
+- **[HELD] Sent to the triage / deep review queue** -- a check found a question for a person; the
+  video is in that queue now and goes on by itself once it is reviewed (Review Queues tab).
+- **[HELD] Waiting in Processing** -- the video waits for its hand scores (it goes on once the
+  session's scores are imported), or a folder in the review queue is in the way (listed under
+  "Folders left for a person" on the Review Queues tab). It is not filed until that is resolved.
+- **[FAIL] ...** -- a step failed; the watcher's retry and `mousereach-watch-reprocess` apply as
+  for any failed video.
+- **[NOT RUN] ...** -- nothing was run or moved; the reason says what to do instead.
+
+**What runs.** Exactly what the automatic watcher runs, through its own code
+(`watcher/run_one.py` drives `ProcessingOrchestrator._dispatch_work` for that one video): a video
+waiting in the posed folder is taken in (registered by the watcher's own scan of that folder if it
+is new, then the multi-machine claim, then the copy), then analysed (segmentation, reach detection,
+outcome detection, reach assignment), then the quality check, the hand-score comparison, the review
+gate and the kinematics, then filed. A failed video is first given its retries back (as
+`mousereach-watch-reprocess` does); a filed video's re-run that has failed for good is put back as
+filed, as the watcher does. The watcher state is read again after each step, and the run stops as
+soon as the video is filed, held, failed, or did not move on. The run works on the watcher's own
+copy of the video, wherever the file picked in Browse sits. Nothing is pushed into any database.
+
+**What is refused (NOT RUN), and why.**
+
+- A video in the filed tree, or whose watcher state is filed (`archived`, `outdated`): filed means
+  done. A filed video is run again with "Re-run video" on the dashboard or the version re-run.
+- A video held in a review queue (a live triage or deep-review bundle -- checked by the video's
+  name, so a stray copy elsewhere is refused too -- or a state `triage` / `deep_review`): it goes
+  on by itself once reviewed. The tab used to rewrite the bundle's algorithm outputs under the
+  reviewer.
+- A crystallized video (locked for a publication).
+- A video the watcher on this machine has no record of and that is not waiting in the posed folder.
+- A video with no pose yet, a quarantined one, or one this machine has no file for.
+- On a machine whose role is not the processing machine; while a watcher runs on the machine (it
+  does the video by itself -- use "Put first" on the Run Pipeline tab); while a stop is requested
+  (`watcher_stop.flag`) or the watcher is paused.
+
+**Why.** Running by hand must do what the watcher does: one implementation, two ways to start it.
+The tab used to run its own older chain in the chosen video's own folder: no hand-score
+comparison, a quality check that let a video through when it could not run, a push of the
+kinematics into a database, and no check of where the video was. Picking a filed video's mp4
+rewrote the filed segments, reaches, outcomes and assignment files (and the features file) in
+place, with no earlier generation kept and no watcher record.
+
+**Hand-score holds are kept.** The run first reads this machine's list of videos held for their
+hand scores (the watcher's restart path, `_restore_score_waits`), so a held video is not analysed
+again in full, and the other held videos stay on the machine's list.
+

@@ -397,7 +397,8 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
-    # Load Run All Steps (push one opened video through the whole pipeline)
+    # Load Run All Steps: runs the watcher's own steps, gates and holds for one
+    # chosen video, and refuses a filed video or one held in a review queue
     tprint("  Run All Steps...", end=" ")
     try:
         from mousereach.pipeline.run_all_widget import RunAllStepsWidget

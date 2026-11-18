@@ -69,8 +69,8 @@ keep every check: the animal-first box above, ``mousereach-watch-reprocess
 <video>`` (a failed video) and the version re-run (a filed video: declare new
 versions in the Watcher Control tab, or ``mousereach-version-check --mark``,
 which keeps every person's answers and cuts). The Run All Steps tab runs one
-chosen video, but it is a separate, older path that does not yet keep every
-watcher check, and its note says so.
+chosen video through the watcher's own steps (watcher/run_one.py), with every
+check, and refuses a filed, held or crystallized video.
 
 ASCII-only console output (Windows cp1252). Qt widget text may use Unicode,
 but this module prints nothing to the terminal.
@@ -141,9 +141,9 @@ SELECTION_NOTE = (
     "are switched off: they skipped the watcher's checks, and what they should do "
     "with a filed or held video is still to be decided. A failed video: "
     "mousereach-watch-reprocess <video>. A filed video: the version re-run. The "
-    "Run All Steps tab runs one chosen video, but it does not yet keep every "
-    "watcher check (no hand-score comparison, and its quality check lets a video "
-    "through when the check cannot run)."
+    "Run All Steps tab runs one chosen video now, through the watcher's own "
+    "steps with every check (it refuses a filed video, a video held in a review "
+    "queue and a crystallized one)."
 )
 
 # The tooltip on each switched-off old button.
