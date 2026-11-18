@@ -12,6 +12,7 @@ features file now says its rows are the algorithm's calls.
 
 Every folder below is built under tmp_path with invented ids.
 """
+import pickle
 import csv
 import json
 import sys
@@ -107,6 +108,10 @@ def test_real_kinematics_uses_the_resolved_reaches_and_outcome(folder, monkeypat
             data.append(np.full(n, v) + (np.arange(n) * 0.5 if c in ("x", "y") and p.startswith("R") else 0))
     pd.DataFrame(np.array(data).T, columns=pd.MultiIndex.from_tuples(cols)).to_hdf(
         folder / f"{VID}DLC_x.h5", key="df")
+    # The video's frame rate, recorded beside the pose as DeepLabCut does
+    # (kinematics/core/frame_rate.py); without one no kinematics are written.
+    with open((folder / f"{VID}DLC_x.h5").with_name((folder / f"{VID}DLC_x.h5").stem + "_meta.pickle"), "wb") as _f:
+        pickle.dump({"data": {"fps": 60.0}}, _f)
     from mousereach.kinematics.analysis import real_kinematics
     monkeypatch.setattr(sys, "argv", ["mousereach-real-kinematics"])
     real_kinematics.main()

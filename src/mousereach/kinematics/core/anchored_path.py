@@ -68,8 +68,9 @@ ANCHOR_FRACTION_FROM_NOSE = 0.5
 # Below this a landmark's position is not used for an anchor. It is the threshold
 # the rest of the extractor uses for trusting a point.
 ANCHOR_MIN_LIKELIHOOD = 0.7
-# How far from the anchor frame a landmark may be taken from: one second at 30 fps.
-# The nose moves little in that time compared with the length of a reach.
+# How far from the anchor frame a landmark may be taken from, in frames: half a
+# second at 60 frames per second. The nose moves little in that time compared with
+# the length of a reach.
 ANCHOR_SEARCH_FRAMES = 30
 HAND_POINTS = ("RightHand", "RHLeft", "RHRight", "RHOut")
 

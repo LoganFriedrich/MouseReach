@@ -30,8 +30,9 @@ import numpy as np
 import pandas as pd
 
 
-# MouseReach default settings
-DEFAULT_FPS = 200.0
+# MouseReach default settings. There is no default frame rate: the time column
+# of a .trc file is frame / rate, so a rate is read from each video
+# (mousereach.kinematics.core.frame_rate) unless the caller states one.
 RULER_MM = 9.0  # SABL-SABR physical distance
 
 # DLC bodypart -> OpenSim marker name
@@ -119,7 +120,7 @@ def compute_pixel_scale(
 def dlc_to_trc(
     h5_path: Path,
     output_path: Path,
-    fps: float = DEFAULT_FPS,
+    fps: Optional[float] = None,
     marker_map: Optional[Dict[str, str]] = None,
     ruler_mm: float = RULER_MM,
     z_data: Optional[np.ndarray] = None,
@@ -131,7 +132,9 @@ def dlc_to_trc(
     Args:
         h5_path: Path to DLC .h5 file
         output_path: Path for output .trc file
-        fps: Video frame rate (MouseReach default: 200)
+        fps: Video frame rate. Left out, it is read from the video beside the
+             pose file or the pose record (frame_rate.resolve_frame_rate);
+             a ValueError says so when neither has one.
         marker_map: Dict mapping DLC bodypart -> OpenSim marker name.
                    Default: Shoulder->Shoulder, Elbow->Elbow, RightHand->Paw
         ruler_mm: Physical ruler distance in mm (default: 9.0)
@@ -145,6 +148,12 @@ def dlc_to_trc(
     """
     if marker_map is None:
         marker_map = DEFAULT_MARKER_MAP
+
+    from mousereach.kinematics.core.frame_rate import resolve_frame_rate
+    fps, _source = resolve_frame_rate(h5_path, stated=fps)
+    if fps is None:
+        raise ValueError(f"no frame rate for {Path(h5_path).name}: pass fps, or keep the "
+                         f"video or its pose record beside the pose file")
 
     # Load DLC data
     df, scorer = load_dlc_h5(h5_path)
@@ -253,7 +262,7 @@ def batch_convert_reaches(
     h5_path: Path,
     reaches_json_path: Path,
     output_dir: Path,
-    fps: float = DEFAULT_FPS,
+    fps: Optional[float] = None,
     marker_map: Optional[Dict[str, str]] = None,
 ) -> List[Path]:
     """
@@ -263,7 +272,7 @@ def batch_convert_reaches(
         h5_path: Path to DLC .h5 file
         reaches_json_path: Path to MouseReach *_reaches.json
         output_dir: Directory for output .trc files
-        fps: Video frame rate
+        fps: Video frame rate (left out: read per video, see dlc_to_trc)
         marker_map: DLC->OpenSim marker mapping
 
     Returns:

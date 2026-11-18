@@ -3020,6 +3020,38 @@ in `ANCHOR_FRACTION_FROM_NOSE`. It was an assumption before this update.
 **Where the detail is.** `tracked_steps` in `kinematics/core/anchored_path.py` and
 sections 5.4, 6.1 and 6.2 of `docs/KINEMATICS_FIELDS.md`.
 
+## Update 2026-11-17: values in seconds use the video's own frame rate
+
+**What changed.** The kinematics divided every frame count by a constant 30 to get
+seconds. That number was an assumption written into the code, not a measurement. Videos
+recorded at 60 frames per second (their header says so, and their recordings run in real
+time at that rate) therefore carried segment lengths, time to first reach, time to outcome
+and inter-reach intervals twice as long as they were, and `velocity_at_apex_mm_per_sec`
+converted on the wrong time base. Since extractor 2.5.0 the rate is read from each video:
+its header first, then DeepLabCut's record of that header (`<pose>_meta.pickle`), or a
+rate a lab states in its own configuration (`FeatureExtractor(frame_rate=...)`). The
+features file records the rate and where it came from (`frame_rate`,
+`frame_rate_source`). With no rate (no video beside the pose and no pose record), a line
+says so and the kinematics are not written, so the video is held in Processing like any
+other kinematics problem instead of being filed with its seconds missing.
+
+**Same fix elsewhere.** `mousereach-real-kinematics` (speeds per second, accelerations,
+jerk and durations) and the explorer's `duration_sec` read each video's rate the same
+way; `dlc_to_trc` no longer defaults to 200 frames per second.
+
+**What is not affected.** Reach start, apex and end frames, every value per frame, and
+every value in pixels or millimetres. The segmenter counts frames; its fps argument
+(always 60) only turns its anomaly limits, written in seconds, into frames, and 60 is
+what the videos are.
+
+**What happens to filed videos -- read before deploying.** The extractor is version
+2.5.0 and no older version is compatible. Deploying this code and declaring
+`kinematic_extractor: 2.5.0` in `pipeline_versions.json` go together: the declaration
+makes the version scan mark every filed Pillar video for a kinematics recalculation,
+and code stamping 2.5.0 while the declaration still says 2.4.0 makes every newly filed
+video read as out of date. Until the recalculation finishes, `extractor_version` on a row
+says which time base its seconds use.
+
 ## Update 2026-11-03: a recalculation re-runs no algorithm and no triage, and never re-asks a person's answer
 
 **The rules.** Only the calculations that changed are recalculated, without re-running the four

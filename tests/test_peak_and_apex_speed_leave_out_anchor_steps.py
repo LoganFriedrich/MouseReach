@@ -113,13 +113,13 @@ def test_a_reach_with_no_anchor_keeps_its_speeds_but_not_its_path():
 
 
 def test_the_whole_reach_row_and_its_mm_conversion_follow():
-    fx = FeatureExtractor()
+    fx = FeatureExtractor(frame_rate=60.0)
     reach = {"reach_id": 1, "reach_num": 1, "start_frame": 10, "apex_frame": 11,
              "end_frame": 14, "duration_frames": 5}
     f = fx._extract_reach_features(reach, _pose(), 34.0, {})
     assert f.peak_velocity_px_per_frame == 4.0
     assert f.velocity_at_apex_px_per_frame == 3.0
-    assert f.velocity_at_apex_mm_per_sec == pytest.approx(3.0 * 9.0 / 34.0 * 30.0)
+    assert f.velocity_at_apex_mm_per_sec == pytest.approx(3.0 * 9.0 / 34.0 * 60.0)
     g = fx._extract_reach_features(dict(reach, apex_frame=14), _pose(), 34.0, {})
     assert g.velocity_at_apex_px_per_frame is None and g.velocity_at_apex_mm_per_sec is None
 
@@ -133,4 +133,4 @@ def test_real_kinematics_peak_leaves_out_the_anchor_steps():
 
 
 def test_real_kinematics_needs_a_step_between_two_tracked_positions():
-    assert compute_kinematics(np.array([0.0, 1.0, 2.0]), np.array([0.0, 1.0, 2.0]), ruler_px=9.0) == {}
+    assert compute_kinematics(np.array([0.0, 1.0, 2.0]), np.array([0.0, 1.0, 2.0]), ruler_px=9.0, fps=60.0) == {}

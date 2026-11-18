@@ -15,6 +15,7 @@ import pandas as pd
 
 from mousereach.pipeline.manifest import NOT_RESOLVED
 from mousereach.kinematics.core.anchored_path import AnchoredPath, anchored_hand_path, tracked_steps
+from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 
 
 @dataclass
@@ -52,7 +53,7 @@ class ReachFeatures:
     # Velocity features (computed from DLC)
     # Kept for backward compatibility; superseded by per-paw mean/peak/apex_speed in `extended`.
     velocity_at_apex_px_per_frame: Optional[float] = None
-    velocity_at_apex_mm_per_sec: Optional[float] = None  # Assuming 30 fps
+    velocity_at_apex_mm_per_sec: Optional[float] = None  # x the video's own frame rate (frame_rate.py)
     peak_velocity_px_per_frame: Optional[float] = None
     mean_velocity_px_per_frame: Optional[float] = None
 
@@ -173,6 +174,12 @@ class VideoFeatures:
 
     summary: Dict = None
     extracted_at: Optional[str] = None
+    # Frames per second of the video, and where that number was read
+    # (frame_rate.resolve_frame_rate). Every value in seconds and every speed per
+    # second was converted with it. None only in a session-only file (which has
+    # nothing in seconds): extract() refuses a video with no rate.
+    frame_rate: Optional[float] = None
+    frame_rate_source: Optional[str] = None
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization."""
@@ -292,7 +299,15 @@ class KinematicsProblem(Exception):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.4.0"  # 2.4 (2026-11-02): peak speed and speed at the apex, wrist
+    VERSION = "2.5.0"  # 2.5 (2026-11-17): seconds come from the video's own frame
+                       # rate (frame_rate.py) instead of an assumed 30, so on a
+                       # 60 frames-per-second video the segment length, time to first
+                       # reach, time to outcome and inter-reach interval were twice
+                       # their true value, and velocity_at_apex_mm_per_sec was on the
+                       # wrong time base. The rate and its source are written into
+                       # the features file. Changes those values, so no earlier
+                       # version is compatible.
+                       # 2.4 (2026-11-02): peak speed and speed at the apex, wrist
                        # and per-point, leave out the first and last anchor steps
                        # (anchored_path.tracked_steps says why). The path, its length
                        # and straightness still run nose to nose. A last-frame apex
@@ -325,10 +340,21 @@ class FeatureExtractor:
                        # slit-anchored, per-paw trajectories, paw shape proxies,
                        # per-paw visibility profile, tray contact). See
                        # REACH_KINEMATIC_DATA_DICTIONARY.md.
-    FRAMERATE = 30.0  # fps (assumed - not authoritative; see data dictionary)
     RULER_MM = 9.0  # Physical size of ruler (SABL-SABR distance)
 
-    def __init__(self):
+    def __init__(self, frame_rate: Optional[float] = None):
+        """``frame_rate``: frames per second to use for every video, for a lab that
+        fixes its rate in configuration. Left out, each video's rate is read from
+        the video (frame_rate.resolve_frame_rate says where and why). There is no
+        built-in default: an assumed rate is wrong for every video recorded at
+        another one."""
+        self.stated_frame_rate = frame_rate
+        # Set again per video by extract() / extract_session_only(); a stated rate
+        # (refused here if it cannot be a frame rate) holds from the start.
+        self.frame_rate: Optional[float] = None
+        self.frame_rate_source: Optional[str] = None
+        if frame_rate is not None:
+            self.frame_rate, self.frame_rate_source = resolve_frame_rate("", stated=frame_rate)
         # Set by extract(): the ground-truth file the truth layering found and
         # applied (None: it found none). Left as NOT_RESOLVED when the layering
         # did not run to that point, so a caller never records a guess.
@@ -349,6 +375,7 @@ class FeatureExtractor:
         outcomes_path: Path,
         review_path: Optional[Path] = None,
         assignments_path: Optional[Path] = None,
+        video_path: Optional[Path] = None,
     ) -> VideoFeatures:
         """
         Extract features for all reaches in a video.
@@ -357,6 +384,8 @@ class FeatureExtractor:
             dlc_path: Path to DLC .h5 file
             reaches_path: Path to *_reaches.json from Step 4
             outcomes_path: Path to *_pellet_outcomes.json from Step 3
+            video_path: the video, when it is not beside the pose file (its frame
+                rate converts frames to seconds; frame_rate.py)
 
         Returns:
             VideoFeatures object with all extracted features
@@ -368,6 +397,15 @@ class FeatureExtractor:
         """
         self.problems = []
         self.review_applied = False
+        self._resolve_rate(dlc_path, video_path)
+        if self.frame_rate is None:
+            # Five values in seconds could not be computed, so this would not be
+            # the video's whole result: hold it (KinematicsProblem) rather than
+            # file it with them missing for good.
+            self.problems.append(
+                f"no frame rate for {Path(dlc_path).name}: no video beside the pose "
+                f"file and no pose record of its rate, so nothing in seconds can be computed")
+
         # Load DLC data
         df = self._load_dlc(dlc_path)
 
@@ -637,10 +675,23 @@ class FeatureExtractor:
             n_segments=n_segments,
             segments=segment_features,
             summary=summary,
-            extracted_at=extracted_at
+            extracted_at=extracted_at,
+            frame_rate=self.frame_rate,
+            frame_rate_source=self.frame_rate_source,
         )
 
-    def extract_session_only(self, dlc_path: Path, reaches_path: Path) -> VideoFeatures:
+    def _resolve_rate(self, dlc_path: Path, video_path: Optional[Path]) -> None:
+        """Read this video's frame rate (frame_rate.resolve_frame_rate). A missing
+        rate is said out loud; extract() then refuses (KinematicsProblem), and the
+        session-only file, which has nothing in seconds, records it as missing."""
+        self.frame_rate, self.frame_rate_source = resolve_frame_rate(
+            dlc_path, video_path=video_path, stated=self.stated_frame_rate)
+        if self.frame_rate is None:
+            print(f"[feature_extractor] no frame rate for {Path(dlc_path).name}: no video "
+                  f"beside it and no pose record of one")
+
+    def extract_session_only(self, dlc_path: Path, reaches_path: Path,
+                             video_path: Optional[Path] = None) -> VideoFeatures:
         """The features file of an Easy or Flat tray video: each reach's
         identity and frames, and each span's attention -- no kinematics, no
         outcomes.
@@ -655,6 +706,7 @@ class FeatureExtractor:
         the session's.
         """
         from datetime import datetime
+        self._resolve_rate(dlc_path, video_path)
         df = self._load_dlc(dlc_path)
         with open(reaches_path) as f:
             reaches_data = json.load(f)
@@ -700,6 +752,8 @@ class FeatureExtractor:
                      'note': 'Easy/Flat tray: reaches and attention only -- '
                              'no kinematics or outcomes are computed for these trays'},
             extracted_at=datetime.now().isoformat(),
+            frame_rate=self.frame_rate,
+            frame_rate_source=self.frame_rate_source,
         )
 
     def _extract_reach_features(
@@ -777,10 +831,10 @@ class FeatureExtractor:
         features.peak_velocity_px_per_frame = velocity_features['peak_velocity']
         features.mean_velocity_px_per_frame = velocity_features['mean_velocity']
 
-        # Convert velocity to mm/s
-        if features.velocity_at_apex_px_per_frame is not None:
+        # Convert velocity to mm/s, with this video's own frame rate (none: empty)
+        if features.velocity_at_apex_px_per_frame is not None and self.frame_rate is not None:
             px_to_mm = self.RULER_MM / ruler_pixels
-            features.velocity_at_apex_mm_per_sec = features.velocity_at_apex_px_per_frame * px_to_mm * self.FRAMERATE
+            features.velocity_at_apex_mm_per_sec = features.velocity_at_apex_px_per_frame * px_to_mm * self.frame_rate
 
         # Compute trajectory features
         traj_features = self._compute_trajectory_features(wrist_path)
@@ -1213,21 +1267,26 @@ class FeatureExtractor:
             reaches: List of reach dicts
 
         Returns:
-            Dict with temporal context features
+            Dict with temporal context features. Every value is frames divided by
+            this video's frame rate; with no rate they are all None.
         """
         features = {}
+        fps = self.frame_rate
+        if fps is None:
+            return {'segment_duration_sec': None, 'time_to_first_reach_sec': None,
+                    'time_to_outcome_sec': None, 'mean_inter_reach_interval_sec': None}
 
         start_frame = seg_data['start_frame']
         end_frame = seg_data['end_frame']
 
         # Segment duration
         segment_frames = end_frame - start_frame + 1
-        features['segment_duration_sec'] = float(segment_frames / self.FRAMERATE)
+        features['segment_duration_sec'] = float(segment_frames / fps)
 
         # Time to first reach
         if reaches:
             first_reach_frame = reaches[0]['start_frame']
-            time_to_first = (first_reach_frame - start_frame) / self.FRAMERATE
+            time_to_first = (first_reach_frame - start_frame) / fps
             features['time_to_first_reach_sec'] = float(time_to_first)
         else:
             features['time_to_first_reach_sec'] = None
@@ -1242,7 +1301,7 @@ class FeatureExtractor:
                 prev_end = reaches[i-1]['end_frame']
                 curr_start = reaches[i]['start_frame']
                 interval_frames = curr_start - prev_end
-                intervals.append(interval_frames / self.FRAMERATE)
+                intervals.append(interval_frames / fps)
 
             features['mean_inter_reach_interval_sec'] = float(np.mean(intervals))
         else:

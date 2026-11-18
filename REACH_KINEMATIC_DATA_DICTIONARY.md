@@ -49,9 +49,12 @@ and how it is computed.
     * `_mm` and `_mm2` — millimetres / square millimetres, computed as
       `pixels * 9.0 / ruler_pixels` (the 9 mm calibration ruler corresponds to
       the per-segment `ruler_pixels` distance between SABL and SABR).
-* **Temporal units are frames only.** Framerate is not a measured quantity in
-  this pipeline; conversion to seconds requires a separately known framerate
-  and is the consumer's responsibility.
+* **Temporal units are frames only** in this extended set. To convert, use the
+  `frame_rate` written at the top of the same features file: the video's own
+  frames per second, read from the video's header (or DeepLabCut's record of
+  it), with `frame_rate_source` saying which (extractor 2.5.0 and later; see
+  `kinematics/core/frame_rate.py`). Never assume a rate: a value converted with
+  the wrong one is off by the ratio of the two rates.
 * **Speed units:** `_px_per_frame` and `_mm_per_frame`. There are no
   `_per_second` columns.
 * **Tracking quality is not a gate.** If a reach was emitted by reach

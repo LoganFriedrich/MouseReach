@@ -18,6 +18,7 @@ Built under tmp_path with invented ids; no real folder. Names that only this
 change adds are imported inside the test that needs them, so the behaviour
 tests fail on code without the change by what they assert, not on import.
 """
+import pickle
 import json
 
 import numpy as np
@@ -47,6 +48,10 @@ def run_dir(tmp_path, monkeypatch):
             data.append(np.full(n, v) + (np.arange(n) * 0.5 if c == "y" and p.startswith("R") else 0))
     pose = tmp_path / f"{VID}DLC_x.h5"
     pd.DataFrame(np.array(data).T, columns=pd.MultiIndex.from_tuples(cols)).to_hdf(pose, key="df")
+    # The video's frame rate, recorded beside the pose as DeepLabCut does
+    # (kinematics/core/frame_rate.py); without one no kinematics are written.
+    with open(pose.with_name(pose.stem + "_meta.pickle"), "wb") as _f:
+        pickle.dump({"data": {"fps": 60.0}}, _f)
     reaches = {"video_name": VID, "total_frames": n, "n_segments": 1,
                "segments": [{"segment_num": 1, "start_frame": 0, "end_frame": 99, "ruler_pixels": 34.0,
                              "n_reaches": 1,

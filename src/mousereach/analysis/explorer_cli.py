@@ -347,6 +347,14 @@ def load_reaches_from_jsons(directory: Path) -> pd.DataFrame:
 
             video_name = data.get('video_name', rf.stem.replace('_reaches', ''))
 
+            # Seconds are frames over THIS video's frame rate, read from the video or
+            # its pose record beside it (frame_rate.py); none found: no seconds.
+            from mousereach.kinematics.core.frame_rate import resolve_frame_rate
+            _poses = sorted(directory.glob(f"{video_name}DLC*.h5"))
+            fps = None
+            if _poses:
+                fps, _source = resolve_frame_rate(_poses[0])
+
             # Parse filename
             match = re.match(r'(\d{8})_([A-Z]+\d+)_([PF])(\d)?', video_name)
             if match:
@@ -376,7 +384,7 @@ def load_reaches_from_jsons(directory: Path) -> pd.DataFrame:
                         'duration_frames': reach.get('duration_frames'),
                         'max_extent_pixels': reach.get('max_extent_pixels'),
                         'max_extent_mm': reach.get('max_extent_ruler', 0) * 10 if reach.get('max_extent_ruler') else None,
-                        'duration_sec': reach.get('duration_frames', 0) / 30.0 if reach.get('duration_frames') else None,
+                        'duration_sec': reach.get('duration_frames', 0) / fps if reach.get('duration_frames') and fps else None,
                     })
         except Exception as e:
             print(f"  Warning: Error loading {rf.name}: {e}")

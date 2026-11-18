@@ -86,7 +86,8 @@ class FeatureViewer:
 
         # Temporal context
         print("\nTEMPORAL CONTEXT:")
-        print(f"  Duration: {seg.get('segment_duration_sec', 0):.2f} sec")
+        if seg.get('segment_duration_sec') is not None:  # None: the video's frame rate was not found
+            print(f"  Duration: {seg['segment_duration_sec']:.2f} sec")
         if seg.get('time_to_first_reach_sec') is not None:
             print(f"  Time to first reach: {seg['time_to_first_reach_sec']:.2f} sec")
         if seg.get('mean_inter_reach_interval_sec') is not None:

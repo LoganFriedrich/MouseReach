@@ -9,13 +9,17 @@ import pandas as pd
 
 from mousereach.config import Paths
 from mousereach.kinematics.core.anchored_path import anchored_hand_path, tracked_steps
+from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 
-FPS = 30
 RULER_MM = 9.0  # ruler = 9mm
 
 
-def compute_kinematics(x, y, ruler_px, fps=30):
+def compute_kinematics(x, y, ruler_px, fps):
     """Compute kinematic features from an anchored x,y trajectory.
+
+    ``fps`` is the video's own frame rate (frame_rate.resolve_frame_rate); there is
+    no default, because speeds scale with it, accelerations with its square and
+    jerk with its cube, so an assumed rate is wrong by those powers.
 
     x[0] and x[-1] are the anchors, from get_hand_trajectory. Peak speed leaves out
     the steps to and from them, which measure geometry and not how fast the hand moved
@@ -157,6 +161,11 @@ def main():
             print(f"    No DLC file found, skipping")
             continue
 
+        fps, _source = resolve_frame_rate(dlc_files[0])
+        if fps is None:
+            print(f"    No frame rate (no video beside the pose, no pose record), skipping")
+            continue
+
         dlc_df = load_dlc_data(dlc_files[0])
 
         # Process each reach
@@ -179,14 +188,14 @@ def main():
                     continue
 
                 # Compute kinematics
-                kin = compute_kinematics(x, y, ruler_px, FPS)
+                kin = compute_kinematics(x, y, ruler_px, fps)
 
                 row = {
                     "video": video_name,
                     "segment": seg_num,
                     "reach_num": reach.get("reach_num", reach.get("reach_id")),
                     "outcome": outcome,
-                    "duration_ms": round((end - start) / FPS * 1000, 1),
+                    "duration_ms": round((end - start) / fps * 1000, 1),
                     "n_frames": end - start + 1,
                     **kin
                 }

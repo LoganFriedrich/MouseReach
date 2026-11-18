@@ -14,6 +14,7 @@ archive step also refuses a features file that carries a failed reach.
 Built under tmp_path with invented ids; no real folder, database or
 configuration.
 """
+import pickle
 import json
 from pathlib import Path
 from unittest import mock
@@ -53,6 +54,10 @@ def run_dir(tmp_path, monkeypatch):
             data.append(np.full(n, v) + (np.arange(n) * 0.5 if c == "y" and p.startswith("R") else 0))
     pose = proc / f"{VID}DLC_x.h5"
     pd.DataFrame(np.array(data).T, columns=pd.MultiIndex.from_tuples(cols)).to_hdf(pose, key="df")
+    # The video's frame rate, recorded beside the pose as DeepLabCut does
+    # (kinematics/core/frame_rate.py); without one no kinematics are written.
+    with open(pose.with_name(pose.stem + "_meta.pickle"), "wb") as _f:
+        pickle.dump({"data": {"fps": 60.0}}, _f)
     (proc / f"{VID}_reaches.json").write_text(json.dumps(
         {"video_name": VID, "total_frames": n, "n_segments": 1,
          "segments": [{"segment_num": 1, "start_frame": 0, "end_frame": 99,

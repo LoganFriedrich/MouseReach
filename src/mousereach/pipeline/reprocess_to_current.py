@@ -265,8 +265,11 @@ def reprocess_video_to_current(
             from mousereach.kinematics.core.feature_extractor import FeatureExtractor
             from mousereach.review.causal_review_io import resolve_review_path
             review_path = resolve_review_path(video_id, work_dir)
+            # The pose was copied alone into the work folder, so the video is named:
+            # its frame rate converts frames to seconds (frame_rate.py).
             feats = FeatureExtractor().extract(work_h5, reach_path, outcome_path,
-                                               review_path=review_path)
+                                               review_path=review_path,
+                                               video_path=video_file)
             (work_dir / f"{video_id}_features.json").write_text(
                 json.dumps(feats.to_dict(), indent=2))
             # Per-video finalized results CSV -- the reconciled 'ultimate result'

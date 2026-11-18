@@ -3,8 +3,10 @@ MouseReach Step 2: Segmentation - Core Module
 =============================================
 
 This module detects trial boundaries (segment boundaries) in mouse reaching videos.
-A "segment" is the period between two pellet presentations - typically ~1800 frames
-at 30fps (1 minute per trial).
+A "segment" is the period between two pellet presentations - typically ~1840 frames
+at 60 frames per second (about 30 seconds per trial). The segmenter works in frames;
+its fps argument (default 60, never read from the video) turns the anomaly limits and
+the fallback peak spacing, written in seconds, into frames.
 
 WHAT THIS MODULE DOES
 ---------------------
