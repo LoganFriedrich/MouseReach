@@ -14,7 +14,14 @@ rmtree and sqlite3.connect. WHY refuse and not only report: a test that wrote
 one row into the real shared version index failed afterwards, as designed, but
 the row stayed in the live index; a failing test must leave nothing behind.
 The attempt is also recorded, so a test whose code swallows the error still
-fails, naming the path.
+fails, naming the path. A database opened read-only ("file:...?mode=ro" with
+uri=True) only reads and is allowed.
+
+WHAT IT CANNOT SEE. The guard is a Python audit hook: it sees what Python code
+in this process asks for. It does NOT see writes made inside compiled
+libraries that open files themselves (a video writer, HDF5, a GPU library) or
+by other programs a test starts (ffmpeg, a second Python). Tests that do such
+things must still point them at tmp_path; the guard cannot catch them.
 
 WHERE THE REAL ROOTS COME FROM. They are collected once, when this module is
 imported, from every place MouseReach itself would look on a real machine --
@@ -30,9 +37,11 @@ its way back to the real folders:
   3. every environment variable whose name starts with MOUSEREACH_, MOUSEDB_
      or MOUSEBRAIN_, or is CONNECTOME_ROOT, in ANY letter case (a machine may
      set MouseReach_PROCESSING_ROOT, which the tool reads);
-  4. what the tool's own config module resolved at import (Paths.NAS_ROOT,
+  4. the same variables as Windows keeps them for the account and the
+     machine (the registry), which an isolated run does not remove;
+  5. what the tool's own config module resolved at import (Paths.NAS_ROOT,
      PROCESSING_ROOT, NAS_DRIVE);
-  5. a list the person running the tests supplies: REACH_TEST_GUARD_ROOTS
+  6. a list the person running the tests supplies: REACH_TEST_GUARD_ROOTS
      (folders separated by the system's path separator, ';' on Windows) and/or
      REACH_TEST_GUARD_ROOTS_FILE (a text file, one folder per line, '#'
      starts a comment).
@@ -79,7 +88,6 @@ _ARG_POSITIONS = {
     "shutil.copyfile": (1,), "shutil.copymode": (1,), "shutil.copystat": (1,),
     "shutil.copytree": (1,), "shutil.move": (0, 1), "shutil.rmtree": (0,),
     "shutil.make_archive": (0,),
-    "sqlite3.connect": (0,),
     "tempfile.mkstemp": (0,), "tempfile.mkdtemp": (0,),
 }
 # os.open flags that mean "this open can change the file". The audit "open"
@@ -128,6 +136,40 @@ def _under(n, prefix):
         return True
     head = prefix if prefix.endswith(os.sep) else prefix + os.sep
     return n.startswith(head)
+
+
+def _sqlite_write_target(database):
+    """The file a sqlite3.connect may write, or None when it cannot write one.
+    A "file:" address (uri=True) is reduced to its file; one opened read-only
+    (mode=ro, or immutable=1) only reads, so it is allowed like any read."""
+    if isinstance(database, bytes):
+        try:
+            database = os.fsdecode(database)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(database, (str, os.PathLike)):
+        return None
+    text = os.fspath(database)
+    if text == ":memory:" or not text:
+        return None
+    if text.startswith("file:"):
+        body, _, query = text[5:].partition("?")
+        params = dict(p.partition("=")[::2] for p in query.split("&") if p)
+        if params.get("mode") == "ro" or params.get("immutable") == "1":
+            return None
+        if params.get("mode") == "memory" or body in ("", ":memory:"):
+            return None
+        from urllib.parse import unquote
+        body = unquote(body)
+        if body.startswith("///"):
+            body = body[3:]          # file:///C:/x -> C:/x
+        elif body.startswith("//"):
+            body = body[2:]          # file://localhost/... is not used here
+            body = body.partition("/")[2] if not body.startswith("/") else body
+        if _WINDOWS and len(body) > 2 and body[0] == "/" and body[2] == ":":
+            body = body[1:]          # file:/C:/x -> C:/x
+        return body
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +378,50 @@ def roots_from_environment(environ):
     return roots
 
 
+# Where Windows keeps the variables it gives every new program: the account's
+# own and the machine's. An isolated run removes the tool's variables from its
+# own environment, but they are still set here -- and still name real roots.
+_PERSISTED_ENV_KEYS = (
+    ("HKEY_CURRENT_USER", r"Environment"),
+    ("HKEY_LOCAL_MACHINE", r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+)
+
+
+def persisted_environment():
+    """The account's and the machine's saved environment variables (Windows
+    registry), as {name: value}; {} elsewhere or when unreadable. Read only."""
+    found = {}
+    if not _WINDOWS:
+        return found
+    try:
+        import winreg
+    except ImportError:
+        return found
+    for hive_name, key_path in _PERSISTED_ENV_KEYS:
+        try:
+            key = winreg.OpenKey(getattr(winreg, hive_name), key_path, 0, winreg.KEY_READ)
+        except OSError:
+            continue
+        try:
+            i = 0
+            while True:
+                try:
+                    name, value, kind = winreg.EnumValue(key, i)
+                except OSError:
+                    break
+                i += 1
+                if isinstance(value, str):
+                    if kind == winreg.REG_EXPAND_SZ:
+                        try:
+                            value = winreg.ExpandEnvironmentStrings(value)
+                        except OSError:
+                            pass
+                    found.setdefault(name, value)
+        finally:
+            winreg.CloseKey(key)
+    return found
+
+
 def roots_supplied_by_runner(environ):
     """Real roots the person running the tests listed (see module docstring)."""
     roots = [p.strip() for p in environ.get(ROOTS_ENV, "").split(os.pathsep) if p.strip()]
@@ -435,6 +521,13 @@ class Guard:
             elif not (isinstance(flags, int) and flags & _WRITE_FLAGS):
                 return
             places = (args[0],)
+        elif event == "sqlite3.connect":
+            if not args:
+                return
+            target = _sqlite_write_target(args[0])
+            if target is None:
+                return
+            places = (target,)
         else:
             positions = _ARG_POSITIONS.get(event)
             if positions is None:
@@ -451,17 +544,19 @@ class Guard:
                     % (event, hit))
 
 
-def collect_real_roots(environ=None, homes=None):
+def collect_real_roots(environ=None, homes=None, persisted=None):
     """Every real root this machine names, from every source (module docstring)."""
     environ = os.environ if environ is None else environ
     homes = os_home_folders() if homes is None else homes
+    persisted = persisted_environment() if persisted is None else persisted
     return (roots_from_settings_files(homes) + roots_from_environment(environ)
+            + roots_from_environment(persisted)
             + roots_supplied_by_runner(environ) + roots_from_tool_config())
 
 
-def build_guard(environ=None, homes=None, repo_root=None):
+def build_guard(environ=None, homes=None, repo_root=None, persisted=None):
     guard = Guard()
-    for root in collect_real_roots(environ, homes):
+    for root in collect_real_roots(environ, homes, persisted):
         guard.add_root(root)
     import tempfile
     exempt = [tempfile.gettempdir(), sys.prefix, sys.base_prefix,

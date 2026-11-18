@@ -191,3 +191,28 @@ def test_pytest_never_writes_its_cache_into_the_repository():
     text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     addopts = [l for l in text.splitlines() if l.strip().startswith("addopts")]
     assert addopts and "-p no:cacheprovider" in addopts[0]
+
+
+def test_saved_account_and_machine_variables_name_real_roots(tmp_path):
+    # An isolated run removes the tool's variables from its own environment,
+    # but the account and the machine still have them saved; they count.
+    saved = {"MouseReach_NAS_DRIVE": str(tmp_path / "drive"), "Path": str(tmp_path / "bin")}
+    roots = rg.collect_real_roots(environ={}, homes=[], persisted=saved)
+    assert str(tmp_path / "drive") in roots
+    assert str(tmp_path / "bin") not in roots
+
+
+def test_persisted_environment_is_read_without_error():
+    assert isinstance(rg.persisted_environment(), dict)
+
+
+def test_a_database_address_is_refused_unless_it_is_read_only(tmp_path):
+    root = tmp_path / "real_share"
+    g = _guard(root)
+    db = (root / "watcher.db").as_posix()
+    assert _event_refused(g, "sqlite3.connect", ("file:%s" % db,))
+    assert _event_refused(g, "sqlite3.connect", ("file:%s?mode=rw" % db,))
+    assert _event_refused(g, "sqlite3.connect", ("file:///%s" % db.lstrip("/"),))
+    assert not _event_refused(g, "sqlite3.connect", ("file:%s?mode=ro" % db,))
+    assert not _event_refused(g, "sqlite3.connect", ("file:%s?immutable=1" % db,))
+    assert not _event_refused(g, "sqlite3.connect", (":memory:",))

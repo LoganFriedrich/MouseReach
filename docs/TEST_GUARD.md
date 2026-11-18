@@ -21,18 +21,19 @@ look on that machine:
 | The same file in the account's *own* home folder, as Windows (or the operating system) records it | the same. This is read even when the test run has moved the home folder elsewhere -- see "Isolated runs" below. |
 | The shared lab settings file `mousereach_lab_config.json` in the `nas_root` each of those names | every path in it (for example the hand-scores file's folder). |
 | Environment variables whose names start with `MOUSEREACH_`, `MOUSEDB_` or `MOUSEBRAIN_`, or are `CONNECTOME_ROOT` -- **in any mix of capital and small letters** | every absolute path in them. (A machine may set `MouseReach_PROCESSING_ROOT` and `MouseReach_NAS_DRIVE`; MouseReach reads those, so they count.) |
+| The same variables as Windows keeps them for your account and for the machine (System Properties > Environment Variables) | the same. An isolated run removes them from its own copy of the environment, but Windows still has them, so the guard still reads them. |
 | What MouseReach's own settings resolved when the tests started | the shared pipeline folder, the processing folder and the network drive. |
 | A list **you** give (optional, see below) | every folder you list. |
 
 Each real root is recognized however a path to it is written: capital or small
 letters, `/` or `\`, a path relative to the current folder, the `\\?\` long-path
-form, Windows short names (`2_CONN~1`), and -- for a mapped network drive --
+form, Windows short names (`PROGRA~1`), and -- for a mapped network drive --
 both the drive letter (`Q:\...`) and the network form (`\\server\share\...`).
 
 ## What it refuses
 
-Inside a real root, **every** kind of change is refused **before** it reaches
-the disk:
+Inside a real root, these changes are refused **before** they reach the disk
+(see "What it cannot see" below for the limits):
 
 - opening a file to write, append, create or update it (also the hidden
   temporary files programs write first and then rename into place);
@@ -42,9 +43,24 @@ the disk:
   folder, changing a file's time or permissions;
 - copying a file **into** it (copying a file *out of* it is reading, which is
   allowed);
-- opening a database file in it.
+- opening a database file in it (opening one read-only is reading, and is
+  allowed).
 
 Reading is always allowed.
+
+## What it cannot see
+
+The guard watches what the Python code of the test run asks for. It cannot
+see:
+
+- writes made *inside* compiled libraries that open files on their own (for
+  example a video writer, an HDF5 library or a graphics-card library);
+- writes made by **other programs** a test starts (for example `ffmpeg`, or a
+  second Python).
+
+A test that uses such a library or program must still point it at its own
+temporary folder. The guard is a safety net for the common case, not a proof
+that nothing outside Python wrote anything.
 
 ## What it does not guard
 

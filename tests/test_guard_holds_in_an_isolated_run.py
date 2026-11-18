@@ -8,10 +8,12 @@ unhindered. And when it did know a root, it refused nothing outside a test and
 only reported inside one, after the write.
 
 Each test starts a separate Python with that isolated environment, loads
-tests/conftest.py exactly as pytest does, and tries four kinds of write into a
-folder under tmp_path that stands in for a real root: an open() in write mode,
-an os.open create (the temporary file of an atomic write), a tempfile.mkstemp
-and a folder create. Every one must be refused and the folder stay empty.
+tests/conftest.py exactly as pytest does, and tries to write into a folder
+under tmp_path that stands in for a real root: an open() in write mode, an
+os.open create (the temporary file of an atomic write), a tempfile.mkstemp, a
+folder create, and the same folder spelled in capitals and with forward
+slashes. Every one must be refused and the folder stay empty. The last test
+runs pytest itself on a test file that writes while it is being loaded.
 """
 import json
 import os
@@ -43,6 +45,9 @@ attempt("open", lambda: open(os.path.join(root, "a.json"), "w").close())
 attempt("os.open", lambda: os.close(os.open(os.path.join(root, "b.tmp"), os.O_CREAT | os.O_WRONLY)))
 attempt("mkstemp", lambda: os.close(tempfile.mkstemp(dir=root)[0]))
 attempt("mkdir", lambda: os.mkdir(os.path.join(root, "Processing")))
+# Other spellings of the same folder: capital letters, forward slashes.
+attempt("upper", lambda: open(os.path.join(root.upper(), "c.json"), "w").close())
+attempt("slashes", lambda: open(root.replace(os.sep, "/") + "/d.json", "w").close())
 print("RESULT " + json.dumps(outcome))
 '''
 
@@ -75,7 +80,8 @@ def _run_child(env, real):
 
 
 def _expect_all_refused(outcome, real):
-    assert outcome == {k: "refused" for k in ("open", "os.open", "mkstemp", "mkdir")}, outcome
+    kinds = ("open", "os.open", "mkstemp", "mkdir", "upper", "slashes")
+    assert outcome == {k: "refused" for k in kinds}, outcome
     assert sorted(p.name for p in real.iterdir()) == []
 
 
@@ -105,3 +111,38 @@ def test_a_mixed_case_tool_variable_names_a_real_root(tmp_path):
     env = _isolated_env(tmp_path)
     env["MouseReach_PROCESSING_ROOT"] = str(real)
     _expect_all_refused(_run_child(env, real), real)
+
+
+_SWALLOWED_AT_IMPORT = """
+import os
+try:  # a module that writes into a real root while it is loaded, and hides it
+    open(os.path.join(os.environ["GUARDED_FOLDER"], "at_import.log"), "w").close()
+except OSError:
+    pass
+
+def test_something_unrelated():
+    assert True
+"""
+
+
+def test_a_write_while_test_files_load_fails_the_run(tmp_path):
+    """Refused, and the run fails even though the module swallowed the error
+    and its one test passed: an attempt outside any test fails the run."""
+    real = tmp_path / "loaded_root"
+    real.mkdir()
+    work = tmp_path / "run"
+    work.mkdir()
+    (work / "test_writes_at_import.py").write_text(_SWALLOWED_AT_IMPORT)
+    env = _isolated_env(tmp_path)
+    env[ROOTS_ENV] = str(real)
+    env["GUARDED_FOLDER"] = str(real)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(TESTS_DIR)] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p])
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "conftest", "-p", "no:cacheprovider",
+         "-q", "--rootdir", str(work), str(work / "test_writes_at_import.py")],
+        cwd=str(work), env=env, capture_output=True, text=True, timeout=300)
+    assert list(real.iterdir()) == []
+    assert "1 passed" in proc.stdout, proc.stdout + proc.stderr
+    assert proc.returncode != 0, proc.stdout
+    assert "test guard" in proc.stdout and "at_import.log" in proc.stdout
