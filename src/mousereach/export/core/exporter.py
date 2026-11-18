@@ -18,7 +18,7 @@ def load_all_results(input_dir: Path, left_out: Optional[list] = None) -> List[d
     ``left_out``, when a list, receives each video that has algorithm files
     but no readable features file, with the reason (export.resolved)."""
     from mousereach.export.resolved import load_resolved_videos
-    results, skipped = load_resolved_videos(Path(input_dir))
+    results, skipped = load_resolved_videos(Path(input_dir), pellets_only=True)
     if left_out is not None:
         left_out.extend(skipped)
     return results

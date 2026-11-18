@@ -20,10 +20,21 @@ FEATURES_SUFFIX = "_features.json"
 _ALGO_SUFFIXES = ("_pellet_outcomes.json", "_reaches.json")
 
 
-def load_resolved_videos(input_dir: Path) -> Tuple[List[Dict], List[str]]:
+def is_session_only(doc: Dict) -> bool:
+    """True for an Easy or Flat tray's features file: reaches and attention
+    only, no pellet outcome (FeatureExtractor.extract_session_only)."""
+    return bool(((doc or {}).get("summary") or {}).get("session_only"))
+
+
+def load_resolved_videos(input_dir: Path, pellets_only: bool = False) -> Tuple[List[Dict], List[str]]:
     """``(videos, left_out)`` for the files directly in ``input_dir``.
 
     ``videos``: every readable ``*_features.json``, parsed, in name order.
+    With ``pellets_only``, an Easy or Flat tray's session file is skipped
+    (not left out -- it has no pellet to count). WHY: its segment carries no
+    outcome, so a pellet count would gain a pellet with no outcome that never
+    existed; the algorithm's outcome file those counts read before is not
+    written for these trays.
     ``left_out``: the names of videos that have an algorithm file
     (pellet outcomes or reaches) but no features file, or whose features file
     cannot be read -- each with the reason, for the command to print."""
@@ -41,6 +52,8 @@ def load_resolved_videos(input_dir: Path) -> Tuple[List[Dict], List[str]]:
             left_out.append(f"{stem}: its features file could not be read ({err})")
             continue
         doc.setdefault("video_name", stem)
+        if pellets_only and is_session_only(doc):
+            continue
         videos.append(doc)
     algo = set()
     for suffix in _ALGO_SUFFIXES:

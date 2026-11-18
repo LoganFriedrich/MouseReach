@@ -3162,7 +3162,7 @@ failed: kinematics not written: ...)`, followed by each problem in words. The pr
 - a reach's extended measures could not be computed -- the message names the reach and its frames.
 
 No `<video>_features.json` is written (an existing one is left as it was). The same happens when
-the kinematics are made by hand (`mousereach-kinematics`, the Run Pipeline window, the bring-current
+the kinematics are made by hand (`mousereach-kinematics`, the Run All Steps tab, the bring-current
 routine): the command reports the error and writes no file.
 
 **What happens next.** The failed-video retry runs it again, like any other kinematics failure

@@ -34,7 +34,7 @@ def main():
     # WHY the features files: the pellet-outcomes file is the algorithm's call
     # before any person's answer, so a pellet a reviewer corrected was counted
     # with the algorithm's call (export.resolved).
-    videos, left_out = load_resolved_videos(PROCESSING)
+    videos, left_out = load_resolved_videos(PROCESSING, pellets_only=True)
     for data in videos:
         video_name = data.get("video_name")
         segments = data.get("segments", [])

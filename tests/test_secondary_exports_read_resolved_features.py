@@ -121,3 +121,18 @@ def test_the_reach_export_names_rows_that_are_the_algorithms_calls(folder, capsy
     reach_export.main()
     out = capsys.readouterr().out
     assert "algorithm's own calls" in out and VID in out
+
+
+def test_an_easy_trays_session_file_adds_no_pellet(folder):
+    """An Easy or Flat tray's features file has reaches and attention but no
+    pellet outcome; it must not add a pellet to the pellet counts."""
+    from mousereach.export.core.summary import compile_results
+    easy = "20990101_ABC0904_E1"
+    (folder / f"{easy}_reaches.json").write_text(json.dumps({"video_name": easy, "segments": []}),
+                                                 encoding="utf-8")
+    (folder / f"{easy}_features.json").write_text(json.dumps({
+        "video_name": easy, "summary": {"session_only": True},
+        "segments": [{"segment_num": 1, "outcome": None, "reaches": []}]}), encoding="utf-8")
+    r = compile_results(folder)
+    assert (r["summary"]["n_videos"], r["summary"]["total_segments"]) == (1, 1)
+    assert not any(easy in line for line in r["metadata"]["left_out"])

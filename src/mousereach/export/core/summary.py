@@ -24,7 +24,7 @@ def compile_results(input_dir: Path) -> Dict:
       algorithm files but no features file, each with the reason
     """
     from mousereach.export.resolved import load_resolved_videos
-    videos, left_out = load_resolved_videos(Path(input_dir))
+    videos, left_out = load_resolved_videos(Path(input_dir), pellets_only=True)
 
     def _count(outcomes):
         return sum(sum(1 for s in v.get('segments', []) if s.get('outcome') in outcomes)
