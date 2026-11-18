@@ -187,3 +187,48 @@ def test_a_ground_truth_reach_goes_to_the_segment_holding_most_of_its_frames():
               for s in out["segments"]}
     assert placed == {1: [], 2: [(199, 201)]}
     assert out["segments"][1]["reaches"][0]["duration_frames"] == 3
+
+
+# --- the reach review window --------------------------------------------------------
+
+@pytest.fixture
+def widget_module():
+    pytest.importorskip("napari")
+    from mousereach.reach import review_widget
+    return review_widget
+
+
+def test_moving_a_reach_keeps_an_exact_duration(widget_module):
+    r = {"reach_id": 1, "start_frame": 100, "end_frame": 104, "duration_frames": 5,
+         "source": "algorithm"}
+    widget_module.move_reach_end(r, 110)
+    assert r["duration_frames"] == 11
+    widget_module.move_reach_start(r, 105)
+    assert r["duration_frames"] == 6
+
+
+def test_both_originals_are_kept_whichever_end_moves_first(widget_module):
+    r = {"reach_id": 1, "start_frame": 100, "end_frame": 104, "source": "algorithm"}
+    widget_module.move_reach_end(r, 110)
+    widget_module.move_reach_start(r, 98)
+    widget_module.move_reach_start(r, 97)          # a second move keeps the algorithm's
+    assert (r["original_start"], r["original_end"]) == (100, 104)
+    assert r["human_corrected"] is True
+
+
+def test_the_ground_truth_export_carries_the_original_frames(widget_module):
+    r = {"reach_id": 1, "reach_num": 1, "start_frame": 100, "end_frame": 104,
+         "source": "algorithm"}
+    widget_module.move_reach_start(r, 98)
+    g = widget_module.gt_reach_record(r, "tester", "2099-01-01T00:00:00")
+    assert g["original_start_frame"] == 100
+    assert g["original_end_frame"] is None          # the end was not moved
+    assert g["duration_frames"] == 7                 # 98..104
+
+
+def test_a_reach_a_person_added_has_no_original(widget_module):
+    r = {"reach_id": 9, "start_frame": 100, "end_frame": 104, "source": "human_added",
+         "original_start": None, "original_end": None}
+    widget_module.move_reach_start(r, 99)
+    assert r["original_start"] is None
+    assert widget_module.gt_reach_record(r, "t", "x")["duration_frames"] == 6

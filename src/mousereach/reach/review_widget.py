@@ -44,6 +44,68 @@ import cv2
 
 from mousereach.review import ComparisonPanel, create_reach_comparison
 from mousereach.review.save_panel import SimpleSavePanel
+# The pipeline's one frame convention: a reach is its first and last frame,
+# both included, so it holds end - start + 1 frames (causal_review_io states it).
+from mousereach.review.causal_review_io import frames_in, reach_duration_frames
+
+
+def move_reach_start(r: Dict, frame: int) -> None:
+    """Set a reach's start to ``frame`` (a person's correction).
+
+    The algorithm's start is kept as ``original_start`` the first time a person
+    moves it -- independently of the end: before 2026-11-18 it was recorded only
+    while the reach was not yet marked corrected, so a reach whose end was moved
+    first never kept its original start. A reach a person added has no
+    algorithm start to keep. duration_frames is counted from the frames, both
+    included (it was end - start, one frame short)."""
+    if r.get('original_start') is None and r.get('source') != 'human_added':
+        r['original_start'] = r['start_frame']
+    r['human_corrected'] = True
+    r['start_frame'] = int(frame)
+    r['duration_frames'] = reach_duration_frames(r)
+
+
+def move_reach_end(r: Dict, frame: int) -> None:
+    """Set a reach's end to ``frame`` (a person's correction); keeps the
+    algorithm's end as ``original_end`` the first time (move_reach_start says
+    why each is kept on its own) and recounts duration_frames."""
+    if r.get('original_end') is None and r.get('source') != 'human_added':
+        r['original_end'] = r['end_frame']
+    r['human_corrected'] = True
+    r['end_frame'] = int(frame)
+    r['duration_frames'] = reach_duration_frames(r)
+
+
+def gt_reach_record(r: Dict, verified_by: str, verified_at: str) -> Dict:
+    """One reach of the reach ground-truth file this window exports.
+
+    ``original_start_frame`` / ``original_end_frame`` (the names the
+    ground-truth readers use, e.g. performance.metrics) carry the algorithm's
+    frames from ``original_start`` / ``original_end``, which is where this
+    window records them. Before 2026-11-18 the export read keys of those
+    output names, which nothing writes, so both were always empty.
+    duration_frames is counted from the frames (end - start + 1)."""
+    def _orig(new_key, old_key):
+        v = r.get(new_key)
+        return v if v is not None else r.get(old_key)
+    return {
+        'reach_id': r.get('reach_id'),
+        'reach_num': r.get('reach_num'),
+        'start_frame': r['start_frame'],
+        'apex_frame': r.get('apex_frame'),
+        'end_frame': r['end_frame'],
+        'duration_frames': reach_duration_frames(r),
+        'source': r.get('source', 'algorithm'),
+        'human_corrected': r.get('human_corrected', False),
+        'human_verified': True,
+        'verified_by': verified_by,
+        'verified_at': verified_at,
+        'exclude_from_analysis': r.get('exclude_from_analysis', False),
+        'exclude_reason': r.get('exclude_reason'),
+        # Preserve original values if corrected
+        'original_start_frame': _orig('original_start', 'original_start_frame'),
+        'original_end_frame': _orig('original_end', 'original_end_frame'),
+    }
 
 
 def get_username():
@@ -1694,13 +1756,8 @@ class ReachAnnotatorWidget(QWidget):
             show_warning("Start must be before end")
             return
         
-        # Track correction
-        if not r.get('human_corrected'):
-            r['original_start'] = r['start_frame']
-            r['human_corrected'] = True
-        
-        r['start_frame'] = frame
-        r['duration_frames'] = r['end_frame'] - frame
+        # Track correction (keeps the algorithm's start; recounts the duration)
+        move_reach_start(r, frame)
 
         # Re-sort and renumber in case start moved past another reach
         self._sort_and_renumber_reaches()
@@ -1722,13 +1779,8 @@ class ReachAnnotatorWidget(QWidget):
             show_warning("End must be after start")
             return
 
-        # Track correction
-        if not r.get('human_corrected'):
-            r['original_end'] = r['end_frame']
-            r['human_corrected'] = True
-
-        r['end_frame'] = frame
-        r['duration_frames'] = frame - r['start_frame']
+        # Track correction (keeps the algorithm's end; recounts the duration)
+        move_reach_end(r, frame)
 
         self._increment_corrections()
         self._update_display()
@@ -1843,7 +1895,7 @@ class ReachAnnotatorWidget(QWidget):
             'start_frame': self.new_reach_start,
             'apex_frame': (self.new_reach_start + end_frame) // 2,  # Estimate
             'end_frame': end_frame,
-            'duration_frames': end_frame - self.new_reach_start,
+            'duration_frames': frames_in(self.new_reach_start, end_frame),
             'max_extent_pixels': 0,
             'max_extent_ruler': 0,
             'source': 'human_added',
@@ -2118,24 +2170,8 @@ class ReachAnnotatorWidget(QWidget):
 
                 # Only include in GT if human interacted with this reach
                 if is_verified:
-                    gt_reach = {
-                        'reach_id': r.get('reach_id'),
-                        'reach_num': r.get('reach_num'),
-                        'start_frame': r['start_frame'],
-                        'apex_frame': r.get('apex_frame'),
-                        'end_frame': r['end_frame'],
-                        'duration_frames': r.get('duration_frames'),
-                        'source': r.get('source', 'algorithm'),
-                        'human_corrected': r.get('human_corrected', False),
-                        'human_verified': True,
-                        'verified_by': get_username(),
-                        'verified_at': datetime.now().isoformat(),
-                        'exclude_from_analysis': r.get('exclude_from_analysis', False),
-                        'exclude_reason': r.get('exclude_reason'),
-                        # Preserve original values if corrected
-                        'original_start_frame': r.get('original_start_frame'),
-                        'original_end_frame': r.get('original_end_frame'),
-                    }
+                    gt_reach = gt_reach_record(
+                        r, get_username(), datetime.now().isoformat())
                     gt_reaches.append(gt_reach)
                     gt_reaches_saved += 1
 

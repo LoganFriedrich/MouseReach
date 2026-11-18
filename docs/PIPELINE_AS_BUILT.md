@@ -5871,6 +5871,27 @@ with 2.6.0: rows stamped 2.5.0 would then keep their missing columns for good.
 kinematics-only re-run of a filed video (previous section) adds them and keeps the
 filed reaches, outcomes and causal reaches exactly as before.
 
+**Also in 2.6.0: one frame convention (2026-11-18).** This was folded into 2.6.0
+before 2.6.0 was declared or deployed, so no 2.6.0 output exists without it, and the
+version stays 2.6.0. A window of frames is its first and last frame, both included.
+Every reader now uses that convention (`causal_review_io.reach_file_segment_span`).
+The reaches file stores each segment's end as the next pellet's first frame, and the
+kinematics read that as the segment's last frame. So every segment-level value
+(attention, body/posture, quality, and the pellet window behind the `legacy_swipe_*`
+threshold line) took in one frame of the next pellet. Each pellet's
+`segment_duration_sec` and `time_to_outcome_sec` were one frame long, and the
+features file's segment `end_frame` was the next pellet's first frame. It is now the
+pellet's last frame, as in the outcomes file.
+
+A reach's `duration_frames` is now counted from its frames (`end - start + 1`). It
+used to be copied, which left reaches a person moved or added in the reach review
+window, and every ground-truth or reviewer-typed reach, one frame short. The reach
+review window also now keeps the algorithm's start and end each on their own when a
+person moves them. Its ground-truth export writes them (`original_start_frame` /
+`original_end_frame`); before, both were always empty. Reach start and end frames
+themselves are unchanged, so a kinematics-only re-run keeps every filed decision.
+Details: `docs/KINEMATICS_FIELDS.md` section 3, "One frame convention".
+
 ## Update: one rule for "has something to triage" and "waits for its segmentation"
 
 The review window, the review gate and the watcher's return scan used to carry

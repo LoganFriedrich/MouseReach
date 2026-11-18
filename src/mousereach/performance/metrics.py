@@ -205,9 +205,11 @@ def compute_reach_metrics(
             elif r.get('human_corrected', False):
                 total_corrected += 1
                 # Compute timing errors if original values stored
-                if 'original_start_frame' in r:
+                # Empty when that side was not moved (the reach review
+                # window writes both keys on every corrected reach).
+                if r.get('original_start_frame') is not None:
                     start_errors.append(r['start_frame'] - r['original_start_frame'])
-                if 'original_end_frame' in r:
+                if r.get('original_end_frame') is not None:
                     end_errors.append(r['end_frame'] - r['original_end_frame'])
 
         # Count deletions (algorithm false positives)
