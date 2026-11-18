@@ -54,9 +54,10 @@ snapshot diffs, not a recalibration.
 
 Convention for MouseReach:
 
-- Bump `pyproject.toml` version `X.Y.Z` → `X.Y+1.0-dev` on a feature
-  branch. The `-dev` suffix signals "actively recalibrating, not
-  shipped."
+- (Update 2026-11-18.) Master's own `pyproject.toml` version already
+  carries `-dev`, so a `-dev` suffix does not mark a recalibration.
+  Mark a recalibration by its branch name (below), and on ship bump the
+  changed stage's own version constant (see "On final ship").
 - Branch off `master` with a name that describes the trigger, e.g.
   `feature/new-dlc-recalibration` or `feature/tray-geometry-retune`.
 - Tag the current baseline so it's easy to check out and rerun:
@@ -70,8 +71,20 @@ On final ship:
 - Squash/merge the feature branch to master.
 - Bump version to the target release (`2.4.0` → `2.5.0`, dropping
   `-dev`).
-- Update `pipeline_versions.json` on the Pipeline side to the new
-  version so the reprocessing scanner re-queues affected videos.
+- (Update 2026-11-18.) `pipeline_versions.json` declares one version
+  per STAGE, not the package version: `segmenter`, `reach_detector`,
+  `outcome_detector`, `assignment`, `kinematic_extractor`. Each is
+  compared with the constant the code stamps into its output files:
+  `SEGMENTER_VERSION` in `segmentation/core/segmenter_multi.py`,
+  `VERSION` in `reach/v8/__init__.py`, `VERSION` in
+  `outcomes/v6_cascade/__init__.py`, `VERSION` in
+  `assignment/v2/assign.py`, `FeatureExtractor.VERSION` in
+  `kinematics/core/feature_extractor.py`. So: bump the changed stage's
+  own version constant, then set that stage's entry in
+  `pipeline_versions.json`. `mousereach-version-check` reports any
+  drift between that file and the installed code; `--init` writes the
+  file from the installed code's versions; `--mark` marks outdated
+  videos for reprocessing.
 
 ---
 
@@ -95,7 +108,8 @@ your recalibration recovered. Don't skip (1) — without it you can't
 tell whether a post-edit 94% is a gain or a loss.
 
 Store both eval reports under a timestamped or triggered directory:
-`<improvement root>\validation_runs\<trigger>_<date>\reports\`. Keep them.
+a validation folder of your choosing outside the pipeline data folders, e.g.
+`<validation root>\<trigger>_<date>\reports\`. Keep them.
 They are the provenance for the decision.
 
 ### What to report (and what NOT to lead with)
@@ -175,7 +189,7 @@ Comments like this make the recalibration self-documenting.
 **After each edit** (or batch of edits in one commit):
 
 1. Re-run the downstream pipeline on the same GT corpus. For new-DLC
-   recalibration: segmenter → reaches → outcomes → features on the same
+   recalibration: segmenter -> reaches -> outcomes -> reach assignment -> features on the same
    h5 files that were used for the baseline.
 2. Re-run `mousereach-eval --all` and save the report alongside the
    baseline in the validation dir's `reports/` subfolder.
@@ -203,9 +217,9 @@ recalibration must pass a fresh-holdout test before being declared done.
    Select randomly across cohorts (don't pick all from one cohort).
 2. Run the new (recalibrated) MouseReach on those videos, writing
    outputs to a separate subtree (e.g.,
-   `<improvement root>\validation_runs\<trigger>_<date>\generalization\`).
+   `<validation root>\<trigger>_<date>\generalization\`).
 3. Ground-truth those 10 videos through the usual Review / GT tool
-   process. This is human time, ~1-2h per video for full annotation.
+   process. This takes substantial human time per video.
 4. Score the new MouseReach output against the fresh GT. Also run the
    old MouseReach on the same 10 videos and score its output — so the
    comparison on fresh material is apples-to-apples.
@@ -263,7 +277,8 @@ A recalibration is complete when all of these exist:
 ## Example: a new-DLC recalibration
 
 A validation run for a DLC model swap would live at
-`<improvement root>\validation_runs\<trigger>_<date>\`, holding the
+`<validation root>\<trigger>_<date>\` (a folder of your choosing outside the
+pipeline data folders), holding the
 reports, the generalization queue, and SUMMARY.md once it exists.
 
 Typical triggering circumstance: a new DLC training run produces cleaner
@@ -281,15 +296,20 @@ The `displaced_outside` class is an example of an acceptable gap
 
 ### Nose-referenced reach metrics
 
-The current extent definition
+(Update 2026-11-18.) The pre-v8 extent (`max_hand_x - boxr_x`) is no
+longer computed: the current reach detector (v8, 8.1.0) leaves
+`max_extent_pixels` and `max_extent_ruler` null, and `max_extent_mm` is
+null on every current reach. The text below describes that old definition.
+
+The old extent definition
 (`extent = max_hand_x - boxr_x`) is a signed 1-D projection relative to
 the apparatus (right slit edge). This creates two issues:
 
 1. **Negative extent** is possible and common — it happens whenever the
    hand didn't cross BOXR. A large share of ground-truth-marked
    real reaches have negative extent, which means "negative extent" is
-   NOT a valid "not a reach" signal even though thresholds treat it that
-   way. The filtering conflates partial-reach (hand behind slit, real
+   NOT a valid "not a reach" signal even though the pre-v8 detectors'
+   thresholds treated it that way (no current threshold reads extent). The filtering conflates partial-reach (hand behind slit, real
    intent) with non-reach (hand waving, no intent).
 2. **Apparatus-relative anchoring** tracks the box, not the animal.
    A reach extends *from the mouse*, not from the slit. The nose is
@@ -298,12 +318,13 @@ the apparatus (right slit edge). This creates two issues:
 Proposed redesign (separate ticket, separate version bump):
 - Redefine `extent = max_t distance(nose(t), hand(t))` over the reach
   window. Always non-negative. 2-D Euclidean.
-- Update trajectory anchor heuristic from midpoint(nose, boxr/boxl) to
-  pure nose position for the frame before paw first appears and the
-  frame after paw last disappears. Simpler, more consistent.
-- Extend nose-referenced anchoring to every place where a "reach
-  starts/ends" needs a consistent position — trajectory area,
-  straightness, smoothness, etc.
+- (Update 2026-11-18.) Done, and settled the other way: reach paths are
+  anchored at `start_frame - 1` to the midpoint of the nose and BOXL and
+  at `end_frame + 1` to the midpoint of the nose and BOXR
+  (`kinematics/core/anchored_path.py`, `ANCHOR_FRACTION_FROM_NOSE = 0.5`),
+  and every paw-position measure (path, length, straightness ...) uses
+  them. Still open: the nose-referenced extent in the first bullet, to
+  replace the null `max_extent_*` fields.
 
 This is a feature-definition change that deserves its own branch
 (`feature/nose-referenced-reach-metrics`) and its own recalibration
