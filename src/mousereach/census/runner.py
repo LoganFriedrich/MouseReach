@@ -465,7 +465,11 @@ def run_census(window_days: int = 14) -> dict:
     # recording is listed with its reason (recording_issues below) so a
     # database tool can say "recording failed" instead of "video missing".
     from mousereach.watcher import recording_issue as _ri
-    _root("recording_issues", _ri.problematic_dir(nas) if nas else None)
+    # Recorded as a root only when the folder exists: it is created by the
+    # first recording issue, and its absence is not a problem to report.
+    _issue_dir = _ri.problematic_dir(nas) if nas else None
+    if _issue_dir is not None and _issue_dir.is_dir():
+        _root("recording_issues", _issue_dir)
     issue_marks = _ri.read_marks(nas) if nas else {}
     recording_issues = []
     issue_sessions = set()

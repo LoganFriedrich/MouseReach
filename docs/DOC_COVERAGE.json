@@ -316,6 +316,13 @@
    "covers": [
     "src/mousereach/watcher/recording_outbox.py"
    ]
+  },
+  {
+   "doc": "docs/RECORDING_ISSUES.md",
+   "what": "Recording issues: failed recordings set aside before any cut",
+   "covers": [
+    "src/mousereach/watcher/recording_issue.py"
+   ]
   }
  ]
 }
