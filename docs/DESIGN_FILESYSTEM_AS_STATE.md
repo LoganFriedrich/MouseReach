@@ -98,6 +98,11 @@ it waits for cleanup. One such folder holds videos:
 claimed for pose (watcher/single_claim.py). A scan counts each one as still
 waiting in `Unanalyzed/Single_Animal`, never as a stage of its own and never
 as lost (2026-09-15).
+`Processing/Review/_Problematic/` holds recordings that failed (empty, a
+fraction of a second, unreadable), each with a
+`<name>.recording_issue.json` reason file; a person deals with them. It is
+not a stage, and it is not leftover either (docs/RECORDING_ISSUES.md;
+update 2026-11-18).
 
 Both `Unanalyzed/` folders accept new videos at any time, even while nodes run.
 A video is taken only once it has stopped changing, and singles are claimed by
