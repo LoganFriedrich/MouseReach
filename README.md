@@ -64,7 +64,7 @@ Launch with `mousereach` command. Available tabs:
 | **Pipeline Dashboard** | Overview of all videos and pipeline status |
 | **Step 0 - Crop Videos** | Crop multi-animal collage to single animals |
 | **Step 1 - DLC Analysis** | Run DeepLabCut pose estimation |
-| **Step 2 - Run Pipeline** | Batch segmentation, reach, outcome detection |
+| **Step 2 - Run Pipeline** | Run the pipeline by hand: one pass of this machine's watcher over everything waiting, in this machine's role. On the processing machine: the same steps, checks and review queues as the automatic watcher, and finished videos are filed. On a pose-only graphics-card PC: cutting and posing only (the analysis runs on the processing machine). The tab says which. No watcher needs to be running. A box puts one animal's videos first (the watcher's own priority, kept until cleared); the old "Select Specific Files..." / "Reprocess All..." buttons are shown switched off until the lab decides what they should do |
 | **Review Queues** | Open the triage review window and the re-segmentation review |
 | **Step 4 - View Features** | Visualize kinematic features |
 | **GT Tool** | Create ground truth files for evaluation |

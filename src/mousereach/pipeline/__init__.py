@@ -1,14 +1,14 @@
 """
-MouseReach Unified Pipeline
-=======================
+MouseReach pipeline helpers (manifests, versions, the filed tree, triage) and
+the "2 - Run Pipeline" tab (batch_widget), which runs one pass of this
+machine's watcher by hand.
 
-Single widget for running the complete analysis pipeline:
-- Stage 1: Segmentation (find pellet presentation boundaries)
-- Stage 2: Outcome Detection (classify R/D/M for each segment)
-- Stage 3: Reach Detection (find individual reach attempts)
-
-All files stay in Processing/. Status is tracked via validation_status
-field in JSON files, not by folder location.
+The tab's old separate processor (pipeline/core.py: UnifiedPipelineProcessor,
+scan_pipeline_status, consolidate_all_to_dlc_complete) is removed. It ran an
+older copy of the steps -- the old outcome detector before reach detection,
+no gate, no queue, no record -- and its "Reprocess All" deleted every
+segments file in Processing, a person's cuts included. batch_widget's
+docstring says what replaced it and why.
 """
 
 # The package's public names load on first use, not at import. WHY: importing
@@ -21,11 +21,6 @@ field in JSON files, not by folder location.
 # batch_widget directly and are unaffected.
 _LAZY = {
     'UnifiedPipelineWidget': 'mousereach.pipeline.batch_widget',
-    'UnifiedPipelineProcessor': 'mousereach.pipeline.core',
-    'UnifiedResults': 'mousereach.pipeline.core',
-    'PipelineStatus': 'mousereach.pipeline.core',
-    'scan_pipeline_status': 'mousereach.pipeline.core',
-    'consolidate_all_to_dlc_complete': 'mousereach.pipeline.core',
 }
 
 __all__ = list(_LAZY)

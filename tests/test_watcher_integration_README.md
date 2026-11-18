@@ -81,7 +81,6 @@ All tests use fixtures:
 
 - DLC processing (deeplabcut module)
 - Video cropping (mousereach.video_prep.core.cropper)
-- Pipeline processing (mousereach.pipeline.core)
 - File system paths (using tmp_path)
 
 ## Notes

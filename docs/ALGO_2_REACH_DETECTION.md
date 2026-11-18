@@ -1,6 +1,6 @@
 # Reach detection: finding each attempt
 
-Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mousereach/reach/cli.py`, `src/mousereach/reach/review_widget.py`, `compute_reach_apex` in `src/mousereach/lib/causal_attribution.py`, and the three places that call reach detection (`src/mousereach/reach/core/batch.py`, `src/mousereach/pipeline/core.py`, `src/mousereach/review/staging.py`)
+Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mousereach/reach/cli.py`, `src/mousereach/reach/review_widget.py`, `compute_reach_apex` in `src/mousereach/lib/causal_attribution.py`, and the two places that call reach detection (`src/mousereach/reach/core/batch.py`, `src/mousereach/review/staging.py`)
 
 Verified against: b65fcf0 (2026-08-23)
 
@@ -43,13 +43,12 @@ DLC .h5 + {video}_segments.json
   -> {video}_reaches.json
 ```
 
-Three places call `detect_video_reaches`:
+Two places call `detect_video_reaches`:
 
 - **`reach/core/batch.py:163`**, inside `process_single`. This is the busy one. It is reached from `process_batch` (`batch.py:244`, which is what `mousereach-detect-reaches` runs), from both watcher pipelines (`watcher/orchestrator.py:1052` and `:1949`), from `pipeline/run_all.py:83`, and from `pipeline/reprocess_to_current.py:212`.
-- **`pipeline/core.py:588`**, inside `UnifiedPipelineProcessor` — the napari "Run Pipeline" widget.
 - **`review/staging.py:304`**, building a review bundle.
 
-All three then call `ReachDetector.save_results` (`batch.py:168`, `pipeline/core.py:590`, `staging.py:305`). `span_to_reaches` itself writes nothing to disk.
+Both then call `ReachDetector.save_results` (`batch.py:168`, `staging.py:305`). The napari "Run Pipeline" tab used to be a third caller with its own processor (`pipeline/core.py`); it was removed, and the tab now runs one pass of the watcher, which goes through `process_single` like every other watcher run. `span_to_reaches` itself writes nothing to disk.
 
 ---
 
@@ -272,7 +271,6 @@ Filled with real values:
 
 - **`reach_detector.py:1121-1133`.** After the file is written, `save_results` tries to record it in the pipeline index. Line `:1127` reads `results.summary.total_reaches`, but `summary` is a plain dict (`span_to_reaches.py:202-209`), so this raises `AttributeError` on every run. The `except Exception: pass` at `:1132-1133` hides it. Verified by calling `save_results` with the index class stubbed out: the JSON is written, and the index records nothing. **The pipeline index is never updated by reach detection.**
 - **`reach_detector.py:1136-1140`.** The database sync immediately after is wrapped the same way (`except Exception: pass`), so a sync failure is equally invisible.
-- **`pipeline/core.py:610-611`.** The whole outcomes-and-reaches block is wrapped in `except Exception as e: results.outcome_failed += 1`. Nothing is logged, no traceback is printed, and a reach-detection failure is counted as an **outcome** failure. In this path a crash inside reach detection leaves no trace.
 - **An empty or unrecognised boundaries list produces an empty result, not an error.** If `load_segments` returns `[]`, `build_video_reaches` has nothing to attach spans to, so the loop at `span_to_reaches.py:126-138` hits the `continue` at `:135` for every span and discards them all. The output is a structurally valid file with zero segments and zero reaches.
 - **The watcher paths are better.** Both `watcher/orchestrator.py:1182-1186` and `:1962-1966` log the step as failed, mark the video failed, and re-raise.
 - **`review_widget.py:1077-1080`** shows the error and prints a traceback.
@@ -280,7 +278,6 @@ Filled with real values:
 ## Commands and code that do not work
 
 - **`mousereach-triage-reaches` crashes on every v8 file.** `triage.check_anomalies` reads each reach's confidence with `r.get('confidence', 0)` and compares it to 0.30 (`triage.py:144-145`). v8 writes `confidence: null`, so the `0` default never applies and `None < 0.30` raises `TypeError`. Reproduced against a shipped file. The call at `triage.py:216` is not inside a `try`, so the command dies.
-  The same function is also called from `pipeline/core.py:602`, but there it is handed a stripped-down dict whose segments carry only `n_reaches` (`:597-601`) — so the reach loop never executes, the crash never happens, and the low-confidence check is dead code. In that path the only anomaly checks that can fire are "segment count is not 20 or 21" and "a segment has more than 100 reaches".
 - **`mousereach-advance-reaches` crashes immediately.** `cli.py:173` calls `advance_videos(args.input, require_validation=not args.force)`, but `advance.advance_videos` is defined as `(input_dir, output_dir, verbose)` (`advance.py:45-49`). Verified: `TypeError: advance_videos() got an unexpected keyword argument 'require_validation'`. Note also that `advance.py:86` **moves files** with `shutil.move`, which contradicts the single-folder architecture described in the comment at `core/__init__.py:163-165` and in the command's own help text.
 - **`_run_detection` in the napari reach widget would run the wrong algorithm — but nothing calls it.** `review_widget.py:1059-1080` instantiates the dead v6 `ReachDetector` and would overwrite `{video}_reaches.json` with v6 output. It is not connected to any button, signal or menu; a repository-wide search for `_run_detection` finds only its own definition (plus an unrelated one in the outcomes widget). It is dead code and should be deleted rather than wired up.
 - **`mousereach-review-reaches` is not the napari tool.** `cli.py:180-194` documents it as launching a GUI, but it calls `_review.interactive_review` (`_review.py:157`), a text prompt loop in the terminal. The napari widget is `reach.review_widget:ReachAnnotatorWidget`, reached through the napari plugin manifest (`napari.yaml:40-41`), the dashboard, or the unified review widget.

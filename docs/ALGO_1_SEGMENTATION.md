@@ -1,6 +1,6 @@
 # Segmentation: cutting a video into one stretch per pellet
 
-Describes: `src/mousereach/segmentation/` (all of it), plus the places outside it that run segmentation or read its output: `src/mousereach/pipeline/core.py`, `src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/watcher/review_gate.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/fix_segmentation_widget.py`
+Describes: `src/mousereach/segmentation/` (all of it), plus the places outside it that run segmentation or read its output: `src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/watcher/review_gate.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/fix_segmentation_widget.py`
 
 Verified against: b65fcf0 (2026-08-23)
 
@@ -49,7 +49,7 @@ Seven call sites, in three groups.
 **Through `segmentation/core/batch.py:process_single`**, which calls `segment_video_multi(dlc_path)` then `save_segmentation(...)` (`core/batch.py:79-80`):
 
 1. `mousereach-segment -i <dir>` -> `segmentation/cli.py:main_batch` -> `core/batch.py:process_batch` -> `:179`
-2. The unified pipeline runner -> `pipeline/core.py:492`
+2. (removed) The old "Run Pipeline" tab's own runner, `pipeline/core.py`. The tab now runs one pass of the watcher (call site 3), so it no longer has a call site of its own.
 3. The watcher, local-pipeline path -> `watcher/orchestrator.py:1010`
 4. The watcher, dependency-aware reprocess path -> `watcher/orchestrator.py:1891`
 5. A manual single-video run -> `pipeline/run_all.py:74`
@@ -63,7 +63,7 @@ One more script re-runs the segmenter without using its boundaries: a backfill s
 
 ### Who sets `validation_status`
 
-Only three of those paths ever write `validation_status` into the file: `process_batch` (`core/batch.py:191-198`), `pipeline/core.py:500-508`, and human review. **The watcher does not.** `orchestrator.py:1846` imports `add_validation_status` and never calls it -- that import is the only mention of the name in the file. `run_all.py`, `reprocess_to_current.py` and `staging.py` do not set it either. In the archive, a large share of files have no `validation_status` key at all.
+Only three of those paths ever write `validation_status` into the file: `process_batch` (`core/batch.py:191-198`), the old Run Pipeline tab's runner (`pipeline/core.py`, removed; files it wrote still carry the key), and human review. **The watcher does not.** `orchestrator.py:1846` imports `add_validation_status` and never calls it -- that import is the only mention of the name in the file. `run_all.py`, `reprocess_to_current.py` and `staging.py` do not set it either. In the archive, a large share of files have no `validation_status` key at all.
 
 ### Two constants with the same name and different values
 
@@ -329,7 +329,6 @@ Two causes are visible in the anomaly lines:
 ### Exceptions are swallowed
 
 - `core/batch.py:108-115` catches everything from segmentation and returns `status: 'failed'` with the message. No file is written.
-- `pipeline/core.py:518-519` catches everything and increments a counter. The exception object is bound to `e` and never used, never logged.
 - `save_segmentation`'s pipeline-index update is wrapped in a bare `except Exception: pass` (`segmenter_robust.py:995-996`), as is `process_batch`'s (`core/batch.py:219-220`). In `process_batch` that second handler also hides a real bug: on a failed video the result dict has no `output_file` key, so `core/batch.py:211` raises `KeyError` and it is silently discarded.
 - The two index updates disagree about what `seg_confidence` means. `save_segmentation` writes `overall_confidence` (`segmenter_robust.py:986`); `process_batch` then overwrites the same key with the interval coefficient of variation (`core/batch.py:215`).
 
@@ -386,7 +385,7 @@ Written by `save_segmentation` (`segmenter_robust.py:853-996`). Everything below
 
 ### Fields added afterwards, not by the segmenter
 
-- `validation_status` (`auto_approved` / `needs_review` / `validated`) and `validation_timestamp` are added by `add_validation_status` (`core/batch.py:30-39`), called only from `process_batch` and from `pipeline/core.py`. Section 2 lists the paths that never set them.
+- `validation_status` (`auto_approved` / `needs_review` / `validated`) and `validation_timestamp` are added by `add_validation_status` (`core/batch.py:30-39`), called only from `process_batch` (and, before it was removed, from the old Run Pipeline tab's `pipeline/core.py`). Section 2 lists the paths that never set them.
 - Human review in the napari boundary tool (`segmentation/review_widget.py:1229-1252`) overwrites `boundaries` in place and adds `n_boundaries`, `boundary_corrections` (per boundary: was it moved, from what frame, by whom, when), `validation_status: "validated"`, and `validation_record` (an audit trail with the original boundary list and the deltas). It also rewrites `video_name` to the plain video id. **It does not recompute `intervals`, `detection`, `anomalies` or `overall_confidence`, and it does not clear `needs_human`** -- after a human moves a boundary, those fields still describe the algorithm's original answer. No file in the archive has been through this path: `n_boundaries` appears in none of them.
 - The correction tool (`review/fix_segmentation_widget.py:450-459`) overwrites `boundaries` and adds `algo_boundaries`, `boundary_source: "human"`, `corrected_by`, `corrected_at`, `needs_human_resolved`, and an emptied `needs_human`. It archives the original first and refuses to save if it cannot (`:439-448`). It does not recompute `intervals`, `detection`, `anomalies`, `overall_confidence` or `n_boundaries` either, and it does not re-run reach or outcome detection -- those files still describe the old cuts until the video goes back through the pipeline.
 - `candidates_backfilled_at` and `candidates_backfill_note` are added by the backfill script (no longer in this repository).

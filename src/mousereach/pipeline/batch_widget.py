@@ -1,576 +1,346 @@
+"""The "2 - Run Pipeline" tab: run the pipeline by hand from a window.
+
+WHAT IT DOES
+------------
+One button, "Run the pipeline now". It runs ONE pass of this machine's own
+watcher -- exactly what ``mousereach-watch --once`` and the Watcher Control
+tab's "Run Once" run -- and stops when nothing is left waiting. What that pass
+does depends on the role this machine is configured for (``watcher.mode`` in
+~/.mousereach/config.json, shown on the tab):
+
+On a pose-only graphics-card PC (``dlc_pc``, ``also_process`` false) the pass
+is the pose pass: it cuts waiting recordings into single-animal videos, poses
+them and stages each pose for the processing machine. It does NOT run
+segmentation or anything after it; the analysis below happens on the
+processing machine. (A ``dlc_pc`` with ``also_process`` true also analyses
+what it posed and files it, as below.)
+
+On the processing machine (``processing_server``):
+
+  * every posed video waiting on this machine goes through segmentation,
+    reach detection, the outcome cascade, reach assignment, the quality
+    check, the hand-score comparison and the review gate, in the watcher's
+    order;
+  * a video the gate holds goes to its review queue (triage or manual
+    segmentation), with its watcher record, as it would overnight;
+  * a video that passed every check gets its kinematics and is filed;
+  * videos coming back from review go on from where they were sent.
+
+No automatic watcher has to be running. The pass refuses to start, with the
+reason shown, where the watcher itself would not start work: another watcher
+is already running on this PC, the watcher is paused (by hand or because a
+recording program is open), a stop was requested, or the machine's role is
+not configured.
+
+WHY IT IS BUILT THIS WAY
+------------------------
+Running the pipeline by hand from a window is the most important capability
+the tool has, so the tab stays. But the tab used to run its own, older copy
+of the steps (pipeline/core.py, now removed): the old outcome detector, run
+BEFORE reach detection, in the folder the watcher works in, with no reach
+assignment, no hand-score check, no gate, no review queue and no watcher
+record -- and a "Reprocess All" button that deleted every segments, reaches
+and outcomes file in Processing, a person's hand-set cuts included. Its
+results were never filed and nothing said why.
+
+So there is now ONE implementation and two ways to start it. This tab IS the
+Watcher Control panel's run-once (it subclasses WatcherControlWidget and keeps
+its guards and its run-once unchanged) with a smaller screen: same steps, same
+order, same gates and holds, same outputs, same refusals. A change to how the
+watcher runs a video reaches this button with no second copy to keep in step.
+
+CHOOSING WHICH VIDEOS GO FIRST. The "Do one animal's videos first" box puts
+one animal first, through the watcher's own priority (watcher/priority_animal.py,
+the same file ``mousereach-watch-prioritize`` writes): the next passes take
+that animal's videos before any other, with every step, check and hold
+unchanged. That is how a person has chosen videos done now from a window.
+
+THE OLD CONTROLS ARE KEPT, SWITCHED OFF. "Select Specific Files...", "Clear
+Selection" and "Reprocess All..." are still on the tab, greyed out, each with
+a note saying why. They ran the chosen (or all) pose files through the old
+copy of the steps, wherever those files sat, with no checks, queue or filing;
+"Reprocess All" also deleted every segments, reaches and outcomes file in
+Processing, a person's hand-set cuts included. Wiring them to the watcher
+needs a decision from the lab owner that is still open: should the tab offer
+choosing specific videos again, and if so what should happen to a chosen video
+that is already filed, held in a review queue, or crystallized? Until it is
+decided they do nothing, and the note on the tab lists the per-video ways that
+keep every check: the animal-first box above, ``mousereach-watch-reprocess
+<video>`` (a failed video) and the version re-run (a filed video: declare new
+versions in the Watcher Control tab, or ``mousereach-version-check --mark``,
+which keeps every person's answers and cuts). The Run All Steps tab runs one
+chosen video, but it is a separate, older path that does not yet keep every
+watcher check, and its note says so.
+
+ASCII-only console output (Windows cp1252). Qt widget text may use Unicode,
+but this module prints nothing to the terminal.
 """
-MouseReach Unified Pipeline Widget
-==============================
+from __future__ import annotations
 
-Single napari widget for running the complete analysis pipeline.
-
-Philosophy: "Push everything forward"
-- Click Run with no selection → process everything that's ready
-- Optionally select specific files for targeted reprocessing
-
-When you click Run:
-1. New DLC files → Segmentation → auto-triage
-2. Validated segmentations → Outcomes → Reaches → auto-triage
-3. Validated items in *_NeedsReview → advance to next stage
-
-Files needing review are paused but don't block others.
-"""
-
-from pathlib import Path
-from typing import Optional, List
-import threading
+import logging
 
 from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFileDialog, QProgressBar, QGroupBox, QScrollArea, QFrame,
-    QMessageBox
-)
-from qtpy.QtCore import Qt, Signal, QObject, QTimer
-
-import napari
-from napari.utils.notifications import show_info, show_error, show_warning
-
-from mousereach.config import Paths
-from mousereach.pipeline.core import (
-    scan_pipeline_status, PipelineStatus,
-    UnifiedPipelineProcessor, UnifiedResults,
-    consolidate_all_to_dlc_complete, count_all_videos_in_pipeline
+    QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox,
+    QTableWidget, QTextEdit, QHeaderView,
 )
 
+from mousereach.watcher.control_widget import WatcherControlWidget, status_headline
 
-class PipelineSignals(QObject):
-    """Signals for pipeline processing."""
-    status_scanned = Signal(object)  # PipelineStatus
-    stage_progress = Signal(str, int, int, str)  # stage_name, current, total, message
-    pipeline_complete = Signal(object)  # UnifiedResults
-    consolidate_complete = Signal(dict)  # consolidation stats
-    error = Signal(str)
+logger = logging.getLogger(__name__)
 
 
-class StageWidget(QFrame):
-    """Widget displaying a single pipeline stage."""
-
-    def __init__(self, stage_name: str, description: str):
-        super().__init__()
-        self.stage_name = stage_name
-        self.setFrameStyle(QFrame.Box | QFrame.Raised)
-        self.setLineWidth(1)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        self.setLayout(layout)
-
-        # Header
-        header = QLabel(f"<b>{stage_name}</b>")
-        header.setStyleSheet("font-size: 12px;")
-        layout.addWidget(header)
-
-        # Description
-        desc = QLabel(description)
-        desc.setStyleSheet("color: #888; font-size: 10px;")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-
-        # Status label
-        self.status_label = QLabel("Waiting...")
-        self.status_label.setStyleSheet("color: #666;")
-        layout.addWidget(self.status_label)
-
-        # Results summary (hidden until complete)
-        self.results_label = QLabel("")
-        self.results_label.setVisible(False)
-        self.results_label.setWordWrap(True)
-        layout.addWidget(self.results_label)
-
-    def set_pending(self):
-        """Reset to pending state."""
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
-        self.status_label.setText("Waiting...")
-        self.status_label.setStyleSheet("color: #666;")
-        self.results_label.setVisible(False)
-
-    def set_running(self, current: int, total: int, message: str):
-        """Update progress while running."""
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setMaximum(total)
-        self.progress_bar.setValue(current)
-        self.status_label.setText(message)
-        self.status_label.setStyleSheet("color: #4a9eff;")
-
-    def set_complete(self, summary: str, has_warnings: bool = False):
-        """Show completion status."""
-        self.progress_bar.setVisible(False)
-        self.status_label.setText("Complete")
-        if has_warnings:
-            self.status_label.setStyleSheet("color: #ffa500;")
-        else:
-            self.status_label.setStyleSheet("color: #4caf50;")
-        self.results_label.setText(summary)
-        self.results_label.setVisible(True)
+RUN_PIPELINE_INTRO = (
+    "Runs one pass of this machine's watcher on everything waiting here, then "
+    "stops: the same steps the automatic watcher runs on this machine, in the "
+    "same order, with the same checks. What that is depends on this machine's "
+    "role (shown below). On the processing machine: segmentation, reaches, "
+    "outcomes, causal reach, quality check, hand-score comparison, review "
+    "gate, kinematics, filing -- a video with a problem goes to its review "
+    "queue, and a video that passed every check is filed. On a pose-only "
+    "graphics-card PC: cutting recordings and posing them, then handing the "
+    "poses to the processing machine, which does the analysis. No watcher "
+    "has to be running."
+)
 
 
-class UnifiedPipelineWidget(QWidget):
+def role_explanation(mode, also_process=False) -> str:
+    """One sentence saying what a pass does on a machine of role ``mode``.
+
+    WHY: the tab runs THIS machine's watcher role. On a pose-only
+    graphics-card PC that is the pose pass, not the analysis, and a person
+    who pressed the button there must not expect videos to be analysed or
+    filed by it."""
+    if mode == "processing_server":
+        return ("This machine is the processing machine: a pass analyses the "
+                "posed videos waiting here, sends a video with a problem to its "
+                "review queue and files a video that passed every check.")
+    if mode == "dlc_pc" and also_process:
+        return ("This machine is a graphics-card PC that also analyses: a pass "
+                "cuts and poses waiting recordings, then analyses what it posed "
+                "and files it (or sends it to its review queue), as the "
+                "processing machine would.")
+    if mode == "dlc_pc":
+        return ("This machine is a pose-only graphics-card PC: a pass cuts waiting "
+                "recordings and poses them, and hands each pose to the processing "
+                "machine. It does not analyse or file anything; that happens on "
+                "the processing machine.")
+    return f"This machine's role ({mode}) is not one the pipeline knows."
+
+RUN_PIPELINE_BUTTON_TEXT = "Run the pipeline now"
+
+# Shown on the tab. WHY: the old tab's "Select Specific Files...", "Clear
+# Selection" and "Reprocess All..." are kept but switched off until the lab
+# owner decides what they should do (module docstring); a person who used
+# them must be told, on the screen, why and what to use instead.
+SELECTION_NOTE = (
+    "Running only chosen videos: \"Run the pipeline now\" works on everything "
+    "waiting on this machine. To have chosen videos done first, put their animal "
+    "first in the box above, then press the button: the watcher takes that "
+    "animal's videos before any other, with every check. The old \"Select "
+    "Specific Files...\", \"Clear Selection\" and \"Reprocess All...\" buttons "
+    "are switched off: they skipped the watcher's checks, and what they should do "
+    "with a filed or held video is still to be decided. A failed video: "
+    "mousereach-watch-reprocess <video>. A filed video: the version re-run. The "
+    "Run All Steps tab runs one chosen video, but it does not yet keep every "
+    "watcher check (no hand-score comparison, and its quality check lets a video "
+    "through when the check cannot run)."
+)
+
+# The tooltip on each switched-off old button.
+OLD_CONTROL_TIP = (
+    "Switched off: this ran pose files through an older copy of the steps that "
+    "skipped the watcher's checks. Whether it comes back, and what it should do "
+    "with a filed or held video, is still to be decided. See the note below.")
+
+PRIORITY_INTRO = (
+    "Do one animal's videos first: type the animal (e.g. ABC0101) and press "
+    "\"Put first\". The next passes take that animal's videos before any other; "
+    "every step and check is the same. It stays in force -- for the automatic "
+    "watcher too, overnight included -- until you press \"Back to normal order\". "
+    "Same as mousereach-watch-prioritize."
+)
+
+
+class UnifiedPipelineWidget(WatcherControlWidget):
+    """Run the pipeline by hand: one pass of this machine's watcher.
+
+    Everything that decides what happens to a video is inherited from
+    WatcherControlWidget (``_run_once`` and the guards it calls); this class
+    only lays out a smaller screen. See the module docstring for why.
     """
-    Unified widget for running the complete MouseReach analysis pipeline.
-
-    Philosophy: "Push everything forward"
-    - Run with no selection = process everything that's ready
-    - Select specific files = targeted reprocessing
-    """
-
-    def __init__(self, napari_viewer: napari.Viewer):
-        super().__init__()
-        self.viewer = napari_viewer
-        self.base_dir: Path = Paths.PROCESSING_ROOT
-        self.specific_files: Optional[List[Path]] = None
-        self.worker_thread: Optional[threading.Thread] = None
-        self.signals = PipelineSignals()
-        self.current_status: Optional[PipelineStatus] = None
-
-        self._build_ui()
-        self._connect_signals()
-
-        # Auto-scan on startup (deferred to avoid blocking)
-        if self.base_dir.exists():
-            QTimer.singleShot(200, self._scan_status)
 
     def _build_ui(self):
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        self.setLayout(main_layout)
+        root = QVBoxLayout(self)
 
-        # Scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        main_layout.addWidget(scroll)
-
-        inner_widget = QWidget()
-        scroll.setWidget(inner_widget)
-        layout = QVBoxLayout()
-        inner_widget.setLayout(layout)
-
-        # === Header ===
-        header = QLabel("<b>MouseReach Analysis Pipeline</b>")
+        header = QLabel("<b>Run the pipeline by hand</b>")
         header.setStyleSheet("font-size: 14px; padding: 5px;")
-        layout.addWidget(header)
+        root.addWidget(header)
 
-        # === Status Summary ===
-        status_group = QGroupBox("Pipeline Status")
-        status_layout = QVBoxLayout()
-        status_group.setLayout(status_layout)
+        intro = QLabel(RUN_PIPELINE_INTRO)
+        intro.setWordWrap(True)
+        root.addWidget(intro)
 
-        self.status_label = QLabel("Scanning pipeline...")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("font-family: monospace; font-size: 11px;")
-        status_layout.addWidget(self.status_label)
+        self._status_label = QLabel("Status: unknown")
+        self._status_label.setStyleSheet("font-weight: bold;")
+        self._status_label.setWordWrap(True)
+        root.addWidget(self._status_label)
 
-        # Refresh button
-        btn_row = QHBoxLayout()
-        self.refresh_btn = QPushButton("Refresh Status")
-        self.refresh_btn.setToolTip("Re-scan pipeline folders to see what's ready")
-        self.refresh_btn.clicked.connect(self._scan_status)
-        btn_row.addWidget(self.refresh_btn)
-        btn_row.addStretch()
-        status_layout.addLayout(btn_row)
+        self._mode_label = QLabel("")
+        self._mode_label.setStyleSheet("font-weight: bold;")
+        self._mode_label.setWordWrap(True)
+        root.addWidget(self._mode_label)
 
-        layout.addWidget(status_group)
+        # The role is this machine's configured one; _take_start_guards reads
+        # the "Run as" box when there is one, and there is none on this tab.
+        self._mode_select = None
 
-        # === Run Section ===
-        run_group = QGroupBox("Run Pipeline")
-        run_layout = QVBoxLayout()
-        run_group.setLayout(run_layout)
-
-        instructions = QLabel(
-            "Click <b>Run</b> to process everything that's ready.\n"
-            "Or select specific files for targeted reprocessing."
-        )
-        instructions.setWordWrap(True)
-        instructions.setStyleSheet("color: #888; font-size: 10px;")
-        run_layout.addWidget(instructions)
-
-        # Run button
-        self.run_btn = QPushButton("Run Pipeline")
+        self.run_btn = QPushButton(RUN_PIPELINE_BUTTON_TEXT)
         self.run_btn.setStyleSheet("font-weight: bold; padding: 12px; font-size: 13px;")
-        self.run_btn.clicked.connect(self._run_pipeline)
-        self.run_btn.setEnabled(False)
-        run_layout.addWidget(self.run_btn)
+        self.run_btn.setToolTip(
+            "One pass of this machine's watcher (the same as Run Once on the "
+            "Watcher Control tab and mousereach-watch --once).")
+        self.run_btn.clicked.connect(self._run_once)
+        root.addWidget(self.run_btn)
 
-        # Selection row
-        select_row = QHBoxLayout()
+        self._pause_reason_label = QLabel("")
+        self._pause_reason_label.setWordWrap(True)
+        self._pause_reason_label.setStyleSheet("color:#c80; font-weight:bold;")
+        root.addWidget(self._pause_reason_label)
 
+        prio = QGroupBox("Do one animal's videos first")
+        pl = QVBoxLayout(prio)
+        pi = QLabel(PRIORITY_INTRO)
+        pi.setWordWrap(True)
+        pl.addWidget(pi)
+        prow = QHBoxLayout()
+        self.priority_edit = QLineEdit()
+        self.priority_edit.setPlaceholderText("animal, e.g. ABC0101")
+        prow.addWidget(self.priority_edit)
+        self.priority_btn = QPushButton("Put first")
+        self.priority_btn.clicked.connect(self._set_priority)
+        prow.addWidget(self.priority_btn)
+        self.priority_clear_btn = QPushButton("Back to normal order")
+        self.priority_clear_btn.clicked.connect(self._clear_priority)
+        prow.addWidget(self.priority_clear_btn)
+        pl.addLayout(prow)
+        self.priority_label = QLabel("")
+        self.priority_label.setWordWrap(True)
+        pl.addWidget(self.priority_label)
+        root.addWidget(prio)
+
+        # The old tab's controls, kept and switched off (module docstring).
+        old = QHBoxLayout()
         self.select_btn = QPushButton("Select Specific Files...")
-        self.select_btn.setToolTip("Choose specific files to reprocess")
-        self.select_btn.clicked.connect(self._select_specific_files)
-        select_row.addWidget(self.select_btn)
-
         self.clear_btn = QPushButton("Clear Selection")
-        self.clear_btn.setToolTip("Clear selection and process everything")
-        self.clear_btn.clicked.connect(self._clear_selection)
-        self.clear_btn.setEnabled(False)
-        select_row.addWidget(self.clear_btn)
-
-        run_layout.addLayout(select_row)
-
-        # Selection info
-        self.selection_label = QLabel("")
-        self.selection_label.setStyleSheet("color: #4a9eff; font-size: 10px;")
-        self.selection_label.setWordWrap(True)
-        run_layout.addWidget(self.selection_label)
-
-        # Separator
-        run_layout.addSpacing(10)
-
-        # Reprocess All button
         self.reprocess_btn = QPushButton("Reprocess All...")
-        self.reprocess_btn.setToolTip(
-            "Delete derived outputs and reprocess from scratch.\n"
-            "This deletes segments, outcomes, and reaches files."
-        )
-        self.reprocess_btn.setStyleSheet("color: #ff6b6b;")
-        self.reprocess_btn.clicked.connect(self._reprocess_all)
-        run_layout.addWidget(self.reprocess_btn)
+        for b in (self.select_btn, self.clear_btn, self.reprocess_btn):
+            b.setEnabled(False)
+            b.setToolTip(OLD_CONTROL_TIP)
+            old.addWidget(b)
+        root.addLayout(old)
 
-        layout.addWidget(run_group)
+        selection = QLabel(SELECTION_NOTE)
+        selection.setWordWrap(True)
+        selection.setStyleSheet("color: #888;")
+        root.addWidget(selection)
 
-        # === Pipeline Stages ===
-        stages_group = QGroupBox("Progress")
-        stages_layout = QVBoxLayout()
-        stages_group.setLayout(stages_layout)
+        stats = QGroupBox("Videos on this machine, by state")
+        sl = QVBoxLayout(stats)
+        self._totals_label = QLabel("")
+        self._totals_label.setWordWrap(True)
+        sl.addWidget(self._totals_label)
+        self._state_table = QTableWidget(0, 2)
+        self._state_table.setHorizontalHeaderLabels(["State", "Videos"])
+        self._state_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._state_table.verticalHeader().setVisible(False)
+        sl.addWidget(self._state_table)
+        sl.addWidget(QLabel("Recent steps:"))
+        self._activity = QTextEdit()
+        self._activity.setReadOnly(True)
+        sl.addWidget(self._activity)
+        root.addWidget(stats)
 
-        self.stage1 = StageWidget(
-            "Segmentation",
-            "Find pellet presentation boundaries. Good results continue automatically."
-        )
-        stages_layout.addWidget(self.stage1)
+        more = QLabel(
+            "Start or stop the automatic watcher, pause it, or change its "
+            "settings on the Watcher Control tab. Held videos are reviewed from "
+            "the Review Queues tab.")
+        more.setWordWrap(True)
+        more.setStyleSheet("color: #888;")
+        root.addWidget(more)
+        root.addStretch()
 
-        self.stage2 = StageWidget(
-            "Outcomes & Reaches",
-            "Classify segments (R/D/M) and detect individual reach attempts."
-        )
-        stages_layout.addWidget(self.stage2)
-
-        self.stage3 = StageWidget(
-            "Advancing",
-            "Move validated files to next pipeline stage."
-        )
-        stages_layout.addWidget(self.stage3)
-
-        layout.addWidget(stages_group)
-
-        # === Summary ===
-        summary_group = QGroupBox("Results")
-        summary_layout = QVBoxLayout()
-        summary_group.setLayout(summary_layout)
-
-        self.summary_label = QLabel("")
-        self.summary_label.setWordWrap(True)
-        summary_layout.addWidget(self.summary_label)
-
-        layout.addWidget(summary_group)
-
-        # Spacer
-        layout.addStretch()
-
-    def _connect_signals(self):
-        self.signals.status_scanned.connect(self._on_status_scanned)
-        self.signals.stage_progress.connect(self._on_stage_progress)
-        self.signals.pipeline_complete.connect(self._on_pipeline_complete)
-        self.signals.consolidate_complete.connect(self._on_consolidate_complete)
-        self.signals.error.connect(self._on_error)
-
-    def _scan_status(self):
-        """Scan the pipeline to see what's ready."""
-        self.status_label.setText("Scanning pipeline...")
-        self.refresh_btn.setEnabled(False)
-
-        # Run in background to avoid blocking UI
-        def scan_worker():
-            try:
-                status = scan_pipeline_status(self.base_dir)
-                self.signals.status_scanned.emit(status)
-            except Exception as e:
-                self.signals.error.emit(f"Scan failed: {e}")
-
-        thread = threading.Thread(target=scan_worker)
-        thread.start()
-
-    def _on_status_scanned(self, status: PipelineStatus):
-        """Handle status scan completion."""
-        self.current_status = status
-        self.refresh_btn.setEnabled(True)
-
-        # Update status display
-        lines = status.summary_lines()
-        if status.total_ready > 0:
-            lines.append(f"\n<b>Total: {status.total_ready} ready to process</b>")
-
-        self.status_label.setText("<br>".join(lines))
-
-        # Enable run button if there's work to do
-        self.run_btn.setEnabled(status.total_ready > 0 or self.specific_files is not None)
-
-        # Reset stages
-        self.stage1.set_pending()
-        self.stage2.set_pending()
-        self.stage3.set_pending()
-        self.summary_label.setText("")
-
-    def _select_specific_files(self):
-        """Open dialog to select specific files for reprocessing."""
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Select DLC files to process",
-            str(self.base_dir),
-            "DLC Files (*DLC*.h5);;All Files (*)"
-        )
-
-        if files:
-            self.specific_files = [Path(f) for f in files]
-            self.selection_label.setText(f"Selected: {len(self.specific_files)} file(s)")
-            self.clear_btn.setEnabled(True)
-            self.run_btn.setEnabled(True)
-
-    def _clear_selection(self):
-        """Clear specific file selection."""
-        self.specific_files = None
-        self.selection_label.setText("")
-        self.clear_btn.setEnabled(False)
-        # Re-enable based on pipeline status
-        if self.current_status:
-            self.run_btn.setEnabled(self.current_status.total_ready > 0)
-
-    def _reprocess_all(self):
-        """Consolidate all files and reprocess from scratch."""
-        # Count videos first
-        counts = count_all_videos_in_pipeline(self.base_dir)
-        total = counts.get('total', 0)
-
-        if total == 0:
-            show_warning("No videos found in pipeline to reprocess.")
-            return
-
-        # Show confirmation dialog
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Reprocess All Videos")
-        msg.setIcon(QMessageBox.Warning)
-        msg.setText(f"This will reprocess ALL {total} videos from scratch.")
-        msg.setInformativeText(
-            "All existing analysis files will be deleted:\n"
-            "- Segmentation results\n"
-            "- Outcome classifications\n"
-            "- Reach detections\n\n"
-            "DLC files will be kept and videos will be reprocessed.\n\n"
-            "This cannot be undone. Continue?"
-        )
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.No)
-
-        if msg.exec_() != QMessageBox.Yes:
-            return
-
-        # Disable UI
-        self.run_btn.setEnabled(False)
-        self.select_btn.setEnabled(False)
-        self.clear_btn.setEnabled(False)
-        self.refresh_btn.setEnabled(False)
-        self.reprocess_btn.setEnabled(False)
-
-        self.summary_label.setText("Consolidating files...")
-        self.stage1.set_pending()
-        self.stage2.set_pending()
-        self.stage3.set_pending()
-
-        # Run consolidation in background
-        self.worker_thread = threading.Thread(target=self._consolidate_worker)
-        self.worker_thread.start()
-
-    def _consolidate_worker(self):
-        """Background worker for consolidation."""
+    def _show_priority(self):
+        """Say which animal goes first now, if any."""
         try:
-            stats = consolidate_all_to_dlc_complete(self.base_dir, delete_outputs=True)
-            self.signals.consolidate_complete.emit(stats)
+            from mousereach.watcher.priority_animal import current_priority
+            data = current_priority()
         except Exception as e:
-            self.signals.error.emit(f"Consolidation failed: {e}")
+            self.priority_label.setText(f"Could not read the priority animal: {e}")
+            return
+        if data:
+            self.priority_label.setText(
+                f"First now: {data['animal_id']} (set {data.get('set_at', '?')}).")
+        else:
+            self.priority_label.setText("No animal is first: normal order.")
 
-    def _on_consolidate_complete(self, stats: dict):
-        """Handle consolidation completion - now run the pipeline."""
-        videos_moved = stats.get('videos_moved', 0)
-        derived_deleted = stats.get('derived_deleted', 0)
-
-        self.summary_label.setText(
-            f"Consolidated {videos_moved} videos, deleted {derived_deleted} derived files.\n"
-            "Now reprocessing..."
-        )
-
-        # Re-enable reprocess button for next time
-        self.reprocess_btn.setEnabled(True)
-
-        # Refresh status and then run pipeline
-        def after_scan():
-            # Disconnect temporary handler
-            try:
-                self.signals.status_scanned.disconnect(after_scan_handler)
-            except (TypeError, RuntimeError):
-                pass  # Handler already disconnected or signal doesn't exist
-            # Now run the pipeline
-            self._run_pipeline()
-
-        def after_scan_handler(status):
-            after_scan()
-
-        # Connect temporary handler and scan
-        self.signals.status_scanned.connect(after_scan_handler)
-        self._scan_status()
-
-    def _run_pipeline(self):
-        """Run the unified pipeline."""
-        self.run_btn.setEnabled(False)
-        self.select_btn.setEnabled(False)
-        self.clear_btn.setEnabled(False)
-        self.refresh_btn.setEnabled(False)
-        self.reprocess_btn.setEnabled(False)
-
-        # Reset stages
-        self.stage1.set_pending()
-        self.stage2.set_pending()
-        self.stage3.set_pending()
-        self.summary_label.setText("Running...")
-
-        self.worker_thread = threading.Thread(target=self._pipeline_worker)
-        self.worker_thread.start()
-
-    def _pipeline_worker(self):
-        """Background worker for pipeline processing."""
+    def _set_priority(self):
+        from mousereach.watcher.priority_animal import set_priority_animal
         try:
-            def progress_callback(stage: str, current: int, total: int, message: str):
-                self.signals.stage_progress.emit(stage, current, total, message)
-
-            processor = UnifiedPipelineProcessor(
-                self.base_dir,
-                progress_callback=progress_callback,
-                specific_files=self.specific_files
-            )
-
-            results = processor.run()
-            self.signals.pipeline_complete.emit(results)
-
+            animal = set_priority_animal(self.priority_edit.text())
         except Exception as e:
-            self.signals.error.emit(str(e))
+            self.priority_label.setText(f"Not set: {e}")
+            return
+        self.priority_label.setText(
+            f"First now: {animal}. Press \"{RUN_PIPELINE_BUTTON_TEXT}\".")
 
-    def _on_stage_progress(self, stage: str, current: int, total: int, message: str):
-        """Handle stage progress updates."""
-        if stage == 'segmentation':
-            self.stage1.set_running(current, total, message)
-        elif stage in ('outcomes', 'reaches'):
-            self.stage2.set_running(current, total, message)
-        elif stage == 'advancing':
-            self.stage3.set_running(current, total, message)
+    def _clear_priority(self):
+        from mousereach.watcher.priority_animal import clear_priority
+        try:
+            clear_priority()
+        except Exception as e:
+            self.priority_label.setText(f"Could not clear it: {e}")
+            return
+        self._show_priority()
 
-    def _on_pipeline_complete(self, results: UnifiedResults):
-        """Handle pipeline completion."""
-        self.run_btn.setEnabled(True)
-        self.select_btn.setEnabled(True)
-        self.refresh_btn.setEnabled(True)
-        self.reprocess_btn.setEnabled(True)
-        if self.specific_files:
-            self.clear_btn.setEnabled(True)
+    def _refresh(self):
+        """The Watcher Control panel's refresh, for this tab's fewer controls."""
+        cfg = None
+        try:
+            from mousereach.config import WatcherConfig, Paths
+            cfg = WatcherConfig.load()
+            db_path = cfg.db_path or (Paths.PROCESSING_ROOT / "watcher.db"
+                                      if Paths.PROCESSING_ROOT else "?")
+            self._mode_label.setText(
+                f"{role_explanation(cfg.mode, getattr(cfg, 'also_process', False))}"
+                f"   (role: {cfg.mode}   |   db: {db_path})")
+        except Exception as e:
+            self._mode_label.setText(
+                f"Not configured ({e}). Use the Setup tab, then come back.")
 
-        # Update Stage 1 summary (Segmentation)
-        if results.seg_processed > 0:
-            s1_summary = f"Processed: {results.seg_processed}"
-            if results.seg_auto_approved > 0:
-                s1_summary += f"\nAuto-approved: {results.seg_auto_approved}"
-            if results.seg_needs_review > 0:
-                s1_summary += f"\nNeeds review: {results.seg_needs_review}"
-            if results.seg_failed > 0:
-                s1_summary += f"\nFailed: {results.seg_failed}"
-            self.stage1.set_complete(s1_summary, results.seg_needs_review > 0 or results.seg_failed > 0)
-        else:
-            self.stage1.set_complete("No new segmentation needed", False)
+        panel_running = self._is_running()
+        external_pid = None if panel_running else self._external_watcher_pid()
+        reason = self._current_pause_reason(cfg)
+        txt, color = status_headline(panel_running, external_pid, reason, self._run_error)
+        if panel_running:
+            txt = "Status: a pass is running"
+        self._status_label.setText(txt)
+        self._status_label.setStyleSheet(f"font-weight:bold; color:{color};")
+        self.run_btn.setEnabled(not (panel_running or external_pid))
+        self._pause_reason_label.setText(f"Paused: {reason}" if reason else "")
+        self._show_priority()
+        self._refresh_stats()
 
-        # Update Stage 2 summary (Outcomes & Reaches)
-        if results.outcome_processed > 0 or results.reach_processed > 0:
-            s2_lines = []
-            if results.outcome_processed > 0:
-                s2_lines.append(f"Outcomes: {results.outcome_completed} completed")
-            if results.reach_processed > 0:
-                s2_lines.append(f"Reaches: {results.reach_validated} validated")
-            if results.reach_needs_review > 0:
-                s2_lines.append(f"Reach review: {results.reach_needs_review}")
-            self.stage2.set_complete("\n".join(s2_lines), results.reach_needs_review > 0)
-        else:
-            self.stage2.set_complete("No outcomes/reaches needed", False)
 
-        # Update Stage 3 summary (Advancing)
-        advanced = results.reach_advanced + results.outcome_advanced
-        if advanced > 0:
-            s3_summary = f"Advanced: {advanced} validated files"
-            self.stage3.set_complete(s3_summary, False)
-        else:
-            self.stage3.set_complete("No files to advance", False)
-
-        # Overall summary
-        summary_lines = []
-        if results.fully_completed > 0:
-            summary_lines.append(f"<span style='color: #4caf50;'><b>{results.fully_completed}</b> completed full pipeline</span>")
-        if results.paused_for_review > 0:
-            summary_lines.append(f"<span style='color: #ffa500;'><b>{results.paused_for_review}</b> paused for review</span>")
-        if results.failed > 0:
-            summary_lines.append(f"<span style='color: red;'><b>{results.failed}</b> failed</span>")
-        if not summary_lines:
-            summary_lines.append("Pipeline run complete - nothing to process")
-
-        self.summary_label.setText("<br>".join(summary_lines))
-
-        # Show notification
-        if results.fully_completed > 0 and results.paused_for_review == 0:
-            show_info(f"Pipeline complete! {results.fully_completed} videos fully processed.")
-        elif results.fully_completed > 0:
-            show_warning(
-                f"Pipeline complete: {results.fully_completed} fully processed, "
-                f"{results.paused_for_review} need review."
-            )
-        elif results.paused_for_review > 0:
-            show_warning(f"Pipeline complete: {results.paused_for_review} files need review.")
-        else:
-            show_info("Pipeline run complete - nothing needed processing.")
-
-        # Refresh status to show new state
-        QTimer.singleShot(500, self._scan_status)
-
-    def _on_error(self, message: str):
-        """Handle pipeline error."""
-        self.run_btn.setEnabled(True)
-        self.select_btn.setEnabled(True)
-        self.refresh_btn.setEnabled(True)
-        self.reprocess_btn.setEnabled(True)
-        if self.specific_files:
-            self.clear_btn.setEnabled(True)
-        self.summary_label.setText(f"<span style='color: red;'>Error: {message}</span>")
-        show_error(f"Pipeline failed: {message}")
+__all__ = ["UnifiedPipelineWidget", "RUN_PIPELINE_INTRO", "RUN_PIPELINE_BUTTON_TEXT",
+           "SELECTION_NOTE", "OLD_CONTROL_TIP", "PRIORITY_INTRO", "role_explanation"]
 
 
 def main():
-    """Launch unified pipeline widget standalone."""
+    """Open the tab on its own in a napari window."""
     import napari
-
-    viewer = napari.Viewer(title="MouseReach Analysis Pipeline")
-    widget = UnifiedPipelineWidget(viewer)
-    viewer.window.add_dock_widget(widget, name="Pipeline", area="right")
-
-    print("\nMouseReach Analysis Pipeline")
-    print("=" * 40)
-    print("Click Run to process everything that's ready.")
-    print("Or select specific files for targeted reprocessing.")
-    print()
-
+    viewer = napari.Viewer(title="MouseReach - Run Pipeline")
+    viewer.window.add_dock_widget(UnifiedPipelineWidget(viewer), name="Run Pipeline",
+                                  area="right")
     napari.run()
 
 

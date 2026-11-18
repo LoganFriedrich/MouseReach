@@ -31,9 +31,9 @@ There are two detectors in this directory.
 
 `mousereach-detect-outcomes --legacy` passes `legacy=True` by name through `process_batch` (`core/batch.py`) into `process_single`, whose `legacy` branch is the only place that constructs `PelletOutcomeDetector`. Before 2026-08 the flag printed a legacy banner and ran v6 anyway: `process_batch` called `process_single(dlc, seg, reach, output_dir)` with four positional arguments and `legacy` is the fifth parameter, so it stayed `False`. Any file from that era stamped `6.1.0` was produced by v6 whatever flag was typed.
 
-### The path that does run the legacy detector
+### The "Step 2 - Run Pipeline" tab no longer runs the legacy detector
 
-napari's **"Step 2 - Run Pipeline"** widget (`napari.yaml:22-25` → `pipeline/batch_widget.py:455` → `pipeline/core.py:412` `UnifiedPipelineProcessor.run`) reaches `pipeline/core.py:566-569`, which constructs `PelletOutcomeDetector` directly and calls `save_results`. This bypasses `process_single` entirely. A video processed through that widget gets a legacy-shaped outcomes file stamped `4.0.0_step2`, not `6.1.0`. It also calls `detect(dlc_path, seg_path)` with no reach file at all (`pipeline/core.py:567`).
+The napari **"Step 2 - Run Pipeline"** tab used to run its own processor (`pipeline/core.py`, removed), which constructed `PelletOutcomeDetector` directly, BEFORE reach detection and with no reach file, and stamped its files `4.0.0_step2`. The tab now runs one pass of this machine's watcher (`pipeline/batch_widget.py`, the same code as the Watcher Control tab's Run Once), so on the processing machine it runs v6 through `process_single` after reach detection, exactly as the watcher does. (On a pose-only graphics-card PC the pass only cuts and poses; no outcome detector runs there.) Files stamped `4.0.0_step2` that already exist were made by the old tab.
 
 Nothing announces which detector produced a given file except the `detector_version` string inside it. Anything reading outcomes files has to cope with at least three shapes: v6 (`6.1.0`), archived legacy (`2.4.4`), and legacy-as-it-stands-today (`4.0.0_step2`).
 
@@ -422,7 +422,6 @@ The only things that vary at runtime:
 | What | Where | Effect |
 |---|---|---|
 | `legacy=True` | `core/batch.py` `process_single`, passed through by `process_batch` | Runs the old geometric detector: different algorithm, different output shape, different version string. Reached by `process_single(..., legacy=True)` from Python or by `mousereach-detect-outcomes --legacy` (since 2026-08; before that the flag did not reach it) |
-| The napari "Step 2 - Run Pipeline" widget | `pipeline/core.py:566-569` | A separate code path that does run the legacy detector, on every video it processes, with no reach file |
 | `video_dir` | `core/batch.py:145-151`, defaults to searching the output directory | If no video file is found, the pixel-based artefact guard and stage 98 both become no-ops. Displaced commits that would have been triaged are committed instead. Nothing reports that this happened |
 | Tray type | `pipeline/run_all.py:87-95`, `watcher/orchestrator.py:1062`, `:1971` | Tray `E` or `F` → the whole step is skipped, no file written |
 | Whether reaches exist | `core/batch.py:199-202` | No reach file → empty reach list → stage 7 and most touched stages defer, stage 4 loosens; net shift toward `untouched` and toward triage |

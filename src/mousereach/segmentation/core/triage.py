@@ -595,7 +595,7 @@ def triage_results(
 
     NOTE: This function is deprecated. The unified pipeline now keeps all
     files in Processing/ and tracks status via validation_status in JSON.
-    Use the mousereach dashboard or UnifiedPipelineProcessor instead.
+    Use the watcher (mousereach-watch, or the "2 - Run Pipeline" tab) instead.
 
     Args:
         source_dir: Source directory containing segments files
@@ -608,7 +608,7 @@ def triage_results(
     import warnings
     warnings.warn(
         "triage_results() is deprecated. Use the mousereach dashboard or "
-        "UnifiedPipelineProcessor instead. Files now stay in Processing/ with "
+        "Run Pipeline tab (one pass of the watcher) instead. Files now stay in Processing/ with "
         "status tracked in JSON metadata.",
         DeprecationWarning,
         stacklevel=2

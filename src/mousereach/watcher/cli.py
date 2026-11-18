@@ -1157,15 +1157,13 @@ def main_prioritize():
     clear = ns.clear
     positional = [ns.animal] if ns.animal else []
 
-    from mousereach.config import require_processing_root, AnimalID
-    from datetime import datetime
-
-    priority_file = require_processing_root() / "priority_animal.json"
+    # The file and its rules live in watcher/priority_animal.py, shared with
+    # the Run Pipeline tab's "Do one animal's videos first" box.
+    from mousereach.watcher import priority_animal as pa
 
     # --clear: remove priority
     if clear:
-        if priority_file.exists():
-            priority_file.unlink()
+        if pa.clear_priority():
             print("Priority cleared. Watcher will resume normal ordering.")
         else:
             print("No priority was set.")
@@ -1173,14 +1171,12 @@ def main_prioritize():
 
     # No arguments: show current priority
     if not positional:
-        if priority_file.exists():
-            try:
-                with open(priority_file) as f:
-                    data = json.load(f)
-                print(f"Priority animal: {data['animal_id']}")
-                print(f"Set at:          {data.get('set_at', '?')}")
-            except Exception as e:
-                print(f"Error reading priority file: {e}")
+        data = pa.current_priority()
+        if data:
+            print(f"Priority animal: {data['animal_id']}")
+            print(f"Set at:          {data.get('set_at', '?')}")
+        elif pa.priority_file().exists():
+            print("Error reading priority file: it could not be read")
         else:
             print("No priority animal set. Watcher uses default ordering.")
         print()
@@ -1190,19 +1186,11 @@ def main_prioritize():
         return
 
     # Set priority
-    animal_id = positional[0].upper()
-
-    parsed = AnimalID.parse(animal_id)
-    if not parsed.get('valid'):
-        print(f"ERROR: Invalid animal ID '{animal_id}': {parsed.get('error')}", file=sys.stderr)
+    try:
+        animal_id = pa.set_priority_animal(positional[0])
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
-
-    data = {
-        'animal_id': animal_id,
-        'set_at': datetime.now().isoformat(),
-    }
-    with open(priority_file, 'w') as f:
-        json.dump(data, f, indent=2)
 
     print(f"Priority set: {animal_id}")
     print()

@@ -136,7 +136,10 @@ PIPELINE STEPS
 --------------
     0   - Video Prep (crop 8-camera collages to single animals)
     1   - DLC Analysis (run DeepLabCut pose estimation)
-    2   - Run Pipeline (batch: Segmentation -> Reaches -> Outcomes)
+    2   - Run Pipeline (one pass of this machine's watcher, by hand, in this
+          machine's role: on the processing machine every step, check and
+          review queue the automatic watcher uses, then filing; on a
+          pose-only graphics-card PC cutting and posing only)
     3   - (retired: the old in-place Review Tool; use the Review Queues tab)
     4   - View Features (visualize extracted kinematics)
     GT  - Ground Truth Tool (create evaluation datasets)

@@ -2230,15 +2230,11 @@ class BaseOrchestrator:
         Returns:
             Animal ID string (e.g. "CNT0107") or None
         """
-        priority_file = require_processing_root() / "priority_animal.json"
-        if not priority_file.exists():
-            return None
-        try:
-            with open(priority_file) as f:
-                data = json.load(f)
-            return data.get('animal_id')
-        except Exception:
-            return None
+        # The one reading of the file (watcher/priority_animal.py), shared with
+        # the command and the Run Pipeline tab that set it. As before, an
+        # unconfigured processing root raises; an unreadable file reads as none.
+        from mousereach.watcher.priority_animal import current_priority
+        return (current_priority(require_processing_root()) or {}).get('animal_id')
 
     def _matches_priority(self, item: dict, priority_animal: str,
                           animal_field: str) -> bool:

@@ -160,7 +160,7 @@ def test_package_public_names_still_resolve():
     """The lazy package keeps `from mousereach.pipeline import X` working."""
     import mousereach.pipeline as pipeline
     assert "UnifiedPipelineWidget" in pipeline.__all__
-    assert pipeline.UnifiedPipelineProcessor.__name__ == "UnifiedPipelineProcessor"
+    assert pipeline.UnifiedPipelineWidget.__name__ == "UnifiedPipelineWidget"
     with pytest.raises(AttributeError):
         pipeline.not_a_name
 
