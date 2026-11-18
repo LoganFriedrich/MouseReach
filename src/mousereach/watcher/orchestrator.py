@@ -409,7 +409,7 @@ def refuse_filing_with_undecided_pellet(db, video_id, results_dir) -> bool:
 def reaches_with_failed_measures(features_path):
     """``(segment_num, reach_id)`` of every reach in a features file whose
     extended measures failed: the extractor then stored only
-    ``{"_extended_features_error": ...}`` in place of its 165 values. Empty for
+    ``{"_extended_features_error": ...}`` in place of its extended values. Empty for
     a file that cannot be read (not this check's question)."""
     try:
         with open(features_path, encoding="utf-8") as fh:

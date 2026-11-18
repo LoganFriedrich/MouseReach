@@ -5343,3 +5343,38 @@ Not done yet (a known leftover, in the version scan): a filed video that has no 
 still only counted, not named in the scan's log line or listed for a person, and a stage whose
 version is unrecorded while its output exists still re-runs from segmentation rather than from
 that stage.
+
+## Update 2026-11-17: the kinematics carry an earlier swipe-measure definition (extractor 2.6.0)
+
+**What changed.** Every reach's `extended` block now also holds nine `legacy_swipe_*`
+values (`kinematics/core/legacy_swipe.py`; columns and formulas in
+`docs/KINEMATICS_FIELDS.md` section 6.8). They reproduce an earlier program's per-swipe
+numbers -- breadth, length, area, path length, speed, duration in frames, path over
+frames -- with that program's own per-frame test and formulas, applied inside each
+reach the reach detector found. They exist so analyses built on those numbers can be
+continued with new data. Nothing else in the features file changes: reaches, outcomes,
+causal reaches and every other value are what extractor 2.5.0 gives.
+
+**Where they go.** Into `<video>_features.json` with the rest of the `extended` block,
+so anything that carries that block carries them. The per-session "Total Swipes" of
+the earlier definition is not written: it counts reaches across all the videos of a
+session, so it is derived downstream from the per-reach rows.
+
+**Never a reason to hold a video, except a real failure.** A pose without the
+`Reference` point, or with no `Reference` position at the segment's first frame, gives
+the nine values empty and the video goes on. Any other error in them is a kinematics
+problem like any other: nothing is written and the video is held.
+
+**Version and deployment -- read before deploying.** The extractor is 2.6.0. 2.5.0 was
+never declared in `pipeline_versions.json` (the declaration still says 2.4.0), but
+output stamped 2.5.0 without these columns already exists outside the pipeline, so the
+added columns get their own number rather than sharing 2.5.0. Deploy and declare
+2.6.0 directly, with no compatible versions (2.4.0 needs the 2.5.0 recalculation
+anyway): one kinematics recalculation of the filed Pillar videos then brings both the
+2.5.0 changes and these columns. The rule from 2.5.0 still applies: deploying the code
+and declaring `kinematic_extractor: 2.6.0` go together. Do NOT declare 2.5.0 compatible
+with 2.6.0: rows stamped 2.5.0 would then keep their missing columns for good.
+
+**Kinematics-only re-runs.** These values are measurements, not decisions, so a
+kinematics-only re-run of a filed video (previous section) adds them and keeps the
+filed reaches, outcomes and causal reaches exactly as before.

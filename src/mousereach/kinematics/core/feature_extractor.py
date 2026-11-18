@@ -17,6 +17,7 @@ from mousereach.pipeline.manifest import NOT_RESOLVED
 from mousereach.kinematics.core.anchored_path import (
     AnchoredPath, anchored_hand_path, fill_repeated_frames, tracked_steps)
 from mousereach.kinematics.core.frame_rate import resolve_frame_rate
+from mousereach.kinematics.core.legacy_swipe import legacy_swipe_measures
 
 
 @dataclass
@@ -303,7 +304,13 @@ class KinematicsProblem(Exception):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.5.0"  # 2.5 (2026-11-17), also: speeds read through repeated frames
+    VERSION = "2.6.0"  # 2.6 (2026-11-17): adds the legacy_swipe_* group to the
+                       # extended block (legacy_swipe.py): an earlier swipe-measure
+                       # definition reproduced on each reach, for continuity with
+                       # analyses built on it. Only adds columns; every other value
+                       # is the same as 2.5.0. Kept separate from 2.5.0 because 2.5.0
+                       # output without these columns already exists.
+                       # 2.5 (2026-11-17), also: speeds read through repeated frames
                        # (anchored_path.fill_repeated_frames). A video whose recorder
                        # repeats a picture until the camera sends a new one has steps
                        # of nothing followed by steps of two frames' movement, so peak
@@ -682,6 +689,7 @@ class FeatureExtractor:
                         for sg in reaches_data['segments'] for r in sg['reaches']
                         if r is not reach
                     ],
+                    window=(seg_data['start_frame'], seg_data['end_frame']),
                 )
 
                 # Set contextual flags
@@ -706,7 +714,7 @@ class FeatureExtractor:
             segment_features.append(seg_features)
 
         # A reach whose extended measures failed carries only an error marker
-        # (_extract_reach_features); its 165 values are missing. Not written.
+        # (_extract_reach_features); its extended values are missing. Not written.
         if self.problems:
             raise KinematicsProblem(self.problems)
 
@@ -812,8 +820,12 @@ class FeatureExtractor:
         ruler_pixels: float,
         outcome_data: Dict,
         other_reaches: Optional[List[Tuple[int, int]]] = None,
+        window: Optional[Tuple[int, int]] = None,
     ) -> ReachFeatures:
         """Extract all features for a single reach.
+
+        ``window`` is the (start, end) frame of the pellet window (segment) the reach
+        lies in; the legacy_swipe group needs it and is left out without it.
 
         duration_frames stays the count of DETECTED frames (end - start + 1): the
         anchors say where the hidden hand is, they are not extra tracked footage.
@@ -919,6 +931,7 @@ class FeatureExtractor:
                 interaction_frame=features.interaction_frame,
                 ruler_pixels=ruler_pixels,
                 other_reaches=other_reaches,
+                window=window,
             )
         except Exception as exc:
             features.extended = {'_extended_features_error': str(exc)}
@@ -1921,6 +1934,7 @@ class FeatureExtractor:
         interaction_frame: Optional[int],
         ruler_pixels: float,
         other_reaches: Optional[List[Tuple[int, int]]] = None,
+        window: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, Optional[float]]:
         """Run all extended-feature groups and return a flat dict."""
         ext: Dict[str, Optional[float]] = {}
@@ -1959,6 +1973,14 @@ class FeatureExtractor:
         ext['tray_contact_duration_frames'] = self._tray_contact_duration(
             df, start_frame, end_frame
         )
+
+        # An earlier swipe-measure definition, reproduced for continuity with
+        # analyses built on it (legacy_swipe.py says what is the same and what is
+        # not). Needs the pellet window: its slit zone and threshold line are set
+        # from the window, not from the reach.
+        if window is not None:
+            ext.update(legacy_swipe_measures(
+                df, start_frame, end_frame, window[0], window[1], self.frame_rate))
 
         return ext
 

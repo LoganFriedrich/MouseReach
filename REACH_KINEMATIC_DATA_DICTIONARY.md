@@ -248,6 +248,39 @@ Asymmetric dropouts between paw points (e.g., `rhleft_visibility_min` low while
 `rhright_visibility_min` high) carry rotation-direction information. Low
 visibility is not necessarily bad data; it is data about paw configuration.
 
+## Section 11. An earlier swipe-measure definition (`legacy_swipe_*`)
+
+Extractor 2.6.0 and later. These reproduce an earlier program's per-swipe numbers on
+each reach, so analyses built on those numbers can be continued with new data. They
+are a continuity measure, not a better measurement of the reach; the full rule is in
+`src/mousereach/kinematics/core/legacy_swipe.py` and `docs/KINEMATICS_FIELDS.md` §6.8.
+
+**Frames used.** Inside `[start_frame, end_frame]`, a frame counts only when
+`RightHand` likelihood > 0.7, `Nose` likelihood > 0.5, the nose is in the slit zone
+set from the `Reference` point at the segment's first frame (truncated to whole
+pixels: `Nose_y > ref_y - 80`, `ref_x + 70 < Nose_x < ref_x + 100`), the paw is more
+than 8 px past the nose (`RightHand_y - Nose_y > 8`), and `RightHand_y` is above a line
+300 px below the segment's largest `RightHand_y` at likelihood > 0.95. Raw `RightHand`
+only: no smoothing, no nose anchors, no repeated-frame filling.
+
+| Column | Meaning | Calculation |
+|---|---|---|
+| `legacy_swipe_duration_frames` | Counted frames | Number of frames passing the test above. Given even when 0 or 1; the values below (except the frame indices) are empty with fewer than 2. |
+| `legacy_swipe_first_frame`, `legacy_swipe_last_frame` | First / last counted frame | Frame indices; empty when no frame counts. |
+| `legacy_swipe_breadth_px` | Side-to-side extent (px) | `max(x) - min(x)` of `RightHand`. |
+| `legacy_swipe_length_px` | Extension past the nose (px) | `max(y)` of `RightHand` minus `Nose_y` in the first frame holding that maximum. |
+| `legacy_swipe_area_px2` | Path area (px^2) | Shoelace area of the polygon through the counted `RightHand` points. |
+| `legacy_swipe_path_length_px` | Distance travelled (px) | Sum of straight-line steps between consecutive counted frames. |
+| `legacy_swipe_speed_px_div4_per_sec` | Speed, (px / 4) per second | `(path_length_px / 4) / ((last - first) / frame_rate)`. The /4 is the earlier definition's nominal px per mm, kept so the number matches it: NOT a calibrated mm value. The video's own frame rate replaces the earlier constant 60, so a 60 fps video gives the identical number. |
+| `legacy_swipe_path_over_frames_px_per_frame` | Distance per counted frame | `path_length_px / duration_frames`. |
+
+All nine are empty when the pose file has no `Reference` point (or no position for it
+at the segment's first frame).
+
+The earlier definition's per-session total ("Total Swipes") is a session aggregate
+(reaches per animal per session, across several videos), so it is not a per-reach
+column: derive it downstream by counting a session's reach rows.
+
 ## Deprecated columns retained for backward compatibility
 
 These columns appear in the output but are superseded by the extended-feature
@@ -267,3 +300,7 @@ Schema version: 2.0 (extended kinematic feature set).
 
 Bump the schema version when columns are added, removed, or have their
 calculation changed. Document the change in this file in a changelog section.
+
+Changelog:
+- Extractor 2.6.0 (2026-11-17): adds the nine `legacy_swipe_*` columns (Section 11).
+  No other value changes from 2.5.0.

@@ -36,7 +36,7 @@ One class, `FeatureExtractor` (`feature_extractor.py:169`), turns three files in
 
 **Run by**: `mousereach-grasp-analyze` (`kinematics/cli.py:17`, entry point at `pyproject.toml:132`), the watcher (`watcher/orchestrator.py:1154` and `:2103`), `pipeline/run_all.py:121`, and `pipeline/reprocess_to_current.py:259`.
 
-**Sizes.** `ReachFeatures` declares 44 fields: 43 named values plus a nested dictionary called `extended` holding a further 165 named values. `SegmentFeatures` declares 26: 25 values plus the reach list. Counted by parsing the dataclasses; the 161 from before extractor 2.3.0 confirmed by reading shipped files, and the four anchor columns added by 2.3.0 read from the code (§6.7).
+**Sizes.** `ReachFeatures` declares 44 fields: 43 named values plus a nested dictionary called `extended` holding a further 174 named values (165 before extractor 2.6.0, which added the nine `legacy_swipe_*` values of §6.8). `SegmentFeatures` declares 26: 25 values plus the reach list. Counted by parsing the dataclasses; the 161 from before extractor 2.3.0 confirmed by reading shipped files, and the four anchor columns added by 2.3.0 read from the code (§6.7).
 
 ---
 
@@ -245,11 +245,11 @@ Four more with the same story as `tracking_quality_score`: a name in the datacla
 
 ---
 
-## 6. The `extended` block: 165 values per reach
+## 6. The `extended` block: 174 values per reach
 
-Produced by `_extended_features` and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message. Before the kinematics-problems change the reach then shipped with all 165 values missing and no other warning; now `extract()` raises `KinematicsProblem` naming the reach and writes no features file, and the archive step refuses a features file that still carries the key (§11).
+Produced by `_extended_features` and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message. Before the kinematics-problems change the reach then shipped with all its extended values missing and no other warning; now `extract()` raises `KinematicsProblem` naming the reach and writes no features file, and the archive step refuses a features file that still carries the key (§11).
 
-Rows from an extractor before 2.3.0 hold the same block without the four anchor columns of §6.7, so 161 values. The ten `_at_contact` columns are null almost always (§2). A reach with no anchor (§6.1) also has null path measures: 12 path columns of each paw point (§6.2) and `paw_velocity_correlation`. Its peak and apex speed are still given, because they read detected frames only (on 2.3.0 rows they were null too).
+Rows from an extractor before 2.6.0 hold the block without the nine `legacy_swipe_*` values of §6.8, so 165; rows from before 2.3.0 also lack the four anchor columns of §6.7, so 161. The ten `_at_contact` columns are null almost always (§2). A reach with no anchor (§6.1) also has null path measures: 12 path columns of each paw point (§6.2) and `paw_velocity_correlation`. Its peak and apex speed are still given, because they read detected frames only (on 2.3.0 rows they were null too).
 
 ### 6.1 The coordinate frame these use
 
@@ -360,6 +360,29 @@ New in extractor 2.3.0, from `anchored_hand_path` on the `RightHand` point. All 
 |---|---|---|---|
 | `anchor_start_source` / `anchor_end_source` | How this end's anchor was placed | `anchor_frame`: nose and slit corner both trusted (likelihood at least 0.7) in the anchor frame. `nearest_frame`: a landmark was not trusted there, so its nearest trusted position within 30 frames was used. `video_edge`: the anchor frame is outside the video, so the nearest frame inside it stands in. `none`: no trusted landmark in range, so there is no anchor | text |
 | `anchor_start_in_neighbour_reach` / `anchor_end_in_neighbour_reach` | The anchor frame falls inside another detected reach | Only the nose and slit are read from that frame, never the hand, and the anchor stands | True / False |
+
+### 6.8 An earlier swipe-measure definition (`legacy_swipe_*`) — 9 values
+
+New in extractor 2.6.0, from `legacy_swipe_measures` in `kinematics/core/legacy_swipe.py`, whose text gives the whole rule. **What these are for:** analyses built on an earlier program's per-swipe numbers can only be continued with new data if the same numbers are computed the same way. These columns reproduce that earlier definition on each reach. They are not a better measurement of the reach than the rest of this block, and nothing else in the block uses them.
+
+**Which frames count.** Inside the reach (`start_frame` to `end_frame`, from the reach detector), a frame counts only when all of these hold: `RightHand` likelihood above 0.7; `Nose` likelihood above 0.5; the nose inside the slit zone set from the `Reference` point at the pellet window's (segment's) first frame, truncated to whole pixels (`Nose_y > ref_y − 80` and `ref_x + 70 < Nose_x < ref_x + 100`); the paw more than 8 px past the nose (`RightHand_y − Nose_y > 8`); and `RightHand_y` above a line 300 px below the largest `RightHand_y` among the window's frames whose `RightHand` likelihood is above 0.95. Only the `RightHand` point, as tracked: no smoothing, no anchoring at the nose, no filling of repeated frames — unlike every other path measure in this extractor, because the point is to give the earlier numbers.
+
+| Column | Plain English | How computed (on the counted frames, in frame order; x, y = `RightHand`) | Units |
+|---|---|---|---|
+| `legacy_swipe_duration_frames` | How many frames of the reach count | number of counted frames (0 or 1 is given; every other value except the two frame indices is empty below 2) | frames |
+| `legacy_swipe_first_frame` / `legacy_swipe_last_frame` | First and last counted frame (empty when none counts) | frame indices | frame |
+| `legacy_swipe_breadth_px` | Side-to-side extent | `max(x) − min(x)` | pixels |
+| `legacy_swipe_length_px` | How far past the nose the paw got | `max(y)` minus `Nose_y` in the first frame holding that maximum | pixels |
+| `legacy_swipe_area_px2` | Area of the path | shoelace area of the polygon through the (x, y) points | pixels² |
+| `legacy_swipe_path_length_px` | Distance travelled | sum of the straight-line steps between consecutive counted frames | pixels |
+| `legacy_swipe_speed_px_div4_per_sec` | Speed, in the earlier definition's own unit | `(path_length_px / 4) / ((last_frame − first_frame) / frame_rate)`; empty when first = last or there is no frame rate | (pixels ÷ 4) per second |
+| `legacy_swipe_path_over_frames_px_per_frame` | Distance per counted frame | `path_length_px / duration_frames` | pixels per frame |
+
+**What differs from the earlier program, and what does not.** The reach window comes from this pipeline's reach detector, not from the earlier program's own grouping of frames; the per-frame test above is applied inside it. The speed divides by the video's own frame rate (§3) where the earlier program divided by a constant 60, so on a 60 frames-per-second video the two give the same number; on any other rate this one is the true per-second value. The divisor 4 inside the speed was the earlier program's nominal pixels per millimetre; it is kept so the number is the earlier one, and the column name says so — **it is not a calibrated millimetre value** (for that, use the ruler, `ruler_pixels`). Every other value stays in pixels, as the earlier program reported them.
+
+**When they are empty.** A pose file without the `Reference` point, or with no `Reference` position at the segment's first frame, gives all nine empty; the rest of the kinematics are written as usual. With no frame of the window above 0.95 `RightHand` likelihood, no frame counts (duration 0).
+
+**Not here: the per-session total.** The earlier definition's "Total Swipes" is a count of reaches per animal per session. A session spans several videos and no one video's features file can hold it, so it is derived downstream from the per-reach rows (count the rows of a session), not written by the extractor.
 
 ---
 
