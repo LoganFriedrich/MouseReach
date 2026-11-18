@@ -8093,7 +8093,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         'dlc_complete' without being asked -- a person's reset
         (mousereach-watch-reprocess --from-step dlc_complete), an intake parked
         for a missing file and brought back by the scan -- and was then
-        analysed again and routed at the queue folder that already held a
+        analyzed again and routed at the queue folder that already held a
         person's bundle. A video is in one place at a time, and a bundle in a
         queue is that place.
 

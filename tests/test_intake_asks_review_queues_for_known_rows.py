@@ -4,7 +4,7 @@ posed video it ALREADY has a row for.
 The posed-folder scan asks "held in a review queue, or filed?" only for a posed
 video with no row (test_posed_scan_asks_held_or_filed). A row put back to
 'dlc_complete' some other way -- a person's reset, an intake parked for a
-missing file -- was taken in without asking, analysed again and routed at the
+missing file -- was taken in without asking, analyzed again and routed at the
 queue folder that already held a person's bundle. Now the intake records such
 a row in that queue's state and copies nothing.
 

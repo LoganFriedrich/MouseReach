@@ -4830,7 +4830,7 @@ A row reaches `dlc_complete` (waiting for intake) by a person's `mousereach-watc
 files incomplete, or by a lifted quality hold. If the video's bundle is in the triage or
 deep-review queue (or being routed into one), the row is recorded in that queue's state, nothing is
 copied in, and the processing log shows step `intake`, status `skipped`, with the reason. Before,
-such a video was analysed again and routed at the queue folder that held a person's bundle. A
+such a video was analyzed again and routed at the queue folder that held a person's bundle. A
 folder kept for a person (it holds the left-over note) is not a hold, so the leftover of a lifted
 quality hold does not send the video back to its queue. "Already filed" is NOT asked for a video
 that has a row: every way such a row gets to `dlc_complete` is a request for a fresh run (a lifted
