@@ -151,6 +151,11 @@ class UnifiedGroundTruth:
     # Kept, written back on every save, never applied: a person's answer is
     # never dropped, and never put on footage it was not given for.
     unmatched_outcomes: List[OutcomeGT] = field(default_factory=list)
+    # Saved boundaries a person determined (or commented on) that match no cut
+    # of the current segmentation when the file is reopened
+    # (match_saved_boundaries). Kept, written back on every save, never put
+    # on another cut's row and never read as the file's segmentation.
+    unmatched_boundaries: List[BoundaryGT] = field(default_factory=list)
 
     def update_completion_status(self) -> CompletionStatus:
         """Recompute completion status from current data."""
@@ -343,6 +348,7 @@ def finalized_ground_truth(gt: UnifiedGroundTruth) -> Tuple[Optional[UnifiedGrou
     out.boundaries, out.reaches, out.outcomes = kept_b, kept_r, kept_o
     # Answers given on cuts the video no longer has: kept, never applied.
     out.unmatched_outcomes = list(gt.unmatched_outcomes)
+    out.unmatched_boundaries = list(gt.unmatched_boundaries)
     for part in ("segmentation", "reaches", "outcomes"):
         for suffix in ("exhaustive", "exhaustive_determined_by", "exhaustive_determined_at"):
             name = f"{part}_{suffix}"
@@ -394,6 +400,15 @@ def _dict_to_unified_gt(data: Dict) -> UnifiedGroundTruth:
             determined=determined,
             determined_by=determined_by,
             determined_at=determined_at,
+            comment=b_data.get("comment"),
+        ))
+    for b_data in seg_section.get("unmatched", []) or []:
+        gt.unmatched_boundaries.append(BoundaryGT(
+            index=b_data.get("index", 0),
+            frame=b_data.get("frame", 0),
+            determined=b_data.get("determined", False),
+            determined_by=b_data.get("determined_by"),
+            determined_at=b_data.get("determined_at"),
             comment=b_data.get("comment"),
         ))
 
@@ -502,6 +517,19 @@ def _unified_gt_to_dict(gt: UnifiedGroundTruth) -> Dict:
                     "comment": b.comment,
                 }
                 for b in gt.boundaries
+            ],
+            # Saved cuts that match no cut of the segmentation the file was
+            # last opened on (match_saved_boundaries); no reader applies them.
+            "unmatched": [
+                {
+                    "index": b.index,
+                    "frame": b.frame,
+                    "determined": b.determined,
+                    "determined_by": b.determined_by,
+                    "determined_at": b.determined_at,
+                    "comment": b.comment,
+                }
+                for b in gt.unmatched_boundaries
             ],
         },
         "reaches": {
@@ -1091,6 +1119,119 @@ def _segments_of(gt: UnifiedGroundTruth):
     return [(i + 1,) + pellet_span(by_index, i) for i in sorted(by_index) if i + 1 in by_index]
 
 
+# How far a saved cut may be from a current cut and still be the same cut:
+# the segmenter's own merge window (segmenter_multi's merge_window, 30
+# frames) -- two cut candidates closer than that are one tray advance seen
+# twice, so a saved cut within it of a current one is that cut.
+BOUNDARY_MATCH_FRAMES = 30
+
+
+def match_saved_boundaries(saved, current, tol: int = BOUNDARY_MATCH_FRAMES):
+    """Pair the boundaries of a saved ground truth with the current
+    segmentation's: ``({id(saved boundary): current boundary}, [saved
+    boundaries matched to none])``.
+
+    WHY: a reopened ground truth used to overlay its boundary k onto today's
+    boundary k by position. When today's segmentation has a different number
+    of cuts, the person's determined cut landed on another cut's row while
+    the cut really there stayed beside it, and the next save wrote that as
+    the person's determined segmentation.
+
+    How, in order:
+
+    1. By frame: each saved cut to the nearest current cut within ``tol``
+       frames, one to one, nearest pairs first, never crossing (cuts are
+       ordered in time on both sides).
+    2. Between two cuts paired by frame -- or the start of the list, or the
+       end when the saved file holds every cut it was saved with (indices
+       0..n-1) -- a saved cut a person moved further than ``tol`` is paired
+       with the current cut at the same place in that stretch, but ONLY when
+       the stretch holds the same number of cuts on both sides (by the saved
+       cuts' own ``index``). Then nothing was added or removed there and the
+       k-th cut of the stretch is the same cut; where the numbers differ the
+       saved cut is not placed on any row. After the last cut paired by
+       frame, when the saved file does not hold every cut (a "Save as Ground
+       Truth" file holds only the determined ones), the stretch has no end to
+       count against: a saved cut is placed there only where it keeps the
+       current cuts in time order (between that row's neighbours). Every
+       placement in step 2 must keep that order.
+    3. Everything else is unmatched: returned for the caller to keep and
+       show, never written onto another cut's row."""
+    S = [b for b in saved if getattr(b, "frame", None) is not None]
+    S.sort(key=lambda b: (int(b.index), int(b.frame)))
+    C = sorted((b for b in current if getattr(b, "frame", None) is not None),
+               key=lambda b: int(b.frame))
+    pairs = {}                                       # position in S -> position in C
+    near = sorted((abs(int(s.frame) - int(c.frame)), si, ci)
+                  for si, s in enumerate(S) for ci, c in enumerate(C)
+                  if abs(int(s.frame) - int(c.frame)) <= tol)
+    used = set()
+    for _, si, ci in near:
+        if si in pairs or ci in used:
+            continue
+        if any((sj < si) != (cj < ci) for sj, cj in pairs.items()):
+            continue                                  # would cross a paired cut
+        pairs[si] = ci
+        used.add(ci)
+    # Stretches between anchors, by the saved cuts' own index and the
+    # current cuts' position.
+    anchors = [(-1, -1)] + sorted((int(S[si].index), ci) for si, ci in pairs.items())
+    try:
+        full = sorted(int(b.index) for b in S) == list(range(len(S)))
+    except (TypeError, ValueError):
+        full = False
+    # The end of the list closes the last stretch only when the saved file
+    # holds every cut; otherwise the last stretch is open (ib None).
+    anchors.append((len(S), len(C)) if full else (None, None))
+
+    def _in_order(ci, frame):
+        # Put there, the saved cut keeps the current cuts in time order.
+        return ((ci == 0 or int(C[ci - 1].frame) < frame)
+                and (ci == len(C) - 1 or frame < int(C[ci + 1].frame)))
+
+    for (ia, pa), (ib, pb) in zip(anchors, anchors[1:]):
+        if ib is not None and ib - ia != pb - pa:
+            continue                                  # cuts added or removed here
+        for si, s in enumerate(S):
+            if si in pairs or int(s.index) <= ia or (ib is not None and int(s.index) >= ib):
+                continue
+            ci = pa + (int(s.index) - ia)
+            if 0 <= ci < len(C) and ci not in used and _in_order(ci, int(s.frame)):
+                pairs[si] = ci
+                used.add(ci)
+    matched = {id(S[si]): C[ci] for si, ci in pairs.items()}
+    unmatched = [s for si, s in enumerate(S) if si not in pairs]
+    return matched, unmatched
+
+
+def _apply_saved_boundaries(algo_gt: UnifiedGroundTruth, saved, carried=()):
+    """Put saved boundaries' determinations on the current cuts they match
+    (match_saved_boundaries). A matched cut takes the saved determination,
+    who and when, comment, and -- when determined -- the saved frame. A
+    saved cut that matches none is kept in ``unmatched_boundaries`` when a
+    person determined it or wrote a comment on it (an undetermined,
+    uncommented one is an older run's guess and is not carried), logged,
+    and shown when the file is opened; earlier unmatched cuts
+    (``carried``) are carried along the same way."""
+    matched, unmatched = match_saved_boundaries(saved, algo_gt.boundaries)
+    for sb in saved:
+        b = matched.get(id(sb))
+        if b is None:
+            continue
+        b.determined = sb.determined
+        b.determined_by = sb.determined_by
+        b.determined_at = sb.determined_at
+        if sb.determined and sb.frame != b.frame:
+            b.frame = sb.frame
+        b.comment = sb.comment
+    keep = [sb for sb in unmatched if sb.determined or sb.comment]
+    algo_gt.unmatched_boundaries = list(carried or ()) + keep
+    for sb in keep:
+        logger.warning("ground truth %s: saved cut at frame %s (cut %s of the cuts it was "
+                       "saved on) matches no cut of the current segmentation; kept "
+                       "unapplied", algo_gt.video_name, sb.frame, sb.index)
+
+
 def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGroundTruth):
     """Overlay determination status from saved GT onto algorithm GT."""
     # Copy exhaustive flags from saved GT
@@ -1104,18 +1245,10 @@ def _overlay_gt_determinations(algo_gt: UnifiedGroundTruth, saved_gt: UnifiedGro
     algo_gt.outcomes_exhaustive_determined_by = saved_gt.outcomes_exhaustive_determined_by
     algo_gt.outcomes_exhaustive_determined_at = saved_gt.outcomes_exhaustive_determined_at
 
-    # Boundaries: match by index and apply determination status
-    saved_bounds = {b.index: b for b in saved_gt.boundaries}
-    for b in algo_gt.boundaries:
-        if b.index in saved_bounds:
-            sb = saved_bounds[b.index]
-            b.determined = sb.determined
-            b.determined_by = sb.determined_by
-            b.determined_at = sb.determined_at
-            # If saved GT has a different frame, use the determined value
-            if sb.determined and sb.frame != b.frame:
-                b.frame = sb.frame
-            b.comment = sb.comment
+    # Boundaries: matched by FRAMES (match_saved_boundaries), never by index
+    # alone -- see there for why and how.
+    _apply_saved_boundaries(algo_gt, saved_gt.boundaries,
+                            carried=saved_gt.unmatched_boundaries)
 
     # Reaches: matched by FRAMES, never by reach_id. WHY: reach ids are
     # renumbered on every run, so after a re-pose or a new detector the
@@ -1239,14 +1372,13 @@ def _overlay_old_gt_corrections(gt: UnifiedGroundTruth, video_path: Path):
             with open(seg_gt_path) as f:
                 seg_data = json.load(f)
             gt_boundaries = seg_data.get("boundaries", [])
-            # Mark boundaries as determined if they exist in old GT
-            for i, b in enumerate(gt.boundaries):
-                if i < len(gt_boundaries):
-                    if b.frame != gt_boundaries[i]:
-                        b.frame = gt_boundaries[i]
-                    b.determined = True
-                    b.determined_by = seg_data.get("created_by", "unknown")
-                    b.determined_at = seg_data.get("created_at")
+            # The old file's cuts are a person's: matched to the current cuts
+            # by frame (match_saved_boundaries), never by position alone.
+            old = [BoundaryGT(index=i, frame=int(f), determined=True,
+                              determined_by=seg_data.get("created_by", "unknown"),
+                              determined_at=seg_data.get("created_at"))
+                   for i, f in enumerate(gt_boundaries)]
+            _apply_saved_boundaries(gt, old, carried=gt.unmatched_boundaries)
         except Exception as err:
             logger.warning('Could not read %s, so its boundary corrections were not applied: %s', seg_gt_path, err)
             pass

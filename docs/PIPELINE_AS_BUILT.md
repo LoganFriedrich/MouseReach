@@ -6398,3 +6398,29 @@ index-only reading are unchanged.
 Tests: `tests/test_triage_bundle_held_by_its_own_ground_truth_is_listed.py` (on the commit before
 this one the scan listed nothing for such a bundle).
 
+## Update: a reopened ground truth puts its cuts back by frame
+
+WHY: `unified_gt._overlay_gt_determinations` laid a saved boundary with index k over today's
+boundary k by position. With a different number of cuts today, a person's determined cut landed
+on another cut's row while the cut really there stayed beside it, and the next save wrote that as
+the person's determined segmentation. (Reaches and outcomes were already matched by frames.)
+
+WHAT IS BUILT (`unified_gt.match_saved_boundaries`, `_apply_saved_boundaries`):
+1. Each saved cut is paired with the nearest current cut within `BOUNDARY_MATCH_FRAMES` (30, the
+   segmenter's merge window), one to one, nearest pairs first, never crossing.
+2. Between two cuts paired by frame -- or the start of the list, or its end when the saved file
+   holds every cut (indices 0..n-1) -- a remaining saved cut goes on the current cut at the same
+   place in that stretch only when the stretch holds the same number of cuts on both sides and the
+   placement keeps the cuts in time order. After the last frame-paired cut of a file that holds only
+   some cuts ("Save as Ground Truth" keeps only determined ones) the stretch has no end to count
+   against; the time-order condition alone decides there.
+3. A saved cut that is still unpaired is kept, when a person determined it or commented on it, in
+   `UnifiedGroundTruth.unmatched_boundaries` (`segmentation.unmatched` in the file; carried through
+   both saves, never read as the file's segmentation), logged, and shown by the ground-truth tool
+   when the video opens. An undetermined, uncommented one (an older run's guess) is not carried.
+The old separate `_seg_ground_truth.json` overlay (`_overlay_old_gt_corrections`) uses the same
+matching instead of position.
+
+Tests: `tests/test_gt_reopen_puts_cuts_back_by_frame.py` (on the commit before this one a cut
+added or removed today put the person's determined cut on the wrong row).
+

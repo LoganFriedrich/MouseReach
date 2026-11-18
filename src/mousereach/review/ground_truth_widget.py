@@ -847,6 +847,14 @@ class GroundTruthWidget(QWidget):
             # Saved outcomes that fit no pellet of today's cuts are kept in the
             # file but not shown on any pellet (unified_gt.UnifiedGroundTruth.
             # unmatched_outcomes); say so, so the person knows to look again.
+            # The same for saved cuts that match no cut of today's segmentation
+            # (unified_gt.match_saved_boundaries): kept, never put on another row.
+            _ub = getattr(self.gt, "unmatched_boundaries", None) or []
+            if _ub:
+                show_warning(
+                    f"{len(_ub)} saved cut(s) match no cut of the current segmentation "
+                    f"(frame(s) {', '.join(str(b.frame) for b in _ub)}). They are kept in "
+                    f"the file but not applied; set those cuts again if needed.")
             _unmatched = getattr(self.gt, "unmatched_outcomes", None) or []
             if _unmatched:
                 show_warning(
