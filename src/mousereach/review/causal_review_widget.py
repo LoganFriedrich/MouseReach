@@ -2965,11 +2965,14 @@ The notes box travels with the video.
         bd = getattr(self, "_bundle_dir", None)
         return Path(bd).parent if bd else None
 
-    def _review_root(self) -> Path:
+    def _review_root(self) -> Optional[Path]:
         """Root of the review corpus (Processing/Review/triage), where corpus-level files
-        like flagged_sessions.json live -- the parent of Pending."""
+        like flagged_sessions.json live -- the parent of Pending. None when this
+        window has no queue. WHY no fallback to the video's own folder: a video
+        opened by hand may sit in a filed or retained-copy folder, where nothing
+        reads a session note and nothing the review tools do may write."""
         pd = self._pending_dir()
-        return pd.parent if pd is not None else self.video_path.parent
+        return pd.parent if pd is not None else None
 
     def _flag_session(self):
         """Flag this video's whole mouse+day session, and DIVERT this video to
@@ -2989,25 +2992,30 @@ The notes box travels with the video.
         the note survives for its other P#s."""
         if not self._video_stem:
             return
+        bundle = getattr(self, "_bundle_dir", None)
+        root = self._review_root()
+        if not bundle or root is None:
+            # No queue bundle on screen (a video opened with Browse): record
+            # nothing and move nothing. WHY before the flag is written: the
+            # session note used to fall back to the video's own folder -- for a
+            # video opened by hand possibly a filed folder, where nobody reads
+            # it and nothing MouseReach does may write.
+            show_info("No bundle loaded: nothing was flagged or moved.")
+            self._status_label.setText(
+                f"[NOT FLAGGED] {self._video_stem}: no queue bundle loaded")
+            return
         reason = (self._notes_edit.toPlainText().strip()
                   if hasattr(self, "_notes_edit") else "")
         try:
             # A short wait for another window's lock: this runs on the
             # window's own thread, and a long wait froze it (GUI_LOCK_WAIT_S,
             # causal_review_io). The error names the lock file if it is stuck.
-            key = flag_session(self._video_stem, self._review_root(), reason=reason,
+            key = flag_session(self._video_stem, root, reason=reason,
                                lock_wait_s=GUI_LOCK_WAIT_S)
         except Exception as e:
             show_error(f"Could not flag session: {e}")
             return
 
-        bundle = getattr(self, "_bundle_dir", None)
-        if not bundle:
-            # Not walking a queue bundle (e.g. a --worklist run): record the flag
-            # and say plainly that nothing moved, rather than implying it did.
-            show_info(f"Flagged session {key}. No bundle loaded, so nothing was moved.")
-            self._status_label.setText(f"[FLAG] Session {key} flagged (no bundle to divert).")
-            return
         try:
             if self._save_review() is False:
                 return   # take another look: the flag is recorded, the video is not moved

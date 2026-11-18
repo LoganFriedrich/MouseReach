@@ -247,3 +247,41 @@ def test_after_a_failed_load_next_video_skips_the_bundle_that_failed(tmp_path, m
     assert w.loaded == [(NEW, pending / NEW)]    # the failed bundle was skipped
     assert w._bundle_dir == pending / NEW
 
+
+def test_flag_session_after_browse_writes_nothing_and_moves_nothing(tmp_path, monkeypatch):
+    msgs = _quiet(monkeypatch)
+    pending = _queue(tmp_path, OLD)
+    w = _QueueWindow()
+    w.load_from_manifest(_manifest(pending / OLD), pending / OLD)
+    filed = tmp_path / "filed"
+    filed.mkdir()
+    browsed = filed / f"{C}.mp4"
+    browsed.write_bytes(b"x")
+    monkeypatch.setattr(crw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(browsed), "")))
+    w._browse_video()
+    before = sorted(p for p in tmp_path.rglob("*"))
+    routed = []
+    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
+
+    w._flag_session()
+
+    assert routed == []
+    assert sorted(p for p in tmp_path.rglob("*")) == before   # no flagged_sessions.json anywhere
+    assert ("show_info", "No bundle loaded: nothing was flagged or moved.") in msgs
+    assert (pending / OLD).is_dir()
+
+
+def test_flag_session_with_no_queue_writes_nothing_beside_the_video(tmp_path, monkeypatch):
+    msgs = _quiet(monkeypatch)
+    filed = tmp_path / "filed"
+    filed.mkdir()
+    video = filed / f"{C}.mp4"
+    video.write_bytes(b"x")
+    w = _QueueWindow()
+    w._video_stem, w.video_path = C, video
+
+    w._flag_session()
+
+    assert sorted(p.name for p in filed.iterdir()) == [f"{C}.mp4"]
+    assert ("show_info", "No bundle loaded: nothing was flagged or moved.") in msgs

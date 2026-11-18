@@ -242,15 +242,17 @@ Escalate, Flag Session and Clear act on the **queue bundle** the window is showi
 cases they do nothing, and the message says why:
 
 - **You opened a video yourself with Browse / Load Video.** Opening a video by hand lets go of
-  the queue bundle that was on screen: Escalate says "No bundle loaded", Flag Session records
-  the session note in the queue and says nothing was moved, and Clear says there is nothing to
-  clear. The
+  the queue bundle that was on screen: Escalate says "No bundle loaded", Flag Session says "No
+  bundle loaded: nothing was flagged or moved" (it writes no session note anywhere -- not in the
+  queue and not beside the video you opened), and Clear says there is nothing to clear. The
   window still knows which queue it was walking: press **Save Review + Next Video** to save the
   review of the video you opened and go back to the next video in the queue. The queue video
   you left counts as visited for the rest of this window's session, as it would if you had
   moved on with Save Review + Next Video. **Why:** the window used to keep the previous queue
   video's bundle, so these buttons moved THAT video's folder under the name of the video you
-  had opened, and answers could be saved into the wrong bundle.
+  had opened, and answers could be saved into the wrong bundle. And a session note written
+  with no queue loaded used to land in the folder of the video you had opened, which may be a
+  filed folder where nothing reads it and nothing the review tools do should write.
 - **The video did not load.** When a video cannot be opened (a missing or broken file), the
   window shows the error and forgets everything it had loaded -- the previous video's answers,
   its segments and its bundle. Every button then says no video is loaded until a video loads

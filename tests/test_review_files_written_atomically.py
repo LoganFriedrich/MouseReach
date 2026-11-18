@@ -681,7 +681,7 @@ def test_the_review_window_does_not_freeze_on_a_held_lock(tmp_path, monkeypatch)
     monkeypatch.setattr(crw, "show_error", lambda msg, *a, **k: errors.append(msg))
     monkeypatch.setattr(crw, "show_info", lambda *a, **k: None)
     window = SimpleNamespace(
-        _video_stem=VID, _bundle_dir=None, _review_root=lambda: root,
+        _video_stem=VID, _bundle_dir=root / "Pending" / VID, _review_root=lambda: root,
         _status_label=SimpleNamespace(setText=lambda text: None))
     t0 = time.monotonic()
     crw.CausalReviewWidget._flag_session(window)

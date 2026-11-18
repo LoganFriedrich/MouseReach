@@ -3372,7 +3372,10 @@ move a video", says what the reviewer sees):
   to their message. Tests: `tests/test_queue_move_reports_unrecorded_state.py`.
 - **Nothing moves when the answers did not save, or when no bundle is paired.** A failed save
   stops Escalate and Flag Session as it stops Clear; Browse and a failed load leave no bundle
-  paired with the window. Tests: `tests/test_move_buttons_stop_when_save_fails.py`,
+  paired with the window, and with no bundle Flag Session writes no session note at all (it used
+  to fall back to the opened video's own folder). The window keeps the queue folder apart from
+  the bundle (`_queue_pending_dir`), so "Save Review + Next Video" still walks the queue after
+  Browse or a failed load, skipping the bundle that failed. Tests: `tests/test_move_buttons_stop_when_save_fails.py`,
   `tests/test_browse_after_bundle.py`.
 
 
