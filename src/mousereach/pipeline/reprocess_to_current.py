@@ -200,6 +200,13 @@ def reprocess_video_to_current(
         if not safe_copy(dlc_h5, work_h5, verify=True):
             summary["error"] = "pose copy failed"
             return summary
+    # DeepLabCut's record of the video's frame rate goes with the pose, so the
+    # kinematics can convert to seconds even when no video file is found
+    # (kinematics/core/frame_rate.py; without a rate they are not written).
+    meta = dlc_h5.with_name(dlc_h5.stem + "_meta.pickle")
+    work_meta = work_dir / meta.name
+    if meta.is_file() and not work_meta.exists():
+        safe_copy(meta, work_meta, verify=True)
 
     def _step(name, fn):
         s = time.time()
