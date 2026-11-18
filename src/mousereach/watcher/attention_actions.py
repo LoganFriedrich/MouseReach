@@ -96,10 +96,15 @@ def _source_not_held(bundle: Path, vid: str, db) -> str:
     bundle's queue. WHY: the source is usually the processing folder the
     video was routed from, and the video may be running there again; its
     mp4 or pose would then be taken from under the run. No watcher database
-    on this computer: "" (the person pressing the button decides)."""
+    on this computer: "" (the person pressing the button decides). A login
+    that cannot NAME its watcher database is not "no database": the reason is
+    returned and nothing is touched (db_location.watcher_db_unnamed_reason)."""
     own = db
     if own is None:
-        from .db_location import open_watcher_db_if_present
+        from .db_location import open_watcher_db_if_present, watcher_db_unnamed_reason
+        unnamed = watcher_db_unnamed_reason()
+        if unnamed:
+            return unnamed
         own, _why = open_watcher_db_if_present()
     from .review_return import _held_in_this_queue
     held, why_not = _held_in_this_queue(bundle, vid, own)
@@ -225,7 +230,13 @@ def perform(item: dict, key: str, db=None) -> str:
         # computer: the person pressing the button decides.
         own = db
         if own is None:
-            from .db_location import open_watcher_db_if_present
+            from .db_location import (open_watcher_db_if_present,
+                                      watcher_db_unnamed_reason)
+            unnamed = watcher_db_unnamed_reason()
+            if unnamed:
+                # Cannot tell which database holds the record: not "no
+                # database", so nothing is moved.
+                raise ActionRefused(f"{unnamed} Nothing was moved.")
             own, _why = open_watcher_db_if_present()
         still, n = _finish_failed_moves(bundle, vid, db=own)
         if not still:

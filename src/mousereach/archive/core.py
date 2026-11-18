@@ -189,13 +189,25 @@ def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[s
       * no ``<stem>_features.json``, or one older than the outputs beside it
         (stale_features_reason) -> refused.
 
-    No watcher database at all means a machine that does not run the watcher
-    (the tool used on its own); then the files are all there is to go on.
+    No watcher database at the named place means a machine that does not run
+    the watcher (the tool used on its own); then the files are all there is to
+    go on. But when this login's settings cannot NAME the watcher database (they
+    cannot be read, or a processing server's settings have no
+    watcher.db_path -- db_location.watcher_db_unnamed_reason), the command
+    refuses: "cannot tell which database" is not "no database", and the row
+    that would refuse the filing may be in the one it cannot name.
     Never called by the watcher itself (skip_ready_check), whose own filing
     step makes these checks.
     """
     folder = Path(source_dir) if source_dir else Paths.PROCESSING
     started_at = None
+    try:
+        from mousereach.watcher.db_location import watcher_db_unnamed_reason
+        unnamed = watcher_db_unnamed_reason()
+    except Exception as e:
+        unnamed = f"the watcher database could not be looked up ({e})"
+    if unnamed:
+        return f"{unnamed}; not filing without reading the watcher's row"
     try:
         from mousereach.watcher.db_location import open_watcher_db_if_present
         db, why_none = open_watcher_db_if_present()

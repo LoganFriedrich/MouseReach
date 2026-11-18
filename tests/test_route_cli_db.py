@@ -109,13 +109,19 @@ def test_resolver_falls_back_to_processing_root(site, monkeypatch):
     assert resolve_watcher_db_path() == site["proc"] / "watcher.db"
 
 
-def test_resolver_treats_an_unreadable_config_as_no_override(site, monkeypatch):
+def test_resolver_refuses_an_unreadable_config(site, monkeypatch):
+    """An unreadable config used to count as "no override" and resolve to
+    <processing folder>/watcher.db -- a decoy wherever the watcher writes an
+    overridden file. Which database cannot be told, so it refuses."""
+    from mousereach.watcher.db_location import WatcherDbUnnamed
+
     def boom():
         raise ValueError("bad config")
     monkeypatch.setattr(config.WatcherConfig, "load", staticmethod(boom))
     monkeypatch.setattr(config, "require_processing_root", lambda: site["proc"])
 
-    assert resolve_watcher_db_path() == site["proc"] / "watcher.db"
+    with pytest.raises(WatcherDbUnnamed, match="bad config"):
+        resolve_watcher_db_path()
 
 
 def test_cli_resolver_delegates_and_still_prints(site, monkeypatch, capsys):

@@ -308,8 +308,13 @@ class UnifiedPipelineWidget(WatcherControlWidget):
         try:
             from mousereach.config import WatcherConfig, Paths
             cfg = WatcherConfig.load()
-            db_path = cfg.db_path or (Paths.PROCESSING_ROOT / "watcher.db"
-                                      if Paths.PROCESSING_ROOT else "?")
+            # The file the watcher and every tool use (watcher/db_location),
+            # or why this login cannot name it.
+            from mousereach.watcher.db_location import resolve_watcher_db_path
+            try:
+                db_path = resolve_watcher_db_path()
+            except Exception as e:
+                db_path = f"NOT NAMED -- {e}"
             self._mode_label.setText(
                 f"{role_explanation(cfg.mode, getattr(cfg, 'also_process', False))}"
                 f"   (role: {cfg.mode}   |   db: {db_path})")

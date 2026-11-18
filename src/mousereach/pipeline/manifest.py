@@ -685,7 +685,15 @@ def backfill_kinematic_versions(root: Path, apply: bool = False,
                          "manifests are archived before they are modified")
     db = None
     if apply:
-        from mousereach.watcher.db_location import open_watcher_db_if_present
+        from mousereach.watcher.db_location import (open_watcher_db_if_present,
+                                                    watcher_db_unnamed_reason)
+        # A login that cannot name its watcher database cannot read the
+        # publication locks in it; rewriting filed records then would ignore
+        # them. Refuse before anything is touched.
+        unnamed = watcher_db_unnamed_reason()
+        if unnamed:
+            from mousereach.config import ConfigurationError
+            raise ConfigurationError(f"{unnamed}; no manifest was changed")
         db, _ = open_watcher_db_if_present()
 
     # WHY iter_files, not rglob: superseded manifests keep their names under
@@ -797,7 +805,13 @@ def main_backfill_kinematic_versions():
     print(f"{'Applying' if args.apply else 'Checking'}: {root}")
     if args.apply:
         print(f"Originals copied to: {archive_dir}")
-    result = backfill_kinematic_versions(root, apply=args.apply, archive_dir=archive_dir)
+    from mousereach.config import ConfigurationError
+    try:
+        result = backfill_kinematic_versions(root, apply=args.apply,
+                                             archive_dir=archive_dir)
+    except ConfigurationError as e:
+        print(f"[FAIL] {e}")
+        raise SystemExit(1)
     print()
     for k, v in sorted(result['counts'].items(), key=lambda kv: -kv[1]):
         print(f"  {v:6d}  {k}")

@@ -19,9 +19,15 @@ called and what they hold. Behaviour lives in PIPELINE_AS_BUILT.md.
 ## 1. WHICH FILE IS THE DATABASE
 
 A node's live database is the `db_path` override in that machine's
-`~/.mousereach/config.json`, else `processing_root/watcher.db`. On a machine
-with the override set, a file named `watcher.db` may also sit beside it holding
-the full schema and zero rows; it is not the live one.
+`~/.mousereach/config.json`, else `processing_root/watcher.db` -- but the
+fallback applies ONLY to a GPU PC (`watcher.mode` `dlc_pc`). On a processing
+server (`mode` `processing_server`) every login's settings must name the file
+in `watcher.db_path`; a login whose settings do not, or whose settings file
+cannot be read, gets a refusal naming the problem from every command and from
+the watcher itself, never `processing_root/watcher.db`. On a machine with the
+override set, a file named `watcher.db` may also sit beside it holding the
+full schema and old or zero rows; it is not the live one, and nothing opens
+it any more.
 `resolve_watcher_db_path` (watcher/db_location.py) is the only correct way to
 pick it. The CLI's `_resolve_db_path` calls it and prints its choice, and
 `mousereach-route-to-queue` uses it too, refusing to route when the file is

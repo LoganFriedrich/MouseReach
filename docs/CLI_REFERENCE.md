@@ -788,7 +788,9 @@ THE WATCHER DATABASE -- the same file the daemon writes, or nothing is routed
 -----------------------------------------------------------------------------
 The database is resolved exactly as the daemon resolves it
 (db_location.resolve_watcher_db_path: the configured watcher.db_path, else
-<processing_root>/watcher.db) and printed as "[watcher db] <path>", like every
+<processing_root>/watcher.db on a GPU PC; a processing server whose settings
+name no watcher.db_path, or settings that cannot be read, are refused) and
+printed as "[watcher db] <path>", like every
 other watcher command. This command used to open a bare WatcherDB(), which
 ignores the db_path override: every state write went to an unused decoy
 database while the bundles moved on disk, and the live database never learned
@@ -943,7 +945,9 @@ options:
 ```
 
 It works on this machine's watcher database (the configured `watcher.db_path`
-when set, else `<processing_root>/watcher.db`) and never creates it: if that
+when set, else `<processing_root>/watcher.db` on a GPU PC; on a processing
+server a login whose settings name no `watcher.db_path` is refused, see
+PIPELINE_AS_BUILT.md) and never creates it: if that
 file is not there it prints `ERROR: no watcher database at <path>; nothing
 done` and exits with code 2. Run `mousereach-watch` once on the machine first.
 

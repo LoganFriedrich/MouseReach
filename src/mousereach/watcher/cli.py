@@ -366,7 +366,12 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     # changed the local database and touched the shared one (watcher/preview.py).
     if dry_run:
         from mousereach.watcher.preview import preview
-        for line in preview(config, _resolve_db_path()):
+        try:
+            db_path = _resolve_db_path()
+        except Exception as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        for line in preview(config, db_path):
             print(line)
         return
 
@@ -1500,7 +1505,13 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
     # every video into an empty decoy the watcher never reads -- and the
     # videos were copied into the DLC queue with no record of them. Only
     # mousereach-watch (and the Watcher Control panel) creates the database.
-    db_path = _resolve_db_path()
+    try:
+        db_path = _resolve_db_path()
+    except Exception as e:
+        # This login cannot name the watcher database (db_location says why);
+        # queueing into a guessed one is how a decoy got written.
+        print(f"ERROR: {e} Nothing was queued.", file=sys.stderr)
+        sys.exit(1)
     if not db_path.exists():
         print(f"ERROR: Watcher database not found at {db_path}. Run 'mousereach-watch' "
               f"once on this machine first; nothing was queued.", file=sys.stderr)

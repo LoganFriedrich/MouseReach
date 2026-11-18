@@ -5095,12 +5095,50 @@ it is missing:
 
 What a person does when a tool says the database is missing: start the watcher on that machine
 once (`mousereach-watch`, or Start in the Watcher Control panel); if the watcher is already
-running there, check `watcher.db_path` in `~/.mousereach/config.json` (`mousereach-watch-info`
-shows it). A decoy `watcher.db` left beside a configured `db_path` is not read by anything in a
-login whose config sets `db_path`; before renaming it aside, check every login's config on that
-machine (`mousereach-watch-info` in each), because a login whose own config has no `db_path`
-resolves `<processing_root>/watcher.db` as its real database. Tests: `tests/test_tools_never_create_a_decoy_watcher_db.py`,
+running there, check `watcher.db_path` in `~/.mousereach/config.json` (`mousereach-watch-status`
+prints the file it uses on its first line, `[watcher db] <path>`). A decoy `watcher.db` left
+beside a configured `db_path` is not read by anything: see the next update for the login whose
+settings name no database. Tests: `tests/test_tools_never_create_a_decoy_watcher_db.py`,
 `tests/test_archive_gate.py`.
+
+## Update: a login that cannot name the watcher database refuses; nothing falls back to the default file
+
+Every Windows login on a machine has its own `~/.mousereach/config.json`, but all of them share
+the processing folder. The resolver used to hand any login whose settings could not be read, or
+whose settings had no `watcher.db_path`, the file `<processing_root>/watcher.db`. On a processing
+server whose watcher writes a configured `db_path`, that file is an old decoy -- so a second login
+(a reviewer's, set up from a profile without `db_path`) ran `mousereach-crystallize`,
+`mousereach-uncrystallize`, `mousereach-watch-process-animal`, `mousereach-repose-videos` or the
+dashboard's Reprocess outdated against the decoy without a word: a publication lock or an
+"outdated" mark the watcher never saw.
+
+Now `db_location.resolve_watcher_db_path` follows these rules, in order:
+
+1. the settings file cannot be read -> refused (`WatcherDbUnnamed`), naming the file and the
+   problem;
+2. `watcher.db_path` is set -> that file;
+3. `watcher.mode` is `processing_server` and `db_path` is not set -> refused (`WatcherDbUnnamed`):
+   the processing server's database must be named in the settings of every login that works
+   with it;
+4. otherwise (a GPU PC) -> `<processing_root>/watcher.db`, as before.
+
+Everything uses this one resolver: every watcher command, the watcher itself (`mousereach-watch`
+and the Watcher Control panel's Start / Run Once, which used to carry their own copy of the
+fallback), the dashboard's database buttons, the review tools' Escalate / Flag Session, the
+archive command, `mousereach-migrate-archive`'s row update (which used to try the default file
+FIRST) and the manifest backfill. Commands print `ERROR: ...` and exit non-zero; the panels show
+the reason (their status line reads `db: NOT NAMED -- <reason>`).
+
+Two callers treated "no watcher database" as "a machine that does not run the watcher" and went
+on with the files alone: the archive command's filing check and the dashboard's attention-item
+buttons. They now ask `db_location.watcher_db_unnamed_reason()` first, and a login that cannot
+name its database is refused ("cannot tell which database" is not "no database"). A machine whose
+named database simply does not exist is still treated as the tool used on its own.
+
+What a person does: copy `watcher.db_path` from the settings of the login that runs the watcher
+(`mousereach-watch-status` there prints it on its first line) into the `watcher` section of the
+refused login's `~/.mousereach/config.json`, or set it in the Watcher Control panel's settings.
+Tests: `tests/test_watcher_db_must_be_named.py`, `tests/test_route_cli_db.py`.
 
 ## Update: publication locks are set and lifted on the processing server only
 

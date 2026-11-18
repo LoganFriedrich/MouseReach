@@ -770,9 +770,11 @@ class WatcherControlWidget(QWidget):
         try:
             from mousereach.config import Paths, WatcherConfig
             from mousereach.watcher.db import WatcherDB
-            cfg = WatcherConfig.load()
-            db_path = cfg.db_path or (Paths.PROCESSING_ROOT / "watcher.db" if Paths.PROCESSING_ROOT else None)
-            if not db_path or not Path(db_path).exists():
+            # The one shared resolver (db_location): the panel reads the same
+            # file the daemon writes, and refuses a login that cannot name it.
+            from mousereach.watcher.db_location import resolve_watcher_db_path
+            db_path = resolve_watcher_db_path()
+            if not Path(db_path).exists():
                 return None
             return WatcherDB(Path(db_path))
         except Exception as e:
@@ -855,8 +857,13 @@ class WatcherControlWidget(QWidget):
             if not ok:
                 self._refresh()
                 return
-            db_path = cfg.db_path or (require_processing_root() / "watcher.db")
-            db = WatcherDB(Path(db_path))
+            # The same resolver every command uses (db_location): a
+            # processing server whose settings name no watcher.db_path, or
+            # settings that cannot be read, refuse here instead of starting a
+            # watcher on <processing folder>/watcher.db -- a file the other
+            # logins' tools would not agree on.
+            from mousereach.watcher.db_location import resolve_watcher_db_path
+            db = WatcherDB(Path(resolve_watcher_db_path()))
             if cfg.mode == "processing_server":
                 self._orchestrator = ProcessingOrchestrator(cfg, db)
             else:
@@ -937,8 +944,8 @@ class WatcherControlWidget(QWidget):
                     ProcessingOrchestrator, DLCOrchestrator,
                 )
                 cfg = WatcherConfig.load()
-                db_path = cfg.db_path or (require_processing_root() / "watcher.db")
-                db = WatcherDB(Path(db_path))
+                from mousereach.watcher.db_location import resolve_watcher_db_path
+                db = WatcherDB(Path(resolve_watcher_db_path()))   # as Start does
                 orch = (ProcessingOrchestrator(cfg, db) if cfg.mode == "processing_server"
                         else DLCOrchestrator(cfg, db))
                 orch.run_once()
@@ -993,7 +1000,13 @@ class WatcherControlWidget(QWidget):
         try:
             from mousereach.config import WatcherConfig, Paths
             cfg = WatcherConfig.load()
-            db_path = cfg.db_path or (Paths.PROCESSING_ROOT / "watcher.db" if Paths.PROCESSING_ROOT else "?")
+            # The file the watcher and every tool use (db_location), or why
+            # this login cannot name it -- shown, never guessed.
+            from mousereach.watcher.db_location import resolve_watcher_db_path
+            try:
+                db_path = resolve_watcher_db_path()
+            except Exception as e:
+                db_path = f"NOT NAMED -- {e}"
             self._mode_label.setText(f"mode: {cfg.mode}   |   db: {db_path}")
         except Exception:
             pass

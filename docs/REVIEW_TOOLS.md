@@ -253,7 +253,10 @@ Before, that case was only written to the log and the message just said "moved".
 
 **Checking a reviewer's login (whoever installs or updates the review tools).** The window finds
 the watcher database the same way the watcher does: `watcher.db_path` in that login's
-`~/.mousereach/config.json` if set, otherwise `watcher.db` in that login's processing folder. So
+`~/.mousereach/config.json` if set, otherwise (on a GPU PC only) `watcher.db` in that login's
+processing folder. On a processing server the login's settings MUST name `watcher.db_path`: without
+it every move says "Note: the watcher's record was NOT updated (... name no watcher database
+(watcher.db_path) ...)" -- copy the value from the settings of the login that runs the watcher. So
 in every login people review from, check once that this resolves to the database the watcher
 actually writes, and that the login may write it: escalate one test video and read the message.
 No "record was NOT updated" note means it is right. The login must also be able to create and

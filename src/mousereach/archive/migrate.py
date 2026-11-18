@@ -349,26 +349,19 @@ def _update_watcher_db_paths(
 
     Returns the number of rows updated (or that would be updated).
     """
-    from mousereach.config import PROCESSING_ROOT
-
-    if PROCESSING_ROOT is None:
-        print("  [!] PROCESSING_ROOT not configured - cannot locate watcher.db")
+    # The one shared resolver (watcher/db_location): the configured
+    # watcher.db_path first. This used to try <processing_root>/watcher.db
+    # FIRST and the override only when that was missing -- on a machine with
+    # an override and an old default file beside it, it rewrote the old file.
+    from mousereach.watcher.db_location import resolve_watcher_db_path
+    try:
+        db_path = Path(resolve_watcher_db_path())
+    except Exception as e:
+        print(f"  [!] cannot tell which watcher database to update ({e})")
         return 0
-
-    db_path = Path(PROCESSING_ROOT) / "watcher.db"
-    if not db_path.exists():
-        # Also check WatcherConfig db_path override
-        try:
-            from mousereach.config import WatcherConfig
-            watcher_cfg = WatcherConfig.load()
-            if watcher_cfg.db_path and watcher_cfg.db_path.exists():
-                db_path = watcher_cfg.db_path
-            else:
-                print(f"  [!] watcher.db not found at {db_path}")
-                return 0
-        except Exception:
-            print(f"  [!] watcher.db not found at {db_path}")
-            return 0
+    if not db_path.is_file():
+        print(f"  [!] watcher database not found at {db_path}")
+        return 0
 
     print(f"  Checking watcher.db at: {db_path}")
 
