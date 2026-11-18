@@ -140,3 +140,18 @@ def test_a_bundle_is_moved_whole_or_not_at_all(tmp_path, module, monkeypatch):
         assert files[key].is_file(), key          # nothing left the source
     assert not (dest / f"{vid}.mp4").exists()
     assert (dest / f"{vid}_segments.json").read_text() == "another copy"
+
+
+def test_step0_quick_guide_describes_the_checkbox_the_tab_has():
+    """The '?' guide must name the crop tab's real checkbox and say where the cut
+    videos go now: the shared singles folder, never the DLC queue."""
+    import re
+    from pathlib import Path
+    import mousereach.video_prep as vp
+    from mousereach.ui.utils import STEP0_HELP
+    widget_src = (Path(vp.__file__).parent / "widget.py").read_text(encoding="utf-8")
+    label = re.search(r'copy_to_queue_cb = QCheckBox\("([^"]+)"\)', widget_src).group(1)
+    assert label in STEP0_HELP
+    assert "Copy to DLC Queue" not in STEP0_HELP
+    assert "shared singles folder" in STEP0_HELP
+    assert "Run the pipeline now" in STEP0_HELP

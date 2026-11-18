@@ -144,7 +144,9 @@ class VideoPrepWidget(QWidget):
         self.copy_to_queue_cb.setToolTip(
             "Puts each video this run cut in the shared singles folder, where a "
             "graphics-card PC's watcher claims and poses it (one machine per "
-            "video). Nothing is copied straight into a DLC queue.")
+            "video). Nothing is copied straight into a DLC queue, so the DLC "
+            "Analysis tab's default folder stays empty: to pose them now, press "
+            "\"Run the pipeline now\" on a graphics-card PC's Run Pipeline tab.")
         self.copy_to_queue_cb.setChecked(True)
         output_layout.addWidget(self.copy_to_queue_cb)
 

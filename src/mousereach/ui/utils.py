@@ -304,8 +304,22 @@ Individual .mp4 files:
 ## Blank Positions
 Use cohort "00" (e.g., CNT0001) for empty cage positions.
 
-## Copy to Queue
-Check "Copy to DLC Queue" to automatically stage files for Step 1.
+## Handing the Cut Videos to the Pose Step
+"Hand the cut videos to the pose step" (on by default) puts each video
+this run cut in the shared singles folder (`Unanalyzed/Single_Animal`).
+A graphics-card PC's watcher claims each one there and poses it, one
+machine per video. Nothing is copied into a DLC queue, so the
+"1 - DLC Analysis" tab's default folder stays empty.
+
+To pose them now by hand: on a graphics-card PC, open the Run Pipeline
+tab and press "Run the pipeline now". It claims each video and poses it
+the way the watcher does. Do not point the DLC Analysis tab at the
+shared singles folder: it would pose them with no claim, so another
+machine could pose the same video.
+
+A video whose name is already in the shared folder, or that a machine
+already holds for pose, is not handed on again; the results say how
+many were "NOT handed on".
 """
 
 STEP1_HELP = """

@@ -6125,6 +6125,13 @@ the command say how many were "NOT handed on". With no watcher running, press "R
 now" on a graphics-card PC's Run Pipeline tab to pose them (`video_prep/core/cropper.py`,
 `hand_to_pose`; `copy_to_dlc_queue` keeps its name for scripts and does the same).
 
+What this narrows: the "1 - DLC Analysis" tab and `mousereach-dlc-batch` still open this
+machine's own DLC queue by default, and the crop tools no longer put anything there. Pointing that
+tab at the shared singles folder instead would pose the videos where every machine reads them,
+with no claim; use the Run Pipeline tab's pass, which claims each video and poses it in the
+machine's own queue. (Those two pose tools still pose whatever is in a folder with no claim and no
+watcher record -- a known leftover.)
+
 **`mousereach-prep --archive`** used to move every collage of the folder after cropping, whatever
 its children's state. It now applies the watcher's own retirement rule
 (`collage_provenance.retire_completed_collages`, which the processing machine runs every few
