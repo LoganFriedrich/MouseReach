@@ -5160,7 +5160,7 @@ Tests: `tests/test_watcher_db_must_be_named.py`, `tests/test_route_cli_db.py`.
 ## Update: publication locks are set and lifted on the processing server only
 
 *Superseded in part by the next update ("a publication lock is a record beside the filed results
-that every machine honours"): the lock is no longer known to one machine only.*
+that every machine honors"): the lock is no longer known to one machine only.*
 
 A publication lock (`mousereach-crystallize`, state `crystallized`) is written only to the
 watcher database of the machine that runs the command, and only that machine's version scan
@@ -5173,10 +5173,10 @@ with no processing server) may lock, with a printed note that the lock is known 
 only. An unreadable configuration refuses. The rule and its reason are in
 `pipeline/versions.py` `publication_lock_gate`. Tests: `tests/test_publication_lock_gate.py`.
 
-## Update: a publication lock is a record beside the filed results that every machine honours
+## Update: a publication lock is a record beside the filed results that every machine honors
 
 The lock above still lived only in the database of the machine that ran the command: another
-analysing machine never saw it, and a lock written into the wrong database protected nothing.
+analyzing machine never saw it, and a lock written into the wrong database protected nothing.
 Now `mousereach-crystallize` (and the dashboard's Lock button) first writes
 `<video>_crystallized.json` into the folder the video is filed in -- the one place every machine
 reads -- and only then sets this machine's row to `crystallized`
@@ -5186,7 +5186,7 @@ one; no folder is created for it, and a video whose filed results are not in its
 not locked (reported, exit code 1). `mousereach-uncrystallize` removes the record first and then
 unlocks the row; a record that cannot be removed leaves the video locked (reported, exit 1).
 
-Every machine honours the record, whatever machine set it:
+Every machine honors the record, whatever machine set it:
 
 - the version scan reads the records from the same listing of the filed tree it already makes
   and never marks a video with one for a re-run (counted as `locked_by_record`; when the listing

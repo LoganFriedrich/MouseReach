@@ -122,7 +122,7 @@ def crystallized_refusal(db, video_id: str, action: str, folder=None,
     (``<video>_crystallized.json`` beside the filed results,
     pipeline/publication_lock.py) is the one every machine reads, so it is
     checked too, with or without ``db``: a lock set from another machine is
-    honoured here. ``folder`` is the folder holding the video's filed results
+    honored here. ``folder`` is the folder holding the video's filed results
     when the caller already knows it; otherwise the folder the archive step
     files into (under ``analyzed_root``, default the configured Analyzed).
     A record that cannot be checked (the share is unreachable) refuses.

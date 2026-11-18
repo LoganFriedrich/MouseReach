@@ -6,13 +6,13 @@ WHY A FILE AS WELL AS THE DATABASE ROW
 results must stay exactly as they are until a person unlocks it. The lock used
 to be only a state ('crystallized') in the watcher database of the machine
 that ran the command. Every machine keeps its own watcher database, so the
-lock was known to that one database only: another analysing machine's version
+lock was known to that one database only: another analyzing machine's version
 scan never saw it, and a lock written into the wrong database (a login whose
 settings named an old copy) looked set and protected nothing.
 
 The filed folder is the one place every machine reads. So locking writes a
 small record there, beside the video's filed results, and the record IS the
-lock that every machine honours:
+lock that every machine honors:
 
   * the version scan never marks a video with a record for a re-run (it reads
     the records from the same folder listing it already makes);

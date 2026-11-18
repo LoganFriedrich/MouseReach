@@ -2483,7 +2483,7 @@ usage: mousereach-crystallize (--cohort C | --videos "v1,v2") --label NAME
 
 Lock archived videos against automatic reprocessing (for publications).
 Each locked video gets <video>_crystallized.json beside its filed results;
-every machine honours it. Exit code 1 lists any video that was NOT locked.
+every machine honors it. Exit code 1 lists any video that was NOT locked.
 
   --cohort C    Every archived video of this cohort (e.g. CNT01).
   --videos LIST Comma-separated video ids.
@@ -2550,7 +2550,7 @@ every machine honours it. Exit code 1 lists any video that was NOT locked.
     if list_mode:
         crystallized = db.get_videos_in_state('crystallized')
         # The lock records beside the filed results are the locks every
-        # machine honours; a record with no locked row here was set from
+        # machine honors; a record with no locked row here was set from
         # another machine (or for a video this machine has no row for).
         try:
             from mousereach.pipeline.publication_lock import iter_records, read_record
@@ -2616,7 +2616,7 @@ every machine honours it. Exit code 1 lists any video that was NOT locked.
     print(f"Crystallized {count} videos with label '{label}'.")
     if count > 0:
         print("Each has a lock record (<video>_crystallized.json) beside its filed")
-        print("results, which every machine honours: these videos will NOT be")
+        print("results, which every machine honors: these videos will NOT be")
         print("reprocessed, re-filed or moved into a review queue.")
         print(f"To unlock: mousereach-uncrystallize --label '{label}'")
     if failures:

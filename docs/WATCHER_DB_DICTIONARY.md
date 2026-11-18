@@ -340,7 +340,7 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
                    refuse it, and no
                    route, return or divert moves a crystallized video).
                    The row is this machine's copy of the lock; the lock every
-                   machine honours is <video>_crystallized.json beside the
+                   machine honors is <video>_crystallized.json beside the
                    filed results (pipeline/publication_lock.py), so an
                    'archived' or 'outdated' row of a video with that record is
                    treated as locked too.

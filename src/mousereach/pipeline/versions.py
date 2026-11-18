@@ -295,12 +295,12 @@ def publication_lock_gate(config=None):
     allowed, a caveat to show when allowed with one, or None.
 
     WHY: a lock is a record beside the filed results that every machine
-    honours (pipeline/publication_lock.py) PLUS the row of the machine that
+    honors (pipeline/publication_lock.py) PLUS the row of the machine that
     ran the command ('crystallized'). Videos are filed -- and re-run when
     outdated -- by the machine that analyses them, which is the processing
     server ('processing_server' mode), so that is where the row belongs and
     where locks are set and lifted. A GPU PC that only poses keeps rows that
-    say 'pose handed on'. A lab whose only analysing machine is a GPU PC with
+    say 'pose handed on'. A lab whose only analyzing machine is a GPU PC with
     ``also_process`` on (no processing server) may lock there, with a note.
     An unreadable configuration refuses: the role cannot be told.
     """
@@ -317,7 +317,7 @@ def publication_lock_gate(config=None):
     if mode == "dlc_pc" and getattr(config, "also_process", False):
         return True, ("Note: this machine analyses and files videos itself (also_process), "
                       "so the lock's row is set in its own database. The lock record beside "
-                      "the filed results is what every other machine honours.")
+                      "the filed results is what every other machine honors.")
     return False, ("Publication locks are set and lifted on the processing server, the "
                    "machine that files and re-runs videos. This machine is configured as "
                    "'%s'%s, whose database does not hold the filed videos' rows. Nothing "

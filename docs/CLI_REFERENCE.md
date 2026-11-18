@@ -2294,7 +2294,7 @@ usage: mousereach-crystallize (--cohort C | --videos "v1,v2") --label NAME
 
 Lock archived videos against automatic reprocessing (for publications).
 Each locked video gets <video>_crystallized.json beside its filed results;
-every machine honours it. Exit code 1 lists any video that was NOT locked.
+every machine honors it. Exit code 1 lists any video that was NOT locked.
 
   --cohort C    Every archived video of this cohort (e.g. CNT01).
   --videos LIST Comma-separated video ids.
@@ -2308,7 +2308,7 @@ them when they go out of date. Locking a video does two things, in this order:
 
 1. it writes a **lock record**, `<video>_crystallized.json`, into the folder the
    video is filed in (`Analyzed/<project>/<cohort>/`), beside its results. This
-   record is the lock every machine honours: no machine's version scan marks the
+   record is the lock every machine honors: no machine's version scan marks the
    video for a re-run, a re-run of it is never started, nothing files over its
    results, and nothing moves it into a review queue or to a new pose. It is
    written in one step (a temporary dot-name, then a rename), and no folder is

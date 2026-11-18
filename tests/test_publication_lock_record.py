@@ -1,4 +1,4 @@
-"""A publication lock is a record beside the filed results, honoured by every machine.
+"""A publication lock is a record beside the filed results, honored by every machine.
 
 WHY: mousereach-crystallize used to lock a video only in the watcher database
 of the machine that ran it. Every machine keeps its own database, so the lock
@@ -7,7 +7,7 @@ wrong database looked set and protected nothing. Now locking writes
 ``<video>_crystallized.json`` beside the filed results -- the one place every
 machine reads -- and the version scan, the route into a review queue, filing,
 the start of a re-run, the dashboard's Re-run button and the re-pose command
-all honour it, whatever machine set it. Unlocking removes it.
+all honor it, whatever machine set it. Unlocking removes it.
 
 Built under tmp_path: a filed tree, databases made by the test, and hand-written
 records standing for a lock set from another machine.
@@ -97,7 +97,7 @@ def test_another_machines_record_refuses_the_route_into_a_queue(filed):
     assert (folder / f"{VID}_features.json").exists()
 
 
-def test_the_record_is_honoured_with_no_database_at_all(filed):
+def test_the_record_is_honored_with_no_database_at_all(filed):
     from mousereach.watcher.db import crystallized_refusal
     folder, _ = filed
     _lock_from_elsewhere(folder)
