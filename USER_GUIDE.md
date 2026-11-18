@@ -570,13 +570,13 @@ mousereach-export -i Processing/ -o results.xlsx
 - Check DLC model quality with `mousereach-dlc-quality`
 - May need to retrain model or filter bad videos
 
-### The watcher (or the CPU pose pool) will not start
+### The watcher will not start
 
 The message, the watcher log and the Dashboard's health line say why. There are
 three reasons a start is refused, and each is on purpose:
 
 - **"Not started: a stop request is waiting in ...\watcher_stop.flag (left ...
-  ago)"** (for the CPU pose pool: `cpu_pose_stop.flag`). That file asks a
+  ago)"**. That file asks a
   watcher to stop; it is left by a stop or by an update in progress, and while
   it is there every new watcher would stop the moment it starts. Nothing
   deletes it for you. If the stop or update it belongs to is finished, delete

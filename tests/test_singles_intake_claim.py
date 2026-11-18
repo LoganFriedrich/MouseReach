@@ -772,6 +772,23 @@ def test_a_stopped_nodes_claims_come_back_in_hours_not_a_day(env):
     assert not claimed.exists()
 
 
+def test_a_removed_cpu_pools_leftover_claim_comes_back(env):
+    """The CPU pose pool (removed 2026-11-18) claimed as ``<host>-cpu``. A claim
+    it left behind has no live status report (its report was renamed aside or
+    deleted), so it is judged by its own age and returned like any stopped
+    node's -- no code that knows about the pool is needed for that."""
+    from mousereach.watcher import claim_marker, node_status
+    holder = "SRV-cpu"
+    claimed = _age(single_claim.claim_single(_drop(env), holder),
+                   claim_marker.GONE_AFTER_S + 60)
+    d = node_status.status_dir(env.nas_root)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{holder}.json.stopped-2026-11-09").write_text("{}", encoding="ascii")
+    _report(env, HOST)                                   # the share's "now"
+    assert single_claim.reclaim_stale() == [env.door / f"{VID}.mp4"]
+    assert not claimed.exists()
+
+
 def test_a_live_nodes_quiet_claim_still_waits_the_day(env):
     """Reporting means running: an untouched claim of a live node goes back
     only by the old one-day rule (a node on older code stops touching a claim

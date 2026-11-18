@@ -249,7 +249,7 @@ def held_or_filed_on_share(video_id: str) -> Optional[Tuple[str, str]]:
     as "not there".
 
     Used by a GPU node before it poses a video (DLCOrchestrator.
-    _already_done_or_held), by the CPU pose pool, and by the processing
+    _already_done_or_held) and by the processing
     server before it registers a posed video it has no row for
     (state.WatcherStateManager.discover_dlc_staged).
     """

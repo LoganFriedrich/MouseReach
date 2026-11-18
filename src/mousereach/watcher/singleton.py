@@ -29,7 +29,7 @@ is allowed and the log says the check is not available.
 A STOP REQUEST LEFT BEHIND
 --------------------------
 A watcher stops when it finds ``watcher_stop.flag`` in the machine's
-processing folder (the CPU pose pool: ``cpu_pose_stop.flag``). The update
+processing folder. The update
 procedure relies on that file keeping a stopped watcher stopped until the
 person updating deletes it. A file forgotten there made every later start
 exit at once with one line in the log -- a scheduled task even reported

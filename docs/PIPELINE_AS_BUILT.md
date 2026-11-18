@@ -2637,6 +2637,8 @@ Tests: `tests/test_triage_answers_that_cannot_count.py`.
 
 ## Update 2026-10-24: posing on a machine's CPUs (`mousereach-cpu-pose`)
 
+*Removed 2026-11-18: the CPU pose pool no longer exists (see "Update 2026-11-18: posing on a machine's CPUs is removed" at the end). Kept as the record of what it did.*
+
 Posing is the slow step, and only GPU nodes did it. A machine with many idle cores
 can add to that by running `mousereach-cpu-pose` beside its watcher.
 
@@ -4800,7 +4802,7 @@ the node that failed it, and the CPU-pool fix below covers its own hand-off only
 Where it lives: `DLCOrchestrator._queue_copy_elsewhere`, `_drop_superseded_queue_copy`, `_process_single_dlc`,
 `_recover_local_dlc_queue`. Tests in `tests/test_queue_copy_needs_the_claim.py`.
 
-**The CPU pose pool retries a failed hand-on while it runs.** When the pool (`mousereach-cpu-pose`)
+**The CPU pose pool retries a failed hand-on while it runs.** (The pool was removed 2026-11-18.) When the pool (`mousereach-cpu-pose`)
 finished a pose but could not hand it on to Processing/Posed (a dropped share, say), the pose waited
 in its work folder "until the next start" and its claim was no longer refreshed -- only running
 poses were. A day later the shared copy went back to the singles folder for any node, which posed
@@ -5039,12 +5041,14 @@ Three ways a machine used to end up running the wrong watcher, or silently none:
   run left (as at every start), then refuses. A flag created while a watcher runs still stops it
   normally, with exit code 0. The Dashboard's Restart button, which a person presses on purpose,
   still clears the flag before it starts a watcher, as before.
-For an operator: if a watcher will not start, read the message; USER_GUIDE.md "The watcher (or the
-CPU pose pool) will not start" says what to do for each. Where it lives: `watcher/singleton.py`,
+For an operator: if a watcher will not start, read the message; USER_GUIDE.md "The watcher will not
+start" says what to do for each. Where it lives: `watcher/singleton.py`,
 `cli.main_watch`, `WatcherControlWidget._take_start_guards`, `CpuPosePool.run`,
 `health.health_report`. Tests in `tests/test_start_guards.py`.
 
 ## Update: the CPU pose pool shows the poses it could not hand on, tries them once more at a stop, and gives a video back after a day of failures
+
+*Removed 2026-11-18: the CPU pose pool no longer exists (see "Update 2026-11-18: posing on a machine's CPUs is removed" at the end). Kept as the record of what it did.*
 
 Three gaps were left after the CPU pose pool learned to retry a failed hand-on while it runs:
 
@@ -6491,3 +6495,31 @@ matching instead of position.
 Tests: `tests/test_gt_reopen_puts_cuts_back_by_frame.py` (on the commit before this one a cut
 added or removed today put the person's determined cut on the wrong row).
 
+## Update 2026-11-18: posing on a machine's CPUs is removed
+
+`mousereach-cpu-pose` and its module `watcher/cpu_pose_pool.py` are gone, with their tests. Posing
+is done only by machines with a graphics card; a processing machine analyses posed videos (and,
+where configured, runs the backup sync) and poses nothing. WHY: posing on the CPUs did not work
+well enough to keep, and the pool had already been switched off on the one machine that ran it.
+
+What a machine that ran the pool may still carry, and why each is harmless:
+- **A `cpu_pose` section in `~/.mousereach/config.json`.** Nothing reads it; the settings load
+  exactly as without it. Delete it when convenient.
+- **Claimed videos in `Unanalyzed/Single_Animal/.inflight/<machine>-cpu/`.** The pool's status
+  report is no longer written, so such a claim is returned to the shared singles folder by the
+  ordinary stopped-holder rule (`single_claim.reclaim_stale`: a holder with no status report is
+  judged by the claim's own age, 3 hours). No code that knows about the pool is needed. An empty
+  `<machine>-cpu` folder may be deleted.
+- **A `Processing/.node_status/<machine>-cpu.json` report.** `mousereach-watch-status` still prints it
+  as one line (an old report's "doing" may be a list). Rename or delete it; it never refreshes.
+- **The pool's local work folder `<processing root>/CPU_Pose`.** Local copies of videos the pool
+  was posing, and their logs. Nothing reads or cleans it any more; once each video's current copy
+  is confirmed elsewhere (posed, filed or back in the singles folder), a person may remove it.
+- **`cpu_pose_stop.flag` in the processing root.** Nothing reads it; delete it.
+- **Videos already posed by the pool.** Untouched by this change. If the lab decides not to keep
+  those poses, `mousereach-repose-videos` sends named videos back for a new pose (update
+  2026-11-09).
+
+For an operator: remove the scheduled task that started the pool, if the machine has one. Where it
+lived: `watcher/cpu_pose_pool.py` (deleted). Tests: `tests/test_cpu_pose_pool_removed.py` and
+`test_a_removed_cpu_pools_leftover_claim_comes_back` in `tests/test_singles_intake_claim.py`.

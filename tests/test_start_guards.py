@@ -314,30 +314,6 @@ def test_a_second_taker_of_the_same_lock_is_refused_until_the_first_lets_go():
     singleton.release_watcher_lock(again)
 
 
-# ------------------------------------------------------------ the CPU pool
-
-def test_the_cpu_pool_refuses_to_start_on_a_stop_flag_left_behind(tmp_path, monkeypatch, capsys):
-    import mousereach.watcher.cpu_pose_pool as pool_mod
-    root = tmp_path / "node"
-    root.mkdir()
-    monkeypatch.setattr(pool_mod.Paths, "PROCESSING_ROOT", root, raising=False)
-    flag = _flag(root, pool_mod.STOP_FLAG)
-    p = object.__new__(pool_mod.CpuPosePool)
-    p.workers, p.threads, p.dlc_config, p.holder = 1, 1, tmp_path / "c.yaml", "TEST-cpu"
-    p.active, p.backoff, p.done_times, p.stopping = {}, {}, [], False
-    recovered = []
-    monkeypatch.setattr(p, "recover", lambda: recovered.append(True), raising=False)
-    monkeypatch.setattr(p, "_status", lambda: None, raising=False)
-    monkeypatch.setattr(p, "_start_one",
-                        lambda: pytest.fail("a pose was started"), raising=False)
-    monkeypatch.setattr(pool_mod.time, "sleep",
-                        lambda s: pytest.fail("the pool went on running"))
-    assert p.run() == 3
-    assert recovered                                  # a previous run's leftovers handled
-    assert str(flag) in capsys.readouterr().err
-    assert flag.exists()
-
-
 # ------------------------------------------------------------ the health line
 
 def test_health_names_a_waiting_stop_flag_when_the_watcher_is_not_running(tmp_path, monkeypatch):

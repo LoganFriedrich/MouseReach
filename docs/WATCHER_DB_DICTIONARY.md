@@ -96,7 +96,8 @@ state it set was lost).
       'processed', 'archived'. Read at a GPU node's startup by cross-node
       recovery, and by the claim takeover check above. A GPU node's 'archived'
       means that node staged or filed it, not that the analysis is finished.
-      (A GPU PC or the CPU pose pool writes 'archived' here when it HANDS the
+      (A GPU PC -- and, before 2026-11-18, the since-removed CPU pose pool --
+      writes 'archived' here when it HANDS the
       pose on to Processing/Posed. Only the 'videos' table above, written at
       filing, means filed. mousereach-session-coverage reads it that way: an
       'archived' here is reported by where the pose is -- "taken in for
@@ -109,7 +110,7 @@ state it set was lost).
       node; a source_path in ANOTHER machine's Single_Animal/.inflight/<host>/
       claim folder does not count, although the shared drive makes it exist
       everywhere (since 2026-10-28; before, a restarting GPU node adopted and
-      re-posed every video the CPU pose pool was holding).
+      re-posed every video the CPU pose pool, since removed, was holding).
 
 For reprocessing questions the processing server's live database decides. It is
 the only role with `reprocesses_partial` true (orchestrator.py:433); GPU nodes

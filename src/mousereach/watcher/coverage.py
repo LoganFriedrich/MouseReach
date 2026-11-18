@@ -32,8 +32,9 @@ Each listed session is placed in exactly one stage, first match wins:
 WHY 'archived' is read two ways: the shared record has two tables. ``videos``
 holds a copy of a node's row made when that node FILED the video into Analyzed
 (an audit copy), so 'archived' there means filed. ``pipeline_videos`` is the
-live coordination record every node writes, and there a posing node (a GPU PC
-or the CPU pose pool) writes 'archived' when it HANDS the pose on to the posed
+live coordination record every node writes, and there a posing node (a GPU PC;
+until 2026-11-18 also the CPU pose pool, since removed, whose old rows remain)
+writes 'archived' when it HANDS the pose on to the posed
 folder -- nothing has been analysed yet. The word is kept as stored because
 recovery relies on it to stop a second pose of the same video; this report
 alone translates it. So 'archived' from ``pipeline_videos`` is never read as

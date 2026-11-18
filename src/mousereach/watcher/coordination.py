@@ -90,7 +90,7 @@ def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[P
     drive, so it exists for EVERY node. Taking that as "the file is here" made
     a restarting GPU node adopt the other machine's dlc_running row, reclaim it
     to dlc_queued and pose the video a second time (every GPU restart took
-    the videos the server's CPU pose pool was posing). A file
+    the videos a CPU pose pool, since removed, was posing). A file
     in another host's claim folder is that host's, so it counts as not here;
     the row is then recorded as elsewhere, as for any video whose files sit on
     another machine. This node's own claim folder is still its own.

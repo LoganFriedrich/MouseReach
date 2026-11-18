@@ -136,8 +136,8 @@ def test_route_command_does_not_count_a_leftover_as_held(env):
 
 
 def test_pose_node_does_not_count_a_leftover_as_held(env):
-    """DLCOrchestrator._already_done_or_held (also the CPU pose pool's rule,
-    and what _record_finished_child records)."""
+    """DLCOrchestrator._already_done_or_held (and what
+    _record_finished_child records)."""
     _, triage, deep, _ = env
     from mousereach.watcher.orchestrator import DLCOrchestrator
     _leftover(deep, with_pose=True)
