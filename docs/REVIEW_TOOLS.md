@@ -1467,7 +1467,15 @@ Until 2026-10-23 the tool READ this list at launch and, if it held any row for t
 session in `Processing/Review/flagged_sessions.json` as provenance, and **routes the
 video to the re-segmentation queue** via `route_to_queue`, then advances to the next video.
 The flag is a note about the session; the divert is the action. Nothing filters on the
-flag any more.
+flag any more: the last place that did, the queue-index seed (`seed_from_folder`), used to
+skip every video of a flagged session and no longer does.
+
+**What Flag Session does NOT do.** Despite its name, it moves only the video on screen. The
+same mouse's other videos from that day are not moved and not held: those still in triage stay
+there and are offered as usual, and those already filed stay filed. If they need the same look,
+open each one (or route it with `mousereach-route-to-queue`). Whether the button should also
+send or hold the session's other videos, or be renamed to what it does, is an open question
+for the lab.
 
 **Flagging cancels any earlier re-segmentation clear, exactly as Escalate does.** Before the
 video moves, an old `{stem}_deep_review_cleared.json` from an earlier visit is renamed to
@@ -1491,7 +1499,7 @@ deletes or overwrites a person's file").
 said it marks every video of that mouse+day as must-be-human-reviewed, and the toast said
 "all its videos need human review". `flag_session` wrote the session key to
 `flagged_sessions.json` and that was the entire effect. Two pieces of code read that file:
-`_bundle_needs_review` and the never-called `seed_from_folder` (`queue_index.py:160`).
+`_bundle_needs_review` and the never-called `seed_from_folder` (`queue_index.py`; its skip was removed later too).
 The first one did this:
 
 ```python

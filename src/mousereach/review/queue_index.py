@@ -142,11 +142,10 @@ def seed_from_folder(pending_dir, db_path: Optional[Path] = None, *,
     pending_dir = Path(pending_dir)
     idx = QueueIndex(db_path)
     seeded = skipped = 0
-    root = pending_dir.parent
     if exclude_reviewed:
         from .triage_status import triaged_segments, resolved_segments, segmentation_failed
         from .causal_review_io import (bundle_manifest_path, load_causal_review,
-                                       has_gt, is_session_flagged)
+                                       has_gt)
     for b in sorted(pending_dir.iterdir()):
         if not b.is_dir() or b.name.startswith((".", "_")):
             continue
@@ -167,8 +166,14 @@ def seed_from_folder(pending_dir, db_path: Optional[Path] = None, *,
             od = _rj(f"{stem}_pellet_outcomes.json")
             ad = _rj(f"{stem}_reach_assignments.json")
             tri = triaged_segments(od, ad)
+            # A flagged session is NOT a reason to leave a video out. WHY: the
+            # flag is a note a reviewer left (Flag Session moves only the
+            # video on screen); leaving the session's other videos out of the
+            # queue hid them from review with nothing else holding them --
+            # the review window's own copy of this exclusion was removed
+            # earlier for the same reason.
             if not tri or segmentation_failed(_rj(f"{stem}_segments.json")) \
-                    or is_session_flagged(stem, root) or has_gt(stem, extra_dirs=[b]):
+                    or has_gt(stem, extra_dirs=[b]):
                 skipped += 1
                 continue
             resolved = set()
