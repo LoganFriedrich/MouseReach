@@ -4,6 +4,8 @@ Describes: `src/mousereach/segmentation/` (all of it), plus the places outside i
 
 Verified against: b65fcf0 (2026-08-23)
 
+Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+
 ---
 
 ## 1. What this actually does
@@ -19,6 +21,8 @@ It does **not** look at the video. It reads a DeepLabCut pose file (`.h5`), whic
 An eighth, `Pillar`, is named in the code but only inside a test that is switched off (`tray_motion.py:133`, section 5.5).
 
 The output is a single file, `{video_id}_segments.json`, whose core content is a list of **exactly 21 frame numbers**, always sorted, always length 21. 21 is hard-coded as the expectation (`n_expected: int = 21`, `segmenter_multi.py:85`) and is forced by a safety net (section 5.6). Every archived output file has exactly 21. **The count is never evidence that anything worked.**
+
+**Update 2026-11-18 -- Easy and Flat trays are not segmented.** All of the above is about pillar-tray videos. For an Easy or Flat tray video (`config.is_outcome_free_tray`), `process_single` does not run the segmenter at all: it writes a whole-video span (`write_whole_video_span` in `core/batch.py`) whose `boundaries` list is `[0]` -- a single boundary at frame 0 -- with `boundary_source: "outcome_free_tray"` and `segmenter_algorithm: "whole_video_outcome_free_tray"`. Reach detection then reads one segment running from frame 0 to the end of the video. These trays have no per-pellet outcomes, so the 21/20 segment split below does not apply to them.
 
 ### How boundaries become segments
 
@@ -55,6 +59,8 @@ Seven call sites, in three groups.
 5. (no call site of its own) A manual single-video run, the Run All Steps tab (`pipeline/run_all.py`): it drives the watcher's own handlers for the one chosen video (`watcher/run_one.py`), so it reaches segmentation through call site 3.
 6. Reprocessing to current versions -> `pipeline/reprocess_to_current.py:211`
 
+Before anything else, `process_single` checks the tray type: an Easy or Flat tray video (`is_outcome_free_tray`) gets the whole-video span file (`boundaries` `[0]`, see section 1) and no segmenter runs. This check comes before the human-cuts check, so a hand-set cut on such a video is not kept either. (Update 2026-11-18.)
+
 A person's cuts (a segments file marked `boundary_source: "human"`) survive every one of these: `process_single` keeps such a file when it finds one in its output folder, bring-current copies it from beside the filed video into its work folder first, and the stager (7) keeps it as it is and does not segment.
 
 **Bypassing `process_single` entirely:**
@@ -69,17 +75,17 @@ Only three of those paths ever write `validation_status` into the file: `process
 
 ### Two constants with the same name and different values
 
-`SEGMENTER_VERSION` is `"2.2.3"` in `segmenter_multi.py:53` and `"2.1.3"` in `segmenter_robust.py:103`. Which one you get depends on where you import from:
+`SEGMENTER_VERSION` is `"2.2.4"` in `segmenter_multi.py:53` and `"2.1.3"` in `segmenter_robust.py:103` (Update 2026-11-18: was 2.2.3 when this was written). Which one you get depends on where you import from:
 
-- `from mousereach.segmentation.core.batch import SEGMENTER_VERSION` -> 2.2.3 (`core/batch.py:22`)
+- `from mousereach.segmentation.core.batch import SEGMENTER_VERSION` -> 2.2.4 (`core/batch.py:22`)
 - `from mousereach.segmentation.core import SEGMENTER_VERSION` -> **2.1.3** (`core/__init__.py:79-85` re-exports the robust one)
 
 This ambiguity caused a long-lived bug. `save_segmentation` used to stamp `segmenter_robust`'s own constant into every file, so files produced by the 2.2.x segmenter claimed to be 2.1.3, and the pipeline's version check never marked a single video as needing reprocessing for the 2.2 changes. That is now fixed in both places: `save_segmentation` takes the version as an argument and defaults to importing `segmenter_multi`'s constants (`segmenter_robust.py:853-878`), and the pipeline-index update writes the same value (`segmenter_robust.py:991`). An earlier draft of this document said the index half was still broken. It is not.
 
-Two consequences are still live:
+Two consequences were live when this was written:
 
-- The napari review widget imports the **robust** constant as "the current version" (`review_widget.py:781-782`) and warns when the file disagrees (`:836-838`). Every correctly stamped file now trips that warning and is labelled `OUTDATED v2.2.3` against a "current version" of 2.1.3. The warning also tells the user to run `batch_segment.py`, a file that does not exist.
-- The version check reads `segmenter_version` straight out of `_segments.json` (`pipeline/manifest.py:153`), and the pipeline declares `segmenter: "2.2.3"` (`<nas_root>/pipeline_versions.json`). Files under `Analyzed/` written by the 2.2.x segmenter were corrected, but segments files still sitting in the processing folder (`<nas_root>\Processing`) can still be stamped `2.1.3` and so read as outdated.
+- (Fixed 2026-08-23, see the update at the end of this document.) The napari review widget used to import the **robust** constant as "the current version" and flag every correctly stamped file OUTDATED; it now imports `SEGMENTER_VERSION` from `segmenter_multi`. A separate message in the same widget, "Using old segments format. Run batch_segment.py to upgrade.", still names a file that does not exist.
+- The version check reads `segmenter_version` straight out of `_segments.json` (`pipeline/manifest.py:153`), and the pipeline declares `segmenter: "2.2.4"` with 2.2.3 listed under `compatible_versions` (`<nas_root>/pipeline_versions.json`; Update 2026-11-18), so 2.2.3 files are not marked outdated. Segments files stamped `2.1.3` still read as outdated.
 
 ---
 
@@ -109,8 +115,6 @@ If the whole-file verdict is `bad`, the code does not immediately give up (`segm
 3. If the window's verdict is not `bad`, adopt its `box_center` and quality, re-measure corner coverage on the window, and continue -- with an anomaly line reading `reference rescued on pellet-active window [lo,hi] of N frames`.
 
 **What the rescue does not do:** it changes only the reference numbers. Candidate detection in step 5.1 still runs over the *whole* dataframe, junk frames included (`segmenter_multi.py:222-233` passes `df`, not the sub-window). Trimming the out-of-session candidates is left to the pellet-window gate, which only acts under specific conditions.
-
-In the archive this rescue fired on only a handful of the files the current segmenter produced.
 
 ### The bailout
 
@@ -167,7 +171,7 @@ A fifth proposer exists, `pellet_swap_proposer` (`proposers.py:200-269`), which 
 - It runs **only** on a corner that has **more than 21** candidates (`:150`). A corner already at or below 21 is untouched, so the gate can never strip a real boundary from a clean count.
 - If trimming would leave **fewer than 21**, the trim is discarded entirely and the original list is kept (`:154`). That means it was not clean phantom removal.
 
-It only excludes the dead zones at the two ends. A middle segment with no visible pellet is always kept. Each trim writes an anomaly line: `pellet_window_gate: SATL dropped 1 dead-zone candidate(s)`. In the archive most of the dropped candidates came from `SATL`.
+It only excludes the dead zones at the two ends. A middle segment with no visible pellet is always kept. Each trim writes an anomaly line: `pellet_window_gate: SATL dropped 1 dead-zone candidate(s)`.
 
 ### 5.3 The two selection paths
 
@@ -178,7 +182,7 @@ All surviving candidates from all four corners are pooled and clustered by frame
 
 Then (`segmenter_multi.py:269-298`):
 
-**Path A -- SABL-primary** (`segmenter_multi.py:275-288`). Taken when `SABL` produced *exactly* 21 candidates. For each of the 21 SABL frames, find the nearest merged cluster; if it is less than 30 frames away, use the cluster's frame, otherwise keep the raw SABL frame. Records `SABL-primary mode: 21 SABL candidates`. Most current-segmenter archived files took it.
+**Path A -- SABL-primary** (`segmenter_multi.py:275-288`). Taken when `SABL` produced *exactly* 21 candidates. For each of the 21 SABL frames, find the nearest merged cluster; if it is less than 30 frames away, use the cluster's frame, otherwise keep the raw SABL frame. Records `SABL-primary mode: 21 SABL candidates`.
 
 **Path B -- consensus** (`segmenter_multi.py:290-298`). Everything else. `select_boundaries` (`consensus.py:95-220`) runs a chain of repair steps in order:
 
@@ -197,7 +201,7 @@ Both branches assign a local variable `selected` (`segmenter_multi.py:285`, `:29
 `_validate_and_correct` (`consensus.py:223-284`) is reached only from path B, and only from its middle branches (`consensus.py:167-168`, `:200-201`). A near-identical copy, `_validate_and_correct_boundaries` (`segmenter_robust.py:375`), lives on the robust path and nothing the production pipeline runs reaches it.
 
 - **Phantom removal** (`consensus.py:232-254`). Look for a pair of adjacent gaps that are each shorter than 0.95 x the median gap, whose *sum* is within 15% of the median, and where the gaps immediately before and after are each within 15% of the median. That signature means the detector wedged a spurious boundary inside one real tray advance. Drop the boundary between them, and repeat.
-- **Endpoint projection** (`consensus.py:256-282`). While there are fewer than 21 boundaries and there is a gap at the start or end larger than 0.9 x the median, insert a boundary one median interval before the first (or after the last). Capped at 4 insertions. In the archive, first-boundary projections are more common than last-boundary ones.
+- **Endpoint projection** (`consensus.py:256-282`). While there are fewer than 21 boundaries and there is a gap at the start or end larger than 0.9 x the median, insert a boundary one median interval before the first (or after the last). Capped at 4 insertions.
 
 The endpoint loop tests `len(frames) < 21` as a literal (`consensus.py:265`) rather than the configured `n_expected`. Today those are the same number, so it has no effect; it would silently break if `n_expected` were ever changed.
 
@@ -225,7 +229,7 @@ Before the tray-motion gate (`segmenter_multi.py:300-327`):
 - More than 21 boundaries: truncate to the first 21 by frame order, not by quality, and record `safety_net: discarded N boundary(ies) beyond 21`.
 - Fewer than 21: repeatedly append `last + median interval` (or `last + 1839` if there are fewer than two boundaries) until there are 21, clamped to the last frame, and record `safety_net: invented N boundary(ies) at the median cadence ... these mark no observed tray movement`.
 
-The two `safety_net:` anomaly lines are new; no archived file contains one yet.
+Update 2026-11-18: there are three `safety_net:` lines. Besides the two above, since 2.2.4 the duplicate-boundary repair (run after the tray-motion gate, see "Zero-length segments ship" in section 9) writes `safety_net: removed N duplicate boundary(ies) ...`.
 
 ---
 
@@ -241,7 +245,7 @@ It also has almost no range. In the current-segmenter archive, **the large major
 
 **Overall confidence** (`overall_confidence`) is the plain mean of the per-boundary confidences (`segmenter_robust.py:973`). Across the current-segmenter archive it is bunched just below 1.0, with only rare files far lower. It is not a usable ranking signal. It is, however, the only segmentation number the pipeline's review gate reads (section 9).
 
-Note that the tray-motion gate runs *after* the boundary is chosen but *before* confidences are assigned, and a projected replacement frame is looked up against the merged clusters like any other -- so a boundary the gate rejected and replaced can still end up labelled with four-corner agreement and a confidence of 1.0.
+The order is: selection -> safety net -> tray-motion gate -> duplicate-boundary repair (2.2.4) -> anomaly detection -> per-boundary confidences. Note that the tray-motion gate runs *after* the boundary is chosen but *before* confidences are assigned, and a projected replacement frame (from the gate or from the duplicate repair) is looked up against the merged clusters like any other -- so a boundary the gate rejected and replaced can still end up labelled with four-corner agreement and a confidence of 1.0.
 
 ---
 
@@ -249,13 +253,14 @@ Note that the tray-motion gate runs *after* the boundary is chosen but *before* 
 
 Added 2026-08-22, then switched off 2026-08-23.
 
-Because the safety net guarantees 21 boundaries, a forced answer and a measured one look identical downstream. The segmenter now says which it was. At `segmenter_multi.py:386-439` it builds a list of plain-English reasons, `needs_human`, from four sources plus the interval structure:
+Because the safety net guarantees 21 boundaries, a forced answer and a measured one look identical downstream. The segmenter now says which it was. At `segmenter_multi.py:386-439` it builds a list of plain-English reasons, `needs_human`, from four sources plus the interval structure (and, since 2.2.4, a fifth: see item 6):
 
 1. Boundaries invented by the safety net.
 2. Boundaries discarded by the safety net.
 3. Boundaries whose method is `interpolated` or `fallback`.
 4. `reference_quality` other than `good`.
 5. Any segment at least 1.6x the median length ("what a missed tray advance looks like"), any segment at most half the median ("what an extra cut looks like"), or a first-half/second-half median cadence ratio of 1.35 or more.
+6. (2.2.4) Duplicate boundaries removed, whose replacements were projected rather than detected ("N boundary(ies) were duplicates and their replacements were projected rather than detected").
 
 It also saves every merged candidate it considered, chosen or not, as `candidates` -- frame, which corners voted, the consensus score, and whether it became a boundary (`segmenter_multi.py:369-383`). Both fields go into the JSON at `segmenter_robust.py:931-932`.
 
@@ -283,7 +288,7 @@ This is why boundary accuracy matters, stated concretely.
 
 **The pixel-to-millimetre scale.** `compute_segment_geometry` (`reach/core/geometry.py:89-113`) measures the tray corners over the middle of each segment window and derives the pillar position and `ruler_pixels` from them. Boundaries in the wrong place put tray-in-motion frames inside that window, which shifts the corner medians and therefore the scale that every distance in that segment is expressed in.
 
-**Reaches silently dropped at the end of every video.** The kinematics extractor pairs reach segments with outcome segments by `segment_num` (since 2026-11-18, `feature_extractor.pair_segments_by_number`; before, by position with `zip`). The reaches file has 21 segments and the outcomes file has 20, and a reach segment numbered after every outcome segment is left out, so the last reach segment is never processed. Across the archive that is a small but nonzero fraction of reaches: detected, written to `_reaches.json`, and absent from `_features.json` and from the database. `span_to_reaches.py:30-35` documents the positional zip and warns that dropping or misordering any segment corrupts everything after the first gap.
+**Reaches silently dropped at the end of every video.** The kinematics extractor pairs reach segments with outcome segments by `segment_num` (since 2026-11-18, `feature_extractor.pair_segments_by_number`; before, by position with `zip`). The reaches file has 21 segments and the outcomes file has 20, and a reach segment numbered after every outcome segment is left out, so the last reach segment is never processed. Across the archive that is a small but nonzero fraction of reaches: detected, written to `_reaches.json`, and absent from `_features.json` and from the database. (Update 2026-11-18: `span_to_reaches.py`'s SEGMENT CONVENTION note now says the feature extractor pairs reach and outcome segments by `segment_num` and holds a video whose reach segments skip a pellet the outcomes file has; it no longer documents a positional zip.)
 
 **Human corrections do not renumber cleanly.** The napari boundary reviewer compares old and new lists with `zip(original_boundaries, self.boundaries)` (`segmentation/review_widget.py:1194`); if the reviewer changed the number of boundaries, the extra entries are silently missing from the change log. The correction tool imposes no count at all -- it accepts any list of two or more (`fix_segmentation_widget.py:434-436`) -- so after a human fix a video can have any number of segments, and the 21/20 split above no longer holds.
 
@@ -360,11 +365,13 @@ Finally, `save_segmentation` decides the pipeline index's `seg_validation` value
 
 ## 10. The output file, field by field
 
-Written by `save_segmentation` (`segmenter_robust.py:853-996`). Everything below is at the top level of `{video_id}_segments.json` unless noted. All numbers are converted from numpy to plain JSON types first.
+Written by `save_segmentation` (`segmenter_robust.py:853-996`). Everything below is at the top level of `{video_id}_segments.json` unless noted.
+
+(Update 2026-11-18.) An Easy or Flat tray video's file is different and much smaller: it is written by `write_whole_video_span` (`core/batch.py`), not `save_segmentation`, and holds only `segmenter_version`, `segmenter_algorithm` (`"whole_video_outcome_free_tray"`), `boundary_source` (`"outcome_free_tray"`), `segmented_at`, `video_name`, `total_frames`, `fps`, `boundaries` (`[0]`), `needs_human` (`[]`), `candidates` (`[]`) and a `note`. It has no `detection`, `intervals`, `anomalies` or `overall_confidence`. All numbers are converted from numpy to plain JSON types first.
 
 | Field | Written at | What it is |
 |---|---|---|
-| `segmenter_version` | `:927` | Version of the segmenter that ran; defaults to `segmenter_multi`'s `"2.2.3"`. Corrected files under `Analyzed/` say 2.2.3; older archived ones say 2.1.0; some still under `Processing/` say 2.1.3. |
+| `segmenter_version` | `:927` | Version of the segmenter that ran; defaults to `segmenter_multi`'s `"2.2.4"` (2.2.3 when this was written). Corrected files under `Analyzed/` say 2.2.3; older archived ones say 2.1.0; some still under `Processing/` say 2.1.3. |
 | `needs_human` | `:931` | Plain-English reasons a person should check the cuts. Section 7. **No archived file has this key.** Nothing routes on it. |
 | `candidates` | `:932` | Every merged candidate the segmenter considered, chosen or not. Section 7. **No archived file has this key.** |
 | `segmenter_algorithm` | `:933` | Same source: `"multi_proposer_sabl_primary_v1+tray_motion_gate+pellet_window_gate"`. **Every archived file still says `"sabl_centered_crossing_v2"`**, the old value, including those whose version was corrected. No file on disk records the real algorithm string. |
@@ -462,7 +469,7 @@ Do not trust these. All were checked against the code at 4c54e46.
 - `consensus.py:51-53` says `SABR` and `SATR` "never set the frame". They do, in a few boundaries, when a cluster contains neither `SABL` nor `SATL`.
 - `core/batch.py`'s module docstring lists `"auto_approved" / "needs_review" / "validated"` as the statuses, without noting that most calling paths never set one.
 - `segmentation/cli.py:24-25` and `:115-117` document an auto-approval rule based on a 0.85 confidence threshold and a `Failed/` folder. Neither exists in the code the CLI calls.
-- `segmentation/review_widget.py:838` tells the user to re-run `batch_segment.py`. There is no such file.
+- `segmentation/review_widget.py:838` tells the user to re-run `batch_segment.py`. There is no such file. (Update 2026-11-18: that version warning was fixed 2026-08-23; the separate "Using old segments format. Run batch_segment.py to upgrade." message in the same widget still names the missing file.)
 
 ---
 
