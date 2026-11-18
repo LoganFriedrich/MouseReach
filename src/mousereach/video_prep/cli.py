@@ -77,14 +77,31 @@ def main_crop():
 
     if args.queue and results['success'] > 0:
         print("\nHanding the cut videos to the pose step (shared singles folder)...")
-        handed = hand_to_pose(_made_by_this_run(results), verbose=not args.quiet)
-        _print_handed(handed)
+        _hand_on(hand_to_pose, _made_by_this_run(results), args.quiet)
 
 
 def _made_by_this_run(results: dict) -> list:
     """The videos this run cut (each successful crop result's output_path)."""
     return [r.get('output_path') for r in results.get('results', [])
             if r.get('status') == 'success' and r.get('output_path')]
+
+
+def _hand_on(hand_to_pose, videos: list, quiet: bool) -> None:
+    """Hand the cut videos on, saying plainly when that is not possible.
+
+    hand_to_pose raises ConfigurationError when no shared singles folder is
+    configured. That is reached AFTER the crop succeeded, so a traceback would
+    hide that the cut videos exist (they are kept: handing on copies them).
+    """
+    from mousereach.config import ConfigurationError
+    try:
+        handed = hand_to_pose(videos, verbose=not quiet)
+    except ConfigurationError as e:
+        print("  [!] The cut videos were made but not handed on; run "
+              "mousereach-setup, then hand them on again.")
+        print(f"      ({e})")
+        return
+    _print_handed(handed)
 
 
 def _print_handed(handed: dict) -> None:
@@ -145,7 +162,7 @@ def main_prep():
     # Step 2: hand the cut videos to the pose step (the watcher claims them)
     if not args.no_queue and results['success'] > 0:
         print("\n[2/3] Handing the cut videos to the pose step...")
-        _print_handed(hand_to_pose(_made_by_this_run(results), verbose=not args.quiet))
+        _hand_on(hand_to_pose, _made_by_this_run(results), args.quiet)
     else:
         print("\n[2/3] Not handing anything to the pose step")
     

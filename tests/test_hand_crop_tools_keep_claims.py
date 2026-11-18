@@ -160,3 +160,33 @@ def test_step0_quick_guide_describes_the_checkbox_the_tab_has():
     assert "Copy to DLC Queue" not in STEP0_HELP
     assert "shared singles folder" in STEP0_HELP
     assert "Run the pipeline now" in STEP0_HELP
+
+
+def test_crop_queue_with_no_singles_folder_configured_says_what_to_do(folders, tmp_path,
+                                                                     monkeypatch, capsys):
+    from mousereach.config import Paths
+    from mousereach.video_prep import cli
+    import mousereach.video_prep.core as core
+    out = tmp_path / "cut_here"
+    out.mkdir()
+    collage = tmp_path / "20200101_ABC9901,ABC0001,ABC0002,ABC0003,ABC0004,ABC0005,ABC0006,ABC0007_P1.mkv"
+    collage.write_bytes(b"collage")
+
+    def fake_crop(path, output_dir, verbose=True):
+        made = output_dir / "20200101_ABC9901_P1.mp4"
+        made.write_bytes(b"cut")
+        return [{"position": 1, "status": "success", "output_path": str(made)}]
+
+    monkeypatch.setattr(core, "crop_collage", fake_crop)
+    try:
+        from mousereach.watcher import recording_issue
+        monkeypatch.setattr(recording_issue, "refuse_if_issue", lambda path: None)
+    except ImportError:
+        pass
+    monkeypatch.setattr(Paths, "SINGLE_ANIMAL_OUTPUT", None, raising=False)
+    monkeypatch.setattr(sys, "argv", ["mousereach-crop", "-i", str(collage), "-o", str(out),
+                                      "--queue", "-q"])
+    cli.main_crop()                     # must not raise
+    text = capsys.readouterr().out
+    assert "made but not handed on" in text and "mousereach-setup" in text
+    assert (out / "20200101_ABC9901_P1.mp4").is_file()
