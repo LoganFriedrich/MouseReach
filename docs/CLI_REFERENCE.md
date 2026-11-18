@@ -1066,6 +1066,11 @@ options:
                         (default: a dated directory under the pipeline's
                         _archived)
   --apply               Actually write. Without this, nothing is modified.
+
+With --apply: a crystallized (publication-locked) video is left alone,
+whether this machine's watcher database or the lock record beside its
+filed results says so; a login that cannot name its watcher database is
+refused before anything changes (exit code 1).
 ```
 
 ### `mousereach-triage-clearing`

@@ -134,6 +134,12 @@ def test_backfill_cli_default_backup_lands_outside_analyzed(an, tmp_path, monkey
     Analyzed/_archived/, putting an original-named manifest copy inside the
     tree every walker reads. It must land under NAS_ROOT/_archived instead."""
     import mousereach.pipeline.manifest as manifest
+    from mousereach.watcher import db_location
+    # A login that can name its watcher database (the backfill asks the
+    # publication lock with --apply), and no database file on it.
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
+    monkeypatch.setattr(db_location, "open_watcher_db_if_present",
+                        lambda: (None, "no watcher database at <test>"))
     _fake_version_index(monkeypatch)
     _write_json(an.live / f"{VID}_processing_manifest.json",
                 {"pipeline_versions": {"segmenter": "not_run"}})

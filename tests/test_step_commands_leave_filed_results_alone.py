@@ -129,3 +129,82 @@ def test_algorithm_step_commands_refuse_the_filed_tree(tmp_path, monkeypatch, mo
         main()
     assert e.value.code == 1
     assert ran == []
+
+
+# --- the manifest backfill asks the publication lock --------------------------
+
+def _filed_manifests(tmp_path, monkeypatch):
+    from mousereach.config import Paths
+    nas = tmp_path / "nas"
+    analyzed = nas / "Analyzed"
+    filed = analyzed / "PRJ" / "C01"
+    filed.mkdir(parents=True)
+    monkeypatch.setattr(Paths, "NAS_ROOT", nas, raising=False)
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", analyzed, raising=False)
+    for vid in (V, V2):
+        (filed / f"{vid}_processing_manifest.json").write_text(
+            json.dumps({"pipeline_versions": {"segmenter": "not_run"}}), encoding="utf-8")
+        (filed / f"{vid}_segments.json").write_text(
+            json.dumps({"segmenter_version": "2.2.2"}), encoding="utf-8")
+    import mousereach.pipeline.version_index as vi
+    monkeypatch.setattr(vi, "VersionIndex", lambda *a, **k: SimpleNamespace(
+        upsert_from_manifest=lambda *a, **k: None))
+    before = {vid: (filed / f"{vid}_processing_manifest.json").read_bytes() for vid in (V, V2)}
+    return analyzed, filed, before
+
+
+def _segmenter_version(filed, vid):
+    doc = json.loads((filed / f"{vid}_processing_manifest.json").read_text())
+    return doc["pipeline_versions"]["segmenter"]
+
+
+def test_manifest_backfill_leaves_a_crystallized_video_alone(tmp_path, monkeypatch):
+    """backfill-manifest-versions --apply asked no lock at all."""
+    from mousereach.pipeline import manifest
+    from mousereach.watcher import db_location
+    analyzed, filed, before = _filed_manifests(tmp_path, monkeypatch)
+    rows = {V: {"state": "archived"},
+            V2: {"state": "crystallized", "crystallized_label": "PAPER_X"}}
+    monkeypatch.setattr(db_location, "open_watcher_db_if_present", lambda: (
+        SimpleNamespace(get_video=lambda vid: rows.get(vid)), None))
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
+    res = manifest.backfill_manifest_versions(analyzed, apply=True,
+                                              archive_dir=tmp_path / "bak",
+                                              stages=["segmenter"])
+    assert _segmenter_version(filed, V) == "2.2.2"
+    assert (filed / f"{V2}_processing_manifest.json").read_bytes() == before[V2]
+    assert res["stats"].get("crystallized -- left alone") == 1, res
+
+
+def test_manifest_backfill_honors_the_lock_record_with_no_watcher_database(tmp_path, monkeypatch):
+    """The lock record beside the filed results is the one every machine reads."""
+    from mousereach.pipeline import manifest
+    from mousereach.watcher import db_location
+    analyzed, filed, before = _filed_manifests(tmp_path, monkeypatch)
+    (filed / f"{V2}_crystallized.json").write_text(
+        json.dumps({"video_id": V2, "label": "PAPER_X"}), encoding="utf-8")
+    monkeypatch.setattr(db_location, "open_watcher_db_if_present",
+                        lambda: (None, "no watcher database at <test>"))
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
+    manifest.backfill_manifest_versions(analyzed, apply=True, archive_dir=tmp_path / "bak",
+                                        stages=["segmenter"])
+    assert _segmenter_version(filed, V) == "2.2.2"
+    assert (filed / f"{V2}_processing_manifest.json").read_bytes() == before[V2]
+
+
+def test_manifest_backfill_refuses_a_login_that_cannot_name_its_watcher_database(
+        tmp_path, monkeypatch, capsys):
+    from mousereach.pipeline import manifest
+    from mousereach.watcher import db_location
+    analyzed, filed, before = _filed_manifests(tmp_path, monkeypatch)
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason",
+                        lambda: "this login's settings name no watcher database")
+    monkeypatch.setattr(sys, "argv", ["mousereach-backfill-manifest-versions",
+                                      "--apply", "--root", str(analyzed),
+                                      "--stage", "segmenter"])
+    assert manifest.main_backfill_manifest_versions() == 1
+    for vid in (V, V2):
+        assert (filed / f"{vid}_processing_manifest.json").read_bytes() == before[vid]
+    out = capsys.readouterr().out
+    assert "no manifest was changed" in out
+    out.encode("ascii")

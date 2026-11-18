@@ -489,7 +489,11 @@ def backfill_manifest_versions(root: Path, apply: bool = False,
     per stage -- whichever stage is missed next, this repairs it.
 
     Originals are copied to ``archive_dir`` before anything is written. Nothing
-    is ever deleted.
+    is ever deleted. With ``apply``, a crystallized (publication-locked) video
+    is left alone -- by this machine's watcher row or by the lock record beside
+    its filed results (watcher/db.crystallized_refusal) -- and a login that
+    cannot name its watcher database is refused (ConfigurationError) before
+    anything changes, as in backfill_kinematic_versions.
 
     Args:
         root: directory to walk (e.g. the Analyzed tree)
@@ -512,6 +516,18 @@ def backfill_manifest_versions(root: Path, apply: bool = False,
     if apply and archive_dir is None:
         raise ValueError("archive_dir is required when apply=True -- "
                          "manifests are archived before they are modified")
+    # The publication lock, asked exactly as backfill_kinematic_versions asks
+    # it. WHY: this rewrites filed manifests too, and it asked no lock at all,
+    # so a crystallized video's filed record was rewritten.
+    db = None
+    if apply:
+        from mousereach.watcher.db_location import (open_watcher_db_if_present,
+                                                    watcher_db_unnamed_reason)
+        unnamed = watcher_db_unnamed_reason()
+        if unnamed:
+            from mousereach.config import ConfigurationError
+            raise ConfigurationError(f"{unnamed}; no manifest was changed")
+        db, _ = open_watcher_db_if_present()
 
     # WHY iter_files, not rglob: superseded manifests sit under Analyzed/Archive/
     # with their original names. rglob would "repair" them and, with --apply,
@@ -546,6 +562,13 @@ def backfill_manifest_versions(root: Path, apply: bool = False,
 
         if not fixes:
             continue
+
+        if apply:
+            from mousereach.watcher.db import crystallized_refusal
+            if crystallized_refusal(db, stem, "backfilled",
+                                    folder=manifest_path.parent):
+                stats['crystallized -- left alone'] += 1
+                continue
 
         for stage in fixes:
             stats['%s: %s' % (stage, 'fixed' if apply else 'would fix')] += 1
@@ -591,7 +614,13 @@ def main_backfill_manifest_versions():
 
     ap = argparse.ArgumentParser(
         description="Fill in pipeline stage versions a manifest never recorded, "
-                    "reading each version from that stage's own output file.")
+                    "reading each version from that stage's own output file.",
+        epilog=(
+            "With --apply: a crystallized (publication-locked) video is left alone,\n"
+            "whether this machine's watcher database or the lock record beside its\n"
+            "filed results says so; a login that cannot name its watcher database is\n"
+            "refused before anything changes (exit code 1)."),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=None,
                     help="Directory to walk (default: the Analyzed tree)")
     ap.add_argument("--stage", action="append", dest="stages", default=None,
@@ -630,9 +659,14 @@ def main_backfill_manifest_versions():
         print("DRY RUN -- nothing will be written")
     print()
 
-    result = backfill_manifest_versions(root, apply=args.apply,
-                                        archive_dir=archive_dir if args.apply else None,
-                                        stages=args.stages)
+    from mousereach.config import ConfigurationError
+    try:
+        result = backfill_manifest_versions(root, apply=args.apply,
+                                            archive_dir=archive_dir if args.apply else None,
+                                            stages=args.stages)
+    except ConfigurationError as e:
+        print("[FAIL] %s" % e)
+        return 1
     for key, n in sorted(result['stats'].items(), key=lambda kv: -kv[1]):
         print("  %6d  %s" % (n, key))
     if result['versions_found']:

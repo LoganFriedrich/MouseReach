@@ -6747,3 +6747,14 @@ video file, when found, gives the frame rate too), but the summary now records i
 `pose_record`, and when the kinematics could not be made the reason names it: "cannot finalize:
 no kinematics were made for this run (the pose's frame-rate record ... could not be copied into
 the work folder)".
+
+## Update 2026-11-18: mousereach-backfill-manifest-versions asks the publication lock
+
+`mousereach-backfill-manifest-versions --apply` rewrites filed processing manifests (a copy of
+each is kept first). It asked no publication lock at all, so a crystallized (publication-locked)
+video's filed record was rewritten. It now asks exactly as `mousereach-backfill-kinematic-versions
+--apply` does: a video is left alone ("crystallized -- left alone" in the counts) when this
+machine's watcher database or the lock record beside its filed results
+(`<video>_crystallized.json`) says it is locked, or when the lock record cannot be checked; and a
+login that cannot name its watcher database is refused before anything changes ("[FAIL] ...; no
+manifest was changed", exit code 1). Without `--apply` it only reports, as before.
