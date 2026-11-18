@@ -31,6 +31,29 @@ the reason.
 
 Only files directly in the recording folder count. Subfolders are never looked into.
 
+## The session name, exactly
+
+A session name has three parts joined by underscores: the date, the eight
+animals, and the tray. Example (placeholder animal ids):
+
+    20250704_ABC0101,ABC0102,ABC0103,ABC0104,ABC0105,ABC0106,ABC0107,ABC0108_P1.mkv
+
+* **Date**: eight digits, `YYYYMMDD`. It must be a real date and not in the future.
+* **Animals**: exactly eight animal ids, separated by **commas** -- nothing else
+  separates them. A space is not a separator: it stays part of the id next to it,
+  so leave spaces out.
+* **Each animal id**: letters, then at least four digits -- two for the cohort and
+  two for the subject (`ABC0312` is cohort 03, subject 12). A position with no
+  animal is written with cohort `00` (for example `ABC0000`). At least one of the
+  eight must be a real animal.
+* **Tray**: a capital `P`, `E` or `F` followed by the tray number (`P1`, `E2`, `F1`).
+* **File type**: `.mkv`, `.avi`, `.mp4`, `.mov` or `.wmv`.
+
+The recording PC and the pipeline's intake apply the same check
+(`validate_collage_filename` in `watcher/validator.py`), and the step that cuts the
+recording splits the name the same way. A name that fails is held in red on the
+recording PC, with the reason (see "What red means" below).
+
 ## When
 
 The watcher looks at the recording folder at most once a minute, between its other
@@ -118,6 +141,50 @@ shared drive is the only one, in the intake or wherever the pipeline has moved i
 To send it again, find it there. Putting a copy back into the recording folder does
 not send it again: if the shared drive still has the same file, the copy here is
 simply deleted.
+
+## Correcting a name after the recording has left the PC
+
+Once a recording has been sent, the copy on the shared drive is the only one, and
+the pipeline may already have cut it into one video per animal under the name it
+had. MouseReach has **no command that renames a sent recording**: a rename touches
+the recording and every video cut from it, so it is done by whoever looks after the
+pipeline, who keeps the original and a record of the correction in
+`Analyzed/Archive/manual_corrections`. Do not rename files on the shared drive
+yourself.
+
+| The situation | What to do |
+|---|---|
+| The name was never a valid session name | It never left the PC: it is held in red there. Rename it in the recording folder; it is sent on the next pass outside recording hours. |
+| A file whose name the intake could not read is in the Quarantine folder | In `mousereach`, open the **Quarantine** tab, type the right name in the "Corrected name (editable)" column of its row, choose **Collage intake (8-camera videos)** under "Release to:", and press **Release selected**. A name the intake would not accept is refused with the reason, and nothing moves. |
+| The name is a valid session name but wrong (wrong animal, wrong tray, wrong date) | Tell whoever looks after the pipeline: the name the recording has and the name it should have. |
+| The pipeline holds a video as a **label mismatch** (its results fit the hand scores of another tray of the same animal and day better than its own tray's) | Record which is wrong with `mousereach-label-mismatch`, below. |
+
+**Label mismatch.** There is no button for this yet: use a terminal on a machine
+where MouseReach is set up. Activate the environment first (`<mousereach env>` is
+the name or folder of your MouseReach environment, often `mousereach`):
+
+```
+conda activate <mousereach env>
+mousereach-label-mismatch --list
+```
+
+`--list` shows the videos held as a label mismatch. Then record one decision:
+
+* The recording's name is wrong:
+  `mousereach-label-mismatch --name-wrong "<video>" --as "<right name>" --by "<your name>"`.
+  This only RECORDS the decision; it renames nothing. The video stays held until
+  whoever looks after the pipeline has renamed the recording as above.
+* The sheet is wrong (the sheet itself is never edited):
+  `mousereach-label-mismatch --sheet-error "<video>" --by "<your name>"`.
+* Neither is wrong: `mousereach-label-mismatch --labels-right "<video>" --by "<your name>"`.
+
+It refuses, and records nothing, a video that is not held as a label mismatch
+(`[FAIL] <video> is not held as a label mismatch (mousereach-label-mismatch --list shows which are). Nothing recorded.`),
+`--name-wrong` without `--as`, and any decision without `--by`.
+
+This check only compares the other trays of the same animal and day, so a
+recording named with the wrong **animal** is not caught by it: tell whoever looks
+after the pipeline.
 
 ## Settings (in `~/.mousereach/config.json`, section `watcher`)
 

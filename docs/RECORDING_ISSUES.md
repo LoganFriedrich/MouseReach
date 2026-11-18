@@ -83,10 +83,25 @@ conda activate mousereach
 mousereach-recording-issue "<recording file name>" --reason "<what happened, in plain words>" --by "<your name>"
 ```
 
-The recording must still be in `Unanalyzed/Multi-Animal`. The command refuses
-if the recording has already been cut, or is being cut right now by another
-machine. Every watcher stops trying to cut it at its next scan, whichever
-machine you ran the command on.
+Give the recording's file name as it is in `Unanalyzed/Multi-Animal` (or the full
+path to the file). Every watcher stops trying to cut it at its next scan,
+whichever machine you ran the command on.
+
+When the command refuses, it prints one line starting with `[FAIL]`, moves
+nothing, and ends with an error. The exact lines:
+
+| When | What it prints |
+|---|---|
+| The file is not found | `[FAIL] <name> is not in the intake (Unanalyzed/Multi-Animal) and is not a file path. Nothing was moved.` |
+| No `--reason` was given | `[FAIL] say why with --reason "...". Nothing was moved.` |
+| The recording was already cut | `[FAIL] <name> was already cut into single-animal videos by <machine>; its singles are handled on their own. Nothing was moved.` |
+| Another machine is cutting it now | `[FAIL] <name> is being cut by <machine> right now. Wait for it to finish, then deal with the singles. Nothing was moved.` |
+| A different file of the same name is already set aside | `[FAIL] a file named <name> is already in <folder>; nothing was moved -- compare the two and keep the right one` |
+| The shared pipeline folder is not set up on this machine (seen only when a full path is given; with a bare file name the "not in the intake" line above is printed instead) | `[FAIL] the shared pipeline folder (nas_root) is not configured` |
+
+The "already cut" and "being cut" checks read the shared coordination database.
+On a machine that cannot read it they are skipped, so run the command where the
+watcher runs.
 
 To see what the automatic check says about a recording, without moving
 anything:
