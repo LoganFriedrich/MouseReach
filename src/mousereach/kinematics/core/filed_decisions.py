@@ -201,7 +201,8 @@ def changes_not_owed(filed: Dict[int, dict], fresh: Dict[int, dict],
                     ", ".join(sorted({srcs.get(w, "?") for w in added})) or "-", first,
                     "; the reaches left out changed" if lo_changed else "",
                     "; the owed ground truth does not list this pellet's reaches as "
-                    "complete, so it removed none of them"
+                    "complete, so it explains no filed reach that is gone without a "
+                    "person's reach over its frames"
                     if removed and GROUND_TRUTH in owed and not gt_complete else ""))
         if a["outcome"] != b["outcome"] and b.get("outcome_source") not in owed:
             words.append("outcome %s -> %s (by %s)" % (

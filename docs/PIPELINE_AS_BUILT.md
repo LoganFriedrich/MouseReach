@@ -3088,7 +3088,7 @@ only outcomes, or lists some reaches without declaring the list complete, remove
 filed reach is gone anyway, it went for another reason (a changed reach rule, a review copy the
 filing run did not see), and the run is held with the line
 `reaches: 1 filed gone, ... ; the owed ground truth does not list this pellet's reaches as
-complete, so it removed none of them`. A causal reach that changed because of that lost reach is
+complete, so it explains no filed reach that is gone without a person's reach over its frames`. A causal reach that changed because of that lost reach is
 not explained either. Before, any owed ground truth at all let every lost reach, and the causal
 reach that followed from it, be filed without a check.
 
