@@ -49,32 +49,12 @@ logger = logging.getLogger(__name__)
 import numpy as np
 
 
-def invalidate_stale_downstream(seg_path, video_stem, archive_dir):
-    """Archive-then-remove every output computed from boundaries that are
-    about to be replaced.
-
-    A boundary change voids reaches, outcomes, assignments and features --
-    they all describe the OLD cuts. Leaving them in place re-circulated
-    corrected videos to triage with data for different spans, and risked a
-    causal reach attributed to the wrong pellet. Removing them
-    also forces every stage to recompute even under a reuse-scoped rerun.
-
-    Qt-free so it is testable bare. Raises on failure -- the caller must
-    refuse the save rather than leave a half-invalidated video.
-    Returns the list of archived+removed file names.
-    """
-    removed = []
-    for suffix in ("_reaches.json", "_pellet_outcomes.json",
-                   "_reach_assignments.json", "_features.json"):
-        stale = Path(seg_path).parent / (video_stem + suffix)
-        if stale.exists():
-            # The folder is made here, only when something goes into it, so a
-            # save that has nothing to archive leaves no empty archive folder.
-            Path(archive_dir).mkdir(parents=True, exist_ok=True)
-            shutil.copy2(stale, Path(archive_dir) / stale.name)
-            stale.unlink()
-            removed.append(stale.name)
-    return removed
+# Archive-then-remove everything computed from the old cuts. It lives in the
+# Qt-free hand_cuts module, which every cut editor saves through; imported here
+# under its old name for the callers that import it from this module.
+from .hand_cuts import (invalidate_stale_downstream, mark_as_hand_cuts,  # noqa: E402
+                        commit_hand_cuts, HandCutsNotSaved,
+                        release_after_hand_cuts, asked_again_note)
 
 
 from qtpy.QtCore import Qt
@@ -1250,60 +1230,44 @@ automatic.
         archive = (Path(self.seg_path).parents[3] / "_archived"
                    / ("segmentation_before_human_fix_%s"
                       % datetime.now().strftime("%Y%m%d_%H%M%S")))
-        try:
-            if not uncut:
-                archive.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(self.seg_path, archive / self.seg_path.name)
-        except Exception as e:
-            QMessageBox.critical(self, "Could not archive",
-                                 "Refusing to overwrite the original: %s" % e)
-            return
 
-        # A boundary change voids everything computed from boundaries.
-        try:
-            removed = invalidate_stale_downstream(self.seg_path,
-                                                  self.video_stem, archive)
-        except Exception as e:
-            QMessageBox.critical(self, "Could not invalidate stale outputs",
-                                 "The corrected cuts were NOT saved: %s" % e)
-            return
-
-        seg = dict(self.seg)
+        # The fields every later step reads; boundary_source "human" keeps
+        # the segmenter from replacing the cuts on the re-run (hand_cuts says
+        # why each is there).
+        seg = mark_as_hand_cuts(
+            self.seg, self.boundaries, self.original_boundaries,
+            os.environ.get("USERNAME", os.environ.get("USER", "unknown")))
         if uncut:
             # The first segments file of a video the segmenter could not cut.
-            # The fields every later step reads; boundary_source "human" keeps
-            # the segmenter from replacing it on the re-run.
             # fps: the segmenter's own default (it never reads the video's).
             seg.update({"video_name": self.video_stem,
                         "total_frames": length,
                         "fps": 60.0,
                         "candidates": [],
                         "note": "No segmenter output: every cut set by hand."})
-        seg["boundaries"] = [int(b) for b in self.boundaries]
-        seg["algo_boundaries"] = [int(b) for b in self.original_boundaries]
-        seg["boundary_source"] = "human"
-        seg["corrected_by"] = os.environ.get("USERNAME", os.environ.get("USER", "unknown"))
-        seg["corrected_at"] = datetime.now().isoformat()
-        # The reason this video was queued is answered now. Leaving it set would
-        # send the video straight back here on the next pass.
-        seg["needs_human_resolved"] = needs_fixing(self.seg)
-        if uncut:
             try:
                 from .release_cli import _routing_reason
                 why = _routing_reason(Path(self.seg_path).parent, self.video_stem)
             except Exception:
                 why = ""
             seg["needs_human_resolved"] = [why or "no segments file"]
-        seg["needs_human"] = []
         # The guided walk's per-segment answers: which identities/boundaries
         # the human confirmed vs corrected, with the algo's original numbers.
         if self._gw_records:
             seg["guided_walk"] = [self._gw_records[k]
                                   for k in sorted(self._gw_records)]
 
-        tmp = self.seg_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(seg, indent=2))
-        os.replace(tmp, self.seg_path)
+        # Archive the original, then archive and remove every output computed
+        # from the old cuts (a boundary change voids them), then replace the
+        # segments file in one step. Nothing is written when either of the
+        # first two cannot be done.
+        try:
+            removed = commit_hand_cuts(self.seg_path, self.video_stem, seg, archive)
+        except HandCutsNotSaved as e:
+            QMessageBox.critical(self, ("Could not archive" if e.stage == "archive"
+                                        else "Could not invalidate stale outputs"),
+                                 str(e))
+            return
 
         n_added = len([b for b in self.boundaries if b not in self.original_boundaries])
         n_removed = len([b for b in self.original_boundaries if b not in self.boundaries])
@@ -1314,70 +1278,18 @@ automatic.
                "archived and removed; the pipeline recomputes them."
                % len(removed) if removed else ""))
 
-        # Release the bundle if this fix answers why it was queued. Saving a
-        # hand-corrected segmentation finishes the work the video was routed
-        # here FOR when the routing reason names segmentation -- but the clear
-        # marker is a blanket human-clear token the watcher gate honors, so
-        # writing it for a bundle routed on other grounds (e.g. a QC hold)
-        # would release concerns nobody addressed. Gate on the routing reason.
-        try:
-            bundle = Path(self.seg_path).parent
-            stem = self.video_stem
-            marker = bundle / f"{stem}_deep_review_cleared.json"
-            routing = bundle / f"{stem}_routing.json"
-            if routing.is_file() and not marker.exists():
-                from .release_cli import _names_segmentation, _routing_reason
-                reason_txt = _routing_reason(bundle, stem)
-                if _names_segmentation(reason_txt):
-                    # Create-only, never into a recreated folder
-                    # (causal_review_io.write_clear_marker_once says why).
-                    from .causal_review_io import (write_clear_marker_once,
-                                                   _get_username, _get_timestamp)
-                    if write_clear_marker_once(marker, {
-                        "type": "deep_review_cleared",
-                        "video_stem": stem,
-                        "cleared_by": _get_username(),
-                        "cleared_at": _get_timestamp(),
-                        "reason": "segmentation corrected by hand",
-                        "gated_on": "boundary_source",
-                        "routing_reason": reason_txt,
-                    }):
-                        self.status.setText(self.status.text()
-                                            + "  Released back to the pipeline."
-                                            + _asked_again_note(bundle, stem))
-                    else:
-                        self.status.setText(self.status.text()
-                                            + "  Not released from here: it has "
-                                              "already left the queue or been released.")
-                else:
-                    self.status.setText(
-                        self.status.text()
-                        + "  NOT auto-released: routed for '%s', which fixing "
-                          "cuts does not address -- use Re-segmentation Review's "
-                          "tool's Clear when that is resolved."
-                        % (reason_txt or "an unrecorded reason"))
-        except Exception as e:
-            self.status.setText(self.status.text()
-                                + "  (release check failed: %s)" % e)
+        # Release the bundle if this fix answers why it was queued
+        # (hand_cuts.release_after_hand_cuts gates it on the routing reason).
+        self.status.setText(self.status.text()
+                            + release_after_hand_cuts(Path(self.seg_path).parent,
+                                                      self.video_stem))
 
         self._next_video()
 
 
 def _asked_again_note(bundle: Path, stem: str) -> str:
-    """Words for the status line when saving these cuts voided answers a
-    person gave on the old cuts: those pellets are asked again in triage after
-    the re-run (review_gate.recut_voided_open). '' when there are none or the
-    check cannot run -- the gate makes the same check either way, so the note
-    is information only."""
-    try:
-        from mousereach.watcher.review_gate import recut_voided_open
-        n = len(recut_voided_open(stem, bundle))
-    except Exception:
-        return ""
-    if not n:
-        return ""
-    return ("  %d pellet(s) answered on the old cuts will be asked again in triage "
-            "after the re-run." % n)
+    """hand_cuts.asked_again_note, under the name this module always had."""
+    return asked_again_note(bundle, stem)
 
 
 def main():
