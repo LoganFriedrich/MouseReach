@@ -229,7 +229,10 @@ def is_machine_output(video_id: str, name: str) -> bool:
 # ``validation_status`` 'validated'; the re-segmentation fixer
 # ``boundary_source`` 'human'; the reach and outcome reviews and the ground-
 # truth tool ``human_verified`` / ``human_corrected`` (per segment or per
-# reach) and 'validated'; the triage-clearing tools ``triage_cleared``. The
+# reach) and 'validated'; ``triage_cleared`` comes from
+# mousereach-resolve-triage-from-gt and from the triage-clearing tool. That
+# tool is retired and writes nothing now; its mark is still read because
+# files it saved before it was retired may carry it. The
 # pipeline itself writes 'needs_review' or 'auto_approved' and never sets
 # these flags. Only the three files the review tools save into are read
 # (_REVIEWED_IN_PLACE); the other machine outputs (features, the processing

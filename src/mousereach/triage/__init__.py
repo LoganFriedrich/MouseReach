@@ -10,11 +10,12 @@ ambiguous physics, etc.), one of two things resolves it:
      ground-truthed, the human work is already done and we just import
      it. Runs as a step in the normal processing pipeline.
 
-  2. **Human triage clearing** (the napari ``mousereach-review-tool``
-     in :mod:`mousereach.review.triage_clearing`): for segments where
-     no GT is available, a reviewer walks the worklist one segment at
-     a time and marks the causal reach + outcome. Produces the same
-     ``triage_cleared=True`` schema as GT auto-resolve.
+  2. **Human review** (the napari ``mousereach-review-tool``, the
+     review window in :mod:`mousereach.review.causal_review_widget`):
+     for segments where no GT is available, a reviewer answers each
+     triaged segment and the answer is saved as a review record that
+     the watcher reads. (The older triage-clearing tool, which wrote
+     ``triage_cleared=True`` into the algorithm files, is retired.)
 
 After either path, the segment's data flows into normal kinematic
 analysis just like any other committed segment.

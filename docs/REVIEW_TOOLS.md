@@ -28,7 +28,7 @@ These two use different matching rules, they look in different places, and right
 | **Segmentation Fixer** | `mousereach-fix-segmentation` | "Are this video's segment cuts in the right places?" — nothing else | Overwrites `{stem}_segments.json` with the corrected cuts |
 | **Ground Truth Tool** | `mousereach-gt` or `mousereach-unified-review` | "What actually happens in this video, frame by frame, regardless of what the algorithm said?" | `{stem}_unified_ground_truth.json` |
 | **Review Tool** | `mousereach-review-legacy`; the "3 - Review Tool" tab of `mousereach` | "The algorithm's output files are wrong — correct them in place." | Overwrites `{stem}_segments.json`, `{stem}_reaches.json`, `{stem}_pellet_outcomes.json` |
-| **Triage Clearing + spot-check** | `mousereach-triage-clearing` | Older per-segment version of Triage Review, plus "does the algorithm still agree with a person on cases it was confident about?" | Edits the algorithm JSONs; writes a ground-truth file; writes `_QC/qc_state.json` and `_QC/qc_drift_log.jsonl` |
+| **Triage Clearing** (retired) | `mousereach-triage-clearing` | Nothing. It prints "retired -- use mousereach-review-tool" and stops. | Nothing |
 
 Command names come from `pyproject.toml:106`, `:113`, `:115-118`.
 
@@ -69,7 +69,7 @@ A segment is triaged when either:
 
 That rule exists in `triage_status.triaged_segments` (`triage_status.py:70`) and is written out a second time, identically, inside the widget (`_bundle_has_triage`, `causal_review_widget.py:2626`; the walk's own copy at `:1087-1088`).
 
-A **third** version exists in the worklist builder used by the older clearing tool, and it is **not** the same rule (`triage_queue.py:196-222`). It never tests `outcome == "triaged"`; it also triggers on a `flagged_for_review` flag in the *reaches* file, which `triage_status` never reads; its test for "has a committed causal reach" also accepts a reach whose `label` starts with `causal` (`triage_queue.py:107`), which `triage_status` does not; and it drops segments already marked `triage_cleared` unless `--include-cleared` is passed. In practice the missing `outcome == "triaged"` test does not change the result for v6 output, because the v6 cascade always writes `flagged_for_review: true` alongside a `triaged` outcome (`outcomes/v6_cascade/detector.py:260-267`). The other three differences are real.
+(A third, different version lived in the worklist builder of the old triage-clearing tool, `triage_queue.py`; that tool is retired and the builder removed, see "Triage Clearing (retired)".)
 
 In triage mode the walk visits **only** triaged segments (`_visible_indices`, `:1122`). Everything else is skipped.
 
@@ -865,24 +865,22 @@ One button, "Save & Continue" -> `_save_to_algo_files` (`:2041`). It rewrites th
 
 ---
 
-## Triage Clearing and the spot-check pool
+## Triage Clearing (retired)
 
-`mousereach-triage-clearing` -> `triage_clearing.py:664`. This is the older per-segment clearing walk. Its own docstring (`triage_clearing.py:14`) and the folder's `AGENTS.md` (`review/AGENTS.md:86-89`) both still say its command is `mousereach-review-tool`; that name has pointed at the causal review widget since `pyproject.toml:106`.
+`mousereach-triage-clearing` was an older per-segment clearing walk. It is retired: running it now prints a message pointing to `mousereach-review-tool` (or the **Review Queues** tab of `mousereach`) and exits with an error code. It opens no window and writes no file. The command name is still installed so that an old shortcut or script gets that message instead of crashing.
 
-It subclasses the Ground Truth widget and drives a worklist built by `triage_queue.py`. Two sources, chosen by flag:
+**Why it was retired.** It saved the reviewer's call straight into the algorithm's own files, which broke the pipeline in four ways:
 
-- `--corpus-root <dir>` (default: the triage queue, or `MOUSEREACH_ROUTINE_ROOT`) — a folder of per-video bundles. Videos whose segmentation failed are held out and printed as a separate "manual re-seg lane" (`scan_corpus_root_for_triage`, `triage_queue.py:247`; printed at `triage_clearing.py:783-788`).
-- `--algo-dir <dir>` — one flat folder of algorithm outputs, the layout the improvement harness uses. It wins over `--corpus-root` (`triage_clearing.py:749`).
+- The call went into `_pellet_outcomes.json` and `_reaches.json`, not into a review record. The next run of outcome or reach detection rewrites those files, so the person's answer was lost.
+- It never wrote `_reach_assignments.json`. A touched pellet it "cleared" still had no causal reach as far as the watcher's release check was concerned, so the video never left the triage queue.
+- It wrote the reaches file and then the outcomes file, with no way back if the second write failed, leaving the two disagreeing.
+- It took the most recently marked reach as the causal one instead of asking which reach moved the pellet, and saved every reach the algorithm had seeded into the ground-truth file, checked or not.
 
-For each triaged segment it loads only that segment's frames plus padding (`--pre-pad`/`--post-pad`, default 30 each) and asks the reviewer to mark the causal reach with S and E, set the outcome, and write a note about why the algorithm missed it. Save (`_save_current_triage_segment`, `:477`) refuses unless both a causal reach and an outcome are set (`:500-512`), then writes, **for that segment only**:
+The review window (Triage Review, above) does the same job correctly: the answer is a review record (`{stem}_causal_review.json`) that the watcher reads, that survives re-runs, and that releases the video once every question is answered.
 
-- in `_reaches.json`: `flagged_for_review: false`, `triage_cleared: true`, `cleared_by`/`cleared_at`, the causal reach updated with `human_corrected: true` and the note, and **every other reach in the segment marked `exclude_from_analysis: true`** (`:545-556`);
-- in `_pellet_outcomes.json`: the same clearing fields plus `human_verified: true`, the person's outcome, interaction frame, outcome-known frame and `causal_reach_id` (`:570-590`);
-- a `{stem}_unified_ground_truth.json` next to the bundle's algorithm JSONs (`:599`; path from `_unified_gt_path_for_video`, `:642`).
+Its spot-check mode (`--qc-count`, `--qc-report`) went with it: it walked the same retired worklist, and its "algorithm is wrong" verdict wrote a flag back into the algorithm's outcomes file, which the next run overwrote. Files it would have written (`_QC/qc_state.json`, `_QC/qc_drift_log.jsonl`) are not read by anything. Its worklist builder (`triage_queue.py`), with the `MOUSEREACH_ROUTINE_ROOT` and `MOUSEREACH_TRIAGE_ALGO_DIR` settings, is gone as well.
 
-Two consequences of that third write are easy to miss. The object it saves is `self.gt`, the *unfiltered* one seeded from the algorithm — rows nobody touched are in it with `determined: false`. The truth layering skips undetermined rows (`truth_resolver.py:138-139`), so no false values leak into the numbers, but **the file's existence alone** makes `has_gt()` true (`causal_review_io.py:596`), which removes the video from Triage Review's queue as "already ground-truthed". (Until 2026-11-17 it also counted as a clearance all by itself in a re-segmentation bundle; now only the clear marker does, `review_return._deep_review_cleared`, the same test the review gate makes.)
-
-`--qc-count N` blends N spot-checks into the same walk (`qc_pool.py`). These are segments the algorithm was **confident** about — segmentation did not fail, the outcome is a committed class, the segment is not flagged, and for touched outcomes a causal reach was committed (`iter_passing_segments`, `qc_pool.py:78-142`) — sampled round-robin across cohort+date strata, never-checked first (`sample`, `:184`). The reviewer gets two buttons instead of the marking UI: *Algo is RIGHT* logs agreement; *Algo is WRONG* logs disagreement **and** sets `flagged_for_review` back on that segment so it re-enters triage (`_flag_segment_for_triage`, `:429-444`). State lives in `<parent of the corpus root>/_QC/qc_state.json` plus an append-only `qc_drift_log.jsonl` (`qc_pool.py:160`, `:167-173`). `--qc-report` prints the agreement rate and exits without opening napari (`triage_clearing.py:729-742`). `--qc-count` is ignored outside corpus-root mode (`:803-804`).
+Outcome and reaches files that an old copy of the tool already edited keep their marks (`triage_cleared`, `human_verified`); the clean-up rules still treat such a file as a person's file.
 
 ---
 
@@ -1571,7 +1569,7 @@ Each of these is code that runs, produces a value, and has no reader.
 
 ### Not on this list, though a previous draft said so
 
-**`exclude_from_analysis` on reaches has real readers.** The triage clearing tool marks every non-causal reach in a cleared segment with it (`triage_clearing.py:554-555`) and the ground truth tool sets it too (`ground_truth_widget.py:1784`). What is true is narrower: the **kinematics feature extractor** does not read the flag in `_reaches.json` (a flag the legacy in-place tools write there is lost on the next run anyway), the flag is not carried into `{video}_features.json`, and it is not a column in `connectome.db`. The ground-truth tool's exclusion does reach the kinematics: the truth layering takes every detected reach it overlaps out of the measurements and the features file lists it under `reaches_left_out` (`truth_resolver._drop_excluded_reaches`). It **is** read by the analysis dataframe, which drops flagged reaches by default (`analysis/data.py:120-127`, `:167-168`, used by `load_all_data`, `:432-497`) — though on that module's default path the rows come from the features file, where the field is absent, so the filter has nothing to act on; it bites only when loading from `_reaches.json` (`:343`). It is also read by the truth resolver when merging ground-truth reaches (`truth_resolver.py:255`) and throughout the improvement metrics (`improvement/reach_detection/metrics.py:482`, `:518`, `:926`; `kinematic_damage.py:105`, `:173`; `_compute_baseline.py:58`, `:109`). The ODC-SCI export carries it as a column (`kinematics/analysis/odc_sci_exporter.py:157`).
+**`exclude_from_analysis` on reaches has real readers.** The retired triage-clearing tool marked every non-causal reach in a cleared segment with it (files it already edited keep the mark) and the ground truth tool sets it (`ground_truth_widget.py:1784`). What is true is narrower: the **kinematics feature extractor** does not read the flag in `_reaches.json` (a flag the legacy in-place tools write there is lost on the next run anyway), the flag is not carried into `{video}_features.json`, and it is not a column in `connectome.db`. The ground-truth tool's exclusion does reach the kinematics: the truth layering takes every detected reach it overlaps out of the measurements and the features file lists it under `reaches_left_out` (`truth_resolver._drop_excluded_reaches`). It **is** read by the analysis dataframe, which drops flagged reaches by default (`analysis/data.py:120-127`, `:167-168`, used by `load_all_data`, `:432-497`) — though on that module's default path the rows come from the features file, where the field is absent, so the filter has nothing to act on; it bites only when loading from `_reaches.json` (`:343`). It is also read by the truth resolver when merging ground-truth reaches (`truth_resolver.py:255`) and throughout the improvement metrics (`improvement/reach_detection/metrics.py:482`, `:518`, `:926`; `kinematic_damage.py:105`, `:173`; `_compute_baseline.py:58`, `:109`). The ODC-SCI export carries it as a column (`kinematics/analysis/odc_sci_exporter.py:157`).
 
 ---
 
@@ -1623,8 +1621,7 @@ Two different lookups, with different rules:
 
 Stated here so nobody rediscovers it the hard way:
 
-- `review/AGENTS.md:86-89` calls `TriageClearingWidget` the routine tool and maps it to `mousereach-review-tool`. That command is the causal review widget; the clearing tool is `mousereach-triage-clearing`.
-- `triage_clearing.py:14` and `unified_widget.py:17` both claim `mousereach-review-tool`.
+- `unified_widget.py:17` claims `mousereach-review-tool`.
 - `causal_review_widget.py:2509-2510` describes `_review_root()` as `Processing/Review/triage`. It returns the parent of the queue folder, `Processing/Review`, which is where `flagged_sessions.json` actually lives.
 - `pyproject.toml:120-123` says the ground-truth triage resolver runs as a pipeline step. It does not.
 
@@ -1635,18 +1632,13 @@ Stated here so nobody rediscovers it the hard way:
 | Setting | Where | Effect |
 |---|---|---|
 | `nas_root` | `~/.mousereach/config.json` | Root of both queues. Unset means the queues are `None` and the tools say "not configured" (no guessed folder since 2026-10-22). |
-| `MOUSEREACH_ROUTINE_ROOT` | environment | Overrides the corpus root the clearing tool's worklist scans (`triage_queue.py:490`). |
-| `MOUSEREACH_TRIAGE_ALGO_DIR` | environment | Overrides the flat algorithm directory fallback (`triage_queue.py:465`). |
 | `CONNECTOME_ROOT` | environment | Base for the two lookups above; no default -- unset means both lookups are skipped (since 2026-08-28). |
 | `--pending-dir` | `mousereach-review-tool` | Which queue folder to review. Defaults to the triage queue (`causal_review_widget.py:3123`). |
 | `--all-segments` | `mousereach-review-tool` | Walk every segment instead of only triaged ones (`:3126`). |
 | `--worklist FILE` | `mousereach-review-tool` | CSV or JSON of `vid` + `segment_num`. Only those videos are offered and only those segments walked — and unlike the normal pool, already-reviewed and ground-truthed videos are included (`:2709-2718`). |
 | `--cv` | `mousereach-review-tool` | Use pixel-based pellet localisation to narrow candidate reaches. Off by default because it decodes the video over the network; without it the narrowing uses tracking data only (`_get_cv_states`, `:1713`, gated at `:1727`). |
 | `--queue-dir` | `mousereach-fix-segmentation` | Queue of bundles to work through; defaults to the re-segmentation queue (`fix_segmentation_widget.py:482-490`). |
-| `--corpus-root` / `--algo-dir` | `mousereach-triage-clearing` | Bundle-per-video layout vs one flat folder. `--algo-dir` wins (`triage_clearing.py:749`). |
-| `--include-cleared` | `mousereach-triage-clearing` | Put already-cleared segments back in the worklist. |
-| `--qc-count N` / `--qc-report` | `mousereach-triage-clearing` | Blend N spot-checks into the session / print the agreement rate and exit. `--qc-count` is ignored outside corpus-root mode (`:803-804`). |
-| `--pre-pad` / `--post-pad` | `mousereach-triage-clearing`, `mousereach-gt` | Frames of context loaded around the segment. Default 30 for clearing (`:708-713`), 0 for the ground truth tool (`ground_truth_widget.py:3037-3040`). |
+| `--pre-pad` / `--post-pad` | `mousereach-gt` | Frames of context loaded around the segment. Default 0 for the ground truth tool (`ground_truth_widget.py:3037-3040`). |
 | `--algo-dir` | `mousereach-gt`, `mousereach-review-legacy` | Where to read a segment's decision window and which info panel to show. Does not change where a save writes. |
 | `preserve_clears` | `staging.stage_video` argument, default `True` | Captures human-cleared segments before re-running the algorithms and re-applies them afterwards, matched by segment number (`clear_guard.py:47`). **Skipped entirely when boundaries change** (`staging.py:339`), because a re-cut renumbers the segments; a cleared segment whose number is gone is reported as skipped, not silently dropped (`:348-350`). |
 

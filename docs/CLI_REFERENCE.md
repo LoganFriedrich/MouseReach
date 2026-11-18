@@ -1021,51 +1021,20 @@ options:
 
 ### `mousereach-triage-clearing`
 
-*(legacy) GroundTruthWidget-based per-segment triage clearing*
+*RETIRED: prints "use mousereach-review-tool" and exits 1 (kept so old installs get the message)*
 
 ```
-usage: mousereach-triage-clearing [-h] [--corpus-root CORPUS_ROOT]
-                                  [--algo-dir ALGO_DIR]
-                                  [--video-name VIDEO_NAME]
-                                  [--include-cleared] [--pre-pad PRE_PAD]
-                                  [--post-pad POST_PAD] [--qc-count QC_COUNT]
-                                  [--qc-report]
+usage: mousereach-triage-clearing [-h]
 
-MouseReach Triage Clearing Tool — review and resolve algo-flagged segments one
-at a time.
+mousereach-triage-clearing has been retired and does nothing.
+It saved answers into the algorithm's own files, where the next run
+erased them and the watcher never saw them.
+To review the triage queue, open the review window instead:
+    mousereach-review-tool
+(or the Review Queues tab in the main 'mousereach' window).
 
 options:
-  -h, --help            show this help message and exit
-  --corpus-root CORPUS_ROOT
-                        ROUTINE mode: root of per-video bundle subdirs (each
-                        holds the four algo JSONs). Scans every bundle for
-                        unresolved problems and routes failed-segmentation
-                        videos to a separate re-seg lane. Defaults to the
-                        routine review queue (CONNECTOME_ROOT/Behavior/MouseRe
-                        ach_Pipeline/Processing/Review/triage) or
-                        MOUSEREACH_ROUTINE_ROOT. Ignored if --algo-dir is
-                        given.
-  --algo-dir ALGO_DIR   Single flat directory containing *_reaches.json /
-                        *_pellet_outcomes.json (quarantine layout). Overrides
-                        --corpus-root. Defaults (only if no corpus root is
-                        found) to the latest quarantine under CONNECTOME_ROOT/
-                        Behavior/MouseReach_Improvement/validation_runs/DLC_*/
-                        iterations/*/algo_outputs/.
-  --video-name VIDEO_NAME
-                        Restrict worklist to this video stem (e.g.
-                        20250101_CNT0101_P1).
-  --include-cleared     Include already-cleared segments in the worklist (for
-                        re-review).
-  --pre-pad PRE_PAD     Frames to load before each segment's start (context).
-                        Default 30.
-  --post-pad POST_PAD   Frames to load after each segment's end (context).
-                        Default 30.
-  --qc-count QC_COUNT   Routine spot-check: blend N already-passing segments
-                        into the session (stratified rotating sample) for
-                        confirm-the-algo QC. Only in corpus-root mode. Default
-                        0 (triage only).
-  --qc-report           Print the routine spot-check agreement/drift summary
-                        and exit (does not launch napari).
+  -h, --help  show this help message and exit
 ```
 
 ### `mousereach-unified-review`

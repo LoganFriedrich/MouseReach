@@ -371,11 +371,11 @@ Per segment, triaged case — the same six keys plus `flag_reason`, with `outcom
 
 ### What later steps add
 
-The napari triage-clearing tool writes back into this file when a human resolves a segment (`review/triage_clearing.py:564-595`). It sets, on that segment only: `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` (only if the human changed the outcome), and `causal_reach_id`; it overwrites `outcome` always, and `interaction_frame` / `outcome_known_frame` only when the human supplied a non-null value. So `causal_reach_id` would appear in an outcomes file **only** for human-cleared segments.
+The retired triage-clearing tool used to write back into this file when a person resolved a segment, setting on that segment `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` and `causal_reach_id`. It no longer does anything (it prints a pointer to `mousereach-review-tool` and stops); a person's answer now goes into the review record `{stem}_causal_review.json`, never into this file. So `causal_reach_id` and those clearing fields appear in an outcomes file only if an old copy of the tool wrote them.
 
 In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `Analyzed` and `Processing` found **zero** v6 segments carrying `triage_cleared`, `human_verified`, `cleared_by`, `original_triage_reason` or `causal_reach_id`. Every v6 file in the pipeline is exactly as the detector wrote it.
 
-`flagged_for_review` is what routes a segment into the human worklist (`review/triage_queue.py:196`). That module also independently triggers on any segment whose outcome is touched but for which algorithm 4 committed no causal reach, even though `flagged_for_review` is false (`triage_queue.py:203-213`) — so the file's own flag is not the complete picture of what needs review.
+`flagged_for_review` (or `outcome == "triaged"`, or a touched outcome with no committed causal reach in the assignment file) is what puts a segment in front of a person: the rule is `review/triage_status.triaged_segments`, read by the review window and the watcher's release check. So the file's own flag is not the complete picture of what needs review.
 
 ---
 
