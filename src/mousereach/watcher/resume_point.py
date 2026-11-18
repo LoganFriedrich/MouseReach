@@ -35,9 +35,11 @@ design rule is that re-segmentation voids everything after it, a person's
 earlier outcome and causal-reach answers included -- except an answer on a
 pellet whose frames the re-cut did not change (owner ruling 2026-11-18):
 voided answers are kept as a record only and never applied. Every review
-reader does this when a person set the current cuts
-(causal_review_io.index_review_by_segment, keyed on the segments file's
-corrected_at and the cuts it replaced): an answer given before then counts
+reader does this when the current cuts come from a re-cut, by a person or
+by the segmenter (causal_review_io.index_review_by_segment, keyed on
+causal_review_io.cuts_set_at -- the segments file's corrected_at for a
+person's cuts, segmenter_recut_at for the segmenter's -- and the cuts that
+re-cut replaced): an answer given before then counts
 only on an unchanged pellet (causal_review_io.answer_survives_recut). So the deep-review return (resumes at reach on the new
 cuts) treats those pellets as unanswered, and the review gate sends the
 video to triage with each one flagged (review_gate.recut_voided_open): they

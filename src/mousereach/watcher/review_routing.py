@@ -753,9 +753,11 @@ def read_routing_manifest(bundle_dir: Path, video_id: str) -> Optional[Dict]:
 #         the live copy: the live bundle, or the files a route is bringing);
 #       - a review the durable review store already holds byte for byte
 #         (nothing is ever written into the store from here: a leftover's
-#         review was made on cuts that are being, or have been, redone, and a
-#         copy put in the store would be matched to the new cuts by frame
-#         span -- a re-cut voids every answer after it);
+#         review was made on cuts that are being, or have been, redone; an
+#         answer given before a re-cut counts only on a pellet whose frames
+#         did not change, every other answer is void and is never applied,
+#         and a copy put in the store now could bring back answers a later
+#         save had replaced -- see review_held_by_store);
 #       - a machine output (archive.supersede's list), when the caller names
 #         a live copy of the video at all -- the pipeline makes those again
 #         from that copy;
