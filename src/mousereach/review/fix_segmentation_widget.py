@@ -1217,6 +1217,17 @@ automatic.
     def _save(self):
         if not self.seg_path or not self.boundaries:
             return
+        # The bundle may have left the queue while it was open here (the
+        # return scan or another window moved it). Nothing is written then:
+        # writing would recreate its folder holding only these cuts and a
+        # clear marker -- a "cleared" video with no files.
+        if not Path(self.seg_path).parent.is_dir():
+            QMessageBox.warning(self, "This video has left the queue",
+                                "%s is no longer in the re-segmentation queue (the "
+                                "watcher or another window moved it while it was open "
+                                "here). Nothing was saved. Load the next video."
+                                % self.video_stem)
+            return
         if len(self.boundaries) < 2:
             QMessageBox.warning(self, "Too few cuts",
                                 "At least two cuts are needed to make a segment.")
@@ -1318,9 +1329,11 @@ automatic.
                 from .release_cli import _names_segmentation, _routing_reason
                 reason_txt = _routing_reason(bundle, stem)
                 if _names_segmentation(reason_txt):
-                    from .causal_review_io import (_write_json, _get_username,
-                                                   _get_timestamp)
-                    _write_json(marker, {
+                    # Create-only, never into a recreated folder
+                    # (causal_review_io.write_clear_marker_once says why).
+                    from .causal_review_io import (write_clear_marker_once,
+                                                   _get_username, _get_timestamp)
+                    if write_clear_marker_once(marker, {
                         "type": "deep_review_cleared",
                         "video_stem": stem,
                         "cleared_by": _get_username(),
@@ -1328,10 +1341,14 @@ automatic.
                         "reason": "segmentation corrected by hand",
                         "gated_on": "boundary_source",
                         "routing_reason": reason_txt,
-                    })
-                    self.status.setText(self.status.text()
-                                        + "  Released back to the pipeline."
-                                        + _asked_again_note(bundle, stem))
+                    }):
+                        self.status.setText(self.status.text()
+                                            + "  Released back to the pipeline."
+                                            + _asked_again_note(bundle, stem))
+                    else:
+                        self.status.setText(self.status.text()
+                                            + "  Not released from here: it has "
+                                              "already left the queue or been released.")
                 else:
                     self.status.setText(
                         self.status.text()

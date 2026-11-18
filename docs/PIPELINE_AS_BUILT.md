@@ -6349,3 +6349,28 @@ along is not detected as a re-cut).
 Tests: `tests/test_segmenter_recut_voids_earlier_answers.py` (on the commit before this one a
 segmenter re-cut left every earlier answer applied by overlap and the gate passed the video CLEAN).
 
+## Update: no review writer recreates a bundle that left its queue
+
+WHY: while a person has a bundle open, the return scan (or another window's release) can move it
+out of the queue; there is no reviewer claim on a bundle (MRR-02d, an open owner question). The
+Review Queues release button already wrote its clear marker create-only and only into an existing
+folder. The review window's Clear button and its clear-on-complete save, the segmentation fixer's
+release after a save, and the review save itself wrote through `causal_review_io._write_json`,
+which creates missing folders: the bundle came back as a folder holding only a clear marker or
+only a review copy, and a marker someone else had written was overwritten.
+
+WHAT IS BUILT:
+- `causal_review_io.write_clear_marker_once` is the one clear-marker writer (moved from
+  `release_cli._write_marker_once`, which now calls it): create-only (a hard link of a complete
+  temporary file), never into a missing folder; False when the folder is gone or a marker exists.
+  The Clear button, the clear-on-complete save and the fixer use it and tell the person which of
+  the two happened.
+- `save_causal_review(create_folder=False)` (the review window passes it whenever it works on a
+  queue bundle): when the bundle folder is gone it still writes the durable copy, then raises
+  `ReviewFolderGone`, whose message says whether the answers were kept; nothing is written into the
+  queue. `_write_json(make_folder=False)` refuses a missing folder instead of creating it.
+- The fixer's save refuses, writing nothing, when the bundle folder is gone.
+
+Tests: `tests/test_review_writers_never_recreate_a_moved_bundle.py` (on the commit before this one
+the Clear button recreated the folder and overwrote another person's marker).
+

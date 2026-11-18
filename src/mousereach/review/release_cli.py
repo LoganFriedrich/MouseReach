@@ -200,42 +200,10 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
 def _write_marker_once(path: Path, doc: dict) -> bool:
     """Create the clear marker ``path`` holding ``doc``; False (nothing
     written) when its bundle folder is gone or a marker is already there.
-
-    WHY create-only and never make the folder: the marker used to be written
-    through a writer that creates missing folders, so a bundle that had left
-    the queue since the list was made came back as a one-file folder -- a
-    "cleared" video with no files, held for ever. And a marker already there
-    (another window or machine released it first) is that person's record,
-    not something to overwrite."""
-    import os
-    import tempfile
-    text = json.dumps(doc, indent=2, default=str) + "\n"
-    folder = Path(path).parent
-    if not folder.is_dir():
-        return False
-    # Write the whole record to a temp file first, then hard-link it to the
-    # marker name: os.link fails if the marker exists (create-only) and the
-    # marker appears complete or not at all, so a crash cannot leave an empty
-    # marker that has lost who cleared the video and when.
-    try:
-        fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".marker_", suffix=".tmp")
-    except OSError:
-        return False
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            os.link(tmp, str(path))
-        except (FileExistsError, FileNotFoundError):
-            return False
-        return True
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    The one marker writer, causal_review_io.write_clear_marker_once, which
+    says why it never creates the folder or overwrites a marker."""
+    from mousereach.review.causal_review_io import write_clear_marker_once
+    return write_clear_marker_once(path, doc)
 
 
 def release_finished(queue_root: Path, cls: Optional[dict] = None):

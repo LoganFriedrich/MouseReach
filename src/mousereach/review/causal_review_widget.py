@@ -3595,21 +3595,33 @@ The notes box travels with the video.
 
         # Save per-video file
         save_problems: List[str] = []
-        out_path = save_causal_review(
-            video_stem=self._video_stem,
-            output_dir=self._review_dir(),
-            segments=segments,
-            provenance=provenance,
-            reviewer=reviewer,
-            unmatched_answers=getattr(self, "_unmatched_answers", None),
-            other_copies=[self.video_path.parent] if self.video_path else (),
-            problems=save_problems,
-            # An answer given now on a person's cuts is stamped now, never
-            # with a voided earlier answer's time; an earlier answer the
-            # re-cut keeps (pellet unmoved) keeps its own (stamp_segment_reviewers).
-            cuts_set_at=cuts_set_at(getattr(self, "_segments_data", None)),
-            cuts_replaced=replaced_cuts(getattr(self, "_segments_data", None)),
-        )
+        from .causal_review_io import ReviewFolderGone
+        try:
+            out_path = save_causal_review(
+                video_stem=self._video_stem,
+                output_dir=self._review_dir(),
+                segments=segments,
+                provenance=provenance,
+                reviewer=reviewer,
+                unmatched_answers=getattr(self, "_unmatched_answers", None),
+                other_copies=[self.video_path.parent] if self.video_path else (),
+                problems=save_problems,
+                # An answer given now on a person's cuts is stamped now, never
+                # with a voided earlier answer's time; an earlier answer the
+                # re-cut keeps (pellet unmoved) keeps its own (stamp_segment_reviewers).
+                cuts_set_at=cuts_set_at(getattr(self, "_segments_data", None)),
+                cuts_replaced=replaced_cuts(getattr(self, "_segments_data", None)),
+                # A queue bundle is never recreated: if it left the queue
+                # while open here, the save keeps the answers in the lasting
+                # copy and says so (ReviewFolderGone) instead of making the
+                # folder again as a one-file leftover.
+                create_folder=not getattr(self, "_bundle_dir", None),
+            )
+        except ReviewFolderGone as gone:
+            logger.warning("%s: %s", self._video_stem, gone)
+            show_error(str(gone))
+            self._status_label.setText(f"[NOT SAVED IN THE QUEUE] {self._video_stem}")
+            return False
         # A durable-copy failure does not stop the save (refusing would lose
         # the answers outright), but the reviewer must see it, not only the log.
         for msg in save_problems:
@@ -3682,8 +3694,10 @@ The notes box travels with the video.
                     show_info(f"Answers saved. {self._video_stem} stays in the "
                               f"re-segmentation queue -- {reseg_why}")
                 if complete and not marker.exists() and reseg_ok:
-                    from .causal_review_io import _write_json
-                    _write_json(marker, {
+                    # Create-only, never into a recreated folder
+                    # (write_clear_marker_once says why).
+                    from .causal_review_io import write_clear_marker_once
+                    if write_clear_marker_once(marker, {
                         "type": "deep_review_cleared",
                         "video_stem": self._video_stem,
                         "cleared_by": reviewer,
@@ -3691,8 +3705,11 @@ The notes box travels with the video.
                         "reason": "review complete on save: every segment "
                                   "answered",
                         "gated_on": "is_answered",
-                    })
-                    show_info("Review complete -- released back to the pipeline.")
+                    }):
+                        show_info("Review complete -- released back to the pipeline.")
+                    else:
+                        show_info(f"{self._video_stem} was not released from here: it "
+                                  f"has already left the queue or been released.")
         except Exception as e:
             print(f"Warning: auto-release check failed: {e}")
         self._status_label.setText(f"Saved: {out_path.name}")
@@ -3888,9 +3905,14 @@ The notes box travels with the video.
                 show_error(f"{stem} cannot be cleared yet -- {why}")
                 self._status_label.setText(f"[NOT CLEARED] {stem}: {why}")
                 return
+        # Create-only, and never into a folder that is gone: a bundle the
+        # return scan (or another window) moved out of the queue while it was
+        # open here must not come back as a folder holding only a marker
+        # (causal_review_io.write_clear_marker_once).
+        marker = Path(bundle) / f"{stem}_deep_review_cleared.json"
         try:
-            from .causal_review_io import _write_json
-            _write_json(Path(bundle) / f"{stem}_deep_review_cleared.json", {
+            from .causal_review_io import write_clear_marker_once
+            written = write_clear_marker_once(marker, {
                 "type": "deep_review_cleared",
                 "video_stem": stem,
                 "cleared_by": _get_username(),
@@ -3899,6 +3921,19 @@ The notes box travels with the video.
             })
         except Exception as e:
             show_error(f"Could not write clear marker: {e}")
+            return
+        if not written:
+            if not Path(bundle).is_dir():
+                show_error(f"{stem} has already left the re-segmentation queue (the "
+                           f"watcher or another window moved it). Nothing was written. "
+                           f"Load the next video.")
+                self._status_label.setText(f"[NOT CLEARED] {stem}: it has left the queue")
+                return
+            show_info(f"{stem} was already cleared (someone else released it first).")
+            try:
+                self._load_next_video()
+            except Exception:
+                pass
             return
         show_info(f"[OK] Cleared {stem}. The watcher will re-inject it into the pipeline.")
         # The return scan removes the bundle from the queue; advance to the next.

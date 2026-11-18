@@ -227,7 +227,63 @@ def _read_json(path: Path) -> Dict[str, Any]:
     return {}
 
 
-def _write_json(path: Path, data: Dict[str, Any]) -> None:
+class ReviewFolderGone(OSError):
+    """The folder a review was to be saved into no longer exists: the video's
+    queue bundle left the queue (the return scan, or another window's
+    release, moved it) while this window had it open. Raised by
+    save_causal_review(create_folder=False) after the durable copy was
+    written (the message says whether it was), so the person's answers are
+    kept and the folder is not recreated as a one-file leftover."""
+
+
+def write_clear_marker_once(path: Path, doc: dict) -> bool:
+    """Create the clear marker ``path`` holding ``doc``; False (nothing
+    written) when its bundle folder is gone or a marker is already there.
+
+    The ONE writer of a deep-review clear marker: the Review Queues release
+    button (release_cli), the review window's Clear button and its
+    clear-on-complete save, and the segmentation fixer's release after a
+    save all use it.
+
+    WHY create-only and never make the folder: the marker used to be written
+    through a writer that creates missing folders, so a bundle that had left
+    the queue (the return scan, or another window's release, moved it while a
+    window had it open) came back as a one-file folder -- a "cleared" video
+    with no files, held for ever. And a marker already there (another window
+    or machine released it first) is that person's record, not something to
+    overwrite."""
+    import os
+    import tempfile
+    text = json.dumps(doc, indent=2, default=str) + "\n"
+    folder = Path(path).parent
+    if not folder.is_dir():
+        return False
+    # Write the whole record to a temp file first, then hard-link it to the
+    # marker name: os.link fails if the marker exists (create-only) and the
+    # marker appears complete or not at all, so a crash cannot leave an empty
+    # marker that has lost who cleared the video and when.
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".marker_", suffix=".tmp")
+    except OSError:
+        return False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, str(path))
+        except (FileExistsError, FileNotFoundError):
+            return False
+        return True
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _write_json(path: Path, data: Dict[str, Any], make_folder: bool = True) -> None:
     """Replace ``path`` with ``data`` in one step (fsutil.write_json_atomic).
 
     Every review copy, clear marker, the corpus index and flagged_sessions.json
@@ -237,10 +293,17 @@ def _write_json(path: Path, data: Dict[str, Any]) -> None:
     to carry forward from it and the person's answers were gone. Now the old
     file stays complete until the new one is swapped in; a write that still
     fails after the retries raises, with the old file unchanged.
+
+    ``make_folder`` False: a missing folder is NOT created (FileNotFoundError
+    instead) -- for a copy inside a queue bundle, which must never be
+    recreated after the bundle has left the queue (ReviewFolderGone).
     """
     from mousereach.pipeline.fsutil import write_json_atomic
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if make_folder:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.is_dir():
+        raise FileNotFoundError(f"the folder {path.parent} does not exist")
     write_json_atomic(path, data, indent=2, default=str, trailing_newline=True)
 
 
@@ -554,8 +617,15 @@ def save_causal_review(
     problems: Optional[List[str]] = None,
     cuts_set_at: Optional[str] = None,
     cuts_replaced: Optional[List[int]] = None,
+    create_folder: bool = True,
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
+
+    ``create_folder`` False (the review window saving into a queue bundle):
+    when ``output_dir`` no longer exists, the durable copy is still written
+    and ReviewFolderGone is raised instead of recreating the folder -- a
+    bundle that left the queue while the window had it open must not come
+    back as a folder holding only a review copy.
 
     ``cuts_set_at``: when a person set the cuts this save's answers were given
     on (the segments file's ``corrected_at``, causal_review_io.cuts_set_at);
@@ -680,7 +750,26 @@ def save_causal_review(
                     "looks after the pipeline." % (durable.parent, e, output_dir))
 
     out_path = output_dir / f"{video_stem}_causal_review.json"
-    _write_json(out_path, doc)
+    if not create_folder and not Path(output_dir).is_dir():
+        kept = ("Your answers were saved in the lasting copy (%s)." % durable
+                if durable is not None and durable.is_file() else
+                "Your answers could NOT be saved anywhere: write them down.")
+        raise ReviewFolderGone(
+            "%s has left this queue (its folder %s is gone): the watcher or another "
+            "window moved it while it was open here. %s Nothing was written into the "
+            "queue. Load the next video." % (video_stem, output_dir, kept))
+    try:
+        if create_folder:
+            _write_json(out_path, doc)
+        else:
+            _write_json(out_path, doc, make_folder=False)
+    except FileNotFoundError:
+        if create_folder:
+            raise
+        raise ReviewFolderGone(
+            "%s has left this queue (its folder %s is gone) while it was being saved. "
+            "Your answers were kept in the lasting copy where one is configured. "
+            "Load the next video." % (video_stem, output_dir))
     return out_path
 
 
