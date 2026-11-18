@@ -93,9 +93,11 @@ mousereach-crop -i path/to/collage.mkv -o output_folder/
 mousereach-crop -i /path/to/Unanalyzed/Multi-Animal/ -o /path/to/Unanalyzed/Single_Animal/
 ```
 
-**Option C: Crop and queue for DLC**
+**Option C: Crop and hand the videos on for pose**
 ```bash
 mousereach-crop -i input_folder/ -o output_folder/ --queue
+# --queue copies each cut video into the shared singles folder, where a
+# graphics-card PC's watcher claims and poses it. Nothing goes into a DLC queue.
 ```
 
 ### Output
@@ -520,7 +522,7 @@ opened on their own (`mousereach-segment-review`, `mousereach-review-reaches`,
 
 ```bash
 # 1. Crop collages
-mousereach-crop -i Multi-Animal/ -o Single_Animal/ --queue
+mousereach-crop -i Multi-Animal/ -o Single_Animal/ --queue   # hands the cut videos to the pose step (shared singles folder)
 
 # 2. Run DLC (use your preferred method)
 # ... DLC processing ...
