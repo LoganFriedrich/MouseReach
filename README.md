@@ -232,6 +232,14 @@ mousereach-export -i Processing/ -o results.xlsx
 mousereach-summary -i Processing/
 ```
 
+Both read each video's `<video>_features.json` -- the result with every
+person's answer (review, ground truth) applied -- never the algorithm's own
+outcome file. A video without a features file yet (its kinematics have not run,
+or were held) is left out, and the command names it. The same holds for
+`mousereach-quick-summary`, `mousereach-real-kinematics` and
+`mousereach-aspa-sync`; `mousereach-reach-export` still gives basic rows for
+such a video and names them as the algorithm's own calls.
+
 ---
 
 ## Automated Watcher

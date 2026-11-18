@@ -427,7 +427,7 @@ Older code wrote the header from `ALL_COLUMNS` while the rows came from that sep
 
 ### `mousereach-reach-export`
 
-`kinematics/analysis/reach_export.py`. The command (`main`, `:292-301`) writes **one aggregate file**, `reach_kinematics.csv`, beside the Processing directory. It does not write `{video}_results.csv` and does not write cohort CSVs. Those are separate functions: `write_video_results_csv` (`:239-253`) is called only from `pipeline/reprocess_to_current.py:267`, and `export_cohort` (`:267-289`) has no caller anywhere in `src/`.
+`kinematics/analysis/reach_export.py`. The command (`main`, `:292-301`) writes **one aggregate file**, `reach_kinematics.csv`, beside the Processing directory. Its rows come from each video's `_features.json`; a video in Processing with no features file yet gets basic rows from its `_reaches.json` and `_pellet_outcomes.json` -- the algorithm's own calls before any person's answer, labelled `outcome_source` `algo` -- and the command prints the names of those videos so nobody takes their rows for results. It does not write `{video}_results.csv` and does not write cohort CSVs. Those are separate functions: `write_video_results_csv` (`:239-253`) is called only from `pipeline/reprocess_to_current.py:267`, and `export_cohort` (`:267-289`) has no caller anywhere in `src/`.
 
 The column list is not fixed. `write_csv` (`:218-236`) walks every row and appends every key not already in `STATIC_COLUMNS` (`:24-62`), so `fieldnames` is a superset of everything present and the `extrasaction="ignore"` at `:232` can never drop anything. All 161 extended values are carried.
 

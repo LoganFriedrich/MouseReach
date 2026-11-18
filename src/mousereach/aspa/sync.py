@@ -5,11 +5,14 @@ After reprocessing, results land in:
     Analyzed/ASPA/{cohort}/   (on NAS)
 
 For each video, reads:
-    {video_id}_reaches.json
-    {video_id}_features.json           (kinematics - optional)
-    {video_id}_pellet_outcomes.json    (outcomes per reach)
+    {video_id}_features.json           (the rows: reaches, outcomes and
+                                        kinematics with every person's answer
+                                        applied -- required)
+    {video_id}_reaches.json            (version metadata only)
+    {video_id}_pellet_outcomes.json    (outcome detector version only)
 
-and inserts rows into mousereach_reaches.
+and inserts rows into mousereach_reaches. A video without a features file is
+not synced (its kinematics have not run, or were held) and is named.
 
 CLI:
     mousereach-aspa-sync [--cohort H] [--all]
@@ -97,7 +100,38 @@ def _build_reach_rows(
     if reaches_data is None:
         return []
 
+    # The rows come from the features file when there is one: its reaches and
+    # outcomes are the video's result with every person's answer applied
+    # (ground-truth reach boundaries, reviewed outcomes, ignore windows and
+    # exclusions), and its kinematics belong to exactly those reaches. The
+    # reaches file is the algorithm's list before any of that, and joining the
+    # two by (segment, reach number) paired the wrong reaches whenever the
+    # truth layering renumbered them. The reaches file still supplies the
+    # version metadata.
     meta = _extract_meta(reaches_data)
+    if isinstance(features_data, dict) and features_data.get("segments") is not None:
+        return [{
+            "video_id":                 video_id,
+            "cohort":                   cohort,
+            "animal_id":                animal_id,
+            "segment_num":              _safe_int(seg.get("segment_num")),
+            "reach_num":                _safe_int(r.get("reach_num")),
+            "start_frame":              _safe_int(r.get("start_frame")),
+            "end_frame":                _safe_int(r.get("end_frame")),
+            "apex_frame":               _safe_int(r.get("apex_frame")),
+            "duration_frames":          _safe_int(r.get("duration_frames")),
+            # The reach's own outcome: set on the causal reach only.
+            "outcome":                  r.get("outcome"),
+            "max_extent_mm":            _safe_float(r.get("max_extent_mm")),
+            "velocity_at_apex":         _safe_float(r.get("velocity_at_apex")),
+            "trajectory_straightness":  _safe_float(r.get("trajectory_straightness")),
+            "mousereach_version":       meta.get("mousereach_version"),
+            "dlc_scorer":               meta.get("dlc_scorer"),
+            "segmenter_version":        meta.get("segmenter_version"),
+            "reach_detector_version":   meta.get("reach_detector_version"),
+            "outcome_detector_version": outcome_detector_version,
+            "processed_by":             meta.get("processed_by"),
+        } for seg in features_data.get("segments") or [] for r in seg.get("reaches") or []]
 
     # Build outcome lookup: (segment_num, reach_num) -> outcome
     outcome_lookup: Dict[Tuple, str] = {}
@@ -193,9 +227,20 @@ def sync_video(
         if reaches_path is None:
             return 0
 
+    # No features file: the video has no result with the person's answers
+    # applied yet (kinematics not run, or held), so nothing is synced rather
+    # than the algorithm's own calls (_build_reach_rows says why).
+    if not features_path.exists():
+        print(f"    [!] {video_id}: not synced -- no {video_id}_features.json "
+              f"(kinematics not run or held)")
+        return 0
+
     reaches_data  = _load_json(reaches_path)
     outcomes_data = _load_json(outcomes_path) if outcomes_path.exists() else None
-    features_data = _load_json(features_path) if features_path.exists() else None
+    features_data = _load_json(features_path)
+    if features_data is None:
+        print(f"    [!] {video_id}: not synced -- its features file could not be read")
+        return 0
 
     od_version = None
     if outcomes_data and isinstance(outcomes_data, dict):
@@ -327,7 +372,10 @@ def find_reprocessed_videos(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sync mousereach reprocessing results into ASPA.db."
+        description="Sync mousereach reprocessing results into ASPA.db. Each "
+                    "video's rows come from its _features.json (its reaches and "
+                    "outcomes with every person's answer applied); a video "
+                    "without a features file is not synced and is named."
     )
 
     group = parser.add_mutually_exclusive_group(required=True)

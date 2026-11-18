@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 Summary statistics - Generate aggregate statistics
+
+Counts each video's resolved result (``*_features.json``: the algorithm's calls
+with every person's answer applied), never the algorithm's own
+``*_pellet_outcomes.json`` (export.resolved says why).
 """
 
-import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 import json
 from datetime import datetime
 
@@ -13,34 +16,29 @@ from datetime import datetime
 def compile_results(input_dir: Path) -> Dict:
     """
     Compile all results from a directory.
-    
+
     Returns dict with:
-    - videos: List of video results
+    - videos: List of video results (each video's features file)
     - summary: Aggregate statistics
-    - metadata: Compilation info
+    - metadata: Compilation info, including ``left_out``: the videos with
+      algorithm files but no features file, each with the reason
     """
-    videos = []
-    
-    # Load pellet outcomes
-    for outcome_file in sorted(input_dir.glob("*_pellet_outcomes.json")):
-        with open(outcome_file) as f:
-            videos.append(json.load(f))
-    
-    # Calculate summary
-    total_segments = sum(v.get('n_segments', 0) for v in videos)
-    total_retrieved = sum(
-        sum(1 for s in v.get('segments', []) if s.get('outcome') == 'RETRIEVED')
-        for v in videos
-    )
-    total_displaced = sum(
-        sum(1 for s in v.get('segments', []) if s.get('outcome') == 'DISPLACED')
-        for v in videos
-    )
-    total_missed = sum(
-        sum(1 for s in v.get('segments', []) if s.get('outcome') == 'MISSED')
-        for v in videos
-    )
-    
+    from mousereach.export.resolved import load_resolved_videos
+    videos, left_out = load_resolved_videos(Path(input_dir))
+
+    def _count(outcomes):
+        return sum(sum(1 for s in v.get('segments', []) if s.get('outcome') in outcomes)
+                   for v in videos)
+
+    # Lower-case pellet words, as every outcome file holds them. (The counts
+    # once compared against 'RETRIEVED', 'DISPLACED' and 'MISSED', which no
+    # file holds, so every count was 0.) 'displaced' counts both kinds;
+    # 'missed' is the untouched pellet.
+    total_segments = sum(len(v.get('segments', [])) for v in videos)
+    total_retrieved = _count(('retrieved',))
+    total_displaced = _count(('displaced_sa', 'displaced_outside'))
+    total_missed = _count(('untouched',))
+
     return {
         'videos': videos,
         'summary': {
@@ -53,7 +51,9 @@ def compile_results(input_dir: Path) -> Dict:
         },
         'metadata': {
             'compiled_at': datetime.now().isoformat(),
-            'source_dir': str(input_dir)
+            'source_dir': str(input_dir),
+            'source': "features files (every person's answer applied)",
+            'left_out': left_out,
         }
     }
 
@@ -61,7 +61,7 @@ def compile_results(input_dir: Path) -> Dict:
 def generate_summary(input_dir: Path, output_path: Optional[Path] = None) -> Dict:
     """Generate summary statistics and optionally save."""
     results = compile_results(input_dir)
-    
+
     if output_path:
         with open(output_path, 'w') as f:
             # Don't include full video data in summary file
@@ -71,5 +71,5 @@ def generate_summary(input_dir: Path, output_path: Optional[Path] = None) -> Dic
                 'video_names': [v.get('video_name') for v in results['videos']]
             }
             json.dump(summary_data, f, indent=2)
-    
+
     return results

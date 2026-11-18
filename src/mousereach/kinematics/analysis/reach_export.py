@@ -299,7 +299,12 @@ def main() -> None:
         print("usage: mousereach-reach-export\n\n"
               "Export every reach in the local Processing folder to "
               "reach_kinematics.csv (one row per reach, next to Processing). "
-              "Takes no options; runs immediately.")
+              "Rows come from each video's _features.json, the result with "
+              "every person's answer applied. A video with no features file "
+              "yet gets basic rows from its _reaches.json and "
+              "_pellet_outcomes.json: the ALGORITHM'S OWN CALLS before any "
+              "person's answer (outcome_source 'algo'); the command names "
+              "those videos. Takes no options; runs immediately.")
         return
     processing = Paths.PROCESSING
     output_csv = processing.parent / "reach_kinematics.csv"
@@ -309,6 +314,16 @@ def main() -> None:
         return
     fieldnames = write_csv(rows, output_csv)
     print(f"Exported {len(rows)} reaches to: {output_csv}")
+    # Say which rows are the algorithm's calls before any person's answer
+    # (collect_rows' fallback), so nobody takes them for results.
+    have = {f.stem.replace("_features", "") for f in processing.glob("*_features.json")}
+    algo_only = sorted({r["video"] for r in rows if r.get("video") not in have})
+    if algo_only:
+        print(f"[!] {len(algo_only)} video(s) have no features file yet; their rows are "
+              f"the algorithm's own calls before any person's answer "
+              f"(outcome_source 'algo'):")
+        for v in algo_only:
+            print(f"    {v}")
     print(f"Columns: {len(fieldnames)} (static: {len(STATIC_COLUMNS)}, extended: {len(fieldnames) - len(STATIC_COLUMNS)})")
 
     # Quick stats per outcome.

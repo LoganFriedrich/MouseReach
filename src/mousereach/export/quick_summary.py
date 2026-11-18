@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Quick summary for PI - run this to generate a CSV and stats"""
+"""Quick summary for PI - run this to generate a CSV and stats.
 
-import json
-from pathlib import Path
+Reads each video's _features.json in the local Processing folder: the result
+with every person's answer applied. A video without a features file (its
+kinematics have not run, or were held) is left out and named.
+"""
+
 from collections import Counter
 import csv
 
@@ -15,6 +18,7 @@ def main():
     import argparse
     argparse.ArgumentParser(description=__doc__,
                             formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
+    from mousereach.export.resolved import load_resolved_videos, print_left_out
     PROCESSING = Paths.PROCESSING
     OUTPUT_CSV = PROCESSING.parent / "summary_for_PI.csv"
 
@@ -27,27 +31,20 @@ def main():
     print("MOUSEREACH SUMMARY")
     print("=" * 60)
 
-    # Process each outcome file
-    for outcome_file in sorted(PROCESSING.glob("*_pellet_outcomes.json")):
-        video_name = outcome_file.stem.replace("_pellet_outcomes", "")
-
-        with open(outcome_file) as f:
-            data = json.load(f)
-
-        # Get matching reaches file
-        reaches_file = PROCESSING / f"{video_name}_reaches.json"
-        n_reaches = 0
-        if reaches_file.exists():
-            with open(reaches_file) as f:
-                reach_data = json.load(f)
-                # Count reaches across all segments
-                for seg in reach_data.get("segments", []):
-                    n_reaches += len(seg.get("reaches", []))
-
-        # Count outcomes
+    # WHY the features files: the pellet-outcomes file is the algorithm's call
+    # before any person's answer, so a pellet a reviewer corrected was counted
+    # with the algorithm's call (export.resolved).
+    videos, left_out = load_resolved_videos(PROCESSING)
+    for data in videos:
+        video_name = data.get("video_name")
         segments = data.get("segments", [])
+        # Reaches measured, plus those a person took out of the measurements
+        # (ignore window or exclusion) -- every reach that happened.
+        n_reaches = sum(len(s.get("reaches") or []) + int(s.get("n_reaches_left_out") or 0)
+                        for s in segments)
+
         n_segments = len(segments)
-        outcomes = [s.get("outcome", "unknown") for s in segments]
+        outcomes = [s.get("outcome") or "unknown" for s in segments]
 
         for o in outcomes:
             outcome_counts[o] += 1
@@ -70,6 +67,11 @@ def main():
         total_reaches += n_reaches
         total_segments += n_segments
 
+    print_left_out(left_out)
+    if not rows:
+        print("\nNo resolved results found.")
+        return
+
     # Write CSV
     with open(OUTPUT_CSV, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
@@ -78,7 +80,7 @@ def main():
 
     print(f"\nProcessed {len(rows)} videos")
     print(f"Total segments (trials): {total_segments}")
-    print(f"Total reaches detected: {total_reaches}")
+    print(f"Total reaches: {total_reaches}")
     print(f"\nOUTCOME BREAKDOWN:")
     print("-" * 40)
     for outcome, count in sorted(outcome_counts.items()):

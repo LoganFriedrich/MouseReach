@@ -1261,7 +1261,9 @@ options:
 ```
 usage: mousereach-export [-h] -i INPUT -o OUTPUT [--format {excel,csv}]
 
-Export MouseReach results
+Export MouseReach results: one row per pellet, from each video's
+_features.json (the result with every person's answer applied). A video
+without a features file is left out and named.
 
 options:
   -h, --help            show this help message and exit
@@ -1277,7 +1279,9 @@ options:
 ```
 usage: mousereach-summary [-h] -i INPUT [-o OUTPUT]
 
-Generate summary statistics
+Generate summary statistics from each video's _features.json (the result with
+every person's answer applied). A video without a features file is left out
+and named.
 
 options:
   -h, --help            show this help message and exit
@@ -1436,7 +1440,11 @@ options:
 ```
 usage: mousereach-quick-summary [-h]
 
-Quick summary for PI - run this to generate a CSV and stats
+Quick summary for PI - run this to generate a CSV and stats.
+
+Reads each video's _features.json in the local Processing folder: the result
+with every person's answer applied. A video without a features file (its
+kinematics have not run, or were held) is left out and named.
 
 options:
   -h, --help  show this help message and exit
@@ -1460,7 +1468,7 @@ options:
 ```
 usage: mousereach-reach-export
 
-Export every reach in the local Processing folder to reach_kinematics.csv (one row per reach, next to Processing). Takes no options; runs immediately.
+Export every reach in the local Processing folder to reach_kinematics.csv (one row per reach, next to Processing). Rows come from each video's _features.json, the result with every person's answer applied. A video with no features file yet gets basic rows from its _reaches.json and _pellet_outcomes.json: the ALGORITHM'S OWN CALLS before any person's answer (outcome_source 'algo'); the command names those videos. Takes no options; runs immediately.
 ```
 
 ### `mousereach-real-kinematics`
@@ -1468,7 +1476,7 @@ Export every reach in the local Processing folder to reach_kinematics.csv (one r
 ```
 usage: mousereach-real-kinematics
 
-Compute kinematics from the DLC pose for every _reaches.json in the local Processing folder, writing real_kinematics.csv next to Processing. Takes no options; runs immediately.
+Compute kinematics from the DLC pose for the reaches in every _features.json in the local Processing folder (the reaches and pellet outcomes with every person's answer applied), writing real_kinematics.csv next to Processing. A video without a features file is left out and named. Takes no options; runs immediately.
 ```
 
 ## Performance Tracking
@@ -2476,7 +2484,9 @@ singles into the singles intake instead.
 usage: mousereach-aspa-sync [-h] (--cohort COHORT | --all) [--db-path PATH]
                             [--dry-run]
 
-Sync mousereach reprocessing results into ASPA.db.
+Sync mousereach reprocessing results into ASPA.db. Each video's rows come from
+its _features.json (its reaches and outcomes with every person's answer
+applied); a video without a features file is not synced and is named.
 
 options:
   -h, --help       show this help message and exit

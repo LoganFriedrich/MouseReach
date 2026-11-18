@@ -125,10 +125,14 @@ def main():
     import sys
     if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
         print("usage: mousereach-real-kinematics\n\n"
-              "Compute kinematics from the DLC pose for every _reaches.json in "
-              "the local Processing folder, writing real_kinematics.csv next "
-              "to Processing. Takes no options; runs immediately.")
+              "Compute kinematics from the DLC pose for the reaches in every "
+              "_features.json in the local Processing folder (the reaches and "
+              "pellet outcomes with every person's answer applied), writing "
+              "real_kinematics.csv next to Processing. A video without a "
+              "features file is left out and named. Takes no options; runs "
+              "immediately.")
         return
+    from mousereach.export.resolved import load_resolved_videos, print_left_out
     PROCESSING = Paths.PROCESSING
     OUTPUT_CSV = PROCESSING.parent / "real_kinematics.csv"
 
@@ -136,8 +140,15 @@ def main():
 
     print("Computing real kinematics from DLC data...")
 
-    for reaches_file in sorted(PROCESSING.glob("*_reaches.json")):
-        video_name = reaches_file.stem.replace("_reaches", "")
+    # WHY the features files: they hold each video's reaches and outcomes with
+    # every person's answer applied (ground-truth boundaries, reviewed
+    # outcomes, ignore windows and exclusions). The _reaches.json and
+    # _pellet_outcomes.json files are the algorithm's own calls before any of
+    # that (export.resolved).
+    videos, left_out = load_resolved_videos(PROCESSING)
+    print_left_out(left_out)
+    for reach_data in videos:
+        video_name = reach_data.get("video_name")
         print(f"  Processing {video_name}...")
 
         # Find DLC file
@@ -148,23 +159,11 @@ def main():
 
         dlc_df = load_dlc_data(dlc_files[0])
 
-        # Load reaches
-        with open(reaches_file) as f:
-            reach_data = json.load(f)
-
-        # Load outcomes
-        outcome_file = PROCESSING / f"{video_name}_pellet_outcomes.json"
-        outcomes_by_seg = {}
-        if outcome_file.exists():
-            with open(outcome_file) as f:
-                for seg in json.load(f).get("segments", []):
-                    outcomes_by_seg[seg["segment_num"]] = seg.get("outcome", "unknown")
-
         # Process each reach
         for seg in reach_data.get("segments", []):
             seg_num = seg["segment_num"]
-            outcome = outcomes_by_seg.get(seg_num, "unknown")
-            ruler_px = seg.get("ruler_pixels", 34.3)
+            outcome = seg.get("outcome") or "unknown"
+            ruler_px = seg.get("ruler_pixels") or 34.3
 
             for reach in seg.get("reaches", []):
                 start = reach.get("start_frame")

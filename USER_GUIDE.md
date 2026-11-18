@@ -434,7 +434,11 @@ Contains per-reach:
 **Goal:** Generate analysis-ready spreadsheets from processed data.
 
 ### Input
-- Validated outcome files from Step 4
+- Each video's `<video>_features.json` (written by the kinematics step): the
+  result with every person's answer applied. A video that has no features file
+  yet is left out of the export, and the command prints its name and why.
+  Outcomes are counted with the pipeline's own words (retrieved, displaced_sa,
+  displaced_outside, untouched).
 
 ### Process
 

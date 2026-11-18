@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 """
 Data export - Export MouseReach results to Excel/CSV
+
+Reads each video's ``*_features.json`` -- its result with every person's answer
+applied -- never the algorithm's ``*_pellet_outcomes.json`` (export.resolved
+says why). Videos without a features file are left out and named.
 """
 
 import pandas as pd
 from pathlib import Path
 from typing import List, Optional
-import json
 
 
-def load_all_results(input_dir: Path) -> List[dict]:
-    """Load all outcome JSON files from a directory."""
-    results = []
-    
-    for outcome_file in input_dir.glob("*_pellet_outcomes.json"):
-        with open(outcome_file) as f:
-            data = json.load(f)
-            results.append(data)
-    
+def load_all_results(input_dir: Path, left_out: Optional[list] = None) -> List[dict]:
+    """Load every video's resolved result (``*_features.json``) in a directory.
+
+    ``left_out``, when a list, receives each video that has algorithm files
+    but no readable features file, with the reason (export.resolved)."""
+    from mousereach.export.resolved import load_resolved_videos
+    results, skipped = load_resolved_videos(Path(input_dir))
+    if left_out is not None:
+        left_out.extend(skipped)
     return results
 
 
@@ -56,7 +59,7 @@ def results_to_dataframe(results: List[dict]) -> pd.DataFrame:
                 'session': session,
                 'segment_num': segment.get('segment_num'),
                 'outcome': segment.get('outcome'),
-                'confidence': segment.get('confidence'),
+                'confidence': segment.get('outcome_confidence'),
                 'n_reaches': segment.get('n_reaches', 0),
                 'causal_reach_id': segment.get('causal_reach_id'),
             }
@@ -80,10 +83,12 @@ def export_to_excel(
     """
     df_details = results_to_dataframe(results)
     
-    # Summary by video
+    # Summary by video. Outcome names are the pipeline's lower-case pellet
+    # words (the counts once compared against 'RETRIEVED', 'DISPLACED' and
+    # 'MISSED', which no file holds, so every count was 0).
     df_summary = df_details.groupby('video_name').agg({
         'segment_num': 'count',
-        'outcome': lambda x: (x == 'RETRIEVED').sum(),
+        'outcome': lambda x: (x == 'retrieved').sum(),
         'confidence': 'mean',
         'n_reaches': 'sum'
     }).rename(columns={
@@ -93,9 +98,8 @@ def export_to_excel(
         'n_reaches': 'total_reaches'
     })
     
-    # Add displaced, missed counts
-    for outcome in ['DISPLACED', 'MISSED']:
-        df_summary[f'n_{outcome.lower()}'] = df_details[df_details['outcome'] == outcome].groupby('video_name').size()
+    for outcome in ['displaced_sa', 'displaced_outside', 'untouched']:
+        df_summary[f'n_{outcome}'] = df_details[df_details['outcome'] == outcome].groupby('video_name').size()
     df_summary = df_summary.fillna(0)
     
     # Calculate success rate
