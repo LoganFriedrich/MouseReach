@@ -1463,11 +1463,11 @@ Returning moves the bundle's data files, including the review file, into the loc
 
 **A triage bundle with zero triaged elements never leaves.** The return condition requires `st.has_triage` (`:247`), so a bundle whose triage flags were cleared by some other route sits in the folder indefinitely.
 
-### The scan-free queue index (no longer read by the tool)
+### The queue index (removed)
 
-`queue_index.py` keeps a SQLite list at `{NAS}/review_records/triage_queue.db` of videos needing review. It is push/pop: `push` is called only from the bring-current path (`reprocess_to_current._push_review_index`), never by the live watcher, and `pop` happens in the tool when a video's triaged elements are all resolved (best-effort).
+There used to be a SQLite list of the videos waiting in the triage queue, at `{NAS}/review_records/triage_queue.db` (`review/queue_index.py`). The bring-current routine added a row when it staged a bundle and the review window removed one on every *Save & Next*, but nothing had read the list since the window started listing the queue folder itself (see "How a video is chosen"). It has been removed: no tool writes or reads it.
 
-Until 2026-10-23 the tool READ this list at launch and, if it held any row for the queue folder, offered only those rows -- so one row pushed by bring-current hid every video the watcher had routed there. A single row for a bundle long gone was enough to make every launch fall back to reading every bundle, which is slow on a large queue. The tool now lists the queue folder instead (see "How a video is chosen"); the list is still popped, but nothing reads it.
+WHY it was removed rather than left alone: a SQLite database in WAL mode on a shared network drive, written by more than one machine, can lock or corrupt, and it did nothing. What this means for an operator: nothing changes in how videos are offered. A `triage_queue.db` file already on the shared drive is now inert. Keep it (move it to an archive folder if it is in the way); it is never deleted, and nothing will recreate it.
 
 ### The session flag button (FIXED 2026-08-28 -- it used to do the opposite of what it says)
 
@@ -1507,7 +1507,7 @@ deletes or overwrites a person's file").
 said it marks every video of that mouse+day as must-be-human-reviewed, and the toast said
 "all its videos need human review". `flag_session` wrote the session key to
 `flagged_sessions.json` and that was the entire effect. Two pieces of code read that file:
-`_bundle_needs_review` and the never-called `seed_from_folder` (`queue_index.py`; its skip was removed later too).
+`_bundle_needs_review` and the never-called `seed_from_folder` (`queue_index.py`, since removed with the queue index).
 The first one did this:
 
 ```python
@@ -1624,7 +1624,6 @@ Two different lookups, with different rules:
 Stated here so nobody rediscovers it the hard way:
 
 - `review/AGENTS.md:86-89` calls `TriageClearingWidget` the routine tool and maps it to `mousereach-review-tool`. That command is the causal review widget; the clearing tool is `mousereach-triage-clearing`.
-- `queue_index.py:7` says "The tool MOVES a fully-reviewed video OUT of the folder". The tool removes the database row only; the watcher moves the folder.
 - `triage_clearing.py:14` and `unified_widget.py:17` both claim `mousereach-review-tool`.
 - `causal_review_widget.py:2509-2510` describes `_review_root()` as `Processing/Review/triage`. It returns the parent of the queue folder, `Processing/Review`, which is where `flagged_sessions.json` actually lives.
 - `pyproject.toml:120-123` says the ground-truth triage resolver runs as a pipeline step. It does not.

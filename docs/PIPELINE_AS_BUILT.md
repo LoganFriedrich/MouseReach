@@ -694,7 +694,7 @@ bundle (`triage_status`) before all its files had arrived.
 
 WHY a dot-folder under the queue root: the queue readers that judge, retire or
 release bundles (`review_return._bundles`, census `bundles_in` and
-`review_completeness`, dashboard `folder_scan`, `release_cli`, `queue_index`,
+`review_completeness`, dashboard `folder_scan`, `release_cli`,
 `reconcile`) skip names starting with ".", so a bundle being filled is neither
 an empty folder to retire nor a bundle to judge; and staying under the queue
 root keeps the rename on one volume, where a directory rename is a single step.

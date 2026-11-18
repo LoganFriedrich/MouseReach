@@ -1,6 +1,6 @@
 # Reach Assignment — Which Reach Caused the Outcome
 
-Describes: `src/mousereach/assignment/` (`run.py`, `cli.py`, `v1/assign.py`, `v2/assign.py`, `v2/triage_reduction.py`), plus the callers that write and read its output file (`src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/triage_queue.py`, `src/mousereach/review/qc_pool.py`, `src/mousereach/review/queue_index.py`, `src/mousereach/review/causal_review_widget.py`, `src/mousereach/pipeline/manifest.py`, `src/mousereach/archive/supersede.py`)
+Describes: `src/mousereach/assignment/` (`run.py`, `cli.py`, `v1/assign.py`, `v2/assign.py`, `v2/triage_reduction.py`), plus the callers that write and read its output file (`src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/triage_queue.py`, `src/mousereach/review/qc_pool.py`, `src/mousereach/review/causal_review_widget.py`, `src/mousereach/pipeline/manifest.py`, `src/mousereach/archive/supersede.py`)
 
 Verified against: b65fcf0 (2026-08-23)
 
@@ -253,7 +253,7 @@ So the two-signal agreement gate — the thing this stage exists to provide — 
 
 - **Triage routing.** `review/triage_status.py:59-67` collects the segment numbers that have a committed causal reach, using `is_causal` and `segment_num` only — it never looks at `label`. `triaged_segments` (`:70-95`) then treats a touched segment with no committed causal reach as triaged, which sends the video to human review through the gate (`watcher/review_gate.py:83`).
 - **The worklist builder.** `review/triage_queue.py:96-111` `_causal_segments` accepts either `is_causal` or a `label` starting with `causal`, so it is a slightly wider test than `triage_status`'s. It flags any touched segment not in that set (`:203-205`, `:213`). `review/qc_pool.py:106-112` uses the same wider test to build the quality-control pool.
-- **The review tool.** `review/causal_review_widget.py:878` loads the file, `:996-999` indexes it by segment, `:1059-1068` picks out the committed reach for display; `:2580-2581` and `:2639-2641` use it to decide whether a bundle still has anything to review. `review/queue_index.py:156-158` does the same for the queue listing.
+- **The review tool.** `review/causal_review_widget.py:878` loads the file, `:996-999` indexes it by segment, `:1059-1068` picks out the committed reach for display; `:2580-2581` and `:2639-2641` use it to decide whether a bundle still has anything to review.
 - **Version tracking.** `pipeline/manifest.py:156` reads the top-level `version` key into the processing manifest, so a video can be marked stale when this stage's version changes. The declared current value lives in `<nas_root>/pipeline_versions.json` (`"assignment": "2.1.0"`).
 - **Archiving.** `archive/supersede.py:49-52` moves the file aside on reprocess rather than overwriting it.
 - **Auditing and evaluation.** `pipeline/field_audit.py:61`. (Per-reach Sankey evaluation lives in the improvement accessory tool, outside this repo.)

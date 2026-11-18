@@ -148,6 +148,21 @@ def review_complete(records) -> bool:
     return bool(records) and all(is_answered(r) for r in records)
 
 
+def _seg_doc(bundle, stem: str):
+    """The bundle's segments document, or None. Answers are counted by the
+    frames they match in it (triage_status.resolved_segments).
+
+    WHY it lives here: it used to sit in review/queue_index, a SQLite list of
+    videos waiting in the triage queue that nothing read any more (the window
+    lists the queue folder itself). That module is gone; this helper was the
+    only part of it still in use."""
+    p = Path(bundle) / f"{stem}_segments.json"
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
+    except Exception:
+        return None
+
+
 def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
     """Is this bundle's review finished, as the review window judges it when
     choosing what to show? Read through effective_review: every copy in
@@ -163,7 +178,6 @@ def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
     answer only the durable copy held, was judged differently here than by
     the window's own restore and the release check."""
     from .triage_status import resolved_segments, triaged_segments
-    from mousereach.review.queue_index import _seg_doc
     bundle_dir = Path(bundle_dir)
     seg_doc = _seg_doc(bundle_dir, stem)
     doc = effective_review(stem, dirs, seg_doc)
@@ -3497,25 +3511,12 @@ The notes box travels with the video.
         if getattr(self, "video_path", None) and getattr(self, "_video_stem", None):
             if self._save_review() is False:
                 return   # the reviewer chose to take another look
-        self._pop_from_index_if_resolved()
+        # No queue index is touched here. WHY: the old SQLite list of queued
+        # videos (review_records/triage_queue.db on the shared drive) was
+        # written on every save-and-next but read by nothing -- the next video
+        # comes from listing the queue folder -- and a SQLite database in WAL
+        # mode on a network share is a lock and corruption risk for no gain.
         self._load_next_video()
-
-    def _pop_from_index_if_resolved(self):
-        """When the current video's triaged elements are ALL resolved, remove it
-        from the scan-free queue index so it is not offered again in future
-        sessions (this session already excludes it via _reviewed_this_session).
-        Best-effort -- the index is rebuildable, so a missed pop self-heals."""
-        stem = getattr(self, "_video_stem", None)
-        bundle = getattr(self, "_bundle_dir", None)
-        if not stem or bundle is None:
-            return
-        try:
-            from .triage_status import triage_status
-            from .queue_index import QueueIndex
-            if triage_status(Path(bundle), stem).fully_resolved:
-                QueueIndex().pop(str(stem))
-        except Exception:
-            pass
 
     def _save_review(self):
         """Save all accumulated review records to the per-video file + index."""

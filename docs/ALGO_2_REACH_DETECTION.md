@@ -336,7 +336,7 @@ opening the code yourself.** Everything not listed survived two passes.
 - **"comparison_panel.py - a shared side-by-side panel used by the outcome step's own review widget (outcomes/review_widget.py:481-487), not by anything in this folder."**
   - disputed because: Understates the consumers: three per-step review widgets use ComparisonPanel, not one. The citation resolves and the 'not by anything in this folder' half is correct, but naming only the outcome step reads as exclusive - and the parallel bullet about SimpleSavePanel correctly says 'the three per-step review widgets'.
 - citation could not be resolved: `causal_review_widget.py:2665-2666 - cited twice (in 'How a video is chosen' and in 'Re-segmentation Review') as 'the failed-segmentation skip'. Those two lines are `for b `
-- citation could not be resolved: `reprocess_to_current.py:108 - cited for `_push_review_index`. Line 108 is blank; the def is at :109. (The companion citation ':114-115' for the re-segmentation skip`
+- citation could not be resolved (and `_push_review_index` has since been removed with the queue index): `reprocess_to_current.py:108 - cited for `_push_review_index`. Line 108 is blank; the def is at :109. (The companion citation ':114-115' for the re-segmentation skip`
 - citation could not be resolved: `pyproject.toml:106 - cited for the `mousereach-review-tool` command name (twice: 'Command names come from pyproject.toml:106...' and 'that name has pointed at t`
 - citation could not be resolved: `review/__init__.py:116-119 - cited for the base.py re-export. The import statement spans :117-120; :116 is blank. Separately, the bullet lists AlgoGTReviewMixin`
 

@@ -170,11 +170,11 @@ def _no_real_filing_rules(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_real_shared_indexes(monkeypatch, tmp_path_factory):
-    """No test opens this machine's shared SQLite indexes by default path: the
-    version index (pipeline/version_index.py) and the triage queue index
-    (review/queue_index.py). Both find their file from config.Paths when no
-    path is given, and both are written as a side effect of ordinary calls
-    (writing a processing manifest updates the version index).
+    """No test opens this machine's shared SQLite index by default path: the
+    version index (pipeline/version_index.py). It finds its file from
+    config.Paths when no path is given, and it is written as a side effect of
+    ordinary calls (writing a processing manifest updates it). (A second one,
+    the triage queue index, was removed: nothing read it.)
 
     WHY, when the audit guard above already watches sqlite3.connect: the guard
     reports a write AFTER it has happened, and only on a machine whose real
@@ -205,6 +205,4 @@ def _no_real_shared_indexes(monkeypatch, tmp_path_factory):
         monkeypatch.setattr(module, "default_index_path", default_index_path)
 
     import mousereach.pipeline.version_index as version_index
-    import mousereach.review.queue_index as queue_index
     _guarded(version_index, "version_index.db")
-    _guarded(queue_index, "triage_queue.db")

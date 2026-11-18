@@ -40,11 +40,6 @@ def test_the_version_index_default_is_never_under_an_unpatched_root(unpatched_ro
     assert not (unpatched_root / "pipeline_records").exists()
 
 
-def test_the_triage_queue_index_default_is_never_under_an_unpatched_root(unpatched_root):
-    import mousereach.review.queue_index as queue_index
-    assert unpatched_root not in Path(queue_index.default_index_path()).parents
-
-
 def test_a_root_under_tmp_path_keeps_its_own_index(tmp_path, monkeypatch):
     """A test that does point Paths at tmp_path gets the path it expects."""
     import mousereach.pipeline.version_index as version_index

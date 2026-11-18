@@ -51,7 +51,7 @@ from mousereach.pipeline.fsutil import VIDEO_NAME_BOUNDARY as _BOUNDARY_CHARS  #
 # before it is published into place by one rename. WHY a dot-folder: the queue
 # readers that judge, retire or release bundles skip names starting with "."
 # (review_return._bundles, census/review_completeness, dashboard/folder_scan,
-# review/release_cli, review/queue_index, watcher/reconcile), so a bundle that
+# review/release_cli, watcher/reconcile), so a bundle that
 # is still being filled can be neither retired as an empty dir nor judged as a
 # bundle. Other readers of the queue roots (collage_provenance,
 # reprocess_to_current's skip list, two review widgets) do NOT filter dot-

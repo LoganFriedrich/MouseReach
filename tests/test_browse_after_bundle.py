@@ -171,9 +171,6 @@ class _QueueWindow:
     def _save_review(self):
         self.saves.append(self._video_stem)
 
-    def _pop_from_index_if_resolved(self):
-        pass
-
     def _watcher_db_for_move(self):
         return None, ""
 
