@@ -9,7 +9,7 @@
 Every MouseReach tool should have **three levels of documentation**:
 
 1. **Quick Reference** - In-code docstrings and `--help` output
-2. **Tool README** - Step-specific README.md in each Step folder
+2. **Tool docs** - the stage and tool documents in docs/ (listed in docs/DOC_COVERAGE.json)
 3. **User Guide** - Comprehensive USER_GUIDE.md at project root
 
 When you modify any tool, **update all three levels**.
@@ -77,6 +77,11 @@ parser = argparse.ArgumentParser(
 )
 ```
 
+docs/CLI_REFERENCE.md is generated from every command's `--help` by
+`python -m mousereach.docs.generate_cli_reference` (rerun it after changing any
+help text; it overwrites the file). `mousereach-doc-check --install-hook` installs
+the commit hook that flags code changes whose documents were not touched.
+
 ### Function Docstrings
 
 Public functions need docstrings:
@@ -103,7 +108,7 @@ def process_video(path: Path, threshold: float = 0.5) -> dict:
 
 ## Level 2: Tool README (Step-Specific)
 
-Each `Step*/README.md` should contain:
+Each stage document in docs/ should contain:
 
 ### Required Sections
 
@@ -192,9 +197,9 @@ The root `USER_GUIDE.md` should:
 
 ### New Feature Added
 - [ ] Update relevant script docstring
-- [ ] Update Step README.md
+- [ ] Update the stage document in docs/
 - [ ] Update USER_GUIDE.md
-- [ ] Update MouseReach_README.md (if CLI changed)
+- [ ] Update README.md (if CLI changed)
 - [ ] Update INSTALL.md (if new dependencies)
 
 ### Bug Fixed
@@ -208,9 +213,9 @@ The root `USER_GUIDE.md` should:
 - [ ] Update USER_GUIDE examples
 
 ### New Step Added
-- [ ] Create Step*/README.md
+- [ ] Create the stage document in docs/
 - [ ] Add to USER_GUIDE.md
-- [ ] Add to MouseReach_README.md
+- [ ] Add to README.md
 - [ ] Update pipeline diagrams
 
 ---
@@ -263,13 +268,12 @@ Before any release:
 
 | File | Purpose | Update When |
 |------|---------|-------------|
-| `MouseReach_README.md` | Overview, CLI reference | Any CLI change |
+| `README.md` | Overview, CLI reference | Any CLI change |
 | `USER_GUIDE.md` | Full workflow guide | Any workflow change |
 | `INSTALL.md` | Installation | New dependencies |
-| `launch_all.py` | Launcher header | Launcher changes |
-| `mousereach_state.py` | State manager header | State changes |
-| `Step*/README.md` | Step-specific docs | That step changes |
+| `src/mousereach/launcher.py` | Launcher header | Launcher changes |
+| `src/mousereach/state.py` | State manager header | State changes |
 
 ---
 
-*MouseReach Documentation Guide | Updated 2025-01-05*
+*MouseReach Documentation Guide | Updated 2026-11-18*
