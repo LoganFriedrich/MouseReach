@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import copy
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,6 +44,7 @@ from napari.utils.notifications import show_info, show_warning, show_error
 from .keyboard import keep_typing_in_panel, review_keys_on_layer
 from . import double_disagreement as dd
 from .causal_review_io import (
+    _answer_signature,
     UNDECIDED_OUTCOMES,
     build_segment_record,
     is_answered,
@@ -1769,6 +1771,7 @@ The notes box travels with the video.
             self._update_triage_banner(self._routing_banner)
 
         # Pre-populate from saved record if re-visiting
+        self._restored_panel = None
         if seg["segment_num"] in self._review_records:
             self._restore_answers(seg["segment_num"])
 
@@ -2601,6 +2604,21 @@ The notes box travels with the video.
         rec = self._collect_answers_unchecked()
         if rec is None:
             return None
+        # A saved answer put back on screen and left as it was is NOT a new
+        # answer: the stored record is kept as it is -- its reviewer, its time,
+        # and anything the panel cannot show. WHY: Next / Prev / Save used to
+        # re-collect the panel and store it as the person's answer, so merely
+        # stepping past an answered pellet could rewrite it (a reach restored
+        # by an id a re-run had renumbered; an outcome the list did not offer).
+        restored = getattr(self, "_restored_panel", None)
+        if restored is not None and restored[0] == rec.get("segment_num"):
+            if (restored[1] == _answer_signature(rec)
+                    and rec.get("segment_num") in self._review_records):
+                return copy.deepcopy(self._review_records[rec["segment_num"]])
+            # The person changed the panel: from now on it is their new answer,
+            # even if they change it back -- the stored record may by then be
+            # the changed one, not the one that was restored.
+            self._restored_panel = None
         problem = answer_problem(rec, human_segmentation=self._segmentation_is_human())
         if problem:
             self._answer_problem = problem
@@ -2797,14 +2815,34 @@ The notes box travels with the video.
             combo = self._q_widgets.get("_outcome_combo")
             if combo:
                 i = combo.findText(ho)
-                if i >= 0:
-                    combo.setCurrentIndex(i)
+                if i < 0:
+                    # A saved outcome the list does not offer (abnormal_exception,
+                    # written when an ignore window is set with no reach) is
+                    # added, so the panel shows the answer as saved instead of
+                    # falling back to the default.
+                    combo.addItem(ho)
+                    i = combo.findText(ho)
+                combo.setCurrentIndex(i)
         if hc:
             rp = self._q_widgets.get("_reach_picker", {})
             if rp:
                 reaches = rp.get("all_reaches", [])
-                idx = next((j for j, r in enumerate(reaches)
-                            if r.get("reach_id") == hc.get("reach_id")), None)
+                # By FRAMES, never by reach id: a re-run renumbers the reaches,
+                # and the id then names another reach. A reach the person typed
+                # goes back in the typed-frames row as typed.
+                idx = None
+                if hc.get("start") is not None and not hc.get("typed"):
+                    try:
+                        m = typed_reach_match(int(hc["start"]),
+                                              int(hc.get("end", hc["start"])), reaches)
+                    except (TypeError, ValueError):
+                        m = None
+                    idx = next((j for j, r in enumerate(reaches) if r is m), None)
+                elif hc.get("start") is None:
+                    idx = next((j for j, r in enumerate(reaches)
+                                if r.get("reach_id") == hc.get("reach_id")), None)
+                if hc.get("typed") and "start_spin" in rp:
+                    hc = dict(hc, start=hc["typed"][0], end=hc["typed"][1])
                 if idx is not None:
                     btn = rp["reach_group"].button(idx)
                     if btn is not None:
@@ -2832,6 +2870,18 @@ The notes box travels with the video.
         notes = rec.get("notes", "")
         if hasattr(self, '_notes_edit') and notes:
             self._notes_edit.setPlainText(notes)
+
+        # What the panel reads as right now, with the saved answer on it: when
+        # the person leaves the panel like this, the saved record is kept as is
+        # (_collect_answers).
+        try:
+            shown = self._collect_answers_unchecked()
+        except Exception as err:
+            logger.warning("Could not read back restored answer for segment %s: %s",
+                           segment_num, err)
+            shown = None
+        if shown is not None:
+            self._restored_panel = (segment_num, _answer_signature(shown))
 
     # ===================================================================
     # Save
