@@ -5123,7 +5123,14 @@ Now `db_location.resolve_watcher_db_path` follows these rules, in order:
 3. `watcher.mode` is `processing_server` and `db_path` is not set -> refused (`WatcherDbUnnamed`):
    the processing server's database must be named in the settings of every login that works
    with it;
-4. otherwise (a GPU PC) -> `<processing_root>/watcher.db`, as before.
+4. otherwise -> `<processing_root>/watcher.db`, as before. This is the GPU PC's own default,
+   and it is also what a login gets whose settings carry NO `watcher.mode`: the mode then
+   defaults to `dlc_pc`, so rule 3 does not apply and there is no refusal. The refusal keys on
+   `watcher.mode` = `processing_server`. On the processing server, therefore, every login's
+   settings must carry `watcher.mode` `processing_server` AS WELL AS `watcher.db_path`; a login
+   with a settings file but no mode still reads and writes `<processing_root>/watcher.db`
+   silently (a known leftover: refusing a mode-less login would also stop a GPU PC whose
+   settings never named a mode, which needs a decision first).
 
 Everything uses this one resolver: every watcher command, the watcher itself (`mousereach-watch`
 and the Watcher Control panel's Start / Run Once, which used to carry their own copy of the
@@ -5141,6 +5148,8 @@ named database simply does not exist is still treated as the tool used on its ow
 What a person does: copy `watcher.db_path` from the settings of the login that runs the watcher
 (`mousereach-watch-status` there prints it on its first line) into the `watcher` section of the
 refused login's `~/.mousereach/config.json`, or set it in the Watcher Control panel's settings.
+On the processing server, check every login's `watcher` section for `"mode":
+"processing_server"` too: a login without it is not refused (rule 4).
 Tests: `tests/test_watcher_db_must_be_named.py`, `tests/test_route_cli_db.py`.
 
 ## Update: publication locks are set and lifted on the processing server only

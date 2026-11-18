@@ -257,7 +257,11 @@ the watcher database the same way the watcher does: `watcher.db_path` in that lo
 processing folder. A login with no `~/.mousereach/config.json` at all is refused the same way
 (run `mousereach-setup` in it). On a processing server the login's settings MUST name `watcher.db_path`: without
 it every move says "Note: the watcher's record was NOT updated (... name no watcher database
-(watcher.db_path) ...)" -- copy the value from the settings of the login that runs the watcher. So
+(watcher.db_path) ...)" -- copy the value from the settings of the login that runs the watcher.
+The refusal depends on the login's settings saying `"mode": "processing_server"` in the `watcher`
+section: a reviewer's login on the processing server whose settings carry no `mode` is taken for a
+GPU PC and silently uses `watcher.db` in its processing folder, which may be an old file the
+watcher does not write. Give every reviewer's login both `mode` and `db_path`. So
 in every login people review from, check once that this resolves to the database the watcher
 actually writes, and that the login may write it: escalate one test video and read the message.
 No "record was NOT updated" note means it is right. The login must also be able to create and

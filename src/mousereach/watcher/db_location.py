@@ -31,6 +31,15 @@ The rule, in order:
      ConfigurationError (from require_processing_root), whose message names
      the setup command.
 
+KNOWN LEFTOVER (rule 4). WatcherConfig defaults a missing ``watcher.mode`` to
+``dlc_pc``, so a login whose settings file exists but names no mode lands
+here, not in rule 3, and gets the default file without a refusal -- on the
+processing server, the old decoy. Refusing a mode-less login would also stop
+a GPU PC (its watcher included) whose settings never named a mode, so that
+needs a decision first; until then the operator docs require every
+processing-server login to carry ``watcher.mode`` = ``processing_server`` as
+well as ``watcher.db_path``.
+
 WHY REFUSE INSTEAD OF FALLING BACK (rules 1 and 3). A login with no settings
 file at all gets its processing folder from the machine-wide environment
 variable, and nothing about which database the watcher uses; the default file

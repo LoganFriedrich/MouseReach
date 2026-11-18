@@ -902,16 +902,22 @@ already has is never replaced by the profile's.
 
 When it says "Configuration saved!", you're done with setup.
 
-**On the processing server only:** the settings must also name the watcher
-database, `watcher.db_path` (the lab profile's server entry carries it). The
-watcher refuses to start without it, and so does every tool run from a login
-whose settings lack it -- they print "... name no watcher database
-(watcher.db_path) ..." and change nothing. On a new server where no watcher
+**On the processing server only:** the settings must say
+`"mode": "processing_server"` in the `watcher` section AND name the watcher
+database, `watcher.db_path` (the lab profile's server entry carries both). The
+watcher refuses to start without `db_path`, and so does every tool run from a
+login whose settings say `processing_server` but lack it -- they print "...
+name no watcher database (watcher.db_path) ..." and change nothing. The
+refusal keys on the mode: a login whose settings carry NO `watcher.mode` is
+taken for a GPU PC and, without any message, uses `watcher.db` in its
+processing folder -- on the processing server an old file the watcher may not
+use. So in EVERY login on the processing server (reviewers' logins included),
+check that the `watcher` section has both `mode` and `db_path`. On a new server where no watcher
 has run yet, choose the file the watcher should create (for example
 `<processing root>\watcher.db`), put it in the `watcher` section of
 `~/.mousereach/config.json` (or the Watcher Control panel's settings), and put
-the SAME value in the settings of every other login on that machine that uses
-MouseReach (reviewers' logins included). `mousereach-watch-status` prints the
+the SAME value, with `"mode": "processing_server"`, in the settings of every
+other login on that machine that uses MouseReach (reviewers' logins included). `mousereach-watch-status` prints the
 file in use on its first line, `[watcher db] <path>`.
 
 ---
