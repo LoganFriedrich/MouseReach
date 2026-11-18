@@ -375,6 +375,15 @@ def reprocess_video_to_current(
     # into Analyzed. Only a CLEAN video supersedes its old outputs + lands next to
     # the video. Neither is done to a crystallized video or one the watcher is
     # working on (_finalize_refusal).
+    if decision not in (DECISION_CLEAN, DECISION_DEEP, DECISION_TRIAGE):
+        # The gate's "stale outputs" answer (review_gate.DECISION_STALE): the
+        # reaches or outcomes were computed against cuts that no longer exist.
+        # That is neither a pass nor a review question -- a reviewer must not
+        # judge data describing old cuts, and the watcher itself never routes
+        # it (review_gate.run_gate). So nothing is filed and nothing is
+        # sent to a queue; the summary says why, and the filed results stay.
+        summary["error"] = f"not finalized: the gate answered '{decision}' ({reason})"
+        return summary
     refusal = _finalize_refusal(video_id)
     if refusal:
         summary["error"] = f"not finalized: {refusal}"

@@ -5622,6 +5622,11 @@ all is a question for the lab owner; until then it keeps the same rules as the w
   beats triage (no triage copy is made beside a deep-review bundle), a bundle already in a queue
   is never overwritten, the bundle is built out of sight, and the move is recorded in the watcher
   database. The filed results stay in Analyzed until the video is filed again.
+- **A "stale outputs" gate answer is reported, never routed.** When the gate finds the reaches
+  or outcomes were computed against cuts that no longer exist, the video is neither filed nor
+  sent to a review queue (a reviewer must not judge data describing old cuts; the watcher does
+  not route that answer either). The summary's `error` reads "not finalized: the gate answered
+  'stale_outputs' (...)", and the filed results stay as they were.
 - **A clean video is filed only with its features file**, and nothing is pushed to any database:
   the database tool pulls filed results itself. The `sync_db` argument is accepted and ignored.
 

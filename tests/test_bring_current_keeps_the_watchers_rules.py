@@ -160,6 +160,17 @@ def test_a_clean_video_is_filed_and_nothing_is_pushed_to_a_database(world):
     assert world.state.pushed == []
 
 
+def test_a_stale_outputs_gate_answer_is_reported_not_sent_to_a_queue(world):
+    """The gate's "stale outputs" answer means the reaches or outcomes describe
+    cuts that no longer exist: no reviewer may be shown them and nothing may
+    be filed. Bring-current used to send every non-clean answer to triage."""
+    world.state.gate = "stale_outputs"
+    out = world.run()
+    assert "gate answered 'stale_outputs'" in (out.get("error") or ""), out
+    assert _queued(world) == [], _queued(world)
+    assert _filed_untouched(world)
+
+
 def test_a_held_video_never_gets_a_triage_copy_beside_its_deep_review_bundle(world):
     """Deep review beats triage: the routine goes through the watcher's router."""
     deep = world.queues["deep"] / V
