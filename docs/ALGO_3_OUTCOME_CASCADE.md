@@ -4,6 +4,8 @@ Describes: `src/mousereach/outcomes/v6_cascade/` (all files), `src/mousereach/ou
 
 Verified against: b65fcf0 (2026-08-23)
 
+Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+
 ---
 
 ## What this step does
@@ -93,7 +95,7 @@ Segment identity is not something this step checks — it is something this step
 
 **Very short segments produce triage.** If `seg_end - 5 <= seg_start`, most stages return `continue` with reason `too_short` and the segment falls to stage 99.
 
-**Nothing records which boundaries were used.** The outcomes file carries exactly four top-level keys — `video_id`, `detector`, `detector_version`, `segments` — and no segment start/end frames, no segmenter version, no source-file reference. If `{video}_segments.json` is later regenerated with different boundaries, the outcomes file silently no longer matches it, and no code compares them.
+**Nothing records which boundaries were used.** The outcomes file carries five top-level keys -- `video_id`, `detector`, `detector_version`, `cv_video`, `segments` (Update 2026-11-18: `cv_video` was added after this was written) -- and no segment start/end frames, no segmenter version, no source-file reference. If `{video}_segments.json` is later regenerated with different boundaries, the outcomes file silently no longer matches it, and no code compares them.
 
 ---
 
@@ -181,7 +183,7 @@ After the stage list is built, `detector.py:154-163` wraps three extra checks ar
 
 **3. Pixel check on the landing spot** (`cv_artifact_gate.py:171-195`, measurement at `:81-157`). This is the only guard that can *create* a triage. It opens the video, finds where the pellet supposedly landed (median position of the last 60 confident off-pillar sightings), and measures brightness in a small patch there before and after. It computes `(after − before) / pellet_brightness`, where `pellet_brightness` is the same pellet sampled on the pillar earlier in this same video. A real pellet arriving makes a dark spot bright. If the change is below **0.10** (`CV_CHANGE_GATE_T`, `cv_artifact_gate.py:45`), the tracker had latched onto something already bright at that location — dust, a corner marker, a reflection — and the commit becomes **triage** with reason `cv_artifact_landing_no_pellet_arrival`.
 
-This guard is a no-op if `video_dir` is `None`, if the file is not found, if `cv2` will not import, if the segment is shorter than 20 clean frames, if there are fewer than three confident off-pillar sightings, or if any of the sampled brightness measurements come back unusable — every one of those returns `None` and the commit stands. It accepts `.mp4` and `.avi` (`cv_artifact_gate.py:164`).
+This guard is a no-op if `video_dir` is `None`, if the file is not found, if `cv2` will not import, if the segment is shorter than 20 clean frames, if there are fewer than three confident off-pillar sightings, or if any of the sampled brightness measurements come back unusable — every one of those returns `None` and the commit stands. It finds the video through `cv_artifact_gate.resolve_video`, which accepts `.mp4`, `.avi` and `.mkv` (the same rule Stage 98 and the batch runner use; Update 2026-11-18).
 
 **4. Paw-confidence override.** `detector.py:157-158` raises `paw_lk_threshold` from 0.5 to 0.9 on exactly two stages, `Stage16DisplacedViaMaxDisplacement` and `Stage17DisplacedViaDominantMaxDisplacement` (`guards.py:114-117`), because DeepLabCut 4.0 detects an approaching paw past the slit far more often than 3.x did. The override is applied only to the objects in the top-level list. Stages 22 and 25 construct **their own private copies** of stages 16 and 17 inside `__init__` (`stage_22_retry_with_stabilized_dlc.py:48-53`, `stage_25_retry_with_strict_pellet_confidence.py:46-51`), and those copies keep the 0.5 threshold. The three wrapping guards still apply to 22 and 25, because they wrap the outer object's `decide` — confirmed in the archive, where stage 22 appears with a `cv_artifact` triage reason.
 
@@ -219,7 +221,7 @@ Stage 5 is the only untouched stage that can triage: if the pellet started off-p
 | `stage_9_pellet_vanished_after_reach` | `retrieved` | Given the segment is touched, did the pellet disappear rather than land in the tray? Late-half visibility ≤ 10%; from the causal reach onward, at most 5 sustained frames of any pellet sighting; from the first reach onward, at most 5 sustained frames of the pellet off-pillar inside the tray. Reaches less than 20 frames apart are chained into one retrieval action. Has a second attempt (`_recheck`, `stage_9...py:176`) that re-picks the causal reach using a sustained on-pillar test when the first pass deferred with `no_candidate_reach_for_retrieval` |
 | `stage_10_pillar_revealed_after_reach` | `displaced_sa` | *(filename is stale — this is not about the pillar; the docstring is honest)* One run of ≥ 5 confident frames (≥ 0.95) with the pellet more than 2.0 radii out and inside the tray, after a reach; requires ≥ 30 such frames in total afterwards and **zero** sustained sightings back within 1.5 radii |
 | `stage_11_single_reach_clean_displacement` | `retrieved` | *(filename is stale — this commits retrieved; the docstring is honest)* Did tracking lose the pellet completely? ≤ 100 sustained frames of pellet sighting (confidence ≥ 0.7) in the whole clean zone, ≤ 5 in the late half, and a single reach or single paw bout to hang the interaction frame on |
-| `stage_12_retrieved_pellet_above_slit` | `retrieved` | Are the post-reach pellet sightings *above* the slit line (in the mouse's face) rather than below it (in the tray)? Needs ≥ 3 sustained above-slit frames and ≤ 5 below-slit ones. Requires exactly one paw-over-slit bout |
+| `stage_12_retrieved_pellet_above_slit` | `retrieved` | Are the post-reach pellet sightings *above* the slit line (in the mouse's face) rather than below it (in the tray)? Needs ≥ 3 sustained above-slit frames and ≤ 5 below-slit ones. Requires exactly one reach in the segment (or, when the segment has no reaches, exactly one paw-over-slit bout), and no more than 15 paw-over-slit bouts in total |
 | `stage_13_retrieved_via_pillar_lk_transition` | `retrieved` | In a segment with exactly one reach, does the `Pillar` body part go from hidden (confidence < 0.3 for ≥ 5 frames) to revealed (> 0.5 for ≥ 30 frames) across the reach, with the pellet gone afterwards? |
 | `stage_14`, `stage_15` | — | **Disabled** |
 | `stage_16_displaced_via_max_displacement` | `displaced_sa` | Across the segment's reaches, is there exactly one where the pellet's median position (30 frames before vs after) shifts by ≥ 1.5 radii? Requires ≥ 50 off-pillar sightings in the last 30% of the segment |
@@ -308,7 +310,7 @@ Every failure inside stage 98 becomes a `continue`: `cv2` not installed (`:336-3
 
 ## Exactly what lands in `{video}_pellet_outcomes.json`
 
-Written by `core/batch.py:210-211` (pipeline) or `cli.py:189-191` (command line). Built at `detector.py:246-275`. Here is a real file, unedited except for the video name:
+Written by `process_single` in `core/batch.py` (both the pipeline and `mousereach-detect-outcomes` go through it). Built in `detector.py` (`_detect_outcomes_v6_cascade_impl`). Here is a real file, unedited except for the video name:
 
 ```json
 {
@@ -329,7 +331,7 @@ Written by `core/batch.py:210-211` (pipeline) or `cli.py:189-191` (command line)
 }
 ```
 
-Top level — exactly four keys, no more. Every archived v6 file has exactly this key set.
+Top level -- five keys: `video_id`, `detector`, `detector_version`, `cv_video`, `segments`. Files written before `cv_video` was added carry only the other four. (Update 2026-11-18.)
 
 | Key | Value |
 |---|---|
@@ -401,7 +403,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `stage_26:22` and `stage_27:15` say the displacement threshold is 12 px; both constants are 10.0.
 - `guards.py:10` says the vanish guard applies to four named stage classes; it applies to all 33.
 - `lib/pillar_geometry.py:14` describes the pillar offset as "perpendicular" to the tray front edge; the code offsets straight up in image y (`:104`).
-- `v6_cascade/STAGE_DESCRIPTIONS.md` (854 lines) is headed "v6.0.0_dev" and its stage table still says stage 0 triages abnormally short segments.
+- `v6_cascade/STAGE_DESCRIPTIONS.md` is headed "v6.0.0_dev" and its stage table still says stage 0 triages abnormally short segments. (Update 2026-11-18: it now opens with a banner marking it as the historical May 2026 validation record and pointing here.)
 - `outcomes/core/__init__.py` describes the legacy geometric algorithm, ruler units, `displaced_outside`, confidence scores and the `validation_status` workflow. It does not mention the v6 cascade at all.
 
 **Parameters and imports that have no effect.**
@@ -409,7 +411,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `stage_2` imports `detect_tray_motion_onset` (`:34`) and never calls it. It also defines `ANCHOR_BACK_OFFSET = 10` (`:53`), used only inside a comment.
 - `DISPLACED_VANISH_GUARD_CLASSES` is imported by `detector.py:88` and never used.
 
-**Failures that are swallowed.** `process_batch` (`core/batch.py:291-295`) and the v6 CLI loop (`cli.py:208-211`) both catch every exception per video, print `FAILED: <message>`, and continue. Nothing is raised and no file is written; a video with a corrupt pose file simply has no outcomes file afterwards. The watcher's reprocess path is better: `watcher/orchestrator.py:1994-1998` logs the step as failed, marks the video failed, and re-raises. Inside stage 98 and the pixel guard, every video-access failure becomes a silent `continue`.
+**Failures that are swallowed.** `process_batch` (`core/batch.py`), which `mousereach-detect-outcomes` runs, catches every exception per video, prints `FAILED: <message>`, and continues (Update 2026-11-18: the CLI no longer has a loop of its own). Nothing is raised and no file is written; a video with a corrupt pose file simply has no outcomes file afterwards. The watcher's reprocess path is better: `watcher/orchestrator.py:1994-1998` logs the step as failed, marks the video failed, and re-raises. Inside stage 98 and the pixel guard, every video-access failure becomes a silent `continue`.
 
 ---
 
@@ -427,29 +429,6 @@ The only things that vary at runtime:
 | Whether reaches exist | `core/batch.py:199-202` | No reach file → empty reach list → stage 7 and most touched stages defer, stage 4 loosens; net shift toward `untouched` and toward triage |
 
 The stage list itself (`detector.py:112-146`) is hard-coded and identical for every video. There is no way to enable, disable or reorder a stage without editing `detector.py` or the stage's constants.
-
----
-
-## Contested claims
-
-This document was written from the source, then checked by a second reader
-whose job was to disprove it. The statements below are ones they disputed and
-that were not resolved. Neither side is authoritative: spot-checking found the
-checker wrong at least once. **Do not rely on anything listed here without
-opening the code yourself.** Everything not listed survived two passes.
-
-- **Section 3 (Units): the stated number of segments whose ruler falls outside 25-50 px, and its minimum and maximum.**
-  - disputed because: The count was overstated. The minimum and maximum are both correct, so only the count is wrong. Everything else in that paragraph checks out.
-- **Section 5.10 (outcome_source, "Filled today"): "On every reach whose features file was written by the current extractor (the stated share of Processing; older files predate the field)."**
-  - disputed because: The stated share is slightly too high. The qualitative claim is right -- outcome_source is non-null on every reach written by extractor 2.0.0 and null on every reach from the older 1.0.0 files -- but the number is off, and it contradicts the document's own arithmetic elsewhere: section 5.3's share of Processing reaches carrying a legacy max_extent value puts the current-extractor share lower
-- **Section 5.7 (Head and body at the apex): all four rows -- head_width_at_apex_mm, nose_to_slit_at_apex_mm, head_angle_at_apex_deg, head_angle_change_deg -- are listed with the same fill rate.**
-  - disputed because: Only nose_to_slit_at_apex_mm has that rate. The other three are slightly lower, head_angle_change_deg lowest. The difference is small but it is a stated measurement, and head_angle_change_deg is lower than the other two for a reason the table hides -- it needs both ears tracked above likelihood 0.7 at the reach START frame as well as at the apex (feature
-- **Section 3 and the section 11 failure table: "If ruler_pixels is 0 or negative the conversion factor is set to 0.0 and every millimetre value in that segment reads exactly 0, not null."**
-  - disputed because: True for a negative ruler_pixels, but not for exactly 0. The five cited guard sites (:606, :689, :884, :1048, :1246) all read `RULER_MM / ruler_pixels if ruler_pixels > 0 else 0`, but there is a sixth conversion at feature_extractor.py:406 that has no guard: `px_to_mm = self.RULER_MM / ruler_pixels`. With ruler_pixels == 0 that raises ZeroDivisionError inside _extract_reach_features, outside the t
-- **Section 8 (reach_data.csv): "from position 6 onward every column is labelled with the name of the column before it."**
-  - disputed because: The shift runs the other way. The SELECT has one extra column (segment_num) inserted at index 5 relative to ALL_COLUMNS, so from index 5 on, the data sitting under a given header name actually belongs to the column BEFORE that name -- equivalently, each data column is labelled with the name of the column AFTER it. The three concrete examples the document gives immediately afterwards are all correc
-- **Section 4, parenthetical: "grep -rn \"reach_detector_v8\\|ReachDetectorV8\" src/ returns only the file itself and one docstring mention."**
-  - disputed because: That grep returns five hits, not four: three inside reach_detector_v8.py itself, the docstring mention in span_to_reaches.py:279, and a fifth in the improvement subsystem's README (since moved out of this repository). The substantive claim the parenthetical supports -- that nothing imports the class -- is correct; only the stated grep result is incomplete.
 
 ---
 
