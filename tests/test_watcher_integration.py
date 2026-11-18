@@ -665,7 +665,7 @@ class TestOrchestratorIntegration:
     """Integration tests for WatcherOrchestrator (mock heavy dependencies)."""
 
     @pytest.fixture
-    def mock_orchestrator(self, temp_db, watcher_config, tmp_path, scratch_paths):
+    def mock_orchestrator(self, temp_db, watcher_config, tmp_path, scratch_paths, monkeypatch):
         """Create orchestrator with mocked dependencies.
 
         Three live-data doors are shut. ``scratch_paths`` points config.Paths at a
@@ -680,11 +680,18 @@ class TestOrchestratorIntegration:
         depend on live data, take five minutes, and fail the priority-order test
         because thousands of imported videos outranked the collage the test had
         just registered.
+
+        The processing root is set for the WHOLE test, not only while the
+        orchestrator is built: the work loop reads it again (the priority
+        animal file under it). A patch held only around the constructor ended
+        when the fixture returned, so on a configured machine the test read the
+        real processing root, and on an unconfigured one it failed with
+        "MouseReach is not configured".
         """
-        with patch('mousereach.watcher.orchestrator.require_processing_root') as mock_root, \
-             patch('mousereach.watcher.coordination.PipelineCoordinator') as mock_coord, \
+        import mousereach.config as config
+        monkeypatch.setattr(config, "PROCESSING_ROOT", scratch_paths["PROCESSING_ROOT"])
+        with patch('mousereach.watcher.coordination.PipelineCoordinator') as mock_coord, \
              patch('mousereach.watcher.coordination.restore_db', return_value=False):
-            mock_root.return_value = tmp_path / "processing"
             mock_coord.return_value.recover_local_db.return_value = {}
 
             from mousereach.watcher.orchestrator import WatcherOrchestrator
