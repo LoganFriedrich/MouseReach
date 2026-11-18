@@ -213,18 +213,21 @@ def _finalize_refusal(video_id: str, action: str = "brought current",
 from mousereach.watcher.attention import BRING_CURRENT_HELD_KIND  # noqa: E402,F401
 
 
-def _attention_note(video_id: str, says: str) -> None:
+def _attention_note(video_id: str, says: str) -> bool:
     """List ``video_id`` on this machine's bring-current attention list, so a
     person sees it on the Pipeline Dashboard's red panel without reading the
-    returned summary. Never raises."""
+    returned summary. True only when the list was written (note_video says
+    False when no NAS root is set or the write failed). Never raises."""
     try:
         import socket
         from mousereach.config import Paths
         from mousereach.watcher.attention import note_video
-        note_video(getattr(Paths, "NAS_ROOT", None), socket.gethostname(),
-                   BRING_CURRENT_HELD_KIND, video_id, says)
+        return bool(note_video(getattr(Paths, "NAS_ROOT", None),
+                               socket.gethostname(),
+                               BRING_CURRENT_HELD_KIND, video_id, says))
     except Exception as e:      # note_video never raises; an import might
         logger.warning("could not list %s for attention: %s", video_id, e)
+        return False
 
 
 def _attention_drop(video_id: str) -> None:
@@ -281,10 +284,18 @@ def _show_the_stop(summary: Dict, video_id: str, notice: Dict, finalize: bool) -
         return
     says = notice.get("says") or (f"{video_id}: {err}. Fix that, then run "
                                   f"bring-current again for it.")
-    listed = bool(finalize) and notice.get("listed", True)
+    wanted = bool(finalize) and notice.get("listed", True)
     print(f"bring-current: {says}")
-    if listed:
-        _attention_note(video_id, says)
+    listed = False
+    if wanted:
+        # WHY the result is read: "listed" must say what was done. A failed
+        # write (no NAS root, unwritable list) leaves nobody told on the red
+        # panel, so the printed line says so and the summary says False.
+        listed = _attention_note(video_id, says)
+        if not listed:
+            print(f"bring-current: {video_id} could NOT be put on the "
+                  f"attention list (no NAS root set, or the list could not "
+                  f"be written); this printed line is the only notice.")
     summary["attention"] = says
     summary["listed"] = listed
 

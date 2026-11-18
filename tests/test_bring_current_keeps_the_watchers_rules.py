@@ -297,6 +297,18 @@ def test_a_hand_score_hold_is_printed_and_listed_for_a_person(world, capsys):
     assert _filed_untouched(world)
 
 
+def test_a_list_that_could_not_be_written_is_not_reported_as_listed(world, capsys, monkeypatch):
+    """summary['listed'] must say what was done: when the attention list
+    cannot be written, it is False and the printed line says so."""
+    import mousereach.watcher.attention as att
+    monkeypatch.setattr(att, "note_video", lambda *a, **k: False)
+    world.state.hand = "waiting"
+    out = world.run()
+    assert out.get("listed") is False, out
+    assert "could NOT be put on the attention list" in capsys.readouterr().out
+    assert _filed_untouched(world)
+
+
 def test_a_dry_run_hold_prints_but_writes_no_list(world, capsys):
     world.state.hand = "waiting"
     world.run(finalize=False)

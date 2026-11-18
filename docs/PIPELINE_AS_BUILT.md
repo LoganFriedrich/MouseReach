@@ -6718,7 +6718,7 @@ whoever called bring-current, as before) -- it is:
   what is wrong and what to do. A dry run (`finalize=False`) touches nothing live, so it only
   prints.
 
-The summary also says what was shown (`attention`) and whether it was listed (`listed`).
+The summary also says what was shown (`attention`) and whether it was listed (`listed`). `listed` is true only when the list was really written: with no NAS root set, or a list that cannot be written, `listed` is false and a further printed line says the stop could NOT be put on the list, so that printed line is then the only notice.
 
 Printed but NOT listed. The list is for what a person must fix, and an item stays on it until the
 video is filed or held in a review queue, so these are left off it:
