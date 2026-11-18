@@ -86,17 +86,16 @@ There are three doors into this code. Two work; one is broken.
 
 This is how the pipeline writes. It takes one file path and does everything: read, delete, insert, save state, dump the CSV. It never raises.
 
-It is called from seven places:
+It is called from four places:
 
 | Called from | Passes | Effect |
 |---|---|---|
-| `kinematics/cli.py:141-142` | the features file | writes |
+| `kinematics/cli.py:154-155` | the features file | writes |
 | `pipeline/run_all.py:130-131` | the features file | writes |
-| `watcher/orchestrator.py:1167-1168` | the features file | writes |
-| `watcher/orchestrator.py:2124-2125` | the features file | writes |
-| `pipeline/reprocess_to_current.py:315-317` | the features file, only for videos judged clean | writes |
-| `reach/core/reach_detector.py:1137-1138` | `_reaches.json` | **does nothing** |
+| `reach/core/reach_detector.py:1140-1141` | `_reaches.json` | **does nothing** |
 | `outcomes/core/pellet_outcome.py:1799-1800` | `_pellet_outcomes.json` | **does nothing** |
+
+The watcher (`watcher/orchestrator.py`) and the bring-current routine (`pipeline/reprocess_to_current.py`) used to be on this list, pushing the features file of a video they filed; neither calls `sync_file_to_database` any more (bring-current's `sync_db` argument is accepted and ignored), and the database tool pulls filed results from Analyzed itself.
 
 The last two return immediately at the file-name check (`database.py:832-833`). They look like sync points and are not. They have never written anything.
 
@@ -169,7 +168,7 @@ Rows for other videos are untouched — the replacement is scoped to `video_name
 
 Three consequences worth stating explicitly:
 
-- **Fewer reaches means orphan rows vanish.** If a re-run detects 40 reaches where the old run found 55, the extra 15 rows are deleted and not replaced. This is intended — it is how reprocessing avoids blending two algorithm versions (see the comment at `reprocess_to_current.py:309-312`) — but it means row counts drop with no message.
+- **Fewer reaches means orphan rows vanish.** If a re-run detects 40 reaches where the old run found 55, the extra 15 rows are deleted and not replaced. This is intended — it is how reprocessing avoids blending two algorithm versions — but it means row counts drop with no message.
 - **Zero reaches means the old rows survive.** The early return at `database.py:610-611` happens before the delete. A video that reprocesses down to no reaches at all keeps its previous rows in the table forever, now attributed to a run that no longer produces them. This is the one case where the table and the files on disk can disagree without anything being wrong upstream.
 - **Columns filled by anything other than this code are wiped.** `test_phase` and `phase_group` are columns in the live table that MouseReach never writes. The delete removes the row that held them and the insert does not put them back. This has already happened in a live table: every row still stamped with the old kinematics extractor (`extractor_version` 1.0.0) carried a `test_phase`, and every row re-synced under extractor 2.0.0 had `test_phase` null.
 

@@ -48,6 +48,11 @@ def test_staging_a_bring_current_bundle_writes_no_queue_index(tmp_path, monkeypa
     triage = tmp_path / "Processing" / "Review" / "triage"
     triage.mkdir(parents=True)
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage, raising=False)
+    # The router records the move in this machine's watcher database, found
+    # through the machine's configuration (not Paths): none in this test.
+    import mousereach.watcher.db_location as db_location
+    monkeypatch.setattr(db_location, "open_watcher_db_if_present",
+                        lambda: (None, "no watcher database in this test"))
     work = tmp_path / "work"
     work.mkdir()
     (work / f"{VID}_segments.json").write_text("{}", encoding="utf-8")

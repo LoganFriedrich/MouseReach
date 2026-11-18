@@ -19,6 +19,31 @@ Safety / storage model:
 
 ``finalize=False`` (default) is a safe DRY run: everything lands in the work dir and
 the gate DECISION is reported, but the live tree is not modified.
+
+The same rules as the watcher. WHY: this routine files into
+Analyzed and holds videos in the review queues, so it must keep the rules every
+other path keeps, or a video it touches ends up in two places, filed unchecked,
+or with a person's work lost:
+ - A person's cuts and clear marker beside the video are copied into the work
+   folder before any step runs; the segmenter keeps a person's cuts, and
+   finalize never replaces them with the algorithm's (archive/supersede.py).
+ - The quality check fails CLOSED: if it cannot run, nothing is finalized.
+ - The hand-score comparison runs before the gate, as in the watcher
+   (watcher/hand_scores.py): a disagreeing pellet is flagged so the gate holds
+   the video in triage; a session whose hand scores cannot be found is NOT
+   finalized, never filed uncompared. That refusal is only in the returned
+   summary's ``error`` (and in reprocess_batch's ``results``): nothing is
+   printed or moved, and the video is put on no attention list or queue, so
+   whoever runs this must read the summaries.
+ - A held video goes into its queue through the watcher's own router
+   (review_gate.route_to_queue): deep review beats triage, a bundle already
+   there is never overwritten, the move is recorded in this machine's watcher
+   database, and a crystallized video is refused.
+ - finalize needs this machine's watcher database: it refuses a crystallized
+   video and a video the watcher is working on (any state but 'archived'), and
+   refuses when the database cannot be read. Run it on the processing server.
+ - A clean video is finalized only with its features file; nothing is pushed
+   to any database (mousedb pulls filed results itself).
 """
 from __future__ import annotations
 
@@ -73,47 +98,66 @@ def find_video_file(video_id: str):
 
 
 def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reason):
-    """HOLD a triaged/deep video: move its algo outputs into a bundle under the
-    right review queue and write a manifest pointing at the REAL canonical video
-    (Analyzed) + pose (DLC Model 4). Does NOT finalize / supersede -- the old
-    outputs stay put until the video clears review and re-runs clean. Never
-    clobbers an existing bundle (respects a reviewer's in-progress work). Returns a
-    summary dict."""
+    """HOLD a triaged / deep-review video: move its work-folder files into the
+    right review queue through the watcher's own router
+    (review_gate.route_to_queue), with the move recorded in this machine's
+    watcher database. Does NOT finalize / supersede -- the filed outputs stay
+    put until the video clears review and is filed again. Returns a summary.
+
+    WHY the router: this used to build ``<queue>/<video>`` itself -- no
+    ``.incoming`` build folder, no check for a deep-review bundle before a
+    triage one, no watcher record, and a never-overwrite check of the one
+    queue only. route_to_queue keeps every queue rule: deep review beats
+    triage, a live bundle is never merged into (AlreadyInQueueError), and a
+    crystallized video is refused (CrystallizedError). The filed video is
+    never passed along: the review tools find it in the filed folder."""
     from mousereach.config import Paths
-    from mousereach.watcher.transfer import safe_move
-    dest_root = Paths.DEEP_REVIEW if decision == "deep_review" else Paths.TRIAGE_REVIEW
+    from mousereach.watcher.review_gate import (route_to_queue, AlreadyInQueueError,
+                                                DECISION_DEEP)
+    from mousereach.watcher.db import CrystallizedError
+    from mousereach.watcher.db_location import open_watcher_db_if_present
+    dest_root = Paths.DEEP_REVIEW if decision == DECISION_DEEP else Paths.TRIAGE_REVIEW
     if not dest_root:
         return {"held": False, "error": "no review-queue root configured"}
-    bundle = Path(dest_root) / video_id
-    if bundle.exists():
-        return {"held": True, "bundle": str(bundle), "note": "already queued -- left intact"}
-    bundle.mkdir(parents=True, exist_ok=True)
-    moved = []
-    # files_of_video: the shared rule (not another video whose stem begins
-    # with this one; never an unfinished copy).
-    from mousereach.pipeline.fsutil import files_of_video
-    for f in sorted(files_of_video(work_dir, video_id)):
-        if f.name == Path(dlc_h5).name or f.suffix.lower() in (".h5", ".csv", ".pickle"):
-            continue  # pose artifacts stay in DLC Model 4/; bundle references them
-        if safe_move(f, bundle / f.name):
-            moved.append(f.name)
-    manifest = {
-        "type": "causal_review_bundle",
-        "schema_version": "1.0",
-        "video_stem": video_id,
-        "canonical_video_path": str(video_file) if video_file else None,
-        "canonical_dlc_h5_path": str(dlc_h5),
-        "provenance": {
-            "routed_reason": reason,
-            "staged_at": datetime.now().isoformat(),
-            "staged_by": "reprocess_to_current",
-            "self_contained": False,
-        },
-    }
-    (bundle / f"{video_id}_manifest.json").write_text(
-        json.dumps(manifest, indent=2), encoding="utf-8")
-    return {"held": True, "bundle": str(bundle),
-            "queue": Path(dest_root).name, "moved": moved}
+    db, why_no_db = open_watcher_db_if_present()
+    report: Dict = {}
+    try:
+        bundle = route_to_queue(video_id, Path(work_dir), Path(dest_root),
+                                f"bring-current: {reason}", db=db, db_state=decision,
+                                report=report)
+    except CrystallizedError as e:
+        return {"held": False, "error": f"refused: {e}"}
+    except AlreadyInQueueError as e:
+        return {"held": True, "note": f"already in a review queue -- left intact ({e})"}
+    except Exception as e:
+        return {"held": False, "error": f"could not route to {Path(dest_root).name}: {e}"}
+    out = {"held": True, "bundle": str(bundle), "queue": Path(dest_root).name,
+           "state_recorded": bool(report.get("state_recorded"))}
+    if not out["state_recorded"]:
+        out["state_note"] = report.get("state_note") or why_no_db
+    return out
+
+
+def _finalize_refusal(video_id: str) -> Optional[str]:
+    """Why finalize must not touch this video's filed results, or None.
+    Reads this machine's watcher database (never creates it)."""
+    from mousereach.watcher.db import crystallized_refusal
+    from mousereach.watcher.db_location import open_watcher_db_if_present
+    db, why = open_watcher_db_if_present()
+    if db is None:
+        return (f"cannot tell whether it is crystallized or being worked ({why}); "
+                f"run bring-current on the machine whose watcher database holds it")
+    locked = crystallized_refusal(db, video_id, "brought current")
+    if locked:
+        return locked
+    try:
+        row = db.get_video(video_id) or {}
+    except Exception as e:
+        return f"its watcher record could not be read ({e})"
+    state = row.get("state")
+    if state not in (None, "archived"):
+        return f"the watcher is working on it (state '{state}'); it is not touched"
+    return None
 
 
 def reprocess_video_to_current(
@@ -124,7 +168,7 @@ def reprocess_video_to_current(
     *,
     finalize: bool = False,
     archive_root=None,
-    sync_db: Optional[bool] = None,
+    sync_db: Optional[bool] = None,     # ignored: nothing is pushed (module docstring)
     skip_if_current: bool = True,
 ) -> Dict:
     """Reprocess one video to the current algo stack. See module docstring.
@@ -139,11 +183,10 @@ def reprocess_video_to_current(
     from mousereach.assignment.run import assign_reaches_for_video
     from mousereach.pipeline.manifest import create_processing_manifest
     from mousereach.pipeline.triage import triage_video
-    from mousereach.watcher.review_gate import evaluate_gate, DECISION_CLEAN, DECISION_TRIAGE
+    from mousereach.watcher.review_gate import (evaluate_gate, DECISION_CLEAN, DECISION_DEEP,
+                                                DECISION_TRIAGE)
     from mousereach.watcher.transfer import safe_copy
 
-    if sync_db is None:
-        sync_db = finalize  # live finalize syncs current kinematics to the central database
     dlc_h5 = Path(dlc_h5)
     video_file = Path(video_file) if video_file else find_video_file(video_id)
     video_dir = video_file.parent if video_file else None
@@ -256,18 +299,43 @@ def reprocess_video_to_current(
         except Exception:
             pass
 
-    # QC triage
-    qc_verdict = "auto_approved"
+    # QC triage. Fails CLOSED: a check that could not run is not a pass.
     try:
         tr = triage_video(video_id=video_id, processing_dir=work_dir, h5_path=work_h5)
         qc_verdict = tr.verdict
         tr.save(work_dir / f"{video_id}_triage.json")
     except Exception as e:
         logger.warning("triage failed for %s: %s", video_id, e)
+        summary["error"] = f"the quality check could not run ({e}); nothing finalized"
+        return summary
     summary["qc_verdict"] = qc_verdict
 
-    # GATE (pure -- decision only, no moves/DB)
-    decision, reason, status = evaluate_gate(video_id, work_dir, qc_verdict=qc_verdict)
+    # Hand scores, before the gate -- the watcher's order and the watcher's
+    # check (watcher/hand_scores.py). A disagreeing pellet is flagged, so the
+    # gate below holds the video in triage. A session whose hand scores cannot
+    # be found is a defect to fix, never filed uncompared: reported, not
+    # finalized.
+    from mousereach.watcher import hand_scores
+    try:
+        verdict = hand_scores.check(video_id, work_dir)
+    except hand_scores.PelletNumbersUnknown as e:
+        verdict = None
+        summary["hand_scores"] = "pellet numbers unknown"
+        decision, reason = DECISION_DEEP, f"hand scores: {e}"
+    except Exception as e:
+        summary["error"] = f"the hand-score comparison could not run ({e}); nothing finalized"
+        return summary
+    if verdict is not None:
+        summary["hand_scores"] = verdict.status
+        if verdict.status == hand_scores.WAITING:
+            summary["error"] = (f"no hand scores found for this session ({verdict.reason}); "
+                                f"held, nothing finalized")
+            return summary
+        if verdict.status == hand_scores.DISAGREES:
+            hand_scores.flag_disagreements(work_dir, video_id, verdict)
+        hand_scores.record(work_dir, video_id, verdict, hand_scores.scores_file_stamp())
+        # GATE (pure -- decision only, no moves/DB)
+        decision, reason, status = evaluate_gate(video_id, work_dir, qc_verdict=qc_verdict)
     summary["decision"] = decision
     summary["gate_reason"] = reason
 
@@ -305,7 +373,12 @@ def reprocess_video_to_current(
     # --- FINALIZE: obey the gate ---
     # Triaged / deep-review videos must be HELD in the review queue, NOT finalized
     # into Analyzed. Only a CLEAN video supersedes its old outputs + lands next to
-    # the video + syncs to the DB.
+    # the video. Neither is done to a crystallized video or one the watcher is
+    # working on (_finalize_refusal).
+    refusal = _finalize_refusal(video_id)
+    if refusal:
+        summary["error"] = f"not finalized: {refusal}"
+        return summary
     if decision != DECISION_CLEAN:
         if decision == DECISION_TRIAGE:
             # Pellets whose answer a person's re-cut voided are flagged so the
@@ -318,6 +391,9 @@ def reprocess_video_to_current(
 
     if video_dir is None:
         summary["error"] = "cannot finalize: video dir unknown"
+        return summary
+    if not (work_dir / f"{video_id}_features.json").is_file():
+        summary["error"] = "cannot finalize: no kinematics were made for this run"
         return summary
     from mousereach.archive.supersede import supersede_video_outputs
     from mousereach.pipeline.fsutil import files_of_video
@@ -358,18 +434,6 @@ def reprocess_video_to_current(
     summary["finalized_moved"] = moved
     summary["decision_final"] = decision
 
-    # Clean video -> sync the current kinematics into the central database. The sync does
-    # an atomic per-video replace (DELETE old rows for this video, INSERT new), so
-    # re-syncing a reprocessed video swaps its old-version rows for the current
-    # ones -- no duplicates, no version blending.
-    if sync_db and decision == DECISION_CLEAN and f"{video_id}_features.json" in moved:
-        try:
-            from mousereach.sync.database import sync_file_to_database
-            summary["db_synced"] = bool(
-                sync_file_to_database(video_dir / f"{video_id}_features.json"))
-        except Exception as e:
-            summary["db_synced"] = False
-            logger.warning("db sync failed for %s: %s", video_id, e)
     return summary
 
 
