@@ -99,6 +99,41 @@ def acquire_watcher_lock(name: str = WATCHER_LOCK_NAME):
     return handle
 
 
+_ERROR_FILE_NOT_FOUND = 2
+_SYNCHRONIZE = 0x00100000
+
+
+def watcher_lock_exists(name: str = WATCHER_LOCK_NAME):
+    """Is the one-watcher-per-machine lock held right now? True, False, or
+    None when that cannot be checked here (not Windows, or the call failed).
+
+    Only LOOKS: the lock is opened, never created, and the handle is closed at
+    once, so asking can never itself make a watcher's start refuse. "Access
+    denied" means the lock exists (created by another login), so True.
+    WHY: a command that must not run beside the watcher (mousereach-archive)
+    cannot read another login's program command lines, but every login sees
+    this lock (health.watcher_presence)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        k = _kernel32()
+        k.OpenMutexW.restype = ctypes.c_void_p
+        k.OpenMutexW.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p]
+        handle = k.OpenMutexW(_SYNCHRONIZE, False, name)
+        err = ctypes.get_last_error()
+    except Exception:
+        return None
+    if handle:
+        _close(handle)
+        return True
+    if err == _ERROR_ACCESS_DENIED:
+        return True
+    if err == _ERROR_FILE_NOT_FOUND:
+        return False
+    return None
+
+
 def release_watcher_lock(handle) -> None:
     """Give the lock back (the watcher this handle was taken for has ended)."""
     if handle:

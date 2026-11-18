@@ -32,6 +32,20 @@ def _watcher_processes(first_only: bool = False) -> list:
     """psutil.Process objects for every running watcher daemon (at most one
     when ``first_only``). Raises ImportError when psutil is missing.
 
+    A program whose command line cannot be read is left out here (see
+    _watcher_scan); callers that must not mistake "cannot tell" for "not
+    running" use watcher_presence instead.
+    """
+    return _watcher_scan(first_only=first_only)[0]
+
+
+def _watcher_scan(first_only: bool = False):
+    """``(watchers, unreadable_pids)``: psutil.Process objects for every
+    running watcher daemon (at most one when ``first_only``), and the ids of
+    Python or MouseReach programs whose command line could not be read (most
+    often: a program of another Windows login, which psutil refuses with
+    AccessDenied). Raises ImportError when psutil is missing.
+
     WHY names first: reading EVERY process's command line through psutil took
     about 85 seconds per call on a busy server, and the Watcher Control panel
     asks every few seconds on the GUI thread -- the panel froze. One Windows
@@ -52,7 +66,8 @@ def _watcher_processes(first_only: bool = False) -> list:
     except Exception:
         candidates = None
 
-    found = []
+    gone = getattr(psutil, "NoSuchProcess", None)
+    found, unreadable = [], []
     if candidates is not None:
         for pid in candidates:
             try:
@@ -61,16 +76,71 @@ def _watcher_processes(first_only: bool = False) -> list:
                     found.append(p)
                     if first_only:
                         break
-            except Exception:
+            except Exception as e:
+                # A program that ended between the snapshot and now is no
+                # watcher. Anything else (AccessDenied above all) means this
+                # one could be the watcher and we cannot tell.
+                if not (isinstance(gone, type) and isinstance(e, gone)):
+                    unreadable.append(pid)
                 continue
-        return found
-    for p in psutil.process_iter(["cmdline"]):
-        cmd = " ".join(p.info.get("cmdline") or [])
+        return found, unreadable
+    for p in psutil.process_iter(["cmdline", "name"]):
+        info = getattr(p, "info", None) or {}
+        cmd = " ".join(info.get("cmdline") or [])
         if is_watcher_command(cmd):
             found.append(p)
             if first_only:
                 break
-    return found
+        elif not cmd:
+            # process_iter gives None for a command line it may not read.
+            name = (info.get("name") or "").lower()
+            if "python" in name or "mousereach" in name:
+                unreadable.append(getattr(p, "pid", None))
+    return found, unreadable
+
+
+def watcher_presence():
+    """``(running, why)`` -- is a watcher running on this machine?
+
+    ``running`` is True (one is), False (none is) or None (cannot tell); ``why``
+    says how that was decided, for a message to a person.
+
+    For commands that must never act beside a running watcher (the archive
+    command files videos, as the watcher does; two filers moving one video's
+    files at once can split it between Processing and the filed folder). Unlike
+    watcher_running, "cannot tell" is never folded into "not running":
+
+      * the one-watcher-per-machine lock (singleton.watcher_lock_exists) is
+        held -> True. Every way of starting a watcher takes it, and it is
+        visible to every Windows login, so this answers even for a watcher
+        another login started;
+      * a watcher's command line is found -> True;
+      * a Python or MouseReach program's command line cannot be read (a
+        program of another login: AccessDenied) -> None, unless the lock
+        check answered "no lock exists": then that program is not a watcher
+        of this version, and the answer is False;
+      * the programs cannot be listed at all -> None.
+    """
+    try:
+        from mousereach.watcher.singleton import watcher_lock_exists
+        lock = watcher_lock_exists()
+    except Exception:
+        lock = None
+    if lock is True:
+        return True, "the one-watcher-per-machine lock is held"
+    try:
+        found, unreadable = _watcher_scan(first_only=True)
+    except Exception as e:
+        return None, f"the running programs could not be listed ({e})"
+    if found:
+        return True, f"a watcher is running (process {found[0].pid})"
+    if unreadable:
+        if lock is False:
+            return False, "no watcher lock exists"
+        return None, ("the command line of process(es) %s (another login's programs) "
+                      "could not be read, so whether one is the watcher cannot be told"
+                      % ", ".join(str(p) for p in unreadable[:5]))
+    return False, "no watcher process found"
 
 
 def watcher_running() -> Optional[int]:

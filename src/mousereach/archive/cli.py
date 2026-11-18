@@ -6,7 +6,8 @@ File finished videos from Processing/ into the Analyzed tree, by hand.
 
 On a machine that runs the watcher, the watcher files every video itself as
 soon as it has passed every check, so this command is rarely needed there.
-It files a video only when (1) the watcher is not running on this machine,
+It files a video only when (1) the watcher is not running on this machine
+(and that can be told: health.watcher_presence),
 (2) this machine's watcher database, if there is one, has the video as
 'processed' (passed every check), and (3) the video's features file is there
 and newer than its stage outputs. See docs/CLI_REFERENCE.md.
@@ -32,13 +33,20 @@ def watcher_daemon_running() -> bool:
     moving the same video's files at once can leave it split between
     Processing and the filed folder. "Cannot tell" is treated as running
     because the cost of waiting is nothing and the cost of racing is a split
-    video."""
-    try:
-        from mousereach.watcher.health import _watcher_processes
-        return bool(_watcher_processes(first_only=True))
-    except Exception:
-        return True
+    video. health.watcher_presence decides; a program of another Windows
+    login whose command line cannot be read is "cannot tell" (it used to be
+    skipped, so a watcher started by another login looked like none)."""
+    return _watcher_running_why()[0]
 
+
+def _watcher_running_why():
+    """``(refuse, why)`` for watcher_daemon_running and its message."""
+    try:
+        from mousereach.watcher.health import watcher_presence
+        running, why = watcher_presence()
+    except Exception as e:
+        return True, f"whether the watcher runs could not be checked ({e})"
+    return (running is not False), why
 
 
 def main():
@@ -57,9 +65,15 @@ On a machine that runs the watcher you normally never need this command:
 the watcher files each video by itself as soon as it has passed every check
 (quality triage, the hand-score comparison, review, kinematics). This
 command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
-    - the watcher is running on this machine, or that cannot be checked
+    - the watcher is running on this machine, or that cannot be told
       (two programs filing one video at once can split it between two
-      folders). Stop the watcher first, or leave the filing to it;
+      folders). The machine-wide one-watcher lock is checked first, so a
+      watcher started by another Windows login counts too; a Python program
+      of another login whose command line cannot be read counts as "cannot
+      tell" unless that lock is known to be free. Stop the watcher first, or
+      leave the filing to it;
+    - this login's settings cannot name the watcher database (they cannot
+      be read, or a processing server's settings have no watcher.db_path);
     - this machine's watcher database is there but cannot be read, or it
       knows the video and does not have it as 'processed'. The message
       names the state (e.g. 'processing' while
@@ -68,8 +82,8 @@ command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
     - <video>_features.json is missing, or older than the video's segments,
       reaches or outcomes file (an earlier run's kinematics);
     - a segmentation, reach or outcome file lacks an approved verdict.
-A machine with no watcher database (the tool used on its own) is judged on
-the files alone. After filing, 'archived' is recorded in this machine's
+A machine whose named watcher database does not exist (the tool used on its
+own) is judged on the files alone. After filing, 'archived' is recorded in this machine's
 watcher database; if the database knows the video and that cannot be
 recorded, the command says so and exits 1. --list shows only videos that
 pass these checks; --status VIDEO_ID names the reason one would be refused.
@@ -145,12 +159,14 @@ pass these checks; --status VIDEO_ID names the reason one would be refused.
 
     verbose = not args.quiet
 
-    if not args.dry_run and watcher_daemon_running():
-        print("The watcher is running on this machine (or that could not be "
-              "checked). It files finished videos itself; this command does "
-              "not file beside it. Stop the watcher first, or leave the filing "
-              "to it. Nothing was moved.")
-        sys.exit(1)
+    if not args.dry_run:
+        refuse, why = _watcher_running_why()
+        if refuse:
+            print(f"The watcher is running on this machine, or that cannot be "
+                  f"told ({why}). It files finished videos itself; this command "
+                  f"does not file beside it. Stop the watcher first, or leave the "
+                  f"filing to it. Nothing was moved.")
+            sys.exit(1)
 
     print("=" * 60)
     print("MouseReach Archive Tool")

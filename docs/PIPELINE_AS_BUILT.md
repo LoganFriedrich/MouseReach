@@ -5372,6 +5372,26 @@ the stage outputs beside it. A filing it cannot record in a database that knows 
 exits with code 1. The watcher's own filing does not go through these command checks; it has
 its own (below). `docs/CLI_REFERENCE.md` lists the exact refusals.
 
+*Correction (later): "or that cannot be checked" was not what the code did.* When people work
+in their own Windows logins on the machine that runs the watcher, and the watcher runs in
+another login, Windows refuses to show the watcher's command line to them (AccessDenied); the check skipped such a program, found "no watcher", and the command
+filed beside the live watcher. Now the command asks `health.watcher_presence`, which answers
+running / not running / cannot tell:
+
+- the machine-wide one-watcher lock (`singleton.watcher_lock_exists`; it only looks, it never
+  creates the lock) is held, or Windows refuses this login access to it -> running;
+- a watcher's command line is found -> running;
+- a Python or MouseReach program's command line cannot be read -> cannot tell, which the
+  command treats as running and refuses, naming the program ids -- unless the lock check said
+  the lock does not exist: every way of starting a watcher (`mousereach-watch`, the Watcher
+  Control panel's Start and Run Once) takes that lock, so then no watcher runs;
+- the programs cannot be listed at all -> cannot tell (refused).
+
+The command also refuses when this login's settings cannot NAME the watcher database (see
+"a login that cannot name the watcher database refuses" above) instead of judging the video on
+its files alone. Tests: `tests/test_archive_refuses_when_watcher_cannot_be_seen.py`,
+`tests/test_archive_command_files_only_passed.py`.
+
 **The watcher's own filing step checks that the kinematics are this run's.** The step that
 files a 'processed' video used to check only that a `<video>_features.json` was in the
 Processing folder. A re-run copies the filed generation down, the old features file

@@ -46,6 +46,11 @@ def env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(index_pkg, "PipelineIndex", _NoIndex)
     import mousereach.watcher.health as health
+    from mousereach.watcher import singleton
+    # No watcher here: no lock (the real machine-wide lock is never consulted
+    # in a test) and no watcher process.
+    monkeypatch.setattr(singleton, "watcher_lock_exists", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(health, "_watcher_scan", lambda first_only=False: ([], []), raising=False)
     monkeypatch.setattr(health, "_watcher_processes", lambda first_only=False: [])
     return proc, dest, db
 
@@ -114,7 +119,10 @@ def test_the_command_does_not_file_beside_a_running_watcher(env, monkeypatch):
     _row(db, "processed")
     _outputs(proc)
     import mousereach.watcher.health as health
-    monkeypatch.setattr(health, "_watcher_processes", lambda first_only=False: [object()])
+    class _Proc:
+        pid = 4242
+    monkeypatch.setattr(health, "_watcher_scan", lambda first_only=False: ([_Proc()], []), raising=False)
+    monkeypatch.setattr(health, "_watcher_processes", lambda first_only=False: [_Proc()])
     from mousereach.archive import cli
     monkeypatch.setattr(sys, "argv", ["mousereach-archive", V])
     with pytest.raises(SystemExit) as e:

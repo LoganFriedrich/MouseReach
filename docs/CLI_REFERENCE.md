@@ -1302,9 +1302,15 @@ On a machine that runs the watcher you normally never need this command:
 the watcher files each video by itself as soon as it has passed every check
 (quality triage, the hand-score comparison, review, kinematics). This
 command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
-    - the watcher is running on this machine, or that cannot be checked
+    - the watcher is running on this machine, or that cannot be told
       (two programs filing one video at once can split it between two
-      folders). Stop the watcher first, or leave the filing to it;
+      folders). The machine-wide one-watcher lock is checked first, so a
+      watcher started by another Windows login counts too; a Python program
+      of another login whose command line cannot be read counts as "cannot
+      tell" unless that lock is known to be free. Stop the watcher first, or
+      leave the filing to it;
+    - this login's settings cannot name the watcher database (they cannot
+      be read, or a processing server's settings have no watcher.db_path);
     - this machine's watcher database is there but cannot be read, or it
       knows the video and does not have it as 'processed'. The message
       names the state (e.g. 'processing' while
@@ -1313,8 +1319,8 @@ command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
     - <video>_features.json is missing, or older than the video's segments,
       reaches or outcomes file (an earlier run's kinematics);
     - a segmentation, reach or outcome file lacks an approved verdict.
-A machine with no watcher database (the tool used on its own) is judged on
-the files alone. After filing, 'archived' is recorded in this machine's
+A machine whose named watcher database does not exist (the tool used on its
+own) is judged on the files alone. After filing, 'archived' is recorded in this machine's
 watcher database; if the database knows the video and that cannot be
 recorded, the command says so and exits 1. --list shows only videos that
 pass these checks; --status VIDEO_ID names the reason one would be refused.
