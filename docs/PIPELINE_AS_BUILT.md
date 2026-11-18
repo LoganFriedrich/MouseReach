@@ -2339,6 +2339,10 @@ What each answer does now:
   so a video whose every pellet is answered is not held. WHY: the check paired segment N with hand
   pellet N and never read `true_segment_num`, so after a mislabel it could compare a pellet with
   another pellet's hand score and flag, or pass, the wrong one.
+  The review gate applies the same rule on every run (`review_gate.mislabel_on_current_cuts`, see
+  "Update: the review gate holds a segment a reviewer said is another pellet"), so a run that
+  skips this check -- a kinematics-only re-run, or a video whose every pellet a person answered --
+  is held there instead of being filed on those cuts.
 
 Held videos do not count against `max_local_pending` (`_held_for_hand_scores`): they are analysed
 already, and a night of them would otherwise stop all intake until the next sheet import. Videos
@@ -6275,3 +6279,37 @@ filing. They are research tools for a copy in a folder of your own. To run the p
 a video with every check, use the Run Pipeline tab ("Run the pipeline now") or the Run All Steps
 tab (one chosen video).
 
+
+## Update: the review gate holds a segment a reviewer said is another pellet
+
+WHY: a person can record that a segment is really another pellet (`true_segment_num` with
+`segmentation_wrong`, written by the review tool's old mislabel box; such records are still on
+file). The hand-score check refuses to compare such a video and sends it to manual segmentation,
+but that check is skipped on a kinematics-only re-run and compares only pellets nobody answered.
+The review gate, which every run passes, ignored the statement: a re-run of a reviewed video (the
+version scan, a kinematics-only re-run, bring-current) was passed CLEAN and filed again on the cuts
+the reviewer had called wrong.
+
+WHAT IS BUILT (`watcher/review_gate.py`, `evaluate_gate` -> `mislabel_on_current_cuts`):
+- After the segmentation, staleness and quality checks, the gate reads every mislabel record in
+  every copy of the video's review (`hand_scores._review_and_segments`) and decides with the same
+  rule as the hand-score check (`hand_scores.unresolved_mislabels`): the record's frames are
+  matched to the current cuts; when the current cuts still number that stretch otherwise, the
+  video goes to DEEP REVIEW (the re-segmentation queue) with the reason
+  "segmentation: a reviewer said segment(s) N show a different pellet, and the current cuts still
+  number them otherwise; the cuts must be set or confirmed in manual segmentation".
+- The reason names segmentation, so the segmentation fixer lists the video and saving cuts there
+  releases it (`release_cli._names_segmentation`). A person's re-cut saved after the record settles
+  it (the newest human statement about the cuts wins); an older clear marker does not.
+- Easy and Flat trays are never held for it (they are not segmented). A ground-truth file that
+  certifies the whole video still passes it CLEAN (checked first, as before).
+- A review that cannot be read is logged at WARNING and does not hold the video here.
+- `mousereach-bring-current` and the "2 - Run Pipeline" tab use the same gate, so they hold such a
+  video too.
+
+What an operator sees: the video is in the Re-segmentation queue with that reason. Open it in the
+segmentation fixer, set or confirm the cuts and save; the video goes back to the pipeline from
+reach detection.
+
+Tests: `tests/test_gate_holds_a_mislabel_the_cuts_contradict.py` (on the commit before this one the
+gate returned `clean` for such a video).

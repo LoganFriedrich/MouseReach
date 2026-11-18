@@ -394,7 +394,11 @@ because the button does the same job in one step. Records written with it
 are still honoured: at return time the watcher diverts such a video to the
 re-segmentation queue (`review_return.py`, `TriageStatus.seg_pending_reseg`), and
 once the cuts are hand-fixed (`boundary_source: "human"`) the old correction
-stops blocking it.
+stops blocking it. The pipeline's review gate holds such a video the same way
+on every run, re-runs included: while the current cuts still number that
+stretch of frames otherwise, it goes to the re-segmentation queue with a
+reason starting "segmentation: a reviewer said segment(s) N show a different
+pellet". Set or confirm the cuts in the fixer and save; that releases it.
 
 ### A hand-score mismatch opens on the algorithm's answer (since 2026-10-24)
 

@@ -5,7 +5,9 @@ Called AFTER algo-4 (reach assignment), BEFORE kinematics. Decides a freshly
 whole bundle into the right review queue so kinematics + the central database never
 touch it:
 
-    segmentation failed (hard or soft) OR QC-critical -> DEEP_REVIEW
+    segmentation failed (hard or soft) OR QC-critical
+    OR a reviewer said a segment is another pellet
+       and the current cuts still disagree            -> DEEP_REVIEW
         (needs the causal/GT deep tools; clearing re-injects just after
         segmentation: reaches, outcomes and assignment are remade)
     any triaged element still UNRESOLVED              -> TRIAGE
@@ -95,7 +97,9 @@ def evaluate_gate(
     extractor substitutes GT for every element), so its algo triage flags -- and
     even a failed algo segmentation -- are moot -> CLEAN. Otherwise a failed
     segmentation or a critical QC verdict means the whole video is untrustworthy
-    -> DEEP_REVIEW. Otherwise, any triaged element the human has not addressed
+    -> DEEP_REVIEW; so does a person's statement that a segment is really
+    another pellet while the current cuts still number it otherwise
+    (mislabel_on_current_cuts). Otherwise, any triaged element the human has not addressed
     (and that GT did not already determine) -> TRIAGE; so is a pellet whose
     person's answer a re-cut by a person voided and that nobody has answered on
     the new cuts (recut_voided_open; run_gate flags it so triage walks it).
@@ -212,6 +216,20 @@ def evaluate_gate(
                 f"deep-review clear exists -- honoring the clear.")
         else:
             return DECISION_DEEP, TRIAGE_FAILED_REASON, st
+    # A person said a segment is really another pellet, and the current cuts
+    # still number that stretch otherwise (mislabel_on_current_cuts). The cuts
+    # are what is wrong, so the video goes to manual segmentation -- the same
+    # rule, and the same reason text, as the hand-score check's
+    # (hand_scores.PelletNumbersUnknown). WHY here as well: every run passes
+    # the gate, but the hand-score check is skipped on a kinematics-only
+    # re-run and compares only pellets nobody answered, so a re-run of a
+    # reviewed video was filed again on the cuts the reviewer had called
+    # wrong. Settled only by a person's re-cut saved after the statement
+    # (unresolved_mislabels), which is also what the fixer's save releases --
+    # an older clear marker does not settle it.
+    mislabel = mislabel_on_current_cuts(video_id, processing_dir)
+    if mislabel:
+        return DECISION_DEEP, mislabel, st
     # GT-determined segments are resolved; so are segments a human addressed in
     # ANY copy of the review: triage_status reads every copy merged
     # (effective_review), the reading the window and the results step use, so
@@ -257,6 +275,35 @@ def evaluate_gate(
                     f"{', '.join(str(s) for s in sorted(voided))})", st)
         return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
     return DECISION_CLEAN, "clean", st
+
+
+def mislabel_on_current_cuts(video_id: str, processing_dir: Path) -> Optional[str]:
+    """The routing reason when a person said a segment of this video is really
+    another pellet (``true_segment_num`` with ``segmentation_wrong``, in any
+    copy of its review) and the current cuts, matched by frames, still number
+    that stretch otherwise; None when there is no such statement or a
+    person's re-cut saved after it settled it (hand_scores.
+    unresolved_mislabels decides, the one rule). Easy and Flat trays are
+    never segmented: always None. The reason starts with "segmentation:", so
+    the re-segmentation tools release the video once a person saves cuts
+    (release_cli._names_segmentation). Never raises: a review that cannot be
+    read is logged and does not hold the video here."""
+    if is_outcome_free_tray(video_id):
+        return None
+    try:
+        from .hand_scores import _review_and_segments, unresolved_mislabels
+        review, seg_doc = _review_and_segments(video_id, Path(processing_dir))
+        wrong = unresolved_mislabels(review, seg_doc) if review else {}
+    except Exception as e:
+        logger.warning("Gate: %s: could not check for a segment a reviewer said is "
+                       "another pellet (%s)", video_id, e)
+        return None
+    if not wrong:
+        return None
+    return ("segmentation: a reviewer said segment(s) %s show a different pellet, and "
+            "the current cuts still number them otherwise; the cuts must be set or "
+            "confirmed in manual segmentation"
+            % ", ".join(str(k) for k in sorted(wrong)))
 
 
 # The flag a pellet gets in the outcomes file when a re-cut voided a person's
