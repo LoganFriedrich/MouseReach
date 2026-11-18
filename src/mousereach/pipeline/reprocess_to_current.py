@@ -31,12 +31,18 @@ or with a person's work lost:
  - The hand-score comparison runs before the gate, as in the watcher
    (watcher/hand_scores.py): a disagreeing pellet is flagged so the gate holds
    the video in triage; a session whose hand scores cannot be found is NOT
-   finalized, never filed uncompared. That refusal is only in the returned
-   summary's ``error`` (and in reprocess_batch's ``results``): nothing is
-   printed or moved, and the video is put on no attention list or queue, so
-   whoever runs this must read the summaries. A video whose results match
-   another tray's hand scores (hand_scores.label_mismatch) is refused the
-   same way: not finalized and not routed to triage.
+   finalized, never filed uncompared. A video whose results match another
+   tray's hand scores (hand_scores.label_mismatch) is refused the same way:
+   not finalized and not routed to triage. Nothing is moved.
+ - Every stop is shown to a person (_show_the_stop): it is the summary's
+   ``error``, it is printed, and with ``finalize=True`` it puts the video on
+   this machine's attention list (<NAS root>/attention/<host>_bring_current_
+   held.json, the Pipeline Dashboard's red panel); filing the video, or
+   holding it in a review queue, takes it off again. That includes a step
+   that raised: it is shown, then raised on. Printed but not listed
+   (_NOT_LISTED says why): a crystallized video, one the watcher is working
+   on, a machine with no watcher database, and older files left beside a
+   generation that was filed.
  - A held video goes into its queue through the watcher's own router
    (review_gate.route_to_queue): deep review beats triage, a bundle already
    there is never overwritten, the move is recorded in this machine's watcher
@@ -48,6 +54,17 @@ or with a person's work lost:
    file still holds an undecided pellet or a reach whose measures failed (the
    watcher's own last checks, archive/core.filed_features_refusal); nothing
    is pushed to any database (the database tool pulls filed results itself).
+ - Finalize files through the watcher's own filing (archive/core.
+   archive_video), so it is one step as far as a reader can tell: the new
+   files are staged under temporary names, the files they replace are kept
+   as verified copies in the versioned Archive, and renames put the new
+   generation in place with the features file last; a failure puts the
+   previous generation back as it was. It needs this run's own provenance
+   manifest and refuses a video that is not in the folder the filing rules
+   name. Any failure is the summary's ``error`` ("not filed: ..."), never a
+   success, and is shown as every stop is. A copy left in this run's work
+   folder after every file was filed is not a failure: it is recorded under
+   ``work_copy_left`` and printed. Nothing retries a failure.
 """
 from __future__ import annotations
 
@@ -130,7 +147,7 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
                                 f"bring-current: {reason}", db=db, db_state=decision,
                                 report=report)
     except CrystallizedError as e:
-        return {"held": False, "error": f"refused: {e}"}
+        return {"held": False, "crystallized": True, "error": f"refused: {e}"}
     except AlreadyInQueueError as e:
         return {"held": True, "note": f"already in a review queue -- left intact ({e})"}
     except Exception as e:
@@ -144,9 +161,18 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
 
 def _finalize_refusal(video_id: str, action: str = "brought current",
                       tool: str = "bring-current",
-                      require_record: bool = False) -> Optional[str]:
+                      require_record: bool = False,
+                      why_out: Optional[Dict] = None) -> Optional[str]:
     """Why finalize must not touch this video's filed results, or None.
     Reads this machine's watcher database (never creates it).
+
+    ``why_out``, when given, gets ``"not_a_defect"`` set to "crystallized",
+    "watcher" or "no_db" for a refusal that is no fault for a person to fix:
+    a crystallized video (the lock is deliberate), one the watcher is working
+    on (it is the watcher's to finish, and the watcher shows its own stops),
+    or no watcher database here (the run belongs on another machine).
+    Bring-current prints those with what that means, and does not list them
+    for a person (_NOT_LISTED says why).
 
     Also the review-bundle stager's check (review/staging.stage_video), with
     its own words (``action``, ``tool``) and ``require_record`` True: a
@@ -156,10 +182,14 @@ def _finalize_refusal(video_id: str, action: str = "brought current",
     from mousereach.watcher.db_location import open_watcher_db_if_present
     db, why = open_watcher_db_if_present()
     if db is None:
+        if why_out is not None:
+            why_out["not_a_defect"] = "no_db"
         return (f"cannot tell whether it is crystallized or being worked ({why}); "
                 f"run {tool} on the machine whose watcher database holds it")
     locked = crystallized_refusal(db, video_id, action)
     if locked:
+        if why_out is not None:
+            why_out["not_a_defect"] = "crystallized"
         return locked
     try:
         row = db.get_video(video_id)
@@ -170,8 +200,93 @@ def _finalize_refusal(video_id: str, action: str = "brought current",
                 "queue state could not be recorded")
     state = (row or {}).get("state")
     if state not in (None, "archived"):
+        if why_out is not None:
+            why_out["not_a_defect"] = "watcher"
         return f"the watcher is working on it (state '{state}'); it is not touched"
     return None
+
+
+# The attention list a bring-current video that needs a person goes on
+# (<NAS root>/attention/<host>_bring_current_held.json; watcher/attention.py
+# says why it is a list of its own). Re-exported here for callers that named
+# it here.
+from mousereach.watcher.attention import BRING_CURRENT_HELD_KIND  # noqa: E402,F401
+
+
+def _attention_note(video_id: str, says: str) -> None:
+    """List ``video_id`` on this machine's bring-current attention list, so a
+    person sees it on the Pipeline Dashboard's red panel without reading the
+    returned summary. Never raises."""
+    try:
+        import socket
+        from mousereach.config import Paths
+        from mousereach.watcher.attention import note_video
+        note_video(getattr(Paths, "NAS_ROOT", None), socket.gethostname(),
+                   BRING_CURRENT_HELD_KIND, video_id, says)
+    except Exception as e:      # note_video never raises; an import might
+        logger.warning("could not list %s for attention: %s", video_id, e)
+
+
+def _attention_drop(video_id: str) -> None:
+    """Take ``video_id`` off the bring-current attention list (it was filed,
+    or is held in a review queue where a person sees it). Never raises."""
+    try:
+        import socket
+        from mousereach.config import Paths
+        from mousereach.watcher.attention import drop_video
+        drop_video(getattr(Paths, "NAS_ROOT", None), socket.gethostname(),
+                   BRING_CURRENT_HELD_KIND, video_id)
+    except Exception as e:
+        logger.warning("could not update the attention list for %s: %s", video_id, e)
+
+
+# ``notice`` keys the run sets for the one place that shows a stop
+# (_show_the_stop): "says" -- the sentence for a person, when the default
+# ("<video>: <error>. Fix that, then run bring-current again for it.") is not
+# the right instruction; "listed" _NOT_LISTED -- printed only. WHY printed
+# only: the list is for what a person must fix, and an item stays on the red
+# panel until a filing of the video (archive_video) or a review-queue hold
+# clears it. So these are not listed: a crystallized video (the lock is
+# deliberate, nothing to fix, and it is never filed, so the item would stay
+# for good); a video the watcher is working on (nothing to fix: it is the
+# watcher's to finish, and the watcher shows its own stops); a machine with
+# no watcher database (nothing to fix about the video: run bring-current on
+# the machine that has one; an item here would be on this machine's list,
+# which that run never clears); and older files left beside an already-filed
+# generation (no later filing clears it: bring-current skips a video whose
+# filed results are current; the printed line says what to move).
+_NOT_LISTED = False
+
+# What a person is told about a refusal that is not a defect (see above),
+# in place of the default "Fix that, then run bring-current again".
+_NOT_A_DEFECT_SAYS = {
+    "crystallized": "Left as it is: the publication lock is deliberate, and "
+                    "bring-current never changes a locked video.",
+    "watcher": "Left to the watcher, which is working on it.",
+    "no_db": "Nothing is wrong with the video: run bring-current for it on the "
+             "machine whose watcher database holds it.",
+}
+
+
+def _show_the_stop(summary: Dict, video_id: str, notice: Dict, finalize: bool) -> None:
+    """Every bring-current stop is printed, and with ``finalize`` listed for a
+    person unless ``notice`` says it is not to be (see _NOT_LISTED). WHY one
+    place: each refusal used to decide for itself, and most only set the
+    summary's ``error``, so the video stayed as it was with nobody told unless
+    they read the returned dictionary. A dry run touches nothing live, so it
+    only prints. ``summary["attention"]`` records what was shown and
+    ``summary["listed"]`` whether it went on the list."""
+    err = summary.get("error")
+    if not err:
+        return
+    says = notice.get("says") or (f"{video_id}: {err}. Fix that, then run "
+                                  f"bring-current again for it.")
+    listed = bool(finalize) and notice.get("listed", True)
+    print(f"bring-current: {says}")
+    if listed:
+        _attention_note(video_id, says)
+    summary["attention"] = says
+    summary["listed"] = listed
 
 
 def reprocess_video_to_current(
@@ -190,7 +305,29 @@ def reprocess_video_to_current(
     ``dlc_h5`` is the current (4.0) pose; ``video_file`` the source mp4 (its dir is
     passed to the v6 cascade's CV stage and is where finalized outputs land). Returns
     a summary with the gate decision, versions, and outputs. Never raises on an
-    individual step past setup -- failures are captured in the summary."""
+    individual step past setup -- failures are captured in the summary, and
+    every one is shown to a person (_show_the_stop)."""
+    notice: Dict = {}
+    try:
+        summary = _reprocess_video_to_current(
+            video_id, dlc_h5, video_file, work_dir, finalize=finalize,
+            archive_root=archive_root, skip_if_current=skip_if_current, notice=notice)
+    except Exception as e:
+        # A call that raised (the gate, the filing ...) is a stop like any
+        # other: shown to a person, then raised on, so a caller sees what it
+        # always saw (reprocess_batch records it in its results).
+        _show_the_stop({"video_id": video_id, "error": f"bring-current stopped: {e}"},
+                       video_id, {}, finalize)
+        raise
+    _show_the_stop(summary, video_id, notice, finalize)
+    return summary
+
+
+def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
+                                finalize, archive_root, skip_if_current,
+                                notice: Dict) -> Dict:
+    """The work of reprocess_video_to_current. A stop sets the summary's
+    ``error`` and returns; ``notice`` carries how it is to be shown."""
     from mousereach.segmentation.core.batch import process_single as seg_single
     from mousereach.reach.core.batch import process_single as reach_single
     from mousereach.outcomes.core.batch import process_single as outcome_single
@@ -353,6 +490,18 @@ def reprocess_video_to_current(
         if verdict.status == hand_scores.WAITING:
             summary["error"] = (f"no hand scores found for this session ({verdict.reason}); "
                                 f"held, nothing finalized")
+            # R4: hand scores always exist, so a session without them is OUR
+            # defect (an import or a sheet-to-video match) and is held
+            # VISIBLY: printed, and with finalize on the attention list
+            # (Pipeline Dashboard, red panel) -- _show_the_stop. WHY: the hold
+            # used to be only in the returned summary, so the video stayed
+            # filed with its old results and nobody saw it unless they read
+            # the dict.
+            notice["says"] = (
+                f"{video_id}: {summary['error']}. Its filed results are unchanged. "
+                f"Find why its hand scores cannot be found (its rows in the "
+                f"tracking sheet, or the hand-scores file this machine reads), "
+                f"then run bring-current again for it.")
             return summary
         if verdict.status == hand_scores.LABEL_MISMATCH:
             # The results match another tray's hand scores: the name or the
@@ -423,9 +572,14 @@ def reprocess_video_to_current(
         # sent to a queue; the summary says why, and the filed results stay.
         summary["error"] = f"not finalized: the gate answered '{decision}' ({reason})"
         return summary
-    refusal = _finalize_refusal(video_id)
+    refusal_kind: Dict = {}
+    refusal = _finalize_refusal(video_id, why_out=refusal_kind)
     if refusal:
         summary["error"] = f"not finalized: {refusal}"
+        kind = refusal_kind.get("not_a_defect")
+        if kind:
+            notice["listed"] = _NOT_LISTED
+            notice["says"] = f"{video_id}: {summary['error']}. {_NOT_A_DEFECT_SAYS[kind]}"
         return summary
     if decision != DECISION_CLEAN:
         if decision == DECISION_TRIAGE:
@@ -435,6 +589,17 @@ def reprocess_video_to_current(
             summary["flagged_recut_voided"] = flag_recut_voided(video_id, work_dir)
         summary["held"] = _stage_review_bundle(
             video_id, work_dir, video_file, dlc_h5, decision, reason)
+        if summary["held"].get("held"):
+            _attention_drop(video_id)   # held in a queue, where a person sees it
+        else:
+            # Neither filed nor in a queue: a stop like any other. WHY: this
+            # used to be only inside summary["held"], with no error at all.
+            summary["error"] = (f"not held for review ({decision}): "
+                                f"{summary['held'].get('error') or 'routing failed'}")
+            if summary["held"].get("crystallized"):
+                notice["listed"] = _NOT_LISTED
+                notice["says"] = (f"{video_id}: {summary['error']}. "
+                                  f"{_NOT_A_DEFECT_SAYS['crystallized']}")
         return summary
 
     if video_dir is None:
@@ -451,45 +616,114 @@ def reprocess_video_to_current(
     if why:
         summary["error"] = f"not finalized: {why} (nothing moved)"
         return summary
+    # Filed only with this run's own provenance manifest. WHY: the filing
+    # replaces only the files this run brings, so without one the filed
+    # folder would keep the previous generation's manifest beside this run's
+    # kinematics, and the version scan would read the old versions.
+    if not (work_dir / f"{video_id}_processing_manifest.json").is_file():
+        summary["error"] = ("cannot finalize: this run's provenance manifest was not "
+                            "written (nothing moved)")
+        return summary
+    from mousereach.archive.core import archive_video, get_archive_destination
+    dest = get_archive_destination(video_id)
+    try:
+        same_folder = Path(dest).resolve() == Path(video_dir).resolve()
+    except Exception:
+        same_folder = False
+    if not same_folder:
+        # The watcher's filing (used below) files into the folder the filing
+        # rules name; the video found is somewhere else, so filing would leave
+        # this run's results in one folder and the video with its old results
+        # in another.
+        summary["error"] = (f"not finalized: the video is in {video_dir}, not in {dest} "
+                            f"where the filing rules file it (nothing moved)")
+        return summary
+
+    # FILING IS THE WATCHER'S OWN (archive/core.archive_video): ONE STEP as far
+    # as any reader of the filed folder can tell. Every new file is copied
+    # into the filed folder under a temporary name first; the files it
+    # replaces are copied, checksum-verified, into the versioned Archive; then
+    # renames in that one folder put the new files in place, the manifest
+    # second to last and the features file last, and a rename that fails is
+    # undone so the previous generation stands complete again. It also keeps
+    # a person's cuts (refused, nothing moved) and refuses a video with a
+    # publication lock record. WHY: bring-current used to move the files
+    # itself in name order -- features FIRST -- after archiving the old
+    # generation, and dropped a failed move silently, so the filed folder
+    # could hold new kinematics without the reaches or segments they were
+    # computed from, reported as success.
+    #
+    # The pose copy stays out of the filing: the current pose lives in its
+    # own tree (DLC Model <N>), not beside the video.
+    kept_out = work_dir / "_not_filed"
+    try:
+        kept_out.mkdir(exist_ok=True)
+        if work_h5.exists():
+            work_h5.replace(kept_out / work_h5.name)
+    except OSError as e:
+        summary["error"] = f"cannot finalize: could not set the pose copy aside ({e})"
+        return summary
+
+    # Files of an older generation beside the video that this run does not
+    # replace (an output the current algorithms no longer write). The
+    # filing replaces only what this run brings, so these are moved into
+    # the Archive after it, under the old manifest's generation and stack.
     from mousereach.archive.supersede import supersede_video_outputs
     from mousereach.pipeline.fsutil import files_of_video
-    new_files = {f.name: f for f in files_of_video(work_dir, video_id)}
-    # A person's cuts beside the video would be replaced by this run's
-    # algorithm cuts: refused, asked with a DRY RUN before anything moves.
-    # WHY first: supersede keeps the person's file but sweeps every other
-    # file beside the video into the Archive, so refusing after the real
-    # sweep would leave the video with its old results archived and no new ones.
-    # (Cannot happen while the person's file is copied into the work folder
-    # above; refused rather than overwritten if it ever does.)
+    new_names = {f.name for f in files_of_video(work_dir, video_id)}
+    old_manifest = None
+    try:
+        old_manifest = json.loads((Path(video_dir) / f"{video_id}_processing_manifest.json")
+                                  .read_text(encoding="utf-8"))
+    except Exception:
+        old_manifest = None
     pre = supersede_video_outputs(video_id, video_dir, archive_root,
-                                  incoming=new_files, dry_run=True)
-    if pre.get("human_cuts_kept") and any(n in new_files for n in pre["human_cuts_kept"]):
-        summary["error"] = ("refusing to finalize: a person's cuts beside the video "
-                            "would be replaced by the algorithm's (nothing moved)")
-        return summary
-    sup = supersede_video_outputs(video_id, video_dir, archive_root,
-                                  incoming=new_files)
-    if sup.get("human_cuts_kept") and any(n in new_files for n in sup["human_cuts_kept"]):
-        summary["error"] = ("refusing to finalize: a person's cuts beside the video "
-                            "would be replaced by the algorithm's")
-        return summary
-    summary["superseded"] = {"generation": sup.get("generation"),
-                             "stack": sup.get("stack"),
-                             "n_pose": len(sup.get("pose", [])),
-                             "n_algo": len(sup.get("algo", []))}
-    from mousereach.watcher.transfer import safe_move
-    moved = []
-    # files_of_video: the shared rule (not another video whose stem begins
-    # with this one; never an unfinished copy).
-    from mousereach.pipeline.fsutil import files_of_video
-    for f in sorted(files_of_video(work_dir, video_id)):
-        if f.name == work_h5.name:
-            continue  # the 4.0 pose stays in DLC Model 4/ until relocation phase
-        if safe_move(f, video_dir / f.name):
-            moved.append(f.name)
-    summary["finalized_moved"] = moved
-    summary["decision_final"] = decision
+                                  manifest=old_manifest, dry_run=True)
+    leftovers = {n for n in (pre.get("algo", []) + pre.get("pose", []))
+                 if n not in new_names}
 
+    filed = archive_video(video_id, verbose=False, skip_ready_check=True,
+                          source_dir=work_dir, archive_root=archive_root,
+                          update_index=False)
+    summary["superseded"] = filed.get("superseded")
+    summary["finalized_moved"] = list(filed.get("files_moved") or [])
+    if not filed.get("success") and not filed.get("filed"):
+        # Not filed: the filing put the previous generation back (or, if it
+        # could not, kept a copy of it in the Archive, and its error says so).
+        summary["error"] = f"not filed: {filed.get('error') or 'filing failed'}"
+        return summary
+    if not filed.get("success"):
+        # Every new file is in place in the filed folder; only a copy in this
+        # run's own work folder could not be removed afterward. That is a
+        # filed video, not a failure, and needs nobody: the work folder is
+        # bring-current's own. Recorded, printed, and the rest of finalize
+        # goes on.
+        summary["work_copy_left"] = filed.get("error")
+        # files_moved lists the work copies removed, which stopped at the
+        # first that could not be; what was filed is every file this run
+        # brought.
+        summary["finalized_moved"] = sorted(n for n in new_names
+                                            if (Path(video_dir) / n).is_file())
+        print(f"bring-current: {video_id}: filed; a copy in its work folder "
+              f"{work_dir} could not be removed afterward ({filed.get('error')}). "
+              f"The filed results are complete.")
+
+    if leftovers:
+        sweep = supersede_video_outputs(video_id, video_dir, archive_root,
+                                        manifest=old_manifest, only=leftovers)
+        if sweep.get("error") or sweep.get("failed"):
+            why = sweep.get("error") or ", ".join(sweep["failed"])
+            summary["decision_final"] = decision
+            summary["error"] = (f"filed, but older files beside it could not be moved "
+                                f"into the Archive ({why}); they are not part of this "
+                                f"run's results")
+            notice["says"] = (f"{video_id}: {summary['error']}. Move them by hand into "
+                              f"the versioned Archive.")
+            notice["listed"] = _NOT_LISTED
+            _attention_drop(video_id)   # filed: an earlier hold is resolved
+            return summary
+    summary["decision_final"] = decision
+    _attention_drop(video_id)
     return summary
 
 

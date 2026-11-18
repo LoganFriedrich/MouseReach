@@ -5854,12 +5854,9 @@ all is a question for the lab owner; until then it keeps the same rules as the w
 - **The hand-score comparison runs before the gate**, with the watcher's own check. A disagreeing
   pellet is flagged, so the gate holds the video in triage; a session whose hand scores cannot be
   found is not finalized ("no hand scores found for this session ... held, nothing finalized") --
-  it is never filed uncompared. That refusal is ONLY in what the routine hands back: the
-  `error` field of the summary `reprocess_video_to_current` returns (and of that video's entry
-  in `reprocess_batch`'s `results`). Nothing is printed, nothing is moved, the filed results stay
-  as they were, and the video is NOT put on any attention list or review queue -- whoever runs
-  bring-current must read the summaries. (The watcher's own hold for missing hand scores is the
-  one listed in the attention panel; bring-current does not write that list.) When a reviewer's
+  it is never filed uncompared. Since 2026-11-18 that hold is visible (see the update "bring-current
+  files all or nothing" below): it is printed, and with `finalize=True` the video is listed on the
+  Pipeline Dashboard's red panel, as every bring-current stop is. Nothing is moved and the filed results stay as they were. When a reviewer's
   note says the cuts number the pellets wrongly, the video is held for manual segmentation.
 - **A held video goes through the watcher's router** (`review_gate.route_to_queue`): deep review
   beats triage (no triage copy is made beside a deep-review bundle), a bundle already in a queue
@@ -6661,3 +6658,81 @@ have no decided outcome ..." or names the reaches carrying `_extended_features_e
 bring-current's summary `error` begins "not finalized:" with the same words. The two checks live
 in one place, `archive/core.py` (`undecided_pellets_in_features` and `reaches_with_failed_measures`,
 which the watcher's own step uses; `filed_features_refusal` for the command and bring-current).
+
+## Update 2026-11-18: bring-current files all or nothing, and its holds are visible
+
+Bring-current (`pipeline/reprocess_to_current.py`, run from Python by hand) changed in two ways.
+
+**It files through the watcher's own filing** (`archive/core.archive_video`, the one-step filing
+described above under "Filing is one step: the filed folder holds the old results or the new ones, never a mix"), so filing is all
+or nothing as far as anyone reading the filed folder can tell. With `finalize=True` and a clean
+video:
+
+1. Nothing moves until every check has passed: the gate, this run's features file and its own
+   provenance manifest being there ("cannot finalize: this run's provenance manifest was not
+   written"), the last checks on the features file (an undecided pellet, failed measures), and
+   the video being in the folder the filing rules name ("not finalized: the video is in ..., not
+   in ... where the filing rules file it").
+2. The filing then copies the new files into the filed folder under temporary names, keeps a
+   checksum-verified copy of each file they replace in the versioned Archive, and renames the new
+   files into place, the manifest second to last and the features file last. A person's cuts are
+   never replaced (refused, nothing moved), and a video with a publication lock record is
+   refused. If a rename fails, the previous generation is put back as it was.
+3. Files of the previous generation that this run does not replace (an output the current
+   algorithms no longer write) are then moved into the Archive too.
+
+The pose copy is not filed (the current pose lives in its own tree), and the Processing index is
+not touched (the video was never in Processing).
+
+It used to archive the old generation first and then move the new files itself in name order, so
+the features file went first, and a file that failed to move was simply left out of the list of
+moved files with no error: the filed folder could hold new kinematics without the reaches or
+segments they were computed from (the old ones already archived), reported as success. Now a
+filing that fails is the summary's `error` ("not filed: ..."); the filing has put the previous
+generation back (when even that fails, the error says so, and a verified copy of the previous
+generation is in the Archive). Nothing retries it: fix whatever stopped it and run bring-current
+again for the video.
+
+One case is not a failure: every new file was put in place in the filed folder, and only a copy
+in bring-current's own work folder could not be removed afterward. The filed folder then holds
+the complete new generation. The summary has no `error`; it records the leftover under
+`work_copy_left`, the screen says "filed; a copy in its work folder ... could not be removed
+afterward ... The filed results are complete.", and the rest of finalize (step 3) goes on. The
+work folder is bring-current's own, so nothing needs a person. The summary's `finalized_moved`
+then lists every file of this run that is now in the filed folder.
+
+**Every stop is visible.** Whenever bring-current stops a video without filing it or holding it in
+a review queue -- for any reason: the pose or a person's file could not be copied into the work
+folder, a step or the quality check could not run, the hand-score
+comparison could not run, a session whose hand scores cannot be found (owner ruling: hand scores
+always exist, so this is a defect to fix), a label mismatch (the results match another tray's
+hand scores; see the label-mismatch update above), any of the checks in step 1, the pose copy could not
+be set aside, the filing failed, the review queue could not take a held video ("not held for
+review ..."), or a call failed outright ("bring-current stopped: ..."; the error is then raised on to
+whoever called bring-current, as before) -- it is:
+
+- in the summary's `error`, as before;
+- printed on the screen ("bring-current: <video>: ...", plain ASCII), in a dry run too;
+- with `finalize=True`, listed on the Pipeline Dashboard's red panel. The list is
+  `<NAS root>/attention/<this machine>_bring_current_held.json`, one item per video, each saying
+  what is wrong and what to do. A dry run (`finalize=False`) touches nothing live, so it only
+  prints.
+
+The summary also says what was shown (`attention`) and whether it was listed (`listed`).
+
+Printed but NOT listed. The list is for what a person must fix, and an item stays on it until the
+video is filed or held in a review queue, so these are left off it:
+
+- a crystallized (publication-locked) video: nothing to fix, the lock is deliberate (and it is
+  never filed, so the item would stay for good). The screen says "Left as it is: the publication
+  lock is deliberate ...";
+- a video the watcher is working on: nothing to fix, it is the watcher's to finish, and the
+  watcher shows its own stops. The screen says "Left to the watcher, which is working on it.";
+- a machine with no watcher database: nothing is wrong with the video; the screen says to run
+  bring-current for it on the machine whose watcher database holds it (the processing server);
+- older files that could not be moved into the Archive after the new generation was filed: no
+  later filing would clear the item (bring-current skips a video whose filed results are
+  current), so the screen says to move them by hand into the versioned Archive.
+
+A listed item goes away by itself when the video is filed (by bring-current or by the watcher), or
+when bring-current holds it in a review queue, where a person sees it.

@@ -24,6 +24,16 @@ import json
 from pathlib import Path
 from typing import List
 
+# The list a bring-current video that needs a person goes on
+# (<NAS root>/attention/<host>_bring_current_held.json), written by
+# pipeline/reprocess_to_current.py and cleared by any filing of the video
+# (archive/core.archive_video). WHY a list of its own: the watcher's
+# hand-score list is rewritten whole on every scan (hand_scores.write_attention),
+# so an item added to it by another program would vanish; note_video keeps one
+# item per video, under a lock. Defined here, beside the lists' code, so the
+# filing can clear it without importing the bring-current routine.
+BRING_CURRENT_HELD_KIND = "bring_current_held"
+
 
 def read_items(nas_root) -> List[dict]:
     """Every item of every list under <nas_root>/attention/. A list that

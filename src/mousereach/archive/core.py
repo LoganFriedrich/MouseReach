@@ -418,6 +418,8 @@ def archive_video(
     verbose: bool = True,
     skip_ready_check: bool = False,
     source_dir: Path = None,
+    archive_root: Path = None,
+    update_index: bool = True,
 ) -> Dict:
     """Archive a video to NAS.
 
@@ -429,6 +431,11 @@ def archive_video(
         verbose: Print progress
         skip_ready_check: If True, skip validation status check
         source_dir: If set, discover files from this directory instead of Processing/
+        archive_root: where the previous generation is kept (default: the
+            versioned Analyzed/Archive, supersede.default_archive_root)
+        update_index: remove the video from the Processing index once filed.
+            False for a caller whose files were never in Processing (the
+            bring-current routine files from a work folder of its own).
 
     Returns:
         Dict with archive results
@@ -576,7 +583,8 @@ def archive_video(
         # earlier attempt already filed as a previous generation.
         try:
             from mousereach.archive.supersede import supersede_video_outputs
-            pre = supersede_video_outputs(video_id, dest, only=set(incoming),
+            pre = supersede_video_outputs(video_id, dest, archive_root,
+                                          only=set(incoming),
                                           incoming=incoming, dry_run=True)
         except Exception as e:
             result["error"] = f"refusing to archive: superseding failed ({e})"
@@ -626,7 +634,7 @@ def archive_video(
     if refiling:
         try:
             superseded = supersede_video_outputs(
-                video_id, dest, only=set(incoming), incoming=incoming,
+                video_id, dest, archive_root, only=set(incoming), incoming=incoming,
                 keep_source=True)
         except Exception as e:
             superseded = {"error": str(e)}
@@ -697,6 +705,12 @@ def archive_video(
             print(f"  {result['error']}")
         return result
 
+    # Every new file is now in place in the filed folder. Recorded apart from
+    # "success", which also needs the source copies removed below: a caller
+    # that files from a work folder of its own (bring-current) must tell
+    # "filed, a copy left behind" from "not filed".
+    result["filed"] = True
+
     # 4. CLEAN UP. The replaced files have their verified copy in the Archive
     # (step 2); a file supersede leaves alone by rule (the video, a person's
     # review, ground truth) or does not know was replaced by the move-based
@@ -739,7 +753,12 @@ def archive_video(
 
     # Update index - remove video
     if result["success"]:
-        # Filed: an earlier refusal over a person's cuts is resolved.
+        # Filed: an earlier refusal over a person's cuts is resolved, and so
+        # is a bring-current hold of the same video (its hand scores were
+        # found, or a finalize that stopped part-way was redone by the
+        # watcher's re-run) -- pipeline/reprocess_to_current.py.
+        # Two separate attempts, so a failure clearing one list never keeps
+        # the other from being cleared.
         try:
             import socket
             from mousereach.watcher.attention import drop_video
@@ -748,12 +767,20 @@ def archive_video(
         except Exception:
             pass
         try:
-            index = PipelineIndex()
-            index.load()
-            index.remove_video(video_id)
-            index.save()
-            if verbose:
-                print("  Index updated")
+            import socket
+            from mousereach.watcher.attention import drop_video, BRING_CURRENT_HELD_KIND
+            drop_video(getattr(Paths, "NAS_ROOT", None), socket.gethostname(),
+                       BRING_CURRENT_HELD_KIND, video_id)
+        except Exception:
+            pass
+        try:
+            if update_index:
+                index = PipelineIndex()
+                index.load()
+                index.remove_video(video_id)
+                index.save()
+                if verbose:
+                    print("  Index updated")
         except Exception as e:
             if verbose:
                 print(f"  Warning: Failed to update index: {e}")
