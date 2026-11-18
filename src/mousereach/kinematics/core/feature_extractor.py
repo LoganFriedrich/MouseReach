@@ -280,7 +280,10 @@ class KinematicsProblem(Exception):
     """Raised by FeatureExtractor.extract when the features it would write are
     not the video's true result: a person's answers (review or ground truth)
     could not be read or applied, the reach assignment file is unreadable, or
-    a reach's extended measures could not be computed. ``problems`` lists each
+    a reach's extended measures could not be computed, or -- in a
+    kinematics-only re-run of a filed video (``keep_filed``) -- the reaches,
+    outcomes or causal reaches would differ from the filed ones without an
+    owed answer deciding them (filed_decisions.py). ``problems`` lists each
     one in words for a person.
 
     WHY an exception and not a printed line: every caller of extract() -- the
@@ -387,6 +390,8 @@ class FeatureExtractor:
         review_path: Optional[Path] = None,
         assignments_path: Optional[Path] = None,
         video_path: Optional[Path] = None,
+        keep_filed: Optional[Path] = None,
+        owed=(),
     ) -> VideoFeatures:
         """
         Extract features for all reaches in a video.
@@ -397,6 +402,13 @@ class FeatureExtractor:
             outcomes_path: Path to *_pellet_outcomes.json from Step 3
             video_path: the video, when it is not beside the pose file (its frame
                 rate converts frames to seconds; frame_rate.py)
+            keep_filed: the FILED features file, for a kinematics-only re-run
+                of a filed video. Its reaches, left-out reaches, outcomes and
+                causal reaches must come out unchanged, except where an
+                answer in ``owed`` decides them; otherwise nothing is
+                returned (KinematicsProblem). filed_decisions.py says why.
+            owed: the kinds of a person's answer the filed kinematics have not
+                applied yet (filed_decisions.owed_human_layers).
 
         Returns:
             VideoFeatures object with all extracted features
@@ -553,6 +565,32 @@ class FeatureExtractor:
             print(f"[feature_extractor] {Path(outcomes_path).name}: {_unmerged_touched} touched "
                   f"segment(s) have no reach-assignment answer to merge -- their causal reach "
                   f"will be absent unless a human layer supplies one")
+
+        # A kinematics-only re-run of a filed video recomputes measurements,
+        # never decisions: the reaches, outcomes and causal reaches worked out
+        # above must be the filed ones, except where an answer the filed
+        # results have not applied decides them (filed_decisions.py says why
+        # and what counts). Anything else is held, never written.
+        if keep_filed is not None:
+            from mousereach.kinematics.core import filed_decisions as _fd
+            try:
+                with open(keep_filed, encoding='utf-8') as f:
+                    _filed = _fd.decisions_of_features(json.load(f))
+            except Exception as _e:
+                raise KinematicsProblem([
+                    f"the filed features file {Path(keep_filed).name} could not be read "
+                    f"({_e}), so this kinematics-only re-run cannot show that it keeps "
+                    f"the filed reaches, outcomes and causal reaches"])
+            _fresh = {}
+            for _sd, _od in zip(reaches_data['segments'], outcomes_data['segments']):
+                _m, _lo = split_reaches_by_ignore_windows(_sd['reaches'], _od.get('abnormal_ranges'))
+                _lo = list(_sd.get('excluded_reaches') or []) + _lo
+                _fresh[int(_sd['segment_num'])] = _fd.decision_of_resolved(_sd, _od, _m, _lo)
+            _changes = _fd.changes_not_owed(_filed, _fresh, owed)
+            if _changes:
+                _msg = _fd.hold_message(_changes, owed)
+                print(f"[feature_extractor] {video_name}: {_msg}")
+                raise KinematicsProblem([_msg])
 
         for seg_data, outcome_data in zip(reaches_data['segments'], outcomes_data['segments']):
             seg_num = seg_data['segment_num']

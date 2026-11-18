@@ -633,7 +633,8 @@ class BaseOrchestrator:
             return False
 
     def _make_features(self, video_id: str, processing_dir: Path, dlc_path,
-                       skip_outcomes: bool) -> Optional[str]:
+                       skip_outcomes: bool,
+                       keep_filed_decisions: bool = False) -> Optional[str]:
         """Write the video's ``<stem>_features.json``: kinematics for a Pillar
         tray, the session file for Easy and Flat. Returns None when it was
         written, else the reason it was not (words for a person).
@@ -645,7 +646,15 @@ class BaseOrchestrator:
         folder. A video whose kinematics failed, or whose reaches or outcomes
         file was missing so kinematics never ran, used to go on to 'processed'
         and be filed with no features file; the caller now holds it instead
-        (_hold_without_kinematics)."""
+        (_hold_without_kinematics).
+
+        ``keep_filed_decisions``: this run is a kinematics-only re-run of a
+        filed video (filed_rerun_reuses_analysis). It may recompute
+        measurements only: the extractor is handed the filed features file and
+        refuses (KinematicsProblem, so the run is held and the filed results
+        stand) when the reaches, outcomes or causal reaches would come out
+        different from the filed ones, unless an answer the filed results have
+        not applied yet decides them (kinematics/core/filed_decisions.py)."""
         processing_dir = Path(processing_dir)
         # Provenance is part of filing: a video is not filed without the
         # manifest of THIS run. One that could not be written was set aside
@@ -686,8 +695,11 @@ class BaseOrchestrator:
             # applied or a reach's measures failed: no features file is
             # written, and the except below returns the reason, so the video
             # is held (_hold_without_kinematics) instead of filed.
+            keep = {}
+            if keep_filed_decisions:
+                keep = self._filed_decisions_to_keep(video_id)
             features = extractor.extract(dlc_path, reach_path, outcome_path,
-                                         review_path=review_path)
+                                         review_path=review_path, **keep)
             with open(processing_dir / f"{video_id}_features.json", 'w') as f:
                 json.dump(features.to_dict(), f, indent=2)
 
@@ -731,6 +743,28 @@ class BaseOrchestrator:
                              duration=time.time() - step_start)
             logger.warning(f"Feature extraction failed for {video_id}: {e}")
             return f"feature extraction failed: {e}"
+
+    @staticmethod
+    def _filed_decisions_to_keep(video_id: str) -> dict:
+        """The extractor arguments that make a kinematics-only re-run keep the
+        filed decisions: the filed features file, and the kinds of a person's
+        answer the filed results have not applied yet (filed_decisions.
+        owed_human_layers -- the version scan's own rules). Empty when the
+        video has no filed features file now (its filed results were moved
+        aside, e.g. by a re-pose): then there is nothing filed to keep."""
+        from mousereach.archive.core import get_archive_destination
+        from mousereach.kinematics.core.filed_decisions import owed_human_layers
+        filed_dir = Path(get_archive_destination(video_id))
+        filed = filed_dir / f"{video_id}_features.json"
+        if not filed.is_file():
+            logger.warning(f"{video_id}: kinematics-only re-run, but no filed features "
+                           f"file in {filed_dir}; nothing filed to keep")
+            return {}
+        owed = owed_human_layers(video_id, filed_dir)
+        logger.info(f"{video_id}: kinematics-only re-run keeps the filed reaches, "
+                    f"outcomes and causal reaches (answers owed: "
+                    f"{', '.join(sorted(owed)) or 'none'})")
+        return {"keep_filed": filed, "owed": owed}
 
     def _hold_without_kinematics(self, video_id: str, why: str) -> None:
         """Mark a video failed because it has no features file, so it is not
@@ -8407,7 +8441,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return  # held: by the hand-score check or by the gate
 
         self._extract_features_and_finish(video_id, dlc_path, skip_outcomes,
-                                          pipeline_duration)
+                                          pipeline_duration,
+                                          keep_filed_decisions=_reuses_analysis)
 
     def _video_beside_pose(self, video_id: str, raw=None) -> Optional[str]:
         """Put ``<video>.mp4`` in the processing folder beside the pose.
@@ -8572,7 +8607,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         return False
 
     def _extract_features_and_finish(self, video_id, dlc_path, skip_outcomes,
-                                     pipeline_duration):
+                                     pipeline_duration, keep_filed_decisions=False):
         """Feature extraction (kinematics), then 'processed' so the archive
         step files the video. Reached only by a video the gate passed CLEAN.
 
@@ -8580,9 +8615,12 @@ class ProcessingOrchestrator(BaseOrchestrator):
         session's attention, no kinematics or outcomes (FeatureExtractor.
         extract_session_only says why). Either way, no features file means
         no 'processed': the video is held as failed (_make_features says why).
+        ``keep_filed_decisions``: a kinematics-only re-run of a filed video,
+        which must keep the filed decisions (_make_features says how).
         """
         # --- Step 4/5: Feature Extraction (CLEAN videos ONLY) ---
-        why = self._make_features(video_id, self.processing_dir, dlc_path, skip_outcomes)
+        why = self._make_features(video_id, self.processing_dir, dlc_path, skip_outcomes,
+                                  keep_filed_decisions=keep_filed_decisions)
         if why:
             self._hold_without_kinematics(video_id, why)
             return

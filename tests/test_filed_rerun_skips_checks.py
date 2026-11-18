@@ -71,6 +71,12 @@ def rig(tmp_path, monkeypatch):
     # video is unresolvable): a Pillar run without it never reaches the gate.
     (folder / f"{VID}.mp4").write_bytes(b"x")
     monkeypatch.setattr(o, "resolve_pose_input", lambda *a, **k: pose)
+    # The video's filed folder, here empty: a kinematics-only re-run looks
+    # there for the filed features it must keep (test_kinematics_only_rerun_
+    # keeps_filed_decisions.py), and with none filed there is nothing to keep.
+    import mousereach.archive.core as arch
+    monkeypatch.setattr(arch, "get_archive_destination",
+                        lambda vid: tmp_path / "no_filed_features_here")
 
     def _stage(name, result):
         def run(*a, **k):

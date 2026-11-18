@@ -3063,6 +3063,79 @@ makes the version scan mark every filed Pillar video for a kinematics recalculat
 and code stamping 2.5.0 while the declaration still says 2.4.0 makes every newly filed
 video read as out of date. Until the recalculation finishes, `extractor_version` on a row
 says which time base its seconds use.
+A filed video whose recalculation would change anything but its measurements is held
+for a person instead of re-decided (next section).
+
+## Update 2026-11-17: a kinematics-only re-run keeps the filed decisions
+
+**The rule.** When a filed video is re-run for its kinematics only (re-run scope
+`kinematics`: a new kinematic extractor, or a person's answer saved after filing), the
+re-run may recompute MEASUREMENTS -- speeds, paths, seconds. It must come out with exactly
+the filed decisions: the same reaches (compared by their start and end frames), the same
+reaches left out of the measurements, the same outcome for every pellet and the same causal
+reach (compared by frames; reach ids are renumbered whenever a reach list changes, so they
+are never compared). The one exception is a decision made by an answer the filed results have
+not applied yet -- a review saved after filing, or ground truth saved or changed after filing,
+judged by the same rules the version scan uses to start such a re-run. That answer may change
+what it decides, because applying it is the reason for the re-run.
+
+**What happens when the rule is broken.** Nothing is written. The kinematics step stops with
+one line, naming each pellet that would change, what it would change from and to, and who
+the new decision would come from, for example:
+`pellet 3: outcome displaced_sa -> abnormal_exception (by ground_truth)`. The video is held
+like any other kinematics problem ("not filed: no kinematics (...)"); after its retries the
+row goes back to 'archived' with that line in its error message (prefix "re-run of a filed
+video failed"), the video is listed for a person in `<NAS root>/attention/<host>_failed_reruns.json`
+and in `mousereach-watch-status`, and the version scan does not offer the same re-run again
+until the declaration, the review or the ground truth changes (see "Update: a filed video
+whose re-run fails stays filed"). The filed results in Analyzed are never touched by any of
+this, so the database keeps the filed numbers. What to do with such a video is a person's
+decision: run it again with every check (a re-run that recomputes the algorithms is not under
+this rule), or leave it as filed.
+
+**Why.** The extractor does not copy the filed decisions; it works them out again from the
+filed reaches, outcomes, reach assignment, every copy of the review and the ground truth. A
+kinematics-only re-run skips the quality triage and the hand-score comparison because nothing
+they judge is supposed to change. But when the rules that turn those files into decisions
+changed since filing, or a file the filing run did not see is found now, the same files give
+different decisions, and the re-run used to file them silently -- outcomes, causal reaches and
+reach frames changed with no check and no person, and an answer a person gave could quietly
+stop being applied. Found on 2026-11-17 by recomputing filed videos with extractor 2.5.0
+before declaring it, the re-run would have re-decided filed videos of three kinds:
+- Ground truth filed beside the video, made before it was filed, that its filing run did
+  not apply. Until 2026-11-16 the extractor looked for ground truth only in the corpus
+  index of the processing tree, not in the folder it ran in, and the filed manifests of
+  those runs carry no "applied ground truth" record, so the version scan's fall-back rule
+  (the ground truth's own save time against the manifest's) counts that ground truth as
+  applied. A re-run finds it and applies it: new reach frames, sometimes a different
+  outcome.
+- Ground truth applied at filing whose pellets' causal reach is now chosen by a newer rule
+  (the reach holding the ground truth's interaction frame).
+- Review answers that today's review matching applies differently from the filing run: an
+  answer placed on another pellet (for example one given before the video was re-cut, landing
+  on a longer re-cut pellet), or a filed answer no longer applied, so the pellet falls back
+  to the algorithm's outcome.
+A change made only by a review saved after filing is applied, as before.
+
+**Where it lives.** The rule and its words: `kinematics/core/filed_decisions.py`
+(`changes_not_owed`, `owed_human_layers`). The extractor takes the filed features file as
+`keep_filed=` and the owed kinds as `owed=` (`FeatureExtractor.extract`), and refuses through
+`KinematicsProblem`. The watcher passes them when `filed_rerun_reuses_analysis` is true
+(`ProcessingOrchestrator._make_features`, `_filed_decisions_to_keep`). Tests:
+`tests/test_kinematics_only_rerun_keeps_filed_decisions.py`.
+
+**Known limits.** A future extractor version that is MEANT to change which reaches are
+measured (as ignore windows did in 2.2) will be held by this rule on every video it changes;
+such a change has to be brought in by a re-run that recomputes the algorithms, or the rule
+widened for it on purpose. The manual bring-current routine (`pipeline/reprocess_to_current.py`)
+recomputes every algorithm and is not under this rule; neither is a review return.
+Whether an answer is owed is decided per KIND, for the whole video: once the review the
+scan finds differs from the one the filed manifest records, every change the review layer
+makes is accepted, including an older answer that newer matching places differently. Ground
+truth that is not owed still holds the run in that case. A video whose filed folder holds no
+features file has nothing filed to keep and is not under this rule. The Re-run button
+(dashboard) re-runs from segmentation with every check, so a held video can always be
+re-run that way.
 
 ## Update 2026-11-03: a recalculation re-runs no algorithm and no triage, and never re-asks a person's answer
 
