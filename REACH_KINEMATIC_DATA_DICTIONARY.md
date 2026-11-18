@@ -4,11 +4,20 @@ This document defines every column emitted by `mousereach-reach-export` /
 `reach_kinematics.csv`. It is the canonical reference for what each value means
 and how it is computed.
 
+(Update 2026-11-18.) Columns present in the features file but NOT in this CSV:
+`velocity_at_apex_px_per_frame`, `velocity_at_apex_mm_per_sec`,
+`peak_velocity_px_per_frame`, `mean_velocity_px_per_frame`,
+`trajectory_straightness`, `trajectory_smoothness`, `causal_reach_source` and
+`algo_causal_reach_id`. The export's row builder does not copy them; read them
+from `{video}_features.json` (see `docs/KINEMATICS_FIELDS.md`).
+
 ## Coordinate frame, units, and reach window conventions
 
 * **Reach window.** A reach has a `start_frame`, an `apex_frame`, and an
-  `end_frame`, all integer frame indices into the source video. The
-  `reach_duration_frames` is `end_frame - start_frame + 1`.
+  `end_frame`, all integer frame indices into the source video, and
+  `end_frame` is inclusive (it is the last frame of the reach). The column
+  `duration_frames` is `end_frame - start_frame + 1` for reaches from reach
+  detection. (There is no `reach_duration_frames` column.)
 * **Trajectory features are computed in the body-relative frame.** For every
   trajectory feature, the paw point's position is nose-subtracted at every
   frame: `paw_relative = paw - nose`. This isolates paw motion from incidental
@@ -25,8 +34,8 @@ and how it is computed.
   "Between" is the midpoint, a fixed choice held in one constant. The anchors give
   a physical boundary that does not depend on where tracking first or last saw
   the paw, and they are the endpoints for path directness and lateral deviation.
-  `reach_duration_frames` still counts detected frames, so a path covers
-  `duration + 1` frame steps.
+  `duration_frames` still counts detected frames, so a path covers
+  `duration_frames + 1` frame steps.
 * **Peak speed and speed at the apex leave out the first and last steps.** Those two
   steps join a calculated point to a detected one and are charged to one frame, so
   they measure geometry, not how fast the hand moved. Both values come only from
@@ -49,7 +58,8 @@ and how it is computed.
     * `_mm` and `_mm2` — millimetres / square millimetres, computed as
       `pixels * 9.0 / ruler_pixels` (the 9 mm calibration ruler corresponds to
       the per-segment `ruler_pixels` distance between SABL and SABR).
-* **Temporal units are frames only** in this extended set. To convert, use the
+* **Temporal units are frames only** in this extended set, except
+  `legacy_swipe_speed_px_div4_per_sec` (Section 11, extractor 2.6.0 and later), which is per second. To convert, use the
   `frame_rate` written at the top of the same features file: the video's own
   frames per second, read from the video's header (or DeepLabCut's record of
   it), with `frame_rate_source` saying which (extractor 2.5.0 and later; see
@@ -69,10 +79,12 @@ and how it is computed.
   step per frame at 30 frames per second covers twice the time of one at 60. To
   compare across rates, multiply by that row's video `frame_rate` to get per second.
 * **Speed units:** `_px_per_frame` and `_mm_per_frame`. There are no
-  `_per_second` columns.
+  `_per_second` columns, except `legacy_swipe_speed_px_div4_per_sec` (Section 11),
+  which is (pixels / 4) per second.
 * **Tracking quality is not a gate.** If a reach was emitted by reach
   detection, the paw is considered trackable through the reach window.
-  Per-feature likelihood gating is not applied; numerically robust
+  Per-feature likelihood gating is not applied, so a frame DeepLabCut tracked
+  at low confidence counts at full weight; numerically robust
   accumulation (`np.nansum`, `np.nanmean`, etc.) tolerates occasional NaN
   frames within a tracked reach.
 
@@ -103,15 +115,18 @@ that pair specifically.
 | Column | Meaning |
 |---|---|
 | `video` | Source video name. |
-| `segment_num` | Segment index. Segments 2-21 correspond to physical pellets 1-20. |
+| `segment_num` | Segment index. Segment N is pellet N, segments 1-20. The reach file's segment 21 (after the last boundary, not a pellet) is left out by the kinematics step, so it is absent from rows built from a features file; rows from the fall-back path (a video with no features file yet) can include it. |
 | `reach_num` | 1-indexed reach number within the segment. |
 | `reach_id` | Unique reach id (assigned by reach detection). |
 | `is_first_reach` / `is_last_reach` | Booleans: is this reach the first / last in its segment. |
 | `n_reaches_in_segment` | Total number of reaches in this segment. |
-| `source` | `"algorithm"` or `"human"` (for human-corrected reaches). Only populated by the legacy reaches.json fall-back path. |
-| `human_corrected` | Boolean; only populated by the legacy fall-back path. |
-| `flagged_for_review` | Boolean from the feature extractor. |
-| `flag_reason` | Reason string (if flagged). |
+| `human_corrected` | Boolean: true when the segment's outcome came from a person (`outcome_source` is `human_review` or `ground_truth`). Filled on every row. |
+| `flagged_for_review` | Always false on rows from the features file (the extractor never sets it) and empty on rows from the fall-back path. Segment-level flags are in the features file as `outcome_flagged`, which this CSV does not carry. |
+| `flag_reason` | Always empty: never set. |
+| `outcome_source` | Where the segment's outcome came from: `algo`, `human_review` or `ground_truth`. |
+| `reach_source` | Where this reach's frame boundaries came from: `algo`, `ground_truth` or `human_review` (a reach a reviewer typed). |
+| `reviewed_by` | Who gave the review answer for this pellet, when a person did. |
+| `algo_outcome` | What the algorithm said before a person overrode it. |
 
 ## Section 2. Outcome linkage
 
@@ -120,7 +135,7 @@ that pair specifically.
 | `outcome` | Segment-level outcome inherited from the outcome detector. |
 | `causal_reach` | Boolean: is this the reach that produced the outcome. |
 | `interaction_frame` | Frame the pellet interaction occurred (causal reach only; otherwise null). |
-| `distance_to_interaction` | `interaction_frame - apex_frame`, in frames. |
+| `distance_to_interaction` | Intended: `interaction_frame - apex_frame`, in frames. Never computed: it is read from an outcome-file key (`reach_features`) that no outcome detector writes, so it is always empty. |
 
 ## Section 3. Timing
 
@@ -160,8 +175,8 @@ apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 
 ## Section 6. Inter-paw shape proxies
 
-Three intra-paw geometric measurements, summarised at six time points and as
-overall statistics. Detected frames only: these describe the paw's shape, and at
+Three intra-paw geometric measurements, summarised at four time points (start,
+apex, end, contact) and as four statistics (max, min, mean, range): eight suffixes. Detected frames only: these describe the paw's shape, and at
 an anchor every point is in one place.
 
 | Measure | Column root | Calculation |
@@ -296,11 +311,17 @@ consumers migrate.
 
 ## Versioning
 
-Schema version: 2.0 (extended kinematic feature set).
-
-Bump the schema version when columns are added, removed, or have their
-calculation changed. Document the change in this file in a changelog section.
+(Update 2026-11-18.) There is no separate schema-version number in the code.
+Versioning follows `extractor_version`, written on every features file and row
+(today 2.6.0, `FeatureExtractor.VERSION`). When columns are added, removed, or
+have their calculation changed, the extractor version is bumped; record the
+change here.
 
 Changelog:
+- Extractor 2.3.0 (2026-10-31): paw paths anchored at the nose (`anchor_*` columns).
+- Extractor 2.4.0 (2026-11-02): peak speed and speed at the apex leave out the
+  first and last anchor steps.
+- Extractor 2.5.0 (2026-11-17): seconds use the video's own frame rate; speeds
+  read through repeated frames.
 - Extractor 2.6.0 (2026-11-17): adds the nine `legacy_swipe_*` columns (Section 11).
   No other value changes from 2.5.0.
