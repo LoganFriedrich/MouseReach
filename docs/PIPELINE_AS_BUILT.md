@@ -5992,3 +5992,37 @@ means the connection to the share itself is slow: one plain request is slow
 too, for example listing the intake folder in File Explorer from that PC.
 
 Tests: tests/test_discover_collages_no_per_file_requests.py.
+
+## Update 2026-11-18: the pick asks the share nothing per claimed or taken video
+
+**What was wrong.** Every pick of every GPU node checks its 'validated' rows
+against the places a video is taken from (`_split_gone_singles`). The folders
+were listed once, but a row whose video another node had already taken still
+pointed into the shared singles folder, and the check asked the share about
+that path (`is_file`) anyway. Reading who holds each claim
+(`single_claim.inflight_claims`) asked twice more per claimed video
+(`is_file`, `stat`) and once per host folder. So on a slow link a pick cost a
+round trip per row and per claim, every cycle.
+
+**What changed.** A recorded path inside a folder that was just listed is
+answered by that listing. `inflight_claims` reads each claim folder with one
+`os.scandir`, which brings each entry's type and modified time with the
+listing. Same results, same order. Measured against a live shared folder with
+8 taken videos and 11 claims: 52 requests per pick before, 12 after.
+
+**How long a cycle should take, and what to do when it does not.** On a GPU
+node a cycle with nothing to pose should take well under a minute, and the
+`scan` and `pick` parts of the `Cycle ... s:` line should each take seconds.
+If a scan or pick takes minutes, the node's connection to the shared drive is
+slow or blocked. That is never normal, and the number of files in the shared
+folders does not explain it. Check first that nothing else on that PC works
+on the shared drive. A GPU PC's editor workspace, search tool, file indexer,
+or a script that lists the shared pipeline tree recursively must not run
+against the shared drive: they share the watcher's connection to it, and each
+one slowed every request the watcher made. A second program that opens the
+shared coordination database (a hand-run copy of the watcher's handlers, for
+example) can hold its locks for minutes on a slow connection and block every
+node's claims.
+
+Tests: tests/test_split_gone_singles_no_per_row_request.py,
+tests/test_inflight_claims_one_listing.py.

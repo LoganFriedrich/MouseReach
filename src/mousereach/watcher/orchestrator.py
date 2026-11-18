@@ -3445,11 +3445,13 @@ class DLCOrchestrator(BaseOrchestrator):
                 return rows             # no shared folder to judge by: offer all
             places = [Paths.PROCESSING, Paths.DLC_QUEUE, door,
                       single_claim.host_dir(getattr(self, 'hostname', None))]
+            listed_dirs = set()
             for d in places:
                 if not d or not Path(d).is_dir():
                     continue
                 with os.scandir(d) as it:
                     names.update(e.name for e in it if e.is_file())
+                listed_dirs.add(os.path.normcase(os.path.abspath(str(d))))
         except OSError as e:
             logger.debug(f"could not list where singles are taken from ({e}); "
                          f"offering every validated row")
@@ -3461,6 +3463,15 @@ class DLCOrchestrator(BaseOrchestrator):
                 keep.append(v)
                 continue
             raw = v.get('current_path')
+            # A recorded path inside a folder just listed is answered by the
+            # listing (its name was not there), so it costs no request to the
+            # share. Typical case: the row points into the shared singles
+            # folder and another node took the video -- one stat per such row,
+            # every pick, was the per-item cost on a slow link.
+            # (tests/test_split_gone_singles_no_per_row_request.py)
+            if raw and os.path.normcase(os.path.dirname(os.path.abspath(raw))) in listed_dirs:
+                (keep if os.path.basename(raw) in names else gone).append(v)
+                continue
             try:
                 if raw and not is_in_staging(Path(raw)) and Path(raw).is_file():
                     keep.append(v)

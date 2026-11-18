@@ -590,22 +590,43 @@ def inflight_claims() -> Dict[str, Tuple[str, float]]:
     out: Dict[str, Tuple[str, float]] = {}
     if root is None:
         return out
+    # os.scandir, not iterdir + is_dir/is_file/stat: on Windows each entry's
+    # type AND modified time arrive with the directory listing, so DirEntry
+    # asks the share nothing more. The old loop made three requests per
+    # claimed video (is_file, stat) and per host folder (is_dir). This runs
+    # in every pick of every GPU node and in several per-video handlers, so
+    # on a slow link those requests were most of its cost.
+    # (tests/test_inflight_claims_one_listing.py)
     try:
-        hosts = sorted(h for h in root.iterdir() if h.is_dir())
+        with os.scandir(root) as it:
+            hosts = sorted((e for e in it if _entry_is(e, "dir")),
+                           key=lambda e: e.name)
     except OSError:
         return out
     for h in hosts:
         try:
-            for p in sorted(h.iterdir()):
-                if p.is_file() and p.suffix.lower() == ".mp4" and p.stem not in out:
-                    try:
-                        mtime = p.stat().st_mtime
-                    except OSError:
-                        mtime = 0.0
-                    out[p.stem] = (h.name, mtime)
+            with os.scandir(h.path) as it:
+                entries = sorted(it, key=lambda e: e.name)
         except OSError:
             continue
+        for e in entries:
+            stem, ext = os.path.splitext(e.name)
+            if ext.lower() != ".mp4" or stem in out or not _entry_is(e, "file"):
+                continue
+            try:
+                mtime = e.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            out[stem] = (h.name, mtime)
     return out
+
+
+def _entry_is(entry, kind: str) -> bool:
+    """DirEntry.is_dir()/is_file() that treats an unreadable entry as absent."""
+    try:
+        return entry.is_dir() if kind == "dir" else entry.is_file()
+    except OSError:
+        return False
 
 
 def inflight_ids() -> Dict[str, str]:
