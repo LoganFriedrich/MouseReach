@@ -310,7 +310,8 @@ def process_batch(
             if needs_review > 0:
                 print(f"  {needs_review} need review (validation_status: needs_review)")
                 print()
-                print("Next step: Review in Napari")
-                print("  mousereach --reviews    # or mousereach-segment-review")
+                print("Next step: review the flagged videos")
+                print("  Review Queues tab of the launcher (mousereach), or mousereach-review-tool")
+                print("  mousereach-segment-review    # per-step sign-off when running by hand")
 
     return results

@@ -3,10 +3,9 @@
 When the outcome detector triages a segment AND a unified GT file
 exists for the same video that has that segment's outcome scored, we
 already know what human review would reveal. Pull the GT into the algo
-output directly — same effect as a human running the triage clearing
-tool, no manual work required.
+output directly, no manual work required.
 
-Marker fields (consistent with the napari triage-clearing tool):
+Marker fields (these match the marks that older cleared files carry):
 
 - ``flagged_for_review`` -> False
 - ``triage_cleared`` -> True
