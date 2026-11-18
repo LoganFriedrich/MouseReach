@@ -695,6 +695,7 @@ def resolve_truth_layers(
     human_segmentation: bool = False,
     applied: Optional[dict] = None,
     extra_review_dirs=(),
+    cuts_set_at: Optional[str] = None,
 ) -> Tuple[dict, dict]:
     """Return (reaches_data, outcomes_data) with every element resolved by
     GT > causal review > triage review > algo (see module docstring).
@@ -744,15 +745,22 @@ def resolve_truth_layers(
     # extractor was handed may be the durable one, and the copy beside the run
     # must still be merged in -- every copy counts, never one picked by time.
     _dirs = review_dirs(stem, primary) + [Path(d) for d in (extra_review_dirs or ()) if d]
+    # When a person set the current cuts (the segments file's corrected_at):
+    # answers given before then count only on a pellet whose cuts did not move
+    # (causal_review_io.index_review_by_segment: a re-cut voids them).
+    _when_cut = {"cuts_set_at": cuts_set_at} if cuts_set_at else {}
     review_doc = effective_review(
         stem, _dirs,
-        current_segments=[{"segment_num": s.get("segment_num"),
-                           "start_frame": s.get("start_frame"),
-                           "end_frame": s.get("end_frame")} for s in _cur_segs] or None,
+        current_segments=[dict({"segment_num": s.get("segment_num"),
+                                "start_frame": s.get("start_frame"),
+                                "end_frame": s.get("end_frame")}, **_when_cut)
+                          for s in _cur_segs] or None,
         human_segmentation=human_segmentation, unreadable=problems) if stem else None
 
     layers: List[Dict[int, dict]] = [
-        _seg_overrides_from_review(review_doc, "human_review", _cur_segs, human_segmentation),
+        _seg_overrides_from_review(review_doc, "human_review",
+                                   [dict(s, **_when_cut) for s in _cur_segs],
+                                   human_segmentation),
     ]
 
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None

@@ -539,6 +539,63 @@ On reopening, `_load_saved_review` drops the placeholders and jumps to the first
 - An earlier answer whose frames match no current segment is **kept in the file** under `unmatched_answers`. It is never applied to anything, and it is never deleted by a later save.
 - A segment with no answer covering its frames is shown for review, even if an answer once carried its number.
 
+### A re-cut voids the answers given before it
+
+When a person saves new cuts for a video (the segmentation fixer in deep review), every answer
+given on the old cuts is void, unless the pellet it was given for has exactly the same frames on
+the new cuts. Void means: the answer is not used anywhere (not by the review window, the release
+check, the review gate, the hand-score check or the results), the pellet counts as unanswered
+again, and the old answer stays in the review file as a record (under `unmatched_answers` after
+the next save). An answer that recorded no frames at all (very old review files) is void after a
+re-cut too, because nothing shows which footage it was about.
+
+How the tool tells: the fixer writes the time of the save into the segments file
+(`corrected_at`); each answer carries the time it was given (`reviewed_at`). An answer given
+before the cuts were saved, on a pellet whose frames moved, is void
+(`causal_review_io.index_review_by_segment`). Answers given after the cuts were saved count as
+usual.
+
+WHY: re-segmentation voids everything after it. The earlier answers were given on cuts that
+turned out wrong; fitting them onto the new cuts, by overlapping frames or by pellet number, is a
+guess about footage nobody judged on the new cuts. Before this rule, such answers were matched to
+the new cuts by frame overlap and applied.
+
+Where a voided pellet is answered again depends on why the video was in deep review:
+
+- **Sent for another reason** (a flagged session, a quality hold): saving the cuts does not
+  release it. Open it in Re-segmentation Review: the voided pellets are open there like any
+  unanswered pellet, and the video is released on the save that answers the last open pellet
+  (or with "Clear -> re-enter pipeline").
+- **Sent for its cuts**: saving the cuts releases it at once (the fixer's status line says how
+  many pellets answered on the old cuts will be asked again). The video re-runs from reaches on
+  the new cuts, and the review gate then sends it to **triage** with each voided pellet flagged,
+  so the triage window walks those pellets like any other open pellet. Each one is answered on
+  the new cuts before the video can go on to kinematics or be filed; it never takes the
+  algorithm's call unasked.
+
+The same gate check runs on every run of a video, so it also covers a **filed video run again**
+(for example after a new algorithm version) whose review holds answers given before a person
+re-cut it: those pellets are asked again in triage instead of being filed with the algorithm's
+call. Once a pellet has an answer given after the re-cut, it is never asked again for this
+reason.
+
+How the gate tells (`review_gate.recut_voided_open`, `causal_review_io.recut_voided_segments`):
+a voided answer is about the current pellet its frames overlap most (an answer that recorded no
+frames: the pellet with its number). Only a real answer counts -- a pellet saved with nothing
+picked asks nothing. Pellets ground truth determines are not asked. The pellet is flagged in the
+outcomes file with the code `answered_before_recut` (`review_gate.flag_recut_voided`); the window
+shows no words for it, only what is open on the pellet, and the gate's routing reason in the
+watcher log names it.
+
+The screen says nothing about this: as everywhere in triage and deep review, the window never
+says that a video was re-cut or that a pellet was answered before (see "Nothing else" above). A
+voided pellet is simply open again. Which answers were voided, and why, is logged at debug level
+and kept in the review file.
+
+What is NOT covered yet: when the SEGMENTER (not a person) cuts a video again -- for example a
+triage return whose algorithm cuts are out of date -- earlier answers are still matched to the
+new cuts by frame overlap, because the segmenter's cuts record no time.
+
 ### The record format
 
 Written by `build_segment_record` (`causal_review_io.py:167`):
@@ -729,17 +786,25 @@ each answer is applied to the pellet whose frames it covers, on the remade
 reaches, outcomes or reach assignment. The video comes back to you only if the
 review gate finds a question no answer covers.
 
-**Known defect: answers are still carried across a re-cut.** The design rule is
-that new cuts void every answer given after segmentation: your earlier pellet
-outcomes and causal reaches should be kept on file as a record only and asked
-again. The watcher does not do that yet. When a video is re-cut -- after a
-deep-review release, or when a triage video's automatic cuts turned out to be
-out of date while it waited and the watcher started it again at segmentation
--- an earlier answer whose frames still match a pellet on the new cuts is
-applied to it, and one whose frames match no pellet is kept in the file but
-applied to nothing. Until this is fixed, if you re-cut a video whose pellets
-you had already answered, check those pellets again in the review tool rather
-than trusting that the old answers still fit.
+**A re-cut by a person voids your earlier answers.** New cuts void every
+answer given on the old ones: once a person saves new cuts (the segments
+file's `corrected_at`), an answer given before then counts only on a pellet
+whose frames are exactly unchanged. Every other earlier answer -- on a pellet
+whose frames moved, split or merged, or an answer that recorded no frames --
+is kept in the review file as a record, is not applied, and its pellet is
+asked again: the review gate sends the video to **triage** with each such
+pellet flagged, so you answer it on the new cuts instead of the algorithm's
+call being filed. This holds after a deep-review release and when a filed
+video is run again. See "A re-cut voids the answers given before it" above.
+
+**Known defect that remains: the segmenter's own re-cut.** When a triage
+video's automatic cuts turned out to be out of date while it waited and the
+watcher started it again at segmentation, the segmenter cuts it again but
+records no time for its cuts, so nothing can tell which answers came before
+them. There, an earlier answer whose frames still match a pellet on the new
+cuts is applied to it, and one whose frames match no pellet is kept in the
+file but applied to nothing. If you know such a video was cut again by the
+segmenter, check its answered pellets again in the review tool.
 
 **If you get a video that is not actually broken**, press *Skip this video* in
 the re-segmentation tool (it stays in the queue), or clear it through Deep
@@ -1040,8 +1105,8 @@ well.** Deep review is the stronger hold: the whole video, cuts included, is in 
     file the deep-review bundle holds byte for byte, and the triage review when the durable
     review store (the review records folder every reader looks in) already holds it byte for
     byte are deleted. Nothing is written into the store from here: the triage answers were made on
-    cuts that are about to be redone, and a copy put in the store would be matched to the new cuts
-    (see "What is not done yet" below).
+    cuts that are about to be redone, and the store is read after the re-cut (where answers given
+    before a person's new cuts count only on unchanged pellets; see below).
   - everything else -- ground truth, a review the store does not hold byte for byte, a clear marker,
     hand-set cuts, a video or pose file that differs from the deep-review bundle's -- **stays in the
     triage folder**, with a note, and is listed under "Folders left for a person" in the Review
@@ -1050,13 +1115,11 @@ well.** Deep review is the stronger hold: the whole video, cuts included, is in 
   not hand-set cuts, not a clear marker: the video's cuts are about to be redone, and
   re-segmentation voids every answer made on the old cuts.
   **Escalate and the mislabel divert are different:** they move the triage bundle ITSELF into deep
-  review, and every file in it goes along -- the review and any ground truth included. That is
-  how they worked before and it has not changed yet; the work that voids answers after a re-cut
-  will change it. **What is not done yet either:** the copy of the review in the durable review
-  store is still read after the re-cut. The review tools and the kinematics step match it to the
-  new cuts by frame span: an old answer whose frames still fall inside one new segment is applied
-  to that segment, not asked again; one whose frames no longer match a single segment is dropped
-  and the segment is asked again.
+  review, and every file in it goes along -- the review and any ground truth included. Once a person
+  saves new cuts, every answer given before then -- in the bundle's review or the durable review
+  store's copy -- counts only on a pellet whose frames are exactly unchanged; the others are kept
+  as a record and their pellets are asked again in triage (see "A re-cut voids the answers given
+  before it").
   If a file failed to move into deep review, the triage folder is not touched at all, because the
   file may still be there: the attention panel lists it. Once the deep-review bundle has every
   file -- the watcher moved it in, or a person moved it in by hand or with the Resolve button --

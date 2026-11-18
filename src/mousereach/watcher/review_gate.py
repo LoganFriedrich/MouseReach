@@ -96,7 +96,10 @@ def evaluate_gate(
     even a failed algo segmentation -- are moot -> CLEAN. Otherwise a failed
     segmentation or a critical QC verdict means the whole video is untrustworthy
     -> DEEP_REVIEW. Otherwise, any triaged element the human has not addressed
-    (and that GT did not already determine) -> TRIAGE. Otherwise -> CLEAN.
+    (and that GT did not already determine) -> TRIAGE; so is a pellet whose
+    person's answer a re-cut by a person voided and that nobody has answered on
+    the new cuts (recut_voided_open; run_gate flags it so triage walks it).
+    Otherwise -> CLEAN.
     """
     st = triage_status(processing_dir, video_id)
     gt_full, gt_segs = _gt_certification(video_id, processing_dir)
@@ -216,6 +219,14 @@ def evaluate_gate(
     # re-triaging. (The gate used to add its own pick of ONE copy by file time,
     # which could disagree with the window about what is answered.)
     unresolved = set(st.unresolved) - gt_segs
+    # A pellet a person answered on cuts a person has since redone: the re-cut
+    # voided the answer (causal_review_io.index_review_by_segment), and nobody
+    # has answered it on the new cuts. It is asked again in triage. WHY here:
+    # unflagged, it would take the algorithm's call -- the call the person had
+    # overruled -- and be filed with no one asked (run_gate flags it in the
+    # outcomes file so the triage window walks it).
+    voided = recut_voided_open(video_id, processing_dir) - gt_segs
+    unresolved |= voided
     # A triaged segment too short to be a pellet presentation cannot be answered
     # in triage (answer_problem refuses it there): it is a question about the
     # cuts, and only something a person can fix in the GUI may hold a video
@@ -239,8 +250,75 @@ def evaluate_gate(
             return (DECISION_TRIAGE,
                     f"reach assignment could not run ({failed}) -- choose the "
                     f"causal reach for segment(s) {segs}", st)
+        if voided:
+            return (DECISION_TRIAGE,
+                    f"{len(unresolved)} triaged segment(s) unresolved: {segs} "
+                    f"({RECUT_FLAG_REASON}: "
+                    f"{', '.join(str(s) for s in sorted(voided))})", st)
         return DECISION_TRIAGE, f"{len(unresolved)} triaged segment(s) unresolved: {segs}", st
     return DECISION_CLEAN, "clean", st
+
+
+# The flag a pellet gets in the outcomes file when a re-cut voided a person's
+# answer on it. A code word, so the triage window shows only what is open on
+# the pellet (plain_flag_reason gives no label for it): a reviewer is never
+# told a video was re-cut or answered before (docs/REVIEW_TOOLS.md, "Nothing
+# else").
+RECUT_FLAG_REASON = "answered_before_recut"
+
+
+def recut_voided_open(video_id: str, processing_dir: Path) -> set:
+    """Pellets whose person's answer a re-cut voided and that nobody has
+    answered on the new cuts (causal_review_io.recut_voided_segments), read
+    from EVERY copy of the review merged (effective_review over review_dirs:
+    this folder, the queue bundles, the filed folder and the durable copy) --
+    the reading triage_status and the window use. WHY every copy: an answer
+    only the durable copy held, voided by the re-cut, would otherwise take the
+    algorithm's call with nobody asked; and a new answer only another copy
+    holds must count as answered. Empty when there are none or the files
+    cannot be read (logged)."""
+    try:
+        from ..review.causal_review_io import (effective_review, recut_voided_segments,
+                                               review_dirs, segmentation_is_human,
+                                               segments_from_segmentation)
+        seg_path = Path(processing_dir) / f"{video_id}_segments.json"
+        if not seg_path.is_file():
+            return set()
+        seg_doc = json.loads(seg_path.read_text(encoding="utf-8"))
+        current = segments_from_segmentation(seg_doc)
+        if not current:
+            return set()
+        human = segmentation_is_human(seg_doc)
+        review = effective_review(video_id, review_dirs(video_id, processing_dir),
+                                  current_segments=current, human_segmentation=human)
+        if not review:
+            return set()
+        return recut_voided_segments(review, current, human_segmentation=human)
+    except Exception as e:
+        logger.warning("Gate: %s: could not check for answers a re-cut voided (%s)",
+                       video_id, e)
+        return set()
+
+
+def flag_recut_voided(video_id: str, processing_dir: Path) -> list:
+    """Flag every pellet recut_voided_open names in the video's outcomes file
+    (flagged_for_review, reason RECUT_FLAG_REASON), so the triage window walks
+    it; returns the pellets flagged. Raises when the outcomes file cannot be
+    written: sent to triage unflagged, the pellet would not be shown, the
+    release check would pass, and the video would come straight back here."""
+    voided = recut_voided_open(video_id, processing_dir)
+    if not voided:
+        return []
+    from .route_cli import flag_segments
+    flagged = flag_segments(Path(processing_dir) / f"{video_id}_pellet_outcomes.json",
+                            sorted(voided), RECUT_FLAG_REASON)
+    missing = sorted(set(voided) - set(flagged))
+    if missing:
+        # Same reason as an unwritable file: an unflagged pellet would not be
+        # walked in triage, and the video would come straight back.
+        raise RuntimeError("segment(s) %s are not in %s_pellet_outcomes.json, so they "
+                           "cannot be flagged to be asked again" % (missing, video_id))
+    return flagged
 
 
 def _assignment_failure(video_id: str, processing_dir: Path) -> str:
@@ -1093,9 +1171,10 @@ def _empty_triage_copy(video_id: str, deep_bundle: Path) -> None:
     whose cuts are being redone. (Escalate and the return scan's mislabel
     divert are different: they route the triage bundle ITSELF into deep
     review, and its review and ground truth travel with it -- see
-    docs/REVIEW_TOOLS.md.) NOT YET DONE: the durable store's copy of the
-    review is still read and matched to the new cuts by frame span
-    (causal_review_io.index_review_by_segment); voiding it is separate work.
+    docs/REVIEW_TOOLS.md.) The durable store's copy of the review is still
+    read, but once a person has set the new cuts every answer in it given
+    before then counts only on a pellet whose frames did not move
+    (causal_review_io.index_review_by_segment: a re-cut voids the rest).
     WHY at all: the whole folder used to be deleted (shutil.rmtree), a
     person's ground truth and clear markers with it; only reviews had a
     durable copy."""
@@ -1205,6 +1284,13 @@ def run_gate(
         # the pellet outcomes and causal reaches (resume_point says where each
         # resumes).
         step = "assignment" if _assignment_failure(video_id, processing_dir) else "outcome"
+        # Pellets whose answer a re-cut voided are flagged first: the triage
+        # window walks only flagged pellets (evaluate_gate says why they are
+        # asked again).
+        flagged = flag_recut_voided(video_id, processing_dir)
+        if flagged:
+            logger.info(f"Gate: {video_id} segment(s) {flagged} answered before the cuts "
+                        f"were redone by a person -- asked again in triage")
         bundle = route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
                                 db=db, db_state="triage", extra_sources=extra,
                                 held_at_step=step)

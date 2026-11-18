@@ -45,6 +45,7 @@ from .keyboard import keep_typing_in_panel, review_keys_on_layer
 from . import double_disagreement as dd
 from .causal_review_io import (
     _answer_signature,
+    cuts_set_at,
     UNDECIDED_OUTCOMES,
     build_segment_record,
     is_answered,
@@ -1472,9 +1473,14 @@ The notes box travels with the video.
         # save overwrote the durable copy's earlier answers with "not
         # reviewed" placeholders.
         copies = review_copies(self._video_stem, candidates)
-        current = [{"segment_num": s["segment_num"],
-                    "start_frame": s.get("start_frame"),
-                    "end_frame": s.get("end_frame")} for s in self._segment_list]
+        # cuts_set_at: answers given before a person set these cuts are void
+        # unless their pellet's cuts did not move (index_review_by_segment).
+        _cut = cuts_set_at(getattr(self, "_segments_data", None))
+        current = [dict({"segment_num": s["segment_num"],
+                         "start_frame": s.get("start_frame"),
+                         "end_frame": s.get("end_frame")},
+                        **({"cuts_set_at": _cut} if _cut else {}))
+                   for s in self._segment_list]
         human = self._segmentation_is_human()
         doc, merge_notes = merge_review_copies(copies, current, human_segmentation=human)
         # Each saved answer goes back on the CURRENT segment whose frames it

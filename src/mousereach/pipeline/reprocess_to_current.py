@@ -139,7 +139,7 @@ def reprocess_video_to_current(
     from mousereach.assignment.run import assign_reaches_for_video
     from mousereach.pipeline.manifest import create_processing_manifest
     from mousereach.pipeline.triage import triage_video
-    from mousereach.watcher.review_gate import evaluate_gate, DECISION_CLEAN
+    from mousereach.watcher.review_gate import evaluate_gate, DECISION_CLEAN, DECISION_TRIAGE
     from mousereach.watcher.transfer import safe_copy
 
     if sync_db is None:
@@ -288,6 +288,11 @@ def reprocess_video_to_current(
     # into Analyzed. Only a CLEAN video supersedes its old outputs + lands next to
     # the video + syncs to the DB.
     if decision != DECISION_CLEAN:
+        if decision == DECISION_TRIAGE:
+            # Pellets whose answer a person's re-cut voided are flagged so the
+            # triage window walks them (review_gate.flag_recut_voided says why).
+            from mousereach.watcher.review_gate import flag_recut_voided
+            summary["flagged_recut_voided"] = flag_recut_voided(video_id, work_dir)
         summary["held"] = _stage_review_bundle(
             video_id, work_dir, video_file, dlc_h5, decision, reason)
         return summary

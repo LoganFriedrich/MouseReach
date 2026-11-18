@@ -3137,6 +3137,14 @@ features file has nothing filed to keep and is not under this rule. The Re-run b
 (dashboard) re-runs from segmentation with every check, so a held video can always be
 re-run that way.
 
+**Before this rule: the gate's re-cut check.** The review gate runs before the extractor in a
+kinematics-only re-run too. When the video's review holds an answer a person's re-cut voided
+(given before the cuts were saved, on a pellet whose frames moved) and nobody has answered that
+pellet on the new cuts, the gate sends the video to triage with that pellet flagged
+(`answered_before_recut`) and the extractor does not run; the filed results stay in Analyzed
+until the new run, with the pellet answered, replaces them. See "A re-cut by a person voids the
+answers given before it" (in the review-return section below, and REVIEW_TOOLS.md).
+
 ## Update 2026-11-03: a recalculation re-runs no algorithm and no triage, and never re-asks a person's answer
 
 **The rules.** Only the calculations that changed are recalculated, without re-running the four
@@ -3547,8 +3555,9 @@ below).
   `repair_unfinished_routes` empties it as above on every pass once the deep-review bundle's route
   is whole (its record has `finished_later` and no `failed_files` left), whoever moved the missing
   file in. Escalate and the return scan's mislabel divert are not this path: they route the
-  triage bundle itself, and its review and ground truth travel with it into deep review (unchanged;
-  the re-segmentation-voids-answers work will change it).
+  triage bundle itself, and its review and ground truth travel with it into deep review; once a
+  person saves new cuts there, every answer in that review given before the save counts only on a
+  pellet whose frames did not move (REVIEW_TOOLS.md, "A re-cut voids the answers given before it").
 
 `mousereach-route-to-queue --queue triage` checks the rule before it flags any segment and
 reports such a video as `deep` (`"in_deep_review": true` with `--json`); it is not counted as a
@@ -4041,17 +4050,25 @@ work and extra ways to fail a cleared video.
    the segment whose frames it covers, on the reaches, outcomes or assignment the run remade
    (an out-of-date output, point 4).
 
-   **Known defect: answers are still carried across a re-cut.** The design rule is that
-   re-segmentation voids everything after it, a person's earlier outcome and causal-reach answers
-   included: they are kept as a record only and asked again, never carried by frames or by segment
-   number. Two paths still break that rule: a deep-review return (the cuts were redone, and the
-   old answers are applied by frames to the new segments; one that matches no segment is kept in
-   the file and applied to nothing), and a triage return whose algorithm cuts are out of date or
-   unreadable (point 4 moves its start back to segmentation, the segmenter cuts again, and the old
-   answers are applied the same way). This is not new -- before this change every return re-cut
-   the video -- and it is scheduled for removal by the review-answer-records work (saving cuts
-   voids later answers and re-runs from reaches). Until then, re-check already-answered pellets
-   after a re-cut instead of trusting the carried answers.
+   **A re-cut by a person voids the answers given before it.** Re-segmentation voids everything
+   after it, a person's earlier outcome and causal-reach answers included. When a person saves new
+   cuts (the segmentation fixer writes `corrected_at` into the segments file), an answer given
+   before then (`reviewed_at`) counts only on a pellet whose frames are exactly unchanged; every
+   other one is void -- not used by the review window, the release check, the review gate, the
+   hand-score check or kinematics -- and is kept in the review file as a record
+   (`causal_review_io.index_review_by_segment`). Only a PERSON's cuts void answers. A voided
+   pellet counts as unanswered: a video sent to deep review for another reason has it open in
+   Re-segmentation Review before release; a video sent for its cuts is released on Save, re-runs
+   from reaches, and the review gate sends it to triage with every voided pellet that nobody has
+   answered on the new cuts flagged (`answered_before_recut`, `review_gate.recut_voided_open` and
+   `flag_recut_voided`). The same gate check holds a filed video run again whose review holds
+   such answers, and `pipeline/reprocess_to_current` flags them the same way before it stages a
+   review bundle; the routing reason in the watcher log ends "(answered_before_recut: <pellets>)".
+   A voided answer is found in the pellet list or among the answers a later save kept aside
+   (`unmatched_answers`). A voided pellet never takes the algorithm's call unasked.
+   STILL OPEN: a triage return whose algorithm cuts are out of date or unreadable (point 4 moves
+   its start back to segmentation and the segmenter cuts again) still matches the earlier answers
+   to the new cuts by frame overlap, because the segmenter's cuts record no time.
 3. **Every later step runs.** The quality triage, the hand-score comparison and the review gate
    always run on a returned video -- they come after every algorithm step -- and then kinematics.
    A returned video is never treated as a filed video's "downstream calculation only" re-run,
@@ -4521,12 +4538,15 @@ queue never deletes or overwrites a person's file".
   (listed) unless the deep-review bundle holds it byte for byte (see "deep review supersedes
   triage" above). No answer is carried into the deep-review bundle by `_empty_triage_copy`. WHY:
   re-segmentation voids every answer after it; a review or ground truth moved into the deep-review
-  bundle travelled back into Processing with it. NOT YET DONE: the review's copy in the durable
-  store is still read by the review readers (`causal_review_io.find_review`, `truth_resolver`),
-  which match it to the new cuts by frame span (`index_review_by_segment` drops it when its frames
-  no longer fall in one segment); and Escalate and the mislabel divert still carry the triage
-  bundle's review and ground truth into deep review. Voiding answers made on the old cuts is
-  separate work. Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
+  bundle travelled back into Processing with it. The review's copy in the durable store is still
+  read by the review readers, but once a person has saved new cuts, every answer in it given
+  before then counts only on a pellet whose frames did not move; the rest are void, kept in the
+  file as a record, and the pellet counts as unanswered again (`index_review_by_segment`, keyed on the segments file's `corrected_at`;
+  see REVIEW_TOOLS.md, "A re-cut voids the answers given before it"). Escalate and the mislabel
+  divert still carry the triage bundle's review and ground truth into deep review, where the same
+  rule voids the answers once the cuts are saved. NOT COVERED: when the SEGMENTER cuts again
+  (a triage return whose algorithm cuts are out of date), earlier answers are still matched to the
+  new cuts by frame overlap -- the segmenter's cuts record no time. Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
 - **Queue folder check reads the dict entries.** `orchestrator.queue_folder_holds_this_run`
   reads each `failed_files` entry's `name` (entries are dicts with `name`, `error`, `source`; the
   oldest records hold bare names), so a route that could not move the run's processing manifest is

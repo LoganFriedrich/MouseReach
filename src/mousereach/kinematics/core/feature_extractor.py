@@ -492,15 +492,21 @@ class FeatureExtractor:
         # fallback, because those features would be filed as the result.
         # Whether a person made this segmentation: their cuts are logged as
         # made, however short (causal_review_io.index_review_by_segment).
+        # And when that person set them: answers given before then are void
+        # unless their pellet's cuts did not move (a re-cut voids them).
         _human_seg = False
+        _cuts_set_at = None
         try:
-            from mousereach.review.causal_review_io import segmentation_is_human
+            from mousereach.review.causal_review_io import cuts_set_at, segmentation_is_human
             _seg_file = Path(reaches_path).with_name(
                 Path(reaches_path).name.replace("_reaches.json", "_segments.json"))
             if _seg_file.is_file():
-                _human_seg = segmentation_is_human(json.loads(_seg_file.read_text(encoding="utf-8")))
+                _seg_doc = json.loads(_seg_file.read_text(encoding="utf-8"))
+                _human_seg = segmentation_is_human(_seg_doc)
+                _cuts_set_at = cuts_set_at(_seg_doc)
         except Exception:
             _human_seg = False
+            _cuts_set_at = None
         # Ground truth BESIDE THIS RUN is looked for first (extra_gt_dirs), then
         # the corpus index. WHY: the index (causal_review_io.gt_index) is built
         # once per process. In a long-running watcher it predates a ground-truth
@@ -519,7 +525,8 @@ class FeatureExtractor:
                 # ``review_path`` may be another copy (the durable one).
                 extra_review_dirs=(Path(reaches_path).parent,),
                 human_segmentation=_human_seg,
-                applied=_applied)
+                applied=_applied,
+                cuts_set_at=_cuts_set_at)
             self.applied_ground_truth = _applied.get('ground_truth', NOT_RESOLVED)
             self.problems.extend(_applied.get('problems') or [])
             self.review_applied = not _applied.get('problems')

@@ -236,7 +236,10 @@ GROUND TRUTH DOES NOT COUNT HERE: a ground-truth file with every boundary
 determined does not release a video or stand in for this step. Set or confirm
 the cuts here even when the video has ground truth.
 
-FINISHING: saving releases a video that was sent here for its cuts. A video
+FINISHING: saving releases a video that was sent here for its cuts. Any
+pellet a person answered on the old cuts whose frames moved is asked again
+in triage after the re-run (the status line says how many): a new cut voids
+the answers given on the old ones. A video
 sent for another reason (a flagged session, a quality hold) is released once
 its cuts are saved: by the "Release finished videos" button on the Review
 Queues tab if every pellet is already answered, otherwise by answering its
@@ -1327,7 +1330,8 @@ automatic.
                         "routing_reason": reason_txt,
                     })
                     self.status.setText(self.status.text()
-                                        + "  Released back to the pipeline.")
+                                        + "  Released back to the pipeline."
+                                        + _asked_again_note(bundle, stem))
                 else:
                     self.status.setText(
                         self.status.text()
@@ -1340,6 +1344,23 @@ automatic.
                                 + "  (release check failed: %s)" % e)
 
         self._next_video()
+
+
+def _asked_again_note(bundle: Path, stem: str) -> str:
+    """Words for the status line when saving these cuts voided answers a
+    person gave on the old cuts: those pellets are asked again in triage after
+    the re-run (review_gate.recut_voided_open). '' when there are none or the
+    check cannot run -- the gate makes the same check either way, so the note
+    is information only."""
+    try:
+        from mousereach.watcher.review_gate import recut_voided_open
+        n = len(recut_voided_open(stem, bundle))
+    except Exception:
+        return ""
+    if not n:
+        return ""
+    return ("  %d pellet(s) answered on the old cuts will be asked again in triage "
+            "after the re-run." % n)
 
 
 def main():

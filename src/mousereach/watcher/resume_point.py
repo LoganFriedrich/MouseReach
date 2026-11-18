@@ -30,17 +30,21 @@ applies each answer to the segment whose frames it covers, on the remade reach,
 outcome or assignment outputs. That is the case when the start moves earlier
 to reach, outcome or assignment because an output is out of date (below).
 
-KNOWN DEFECT, NOT THE DESIGN: answers are still carried across a re-cut. The
-design rule is that re-segmentation voids everything after it, a person's
-earlier outcome and causal-reach answers included: they are kept as a record
-only and asked again, never carried by frames or by segment number. Two paths
-here still re-cut and then apply the old answers by frames
-(causal_review_io.index_review_by_segment): the deep-review return (resumes at
-reach on the new cuts) and a triage return whose algorithm cuts are out of date
-or unreadable (current_start moves its start back to segmentation, so the
-segmenter cuts again). The voiding is owed by the review-answer-records work
-(saving cuts voids later answers); this module only decides where a run starts
-and does not touch the review file.
+A RE-CUT BY A PERSON VOIDS THE EARLIER ANSWERS. The design rule is that
+re-segmentation voids everything after it, a person's earlier outcome and
+causal-reach answers included: they are kept as a record only and never
+applied. Every review reader does this when a person set the current cuts
+(causal_review_io.index_review_by_segment, keyed on the segments file's
+corrected_at): an answer given before then counts only on a pellet whose
+frames did not move. So the deep-review return (resumes at reach on the new
+cuts) treats those pellets as unanswered, and the review gate sends the
+video to triage with each one flagged (review_gate.recut_voided_open): they
+are asked again on the new cuts, never left to the algorithm's call. NOT
+COVERED: a triage return whose algorithm cuts are out of date or unreadable
+(current_start moves its start back to segmentation, so the segmenter cuts
+again) -- the segmenter's cuts record no time, and its earlier answers are
+still matched to the new cuts by frame overlap. This module only decides
+where a run starts and does not touch the review file.
 
 WHY deep review always resumes at reach: deep review is where cuts are fixed,
 and everything computed from the cuts is remade on the new ones. Segmentation

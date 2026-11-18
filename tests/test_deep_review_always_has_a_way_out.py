@@ -89,7 +89,11 @@ def test_ground_truth_is_not_proof_of_re_segmentation(tmp_path):
 
 
 def _answered(n):
-    return {"segment_num": n, "human": {"outcome": "retrieved"}, "answers": {}}
+    # Given on the new cuts, after they were saved: an answer given before a
+    # person re-cut the video is void (test_recut_voids_earlier_answers.py).
+    return {"segment_num": n, "human": {"outcome": "retrieved"}, "answers": {},
+            "reviewed_at": "2099-01-12T09:00:00",
+            "segment_span": {"start": 100 * n, "end": 100 * n + 99}}
 
 
 def test_recut_and_fully_answered_is_complete_whatever_it_was_sent_for(tmp_path):

@@ -830,6 +830,10 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
 # can show a note only on the segment it concerns: a reviewer needs only the
 # note for the segment being looked at. Words None: nothing to act on.
 _PLAIN_NOTES = [
+    (re.compile(r"^segment (\S+) answer \(frames (\d+)-(\d+)\) was given before a person set"),
+     "earlier answer for frames {1}-{2} was given before the re-cut -- answer again", (1, 2)),
+    (re.compile(r"^segment (\S+) answer \(frames not recorded\) was given before a person set"),
+     "an earlier answer was given before the re-cut -- answer again", None),
     (re.compile(r"^segment (\S+) review names causal reach (\d+)-(\d+), outside the frames "
                 r"it records \((\d+)-(\d+)\)"),
      "earlier answer's reach {1}-{2} is outside this segment", (3, 4)),
@@ -885,13 +889,32 @@ def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
             return []
     if len(bounds) < 2:
         return []
-    return [{"segment_num": i + 1, "start_frame": bounds[i], "end_frame": bounds[i + 1] - 1}
+    when = cuts_set_at(seg_doc)
+    segs = [{"segment_num": i + 1, "start_frame": bounds[i], "end_frame": bounds[i + 1] - 1}
             for i in range(len(bounds) - 1)]
+    if when:
+        for s in segs:
+            s[CUTS_SET_AT_KEY] = when
+    return segs
 
 
 def segmentation_is_human(seg_doc) -> bool:
     """True when a person made (or corrected) this segmentation."""
     return (seg_doc or {}).get("boundary_source") == "human"
+
+
+# Carried on each current segment (segments_from_segmentation, and every
+# caller that builds its own list of current segments): when a person set the
+# current cuts. index_review_by_segment uses it to void answers given before.
+CUTS_SET_AT_KEY = "cuts_set_at"
+
+
+def cuts_set_at(seg_doc) -> Optional[str]:
+    """When a person saved the current cuts (the fixer's ``corrected_at``), or
+    None for the segmenter's own cuts or a file that does not record it."""
+    if not segmentation_is_human(seg_doc):
+        return None
+    return (seg_doc or {}).get("corrected_at") or None
 
 
 def answered_segments(review_doc, current_segments=None,
@@ -917,7 +940,8 @@ def answered_segments(review_doc, current_segments=None,
 
 
 def index_review_by_segment(review_doc, current_segments=None,
-                            human_segmentation: bool = False):
+                            human_segmentation: bool = False,
+                            voided: Optional[list] = None):
     """Map each CURRENT segment number to the review record describing it.
 
     Reviews used to be found by segment number alone. That number is an index
@@ -936,6 +960,21 @@ def index_review_by_segment(review_doc, current_segments=None,
     segmentation could not be recovered -- fall back to matching by number,
     which is all that has ever been available for them.
 
+    A RE-CUT VOIDS THE ANSWERS GIVEN BEFORE IT. When a person set the current
+    cuts (a current segment carries ``cuts_set_at``, from the segments file's
+    ``corrected_at``), an answer given before that time counts only if its
+    frames are EXACTLY the frames of a current segment -- that pellet's cuts
+    did not move. Any other earlier answer -- overlapping, shifted, split, or
+    recording no frames at all -- is not applied, and the pellet is asked
+    again; the answer stays in the file as a record (restore_review_for_segments
+    keeps it under ``unmatched_answers``). WHY: the rule is that
+    re-segmentation voids everything after it, a person's answers included:
+    they were given on cuts that turned out wrong, and fitting them onto new
+    cuts by overlap or by number is a guess about footage nobody judged on the
+    new cuts. The same rule puts ground-truth outcomes back only on unchanged
+    cuts (unified_gt). An answer given after the cuts were set is matched as
+    below.
+
     A segment shorter than MIN_REAL_SEGMENT_FRAMES is treated as a segmenter
     artifact -- unless ``human_segmentation`` is set: a person who cut the video
     decided where its segments are, and their cuts are logged as made, however
@@ -949,6 +988,8 @@ def index_review_by_segment(review_doc, current_segments=None,
             number-matching, so callers that have no segmentation still work.
         human_segmentation: the current segmentation was made by a person
             (``boundary_source == "human"`` in its segments file).
+        voided: a list; when given, every record a re-cut voided is appended
+            to it (recut_voided_segments uses them to ask those pellets again).
 
     Returns:
         (mapping, notes) -- mapping is {current segment_num: review record};
@@ -982,6 +1023,10 @@ def index_review_by_segment(review_doc, current_segments=None,
     if not spans:
         return by_num, notes
 
+    recut = max((t for t in (_when(s.get(CUTS_SET_AT_KEY)) for s in current_segments)
+                 if t is not None), default=None)
+    exact = set(spans.values())
+
     mapping = {}
     claimed = {}
     conflicted = {}
@@ -994,6 +1039,18 @@ def index_review_by_segment(review_doc, current_segments=None,
                 "footage (a zero-length-segment artifact); dropped"
                 % (old_num, rspan[0], rspan[1]))
             continue
+        if recut is not None and rspan not in exact:
+            given = _when(rec.get("reviewed_at") or (review_doc or {}).get("reviewed_at"))
+            if given is None or given < recut:
+                notes.append(
+                    "segment %s answer (frames %s) was given before a person set the "
+                    "current cuts (%s) and is not on a pellet whose cuts stayed the "
+                    "same; a re-cut voids it -- not applied, the pellet is unanswered again"
+                    % (old_num, "%d-%d" % rspan if rspan else "not recorded",
+                       recut.isoformat(timespec="seconds")))
+                if voided is not None:
+                    voided.append(rec)
+                continue
         if rspan is None:
             # No frames recorded; the number is the only handle there is.
             if old_num is not None and int(old_num) in spans:
@@ -1085,6 +1142,71 @@ def index_review_by_segment(review_doc, current_segments=None,
             "%s and %s); neither is applied -- a person must answer it again"
             % (sn, rspan[0], rspan[1], b, a))
     return mapping, notes
+
+
+def recut_voided_segments(review_doc, current_segments=None,
+                          human_segmentation: bool = False) -> set:
+    """CURRENT segment numbers whose person's answer a re-cut voided and that
+    nobody has answered since: the pellets that must be ASKED AGAIN.
+
+    index_review_by_segment voids an answer given before a person set the
+    current cuts (unless its pellet's frames did not move). Voiding alone only
+    makes the pellet unanswered, and an unanswered pellet the algorithm did not
+    flag takes the algorithm's call -- so a person's answer would silently be
+    replaced by the very call they had overruled. This names those pellets so
+    the review gate sends them to triage (review_gate.evaluate_gate) and a
+    person answers them on the new cuts.
+
+    Which current pellet a voided answer is about: the one its frames overlap
+    most (ties: each of them); an answer that recorded no frames, the current
+    pellet with its number. Asking one pellet too many costs a person a look;
+    asking one too few files the algorithm's call over a person's answer.
+    Only an ANSWER counts (is_answered): a voided placeholder asks nothing.
+    The answers a save kept aside (``unmatched_answers``) are read too: a save
+    after the re-cut may keep a voided answer there, and it must still be
+    asked. Empty when the current cuts are the segmenter's, or nothing was
+    voided."""
+    if not current_segments:
+        return set()
+    voided: list = []
+    mapping, _ = index_review_by_segment(review_doc, current_segments,
+                                         human_segmentation=human_segmentation,
+                                         voided=voided)
+    aside = [r for r in (review_doc or {}).get("unmatched_answers") or []
+             if isinstance(r, dict)]
+    if aside:
+        # Only what the re-cut voids among them; an aside answer that is not
+        # void was never applied by any reader and is not asked about here.
+        index_review_by_segment({"segments": aside,
+                                 "reviewed_at": (review_doc or {}).get("reviewed_at")},
+                                current_segments, human_segmentation=human_segmentation,
+                                voided=voided)
+    if not voided:
+        return set()
+    answered = {int(sn) for sn, rec in mapping.items() if is_answered(rec)}
+    spans = {}
+    for seg in current_segments:
+        sn, sp = seg.get("segment_num"), _seg_span(seg)
+        if sn is not None and sp is not None and not _too_short(sp, human_segmentation):
+            spans[int(sn)] = sp
+    out = set()
+    for rec in voided:
+        if not is_answered(rec):
+            continue
+        rspan = _span_of(rec)
+        if rspan is None:
+            num = rec.get("segment_num")
+            try:
+                if num is not None and int(num) in spans:
+                    out.add(int(num))
+            except (TypeError, ValueError):
+                pass
+            continue
+        scored = [(_overlap(rspan, sp), sn) for sn, sp in spans.items()]
+        best = max((ov for ov, _ in scored), default=0)
+        if best:
+            out |= {sn for ov, sn in scored if ov == best}
+    return out - answered
 
 
 # ---------------------------------------------------------------------------
