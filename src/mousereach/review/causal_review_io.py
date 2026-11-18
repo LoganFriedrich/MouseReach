@@ -526,7 +526,8 @@ def stamp_segment_reviewers(
       file's own -- the person who saved that file gave that answer;
     - otherwise (new or changed): this save's reviewer and time.
 
-    ``recut``: when a person set the current cuts. A person's answer in THIS
+    ``recut``: when a re-cut (a person's or the segmenter's, cuts_set_at) set
+    the current cuts. A person's answer in THIS
     save never inherits a time from before then -- it was given now, on the
     new cuts. WHY: an answer re-given after a re-cut is often the same as the
     voided one (same pellet number, same outcome); inheriting the old time
@@ -983,9 +984,9 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
 # can show a note only on the segment it concerns: a reviewer needs only the
 # note for the segment being looked at. Words None: nothing to act on.
 _PLAIN_NOTES = [
-    (re.compile(r"^segment (\S+) answer \(frames (\d+)-(\d+)\) was given before a person set"),
+    (re.compile(r"^segment (\S+) answer \(frames (\d+)-(\d+)\) was given before a (?:person|re-cut) set"),
      "earlier answer for frames {1}-{2} was given before the re-cut -- answer again", (1, 2)),
-    (re.compile(r"^segment (\S+) answer \(frames not recorded\) was given before a person set"),
+    (re.compile(r"^segment (\S+) answer \(frames not recorded\) was given before a (?:person|re-cut) set"),
      "an earlier answer was given before the re-cut -- answer again", None),
     (re.compile(r"^segment (\S+) review names causal reach (\d+)-(\d+), outside the frames "
                 r"it records \((\d+)-(\d+)\)"),
@@ -1271,7 +1272,7 @@ def recut_of(current_segments) -> Optional["Recut"]:
 
 
 def given_before_recut(when, recut_at: Optional[datetime]) -> bool:
-    """Was a statement timed ``when`` made before a person set the current
+    """Was a statement timed ``when`` made before a re-cut set the current
     cuts (``recut_at``)? A time that cannot be read counts as before."""
     if recut_at is None:
         return False
@@ -1474,7 +1475,7 @@ def index_review_by_segment(review_doc, current_segments=None,
         verdict = recut_verdict(rec, review_doc, recut)
         if verdict not in RECUT_KEPT:
             notes.append(
-                "segment %s answer (frames %s) was given before a person set the "
+                "segment %s answer (frames %s) was given before a re-cut set the "
                 "current cuts (%s), %s; a re-cut voids it -- not applied, the "
                 "pellet is unanswered again"
                 % (old_num, "%d-%d" % rspan if rspan else "not recorded",
@@ -1580,8 +1581,9 @@ def recut_voided_segments(review_doc, current_segments=None,
     """CURRENT segment numbers whose person's answer a re-cut voided and that
     nobody has answered since: the pellets that must be ASKED AGAIN.
 
-    index_review_by_segment voids an answer given before a person set the
-    current cuts unless its pellet's frames are unchanged
+    index_review_by_segment voids an answer given before a re-cut (a
+    person's or the segmenter's) set the current cuts unless its pellet's
+    frames are unchanged
     (answer_survives_recut). Voiding alone only
     makes the pellet unanswered, and an unanswered pellet the algorithm did not
     flag takes the algorithm's call -- so a person's answer would silently be

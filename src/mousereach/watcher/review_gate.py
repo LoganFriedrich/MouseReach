@@ -101,7 +101,7 @@ def evaluate_gate(
     another pellet while the current cuts still number it otherwise
     (mislabel_on_current_cuts). Otherwise, any triaged element the human has not addressed
     (and that GT did not already determine) -> TRIAGE; so is a pellet whose
-    person's answer a re-cut by a person voided and that nobody has answered on
+    person's answer a re-cut (a person's or the segmenter's) voided and that nobody has answered on
     the new cuts (recut_voided_open; run_gate flags it so triage walks it).
     Otherwise -> CLEAN.
     """
@@ -237,7 +237,8 @@ def evaluate_gate(
     # re-triaging. (The gate used to add its own pick of ONE copy by file time,
     # which could disagree with the window about what is answered.)
     unresolved = set(st.unresolved) - gt_segs
-    # A pellet a person answered on cuts a person has since redone: the re-cut
+    # A pellet a person answered on cuts since redone (by a person or the
+    # segmenter, causal_review_io.cuts_set_at): the re-cut
     # voided the answer (causal_review_io.index_review_by_segment), and nobody
     # has answered it on the new cuts. It is asked again in triage. WHY here:
     # unflagged, it would take the algorithm's call -- the call the person had
@@ -399,7 +400,7 @@ def route_recut_voided_to_triage(video_id: str, processing_dir: Path, segments,
         logger.info(f"Kinematics: {video_id} stays in DEEP_REVIEW (triage refused)")
     else:
         logger.info(f"Kinematics: {video_id} segment(s) {flagged} answered before the "
-                    f"cuts were redone by a person -> TRIAGE, asked again")
+                    f"cuts were redone -> TRIAGE, asked again")
     return Path(bundle)
 
 
@@ -1374,7 +1375,7 @@ def run_gate(
         flagged = flag_recut_voided(video_id, processing_dir)
         if flagged:
             logger.info(f"Gate: {video_id} segment(s) {flagged} answered before the cuts "
-                        f"were redone by a person -- asked again in triage")
+                        f"were redone -- asked again in triage")
         bundle = route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
                                 db=db, db_state="triage", extra_sources=extra,
                                 held_at_step=step)

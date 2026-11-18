@@ -6353,7 +6353,7 @@ segmenter re-cut left every earlier answer applied by overlap and the gate passe
 ## Update: no review writer recreates a bundle that left its queue
 
 WHY: while a person has a bundle open, the return scan (or another window's release) can move it
-out of the queue; there is no reviewer claim on a bundle (MRR-02d, an open owner question). The
+out of the queue; there is no reviewer claim on a bundle (an open owner question). The
 Review Queues release button already wrote its clear marker create-only and only into an existing
 folder. The review window's Clear button and its clear-on-complete save, the segmentation fixer's
 release after a save, and the review save itself wrote through `causal_review_io._write_json`,
@@ -6379,7 +6379,7 @@ the Clear button recreated the folder and overwrote another person's marker).
 
 WHY: the release predicates give the gate and the return scan's divert test an in-bundle reading
 of ground truth for whole-video certification, but the release check (`triage_status`) still
-reads only the ground-truth index (MRR-03d, an open owner decision: releasing these bundles would
+reads only the ground-truth index (an open owner decision: releasing these bundles would
 re-run and file each of them). A triage bundle whose segmentation failed and whose ground truth
 INSIDE the bundle certifies the whole video was therefore not diverted to re-segmentation (it
 counts as cleared), not released (its triaged pellets stay open) and not offered by the review

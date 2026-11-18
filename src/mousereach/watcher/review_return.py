@@ -1827,7 +1827,7 @@ def repair_unfinished_routes(force: bool = False, db=None,
     return out
 
 
-# A triage bundle the scan can neither divert, release nor offer (MR-ND9):
+# A triage bundle the scan can neither divert, release nor offer:
 # its segmentation failed, ground truth INSIDE the bundle certifies the whole
 # video -- so it is not diverted to re-segmentation (the gate would pass it
 # clean) -- but the release check counts only the ground-truth index, not
