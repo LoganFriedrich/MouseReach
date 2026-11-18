@@ -323,6 +323,14 @@
    "covers": [
     "src/mousereach/watcher/recording_issue.py"
    ]
+  },
+  {
+   "doc": "docs/TEST_GUARD.md",
+   "what": "The test guard: what the tests may never write, and how to list real folders",
+   "covers": [
+    "tests/real_root_guard.py",
+    "tests/conftest.py"
+   ]
   }
  ]
 }

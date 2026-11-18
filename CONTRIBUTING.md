@@ -42,7 +42,7 @@ MouseReach requires a trained DeepLabCut model for pose estimation. You must tra
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
-4. Run tests if available
+4. Run the tests (`python -m pytest tests`). They never write into your real pipeline folders: see [docs/TEST_GUARD.md](docs/TEST_GUARD.md) for what the test guard refuses and how to tell it about more folders
 5. Commit with clear messages
 6. Push to your fork
 7. Open a Pull Request
