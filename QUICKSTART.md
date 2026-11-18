@@ -58,9 +58,9 @@ That's it! MouseReach will open with all tools in tabs.
 mousereach "C:\path\to\your\video.mp4"
 ```
 
-**Option B: From within MouseReach**
-1. Launch `mousereach`
-2. Click "Load Video" button in any tab
+**Option B: From a per-step review screen**
+1. Open the screen with its command (see Reviewing below)
+2. Click the **Select Video...** button
 3. Navigate to your video file
 
 ### Reviewing
@@ -92,7 +92,7 @@ Your Video → Crop → DLC → Segment → Reaches → Outcomes → Features �
 |------|--------------|-------------|
 | 0 | Crops 8-camera collages into individual videos | After recording |
 | 1 | Runs DeepLabCut pose tracking | After cropping |
-| 2 | Finds the 20 pellet delivery boundaries | After DLC |
+| 2 | Finds the 21 boundaries around the 20 pellet presentations | After DLC |
 | 3 | Detects reaching movements | After segmentation |
 | 4 | Classifies outcomes (Retrieved/Displaced/etc) | After reaches |
 | 5 | Extracts kinematic features per reach | After outcomes |
@@ -102,7 +102,7 @@ Your Video → Crop → DLC → Segment → Reaches → Outcomes → Features �
 
 ## Keyboard Shortcuts
 
-### All Tools
+### Reach and outcome review screens (the boundary screen differs: Space sets the boundary, S saves, Enter accepts)
 | Key | Action |
 |-----|--------|
 | **Space** | Play/Pause video |
@@ -110,13 +110,15 @@ Your Video → Crop → DLC → Segment → Reaches → Outcomes → Features �
 | **Shift+←/→** | Jump 10 frames |
 | **Ctrl+S** | Save progress |
 
-### Step 2b - Boundaries
+### Step 2b - Review Boundaries
 | Key | Action |
 |-----|--------|
 | **N/P** | Next/Previous boundary |
 | **Space** | Set boundary to current frame |
+| **S** | Save validated boundaries |
+| **Enter** | Accept the current boundary |
 
-### Step 3b - Reaches
+### Step 4b - Review Reaches
 | Key | Action |
 |-----|--------|
 | **N/P** | Next/Previous reach |
@@ -124,7 +126,7 @@ Your Video → Crop → DLC → Segment → Reaches → Outcomes → Features �
 | **A** | Add new reach |
 | **Delete** | Delete selected reach |
 
-### Step 4b - Outcomes
+### Step 3b - Review Outcomes
 | Key | Action |
 |-----|--------|
 | **N/P** | Next/Previous segment |
@@ -150,7 +152,7 @@ Your Video → Crop → DLC → Segment → Reaches → Outcomes → Features �
 - Try copying the video to a simple path like `C:\Videos\`
 
 ### Changes not saving
-- Press **Ctrl+S** to save
+- Press **Ctrl+S** to save (in Step 2b - Review Boundaries, press **S**)
 - Check that you have write permission to the folder
 
 ---
@@ -163,4 +165,4 @@ Your Video → Crop → DLC → Segment → Reaches → Outcomes → Features �
 
 ---
 
-*MouseReach v2.3 | Quick Start Guide*
+*MouseReach v2.16 | Quick Start Guide*
