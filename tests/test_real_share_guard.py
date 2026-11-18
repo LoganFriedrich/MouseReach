@@ -3,7 +3,9 @@ folders -- including a folder create that changes nothing on disk.
 
 The guard is pointed at a temp folder standing in for a real root, so these
 tests never touch the real share. Each test removes the records it made, or the
-guard would (correctly) fail the test itself.
+guard would (correctly) fail the test itself. While a test runs the guard also
+REFUSES the write (PermissionError), so the probe expects that refusal for
+every event it records.
 """
 import conftest
 
@@ -11,8 +13,13 @@ import conftest
 def _record(monkeypatch, root, event, args):
     monkeypatch.setattr(conftest, "_REAL_ROOTS", (conftest._norm(root),))
     before = len(conftest._hits)
-    conftest._audit(event, args)
+    try:
+        conftest._audit(event, args)
+        refused = False
+    except PermissionError:
+        refused = True
     new = conftest._hits[before:]
+    assert refused == bool(new)      # recorded <=> refused
     del conftest._hits[before:]
     return new
 
