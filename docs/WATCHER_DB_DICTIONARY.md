@@ -4,6 +4,10 @@ Verified against: 05de530 (2026-09-14), plus the GPU-node guards of 2026-09-15
 (collage claims, finished-or-held children, Processing/Posed; see
 PIPELINE_AS_BUILT.md, "Update 2026-09-15")
 
+Update 2026-11-18: the file:line references below were taken from an older
+version of the code and many no longer match; find the code by the function,
+class or constant named beside each reference.
+
 WHY THIS EXISTS
 
 Knowing how the pipeline works should never require reading the source or
@@ -40,7 +44,8 @@ state it set was lost).
       exactly one caller, restore_db (:208), and only when that node's own
       database is missing or under 4 KB. Its timestamp says when that node last
       finished a cycle, not when its contents were true. Do not read it to
-      answer questions about the pipeline.
+      answer questions about the pipeline. Written only by GPU nodes
+      (DLCOrchestrator); the processing server writes no such backup.
 
   nas_root/watcher_central.db                    TWO KINDS OF TABLE IN ONE FILE
       Tables `videos` and `processing_log`: AUDIT LOG, NOT STATE.
@@ -131,7 +136,10 @@ Identity and provenance
   date, animal_id, experiment, cohort, subject, tray_type, tray_position
                           parsed out of video_id; see config.AnimalID and
                           config.FilePatterns. tray_type P=Pillar (the only
-                          supported one), E=Easy, F=Flat.
+                          tray that is segmented), E=Easy, F=Flat
+                          (analyzed session-only since 2026-10-23: no
+                          segmentation, a session file instead of
+                          per-pellet kinematics).
 
 Where the files are
 
@@ -289,8 +297,9 @@ Version tracking (added by migration, db.py:331)
                           column: nothing else distinguishes "a person said
                           re-run this" from "the scanner noticed a version".
   crystallized_at, crystallized_by, crystallized_label
-                          locked against reprocessing; use force_state to
-                          unlock
+                          locked against reprocessing; only
+                          mousereach-uncrystallize unlocks it (force_state
+                          refuses a crystallized row)
 
 
 ## 3. TABLE: collages, and TABLE: processing_log
