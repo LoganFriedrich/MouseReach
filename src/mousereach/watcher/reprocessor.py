@@ -400,7 +400,10 @@ class ReprocessingScanner:
         try:
             manifest_index, manifest_mtime, feats_mtime = self._index_archive()
             archive_listed = True
-            summary['no_manifest_listed'] = True
+            # An empty listing (the Analyzed folder missing, or a share that
+            # answered with nothing) says nothing about any video: the list
+            # of videos without a manifest is not rewritten from it.
+            summary['no_manifest_listed'] = bool(manifest_index or feats_mtime)
         except Exception as e:
             manifest_index, manifest_mtime, feats_mtime = {}, {}, {}
             # A listing that stopped part-way may have seen a video's ground
@@ -581,7 +584,11 @@ class ReprocessingScanner:
                     gt_pending = self._pending_ground_truth(video_id, None, feats_mtime)
                     if review_path is None and not gt_pending:
                         summary['no_manifest'] += 1
-                        summary['no_manifest_videos'].append(video_id)
+                        # Named only when the listing shows its features file
+                        # filed and no manifest beside it. A video the listing
+                        # did not show at all is not known to lack anything.
+                        if video_id in feats_mtime:
+                            summary['no_manifest_videos'].append(video_id)
                         continue
                     if (review_path is not None
                             and self._review_declares_mislabel(review_path)

@@ -128,6 +128,29 @@ def test_a_scan_that_could_not_list_the_archive_leaves_the_list_alone(
     assert listed.read_text(encoding="utf-8") == before
 
 
+def test_a_video_the_listing_did_not_show_is_not_named(archive):
+    """An 'archived' row whose files the listing does not show is not known to
+    lack a manifest: it is counted, not named."""
+    gone = "20990101_ABC0103_P1"
+    db = DB(archived=[WITH, gone])
+    summary = ReprocessingScanner(db, archive).scan(mark_outdated=True,
+                                                    adopt_orphans=False)
+    assert summary["no_manifest_videos"] == []
+    assert summary["no_manifest_listed"] is True
+
+
+def test_an_empty_listing_names_nobody_and_is_not_used(tmp_path, monkeypatch):
+    nas = tmp_path / "nas"
+    nas.mkdir()
+    (nas / "pipeline_versions.json").write_text(json.dumps({
+        "versions": dict(CURRENT, dlc_scorer=SCORER)}), encoding="utf-8")
+    monkeypatch.setattr(crio, "review_path_index", lambda stems: {})
+    monkeypatch.setattr(crio, "resolve_review_path", lambda *a, **k: None)
+    db = DB(archived=[WITHOUT])        # no Analyzed folder at all
+    summary = ReprocessingScanner(db, nas).scan(mark_outdated=True,
+                                                adopt_orphans=False)
+    assert summary["no_manifest_videos"] == []
+    assert summary["no_manifest_listed"] is False
 def test_a_pose_node_that_also_processes_still_asks_for_re_poses(
         tmp_path, monkeypatch):
     """A graphics-card node with also_process on runs the version scan too.
