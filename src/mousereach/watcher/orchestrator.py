@@ -362,28 +362,11 @@ def _has_files_of(directory, video_id) -> bool:
         return False
 
 
-def undecided_pellets_in_features(features_path, video_id):
-    """Segment numbers of a Pillar video's features file whose pellet outcome
-    is still undecided (the algorithm's "triaged", an older tool's
-    "uncertain", or none) -- causal_review_io.UNDECIDED_OUTCOMES, the one
-    definition every check of an answer uses. Empty for an Easy or Flat tray
-    (no outcome is ever computed for them) and for a file that cannot be read
-    (the features check proper reports a missing file; an unreadable one is
-    not this check's question)."""
-    from mousereach.config import is_outcome_free_tray
-    from mousereach.review.causal_review_io import UNDECIDED_OUTCOMES
-    if is_outcome_free_tray(video_id):
-        return []
-    try:
-        with open(features_path, encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError):
-        return []
-    out = []
-    for seg in (doc or {}).get("segments") or []:
-        if isinstance(seg, dict) and seg.get("outcome") in UNDECIDED_OUTCOMES:
-            out.append(seg.get("segment_num"))
-    return out
+# The two last checks on a features file live in archive/core.py so that
+# every filing path asks them (the watcher here, the mousereach-archive
+# command, bring-current); imported under their old names.
+from mousereach.archive.core import (  # noqa: E402
+    undecided_pellets_in_features, reaches_with_failed_measures)
 
 
 def refuse_filing_with_undecided_pellet(db, video_id, results_dir) -> bool:
@@ -417,24 +400,6 @@ def refuse_filing_with_undecided_pellet(db, video_id, results_dir) -> bool:
     db.log_step(video_id, 'archive', 'failed', message=message)
     logger.error(f"{video_id}: {message} -- held as failed, not filed")
     return True
-
-
-def reaches_with_failed_measures(features_path):
-    """``(segment_num, reach_id)`` of every reach in a features file whose
-    extended measures failed: the extractor then stored only
-    ``{"_extended_features_error": ...}`` in place of its extended values. Empty for
-    a file that cannot be read (not this check's question)."""
-    try:
-        with open(features_path, encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError):
-        return []
-    out = []
-    for seg in (doc or {}).get("segments") or []:
-        for r in (seg or {}).get("reaches") or []:
-            if isinstance(r, dict) and "_extended_features_error" in (r.get("extended") or {}):
-                out.append((seg.get("segment_num"), r.get("reach_id")))
-    return out
 
 
 def refuse_filing_with_failed_measures(db, video_id, results_dir) -> bool:

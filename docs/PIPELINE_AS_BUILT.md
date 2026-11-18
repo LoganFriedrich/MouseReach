@@ -6649,3 +6649,15 @@ follows all of this: a label mismatch is not finalized and not routed.
 
 Tests: tests/test_label_mismatch_hold.py,
 tests/test_bench_suspension_and_label_decisions.py.
+
+## Update 2026-11-18: every filing path asks the watcher's last checks on the features file
+
+The watcher's archive step has refused to file a `<video>_features.json` that still holds a pellet
+with no decided outcome ("triaged", "uncertain" or none), or a reach whose extended measures
+failed (`_extended_features_error`). The `mousereach-archive` command (on a machine whose watcher
+database has no row for the video) and bring-current's finalize did not ask, and could file such
+a file. Both now refuse it, moving nothing: the command says "pellet(s) N in <video>_features.json
+have no decided outcome ..." or names the reaches carrying `_extended_features_error`, and exits 1;
+bring-current's summary `error` begins "not finalized:" with the same words. The two checks live
+in one place, `archive/core.py` (`undecided_pellets_in_features` and `reaches_with_failed_measures`,
+which the watcher's own step uses; `filed_features_refusal` for the command and bring-current).

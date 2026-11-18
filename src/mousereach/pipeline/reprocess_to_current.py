@@ -44,8 +44,10 @@ or with a person's work lost:
  - finalize needs this machine's watcher database: it refuses a crystallized
    video and a video the watcher is working on (any state but 'archived'), and
    refuses when the database cannot be read. Run it on the processing server.
- - A clean video is finalized only with its features file; nothing is pushed
-   to any database (mousedb pulls filed results itself).
+ - A clean video is finalized only with its features file, and not when that
+   file still holds an undecided pellet or a reach whose measures failed (the
+   watcher's own last checks, archive/core.filed_features_refusal); nothing
+   is pushed to any database (the database tool pulls filed results itself).
 """
 from __future__ import annotations
 
@@ -440,6 +442,14 @@ def reprocess_video_to_current(
         return summary
     if not (work_dir / f"{video_id}_features.json").is_file():
         summary["error"] = "cannot finalize: no kinematics were made for this run"
+        return summary
+    # The watcher's own last checks on the file about to be filed (an
+    # undecided pellet; a reach whose measures failed), asked before anything
+    # moves. WHY: filing means done for good, and this routine files.
+    from mousereach.archive.core import filed_features_refusal
+    why = filed_features_refusal(video_id, work_dir)
+    if why:
+        summary["error"] = f"not finalized: {why} (nothing moved)"
         return summary
     from mousereach.archive.supersede import supersede_video_outputs
     from mousereach.pipeline.fsutil import files_of_video

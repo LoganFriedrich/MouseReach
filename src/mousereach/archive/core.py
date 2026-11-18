@@ -163,6 +163,80 @@ def stale_features_reason(video_id: str, folder, started_at=None) -> Optional[st
     return None
 
 
+def undecided_pellets_in_features(features_path, video_id):
+    """Segment numbers of a Pillar video's features file whose pellet outcome
+    is still undecided (the algorithm's "triaged", an older tool's
+    "uncertain", or none) -- causal_review_io.UNDECIDED_OUTCOMES, the one
+    definition every check of an answer uses. Empty for an Easy or Flat tray
+    (no outcome is ever computed for them) and for a file that cannot be read
+    (the features check proper reports a missing file; an unreadable one is
+    not this check's question).
+
+    Lives here, not in the watcher, so every path that files a video asks
+    it: the watcher's archive step (orchestrator.refuse_filing_with_undecided_
+    pellet), the mousereach-archive command (command_filing_refusal) and
+    bring-current's finalize (filed_features_refusal)."""
+    from mousereach.config import is_outcome_free_tray
+    from mousereach.review.causal_review_io import UNDECIDED_OUTCOMES
+    if is_outcome_free_tray(video_id):
+        return []
+    try:
+        with open(features_path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for seg in (doc or {}).get("segments") or []:
+        if isinstance(seg, dict) and seg.get("outcome") in UNDECIDED_OUTCOMES:
+            out.append(seg.get("segment_num"))
+    return out
+
+
+def reaches_with_failed_measures(features_path):
+    """``(segment_num, reach_id)`` of every reach in a features file whose
+    extended measures failed: the extractor then stored only
+    ``{"_extended_features_error": ...}`` in place of its extended values. Empty for
+    a file that cannot be read (not this check's question). Shared by every
+    filing path, as undecided_pellets_in_features is."""
+    try:
+        with open(features_path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for seg in (doc or {}).get("segments") or []:
+        for r in (seg or {}).get("reaches") or []:
+            if isinstance(r, dict) and "_extended_features_error" in (r.get("extended") or {}):
+                out.append((seg.get("segment_num"), r.get("reach_id")))
+    return out
+
+
+def filed_features_refusal(video_id: str, folder) -> Optional[str]:
+    """Why the features file in ``folder`` may not be filed, or None: it still
+    holds a pellet nobody decided, or a reach whose extended measures failed.
+
+    WHY on every filing path: filing means done for good. An undecided pellet
+    is an open question and a reach with failed measures would be filed with
+    its extended values missing. The watcher's archive step has refused both
+    since they were found; the mousereach-archive command and bring-current's
+    finalize filed such a file unasked. The gate and the extractor read the
+    same answers now and the extractor refuses failed measures, so neither
+    should reach a filing -- this is the last word on the file itself, on
+    every path that files."""
+    feats = Path(folder) / f"{video_id}_features.json"
+    open_segs = undecided_pellets_in_features(feats, video_id)
+    if open_segs:
+        names = ", ".join(str(n) for n in open_segs)
+        return (f"pellet(s) {names} in {feats.name} have no decided outcome; "
+                f"an open question is never filed")
+    bad = reaches_with_failed_measures(feats)
+    if bad:
+        names = ", ".join(f"pellet {s} reach {r}" for s, r in bad)
+        return (f"{names} in {feats.name} carry _extended_features_error; "
+                f"missing measures are never filed")
+    return None
+
+
 def _watcher_db_file_exists() -> bool:
     """Whether this machine's configured watcher database file exists. A
     machine with no watcher configured at all has none (False)."""
@@ -188,7 +262,10 @@ def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[s
         'processed' (passed every check, waiting to be filed) -> refused,
         naming the state;
       * no ``<stem>_features.json``, or one older than the outputs beside it
-        (stale_features_reason) -> refused.
+        (stale_features_reason) -> refused;
+      * a features file that still holds an undecided pellet or a reach
+        whose extended measures failed (filed_features_refusal, the
+        watcher's own last checks) -> refused.
 
     No watcher database at the named place means a machine that does not run
     the watcher (the tool used on its own); then the files are all there is to
@@ -233,7 +310,13 @@ def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[s
             started_at = row.get("processing_started_at")
     if folder is None:
         return "no processing folder configured"
-    return stale_features_reason(video_id, folder, started_at)
+    why = stale_features_reason(video_id, folder, started_at)
+    if why:
+        return why
+    # The watcher's own last checks on the file itself (filed_features_refusal
+    # says why): the command used to file a features file with an undecided
+    # pellet or a reach whose measures failed.
+    return filed_features_refusal(video_id, folder)
 
 
 def get_archive_destination(video_id: str) -> Path:

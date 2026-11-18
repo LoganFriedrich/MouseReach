@@ -1351,6 +1351,9 @@ command files by hand, and it refuses -- moving nothing, exit code 1 -- when:
       deal with it through the watcher and the review tools instead;
     - <video>_features.json is missing, or older than the video's segments,
       reaches or outcomes file (an earlier run's kinematics);
+    - <video>_features.json still holds a pellet with no decided outcome,
+      or a reach whose extended measures failed (_extended_features_error):
+      the watcher's own last checks, so nothing open or missing is filed;
     - a segmentation, reach or outcome file lacks an approved verdict.
 A machine whose named watcher database does not exist (the tool used on its
 own) is judged on the files alone. After filing, 'archived' is recorded in this machine's
