@@ -4823,11 +4823,27 @@ every pose (`locate.held_or_filed_on_share`):
   before.
 The processing log shows step `intake`, status `skipped`, with the reason. For an operator: nothing
 to do.
-Known leftovers (not closed here): the intake of a video that already HAS a row does not ask this
-question; and a held, failed or being-analyzed video's posed copy still stays in Processing/Posed,
-so that folder does not yet hold only waiting work -- whether that copy is removed once the review
-bundle is published with the same video and pose, or kept somewhere that is not a waiting-work
-location, is a decision still to be made. Where it
+The intake of a video that already HAS a row asks the review queues too (2026-11-18,
+`ProcessingOrchestrator._held_in_review_queue_instead`, called first in `_intake_from_staging`).
+A row reaches `dlc_complete` (waiting for intake) by a person's `mousereach-watch-reprocess
+--from-step dlc_complete`, by the posed-folder scan bringing back an intake that had found its
+files incomplete, or by a lifted quality hold. If the video's bundle is in the triage or
+deep-review queue (or being routed into one), the row is recorded in that queue's state, nothing is
+copied in, and the processing log shows step `intake`, status `skipped`, with the reason. Before,
+such a video was analysed again and routed at the queue folder that held a person's bundle. A
+folder kept for a person (it holds the left-over note) is not a hold, so the leftover of a lifted
+quality hold does not send the video back to its queue. "Already filed" is NOT asked for a video
+that has a row: every way such a row gets to `dlc_complete` is a request for a fresh run (a lifted
+hold of a re-run, a person's reset) or the rest of a first intake the posed-folder scan already
+asked about, and a filed video's ordinary re-run goes through `outdated`, never through intake --
+recording it `archived` would drop the run that was asked for. For an operator: nothing to do.
+Tests: `tests/test_intake_asks_review_queues_for_known_rows.py`.
+Known leftovers (not closed here): a failed video a person resets to `processing` (its files are
+already in this machine's Processing folder) does not pass intake and is not asked; and a held,
+failed or being-analyzed video's posed copy still stays in Processing/Posed, so that folder does
+not yet hold only waiting work -- whether that copy is removed once the review bundle is published
+with the same video and pose, or kept somewhere that is not a waiting-work location, is a decision
+still to be made. Where it
 lives: `watcher/locate.py` `held_or_filed_on_share` (moved there from
 `DLCOrchestrator._already_done_or_held`, which now calls it); `watcher/state.py`
 `_held_or_filed_instead`. Tests in `tests/test_posed_scan_asks_held_or_filed.py`.

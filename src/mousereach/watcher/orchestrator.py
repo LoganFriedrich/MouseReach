@@ -8068,6 +8068,55 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # INTAKE: Copy from NAS staging to local Processing/
     # =========================================================================
 
+    def _held_in_review_queue_instead(self, video_id: str) -> bool:
+        """For a 'dlc_complete' row about to be taken in: when the shared drive
+        says the video's bundle is in a review queue (or being routed into
+        one), record the row in that queue's state and take nothing in. True
+        when the row was recorded so. Never raises (a doubt takes the video
+        in, as before).
+
+        WHY: the posed-folder scan asks this only for a video with NO row
+        (state._held_or_filed_instead). A video that HAS a row reached
+        'dlc_complete' without being asked -- a person's reset
+        (mousereach-watch-reprocess --from-step dlc_complete), an intake parked
+        for a missing file and brought back by the scan -- and was then
+        analysed again and routed at the queue folder that already held a
+        person's bundle. A video is in one place at a time, and a bundle in a
+        queue is that place.
+
+        WHY only the queues and not "already filed": for a video that has a
+        row, every writer of 'dlc_complete' on this server is either a request
+        for a fresh run -- a lifted quality hold sent back to the posed folder
+        (review_return._release_to_posed), or a person's reset -- or the
+        continuation of a first intake that the posed-folder scan already
+        asked about; a filed video's ordinary re-run comes through
+        'outdated', never through here. Recording such a row 'archived' would silently drop the run
+        that was asked for. A queue folder left for a person (it holds the
+        left-over note) is not a hold (review_routing.is_queue_bundle), so the
+        leftover of a lifted hold does not bounce the video back."""
+        try:
+            verdict = held_or_filed_on_share(video_id)
+        except Exception as e:
+            logger.debug(f"{video_id}: could not ask the review queues ({e})")
+            return False
+        if not verdict or verdict[0] not in ('triage', 'deep_review'):
+            return False
+        state, why = verdict
+        try:
+            self.db.force_state(
+                video_id, state,
+                reason=f"waiting in the posed folder for intake, but {why}; "
+                       f"recorded as such rather than taken in")
+            self.db.log_step(video_id, 'intake', 'skipped', message=why)
+        except Exception as e:
+            logger.warning(f"{video_id}: {why}, but the row could not be recorded "
+                           f"so ({e}); not taken in this pass")
+            self._note_held_elsewhere(video_id)
+            return True
+        logger.info(f"{video_id}: waiting for intake, but {why}; recorded as "
+                    f"'{state}', not taken in")
+        return True
+
     def _intake_from_staging(self, work: dict):
         """Copy DLC-complete video+h5 from NAS staging to local Processing/."""
         video_id = work['id']
@@ -8077,6 +8126,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
             logger.error("PROCESSING path not configured")
             self.db.mark_failed(video_id, "PROCESSING path not configured")
             return
+
+        # A video whose bundle sits in a review queue is held for a person:
+        # record that instead of taking it in (_held_in_review_queue_instead).
+        if self._held_in_review_queue_instead(video_id):
+            return True
 
         # Multi-node claiming: ensure no other node is processing this video.
         # Declined, not done: returning False tells the loop no work happened
