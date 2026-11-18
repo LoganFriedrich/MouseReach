@@ -1076,6 +1076,14 @@ class PipelineDashboard(QWidget):
                 f"{stem} is currently '{row['state']}' -- it is already "
                 f"queued or mid-run. Nothing to do.")
             return
+        # A publication lock record beside the filed results (set from any
+        # machine) refuses as the row's own lock does.
+        from mousereach.watcher.db import crystallized_refusal
+        locked = crystallized_refusal(db, stem, "marked for a re-run")
+        if locked:
+            QMessageBox.information(self, "Re-run video",
+                                    f"{locked}\n\nNothing was changed.")
+            return
         prior_note = ""
         if row["state"] in ("failed", "unresolvable"):
             why_stuck = (row.get("error_message") or "").strip()
@@ -1255,9 +1263,13 @@ class PipelineDashboard(QWidget):
             return
         try:
             from mousereach.pipeline.versions import crystallize_videos
-            n = crystallize_videos(db, cohort=cohort, label=label)
-            QMessageBox.information(self, "Publication Lock",
-                                    f"Locked {n} video(s) under '{label}'.")
+            failures = []
+            n = crystallize_videos(db, cohort=cohort, label=label, failures=failures)
+            msg = f"Locked {n} video(s) under '{label}'."
+            if failures:
+                msg += (f"\n\nNOT locked ({len(failures)}):\n"
+                        + "\n".join(f"{v}: {w}" for v, w in failures[:20]))
+            QMessageBox.information(self, "Publication Lock", msg)
         except Exception as e:
             QMessageBox.warning(self, "Publication Lock", f"Lock failed: {e}")
         self._refresh_locks()
@@ -1279,9 +1291,13 @@ class PipelineDashboard(QWidget):
         try:
             from mousereach.pipeline.versions import uncrystallize_videos
             db = self._watcher_db()
-            n = uncrystallize_videos(db, label=label)
-            QMessageBox.information(self, "Publication Lock",
-                                    f"Unlocked {n} video(s).")
+            failures = []
+            n = uncrystallize_videos(db, label=label, failures=failures)
+            msg = f"Unlocked {n} video(s)."
+            if failures:
+                msg += (f"\n\nSTILL LOCKED ({len(failures)}):\n"
+                        + "\n".join(f"{v}: {w}" for v, w in failures[:20]))
+            QMessageBox.information(self, "Publication Lock", msg)
         except Exception as e:
             QMessageBox.warning(self, "Publication Lock", f"Unlock failed: {e}")
         self._refresh_locks()

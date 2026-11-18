@@ -395,6 +395,18 @@ def archive_video(
     dest = get_archive_destination(video_id)
     result["destination"] = str(dest)
 
+    # A publication lock record in the destination (pipeline/
+    # publication_lock.py) means the filed results there must stay exactly as
+    # they are: nothing is moved, by the command or by the watcher. A record
+    # that cannot be checked counts as a lock.
+    from mousereach.pipeline.publication_lock import lock_refusal
+    locked = lock_refusal(video_id, "filed", folder=dest)
+    if locked:
+        result["error"] = f"Not filed: {locked}"
+        if verbose:
+            print(f"Cannot archive {video_id}: {locked}")
+        return result
+
     if verbose:
         print(f"Archive {video_id}:")
         print(f"  Source: {Paths.PROCESSING}")

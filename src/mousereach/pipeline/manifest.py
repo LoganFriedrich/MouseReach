@@ -724,7 +724,8 @@ def backfill_kinematic_versions(root: Path, apply: bool = False,
 
         if apply:
             from mousereach.watcher.db import crystallized_refusal
-            if crystallized_refusal(db, stem, "backfilled"):
+            if crystallized_refusal(db, stem, "backfilled",
+                                    folder=manifest_path.parent):
                 stats['crystallized -- left alone'] += 1
                 continue
             try:

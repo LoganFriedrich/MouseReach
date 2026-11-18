@@ -2233,6 +2233,11 @@ class BaseOrchestrator:
         except Exception as e:
             logger.debug(f"could not list outdated rows for re-pose requests: {e}")
             return
+        # No GPU pose is asked for a publication-locked video: its re-run
+        # would be refused anyway (_reprocess_video).
+        from mousereach.watcher.db import crystallized_refusal
+        rows = [v for v in rows
+                if not crystallized_refusal(self.db, v['video_id'], "re-posed")]
         # Runs with an empty list too: the pass also withdraws requests whose
         # row has since healed and returns claims nobody heartbeats.
         latched = getattr(self, '_repose_latched', None)
@@ -7768,6 +7773,26 @@ class ProcessingOrchestrator(BaseOrchestrator):
         """
         video_id = work['id']
         video_data = work['data']
+
+        # A publication lock -- this machine's row, or the lock record beside
+        # the filed results written from any machine (pipeline/
+        # publication_lock.py) -- means the filed results must stay as they
+        # are: the re-run is not started and the row goes back to 'archived'
+        # (a lock that cannot be checked counts as a lock). WHY here: rows
+        # are marked 'outdated' by several writers (the version scan, the
+        # dashboard's Re-run, the re-pose path); this is where every one of
+        # them would start to replace the filed results.
+        from mousereach.watcher.db import crystallized_refusal
+        locked = crystallized_refusal(self.db, video_id, "re-run")
+        if locked:
+            logger.warning(f"{locked} Its 'outdated' mark is dropped.")
+            try:
+                self.db.update_state(video_id, 'archived', reprocess_scope=None,
+                                     mark_reason=None)
+            except Exception as e:
+                logger.warning(f"{video_id}: could not put the locked row back to "
+                               f"'archived' ({e}); it is not re-run either way")
+            return
 
         logger.info(f"Reprocessing outdated video {video_id} (post-DLC)")
 

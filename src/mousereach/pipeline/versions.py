@@ -294,15 +294,14 @@ def publication_lock_gate(config=None):
     Returns ``(allowed, message)``. ``message`` is the refusal when not
     allowed, a caveat to show when allowed with one, or None.
 
-    WHY: a lock ('crystallized') is written only to the watcher database of
-    the machine that runs the command, and only that machine's version scan
-    reads it. Videos are filed -- and re-run when outdated -- by the machine
-    that analyses them, which is the processing server ('processing_server'
-    mode). A lock set on a GPU PC that only poses lands in a database whose
-    rows say 'pose handed on', protects nothing, and looks done. So locks are
-    set and lifted on the processing server. A lab whose only analysing
-    machine is a GPU PC with ``also_process`` on (no processing server) may
-    lock there, with a caveat that the lock is known to that machine only.
+    WHY: a lock is a record beside the filed results that every machine
+    honours (pipeline/publication_lock.py) PLUS the row of the machine that
+    ran the command ('crystallized'). Videos are filed -- and re-run when
+    outdated -- by the machine that analyses them, which is the processing
+    server ('processing_server' mode), so that is where the row belongs and
+    where locks are set and lifted. A GPU PC that only poses keeps rows that
+    say 'pose handed on'. A lab whose only analysing machine is a GPU PC with
+    ``also_process`` on (no processing server) may lock there, with a note.
     An unreadable configuration refuses: the role cannot be told.
     """
     if config is None:
@@ -317,12 +316,12 @@ def publication_lock_gate(config=None):
         return True, None
     if mode == "dlc_pc" and getattr(config, "also_process", False):
         return True, ("Note: this machine analyses and files videos itself (also_process), "
-                      "so the lock is set in its own database. It is known to this machine "
-                      "only: a processing server or another analysing machine does not see it.")
+                      "so the lock's row is set in its own database. The lock record beside "
+                      "the filed results is what every other machine honours.")
     return False, ("Publication locks are set and lifted on the processing server, the "
                    "machine that files and re-runs videos. This machine is configured as "
-                   "'%s'%s, so a lock here would be written to a database no version scan "
-                   "of the filed videos reads. Nothing was changed; run the command on the "
+                   "'%s'%s, whose database does not hold the filed videos' rows. Nothing "
+                   "was changed; run the command on the "
                    "processing server." % (mode, "" if getattr(config, "also_process", False)
                                            else " (pose only)"))
 
@@ -333,8 +332,19 @@ def crystallize_videos(
     cohort: str = None,
     label: str = "unnamed_timepoint",
     crystallized_by: str = None,
+    failures: Optional[list] = None,
+    analyzed_root=None,
 ) -> int:
     """Lock videos against reprocessing.
+
+    Each video gets a lock RECORD beside its filed results first
+    (``<video>_crystallized.json``, pipeline/publication_lock.py) -- the lock
+    every machine reads -- and then this machine's row goes to
+    'crystallized'. WHY the record first: the row alone was known to one
+    machine's database only. A video whose record cannot be written (its
+    filed results are not where the archive step files them, or the write
+    fails) is not locked at all, and is listed in ``failures``. A video named
+    with ``video_ids`` that has no row here still gets its record.
 
     Args:
         db: WatcherDB instance
@@ -342,10 +352,20 @@ def crystallize_videos(
         cohort: Lock all archived videos matching this cohort string
         label: Human-readable label (e.g. "PAPER_2026_submission")
         crystallized_by: Username (defaults to hostname)
+        failures: if given, ``(video_id, why)`` is appended for each video
+            that could not be locked
+        analyzed_root: the filed tree (default: the configured Analyzed)
 
     Returns:
         Number of videos crystallized
     """
+    from mousereach.pipeline.publication_lock import write_record, LockRecordError
+
+    def _fail(vid, why):
+        logger.warning(f"Cannot crystallize {vid}: {why}")
+        if failures is not None:
+            failures.append((vid, why))
+
     if cohort and not video_ids:
         archived = db.get_videos_in_state('archived')
         video_ids = [
@@ -363,25 +383,37 @@ def crystallize_videos(
 
     for vid in video_ids:
         try:
-            video = db.get_video(vid)
-            if not video:
-                logger.warning(f"Video not found: {vid}")
+            video = db.get_video(vid) if db is not None else None
+            if video and video['state'] == 'crystallized':
+                # Already locked here; make sure every machine can see it.
+                write_record(vid, video.get('crystallized_label') or label,
+                             video.get('crystallized_by') or by,
+                             video.get('crystallized_at') or now,
+                             analyzed_root=analyzed_root)
                 continue
-            if video['state'] not in ('archived', 'outdated'):
-                logger.warning(f"Cannot crystallize {vid} (state={video['state']}, need archived/outdated)")
+            if video and video['state'] not in ('archived', 'outdated'):
+                _fail(vid, f"state={video['state']}, need archived/outdated")
                 continue
-
-            db.force_state(
-                vid, 'crystallized',
-                reason=f"crystallized: locked against reprocessing ({label})",
-                crystallized_at=now,
-                crystallized_by=by,
-                crystallized_label=label,
-            )
+            try:
+                write_record(vid, label, by, now, analyzed_root=analyzed_root)
+            except LockRecordError as e:
+                _fail(vid, str(e))
+                continue
+            if video:
+                db.force_state(
+                    vid, 'crystallized',
+                    reason=f"crystallized: locked against reprocessing ({label})",
+                    crystallized_at=now,
+                    crystallized_by=by,
+                    crystallized_label=label,
+                )
+            else:
+                logger.info(f"{vid}: no row on this machine; the lock record alone "
+                            f"locks it")
             count += 1
             logger.info(f"Crystallized {vid} (label={label})")
         except Exception as e:
-            logger.error(f"Failed to crystallize {vid}: {e}")
+            _fail(vid, str(e))
 
     return count
 
@@ -390,23 +422,49 @@ def uncrystallize_videos(
     db,
     video_ids: List[str] = None,
     label: str = None,
+    failures: Optional[list] = None,
+    analyzed_root=None,
 ) -> int:
     """Unlock crystallized videos (allows reprocessing again).
+
+    Removes the lock record beside the filed results first, then puts this
+    machine's row back to 'archived'. A record that cannot be removed leaves
+    the video locked (row included) and is listed in ``failures``. With
+    ``label``, the videos are those whose row OR record carries the label.
 
     Args:
         db: WatcherDB instance
         video_ids: Specific videos to unlock
         label: Unlock all videos with this crystallized_label
+        failures: if given, ``(video_id, why)`` is appended for each video
+            that could not be unlocked
+        analyzed_root: the filed tree (default: the configured Analyzed)
 
     Returns:
         Number of videos uncrystallized
     """
+    from mousereach.pipeline.publication_lock import (
+        remove_record, records_with_label, LockRecordError)
+
+    def _fail(vid, why):
+        logger.error(f"Failed to uncrystallize {vid}: {why}")
+        if failures is not None:
+            failures.append((vid, why))
+
+    record_paths = {}
     if label and not video_ids:
-        crystallized = db.get_videos_in_state('crystallized')
+        crystallized = db.get_videos_in_state('crystallized') if db is not None else []
         video_ids = [
             v['video_id'] for v in crystallized
             if (v.get('crystallized_label', '') or '') == label
         ]
+        try:
+            for vid, p in records_with_label(label, analyzed_root):
+                record_paths[vid] = p
+                if vid not in video_ids:
+                    video_ids.append(vid)
+        except Exception as e:
+            _fail(label, f"the lock records could not be listed ({e})")
 
     if not video_ids:
         logger.warning("No videos to uncrystallize")
@@ -415,23 +473,26 @@ def uncrystallize_videos(
     count = 0
     for vid in video_ids:
         try:
-            video = db.get_video(vid)
-            if not video:
+            video = db.get_video(vid) if db is not None else None
+            try:
+                removed = remove_record(vid, analyzed_root, path=record_paths.get(vid))
+            except LockRecordError as e:
+                _fail(vid, str(e))
                 continue
-            if video['state'] != 'crystallized':
-                continue
-
-            db.force_state(
-                vid, 'archived',
-                reason="uncrystallized: lock removed, back to archived",
-                unlock_crystallized=True,   # the one caller allowed to
-                crystallized_at=None,
-                crystallized_by=None,
-                crystallized_label=None,
-            )
+            if video and video['state'] == 'crystallized':
+                db.force_state(
+                    vid, 'archived',
+                    reason="uncrystallized: lock removed, back to archived",
+                    unlock_crystallized=True,   # the one caller allowed to
+                    crystallized_at=None,
+                    crystallized_by=None,
+                    crystallized_label=None,
+                )
+            elif not removed:
+                continue                    # neither a row lock nor a record
             count += 1
             logger.info(f"Uncrystallized {vid}")
         except Exception as e:
-            logger.error(f"Failed to uncrystallize {vid}: {e}")
+            _fail(vid, str(e))
 
     return count

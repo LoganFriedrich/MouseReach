@@ -278,7 +278,10 @@ class ReprocessingScanner:
                 scanned: total archived videos checked
                 current: videos with up-to-date versions
                 outdated: videos with stale versions
-                crystallized_skipped: crystallized videos skipped
+                crystallized_skipped: crystallized videos skipped (rows in
+                    state crystallized + locked_by_record)
+                locked_by_record: archived rows skipped for a lock record
+                    beside their filed results (publication_lock)
                 no_manifest: videos with no manifest found
                 errors: scan errors
         """
@@ -341,6 +344,8 @@ class ReprocessingScanner:
         manifest_mtime: dict = {}
         feats_mtime: dict = {}
         archive_listed = False
+        self._filed_locks = {}
+        summary['locked_by_record'] = 0
         try:
             manifest_index, manifest_mtime, feats_mtime = self._index_archive()
             archive_listed = True
@@ -424,6 +429,20 @@ class ReprocessingScanner:
         for video in archived:
             video_id = video['video_id']
             summary['scanned'] += 1
+
+            # A publication lock record beside the filed results: never
+            # marked for a re-run, by this machine or any other. Read from
+            # this pass's listing; without one, asked per video (a lock that
+            # cannot be checked is treated as a lock).
+            if archive_listed:
+                record_lock = video_id in self._filed_locks
+            else:
+                from mousereach.pipeline.publication_lock import lock_refusal
+                record_lock = lock_refusal(video_id, "marked",
+                                           analyzed_root=self.archive_dir) is not None
+            if record_lock:
+                summary['locked_by_record'] += 1
+                continue
 
             # A filed video whose re-run failed for good is not offered again
             # until something it was attempted against has changed
@@ -743,7 +762,8 @@ class ReprocessingScanner:
 
         # Also count crystallized (for reporting)
         crystallized = self.db.get_videos_in_state('crystallized')
-        summary['crystallized_skipped'] = len(crystallized)
+        summary['crystallized_skipped'] = (len(crystallized)
+                                           + summary.get('locked_by_record', 0))
 
         logger.info(
             f"Scan complete: {summary['scanned']} checked, "
@@ -1006,8 +1026,13 @@ class ReprocessingScanner:
         (group/project) -- a fixed depth would have dropped every video filed
         that way from the version scan without a word."""
         from mousereach.pipeline.analyzed_tree import iter_file_entries
+        from mousereach.pipeline.publication_lock import LOCK_SUFFIX
         man, man_t, feat_t = {}, {}, {}
         self._filed_gt = {}
+        # Publication lock records (pipeline/publication_lock.py), from the
+        # same listing: the scan never marks a locked video for a re-run, on
+        # any machine, whichever machine set the lock.
+        self._filed_locks = {}
         root = self.archive_dir
         if not root.exists():
             return man, man_t, feat_t
@@ -1022,6 +1047,8 @@ class ReprocessingScanner:
                 man_t[s] = e.stat().st_mtime
             elif n.endswith("_features.json"):
                 feat_t[n[: -len("_features.json")]] = e.stat().st_mtime
+            elif n.endswith(LOCK_SUFFIX):
+                self._filed_locks[n[: -len(LOCK_SUFFIX)]] = Path(e.path)
             elif n.endswith(GROUND_TRUTH_SUFFIX):
                 # Ground truth filed beside a video, from the same listing
                 # (no extra network call): _pending_ground_truth reads it.

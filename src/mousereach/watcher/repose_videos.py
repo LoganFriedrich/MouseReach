@@ -228,6 +228,10 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
     state = row.get("state")
     if state not in OK_STATES:
         return refuse(f"row is '{state}'; only {', '.join(OK_STATES)} are re-posed")
+    from mousereach.watcher.db import crystallized_refusal
+    locked = crystallized_refusal(db, video_id, "re-posed")
+    if locked:
+        return refuse(locked)
     qdir = repose.repose_queue_dir()
     if not qdir:
         return refuse("no shared Repose_Queue configured on this node")

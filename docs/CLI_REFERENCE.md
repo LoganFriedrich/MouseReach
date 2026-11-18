@@ -2001,6 +2001,9 @@ A single is queued only when this machine has no row for it, or its row is
 another machine already holds for pose is skipped as a second copy. If the
 copy or the state change fails after the claim, the claim goes back to the
 shared singles folder and the DLC-queue copy made by this run is removed.
+A video with a publication lock record beside its filed results
+(`<video>_crystallized.json`, set from any machine; see `mousereach-crystallize`)
+is skipped with the lock's message, whatever this machine's row says.
 
 The watcher database must already exist on this machine. It is checked after
 the list is shown and BEFORE the `Queue N videos for processing? [y/N]`
@@ -2290,22 +2293,40 @@ usage: mousereach-crystallize (--cohort C | --videos "v1,v2") --label NAME
        mousereach-crystallize --list
 
 Lock archived videos against automatic reprocessing (for publications).
+Each locked video gets <video>_crystallized.json beside its filed results;
+every machine honours it. Exit code 1 lists any video that was NOT locked.
 
   --cohort C    Every archived video of this cohort (e.g. CNT01).
   --videos LIST Comma-separated video ids.
   --label NAME  Required label naming the lock (e.g. "PAPER_2026").
-  --list        Show what is crystallized, by label.
+  --list        Show what is crystallized, by label, and lock records
+                set from another machine.
 ```
 
-Run it on the **processing server**. A lock is written only to the watcher
-database of the machine that runs the command, and only that machine's version
-scan reads it; the processing server is the machine that files videos and
-re-runs them when they go out of date. On a GPU PC that only poses, the command
-refuses (exit code 1, "Publication locks are set and lifted on the processing
-server ... Nothing was changed") -- a lock there would protect nothing. A GPU PC
-with `watcher.also_process` on (a lab with no processing server) may lock, and
-prints a note that the lock is known to that machine only. `--list` works on any
-machine. The Pipeline Dashboard's Publication Lock buttons follow the same rule.
+Run it on the **processing server**, the machine that files videos and re-runs
+them when they go out of date. Locking a video does two things, in this order:
+
+1. it writes a **lock record**, `<video>_crystallized.json`, into the folder the
+   video is filed in (`Analyzed/<project>/<cohort>/`), beside its results. This
+   record is the lock every machine honours: no machine's version scan marks the
+   video for a re-run, a re-run of it is never started, nothing files over its
+   results, and nothing moves it into a review queue or to a new pose. It is
+   written in one step (a temporary dot-name, then a rename), and no folder is
+   created for it;
+2. it sets this machine's database row to `crystallized`.
+
+A video whose filed results are not in that folder, or whose record cannot be
+written, is NOT locked: the command lists it under "NOT locked" with the reason
+and exits with code 1. A video named with `--videos` that has no row in this
+machine's database still gets its record.
+
+On a GPU PC that only poses, the command refuses (exit code 1, "Publication
+locks are set and lifted on the processing server ... Nothing was changed"). A
+GPU PC with `watcher.also_process` on (a lab with no processing server) may
+lock, with a note. `--list` works on any machine and also lists lock records
+that have no locked row on this machine (set from another machine). The
+Pipeline Dashboard's Publication Lock buttons follow the same rules and show
+the videos that were not locked.
 
 ### `mousereach-uncrystallize`
 
@@ -2317,6 +2338,13 @@ Unlock crystallized videos so reprocessing can touch them again.
   --label NAME   Unlock every video crystallized under this label.
   --videos LIST  Comma-separated video ids.
 ```
+
+Unlocking removes the lock record beside the filed results first, then puts
+this machine's row back to `archived`. With `--label`, the videos are those
+whose row or whose lock record carries that label (a record set from another
+machine is found by listing the filed tree). A record that cannot be removed
+leaves the video locked: the command lists it under "STILL LOCKED" and exits
+with code 1.
 
 Refuses with `ERROR: Watcher database not found at <path>` (exit code 1) when
 this machine's watcher database is missing, instead of creating an empty one

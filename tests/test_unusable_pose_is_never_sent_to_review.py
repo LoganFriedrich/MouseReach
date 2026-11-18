@@ -37,6 +37,10 @@ def _pose(path, points):
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     nas = tmp_path / "nas"
+    # The shared storage is there (reachable); a storage folder that is not
+    # there at all means the filed tree cannot be checked for publication
+    # locks, and routing is refused (pipeline/publication_lock.py).
+    nas.mkdir()
     review = nas / "Review"
     proc = tmp_path / "Processing"
     proc.mkdir()

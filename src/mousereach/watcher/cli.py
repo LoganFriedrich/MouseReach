@@ -1573,6 +1573,15 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
                 print(f"  SKIP {video_id} (already {state})")
                 skipped += 1
                 continue
+        # A publication lock record beside the filed results (set from any
+        # machine; pipeline/publication_lock.py) is never posed again either,
+        # whatever this machine's row says -- or with no row at all.
+        from mousereach.watcher.db import crystallized_refusal
+        locked = crystallized_refusal(db, video_id, "queued for a new pose")
+        if locked:
+            print(f"  SKIP {locked}")
+            skipped += 1
+            continue
 
         result = validate_single_filename(f.name)
         if not result.valid:
@@ -2459,11 +2468,14 @@ usage: mousereach-crystallize (--cohort C | --videos "v1,v2") --label NAME
        mousereach-crystallize --list
 
 Lock archived videos against automatic reprocessing (for publications).
+Each locked video gets <video>_crystallized.json beside its filed results;
+every machine honours it. Exit code 1 lists any video that was NOT locked.
 
   --cohort C    Every archived video of this cohort (e.g. CNT01).
   --videos LIST Comma-separated video ids.
   --label NAME  Required label naming the lock (e.g. "PAPER_2026").
-  --list        Show what is crystallized, by label.
+  --list        Show what is crystallized, by label, and lock records
+                set from another machine.
 """)
     args = sys.argv[1:]
 
@@ -2523,8 +2535,24 @@ Lock archived videos against automatic reprocessing (for publications).
 
     if list_mode:
         crystallized = db.get_videos_in_state('crystallized')
+        # The lock records beside the filed results are the locks every
+        # machine honours; a record with no locked row here was set from
+        # another machine (or for a video this machine has no row for).
+        try:
+            from mousereach.pipeline.publication_lock import iter_records, read_record
+            rows_here = {v['video_id'] for v in crystallized}
+            extra = [(vid, read_record(p).get('label') or '?')
+                     for vid, p in iter_records() if vid not in rows_here]
+        except Exception as e:
+            extra = []
+            print(f"(the lock records beside the filed results could not be listed: {e})")
+        if extra:
+            print(f"Lock records with no locked row on this machine ({len(extra)}):")
+            for vid, lbl in sorted(extra):
+                print(f"  {vid}  (label {lbl})")
+            print()
         if not crystallized:
-            print("No crystallized videos.")
+            print("No crystallized videos in this machine's database.")
             return
 
         print("=" * 70)
@@ -2561,18 +2589,27 @@ Lock archived videos against automatic reprocessing (for publications).
     except Exception:
         username = None
 
+    failures = []
     count = crystallize_videos(
         db=db,
         video_ids=video_ids,
         cohort=cohort,
         label=label,
         crystallized_by=username,
+        failures=failures,
     )
 
     print(f"Crystallized {count} videos with label '{label}'.")
     if count > 0:
-        print("These videos will NOT be reprocessed when tool versions change.")
+        print("Each has a lock record (<video>_crystallized.json) beside its filed")
+        print("results, which every machine honours: these videos will NOT be")
+        print("reprocessed, re-filed or moved into a review queue.")
         print(f"To unlock: mousereach-uncrystallize --label '{label}'")
+    if failures:
+        print(f"NOT locked ({len(failures)}):", file=sys.stderr)
+        for vid, why in failures:
+            print(f"  {vid}: {why}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main_uncrystallize():
@@ -2638,10 +2675,18 @@ Unlock crystallized videos so reprocessing can touch them again.
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
-    count = uncrystallize_videos(db=db, video_ids=video_ids, label=label)
+    failures = []
+    count = uncrystallize_videos(db=db, video_ids=video_ids, label=label,
+                                 failures=failures)
     print(f"Uncrystallized {count} videos.")
     if count > 0:
-        print("These videos can now be reprocessed when tool versions change.")
+        print("Their lock records are removed; these videos can now be reprocessed")
+        print("when tool versions change.")
+    if failures:
+        print(f"STILL LOCKED ({len(failures)}):", file=sys.stderr)
+        for vid, why in failures:
+            print(f"  {vid}: {why}", file=sys.stderr)
+        sys.exit(1)
 
 
 # =============================================================================

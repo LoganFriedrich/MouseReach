@@ -5152,8 +5152,42 @@ machine's `watcher.mode` is `processing_server`; a GPU PC with `watcher.also_pro
 with no processing server) may lock, with a printed note that the lock is known to that machine
 only. An unreadable configuration refuses. The rule and its reason are in
 `pipeline/versions.py` `publication_lock_gate`. Tests: `tests/test_publication_lock_gate.py`.
-A lock written to the file filed results sit beside (so every machine sees it) is a later step,
-not built.
+
+## Update: a publication lock is a record beside the filed results that every machine honours
+
+The lock above still lived only in the database of the machine that ran the command: another
+analysing machine never saw it, and a lock written into the wrong database protected nothing.
+Now `mousereach-crystallize` (and the dashboard's Lock button) first writes
+`<video>_crystallized.json` into the folder the video is filed in -- the one place every machine
+reads -- and only then sets this machine's row to `crystallized`
+(`pipeline/publication_lock.py`). The record holds the label, who locked it and when. It is
+written to a temporary dot-name and renamed into place, so a reader sees no record or a whole
+one; no folder is created for it, and a video whose filed results are not in its filed folder is
+not locked (reported, exit code 1). `mousereach-uncrystallize` removes the record first and then
+unlocks the row; a record that cannot be removed leaves the video locked (reported, exit 1).
+
+Every machine honours the record, whatever machine set it:
+
+- the version scan reads the records from the same listing of the filed tree it already makes
+  and never marks a video with one for a re-run (counted as `locked_by_record`; when the listing
+  failed it checks each video's record);
+- the start of a re-run (`_reprocess_video`) refuses a video with a record or a locked row and
+  puts its row back to `archived` -- whichever writer marked it `outdated` (the version scan,
+  the dashboard's Re-run, the re-pose path);
+- no re-pose request is published for it;
+- filing (the watcher's and the command's) refuses to move anything into a folder holding the
+  video's record, so locked results are never replaced;
+- `db.crystallized_refusal`, which route-to-queue, the review return, the quality-hold release,
+  the version scan's mislabel divert, bring-current and the kinematic-version backfill ask
+  before moving or rewriting anything, reads the row AND the record (with or without a
+  database);
+- the dashboard's Re-run button, `mousereach-repose-videos` and `mousereach-watch-process-animal`
+  refuse (process-animal skips the video even when this machine has no row for it).
+
+A record that exists but cannot be read still locks; a folder that cannot be checked (an
+unreachable share) counts as locked, and the caller refuses. `mousereach-crystallize --list`
+also lists records with no locked row on this machine. Tests:
+`tests/test_publication_lock_record.py`.
 
 ## Update: mousereach-reconcile sees a bundle parked for a new pose
 

@@ -106,9 +106,10 @@ class CrystallizedError(ValueError):
     state. Raised before anything is moved; the message says how to unlock."""
 
 
-def crystallized_refusal(db, video_id: str, action: str):
-    """The refusal message when ``video_id`` is crystallized on ``db``, else
-    None.
+def crystallized_refusal(db, video_id: str, action: str, folder=None,
+                         analyzed_root=None):
+    """The refusal message when ``video_id`` is crystallized -- on ``db``, or
+    by the lock record beside its filed results -- else None.
 
     A crystallized video is locked for a publication (mousereach-crystallize):
     its filed results must stay exactly as they are until a person unlocks it
@@ -117,18 +118,30 @@ def crystallized_refusal(db, video_id: str, action: str):
     refuses. WHY: routing to a queue, the review return and the version
     scan's divert used to force their way through the lock (force_state), so
     a locked video's results could leave the filed folder.
-    ``db`` None, or a row that cannot be read, is not a lock (None)."""
-    if db is None:
-        return None
+    The row is one machine's record; the lock RECORD
+    (``<video>_crystallized.json`` beside the filed results,
+    pipeline/publication_lock.py) is the one every machine reads, so it is
+    checked too, with or without ``db``: a lock set from another machine is
+    honoured here. ``folder`` is the folder holding the video's filed results
+    when the caller already knows it; otherwise the folder the archive step
+    files into (under ``analyzed_root``, default the configured Analyzed).
+    A record that cannot be checked (the share is unreachable) refuses.
+    A row that cannot be read is not a lock by itself."""
+    if db is not None:
+        try:
+            row = db.get_video(video_id) or {}
+        except Exception:
+            row = {}
+        if row.get('state') == 'crystallized':
+            label = row.get('crystallized_label') or '?'
+            return (f"{video_id} is crystallized (locked for '{label}'); not {action}. "
+                    f"Unlock it first with mousereach-uncrystallize if this is intended.")
     try:
-        row = db.get_video(video_id) or {}
-    except Exception:
-        return None
-    if row.get('state') != 'crystallized':
-        return None
-    label = row.get('crystallized_label') or '?'
-    return (f"{video_id} is crystallized (locked for '{label}'); not {action}. "
-            f"Unlock it first with mousereach-uncrystallize if this is intended.")
+        from mousereach.pipeline.publication_lock import lock_refusal
+        return lock_refusal(video_id, action, analyzed_root=analyzed_root, folder=folder)
+    except Exception as e:
+        return (f"cannot tell whether {video_id} is locked for a publication ({e}); "
+                f"not {action}.")
 
 
 def _retry_network_errors(method):

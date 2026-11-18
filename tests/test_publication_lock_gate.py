@@ -33,6 +33,14 @@ def filed(tmp_path, monkeypatch):
     db.register_video(vid, source_path="x")
     db.force_state(vid, "archived", reason="test")
     monkeypatch.setattr(cli, "_resolve_db_path", lambda: path)
+    # Its filed results, where the lock record is written beside them
+    # (test_publication_lock_record.py): a video with none is not locked.
+    from mousereach.archive.core import filed_folder
+    analyzed = tmp_path / "Analyzed"
+    folder = filed_folder(vid, analyzed)
+    folder.mkdir(parents=True)
+    (folder / f"{vid}_processing_manifest.json").write_text("{}")
+    monkeypatch.setattr(config.Paths, "ANALYZED_OUTPUT", analyzed)
     return db, vid
 
 
@@ -79,7 +87,7 @@ def test_an_analysing_gpu_pc_locks_with_a_caveat(filed, monkeypatch, capsys):
     _run(monkeypatch, cli.main_crystallize,
          "mousereach-crystallize", "--videos", vid, "--label", "LABEL_A")
     assert db.get_video(vid)["state"] == "crystallized"
-    assert "known to this machine only" in capsys.readouterr().out
+    assert "also_process" in capsys.readouterr().out
 
 
 def test_list_works_anywhere(filed, monkeypatch, capsys):
