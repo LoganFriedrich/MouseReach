@@ -120,3 +120,29 @@ def test_a_scratch_folder_is_written_directly(stager, tmp_path):
                              verbose=False)
     assert (scratch / V / f"{V}_reaches.json").is_file()
     assert s["db"]().get_video(V)["state"] == "archived"
+
+
+def test_a_failed_staging_leaves_no_work_folder_and_no_bundle(stager, monkeypatch):
+    import tempfile
+    from pathlib import Path
+    s = stager
+    made = []
+    real = tempfile.mkdtemp
+
+    def mkdtemp(*a, **k):
+        made.append(Path(real(*a, **k)))
+        return str(made[-1])
+
+    monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
+    import mousereach.reach.core.span_to_reaches as s2r
+
+    def broken(*a, **k):
+        raise RuntimeError("a step broke")
+
+    monkeypatch.setattr(s2r, "detect_video_reaches", broken)
+    with pytest.raises(RuntimeError, match="a step broke"):
+        s["staging"].stage_video(V, connectome_root=s["root"],
+                                 pending_dir=s["triage"], verbose=False)
+    assert made and not made[0].exists()
+    assert not (s["triage"] / V).exists()
+    assert s["db"]().get_video(V)["state"] == "archived"

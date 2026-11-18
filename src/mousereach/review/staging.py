@@ -24,9 +24,11 @@ The bundle written into ``<pending_dir>/{stem}/`` therefore contains only:
 The review tool reads the four JSONs from the bundle and loads the mp4/pose
 from the manifest's canonical paths (see ``CausalReviewWidget.load_from_manifest``).
 
-Nothing here writes to the production ``Processing`` dir or to the local system
-drive. The only new bytes are a few hundred KB of JSON per video, on shared
-storage.
+Nothing here writes to the production ``Processing`` dir. The only new bytes are
+a few hundred KB of JSON per video, on shared storage; a bundle bound for a
+review queue is built first in a temporary folder on this machine and then
+handed to the watcher's router (stage_video says why), and that temporary
+folder is removed afterwards, also when staging fails.
 
 NB: this file is run against the shipped-best master code. When the production
 editable install is held at older versions, invoke with ``PYTHONPATH`` pinned
@@ -394,168 +396,176 @@ def stage_video(
     assign_out = work / f"{stem}_reach_assignments.json"
     manifest_out = work / f"{stem}_manifest.json"
     work.mkdir(parents=True, exist_ok=True)
+    # A temporary work folder is removed if anything below fails (it holds
+    # only this run's regenerable algorithm outputs and copies), so a failed
+    # or refused staging leaves nothing behind on the local drive.
+    try:
 
-    # A human review is not the algorithms' output and staging must never be
-    # able to lose one. The bundle is transient -- this function regenerates it,
-    # and returning a cleared bundle moves its files away and removes the
-    # directory -- so a review that lives only here disappears on the next
-    # reprocess, and reviewed videos have been found whose only surviving copy
-    # was inside a triage bundle.
-    #
-    # So: find the review wherever it survives (this bundle, the durable store,
-    # the canonical results dir) and make sure the regenerated bundle has it.
-    _restore_review_into_bundle(stem, work, log)
+        # A human review is not the algorithms' output and staging must never be
+        # able to lose one. The bundle is transient -- this function regenerates it,
+        # and returning a cleared bundle moves its files away and removes the
+        # directory -- so a review that lives only here disappears on the next
+        # reprocess, and reviewed videos have been found whose only surviving copy
+        # was inside a triage bundle.
+        #
+        # So: find the review wherever it survives (this bundle, the durable store,
+        # the canonical results dir) and make sure the regenerated bundle has it.
+        _restore_review_into_bundle(stem, work, log)
 
-    # Clear-guard: capture any human triage-clears BEFORE the fresh run
-    # overwrites the JSONs, so they can be re-applied afterwards. Skipped when
-    # boundaries change (manual re-seg renumbers segments -> can't map clears).
-    _old_outcome = _load_json(outcome_out) if (preserve_clears and outcome_out.exists()) else None
-    _old_reach = _load_json(reach_out) if (preserve_clears and reach_out.exists()) else None
+        # Clear-guard: capture any human triage-clears BEFORE the fresh run
+        # overwrites the JSONs, so they can be re-applied afterwards. Skipped when
+        # boundaries change (manual re-seg renumbers segments -> can't map clears).
+        _old_outcome = _load_json(outcome_out) if (preserve_clears and outcome_out.exists()) else None
+        _old_reach = _load_json(reach_out) if (preserve_clears and reach_out.exists()) else None
 
-    # A reviewer's own cuts are human-authored work with the same standing as a
-    # review, and the same exposure: they live in the bundle's segments.json, and
-    # a restage without boundaries would silently re-run the auto-segmenter over
-    # them. The result still looks like a valid segmentation, so nothing would
-    # ever report that a person's boundaries had been thrown away.
-    #
-    # Carry them forward instead. Passing them back in as boundaries_override
-    # takes the manual branch below, which is exactly what the reviewer chose.
-    # (This is a guard put in before the first one is lost, not a repair.)
-    #
-    # A person's cuts made in the segmentation fixer are marked
-    # boundary_source "human" (the mark every other step reads), not with the
-    # old "manual" markers below. Such a file -- in the bundle, or beside the
-    # filed video when the bundle is new -- is kept AS IT IS and the segmenter
-    # does not run. WHY as-is: rewriting it through the manual branch would
-    # drop the "human" mark, and the watcher's segmenter would then re-cut it.
-    _human_seg = None
-    if boundaries_override is None:
-        from mousereach.archive.supersede import is_human_cuts
-        if seg_out.exists() and is_human_cuts(seg_out):
-            _human_seg = seg_out
-        elif not seg_out.exists() and mp4_dir is not None:
-            _filed = Path(mp4_dir) / f"{stem}_segments.json"
-            if _filed.is_file() and is_human_cuts(_filed):
-                shutil.copy2(str(_filed), str(seg_out))
+        # A reviewer's own cuts are human-authored work with the same standing as a
+        # review, and the same exposure: they live in the bundle's segments.json, and
+        # a restage without boundaries would silently re-run the auto-segmenter over
+        # them. The result still looks like a valid segmentation, so nothing would
+        # ever report that a person's boundaries had been thrown away.
+        #
+        # Carry them forward instead. Passing them back in as boundaries_override
+        # takes the manual branch below, which is exactly what the reviewer chose.
+        # (This is a guard put in before the first one is lost, not a repair.)
+        #
+        # A person's cuts made in the segmentation fixer are marked
+        # boundary_source "human" (the mark every other step reads), not with the
+        # old "manual" markers below. Such a file -- in the bundle, or beside the
+        # filed video when the bundle is new -- is kept AS IT IS and the segmenter
+        # does not run. WHY as-is: rewriting it through the manual branch would
+        # drop the "human" mark, and the watcher's segmenter would then re-cut it.
+        _human_seg = None
+        if boundaries_override is None:
+            from mousereach.archive.supersede import is_human_cuts
+            if seg_out.exists() and is_human_cuts(seg_out):
                 _human_seg = seg_out
-        if _human_seg is not None:
-            log("keeping the person's cuts (boundary_source human); not re-segmenting")
-    if boundaries_override is None and _human_seg is None and seg_out.exists():
-        try:
-            _prev = _load_json(seg_out)
-            if _prev.get("manual_resegmentation") or _prev.get("segmenter_algorithm") == "manual":
-                _kept = _prev.get("boundaries")
-                if _kept:
-                    boundaries_override = list(_kept)
-                    log("keeping the reviewer's manual boundaries (a restage would "
-                        "otherwise re-cut the video with the auto-segmenter)")
-        except Exception as e:
-            log(f"WARNING could not check for a manual re-segmentation: {e}")
-
-    # 1. SEGMENTATION (v2.2.2) -- OR a manual re-segmentation: when the reviewer
-    # supplies boundaries, skip auto-segmentation and write a minimal manual
-    # segments.json (downstream reach/outcome/assignment read only the boundary
-    # list + frame count). Re-running the algos on the reviewer's cuts means
-    # UNCHANGED segments keep the algo's scoring and every segment still shows an
-    # algo verdict -- fixing one boundary no longer forces a full re-score.
-    if boundaries_override is not None:
-        log("manual re-segmentation (given boundaries; skipping auto-segment)...")
-        _b = sorted({int(x) for x in boundaries_override})
-        _total = None
-        if seg_out.exists():
+            elif not seg_out.exists() and mp4_dir is not None:
+                _filed = Path(mp4_dir) / f"{stem}_segments.json"
+                if _filed.is_file() and is_human_cuts(_filed):
+                    shutil.copy2(str(_filed), str(seg_out))
+                    _human_seg = seg_out
+            if _human_seg is not None:
+                log("keeping the person's cuts (boundary_source human); not re-segmenting")
+        if boundaries_override is None and _human_seg is None and seg_out.exists():
             try:
-                _total = int(_load_json(seg_out).get("total_frames"))
-            except Exception:
-                _total = None
-        if _total is None:
-            _total = int(len(load_dlc_h5(h5)))
-        seg_out.write_text(json.dumps({
-            "segmenter_version": "manual_resegmentation",
-            "segmenter_algorithm": "manual",
-            "video_name": stem,
-            "total_frames": _total,
-            "fps": 60.0,
-            "boundaries": _b,
-            "reference_quality": "manual",
-            "overall_confidence": 1.0,
-            "anomalies": [],
-            "anomaly_summary": {"critical": 0, "warning": 0, "info": 0},
-            "manual_resegmentation": True,
-        }, indent=2), encoding="utf-8")
-    elif _human_seg is None:
-        log("segment...")
-        boundaries, diagnostics = segment_video_multi(h5)
-        save_segmentation(boundaries, diagnostics, seg_out)
+                _prev = _load_json(seg_out)
+                if _prev.get("manual_resegmentation") or _prev.get("segmenter_algorithm") == "manual":
+                    _kept = _prev.get("boundaries")
+                    if _kept:
+                        boundaries_override = list(_kept)
+                        log("keeping the reviewer's manual boundaries (a restage would "
+                            "otherwise re-cut the video with the auto-segmenter)")
+            except Exception as e:
+                log(f"WARNING could not check for a manual re-segmentation: {e}")
 
-    # 2. REACH DETECTION (v8.1.0 w=0.7 model4.0) -- reads pose + segments, no gate
-    log("detect reaches...")
-    reach_results = detect_video_reaches(h5, seg_out)
-    ReachDetector.save_results(reach_results, reach_out, validation_status="needs_review")
+        # 1. SEGMENTATION (v2.2.2) -- OR a manual re-segmentation: when the reviewer
+        # supplies boundaries, skip auto-segmentation and write a minimal manual
+        # segments.json (downstream reach/outcome/assignment read only the boundary
+        # list + frame count). Re-running the algos on the reviewer's cuts means
+        # UNCHANGED segments keep the algo's scoring and every segment still shows an
+        # algo verdict -- fixing one boundary no longer forces a full re-score.
+        if boundaries_override is not None:
+            log("manual re-segmentation (given boundaries; skipping auto-segment)...")
+            _b = sorted({int(x) for x in boundaries_override})
+            _total = None
+            if seg_out.exists():
+                try:
+                    _total = int(_load_json(seg_out).get("total_frames"))
+                except Exception:
+                    _total = None
+            if _total is None:
+                _total = int(len(load_dlc_h5(h5)))
+            seg_out.write_text(json.dumps({
+                "segmenter_version": "manual_resegmentation",
+                "segmenter_algorithm": "manual",
+                "video_name": stem,
+                "total_frames": _total,
+                "fps": 60.0,
+                "boundaries": _b,
+                "reference_quality": "manual",
+                "overall_confidence": 1.0,
+                "anomalies": [],
+                "anomaly_summary": {"critical": 0, "warning": 0, "info": 0},
+                "manual_resegmentation": True,
+            }, indent=2), encoding="utf-8")
+        elif _human_seg is None:
+            log("segment...")
+            boundaries, diagnostics = segment_video_multi(h5)
+            save_segmentation(boundaries, diagnostics, seg_out)
 
-    # 3. OUTCOME CASCADE (v6.1.0) -- reads pose + segments + reaches + mp4 (CV gate)
-    log("detect outcomes (CV gate via canonical mp4 dir)...")
-    dlc_df = load_dlc_h5(h5)
-    seg_doc = _load_json(seg_out)
-    reach_doc = _load_json(reach_out)
-    segments = _segments_as_tuples(seg_doc)
-    reaches_tuples = _reaches_as_tuples(reach_doc)
-    outcome_result = detect_outcomes_v6_cascade(
-        dlc_df=dlc_df,
-        segments=segments,
-        reaches=reaches_tuples,
-        video_id=stem,
-        video_dir=mp4_dir,  # points at canonical CNT##/ containing {stem}.mp4
-    )
-    outcome_out.write_text(json.dumps(outcome_result, indent=2), encoding="utf-8")
+        # 2. REACH DETECTION (v8.1.0 w=0.7 model4.0) -- reads pose + segments, no gate
+        log("detect reaches...")
+        reach_results = detect_video_reaches(h5, seg_out)
+        ReachDetector.save_results(reach_results, reach_out, validation_status="needs_review")
 
-    # 4. ASSIGNMENT v2 (2.0.0 agreement gate) -- CLI still v1, call v2 directly
-    log("assign reaches (v2 agreement gate)...")
-    merged_segs = _segments_with_outcomes(seg_doc, outcome_result)
-    reaches_list = _reaches_list(reach_doc)
-    assign_result = assign_reaches_v2(
-        reaches=reaches_list,
-        segments_with_outcomes=merged_segs,
-        dlc_df=dlc_df,
-        video_id=stem,
-    )
-    assign_out.write_text(json.dumps(assign_result, indent=2) + "\n", encoding="utf-8")
+        # 3. OUTCOME CASCADE (v6.1.0) -- reads pose + segments + reaches + mp4 (CV gate)
+        log("detect outcomes (CV gate via canonical mp4 dir)...")
+        dlc_df = load_dlc_h5(h5)
+        seg_doc = _load_json(seg_out)
+        reach_doc = _load_json(reach_out)
+        segments = _segments_as_tuples(seg_doc)
+        reaches_tuples = _reaches_as_tuples(reach_doc)
+        outcome_result = detect_outcomes_v6_cascade(
+            dlc_df=dlc_df,
+            segments=segments,
+            reaches=reaches_tuples,
+            video_id=stem,
+            video_dir=mp4_dir,  # points at canonical CNT##/ containing {stem}.mp4
+        )
+        outcome_out.write_text(json.dumps(outcome_result, indent=2), encoding="utf-8")
 
-    # 4b. CLEAR-GUARD: re-apply human triage-clears the fresh run just
-    # overwrote. Human calls win over the recomputed algo call. Skipped for
-    # manual re-segmentation (boundaries changed -> segment_num can't be mapped
-    # safely; the reviewer is intentionally re-scoring).
-    if preserve_clears and boundaries_override is None and (_old_outcome or _old_reach):
-        from .clear_guard import (
-            merge_preserving_clears, is_outcome_locked, is_reach_locked)
-        if _old_outcome:
-            _new_o = _load_json(outcome_out)
-            _new_o, kept, skipped = merge_preserving_clears(_new_o, _old_outcome, is_outcome_locked)
-            if kept:
-                outcome_out.write_text(json.dumps(_new_o, indent=2), encoding="utf-8")
-                log(f"clear-guard: preserved {len(kept)} human-cleared outcome segment(s) {kept}")
-            if skipped:
-                log(f"clear-guard: WARNING {len(skipped)} cleared outcome segment(s) "
-                    f"not re-applied (segment_num absent after re-run): {skipped}")
-        if _old_reach:
-            _new_r = _load_json(reach_out)
-            _new_r, kept, skipped = merge_preserving_clears(_new_r, _old_reach, is_reach_locked)
-            if kept:
-                reach_out.write_text(json.dumps(_new_r, indent=2), encoding="utf-8")
-                log(f"clear-guard: preserved {len(kept)} human-cleared reach segment(s) {kept}")
-            if skipped:
-                log(f"clear-guard: WARNING {len(skipped)} cleared reach segment(s) "
-                    f"not re-applied (segment_num absent after re-run): {skipped}")
+        # 4. ASSIGNMENT v2 (2.0.0 agreement gate) -- CLI still v1, call v2 directly
+        log("assign reaches (v2 agreement gate)...")
+        merged_segs = _segments_with_outcomes(seg_doc, outcome_result)
+        reaches_list = _reaches_list(reach_doc)
+        assign_result = assign_reaches_v2(
+            reaches=reaches_list,
+            segments_with_outcomes=merged_segs,
+            dlc_df=dlc_df,
+            video_id=stem,
+        )
+        assign_out.write_text(json.dumps(assign_result, indent=2) + "\n", encoding="utf-8")
 
-    # 5. MANIFEST -- pointers to canonical files + provenance (versions, sources)
-    manifest = _build_manifest(
-        stem=stem, mp4=mp4, h5=h5,
-        seg_doc=seg_doc, reach_doc=reach_doc,
-        outcome_result=outcome_result, assign_result=assign_result,
-    )
-    manifest_out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        # 4b. CLEAR-GUARD: re-apply human triage-clears the fresh run just
+        # overwrote. Human calls win over the recomputed algo call. Skipped for
+        # manual re-segmentation (boundaries changed -> segment_num can't be mapped
+        # safely; the reviewer is intentionally re-scoring).
+        if preserve_clears and boundaries_override is None and (_old_outcome or _old_reach):
+            from .clear_guard import (
+                merge_preserving_clears, is_outcome_locked, is_reach_locked)
+            if _old_outcome:
+                _new_o = _load_json(outcome_out)
+                _new_o, kept, skipped = merge_preserving_clears(_new_o, _old_outcome, is_outcome_locked)
+                if kept:
+                    outcome_out.write_text(json.dumps(_new_o, indent=2), encoding="utf-8")
+                    log(f"clear-guard: preserved {len(kept)} human-cleared outcome segment(s) {kept}")
+                if skipped:
+                    log(f"clear-guard: WARNING {len(skipped)} cleared outcome segment(s) "
+                        f"not re-applied (segment_num absent after re-run): {skipped}")
+            if _old_reach:
+                _new_r = _load_json(reach_out)
+                _new_r, kept, skipped = merge_preserving_clears(_new_r, _old_reach, is_reach_locked)
+                if kept:
+                    reach_out.write_text(json.dumps(_new_r, indent=2), encoding="utf-8")
+                    log(f"clear-guard: preserved {len(kept)} human-cleared reach segment(s) {kept}")
+                if skipped:
+                    log(f"clear-guard: WARNING {len(skipped)} cleared reach segment(s) "
+                        f"not re-applied (segment_num absent after re-run): {skipped}")
 
-    if into_queue:
-        bundle = _route_staged_bundle(stem, work, Path(pending_dir), into_deep, log)
+        # 5. MANIFEST -- pointers to canonical files + provenance (versions, sources)
+        manifest = _build_manifest(
+            stem=stem, mp4=mp4, h5=h5,
+            seg_doc=seg_doc, reach_doc=reach_doc,
+            outcome_result=outcome_result, assign_result=assign_result,
+        )
+        manifest_out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        if into_queue:
+            bundle = _route_staged_bundle(stem, work, Path(pending_dir), into_deep, log)
+    except BaseException:
+        if into_queue and work != bundle:
+            shutil.rmtree(work, ignore_errors=True)
+        raise
     log(f"bundle ready: {bundle}")
     return bundle
 
