@@ -6736,3 +6736,14 @@ video is filed or held in a review queue, so these are left off it:
 
 A listed item goes away by itself when the video is filed (by bring-current or by the watcher), or
 when bring-current holds it in a review queue, where a person sees it.
+
+## Update 2026-11-18: bring-current names a failed copy of the pose's frame-rate record
+
+Bring-current copies the pose's frame-rate record (`<pose>_meta.pickle`, written by DeepLabCut)
+into its work folder with the pose, so the kinematics can turn frames into seconds even when no
+video file is found. A failed copy used to be ignored: the kinematics then refused for "no frame
+rate", and a person went looking for a missing record. It is still not a refusal on its own (the
+video file, when found, gives the frame rate too), but the summary now records it under
+`pose_record`, and when the kinematics could not be made the reason names it: "cannot finalize:
+no kinematics were made for this run (the pose's frame-rate record ... could not be copied into
+the work folder)".

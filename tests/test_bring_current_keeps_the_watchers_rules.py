@@ -346,6 +346,21 @@ def test_the_watchers_filing_takes_a_bring_current_hold_off_the_list(tmp_path, m
     assert items == []
 
 
+def test_a_failed_pose_record_copy_is_named_in_the_reason(world, monkeypatch):
+    """The frame-rate record's copy result was ignored: a failed copy then
+    read as "no frame rate", sending a person after the wrong problem."""
+    meta = world.pose.with_name(world.pose.stem + "_meta.pickle")
+    meta.write_bytes(b"meta")
+    import mousereach.watcher.transfer as tr
+    real = tr.safe_copy
+    monkeypatch.setattr(tr, "safe_copy", lambda s, d, verify=True: (
+        False if s.name.endswith("_meta.pickle") else real(s, d, verify=verify)))
+    world.state.extract_raises = True
+    out = world.run()
+    assert "frame-rate record" in (out.get("error") or ""), out
+    assert _filed_untouched(world)
+
+
 # --- every finalize stop is printed, and listed unless nothing would clear it --
 
 def _shown_and_listed(w, capsys, out, words):

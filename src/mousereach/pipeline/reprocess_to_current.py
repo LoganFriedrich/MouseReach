@@ -385,8 +385,18 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
     # (kinematics/core/frame_rate.py; without a rate they are not written).
     meta = dlc_h5.with_name(dlc_h5.stem + "_meta.pickle")
     work_meta = work_dir / meta.name
+    meta_copy_failed = None
     if meta.is_file() and not work_meta.exists():
-        safe_copy(meta, work_meta, verify=True)
+        # Checked, as the pose copy above is. WHY not refused: the video file,
+        # when found, also gives the frame rate. But when it is not found the
+        # kinematics refuse for "no frame rate", and a person reading that
+        # would look for a missing record instead of a copy that failed, so
+        # the failure is recorded and named in what the summary reports.
+        if not safe_copy(meta, work_meta, verify=True):
+            meta_copy_failed = (f"the pose's frame-rate record {meta.name} could not be "
+                                f"copied into the work folder")
+            summary["pose_record"] = meta_copy_failed
+            logger.warning("reprocess %s: %s", video_id, meta_copy_failed)
 
     # A person's work beside the video goes into the work folder BEFORE any
     # step runs: their cuts (a segments file marked boundary_source "human",
@@ -549,8 +559,11 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
                 logger.warning("results CSV failed for %s: %s", video_id, _e)
             summary["steps"]["kinematics"] = {"ok": True, "n_segments": feats.n_segments}
         except Exception as e:
-            summary["steps"]["kinematics"] = {"ok": False, "err": str(e)}
-            logger.warning("kinematics failed for %s: %s", video_id, e)
+            err = str(e)
+            if meta_copy_failed:
+                err = f"{err} ({meta_copy_failed})"
+            summary["steps"]["kinematics"] = {"ok": False, "err": err}
+            logger.warning("kinematics failed for %s: %s", video_id, err)
 
     summary["elapsed_s"] = round(time.time() - t0, 1)
 
@@ -607,6 +620,8 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
         return summary
     if not (work_dir / f"{video_id}_features.json").is_file():
         summary["error"] = "cannot finalize: no kinematics were made for this run"
+        if meta_copy_failed:
+            summary["error"] += f" ({meta_copy_failed})"
         return summary
     # The watcher's own last checks on the file about to be filed (an
     # undecided pellet; a reach whose measures failed), asked before anything
