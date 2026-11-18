@@ -6886,3 +6886,37 @@ is retired and moves nothing; the Run All Steps tab runs the watcher's own steps
 filed video itself.) None of them has an option to write into the filed tree anyway: one step's
 new output beside the older outputs of the later steps would no longer be one run's results.
 Filed videos are brought up to date by the watcher's re-run (`mousereach-version-check --mark`).
+
+## Update 2026-11-18: the quarantine purge never deletes a collage
+
+Why quarantine exists: it is the watcher's name gate. A file whose name cannot be read is
+moved to `Processing\Quarantine` with a `.quarantine.json` note, by the collage intake, the
+single intake and the posed-folder intake (`watcher/state.py`, `validator.quarantine_file`),
+and is never processed until a person releases it under a readable name.
+
+`mousereach-watch-quarantine --purge` used to delete every file in that folder for good after
+one y/N question -- a misnamed multi-animal recording included, the only copy of that tray's
+recording -- and left each file's 'quarantined' row behind. It now follows one rule
+(`watcher/quarantine_purge.py`):
+
+* A multi-animal recording (collage) is the irreplaceable source and is NEVER deleted. A file
+  the purge cannot prove to be a single (several animals in its name, a name it cannot read, a
+  non-video file, or a "single" at least half the size of its collage) is kept like a collage.
+* A single-animal video is deleted only when the collage it was cut from is found: same date,
+  same tray letter and run, the single's animal among its eight, in `Unanalyzed\Multi-Animal`,
+  in a `Multi-Animal` folder inside `Analyzed` or `Archive` (at most six levels down), or at the
+  path a watcher-database collage row records, when that path is under the pipeline root. A
+  collage in quarantine does not count; a backup location is never read and does not count. Bytes never decide: two cuts of one collage
+  differ byte for byte.
+* A crystallized video is never touched.
+* `--purge` alone is a dry run (lists "Would delete" with each collage relied on, and "Kept"
+  with each reason). `--purge --delete` asks for a typed "y", works the list out again, and
+  checks each file once more before deleting it.
+* A deletion first takes away the 'quarantined' rows in the shared `watcher_central.db`
+  (`PipelineCoordinator.retire_quarantined_video`) and in this machine's database
+  (`WatcherDB.retire_quarantined_video`, with a `quarantine_purge` processing-log line), then
+  appends a line to `<nas_root>\watcher_logs\quarantine_purge.jsonl` (file, size, SHA-256,
+  collage relied on), then deletes the file and its note. If a row or the log cannot be written,
+  the file is kept. A row in any other state belongs to a live video of the same name and is
+  left alone. Only the row on the machine running the purge (and the shared rows) goes; a row on
+  another node stays until a purge runs there.

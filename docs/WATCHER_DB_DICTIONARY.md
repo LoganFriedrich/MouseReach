@@ -320,6 +320,13 @@ processing_log: append-only, one row per step attempt
   in-memory back-off; WatcherDB.get_videos_held_by_failed_archive() lists
   them for mousereach-watch-status and the dashboard health line.
 
+  step 'quarantine_purge', status 'completed' (since 2026-11-18): the row of a
+  quarantined single was taken away because mousereach-watch-quarantine
+  --purge --delete deleted its file (its source collage exists; the message
+  names it). The log line stays after the videos row is gone. Only the row on
+  the machine that ran the purge goes (plus the shared database's
+  'quarantined' rows); a row on another node stays until a purge runs there.
+
 
 ## 4. STATE VOCABULARY
 

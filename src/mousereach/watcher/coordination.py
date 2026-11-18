@@ -755,6 +755,36 @@ class PipelineCoordinator:
             logger.info(f"Collage {filename}: claim released by {hostname} after a failed crop")
         return released
 
+    def retire_quarantined_video(self, video_id: str) -> int:
+        """Take away the shared database's rows that say ``video_id`` is held
+        in quarantine (pipeline_videos, and the exported videos table when it
+        exists), for a quarantined single whose file the purge is about to
+        delete (watcher/quarantine_purge.py). Returns how many rows went.
+
+        Only rows in state 'quarantined' are touched: any other row is a live
+        video of the same name on some machine. Raises on database errors --
+        the purge then keeps the file, so no row is left saying it is there
+        when it is not, and none is left behind when it is gone."""
+        if self.db_path is None:
+            raise FileNotFoundError("coordination database: NAS root not configured")
+        if not Path(self.db_path).exists():
+            return 0            # no shared database yet: nothing to retire
+        self.ensure_tables()
+        n = 0
+        with self.engine.connect() as conn:
+            n += conn.execute(text(
+                "DELETE FROM pipeline_videos WHERE video_id = :v AND state = 'quarantined'"
+            ), {'v': video_id}).rowcount or 0
+            has_export = conn.execute(text(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'videos'"
+            )).fetchone()
+            if has_export:
+                n += conn.execute(text(
+                    "DELETE FROM videos WHERE video_id = :v AND state = 'quarantined'"
+                ), {'v': video_id}).rowcount or 0
+            conn.commit()
+        return n
+
     def update_collage_state(self, filename: str, state: str,
                              only_if_held_by: Optional[str] = None, **kwargs) -> bool:
         """Update collage state after cropping completes. True if a row changed.

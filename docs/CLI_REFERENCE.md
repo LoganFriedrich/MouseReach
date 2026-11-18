@@ -1953,7 +1953,7 @@ command. `mousereach-watch-status` lists the failed videos.
 ```
 usage: mousereach-watch-quarantine [--list]
                                    [--release FILE --to single|collage [--as NEW_NAME]]
-                                   [--purge]
+                                   [--purge [--delete | --dry-run]]
 
 Manage files the watcher quarantined instead of processing.
 
@@ -1963,7 +1963,38 @@ Manage files the watcher quarantined instead of processing.
     --to collage  ... into the multi-animal intake (a whole-tray recording).
     --as NEW_NAME Release it under this corrected name (default: its own name).
                   The name is checked first; an invalid name moves nothing.
-  --purge         Permanently delete everything quarantined (confirm first).
+  --purge         Show what a purge would delete and keep. Changes nothing.
+    --delete      ... and delete, after a typed "y".
+    --dry-run     ... only show (the default; wins over --delete).
+  --delete and --dry-run are refused without --purge.
+
+A purge NEVER deletes a multi-animal recording (collage). The collage is the
+camera's own recording of a whole tray, the irreplaceable source: lose it and
+that piece of the experiment is gone for ever. Anything the purge cannot prove
+to be a single is kept like a collage (several animals in the name, a name it
+cannot read, a non-video file, or a "single" at least half the size of its
+collage).
+
+A single-animal video can be cut again from its collage, so it is deleted
+only when that collage is found: same date, same tray letter and run, the
+single's animal among its eight, in Unanalyzed/Multi-Animal, in a folder named
+Multi-Animal inside Analyzed or Archive, or at the path a watcher-database
+collage row records -- always under the pipeline root (nas_root). A collage in
+quarantine does not count, and a backup location is never read. Bytes never
+decide: two cuts of one collage differ byte for byte. Otherwise the single is
+kept ("only copy -- kept"). A crystallized video is never touched.
+
+Why a dry run by default: a forgotten flag can never delete anything, and no
+saved list can go stale -- --delete works the list out again and checks each
+file once more just before deleting it.
+
+For each single it deletes, --delete first takes away the 'quarantined' rows
+in the shared watcher_central.db and in THIS machine's database (with a
+'quarantine_purge' processing-log line; a row in any other state is a live
+video of that name and stays), then appends a line to
+<nas_root>/watcher_logs/quarantine_purge.jsonl (file, size, SHA-256, collage
+relied on), then deletes the file and its .quarantine.json note. If a row or
+the log cannot be written, the file is kept.
 ```
 
 ### `mousereach-watch-unresolvable`

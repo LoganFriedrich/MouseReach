@@ -623,7 +623,7 @@ named for the state the work is in, not for the tool that produced it:
 │   ├── Review\
 │   │   ├── triage\             # Held for a person: per-element questions
 │   │   └── deep_review\        # Held for a person: failed segmentation or QC
-│   ├── Quarantine\
+│   ├── Quarantine\             # Files whose names the watcher cannot read (see below)
 │   └── Failed\
 │
 ├── Analyzed\
@@ -686,6 +686,37 @@ Each machine also has a local working folder (`processing_root`):
 
 **Note:** v2.3+ uses JSON `validation_status` field ("needs_review", "auto_approved",
 "validated") instead of separate folders. All files for a video stay together in Processing/.
+
+
+**The Quarantine folder (`Processing\Quarantine`):** the watcher moves a file here,
+with a small `.quarantine.json` note saying why, when it cannot read the file's name
+(a collage that does not name eight animals, a single without a tray letter, a
+single dropped into the multi-animal intake). It never processes a quarantined file.
+To get one back, fix its name with the Quarantine tab or
+`mousereach-watch-quarantine --release FILE --to single|collage --as NEW_NAME`.
+
+To clear old files out of quarantine, run `mousereach-watch-quarantine --purge` first.
+It changes nothing: it lists what it would delete and what it would keep, and why.
+Then `mousereach-watch-quarantine --purge --delete` deletes, after you type `y`. The
+rules, in plain words:
+
+- **A multi-animal recording (collage) is never deleted.** It is the camera's own
+  recording of a whole tray -- the irreplaceable source. Lose it and that piece of
+  the experiment is gone for ever. Anything the purge cannot prove to be a
+  single-animal video is kept as if it were a collage.
+- **A single-animal video is deleted only when the collage it was cut from still
+  exists** in the pipeline (`Unanalyzed\Multi-Animal`, or a `Multi-Animal` folder in
+  `Analyzed` or `Archive`). A single can always be cut again from its collage; without
+  the collage it is the only copy, and it is kept ("only copy -- kept"). A backup
+  location is never looked at and does not count.
+- A crystallized (publication-locked) video is never touched.
+- Each deletion is written to `<nas_root>\watcher_logs\quarantine_purge.jsonl` with
+  the collage that was relied on, and the video's "quarantined" rows in the watcher
+  databases are taken away so nothing points at a file that is gone. Only the row
+  on the machine you run it on goes (plus the shared database's rows); run the
+  purge on another node to clear that node's row.
+
+The full details are in `mousereach-watch-quarantine --help` and docs/CLI_REFERENCE.md under `mousereach-watch-quarantine`.
 
 **Old folder names:** `Processing\Single_Animal`, `Processing\DLC_Complete` and
 `Processing\Review\flagged_for_review` are retired (now `Unanalyzed\Single_Animal`,

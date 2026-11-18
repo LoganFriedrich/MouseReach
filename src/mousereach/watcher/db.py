@@ -1629,6 +1629,45 @@ class WatcherDB:
             self.update_state(identifier, 'quarantined', error_message=reason)
 
     @_retry_network_errors
+    def retire_quarantined_video(self, video_id: str, note: str) -> bool:
+        """Take away the row of a quarantined SINGLE whose file
+        ``mousereach-watch-quarantine --purge --delete`` is about to delete
+        (watcher/quarantine_purge.py). True when a row was taken away.
+
+        Only a row in state 'quarantined' is touched. A row in any other
+        state belongs to a live video of the same name (the same single cut
+        and analyzed again, say) and is left exactly as it is. A crystallized
+        row is refused (CrystallizedError), as everywhere else.
+
+        WHY delete rather than a new terminal state: the row's only meaning
+        was "this file is held in quarantine". Once the file is gone a
+        'quarantined' row would dangle, and a row in any state makes both
+        intake scans skip a file of that name for ever, so a single that is
+        later cut again from its collage could never come back in. The
+        record of what happened stays: one processing_log line (step
+        'quarantine_purge', with ``note``) and the purge log beside the
+        pipeline."""
+        with self._state_write() as conn:
+            row = conn.execute(
+                "SELECT state FROM videos WHERE video_id = ?", (video_id,)).fetchone()
+            if not row:
+                return False
+            if row['state'] == 'crystallized':
+                raise CrystallizedError(
+                    f"{video_id} is crystallized; its row is not retired. Unlock it "
+                    f"with mousereach-uncrystallize first if this is intended.")
+            if row['state'] != 'quarantined':
+                return False
+            cur = conn.execute(
+                "DELETE FROM videos WHERE video_id = ? AND state = 'quarantined'",
+                (video_id,))
+            retired = cur.rowcount == 1
+        if retired:
+            self.log_step(video_id, 'quarantine_purge', 'completed', message=note)
+            logger.info(f"{video_id}: quarantined row retired ({note})")
+        return retired
+
+    @_retry_network_errors
     def mark_failed(self, video_id: str, error_message: str):
         """
         Mark video as failed with error tracking.

@@ -1110,7 +1110,7 @@ def main_quarantine():
     _maybe_print_help("""
 usage: mousereach-watch-quarantine [--list]
                                    [--release FILE --to single|collage [--as NEW_NAME]]
-                                   [--purge]
+                                   [--purge [--delete | --dry-run]]
 
 Manage files the watcher quarantined instead of processing.
 
@@ -1120,12 +1120,52 @@ Manage files the watcher quarantined instead of processing.
     --to collage  ... into the multi-animal intake (a whole-tray recording).
     --as NEW_NAME Release it under this corrected name (default: its own name).
                   The name is checked first; an invalid name moves nothing.
-  --purge         Permanently delete everything quarantined (confirm first).
+  --purge         Show what a purge would delete and keep. Changes nothing.
+    --delete      ... and delete, after a typed "y".
+    --dry-run     ... only show (the default; wins over --delete).
+  --delete and --dry-run are refused without --purge.
+
+A purge NEVER deletes a multi-animal recording (collage). The collage is the
+camera's own recording of a whole tray, the irreplaceable source: lose it and
+that piece of the experiment is gone for ever. Anything the purge cannot prove
+to be a single is kept like a collage (several animals in the name, a name it
+cannot read, a non-video file, or a "single" at least half the size of its
+collage).
+
+A single-animal video can be cut again from its collage, so it is deleted
+only when that collage is found: same date, same tray letter and run, the
+single's animal among its eight, in Unanalyzed/Multi-Animal, in a folder named
+Multi-Animal inside Analyzed or Archive, or at the path a watcher-database
+collage row records -- always under the pipeline root (nas_root). A collage in
+quarantine does not count, and a backup location is never read. Bytes never
+decide: two cuts of one collage differ byte for byte. Otherwise the single is
+kept ("only copy -- kept"). A crystallized video is never touched.
+
+Why a dry run by default: a forgotten flag can never delete anything, and no
+saved list can go stale -- --delete works the list out again and checks each
+file once more just before deleting it.
+
+For each single it deletes, --delete first takes away the 'quarantined' rows
+in the shared watcher_central.db and in THIS machine's database (with a
+'quarantine_purge' processing-log line; a row in any other state is a live
+video of that name and stays), then appends a line to
+<nas_root>/watcher_logs/quarantine_purge.jsonl (file, size, SHA-256, collage
+relied on), then deletes the file and its .quarantine.json note. If a row or
+the log cannot be written, the file is kept.
 """)
     # Parse args
     args = sys.argv[1:]
     list_files = '--list' in args
     purge = '--purge' in args
+    # Deleting needs --delete as well; --dry-run (or no --delete) only shows.
+    purge_delete = purge and '--delete' in args and '--dry-run' not in args
+    if not purge and ('--delete' in args or '--dry-run' in args):
+        # WHY: these two only mean something to --purge. Accepted anywhere,
+        # "--release FILE ... --dry-run" would really move the file while the
+        # person believed it was a preview.
+        print("ERROR: --delete and --dry-run belong to --purge only. "
+              "Nothing was changed.", file=sys.stderr)
+        sys.exit(2)
 
     def _value(flag):
         # The word after the flag; None when the flag is absent or last.
@@ -1145,12 +1185,14 @@ Manage files the watcher quarantined instead of processing.
         print("  --list                              Show quarantined files with reasons")
         print("  --release FILE --to single|collage  Release a file back into an intake folder")
         print("      [--as NEW_NAME]                 ... under a corrected name")
-        print("  --purge                             Delete all quarantined files (with confirmation)")
+        print("  --purge                             Show what a purge would delete/keep (changes nothing)")
+        print("  --purge --delete                    Delete singles whose collage exists (asks first)")
         print()
         print("Examples:")
         print("  mousereach-watch-quarantine --list")
         print("  mousereach-watch-quarantine --release 20250101_badname.mp4 --to single --as 20250101_ABC0101_P1.mp4")
         print("  mousereach-watch-quarantine --purge")
+        print("  mousereach-watch-quarantine --purge --delete")
         sys.exit(1)
 
     if (release_file or release_to or release_as) and (
@@ -1231,35 +1273,93 @@ Manage files the watcher quarantined instead of processing.
             sys.exit(1)
         print(msg)
 
-    # Purge all quarantined files
+    # Purge: never a collage; a single only while its source collage exists.
+    # watcher/quarantine_purge.py has the rule and the reasons for it.
     if purge:
-        if not quarantine_dir.exists():
-            print("Quarantine directory does not exist.")
-            return
+        sys.exit(_purge_quarantine(db, quarantine_dir, purge_delete))
 
-        files = list(quarantine_dir.glob('*'))
-        if not files:
-            print("Quarantine directory is empty.")
-            return
 
-        print(f"Found {len(files)} files in quarantine:")
-        for f in files:
-            print(f"  - {f.name}")
-        print()
+def _purge_quarantine(db, quarantine_dir, really_delete: bool) -> int:
+    """mousereach-watch-quarantine --purge [--delete]. Returns the exit code.
 
-        response = input(f"DELETE all {len(files)} files? [y/N]: ")
-        if response.lower() != 'y':
-            print("Cancelled.")
-            return
+    WHY this replaces "delete everything after y/N": that deleted every
+    quarantined file for good -- a misnamed multi-animal recording, the only
+    copy of a piece of the experiment, included -- and left the files' rows
+    saying they were still quarantined."""
+    from mousereach.config import Paths
+    from mousereach.watcher import quarantine_purge as qp
 
-        for f in files:
-            try:
-                f.unlink()
-                print(f"Deleted: {f.name}")
-            except Exception as e:
-                print(f"ERROR deleting {f.name}: {e}", file=sys.stderr)
+    pipeline_root = Paths.NAS_ROOT
+    if not pipeline_root:
+        print("ERROR: the pipeline root (nas_root) is not configured, so the "
+              "multi-animal recordings cannot be looked for. Nothing was deleted. "
+              "Run mousereach-setup.", file=sys.stderr)
+        return 1
+    if not Path(quarantine_dir).is_dir():
+        print("Quarantine directory does not exist.")
+        return 0
 
-        print(f"\nDeleted {len(files)} files from quarantine.")
+    analyzed_root = Paths.ANALYZED_OUTPUT
+    print(f"Looking for the multi-animal recordings under {pipeline_root} ...")
+    index = qp.CollageIndex(Path(pipeline_root), Path(quarantine_dir), db)
+    decisions = qp.plan(Path(quarantine_dir), index, db, analyzed_root)
+    if not decisions:
+        print("Quarantine directory is empty.")
+        return 0
+
+    red = "\033[31m" if sys.stdout.isatty() else ""
+    end = "\033[0m" if red else ""
+    to_delete = [d for d in decisions if d.action == 'delete']
+    kept = [d for d in decisions if d.action != 'delete']
+
+    print()
+    print(f"Would delete ({len(to_delete)}) -- singles whose multi-animal recording exists:")
+    for d in to_delete:
+        print(f"  {d.path.name}")
+        print(f"      source collage: {d.collage}")
+    print()
+    print(f"Kept ({len(kept)}):")
+    for d in kept:
+        print(f"{red}  {d.path.name}{end}")
+        print(f"{red}      {d.reason}{end}")
+    print()
+
+    if not really_delete:
+        print("Dry run: nothing was changed. To delete the files listed under "
+              "'Would delete', run: mousereach-watch-quarantine --purge --delete")
+        return 0
+    if not to_delete:
+        print("Nothing to delete.")
+        return 0
+    try:
+        response = input(f"DELETE these {len(to_delete)} single-animal videos? [y/N]: ")
+    except EOFError:
+        response = ''
+    if response.strip().lower() != 'y':
+        print("Cancelled. Nothing was changed.")
+        return 0
+
+    coordinator = None
+    try:
+        from mousereach.watcher.coordination import PipelineCoordinator
+        coordinator = PipelineCoordinator()
+    except Exception as e:
+        print(f"ERROR: the shared database cannot be opened ({e}); nothing was "
+              f"deleted.", file=sys.stderr)
+        return 1
+    log_path = qp.purge_log_path(Path(pipeline_root))
+    n_deleted = 0
+    for d in to_delete:
+        done, msg = qp.delete_one(d, index, db, coordinator, log_path, analyzed_root)
+        if done:
+            n_deleted += 1
+            print(f"Deleted: {d.path.name} -- {msg}")
+        else:
+            print(f"{red}NOT deleted: {d.path.name} -- {msg}{end}")
+    print()
+    print(f"Deleted {n_deleted} of {len(to_delete)}; {len(kept)} kept. "
+          f"Log: {log_path}")
+    return 0
 
 
 # =============================================================================
