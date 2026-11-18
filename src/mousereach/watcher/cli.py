@@ -836,6 +836,7 @@ def main_reprocess():
     """Reset failed videos for reprocessing."""
     _maybe_print_help("""
 usage: mousereach-watch-reprocess [video_id] [--all-failed] [--from-step STEP]
+       mousereach-watch-reprocess --collage COLLAGE_FILE
 
 Reset a failed video so the watcher works it again, with its automatic
 retries given back. Only a video in the 'failed' state is changed; for any
@@ -852,9 +853,20 @@ other state the command says what to do instead and exits with code 1.
                      a single whose copy into the DLC queue failed and
                      that is back in the shared singles folder:
                      validated).
+  --collage FILE     Give ONE collage that could not be cropped its
+                     automatic retries back (its file name, as listed in
+                     the dashboard's red panel). Only a 'failed' collage is
+                     changed. The watcher tries it again at its next scan
+                     while the file is still in the intake folder; no
+                     restart, and no other collage or video is affected.
+                     Run it on the machine the red panel names.
 """)
     # Parse args
     args = sys.argv[1:]
+    if '--collage' in args:
+        i = args.index('--collage')
+        name = args[i + 1] if i + 1 < len(args) else None
+        sys.exit(_retry_parked_collage(name))
     all_failed = '--all-failed' in args
     from_step = None
 
@@ -967,6 +979,42 @@ other state the command says what to do instead and exits with code 1.
         except Exception as e:
             print(f"ERROR: Failed to reset video: {e}", file=sys.stderr)
             sys.exit(1)
+
+
+def _retry_parked_collage(name) -> int:
+    """mousereach-watch-reprocess --collage NAME: give one failed collage its
+    retries back (WatcherDB.retry_parked_collage). Returns the exit code: 0
+    when it was changed, 1 when not (and says why). WHY a per-collage retry:
+    the only remedy used to be raising watcher.max_retries for the whole
+    machine and restarting, which retried every failed video on it too."""
+    if not name:
+        print("Usage: mousereach-watch-reprocess --collage COLLAGE_FILE", file=sys.stderr)
+        return 1
+    try:
+        from mousereach.watcher.db import WatcherDB
+        db_path = _resolve_db_path()
+        if not db_path.exists():
+            print("ERROR: Watcher database not found. Run 'mousereach-watch' first.",
+                  file=sys.stderr)
+            return 1
+        db = WatcherDB(db_path)
+        row = db.get_collage(name)
+        if not row:
+            print(f"ERROR: no collage named {name} on this machine. Use the file name "
+                  f"the dashboard's red panel shows, on the machine it names.",
+                  file=sys.stderr)
+            return 1
+        old = db.retry_parked_collage(name)
+    except Exception as e:
+        print(f"ERROR: could not give the collage its retries back: {e}", file=sys.stderr)
+        return 1
+    if old is None:
+        state = (db.get_collage(name) or row).get('state')
+        print(f"{name} not changed: it is '{state}', not failed.")
+        return 1
+    print(f"Retry: {name} -- retries given back (it had used {old}). The watcher "
+          f"tries it again at its next scan while its file is in the intake folder.")
+    return 0
 
 
 def _reprocess_next_step(state: str) -> str:

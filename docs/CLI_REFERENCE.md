@@ -1799,6 +1799,7 @@ three lists under `held_and_failed`.
 
 ```
 usage: mousereach-watch-reprocess [video_id] [--all-failed] [--from-step STEP]
+       mousereach-watch-reprocess --collage COLLAGE_FILE
 
 Reset a failed video so the watcher works it again, with its automatic
 retries given back. Only a video in the 'failed' state is changed; for any
@@ -1815,7 +1816,25 @@ other state the command says what to do instead and exits with code 1.
                      a single whose copy into the DLC queue failed and
                      that is back in the shared singles folder:
                      validated).
+  --collage FILE     Give ONE collage that could not be cropped its
+                     automatic retries back (its file name, as listed in
+                     the dashboard's red panel). Only a 'failed' collage is
+                     changed. The watcher tries it again at its next scan
+                     while the file is still in the intake folder; no
+                     restart, and no other collage or video is affected.
+                     Run it on the machine the red panel names.
 ```
+
+`--collage`: a GPU machine tries a collage whose crop failed again by itself, up to
+`watcher.max_retries` times, while its file is in the intake folder; after that it is listed in
+the Pipeline Dashboard's red panel. Fix the cause the error names, then on the machine the panel
+names either press "Retry a collage..." in Watcher Control (under "Live pipeline status") and pick
+the collage, or run `mousereach-watch-reprocess --collage <file name>`. The collage's retry count
+goes back to 0 (the old count and the last error are kept in the processing log, step `retry`);
+the watcher's next scan moves it on to `validated` and crops it again. Nothing else on the machine
+is changed -- before, the only remedy was raising `max_retries` for the whole machine and
+restarting, which also gave every failed video there another try. A collage that is not `failed`
+is not changed (the command says so and exits with code 1).
 
 What it does, step by step:
 

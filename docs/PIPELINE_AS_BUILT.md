@@ -4884,9 +4884,15 @@ were never cut. Now:
   often it was retried and the last error (`watcher/health.py`).
 
 What to do when one is listed: read its error. Fix the cause, then on the machine named in the list
-(the file name starts with it) open Watcher Control, raise `max_retries` by one in "Configuration
-(applies on next start)", press Save config, and restart the watcher (Stop, then Start). The collage
-is tried once more (failed videos on that machine get one more try too). When the collage crops, it drops off the
+(the file name starts with it) open Watcher Control and press "Retry a collage..." (under "Live
+pipeline status"), pick the collage from the list (each line shows how often it was retried and
+its last error) and press OK -- or run `mousereach-watch-reprocess --collage <file name>` there.
+Only that collage gets its retries back (its retry count goes to 0; the old count and the error
+are kept in the processing log, step `retry`); the watcher's next scan tries it again while its
+file is in the intake folder, with no restart, and no other collage or video on the machine is
+touched (2026-11-18, `WatcherDB.retry_parked_collage`; before, the only remedy was raising
+`max_retries` for the whole machine and restarting, which gave every failed video there another
+try too). Tests: `tests/test_retry_one_parked_collage.py`. When the collage crops, it drops off the
 list at the next scan; it also drops off if its file is taken out of the intake folder. The list
 file is rewritten only when it changes, and a list that cannot be written is a WARNING in the log,
 never a stop of the scan.

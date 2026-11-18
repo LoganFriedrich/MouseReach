@@ -52,6 +52,7 @@ from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QLabel, QPushButton, QGroupBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QTextEdit, QComboBox, QSpinBox, QCheckBox, QLineEdit,
+    QInputDialog, QMessageBox,
 )
 from qtpy.QtCore import Qt, QTimer, QObject, Signal
 from qtpy.QtGui import QColor, QBrush
@@ -85,6 +86,22 @@ def _run_backup_once(src: str, dst: str) -> str:
         return (f"Backup INCOMPLETE: {failed} folder(s) did not copy completely. "
                 f"The watcher log names the files; run the backup again.")
     return "Backup complete."
+
+
+def failed_collage_choices(db) -> List[Tuple[str, str]]:
+    """``(file name, label)`` for every 'failed' collage in this machine's
+    watcher database, for the "Retry a collage..." button. The label carries
+    how often it was retried and its last error, so a person picks the one
+    whose cause they fixed. Never raises (an unreadable database lists none)."""
+    try:
+        rows = db.get_collages_in_state('failed') or []
+    except Exception:
+        return []
+    return [(r.get('filename'),
+             "%s -- retried %s time(s); %s" % (
+                 r.get('filename'), r.get('retry_count') or 0,
+                 r.get('validation_error') or 'no error recorded'))
+            for r in rows if r.get('filename')]
 
 
 class _BackupWorker(QObject):
@@ -441,6 +458,15 @@ class WatcherControlWidget(QWidget):
         refresh_btn = QPushButton("Refresh now")
         refresh_btn.clicked.connect(self._refresh)
         sl.addWidget(refresh_btn)
+        # One collage at a time (see _retry_collage).
+        retry_collage_btn = QPushButton("Retry a collage...")
+        retry_collage_btn.setToolTip(
+            "Give ONE collage that could not be cropped on this machine its "
+            "automatic retries back. It is tried again at the watcher's next "
+            "scan while its file is in the intake folder; no restart, and no "
+            "other collage or video is affected.")
+        retry_collage_btn.clicked.connect(self._retry_collage)
+        sl.addWidget(retry_collage_btn)
         root.addWidget(stat)
 
         # --- Config editor ---
@@ -701,6 +727,43 @@ class WatcherControlWidget(QWidget):
             if getattr(cfg, "pause_while_running", None):
                 return "cannot check for recording programs: %s" % e
             return None
+
+    def _retry_collage(self):
+        """Pick one failed collage of this machine and give it its retries
+        back (WatcherDB.retry_parked_collage). WHY a button: the only remedy
+        for a collage out of retries was to raise watcher.max_retries for the
+        whole machine and restart, which retried every failed video on it
+        too. The same as mousereach-watch-reprocess --collage NAME."""
+        db = self._db()
+        if db is None:
+            QMessageBox.information(self, "Retry a collage",
+                                    "This machine has no watcher database yet.")
+            return
+        choices = failed_collage_choices(db)
+        if not choices:
+            QMessageBox.information(self, "Retry a collage",
+                                    "No collage on this machine is waiting for a retry.")
+            return
+        labels = [label for _, label in choices]
+        picked, ok = QInputDialog.getItem(
+            self, "Retry a collage",
+            "Fix the cause named in the error first. Then pick the collage to "
+            "try again:", labels, 0, False)
+        if not ok:
+            return
+        name = choices[labels.index(picked)][0]
+        try:
+            old = db.retry_parked_collage(name)
+        except Exception as e:
+            show_error(f"Could not give {name} its retries back: {e}")
+            return
+        if old is None:
+            QMessageBox.information(self, "Retry a collage",
+                                    f"{name} was not changed: it is no longer failed.")
+        else:
+            show_info(f"{name}: retries given back; the watcher tries it again at "
+                      f"its next scan while its file is in the intake folder.")
+        self._refresh()
 
     def _db(self):
         """Open the watcher DB if it exists, else None (do NOT create it)."""

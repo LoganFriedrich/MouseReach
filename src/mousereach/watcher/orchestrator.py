@@ -3217,11 +3217,12 @@ class DLCOrchestrator(BaseOrchestrator):
                         "Collage %s could not be cropped and has used up its "
                         "retries (watcher.max_retries); it stays in the intake "
                         "folder and none of its sessions are cut. Last error: %s. "
-                        "Fix the cause, then on that machine raise max_retries "
-                        "by one in Watcher Control > Configuration, press Save "
-                        "config and restart the watcher: the collage is tried "
-                        "once more (failed videos get one more try too)."
-                        % (name, parked[name])),
+                        "Fix the cause, then on that machine press 'Retry a "
+                        "collage...' in Watcher Control and pick it (or run "
+                        "mousereach-watch-reprocess --collage %s): only this "
+                        "collage gets its retries back and is tried again at "
+                        "the next scan; no restart."
+                        % (name, parked[name], name)),
                 })
             if (items != getattr(self, '_parked_collages_listed', None)
                     and Paths.NAS_ROOT):

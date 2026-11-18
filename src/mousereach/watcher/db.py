@@ -1168,6 +1168,50 @@ class WatcherDB:
                 conn.close()
 
     @_retry_network_errors
+    def retry_parked_collage(self, filename: str) -> Optional[int]:
+        """Give ONE failed collage its automatic retries back: retry_count
+        goes to 0. Returns the old count, or None when nothing was changed
+        (no such collage, or it is not 'failed').
+
+        The state is left 'failed' on purpose: the collage intake scan
+        (state.discover_new_collages) moves a failed collage on to
+        'validated' only while its file is still in the intake folder, and
+        counts the retry itself -- so this goes through exactly the retry the
+        watcher makes on its own, on the next scan, with no restart.
+
+        WHY: the only remedy for a collage that had used up its retries was
+        to raise watcher.max_retries for the whole machine and restart the
+        watcher, which gave every failed video on that machine another try
+        too. The old count and error are kept in processing_log (step
+        'retry')."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT state, retry_count, validation_error FROM collages "
+                    "WHERE filename = ?", (filename,)).fetchone()
+                if not row or row['state'] != 'failed':
+                    return None
+                old = int(row['retry_count'] or 0)
+                cur = conn.execute(
+                    "UPDATE collages SET retry_count = 0, updated_at = ? "
+                    "WHERE filename = ? AND state = 'failed'",
+                    (self._now(), filename))
+                conn.commit()
+                if cur.rowcount != 1:
+                    return None
+                error = row['validation_error']
+            finally:
+                conn.close()
+        self.log_step(filename, 'retry', 'started',
+                      message=(f"retries given back by a person (it had used "
+                               f"{old}); last error: {error or 'none recorded'}"))
+        logger.info(f"Collage {filename}: retries given back (was {old}); "
+                    f"tried again at the next scan while its file is in the "
+                    f"intake folder")
+        return old
+
+    @_retry_network_errors
     def update_collage_state(self, filename: str, new_state: str, **kwargs):
         """
         Update collage state with validation.
