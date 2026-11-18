@@ -10,7 +10,8 @@ code's internal states, and the difference matters -- a person asking "where is
 everything" is asking about these:
 
   unanalyzed    recorded, but nothing has been done to it yet
-  crop_dlc      cropping or pose estimation -- RUNNING OR DONE
+  crop_dlc      cropping or pose estimation -- RUNNING OR DONE (also a held
+                video parked for a new pose, Repose_Queue/_parked/<video>/)
   mousereach    the analysis algorithms -- RUNNING OR DONE
   triage        held for a person, quick per-element questions
   deep_review   held for a person, segmentation failed or was escalated

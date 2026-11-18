@@ -3284,6 +3284,27 @@ that reach by its frames).
 
 **A held bundle leaves its queue in one rename (fixed 2026-11-09).** At first the command moved the pose and outputs out of a held bundle while the bundle still sat in the triage queue. The watcher's review-return scan read one such half-emptied bundle as "segmentation failed" and moved the rest of it into deep review in the middle of the run. The bundle is now renamed, as one folder, to `Repose_Queue/_parked/<video>/` before anything is moved out of it. The rename runs under the claim the scan itself takes (`Processing/Review/.return_claims/<video>.claim`, held as `<host>-repose`), so the queue only ever holds the whole bundle or nothing. If the scan holds the claim, the video is refused for now. A run stopped after the rename finishes from the parked folder when it is run again. Tests are in `tests/test_repose_videos.py`.
 
+**A parked bundle is seen while it waits, and cleared after (2026-11-18).** During the round trip
+`Repose_Queue/_parked/<video>/` holds a held video's only copy. The Pipeline Dashboard lists it as
+"Parked, waiting for a new pose" (stage `parked_for_repose`, under "In progress"; a review queue,
+the posed folder or Analyzed outranks it, so a leftover never hides the video's new place), and the
+census counts it in `crop_dlc` (waiting for a pose) with the folder recorded as the root
+`repose_parked`. `mousereach-reconcile` already named it. After the round trip the folder is a
+leftover, and nothing removed it: a later re-pose of the same video was refused while it existed.
+Now `repose_videos.clear_parked` deletes it once the re-run has ended and the video's current copy
+is verified: no request out, the row filed ('archived'/'crystallized') or held ('triage'/
+'deep_review', with that queue's bundle holding the video), the parked mp4 and `posed_copy` mp4 the
+same size and SHA-256 as that copy, and no file in the folder but the video and the old queue's two
+notes. Anything else keeps the folder (the lab's rule for machine leftovers: deleted once a current
+copy is verified, never set aside; anything that may be a person's work is never deleted). It runs
+on the processing server by itself (`ProcessingOrchestrator._maybe_clear_finished_parked`: at most
+5 folders an hour, because each check reads two videos in full; a folder kept for a reason is
+looked at again a day later), in `mousereach-repose-videos` when it meets an old parked folder, and
+on demand with `mousereach-repose-videos --clear-finished [--dry-run]`. Still open: a re-pose run
+that stops after parking leaves the row saying 'triage'/'deep_review' while the bundle is parked;
+reconcile names it ("the re-pose run stopped part way"), and running `mousereach-repose-videos`
+again for the video finishes it. Tests: `tests/test_parked_repose_is_seen_and_cleared.py`.
+
 **The re-run takes the video from the posed folder when there is no filed copy (fixed 2026-11-09).** A held video has no results folder holding its mp4. The re-run copies only DLC files from the posed folder, so a held video re-posed this way ran without a video, and the triage bundle it routed had none for the reviewer to open. `_reprocess_copy_set` (`watcher/orchestrator.py`) now adds `<video>.mp4` from the posed folder, then from `Repose_Queue/_parked/<video>/`, whenever no other folder supplied one. A filed copy still wins. Tests are in `tests/test_reprocess_copy_set.py`.
 
 **What it does not do.** It does not touch the database integration: rows already imported from a

@@ -39,6 +39,11 @@ _PRIORITY = {
     "quarantined": 115, "failed": 110,
     "analyzed": 100,
     "processing": 50, "dlc_complete": 40,
+    # A held video's bundle parked for a new pose (mousereach-repose-videos):
+    # its only copy during the round trip. Below the posed folder, so the new
+    # pose's arrival shows; below every queue and Analyzed, so a parked copy
+    # left over after the round trip never hides the video's new place.
+    "parked_for_repose": 35,
     "cropped": 30, "raw_collage": 20,
 }
 
@@ -53,6 +58,7 @@ _STEPS_DONE = {
     "cropped":      (),
     "dlc_complete": ("dlc",),
     "processing":   ("dlc",),                             # DLC done, MouseReach in progress
+    "parked_for_repose": (),                              # its old pose is set aside; a new one is coming
     "analyzed":     ("dlc", "seg", "reach", "outcome"),
     "triage":       ("dlc", "seg", "reach", "outcome"),   # ran the algos, held on a question
     "deep_review":  ("dlc",),                             # seg failed / escalated -> seg not trusted
@@ -128,6 +134,20 @@ def scan_pipeline_folders(progress: Optional[Callable[[str], None]] = None) -> D
             add(f.name[: -len(_REACHES)], "processing", f)
         for f in proc.glob("*.mp4"):
             add(f.stem, "processing", f)
+
+    # Bundles parked for a new pose (Repose_Queue/_parked/<video>/). Without
+    # this a held video disappeared from the dashboard for the whole round
+    # trip: its bundle had left the review queue and no other folder held it.
+    try:
+        from mousereach.watcher.repose_videos import PARKED
+        rq = getattr(Paths, "REPOSE_QUEUE", None)
+        pdir = Path(rq) / PARKED if rq else None
+        if pdir is not None and pdir.is_dir():
+            for d in pdir.iterdir():
+                if d.is_dir():
+                    add(d.name, "parked_for_repose", d)
+    except Exception as e:
+        logger.warning("could not read the parked re-pose folder: %s", e)
 
     failed = Paths.FAILED
     if failed and Path(failed).exists():

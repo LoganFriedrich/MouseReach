@@ -6896,6 +6896,43 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 logger.warning(f"could not move {mp4.name} to the front door: {e}")
         return moved
 
+    # How often the parked re-pose folders are looked at, and how many are
+    # checked per look. WHY so few: each check reads two video files in full
+    # (their SHA-256 must match before a copy is deleted), and this runs in
+    # the work loop; a backlog clears over hours instead of stalling one pass.
+    _PARKED_CLEAR_INTERVAL_S = 3600.0
+    _PARKED_CLEAR_PER_PASS = 5
+    _PARKED_KEPT_RECHECK_S = 24 * 3600.0
+
+    def _maybe_clear_finished_parked(self) -> None:
+        """Delete re-pose leftovers whose round trip has ended
+        (repose_videos.clear_parked says when; a person's work and anything
+        unverified are kept). WHY here: nothing else ever removed a parked
+        folder, and mousereach-repose-videos refused a later re-pose of the
+        same video while one existed. A folder kept for a reason is looked at
+        again a day later (its round trip may end by then). Never raises."""
+        now = time.monotonic()
+        last = getattr(self, "_parked_clear_last", None)
+        if last is not None and now - last < self._PARKED_CLEAR_INTERVAL_S:
+            return
+        self._parked_clear_last = now
+        kept = getattr(self, "_parked_kept", None)
+        if kept is None:
+            kept = self._parked_kept = {}
+        try:
+            from mousereach.watcher import repose_videos
+            skip = {v for v, t in kept.items() if now - t < self._PARKED_KEPT_RECHECK_S}
+            for r in repose_videos.clear_finished(
+                    self.db, dry_run=False, limit=self._PARKED_CLEAR_PER_PASS, skip=skip):
+                if r["status"] == "cleared":
+                    kept.pop(r["video_id"], None)
+                    logger.info(f"{r['video_id']}: parked re-pose copy deleted ({r['why']})")
+                else:
+                    kept[r["video_id"]] = now
+                    logger.debug(f"{r['video_id']}: parked re-pose copy kept ({r['why']})")
+        except Exception as e:
+            logger.warning(f"Could not check the parked re-pose folders: {e}")
+
     def _scan_phase(self):
         """Discover new DLC outputs in the staging directory."""
         if not self.staging_dir:
@@ -6925,6 +6962,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                             f"{'' if len(adopted) <= 5 else ' ...'}")
         except Exception as e:
             logger.warning(f"Re-pose adoption scan failed (non-fatal): {e}")
+        with cycle.step("scan/parked re-pose leftovers"):
+            self._maybe_clear_finished_parked()
 
         # A video someone put in the posed-video folder without a pose is
         # invisible to the scan below, which finds videos BY their pose file.

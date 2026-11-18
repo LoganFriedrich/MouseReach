@@ -453,6 +453,21 @@ def run_census(window_days: int = 14) -> dict:
     single_root = _root("single_animal", Paths.SINGLE_ANIMAL_OUTPUT)
     if single_root:
         crop_dlc |= ids_in_dir(single_root) | set(claimed_singles(single_root))
+    # A held video's bundle parked for a new pose (mousereach-repose-videos)
+    # sits in <Repose_Queue>/_parked/<video>/ for the whole round trip, and
+    # that folder holds its only copy. It is waiting for a pose, so it counts
+    # in crop_dlc; a parked copy left over after the round trip loses to the
+    # video's new place (a queue or Analyzed outranks crop_dlc). Recorded as a
+    # root only when the folder exists, like the recording issues below.
+    from mousereach.watcher.repose_videos import PARKED as _PARKED
+    _parked_dir = (Path(Paths.REPOSE_QUEUE) / _PARKED
+                   if getattr(Paths, "REPOSE_QUEUE", None) else None)
+    if _parked_dir is not None and _parked_dir.is_dir():
+        _root("repose_parked", _parked_dir)
+        try:
+            crop_dlc |= {e.name for e in os.scandir(_parked_dir) if e.is_dir()}
+        except OSError:
+            pass
     locations = {
         "crop_dlc": crop_dlc,
         "mousereach": (ids_in_dir(_root("dlc_complete", Paths.DLC_STAGING))

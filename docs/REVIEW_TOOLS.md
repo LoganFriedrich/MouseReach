@@ -1809,7 +1809,15 @@ are withdrawn with it; the new pose gets its own run, its own gate and, if neede
 
 **What a reviewer sees.** The bundle disappears from the queue in one step (the whole folder is renamed out; it is never seen half-emptied). Its video and the queue's notes
 move to `Processing/Repose_Queue/_parked/<video>/`; its pose and the algorithm's outputs move to
-`Analyzed/Archive/<label>/`. Nothing is deleted.
+`Analyzed/Archive/<label>/`. The move itself deletes nothing.
+
+After the round trip the parked folder is deleted, but only once its video is verified identical
+(same size and SHA-256) to the video's current copy, no re-pose request for it is still out, and
+the folder holds nothing but the parked video, the old queue's notes and `posed_copy/`. Anything
+unknown or unverified keeps the folder, and the reason is named. The processing server's watcher
+does this by itself; a later re-pose of the same video does it too; and a person can run
+`mousereach-repose-videos --clear-finished` (try `--dry-run` first) -- see CLI_REFERENCE.md,
+`mousereach-repose-videos`.
 
 **A person's work is never taken out this way.** A held video with a saved review
 (`_causal_review.json` in the bundle or in `review_records/reviews/`), a deep-review clearance or

@@ -95,6 +95,7 @@ STAGE_INFO = {
     # Folder-scan stages (video's stage = which pipeline folder it sits in)
     "raw_collage":  ("Raw collage, needs cropping", "An 8-camera collage in the intake folder -- not yet cropped into single-mouse videos.", "wait"),
     "cropped":      ("Cropped, waiting for DLC",   "Cropped to a single-mouse video, waiting for DLC (DeepLabCut).", "wait"),
+    "parked_for_repose": ("Parked, waiting for a new pose", "Taken out of its review queue to be posed again (mousereach-repose-videos); it sits in Processing/Repose_Queue/_parked/ until a GPU machine has posed it, then it is analyzed again.", "wait"),
     "analyzed":     ("Final output (done)",         "Fully processed -- DLC + all 4 MouseReach algorithms + saved to mousedb. This is the final data output.", "done"),
 }
 
@@ -119,7 +120,7 @@ STAGE_FILTERS = [
     ("Needs attention", {"triage", "deep_review", "failed", "outdated", "quarantined"}),
     ("Not started (raw/cropped)", {"raw_collage", "cropped"}),
     ("In progress", {"validated", "dlc_queued", "dlc_running", "dlc_complete", "processing",
-                     "archiving", "raw_collage", "cropped"}),
+                     "archiving", "raw_collage", "cropped", "parked_for_repose"}),
     ("Done (final output)", {"processed", "archived", "crystallized", "analyzed"}),
     ("Needs triage review", {"triage"}),
     ("Needs re-segmentation", {"deep_review"}),

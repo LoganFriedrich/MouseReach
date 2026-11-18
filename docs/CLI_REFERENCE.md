@@ -958,8 +958,9 @@ options:
 ### `mousereach-repose-videos`
 
 ```
-usage: mousereach-repose-videos [-h] --ids IDS --label LABEL --reason REASON
-                                [--dry-run] [--limit LIMIT] [--report REPORT]
+usage: mousereach-repose-videos [-h] [--ids IDS] [--label LABEL] [--reason REASON]
+                                [--clear-finished] [--dry-run] [--limit LIMIT]
+                                [--report REPORT]
 
 Send named videos back to a GPU node for a new pose, because their current
 pose is not trusted. Moves the old pose and every output made from it to
@@ -972,6 +973,11 @@ options:
   --label LABEL    name of the archive folder the old outputs go to
                    (Analyzed/Archive/<label>/), e.g. 'CPU pose <dates>'
   --reason REASON  why, recorded on each video (required)
+  --clear-finished instead of re-posing: delete every parked folder
+                   (Processing/Repose_Queue/_parked/<video>/) whose round trip
+                   has ended and whose video is verified identical to its
+                   current copy (filed, or in a review queue). Anything else is
+                   kept and listed with the reason. Use --dry-run first.
   --dry-run        print what would happen; change nothing
   --limit LIMIT    act on at most this many videos (0 = all)
   --report REPORT  also write the per-video report here (JSON)
@@ -983,6 +989,26 @@ server a login whose settings name no `watcher.db_path` is refused, see
 PIPELINE_AS_BUILT.md) and never creates it: if that
 file is not there it prints `ERROR: no watcher database at <path>; nothing
 done` and exits with code 2. Run `mousereach-watch` once on the machine first.
+
+`--ids`, `--label` and `--reason` are required for a re-pose; `--clear-finished`
+needs none of them.
+
+**The parked folder after the round trip.** A held video's bundle waits in
+`Processing/Repose_Queue/_parked/<video>/` while it is posed again. When the
+re-run has ended (the video is filed, or held in a review queue with a new
+bundle) that folder is a leftover copy. It is deleted -- never moved
+anywhere -- only when ALL of these hold: no re-pose request for the video is
+still out; its row is filed or held in a queue (never in the middle of a run);
+the parked `<video>.mp4` (and `posed_copy/<video>.mp4`) has the same size and
+SHA-256 as the video's current copy; and the folder holds nothing but the
+video, the old queue's `<video>_manifest.json` and `<video>_routing.json`, and
+`posed_copy/`. Anything else keeps the folder, and the reason is printed.
+
+Three things clear it: the processing server's watcher, by itself, a few
+folders per hour; this command when it meets an old parked folder while
+re-posing the same video again (it used to refuse); and
+`mousereach-repose-videos --clear-finished` (try `--dry-run` first; each line
+says `cleared`, `would_clear` or `kept -- <reason>`).
 
 ## Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.
 

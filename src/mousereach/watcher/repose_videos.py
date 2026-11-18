@@ -69,6 +69,33 @@ Then the round trip takes over unchanged: a GPU node claims the request,
 copies the video, poses it and stages the pose into the posed folder; the
 server adopts it and re-runs every step after posing.
 
+AFTER THE ROUND TRIP: THE PARKED FOLDER IS CLEARED
+--------------------------------------------------
+The re-run copies the parked video down, and when it ends the video has a
+new home: its filed folder in Analyzed, or a new bundle in a review queue.
+The parked folder is then a leftover copy, and it used to stay for good --
+and while it existed this command refused any later re-pose of the video.
+``clear_parked`` deletes it, but only when every one of these holds
+(the lab's rule for machine leftovers: deleted once a current copy elsewhere
+is verified, never set aside, and anything that may be a person's work is
+never deleted):
+
+  * no re-pose request for the video is queued or held by a GPU node;
+  * the video's row is filed ('archived' / 'crystallized') or held in a
+    review queue ('triage' / 'deep_review') -- never mid-run;
+  * its current copy is there: ``<id>.mp4`` in the filed folder, or in the
+    bundle of the queue its row names; and the parked ``<id>.mp4`` (and the
+    ``posed_copy/<id>.mp4``, when there is one) has the same size and the
+    same SHA-256 as that copy;
+  * the parked folder holds nothing else than the video, the queue's notes
+    (``<id>_manifest.json``, ``<id>_routing.json``) and ``posed_copy/``. Any
+    other file is left where it is, with the folder, and named in the report.
+
+It runs (1) here, when a re-pose meets an old parked folder (instead of
+refusing); (2) by itself on the processing server, a few folders per hour
+(the watcher's scan, ``ProcessingOrchestrator._maybe_clear_finished_parked``);
+and (3) on demand: ``mousereach-repose-videos --clear-finished [--dry-run]``.
+
 Run ``--dry-run`` first: it prints exactly what would move where and changes
 nothing. ASCII-only console output (Windows consoles cannot print Unicode).
 """
@@ -83,7 +110,7 @@ import socket
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from mousereach.config import Paths
 from mousereach.watcher import repose
@@ -210,6 +237,160 @@ def _move(src: Path, dst_dir: Path, dry_run: bool) -> Optional[Path]:
     return dst
 
 
+PARKED_NOTES = ("_manifest.json", "_routing.json")   # the old queue's own notes
+POSED_COPY = "posed_copy"
+DONE_STATES = ("archived", "crystallized")
+QUEUE_STATES = ("triage", "deep_review")
+
+
+def _sha256(p: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Same size and same SHA-256: the verification the lab's leftover rule
+    asks for before a copy is deleted (size alone is not proof)."""
+    try:
+        return a.stat().st_size == b.stat().st_size and _sha256(a) == _sha256(b)
+    except OSError:
+        return False
+
+
+def _current_copy(row: dict, video_id: str,
+                  results_dir_of: Optional[Callable[[str], Optional[Path]]] = None
+                  ) -> Tuple[Optional[Path], str]:
+    """(the video's current mp4, where) -- the copy that makes the parked one
+    a leftover -- or (None, why there is none)."""
+    state = row.get("state")
+    if state in DONE_STATES:
+        results = (results_dir_of or _results_dir)(video_id)
+        mp4 = results / f"{video_id}.mp4" if results is not None else None
+        if mp4 is not None and mp4.is_file():
+            return mp4, "filed"
+        return None, "it is filed but its filed folder has no video file"
+    if state in QUEUE_STATES:
+        q = getattr(Paths, "DEEP_REVIEW" if state == "deep_review" else "TRIAGE_REVIEW", None)
+        mp4 = Path(q) / video_id / f"{video_id}.mp4" if q else None
+        if mp4 is not None and mp4.is_file():
+            return mp4, state
+        return None, (f"its row says '{state}' but that queue holds no bundle with its "
+                      f"video (a re-pose run that stopped part way leaves it so: run "
+                      f"mousereach-repose-videos again for it)")
+    return None, f"its row is '{state}' (only a filed or held video's copy is verified)"
+
+
+def clear_parked(db, video_id: str, *, dry_run: bool = True,
+                 results_dir_of: Optional[Callable[[str], Optional[Path]]] = None) -> dict:
+    """Delete ``<Repose_Queue>/_parked/<video_id>/`` once its round trip has
+    ended and the video's current copy is verified (module docstring, "AFTER
+    THE ROUND TRIP"). Returns ``{"video_id", "status", "why", "removed"}``;
+    status is 'cleared', 'would_clear' (dry run), 'kept' or 'none' (no
+    parked folder). Never raises; anything uncertain keeps the folder."""
+    rep = {"video_id": video_id, "status": "kept", "why": "", "removed": []}
+    try:
+        qdir = repose.repose_queue_dir()
+        parked = Path(qdir) / PARKED / video_id if qdir else None
+        if parked is None or not parked.is_dir():
+            rep["status"], rep["why"] = "none", "no parked folder"
+            return rep
+        if (repose.queue_path(video_id, qdir).exists()
+                or repose.inflight_path(video_id, qdir).exists()):
+            rep["why"] = "its re-pose request is still out (round trip under way)"
+            return rep
+        row = db.get_video(video_id) if db is not None else None
+        if not row:
+            rep["why"] = "no row for it in this machine's database"
+            return rep
+        current, where = _current_copy(row, video_id, results_dir_of)
+        if current is None:
+            rep["why"] = where
+            return rep
+        # Only files this cleanup knows; anything else may be a person's.
+        files, unknown = [], []
+        for e in os.scandir(parked):
+            p = Path(e.path)
+            if e.is_dir() and e.name == POSED_COPY:
+                for f in os.scandir(p):
+                    if f.is_file() and f.name == f"{video_id}.mp4":
+                        files.append(Path(f.path))
+                    else:
+                        unknown.append(f"{POSED_COPY}/{f.name}")
+            elif e.is_file() and (e.name == f"{video_id}.mp4"
+                                  or e.name in tuple(video_id + s for s in PARKED_NOTES)):
+                files.append(p)
+            else:
+                unknown.append(e.name)
+        if unknown:
+            rep["why"] = ("it holds files this clean-up does not know, left for a "
+                          "person: " + ", ".join(sorted(unknown)))
+            return rep
+        for f in files:
+            if f.suffix.lower() == ".mp4" and not _same_file(f, current):
+                rep["why"] = (f"{f.name} in it differs from the current copy ({current}); "
+                              f"left for a person")
+                return rep
+        rep["why"] = f"its video is verified identical to the {where} copy {current}"
+        if dry_run:
+            rep["status"] = "would_clear"
+            rep["removed"] = [str(f) for f in files]
+            return rep
+        # Asked once more right before deleting: hashing two videos takes a
+        # while, and a re-pose request or a move of the current copy may have
+        # happened meanwhile.
+        if (repose.queue_path(video_id, qdir).exists()
+                or repose.inflight_path(video_id, qdir).exists()
+                or not current.is_file()):
+            rep["why"] = "its round trip or its current copy changed while it was checked"
+            return rep
+        for f in files:
+            f.unlink()
+            rep["removed"].append(str(f))
+        if (parked / POSED_COPY).is_dir():
+            (parked / POSED_COPY).rmdir()
+        parked.rmdir()
+        rep["status"] = "cleared"
+        try:
+            db.log_step(video_id, repose.STEP, "parked_cleared",
+                        message=f"parked copy {parked} deleted: {rep['why']}")
+        except Exception:
+            pass
+    except Exception as e:
+        rep["status"], rep["why"] = "kept", f"could not check or clear it: {e}"
+    return rep
+
+
+def parked_videos() -> List[str]:
+    """Every video id with a folder in ``<Repose_Queue>/_parked/``."""
+    qdir = repose.repose_queue_dir()
+    if not qdir:
+        return []
+    try:
+        with os.scandir(Path(qdir) / PARKED) as it:
+            return sorted(e.name for e in it if e.is_dir())
+    except OSError:
+        return []
+
+
+def clear_finished(db, *, dry_run: bool = True, limit: int = 0,
+                   skip: Iterable[str] = ()) -> List[dict]:
+    """``clear_parked`` for every parked folder (at most ``limit`` checked, 0 =
+    all; ids in ``skip`` are passed over). Never raises."""
+    out = []
+    skip = set(skip)
+    for vid in parked_videos():
+        if vid in skip:
+            continue
+        if limit and len(out) >= limit:
+            break
+        out.append(clear_parked(db, vid, dry_run=dry_run))
+    return out
+
+
 def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
                   declared: str, dry_run: bool = True,
                   results_dir_of: Optional[Callable[[str], Optional[Path]]] = None) -> dict:
@@ -259,8 +440,14 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
                           + ", ".join(human + ([durable.name + " (durable)"]
                                                if durable else [])) + ")")
         if parked.exists():
-            return refuse(f"{parked} already exists (an earlier re-pose?); "
-                          f"nothing is overwritten")
+            # Left from an earlier round trip that has ended: cleared when its
+            # current copy is verified (clear_parked), else refused as before.
+            cleared = clear_parked(db, video_id, dry_run=dry_run)
+            if cleared["status"] not in ("cleared", "would_clear"):
+                return refuse(f"{parked} already exists and was not cleared: "
+                              f"{cleared['why']}; nothing is overwritten")
+            rep["parked"].append(f"old parked copy {parked}: {cleared['status']} "
+                                 f"({cleared['why']})")
     elif state in ("triage", "deep_review") and parked.is_dir():
         # A run stopped after the bundle left its queue: finish from the
         # parked folder (the moves below are no-ops for what already went).
@@ -413,6 +600,32 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
     return rep
 
 
+def _main_clear_finished(args) -> int:
+    """mousereach-repose-videos --clear-finished: clear_parked for every
+    parked folder, printing each result. ASCII only."""
+    from mousereach.watcher.db_location import open_watcher_db_if_present
+    db, why = open_watcher_db_if_present()
+    if db is None:
+        print(f"ERROR: {why}; nothing done. Run 'mousereach-watch' once on this "
+              f"machine first.", file=sys.stderr)
+        return 2
+    print(f"[watcher db] {db.db_path}")
+    reports = clear_finished(db, dry_run=args.dry_run, limit=args.limit or 0)
+    counts: Dict[str, int] = {}
+    for r in reports:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+        print(f"{r['video_id']}: {r['status']} -- {r['why']}")
+    print("")
+    print("Summary: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+                         or "no parked folders"))
+    if args.dry_run:
+        print("DRY RUN -- nothing was deleted.")
+    if args.report:
+        Path(args.report).write_text(json.dumps(reports, indent=1), encoding="utf-8")
+        print(f"Report written to {args.report}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="mousereach-repose-videos",
@@ -421,13 +634,19 @@ def main(argv=None) -> int:
                     "output made from it to Analyzed/Archive/<label>/, then marks the "
                     "video for a new pose and writes the re-pose request. Run on the "
                     "processing server. Use --dry-run first.")
-    ap.add_argument("--ids", required=True,
+    ap.add_argument("--ids",
                     help="text file with one video id per line")
-    ap.add_argument("--label", required=True,
+    ap.add_argument("--label",
                     help="name of the archive folder the old outputs go to "
                          "(Analyzed/Archive/<label>/), e.g. 'CPU pose <dates>'")
-    ap.add_argument("--reason", required=True,
+    ap.add_argument("--reason",
                     help="why, recorded on each video (required)")
+    ap.add_argument("--clear-finished", action="store_true",
+                    help="instead of re-posing: delete every parked folder "
+                         "(Processing/Repose_Queue/_parked/<video>/) whose round trip "
+                         "has ended and whose video is verified identical to its "
+                         "current copy (filed, or in a review queue). Anything else is "
+                         "kept and listed with the reason. Use --dry-run first.")
     ap.add_argument("--dry-run", action="store_true",
                     help="print what would happen; change nothing")
     ap.add_argument("--limit", type=int, default=0,
@@ -435,6 +654,12 @@ def main(argv=None) -> int:
     ap.add_argument("--report", help="also write the per-video report here (JSON)")
     args = ap.parse_args(argv)
 
+    if args.clear_finished:
+        return _main_clear_finished(args)
+    if not (args.ids and args.label and args.reason):
+        print("ERROR: --ids, --label and --reason are required (or use --clear-finished)",
+              file=sys.stderr)
+        return 2
     ids = [ln.strip() for ln in Path(args.ids).read_text(encoding="utf-8").splitlines()
            if ln.strip() and not ln.startswith("#")]
     if args.limit:
