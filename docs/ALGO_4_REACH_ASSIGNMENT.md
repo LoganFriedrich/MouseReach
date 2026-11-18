@@ -4,6 +4,8 @@ Describes: `src/mousereach/assignment/` (`run.py`, `cli.py`, `v1/assign.py`, `v2
 
 Verified against: b65fcf0 (2026-08-23)
 
+Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+
 ---
 
 ## What this stage does
@@ -47,7 +49,7 @@ Production entry points, all of which run v2:
 - `{video}_pellet_outcomes.json`
 - the DeepLabCut pose file (`.h5`), loaded at `run.py:61`
 
-If any of the first three is missing it logs a warning and returns `None` (`run.py:52-59`). No output file is written. See "How failure behaves" for why that is worse than it sounds.
+If any of the first three is missing it logs a warning and returns `None` (`run.py:52-59`), and `run.py` writes no output file. (Update 2026-11-18.) Under the watcher, a `None` result -- like an exception -- counts as a failure: `_hold_for_failed_assignment` (`watcher/orchestrator.py`) writes `<video>_reach_assignments.json` naming no causal reach and carrying `"assignment_failed": "<reason>"`, which triages every touched pellet. `reprocess_to_current` still writes nothing on `None`. See "How failure behaves".
 
 Three helper functions in the command line module (`assignment/cli.py`, which since 2026-08 itself calls `assign_reaches_for_video`) do the joining, and `run.py:62-63` uses them:
 
@@ -157,7 +159,7 @@ Then (`triage_reduction.py:201-258`):
 
 If this pass somehow labels every reach a miss, the whole segment is reverted to fully triaged (`triage_reduction.py:344-346`) — the outcome has to be attributable to something.
 
-**The optional computer-vision confirmation is never used in production.** `compute_pellet_states` and `reduce_triaged_segment` accept `cv_state` / `cv_valid` arguments that would recover on-pillar frames the keypoint dropped, and would let `off → off` be trusted unconditionally. `v2/assign.py:376-377` calls `reduce_triaged_segment` without them, so `cv_verified` is always `False` (`triage_reduction.py:332`) and the CV branch at `triage_reduction.py:130-136` is dead in every production run.
+**The optional computer-vision confirmation is never used by the pipeline's assignment step.** `compute_pellet_states` and `reduce_triaged_segment` accept `cv_state` / `cv_valid` arguments that would recover on-pillar frames the keypoint dropped, and would let `off -> off` be trusted unconditionally. `v2/assign.py:376-377` calls `reduce_triaged_segment` without them, so `cv_verified` is always `False` in every assignment file (`triage_reduction.py:332`). (Update 2026-11-18.) The napari causal review tool does pass them (`review/causal_review_widget.py`, where it re-runs `reduce_triaged_segment` to choose which reaches to show), so the CV branch at `triage_reduction.py:130-136` does run there.
 
 **The whole reduction pass is wrapped in a bare `except Exception: pass`** (`v2/assign.py:381-382`). If it raises for any reason, the segment stays fully triaged and nothing is logged.
 
@@ -229,11 +231,13 @@ One optional key:
 
 **No kinematic values appear here.** No velocity, no extent, no apex. This file is a labelling table only.
 
-**Human review never edits this file.** Reviewer answers go into `{video}_causal_review.json` (`review/causal_review_io.py:278`). The only writers of `_reach_assignments.json` anywhere in `src/` are `run.py:73` and `staging.py:333` (the command line tool writes through `run.py`). Rebuilding a review bundle re-runs the whole chain and overwrites it (`staging.py:298-333`).
+**Human review never edits this file.** Reviewer answers go into `{video}_causal_review.json` (`review/causal_review_io.py:278`). The writers of `_reach_assignments.json` in `src/` are `run.py:73` (also used by the command line tool and by `reprocess_to_current`), `staging.py:333`, and (Update 2026-11-18) the watcher's `_hold_for_failed_assignment`, which writes a no-causal-reach file carrying `"assignment_failed"` when assignment fails. Rebuilding a review bundle re-runs the whole chain and overwrites it (`staging.py:298-333`).
 
 ## Who reads it — and who does not
 
-### Nothing in the scientific data path reads `is_causal`
+### Nothing in the scientific data path reads `is_causal` (until extractor 2.1.0)
+
+> **Update 2026-11-18: this subsection describes the code before kinematics extractor 2.1.0.** Since 2.1.0 the kinematics extractor reads `<video>_reach_assignments.json` (`kinematics/core/feature_extractor.py`) and carries the credited reach into `causal_reach` in the features file and the database, beneath human review and ground truth (see "Update 2026-08-23" at the end, and `docs/KINEMATICS_FIELDS.md`, "Who owns a causal reach"). The paragraphs below are kept as the record of the earlier state.
 
 The per-reach feature table and the database never see this file. The watcher's kinematics step (`watcher/orchestrator.py`, `_make_features`) shows the handoff: the kinematic extractor is given the pose file, the reaches file, the outcomes file and the human review file. The assignment file is not passed and is not opened. Grepping `kinematics/`, `export/`, `analysis/` and `sync/` for `reach_assignments` or `ASSIGN_SUFFIX` returns nothing.
 
@@ -260,6 +264,8 @@ So the two-signal agreement gate — the thing this stage exists to provide — 
 
 ## How failure behaves
 
+> **Update 2026-11-18:** under the watcher, a missing input or an exception now HOLDS the video: `_hold_for_failed_assignment` writes a no-causal-reach file carrying `"assignment_failed"`, and every touched pellet is triaged for a person (see "Update 2026-11-15" at the end). Only `reprocess_to_current` still records the error and writes nothing. A video with no assignment file at all (processed before this stage existed) still contributes no triage. The first two bullets and the "safety net does not fire" bullet below describe the watcher before that change.
+
 - **A missing input** → warning logged, `None` returned, no file written (`run.py:52-59`).
 - **An exception during assignment, under the watcher** → caught and logged as a warning; the video continues through the pipeline (`orchestrator.py:1081-1082`, `:2015-2016`). On the second path the "assignment completed" step log at `:2013-2014` is skipped and no "failed" step is recorded either, so the watcher database shows the step started and never finished.
 - **Under `reprocess_to_current`** → the exception is caught along with the other algorithm steps, recorded in `summary["error"]`, and the function returns without writing a manifest (`reprocess_to_current.py:217-219`). It is not re-raised.
@@ -276,7 +282,7 @@ There is essentially none. Every threshold in both signals and in the triage-red
 | Tray type in the video filename | `watcher/orchestrator.py:1062,1971` (the Run All Steps tab runs these) | Tray types `E` and `F` skip outcome detection **and** this stage entirely. No assignment file is produced for them. `reprocess_to_current.py:215-216` has no such check and runs the stage regardless. |
 | `write=True` (default) | `run.py:37` | Set `False` to compute the result and return it without writing the file. |
 | `window=10` | `v2/assign.py:218` | **Has no effect.** It is accepted, documented as "kept for API symmetry" (`:238-240`), and never referenced in the function body. |
-| `cv_state` / `cv_valid` | `triage_reduction.py:283-284` | Would enable the computer-vision confirmation. Never supplied by any caller. |
+| `cv_state` / `cv_valid` | `triage_reduction.py:283-284` | Would enable the computer-vision confirmation. Never supplied by the pipeline's assignment step; supplied by the napari causal review tool (Update 2026-11-18). |
 | `lk_threshold=0.5` | `v2/assign.py:87` | The pellet-confidence floor for Signal B. Never overridden by the one caller. |
 
 ---
