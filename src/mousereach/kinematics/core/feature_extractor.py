@@ -517,8 +517,9 @@ class FeatureExtractor:
         # made, however short (causal_review_io.index_review_by_segment).
         # And the pellets themselves: their frames come from the segments file
         # (causal_review_io.pellet_span, the definition the review window and
-        # the gate use), together with when a person set those cuts -- answers
-        # given before then are void (causal_review_io.answer_survives_recut).
+        # the gate use), together with when a person set those cuts and which
+        # cuts they replaced -- answers given before then stand only on a
+        # pellet whose frames did not change (causal_review_io.answer_survives_recut).
         _human_seg = False
         _seg_doc = None
         _seg_file = Path(reaches_path).with_name(

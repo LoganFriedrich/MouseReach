@@ -4049,12 +4049,14 @@ work and extra ways to fail a cleared video.
    the segment whose frames it covers, on the reaches, outcomes or assignment the run remade
    (an out-of-date output, point 4).
 
-   **A re-cut by a person voids the answers given before it.** Re-segmentation voids everything
-   after it, a person's earlier outcome and causal-reach answers included. When a person saves new
-   cuts (the segmentation fixer writes `corrected_at` into the segments file), an answer given
-   before then (`reviewed_at`) counts on no pellet, also not one whose frames did not move (since
-   2026-11-18; `causal_review_io.answer_survives_recut`); each is void -- not used by the review window, the release check, the review gate, the
-   hand-score check or kinematics -- and is kept in the review file as a record
+   **A re-cut by a person voids the answers given before it, unless the pellet did not move.**
+   When a person saves new cuts (the segmentation fixer writes `corrected_at` and the cuts it
+   replaced, `algo_boundaries`, into the segments file), an answer given before then
+   (`reviewed_at`) still counts only when its pellet's frames are exactly the same on the replaced
+   cuts and the current ones (owner ruling 2026-11-18; `causal_review_io.answer_survives_recut`).
+   Every other earlier answer -- frames moved by even one frame, or no record of the cuts it was
+   given on -- is void: not used by the review window, the release check, the review gate or
+   kinematics -- and is kept in the review file as a record
    (`causal_review_io.index_review_by_segment`). Only a PERSON's cuts void answers. A voided
    pellet counts as unanswered: a video sent to deep review for another reason has it open in
    Re-segmentation Review before release; a video sent for its cuts is released on Save, re-runs
@@ -4538,8 +4540,8 @@ queue never deletes or overwrites a person's file".
   triage" above). No answer is carried into the deep-review bundle by `_empty_triage_copy`. WHY:
   re-segmentation voids every answer after it; a review or ground truth moved into the deep-review
   bundle travelled back into Processing with it. The review's copy in the durable store is still
-  read by the review readers, but once a person has saved new cuts, no answer in it given
-  before then counts, on any pellet; each is void, kept in the
+  read by the review readers, but once a person has saved new cuts, an answer in it given
+  before then counts only on a pellet whose frames did not change; every other is void, kept in the
   file as a record, and the pellet counts as unanswered again (`index_review_by_segment`, keyed on the segments file's `corrected_at`;
   see REVIEW_TOOLS.md, "A re-cut voids the answers given before it"). Escalate and the mislabel
   divert still carry the triage bundle's review and ground truth into deep review, where the same
@@ -5716,7 +5718,40 @@ WHAT HOLDS NOW.
 WHAT IT MEANS FOR STORED ANSWERS. Every answer given before a person's re-cut is now asked again
 the next time its video passes the gate (a review return or a re-run), including those on pellets
 whose cuts did not move. A filed video is affected only when it is run again. The count of such
-answers is in the lab's work record.
+answers is in the lab's work record. (Narrowed the same day; see the next update.)
+
+## Update 2026-11-18 (later): an earlier answer on a pellet whose frames did not change is kept
+
+THE RULING. The owner narrowed R2: "If resegmenting doesn't alter, then it's fine to keep."
+
+WHAT HOLDS NOW. `causal_review_io.answer_survives_recut` (still the one place; every reader --
+review window, release check, review gate, results step -- reaches it through
+`index_review_by_segment`, and inherits the change):
+- an answer given at or after a person's re-cut stands;
+- an answer given before it stands only when its pellet's frames (`pellet_span`) are EXACTLY the
+  same on the cuts it was given on and on the current cuts. "The cuts it was given on" are the
+  cuts the re-cut replaced, which the fixer writes into the segments file as `algo_boundaries`
+  (`replaced_cuts`; every current pellet carries them with `cuts_set_at`, `recut_keys`). The
+  answer's own frames (`segment_span`) must be a pellet of those cuts and the same frames a pellet
+  of the current cuts. Requiring both guards against an old save that stamped the current
+  pellet's frames on an old answer while keeping its old time;
+- frames moved by even one frame: void, asked again in triage (as before);
+- no record of the cuts it was given on (no frames on the answer, no `algo_boundaries`, or frames
+  that are no pellet of them): treated as moved -- void and asked again. `recut_verdict` names the
+  reason; the log note says it.
+- An answer a save kept aside (`unmatched_answers`) is never applied by any reader, so an aside
+  answer whose pellet did not move is asked again rather than left to the algorithm's call
+  (`recut_voided_segments`).
+- The hand-score check's mislabel statements ("this segment is really pellet N",
+  `hand_scores.unresolved_mislabels`) are NOT under this rule: any later re-cut settles them, on
+  every pellet, because a re-cut can renumber a pellet without moving its frames
+  (`causal_review_io.given_before_recut`).
+- The save still stamps an answer given in it with the save's time (`stamp_segment_reviewers`,
+  time only), so re-giving a voided answer ends the question.
+
+LIMIT. The fixer records only the cuts it loaded. After two re-cuts, an answer given before the
+first one is checked against the first re-cut's cuts; its frames are a pellet of those only if
+that pellet did not move in the first re-cut either, so it is kept only when unchanged throughout.
 
 Tests: `tests/test_recut_one_span_rule.py` (reaches file written by the reach detector itself;
 fails on 5546de0: gate CLEAN where it must be TRIAGE, results step drops a moved pellet's answer

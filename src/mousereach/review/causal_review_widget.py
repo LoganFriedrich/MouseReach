@@ -46,6 +46,7 @@ from . import double_disagreement as dd
 from .causal_review_io import (
     _answer_signature,
     cuts_set_at,
+    recut_keys,
     UNDECIDED_OUTCOMES,
     build_segment_record,
     is_answered,
@@ -1452,8 +1453,8 @@ The notes box travels with the video.
         A segment counts as done when a person's answer covers its frames
         (segment_answered), whatever the algorithm has said since: a person's
         answer is what happened in those frames. An answer given before a
-        person re-cut the video does not count on any pellet
-        (causal_review_io.answer_survives_recut).
+        person re-cut the video counts only on a pellet whose frames the
+        re-cut did not change (causal_review_io.answer_survives_recut).
         """
         self._review_records = {}
         # Check next to the video (canonical) first, then the bundle dir, so a
@@ -1474,13 +1475,13 @@ The notes box travels with the video.
         # save overwrote the durable copy's earlier answers with "not
         # reviewed" placeholders.
         copies = review_copies(self._video_stem, candidates)
-        # cuts_set_at: answers given before a person set these cuts are void
-        # (causal_review_io.answer_survives_recut).
-        _cut = cuts_set_at(getattr(self, "_segments_data", None))
+        # recut_keys: when a person set these cuts and which cuts they
+        # replaced -- an answer given before then stands only on a pellet
+        # whose frames did not move (causal_review_io.answer_survives_recut).
+        _cut = recut_keys(getattr(self, "_segments_data", None))
         current = [dict({"segment_num": s["segment_num"],
                          "start_frame": s.get("start_frame"),
-                         "end_frame": s.get("end_frame")},
-                        **({"cuts_set_at": _cut} if _cut else {}))
+                         "end_frame": s.get("end_frame")}, **_cut)
                    for s in self._segment_list]
         human = self._segmentation_is_human()
         doc, merge_notes = merge_review_copies(copies, current, human_segmentation=human)
@@ -3193,8 +3194,8 @@ The notes box travels with the video.
         the deep-review queue for manual re-segmentation, right now.
 
         Saves the review first so any per-element answers already given travel
-        with the bundle as a record. Once a person saves new cuts they are void
-        and their pellets are asked again in triage
+        with the bundle as a record. Once a person saves new cuts those on
+        pellets whose frames moved are void and asked again in triage
         (causal_review_io.answer_survives_recut). The notes text becomes the routing reason so the person doing
         the re-seg knows what was seen."""
         bundle = getattr(self, "_bundle_dir", None)

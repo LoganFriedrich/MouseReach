@@ -35,7 +35,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +506,7 @@ def stamp_segment_reviewers(
             who, when = reviewer, timestamp
         if (recut is not None and when and rec.get("segment_num") is not None
                 and int(rec["segment_num"]) not in carried
-                and not answer_survives_recut({"reviewed_at": when}, None, recut)):
+                and given_before_recut(when, recut)):
             who, when = reviewer, timestamp
         rec["reviewer"] = who or reviewer
         rec["reviewed_at"] = when or timestamp
@@ -937,19 +937,19 @@ def _cut_frames(seg_doc) -> Optional[List[int]]:
 def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
     """The current pellets ``[{segment_num, start_frame, end_frame}]`` from a
     ``*_segments.json`` document's boundaries, framed by pellet_span (the one
-    definition). Each carries ``cuts_set_at`` when a person set these cuts.
+    definition). When a person set these cuts each also carries what the
+    re-cut rule needs (recut_keys: ``cuts_set_at`` and ``cuts_replaced``).
     Empty when the document has no usable boundaries."""
     bounds = _cut_frames(seg_doc)
     if not bounds or len(bounds) < 2:
         return []
-    when = cuts_set_at(seg_doc)
     segs = []
     for i in range(len(bounds) - 1):
         start, end = pellet_span(bounds, i)
         segs.append({"segment_num": i + 1, "start_frame": start, "end_frame": end})
-    if when:
-        for s in segs:
-            s[CUTS_SET_AT_KEY] = when
+    keys = recut_keys(seg_doc)
+    for s in segs:
+        s.update(keys)
     return segs
 
 
@@ -982,9 +982,12 @@ def segmentation_is_human(seg_doc) -> bool:
 
 
 # Carried on each current segment (segments_from_segmentation, and every
-# caller that builds its own list of current segments): when a person set the
-# current cuts. index_review_by_segment uses it to void answers given before.
+# caller that builds its own list of current segments, through recut_keys):
+# when a person set the current cuts, and the cut frames their re-cut
+# replaced. index_review_by_segment uses them to decide which answers given
+# before the re-cut still stand (answer_survives_recut).
 CUTS_SET_AT_KEY = "cuts_set_at"
+REPLACED_CUTS_KEY = "cuts_replaced"
 
 
 def cuts_set_at(seg_doc) -> Optional[str]:
@@ -995,6 +998,78 @@ def cuts_set_at(seg_doc) -> Optional[str]:
     return (seg_doc or {}).get("corrected_at") or None
 
 
+def replaced_cuts(seg_doc) -> Optional[List[int]]:
+    """The cut frames a person's re-cut replaced -- the cuts the segment fixer
+    had loaded when the person saved theirs (its ``algo_boundaries``) -- or
+    None when the segments file does not record them (or no person set the
+    current cuts).
+
+    WHY these are "the cuts an earlier answer was given on": every answer
+    given before the re-cut was given while those cuts, or still older ones,
+    were in force. The fixer stores the cuts it LOADED, so after a second
+    re-cut they are the first re-cut's, not the segmenter's; older cuts are
+    not kept anywhere, which answer_survives_recut allows for."""
+    if not cuts_set_at(seg_doc):
+        return None
+    raw = (seg_doc or {}).get("algo_boundaries")
+    if not isinstance(raw, list) or len(raw) < 2:
+        return None
+    try:
+        return sorted(int(b.get("frame", b.get("index", 0))) if isinstance(b, dict) else int(b)
+                      for b in raw)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def recut_keys(seg_doc) -> Dict[str, Any]:
+    """What every current segment carries for the re-cut rule, to be merged
+    into each one by a caller that builds its own list of current segments
+    (the review window does): ``cuts_set_at`` (when a person set the current
+    cuts) and ``cuts_replaced`` (replaced_cuts). Empty for the segmenter's own
+    cuts."""
+    when = cuts_set_at(seg_doc)
+    if not when:
+        return {}
+    out: Dict[str, Any] = {CUTS_SET_AT_KEY: when}
+    old = replaced_cuts(seg_doc)
+    if old is not None:
+        out[REPLACED_CUTS_KEY] = old
+    return out
+
+
+class Recut(NamedTuple):
+    """A person's re-cut as the re-cut rule sees it (recut_of)."""
+    at: datetime                       # when the current cuts were set
+    replaced: Optional[frozenset]      # pellet spans of the cuts it replaced; None = not recorded
+    current: frozenset                 # pellet spans of the current cuts
+
+
+def recut_of(current_segments) -> Optional["Recut"]:
+    """The person's re-cut behind ``current_segments`` (each carrying
+    recut_keys), or None for the segmenter's own cuts."""
+    at = recut_time(current_segments)
+    if at is None:
+        return None
+    replaced = None
+    for s in current_segments or []:
+        old = (s or {}).get(REPLACED_CUTS_KEY)
+        if isinstance(old, list) and len(old) >= 2:
+            replaced = frozenset(pellet_span(old, i) for i in range(len(old) - 1))
+            break
+    current = frozenset(sp for sp in (_seg_span(s or {}) for s in current_segments or [])
+                        if sp is not None)
+    return Recut(at, replaced, current)
+
+
+def given_before_recut(when, recut_at: Optional[datetime]) -> bool:
+    """Was a statement timed ``when`` made before a person set the current
+    cuts (``recut_at``)? A time that cannot be read counts as before."""
+    if recut_at is None:
+        return False
+    given = _when(when)
+    return given is None or given < recut_at
+
+
 def recut_time(current_segments) -> Optional[datetime]:
     """When a person set the current cuts (the newest ``cuts_set_at`` the
     current pellets carry), or None for the segmenter's own cuts."""
@@ -1003,32 +1078,68 @@ def recut_time(current_segments) -> Optional[datetime]:
                 if t is not None), default=None)
 
 
-def answer_survives_recut(rec, review_doc, recut) -> bool:
+# Why an answer given before a person's re-cut does or does not stand
+# (recut_verdict). Only the RECUT_KEPT verdicts stand.
+RECUT_NONE = "no re-cut"                     # the cuts are the segmenter's own
+RECUT_AFTER = "given after the re-cut"
+RECUT_UNCHANGED = "pellet frames unchanged by the re-cut"
+RECUT_MOVED = "pellet frames moved by the re-cut"
+RECUT_NO_RECORD = "no record of the cuts it was given on"
+RECUT_KEPT = frozenset({RECUT_NONE, RECUT_AFTER, RECUT_UNCHANGED})
+
+
+def recut_verdict(rec, review_doc, recut: Optional[Recut]) -> str:
+    """answer_survives_recut's decision with its reason (one of RECUT_*), for
+    the notes and for counting."""
+    if recut is None:
+        return RECUT_NONE
+    if not given_before_recut((rec or {}).get("reviewed_at") or (review_doc or {}).get("reviewed_at"),
+                              recut.at):
+        return RECUT_AFTER
+    span = _span_of(rec or {})
+    if span is None or recut.replaced is None or span not in recut.replaced:
+        return RECUT_NO_RECORD
+    return RECUT_UNCHANGED if span in recut.current else RECUT_MOVED
+
+
+def answer_survives_recut(rec, review_doc, recut: Optional[Recut]) -> bool:
     """Does a person's saved answer still stand on the current cuts?
 
     THE re-cut rule, decided here and nowhere else: the review window, the
-    review gate, the release check, the hand-score check and the results step
-    all reach it through index_review_by_segment.
+    review gate, the release check and the results step all reach it through
+    index_review_by_segment. ``recut`` is recut_of(current segments): None
+    when the current cuts are the segmenter's own.
 
-    The rule (owner ruling R2, 2026-11-15): re-segmentation voids everything
-    after it, a person's earlier outcome and causal-reach answers included,
-    and they are asked again. Never carry, re-home or restore an answer across
-    a re-cut, by frames or by number; answers persist only through re-runs on
-    the SAME cuts. So once a person has set the current cuts (``recut``, from
-    the segments file's ``corrected_at``), an answer given before then does
-    not stand -- on any pellet, including one whose frames happen to be the
-    same: the person judged it as part of a cutting that turned out wrong.
-    WHY not "unchanged pellets keep theirs" (built 2026-11-18 in 0bd388d):
-    it decided survival by comparing frames, and the results step and the
-    gate framed pellets differently by one frame (pellet_span), so the gate
-    kept answers the results step then dropped, unasked.
+    The rule (owner ruling 2026-11-18, narrowing R2 of 2026-11-15: "If
+    resegmenting doesn't alter, then it's fine to keep"):
 
-    True: no person's re-cut (``recut`` None), or the answer was given at or
-    after it. An answer whose time cannot be read counts as given before."""
-    if recut is None:
-        return True
-    given = _when((rec or {}).get("reviewed_at") or (review_doc or {}).get("reviewed_at"))
-    return given is not None and given >= recut
+    - an answer given at or after the person's re-cut stands;
+    - an answer given before it stands only when its pellet's frames
+      (pellet_span: cut i to the frame before cut i+1) are EXACTLY the same on
+      the cuts it was given on and on the current cuts -- the person judged
+      exactly the footage that pellet is now;
+    - if the frames moved at all, even by one frame, it is void: never
+      re-homed by overlap or by number, kept in the file as a record, and its
+      pellet is asked again (recut_voided_segments, the review gate);
+    - if the record does not show which cuts it was given on, it is treated
+      as moved: void and asked again (RECUT_NO_RECORD).
+
+    "The cuts it was given on" is checked two ways, and both must agree: the
+    frames the window stamped on the answer (``segment_span``) must be a
+    pellet of the cuts the re-cut replaced (replaced_cuts, the fixer's
+    ``algo_boundaries``) -- otherwise the record does not show those cuts:
+    no span, no replaced cuts on file, a span in another framing, or an
+    answer given on still-older cuts -- and that same span must be a current
+    pellet. WHY both: before 2026-11-18 a save could re-stamp an old answer
+    with the current pellet's frames while keeping its old time, so the span
+    alone could make a moved pellet look unchanged; a span that is a pellet
+    of the replaced cuts was stamped on them. WHY exact frames in one
+    framing: the gate, the window and the results step all frame a pellet
+    with pellet_span, so they keep and void the same answers (in 0bd388d
+    they did not, and the results step dropped answers the gate had counted).
+
+    An answer whose time cannot be read counts as given before."""
+    return recut_verdict(rec, review_doc, recut) in RECUT_KEPT
 
 
 def answered_segments(review_doc, current_segments=None,
@@ -1074,14 +1185,16 @@ def index_review_by_segment(review_doc, current_segments=None,
     segmentation could not be recovered -- fall back to matching by number,
     which is all that has ever been available for them.
 
-    A RE-CUT VOIDS THE ANSWERS GIVEN BEFORE IT (answer_survives_recut, the
-    one place the rule is decided). When a person set the current cuts (a
-    current segment carries ``cuts_set_at``, from the segments file's
-    ``corrected_at``), no answer given before that time is applied, whatever
-    its frames; the pellet is asked again (recut_voided_segments) and the
-    answer stays in the file as a record (restore_review_for_segments keeps it
-    under ``unmatched_answers``). An answer given after the cuts were set is
-    matched as below.
+    A RE-CUT VOIDS THE ANSWERS GIVEN BEFORE IT WHOSE PELLET MOVED
+    (answer_survives_recut, the one place the rule is decided). When a person
+    set the current cuts (a current segment carries ``cuts_set_at`` and
+    ``cuts_replaced``, recut_keys), an answer given before that time is
+    applied only when its pellet's frames are exactly the same on the cuts it
+    was given on and on the current cuts; otherwise -- moved by even one
+    frame, or no record of the cuts it was given on -- it is not applied, the
+    pellet is asked again (recut_voided_segments) and the answer stays in the
+    file as a record (restore_review_for_segments keeps it under
+    ``unmatched_answers``). Answers that stand are matched as below.
 
     A segment shorter than MIN_REAL_SEGMENT_FRAMES is treated as a segmenter
     artifact -- unless ``human_segmentation`` is set: a person who cut the video
@@ -1131,7 +1244,7 @@ def index_review_by_segment(review_doc, current_segments=None,
     if not spans:
         return by_num, notes
 
-    recut = recut_time(current_segments)
+    recut = recut_of(current_segments)
 
     mapping = {}
     claimed = {}
@@ -1145,13 +1258,14 @@ def index_review_by_segment(review_doc, current_segments=None,
                 "footage (a zero-length-segment artifact); dropped"
                 % (old_num, rspan[0], rspan[1]))
             continue
-        if not answer_survives_recut(rec, review_doc, recut):
+        verdict = recut_verdict(rec, review_doc, recut)
+        if verdict not in RECUT_KEPT:
             notes.append(
                 "segment %s answer (frames %s) was given before a person set the "
-                "current cuts (%s); a re-cut voids it -- not applied, the pellet "
-                "is unanswered again"
+                "current cuts (%s), %s; a re-cut voids it -- not applied, the "
+                "pellet is unanswered again"
                 % (old_num, "%d-%d" % rspan if rspan else "not recorded",
-                   recut.isoformat(timespec="seconds")))
+                   recut.at.isoformat(timespec="seconds"), verdict))
             if voided is not None:
                 voided.append(rec)
             continue
@@ -1254,7 +1368,8 @@ def recut_voided_segments(review_doc, current_segments=None,
     nobody has answered since: the pellets that must be ASKED AGAIN.
 
     index_review_by_segment voids an answer given before a person set the
-    current cuts (answer_survives_recut). Voiding alone only
+    current cuts unless its pellet's frames are unchanged
+    (answer_survives_recut). Voiding alone only
     makes the pellet unanswered, and an unanswered pellet the algorithm did not
     flag takes the algorithm's call -- so a person's answer would silently be
     replaced by the very call they had overruled. This names those pellets so
@@ -1279,12 +1394,20 @@ def recut_voided_segments(review_doc, current_segments=None,
     aside = [r for r in (review_doc or {}).get("unmatched_answers") or []
              if isinstance(r, dict)]
     if aside:
-        # Only what the re-cut voids among them; an aside answer that is not
-        # void was never applied by any reader and is not asked about here.
-        index_review_by_segment({"segments": aside,
-                                 "reviewed_at": (review_doc or {}).get("reviewed_at")},
-                                current_segments, human_segmentation=human_segmentation,
-                                voided=voided)
+        # What the re-cut voids among them, and also every aside answer given
+        # before the re-cut whose pellet did not move: no reader applies an
+        # aside answer, so one the re-cut rule would keep is not applied
+        # either, and its pellet must be asked rather than left to the
+        # algorithm's call. An aside answer given after the re-cut was never
+        # applied and is not asked about here.
+        aside_doc = {"segments": aside, "reviewed_at": (review_doc or {}).get("reviewed_at")}
+        index_review_by_segment(aside_doc, current_segments,
+                                human_segmentation=human_segmentation, voided=voided)
+        recut = recut_of(current_segments)
+        if recut is not None:
+            voided.extend(r for r in aside
+                          if recut_verdict(r, aside_doc, recut) == RECUT_UNCHANGED
+                          and not any(r is v for v in voided))
     if not voided:
         return set()
     answered = {int(sn) for sn, rec in mapping.items() if is_answered(rec)}

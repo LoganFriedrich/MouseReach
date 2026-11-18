@@ -283,13 +283,20 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     if not records:
         return {}
     current = segments_from_segmentation(seg_doc) if seg_doc else None
-    from mousereach.review.causal_review_io import answer_survives_recut, recut_time
-    # The one re-cut rule (causal_review_io.answer_survives_recut): a person's
-    # statement made before a person set the current cuts is settled by them.
+    from mousereach.review.causal_review_io import given_before_recut, recut_time
+    # A person's statement that the cuts number a pellet wrongly, made before
+    # a person set the current cuts, is settled by those cuts -- on every
+    # pellet, also one whose frames the re-cut did not move. WHY not the
+    # answer rule (causal_review_io.answer_survives_recut, which keeps an
+    # answer on an unmoved pellet): this is a statement about the cutting, and
+    # a re-cut can renumber a pellet without moving its frames; the person who
+    # re-cut has had the last word on the cuts, so holding to the older
+    # statement would send the video back to re-segmentation for ever.
     cut_at = recut_time(current)
     out: Dict[int, Optional[int]] = {}
     for rec in records:
-        if not answer_survives_recut(rec, review_doc, cut_at):
+        if given_before_recut(rec.get("reviewed_at") or (review_doc or {}).get("reviewed_at"),
+                              cut_at):
             continue
         mapping, _ = index_review_by_segment(
             {"segments": [rec]}, current or None,

@@ -793,10 +793,12 @@ def resolve_truth_layers(
     # extractor was handed may be the durable one, and the copy beside the run
     # must still be merged in -- every copy counts, never one picked by time.
     _dirs = review_dirs(stem, primary) + [Path(d) for d in (extra_review_dirs or ()) if d]
-    # When a person set the current cuts (the segments file's corrected_at,
-    # carried on each pellet as cuts_set_at): no answer given before then
-    # counts (causal_review_io.answer_survives_recut, the one rule).
-    _plain = [{k: s.get(k) for k in ("segment_num", "start_frame", "end_frame", "cuts_set_at")
+    # When a person set the current cuts and which cuts they replaced
+    # (carried on each pellet, causal_review_io.recut_keys): an answer given
+    # before then counts only on a pellet whose frames did not move
+    # (causal_review_io.answer_survives_recut, the one rule).
+    _plain = [{k: s.get(k) for k in ("segment_num", "start_frame", "end_frame", "cuts_set_at",
+                                     "cuts_replaced")
                if s.get(k) is not None} for s in _cur_segs]
     review_doc = effective_review(
         stem, _dirs, current_segments=_plain or None,

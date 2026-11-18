@@ -2100,8 +2100,9 @@ def scan_review_queues(db, processing_dir: Path,
             # frame windows and archive the video as finished with the
             # segmentation error intact. Divert to DEEP_REVIEW for manual
             # re-segmentation instead; the review file travels with the bundle
-            # as a record: once a person saves new cuts its answers are void and
-            # asked again (causal_review_io.answer_survives_recut).
+            # as a record: once a person saves new cuts its answers on pellets
+            # whose frames moved are void and asked again
+            # (causal_review_io.answer_survives_recut).
             if not _claim_return(stem):
                 continue
             try:

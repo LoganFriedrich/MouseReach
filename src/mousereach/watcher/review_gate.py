@@ -1207,8 +1207,9 @@ def _empty_triage_copy(video_id: str, deep_bundle: Path) -> None:
     divert are different: they route the triage bundle ITSELF into deep
     review, and its review and ground truth travel with it -- see
     docs/REVIEW_TOOLS.md.) The durable store's copy of the review is still
-    read, but once a person has set the new cuts every answer in it given
-    before then does not count (causal_review_io.answer_survives_recut).
+    read, but once a person has set the new cuts an answer in it given
+    before then counts only on a pellet whose frames did not change
+    (causal_review_io.answer_survives_recut).
     WHY at all: the whole folder used to be deleted (shutil.rmtree), a
     person's ground truth and clear markers with it; only reviews had a
     durable copy."""

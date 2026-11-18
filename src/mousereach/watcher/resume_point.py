@@ -30,13 +30,15 @@ applies each answer to the segment whose frames it covers, on the remade reach,
 outcome or assignment outputs. That is the case when the start moves earlier
 to reach, outcome or assignment because an output is out of date (below).
 
-A RE-CUT BY A PERSON VOIDS THE EARLIER ANSWERS. The design rule is that
-re-segmentation voids everything after it, a person's earlier outcome and
-causal-reach answers included: they are kept as a record only and never
-applied. Every review reader does this when a person set the current cuts
+A RE-CUT BY A PERSON VOIDS THE EARLIER ANSWERS ON PELLETS IT MOVED. The
+design rule is that re-segmentation voids everything after it, a person's
+earlier outcome and causal-reach answers included -- except an answer on a
+pellet whose frames the re-cut did not change (owner ruling 2026-11-18):
+voided answers are kept as a record only and never applied. Every review
+reader does this when a person set the current cuts
 (causal_review_io.index_review_by_segment, keyed on the segments file's
-corrected_at): no answer given before then counts, on any pellet
-(causal_review_io.answer_survives_recut). So the deep-review return (resumes at reach on the new
+corrected_at and the cuts it replaced): an answer given before then counts
+only on an unchanged pellet (causal_review_io.answer_survives_recut). So the deep-review return (resumes at reach on the new
 cuts) treats those pellets as unanswered, and the review gate sends the
 video to triage with each one flagged (review_gate.recut_voided_open): they
 are asked again on the new cuts, never left to the algorithm's call. NOT

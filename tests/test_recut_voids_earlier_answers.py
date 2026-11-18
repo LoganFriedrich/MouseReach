@@ -1,20 +1,22 @@
 """A re-cut voids the answers given before it.
 
-Rule: when a video is re-segmented, nothing after segmentation is valid any
-more -- a person's earlier outcome and causal-reach answers included. They
-were given on cuts that turned out wrong; fitting them onto the new cuts by
-frame overlap or by segment number is a guess about footage nobody judged on
-the new cuts. They are kept in the file as a record and the pellets are asked
-again.
+Rule (owner ruling 2026-11-18, narrowing R2): when a person re-cuts a video,
+an earlier answer stands only on a pellet whose frames the re-cut did not
+change at all. Every other earlier answer -- its pellet moved, even by one
+frame, or the files do not show which cuts it was given on -- is void: fitting
+it onto the new cuts by frame overlap or by segment number is a guess about
+footage nobody judged on the new cuts. It is kept in the file as a record and
+the pellet is asked again.
 
 Before: every reader matched earlier answers to the new cuts by frame overlap
 (and span-less ones by number), so a person's answer about one stretch of video
 was applied to a differently cut pellet.
 
-Now: when a person set the current cuts (the segments file records when), no
-answer given before that time counts, on any pellet -- also one whose frames
-did not move (causal_review_io.answer_survives_recut). Answers given after,
-and every answer on a video whose cuts are the segmenter's own, are matched as
+Now: when a person set the current cuts (the segments file records when, and
+the cuts they replaced), an answer given before that time counts only when its
+frames are a pellet of the replaced cuts AND the same frames are a current
+pellet (causal_review_io.answer_survives_recut). Answers given after, and
+every answer on a video whose cuts are the segmenter's own, are matched as
 before.
 
 Built under tmp_path with invented ids; no real folder or configuration.
@@ -32,10 +34,17 @@ CUT_AT = "2099-03-02T10:00:00"
 BEFORE, AFTER = "2099-03-01T09:00:00", "2099-03-02T11:00:00"
 
 
-def _seg_doc(human=True):
+# The cuts the person replaced: pellet 1 was 950-1990, pellet 2 1991-2999,
+# pellet 3 3000-3999 (unmoved by the re-cut).
+REPLACED = [950, 1991, 3000, 4000]
+
+
+def _seg_doc(human=True, replaced=REPLACED):
     d = {"boundaries": [1000, 2000, 3000, 4000]}
     if human:
         d.update(boundary_source="human", corrected_at=CUT_AT)
+        if replaced is not None:
+            d["algo_boundaries"] = replaced
     return d
 
 
@@ -47,8 +56,8 @@ def _rec(span, when, outcome="displaced_sa", num=1):
     return r
 
 
-def _answered(doc, human=True):
-    seg_doc = _seg_doc(human)
+def _answered(doc, human=True, replaced=REPLACED):
+    seg_doc = _seg_doc(human, replaced)
     return io.answered_segments(doc, io.segments_from_segmentation(seg_doc),
                                 human_segmentation=human)
 
@@ -64,10 +73,23 @@ def test_an_answer_given_before_a_recut_on_moved_cuts_is_void():
     assert any("re-cut voids it" in n for n in notes)
 
 
-def test_an_answer_on_a_pellet_whose_cuts_did_not_move_is_void_too():
-    # pellet 2 is 2000-2999 before and after the re-cut: still void (rule R2)
+def test_an_answer_on_a_pellet_whose_cuts_did_not_move_stands():
+    # pellet 3 is 3000-3999 before and after the re-cut
+    doc = {"segments": [_rec((3000, 3999), BEFORE, num=3)]}
+    assert _answered(doc) == {3}
+
+
+def test_an_unmoved_span_that_was_no_pellet_of_the_replaced_cuts_is_void():
+    # 2000-2999 is a current pellet, but no pellet of the replaced cuts: the
+    # record does not show the cuts it was given on (a save could stamp the
+    # current frames on an old answer), so it is treated as moved
     doc = {"segments": [_rec((2000, 2999), BEFORE, num=2)]}
     assert _answered(doc) == set()
+
+
+def test_without_the_replaced_cuts_on_file_an_earlier_answer_is_void():
+    doc = {"segments": [_rec((3000, 3999), BEFORE, num=3)]}
+    assert _answered(doc, replaced=None) == set()
 
 
 def test_an_answer_given_after_the_recut_is_matched_as_usual():

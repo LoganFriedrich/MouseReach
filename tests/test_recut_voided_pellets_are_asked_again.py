@@ -1,8 +1,9 @@
 """A pellet whose answer a re-cut voided is asked again; it never takes the
 algorithm's call unasked.
 
-Rule: re-segmentation voids every answer after it, and a voided answer is
-ASKED AGAIN (test_recut_voids_earlier_answers.py covers the voiding).
+Rule: a person's re-segmentation voids every earlier answer whose pellet's
+frames it changed (or whose cuts the files do not show), and a voided answer
+is ASKED AGAIN (test_recut_voids_earlier_answers.py covers the voiding).
 
 Before: voiding only made the pellet unanswered. A video sent to deep review
 for its cuts is released by saving them, re-runs from reaches, and an
@@ -36,15 +37,21 @@ def _rec(span, when, outcome="untouched", num=1, answered=True):
     return r
 
 
-def _current(human=True):
+# The cuts the person replaced: pellets 950-1990, 1991-2999, 3000-3999.
+REPLACED = [950, 1991, 3000, 4000]
+
+
+def _current(human=True, replaced=REPLACED):
     d = {"boundaries": [1000, 2000, 3000, 4000]}
     if human:
         d.update(boundary_source="human", corrected_at=CUT_AT)
+        if replaced is not None:
+            d["algo_boundaries"] = replaced
     return d
 
 
-def _voided(doc, human=True):
-    seg_doc = _current(human)
+def _voided(doc, human=True, replaced=REPLACED):
+    seg_doc = _current(human, replaced)
     return io.recut_voided_segments(doc, io.segments_from_segmentation(seg_doc),
                                     human_segmentation=human)
 
@@ -63,9 +70,20 @@ def test_a_pellet_answered_again_on_the_new_cuts_is_not_asked():
     assert _voided(doc) == set()
 
 
-def test_an_unchanged_pellet_is_asked_again_too():
-    # its frames did not move, but the answer was given before the re-cut
-    assert _voided({"segments": [_rec((2000, 2999), BEFORE, num=2)]}) == {2}
+def test_an_unchanged_pellet_is_not_asked_again():
+    # pellet 3 is 3000-3999 on the replaced cuts and on the current ones
+    assert _voided({"segments": [_rec((3000, 3999), BEFORE, num=3)]}) == set()
+
+
+def test_an_unchanged_pellet_is_asked_when_the_replaced_cuts_are_not_on_file():
+    assert _voided({"segments": [_rec((3000, 3999), BEFORE, num=3)]}, replaced=None) == {3}
+
+
+def test_an_unchanged_answer_kept_only_among_the_unmatched_answers_is_asked():
+    # no reader applies an aside answer, so one the re-cut would keep is
+    # asked rather than left to the algorithm's call
+    doc = {"segments": [], "unmatched_answers": [_rec((3000, 3999), BEFORE, num=3)]}
+    assert _voided(doc) == {3}
 
 
 def test_an_answer_with_no_frames_names_the_pellet_with_its_number():
