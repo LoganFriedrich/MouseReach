@@ -3359,6 +3359,22 @@ If the database cannot be opened, the move still happens, the tool says the reco
 updated, and the row catches up when the video returns. Tests:
 `tests/test_escalate_records_deep_review.py`.
 
+Since then, three more rules hold for these moves (REVIEW_TOOLS.md, "When the window will not
+move a video", says what the reviewer sees):
+- **A move out of a queue takes the bundle claim.** `route_to_queue` takes the per-video claim the
+  return scan takes (`.return_claims`, re-entrant per thread) whenever its source is a queue
+  bundle; `escalate_to_deep_review` and Flag Session hold it from setting an old clear aside to
+  the end of the move. While another process or machine holds it, `BundleBusyError` (a subclass
+  of `AlreadyInQueueError`) is raised before anything moves, so the watcher's existing "refused,
+  wait and run again" handling applies. Tests: `tests/test_queue_moves_take_the_bundle_claim.py`.
+- **A database that could not record the move is reported.** `route_to_queue(..., report={})`
+  fills `state_recorded` and `state_note`; the buttons add "the watcher's record was NOT updated"
+  to their message. Tests: `tests/test_queue_move_reports_unrecorded_state.py`.
+- **Nothing moves when the answers did not save, or when no bundle is paired.** A failed save
+  stops Escalate and Flag Session as it stops Clear; Browse and a failed load leave no bundle
+  paired with the window. Tests: `tests/test_move_buttons_stop_when_save_fails.py`,
+  `tests/test_browse_after_bundle.py`.
+
 
 ## Update 2026-11-15: a crystallized video is never moved
 
