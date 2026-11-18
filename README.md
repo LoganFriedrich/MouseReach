@@ -50,7 +50,7 @@ Video Capture -> Crop -> DLC -> Segment -> Reaches -> Outcomes -> Features -> Ex
 | 2 | **Segmentation** | DLC .h5 | `_segments.json` (21 boundaries) |
 | 3 | **Reach Detection** | Segments + DLC | `_reaches.json` (reach events) |
 | 4 | **Pellet Outcomes** | Segments + DLC | `_pellet_outcomes.json` (R/D/U) |
-| 5 | **Grasp Kinematics** | Reaches + Outcomes + DLC | `_features.json` (48 features/reach) |
+| 5 | **Grasp Kinematics** | Reaches + Outcomes + DLC | `_features.json` (per-reach kinematic features; see REACH_KINEMATIC_DATA_DICTIONARY.md) |
 | 6 | **Export** | All results | Excel/CSV |
 
 ---
@@ -62,12 +62,20 @@ Launch with `mousereach` command. Available tabs:
 | Tab | Purpose |
 |-----|---------|
 | **Pipeline Dashboard** | Overview of all videos and pipeline status |
-| **Step 0 - Crop Videos** | Crop multi-animal collage to single animals |
-| **Step 1 - DLC Analysis** | Run DeepLabCut pose estimation |
-| **Step 2 - Run Pipeline** | Run the pipeline by hand: one pass of this machine's watcher over everything waiting, in this machine's role. On the processing machine: the same steps, checks and review queues as the automatic watcher, and finished videos are filed. On a pose-only graphics-card PC: cutting and posing only (the analysis runs on the processing machine). The tab says which. No watcher needs to be running. A box puts one animal's videos first (the watcher's own priority, kept until cleared); the old "Select Specific Files..." / "Reprocess All..." buttons are shown switched off until the lab decides what they should do |
+| **0 - Crop Videos** | Crop multi-animal collage to single animals |
+| **1 - DLC Analysis** | Run DeepLabCut pose estimation |
+| **2 - Run Pipeline** | Run the pipeline by hand: one pass of this machine's watcher over everything waiting, in this machine's role. On the processing machine: the same steps, checks and review queues as the automatic watcher, and finished videos are filed. On a pose-only graphics-card PC: cutting and posing only (the analysis runs on the processing machine). The tab says which. No watcher needs to be running. A box puts one animal's videos first (the watcher's own priority, kept until cleared); the old "Select Specific Files..." / "Reprocess All..." buttons are shown switched off until the lab decides what they should do |
 | **Review Queues** | Open the triage review window and the re-segmentation review |
-| **Step 4 - View Features** | Visualize kinematic features |
+| **4 - View Features** | Visualize kinematic features |
 | **GT Tool** | Create ground truth files for evaluation |
+| **Watcher Control** | Run, monitor and configure this machine's watcher |
+| **Quarantine** | See files held because their names could not be read, correct a name and release the file back to the intake |
+| **Setup** | Set this machine's processing folder and the shared pipeline folder |
+| **Run All Steps** | Run the watcher's own steps for one chosen video (refuses a filed video or one in a review queue) |
+| **DLC Compare** | Compare two DLC models on a video |
+| **FP/FN Review** | Browse false/true positive and missed reach events (read-only) |
+
+(The napari Plugins menu lists the same tools under slightly different titles, e.g. "Step 0 - Crop Videos".)
 
 ### Where a correction is saved
 
@@ -93,7 +101,6 @@ The other per-step review commands (`mousereach-review-reaches`, `mousereach-rev
 | Command | Description |
 |---------|-------------|
 | `mousereach` | Launch the napari GUI |
-| `MouseReach` | Alias for `mousereach` |
 
 ### Configuration & Setup
 
@@ -125,9 +132,9 @@ The other per-step review commands (`mousereach-review-reaches`, `mousereach-rev
 | `mousereach-compress` | Compress videos for storage |
 
 ```bash
-mousereach-crop collage.mkv -o output/
+mousereach-crop -i collage.mkv -o output/
 mousereach-convert video.mkv
-mousereach-compress -i folder/ -o compressed/
+mousereach-compress folder/      # writes <video>_preview.mp4 beside each video
 ```
 
 ---
@@ -154,7 +161,7 @@ mousereach-dlc-quality video.h5
 | `mousereach-triage` | Auto-classify confidence |
 | `mousereach-advance` | Not needed, and currently stops with an error (see USER_GUIDE); the next step reads `validation_status` itself |
 | `mousereach-segment-review` | Launch review GUI |
-| `mousereach-reject-tray` | Reject unsupported tray types |
+| `mousereach-reject-tray` | Retired: prints that Easy and Flat videos are processed by the watcher and moves nothing |
 
 ```bash
 mousereach-segment -i Processing/
@@ -223,7 +230,7 @@ mousereach-unified-review
 |---------|-------------|
 | `mousereach-grasp-analyze` | Extract kinematic features |
 | `mousereach-grasp-triage` | Auto-classify quality |
-| `mousereach-grasp-review` | Review analysis |
+| `mousereach-grasp-review FEATURES_JSON` | Review one video's feature extraction (the *_features.json path is required) |
 
 ---
 
@@ -251,8 +258,12 @@ such a video and names them as the algorithm's own calls.
 
 ## Automated Watcher
 
-The watcher monitors the data repository for new collage videos and runs the
-full pipeline automatically (crop, DLC, segment, reaches, outcomes, archive).
+The watcher runs on every pipeline machine and does that machine's part: on a
+graphics-card PC (`watcher.mode` dlc_pc) it cuts new collages and poses the
+singles, handing them to the shared Processing/Posed folder (or, with
+`watcher.also_process` true, analyses and files them itself); on the processing
+machine (processing_server) it runs segmentation, reaches, outcomes, the
+hand-score check, kinematics and filing.
 
 | Command | Description |
 |---------|-------------|
@@ -274,7 +285,7 @@ watcher can pause itself: list the recording program's name (as Task Manager's
 Details tab shows it) with `mousereach-watch-recorders --add <name>` or in the
 Watcher Control panel. While that program is open the watcher starts no new
 work and stops a pose part-way (the video is posed again later, not marked
-failed); a collage crop already running finishes first. Work resumes by itself
+failed); a collage crop already running is stopped part-way too (its half-made singles are deleted and the collage is cropped again later). Work resumes by itself
 a set time (default 120 s) after the program closes. Resume cannot override an
 open recording program. The list is empty by default, which means the watcher
 never checks for any program.
@@ -299,7 +310,9 @@ environment and work on any PC:
 On login, the startup script will:
 1. Wait for the shared pipeline folder (`MOUSEREACH_NAS_ROOT`, if set) to be available
 2. Launch the watcher daemon in its own terminal window
-3. Open a live view of the watcher's log
+3. Open a live view of the watcher's log. This needs `MOUSEREACH_PROCESSING_ROOT` (or
+   `MOUSEREACH_NAS_ROOT`) set as a user environment variable; without either it prints
+   "WARNING: Could not find watcher.log - skipping log window" and opens no log window.
 
 Both windows close by themselves when the watcher stops cleanly, so a restart never
 leaves old windows behind (each used to stay open and keep the log file in use). If the
@@ -461,7 +474,7 @@ storage drive dropping for a moment) clears by itself.
 
 | Command | Description |
 |---------|-------------|
-| `mousereach-analyze` | Launch Streamlit dashboard |
+| `mousereach-build-database` | Build the unified reach database (one row per reach, all metadata attached) |
 | `mousereach-build-explorer` | Build statistics database |
 | `mousereach-explore` | Launch data explorer |
 
@@ -479,11 +492,11 @@ storage drive dropping for a moment) clears by itself.
 
 | Command | Description |
 |---------|-------------|
-| `mousereach-sync` | Sync _features.json files to SQLite database |
+| `mousereach-sync` | Sync _features.json files to the central SQLite database named by the `central_db` setting (or the MOUSEREACH_CENTRAL_DB environment variable); with neither set it stops with an error and exits 1. `mousereach-grasp-analyze` also syncs each features file it writes. See docs/SYNC_TO_DATABASE.md |
 | `mousereach-sync --force` | Re-sync all files (delete and re-import) |
-| `mousereach-sync --status` | Show sync status and reach counts |
-| `mousereach-sync --export` | Export reach_data.csv for analysis |
-| `mousereach-sync --watch` | Watch for new features files and auto-sync |
+| `mousereach-sync-status` | Show sync status and reach counts |
+| (no separate command) | Every sync that writes at least one file also rewrites `reach_data.csv` in a `database_dump` folder beside the central database |
+| `mousereach-sync-watch` | Watch for new features files and auto-sync (currently stops with an error on start; see docs/SYNC_TO_DATABASE.md) |
 
 ---
 
@@ -546,8 +559,9 @@ See INSTALL.md, Step 6.
 
 | Setting | Purpose | Required? |
 |---------|---------|-----------|
-| `processing_root` | Pipeline working folders (DLC_Queue, Processing, Failed) | **Yes** |
-| `nas_drive` | Data repository / archive location | Optional |
+| `processing_root` | This machine's local working folders (DLC_Queue, Processing) | **Yes** |
+| `nas_root` | The shared pipeline folder (Unanalyzed, Processing\Failed, Analyzed, review_records, the lab settings file); unset means each tool stops and names mousereach-setup | **Yes** |
+| `nas_drive` | Older setting, still read by mousereach-aspa-import / mousereach-aspa-sync and by mousereach-watch-process-animal's file search | Optional |
 | `watcher.*` | Automated pipeline settings (DLC config, GPU, polling) | For watcher PC |
 | `watcher.db_path` | The watcher database file. On the processing server every login's settings must carry BOTH `watcher.mode` = `processing_server` AND this setting: a login whose settings say `processing_server` but name no file is refused by the watcher and every tool, rather than guess. The refusal keys on `watcher.mode` -- a login whose settings carry no `watcher.mode` is taken for a GPU PC and uses `<processing_root>/watcher.db` WITHOUT a refusal, so on the processing server check that every login has the mode set. On a GPU PC it defaults to `<processing_root>/watcher.db` | Processing server: **Yes** (with `watcher.mode`) |
 | `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked right after a video is analysed, before triage (see "Checked against the hand scores before triage"). Usually kept in the lab settings file instead (below) | Optional |
@@ -584,12 +598,12 @@ depth.
 ```
 DLC_Queue/           -> Videos waiting for DLC processing
 Processing/          -> ALL active videos + analysis files (v2.3+ unified)
-Failed/              -> Processing errors
+<nas_root>/Processing/Failed/ -> Processing errors (on the shared drive, not in this machine's folder)
 _finished_elsewhere/ -> Local copies set aside by the watcher (see below)
 ```
 
-**`_finished_elsewhere/<date>/<folder>/`** -- when a graphics-card machine's
-watcher starts, it looks in its own `DLC_Queue/` and `Processing/` for copies of
+**`_finished_elsewhere/<date>/<folder>/`** -- when any machine's watcher
+starts (a graphics-card PC or the processing machine), it looks in its own `DLC_Queue/` and `Processing/` for copies of
 videos that are already finished: the machine's record says so AND the video's
 results (its `_processing_manifest.json`) are in `Analyzed/`. Those copies are
 moved here, never deleted, and the watcher log says how many and where. A copy
@@ -657,7 +671,7 @@ mousereach-export --help
 - Napari (GUI)
 - OpenCV (video processing)
 - DeepLabCut (pose estimation)
-- TensorFlow 2.10+
+- TensorFlow 2.10 (pinned >=2.10,<2.11; NumPy pinned 1.26.4)
 
 ---
 
@@ -670,5 +684,5 @@ mousereach-export --help
 
 ---
 
-*MouseReach v2.3.0*
+*MouseReach v2.16.0-dev*
 *Developed by Logan Friedrich*
