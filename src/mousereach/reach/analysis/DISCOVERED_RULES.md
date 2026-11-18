@@ -1,7 +1,16 @@
 # Reach Detection Rules - Derived from Ground Truth Analysis
 
+> **Historical research note (Update 2026-11-18).** These rules fed the retired
+> rule-based reach detectors (v3-v7). Production reach detection is now the v8 trained
+> classifier (`mousereach.reach.v8`, version 8.1.0), which uses none of these thresholds:
+> it has no nose gate and no hand-likelihood start rule. The "Implementation" and "Next
+> Steps" parts below were never carried into the current detector. Note also that the
+> nose threshold below is inconsistent: 20 px is stated as "based on" a 95th percentile
+> of 21.3 px, and the retired v3.5.0 detector used 25 px. See
+> `docs/ALGO_2_REACH_DETECTION.md` for how reaches are found now.
+
 Analysis date: 2026-01-12
-Video analyzed: one exhaustively annotated video (321 reaches, 37109 frames)
+Video analyzed: one exhaustively annotated video
 
 ---
 

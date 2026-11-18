@@ -1,6 +1,13 @@
 # Proposed Algorithm Refinements
 
-Based on analysis of 28 boundary disagreements between algorithm and human.
+> **Historical proposal (Update 2026-11-18).** Written in early 2026 against a retired
+> rule-based reach detector. "Current" below refers to that detector, not to the code
+> that runs today. Production reach detection is now the v8 trained classifier
+> (`mousereach.reach.v8`, version 8.1.0): it has no hand-likelihood start rule, does not
+> merge nearby reaches, and only trims the edges of a reach where paw likelihood stays
+> below 0.90. See `docs/ALGO_2_REACH_DETECTION.md`.
+
+Based on analysis of boundary disagreements between algorithm and human.
 
 ## Current Algorithm Issues
 
@@ -78,11 +85,5 @@ def should_merge(gap_frames, dlc_df):
 
 ## Expected Impact
 
-| Metric | Current | After Rules |
-|--------|---------|-------------|
-| Early starts | 16 cases | ~0 cases |
-| Late ends | 12 cases | ~0 cases |
-| Start accuracy | 92% within ±2 | ~98% within ±2 |
-| End accuracy | 95% within ±2 | ~98% within ±2 |
-| Recall | 95.0% | ~95% (may drop slightly) |
-| Precision | 90.1% | ~93% (fewer merges) |
+(Update 2026-11-18: the table of numbers measured on the lab's own ground truth that
+stood here was removed; such results are kept with the lab's data, not in this repository.)

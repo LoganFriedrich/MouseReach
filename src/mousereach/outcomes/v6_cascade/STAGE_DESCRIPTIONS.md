@@ -1,5 +1,16 @@
 # Cascade Stage Descriptions (v6.0.0_dev)
 
+> **Historical validation record -- read this first (Update 2026-11-18).** This file
+> describes the outcome cascade as it stood in May 2026 (version 6.0.0_dev, validated
+> with the DLC 3.1 pose model). The cascade that runs today is version 6.1.0: 33 stages
+> (0, 1, 2, 3, 4, 5, 6, 6b, 7-29, 98, 99), recalibrated for the 4.0 pose model, and
+> several stages below now behave differently (for example Stage 0 is bypassed, Stage 13
+> is enabled, Stage 5 defers instead of triaging on a Pellet+Pillar co-detection). The
+> stage list, thresholds and trust figures below were not re-measured for the current
+> cascade. For what each stage does now, read `docs/ALGO_3_OUTCOME_CASCADE.md`; the
+> stage code in this folder is authoritative. The "update in lockstep" instruction
+> below is no longer followed for this file.
+
 Canonical description of every cascade stage in plain English, including
 empirical validation provenance for each stage. Update this file in
 lockstep with any code change to the stage; the validation block must
@@ -177,7 +188,7 @@ Confounded cases are moved into Stage 2 for further examination.
 - **Trust calibrator code version:**
   `mousereach.outcomes.v6_cascade.trust_calibrator` (commit on master at
   validation time)
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+- **DLC model:** the validation DLC model (3.1) from the
   validation DLC project, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
@@ -274,7 +285,7 @@ Confounded cases are moved into Stage 3 for further examination.
 - **Trust calibrator code version:**
   `mousereach.outcomes.v6_cascade.trust_calibrator` (commit on master at
   validation time)
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+- **DLC model:** the validation DLC model (3.1) from the
   validation DLC project, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
@@ -432,7 +443,7 @@ Confounded cases are moved into Stage 4 for further examination.
   bodyparts before computing the per-frame pillar geometry, so
   single-frame DLC failures on SA do not contaminate per-frame pillar
   position/radius.
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+- **DLC model:** the validation DLC model (3.1) from the
   validation DLC project, run
   completed 2026-02-19 21:13:08+00:00
 - **Segmenter version used to produce segment boundaries:** v2.1.2
@@ -610,7 +621,7 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
 - **Pillar geometry function:**
   `mousereach.lib.pillar_geometry.compute_pillar_geometry_series_cleaned`
   (cleans SA bodyparts before computing per-frame geometry).
-- **DLC model:** `DLC_resnet50_MPSAOct27shuffle1_100000` from the
+- **DLC model:** the validation DLC model (3.1) from the
   validation DLC project, run completed 2026-02-19 21:13:08+00:00.
 - **Segmenter version:** v2.1.2.
 - **Reach detector version:** v7.1.0 (GT reach windows used; Stage 4
@@ -731,7 +742,7 @@ Confounded cases either defer (continue) or triage (out-of-cascade).
 
 **Reframe:** by the time a segment reaches Stage 9, the upstream
 cascade has already excluded `untouched`. By apparatus physics the
-pellet was on the pillar at segment start (ASPA loads it before each
+pellet was on the pillar at segment start (the apparatus loads it before each
 segment). So Stage 9 does NOT need to re-prove "pellet was on pillar
 early" -- that's redundant with upstream. The stage answers only the
 remaining question: given the segment is touched, does post-reach
