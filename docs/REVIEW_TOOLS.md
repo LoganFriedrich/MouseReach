@@ -1089,6 +1089,13 @@ Outcome and reaches files that an old copy of the tool already edited keep their
 
 ## Re-attaching a review after reprocessing
 
+**On the same cuts only.** Everything below is how an answer finds its pellet when the cuts have
+NOT been redone since it was given (a re-run of the later steps). After a re-cut -- a person's in
+the segment fixer, or the segmenter's when its new cuts replaced different ones -- an answer
+given before it counts only on a pellet whose frames are exactly unchanged; every other one is
+void, kept as a record and asked again in triage, never re-attached to the new cuts by frame span
+(owner ruling R2; see "A re-cut voids the answers given before it").
+
 ### The problem
 
 A review is a fact about a stretch of video. `segment_num` is not — the segmenter hands out those numbers fresh on every re-cut. A review of "segment 7" used to be applied to whatever the new segment 7 turned out to be, and the result was recorded as `outcome_source: "human_review"`, indistinguishable from a real one.

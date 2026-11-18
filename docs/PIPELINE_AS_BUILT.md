@@ -4424,10 +4424,11 @@ queue never deletes or overwrites a person's file".
   filed results), and a released quality hold (`_release_to_posed`, `live` = the posed folder).
   Deleted: queue records; a file `live` holds byte for byte; the review when the durable store holds
   it byte for byte (`review_held_by_store` only compares; nothing is written into the store --
-  WHY: a leftover's answers were made on cuts that are being or have been redone, and the review
-  readers match the store's copy to the current cuts by frame span, so a copy put there would
-  carry old answers onto new cuts; and replacing a different stored review could put an older
-  answer where every reader looks); machine outputs when `live` is not empty. Kept where it is: anything
+  WHY: a leftover's answers were made on cuts that are being or have been redone (a re-cut voids
+  the answers given before it on every pellet whose frames moved), and the store's copy is merged
+  into what every reader sees, so a copy put there could bring back answers a later save had
+  replaced; and replacing a different stored review could put an older answer where every reader
+  looks); machine outputs when `live` is not empty. Kept where it is: anything
   else. A folder left with something kept gets the note `LEFT_FOR_A_PERSON.json` and an item
   (`left_for_a_person`) in this machine's `<NAS root>/attention/<host>_queue_folders_for_a_person.json`;
   the return scan skips a folder holding the note (triage loop: from the listing it already takes;

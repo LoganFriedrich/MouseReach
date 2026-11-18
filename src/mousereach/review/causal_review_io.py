@@ -391,9 +391,12 @@ def build_segment_record(
     reassigns every time it re-cuts the video. Re-segment, and segment 7's
     review silently starts describing a different stretch of footage.
 
-    With the span stored, a review can always be re-attached to the frames it
-    was actually about, and a reviewer's note like "this boundary is wrong"
-    survives the fix to that boundary instead of being invalidated by it.
+    With the span stored, a review is matched to the pellet whose frames it
+    was actually about, never to whatever pellet now carries its number. A
+    re-cut (a person's or the segmenter's) voids an answer given before it
+    unless its pellet's frames are exactly unchanged (owner ruling R2,
+    answer_survives_recut): the answer is then kept as a record only and its
+    pellet is asked again, never re-attached to the new cuts by frame span.
 
     Optional because reviews written before this field existed do not have it;
     those were backfilled in place from the segmentation each was made against

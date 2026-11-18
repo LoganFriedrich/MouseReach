@@ -811,11 +811,13 @@ def left_for_a_person(folder) -> bool:
 def review_held_by_store(review, video_id: str) -> bool:
     """True when the durable review store already holds ``review`` byte for
     byte. Nothing is written into the store. WHY: a leftover's review was
-    made on cuts that are being, or have been, redone (a re-cut voids every
-    answer after it), and the review readers match the store's copy to the
-    current cuts by frame span -- a copy put there now would carry old
-    answers onto new cuts; and replacing a different stored review could put
-    an older answer where every reader looks. Never raises."""
+    made on cuts that are being, or have been, redone (a re-cut voids the
+    answers given before it on every pellet whose frames moved,
+    causal_review_io.answer_survives_recut), and the store's copy is merged
+    into what every reader sees -- a copy put there now could bring back
+    answers a later save had replaced; and replacing a different stored
+    review could put an older answer where every reader looks. Never
+    raises."""
     try:
         from mousereach.review.causal_review_io import durable_review_path
         dest = durable_review_path(video_id)

@@ -1318,7 +1318,9 @@ def _empty_triage_copy(video_id: str, deep_bundle: Path) -> None:
                     f"redone, so the answer files here (review, ground truth, cuts, "
                     f"clear marker) are kept only as a record and are not moved into "
                     f"it. (The review's copy in the durable review store is still "
-                    f"matched to the new cuts by frame span.) Every reader ignores this "
+                    f"read: once the new cuts are saved, an answer given before them "
+                    f"counts only on a pellet whose frames did not change, and every "
+                    f"other pellet is asked again.) Every reader ignores this "
                     f"folder while the video is in deep review."))
 
 
