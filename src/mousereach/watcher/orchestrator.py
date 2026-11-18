@@ -1914,9 +1914,69 @@ class BaseOrchestrator:
         now = time.monotonic()
         done = [t for t in getattr(self, "_done_times", []) if now - t <= 3600]
         self._done_times = done
-        return {"doing": getattr(self, "_doing", None),
-                "last_done": getattr(self, "_last_done", None),
-                "done_last_hour": len(done)}
+        report = {"doing": getattr(self, "_doing", None),
+                  "last_done": getattr(self, "_last_done", None),
+                  "done_last_hour": len(done)}
+        # The last recording-send pass (recording_outbox), kept on self so every
+        # status write carries it, not only the one right after the pass.
+        outbox = getattr(self, "_outbox_report", None)
+        if outbox is not None:
+            from mousereach.watcher.recording_outbox import STATUS_KEY
+            report[STATUS_KEY] = outbox
+        return report
+
+    # Seconds between two looks at the recording folder. A look is a listing
+    # of a local folder; the copies themselves are bounded by
+    # watcher.recording_outbox_pass_minutes.
+    _OUTBOX_MIN_INTERVAL_S = 60.0
+
+    def _maybe_send_recordings(self) -> None:
+        """Send named recordings to the shared intake (watcher.recording_outbox).
+
+        Runs only on a watcher whose config names a recording folder, and only
+        outside recording time; mousereach.watcher.recording_outbox has every
+        rule. Never raises: a send that fails is reported and tried again, and
+        must never stop the watcher's other work.
+        """
+        config = getattr(self, 'config', None)
+        if config is None or not getattr(config, 'recording_outbox', None):
+            self._outbox_report = None
+            return
+        now = time.monotonic()
+        last = getattr(self, '_last_outbox_mono', None)
+        if last is not None and now - last < self._OUTBOX_MIN_INTERVAL_S:
+            return
+        self._last_outbox_mono = now
+        try:
+            from mousereach.watcher import recording_outbox as ro
+            settings = ro.OutboxSettings.from_config(config)
+            sender = getattr(self, '_outbox_sender', None)
+            if sender is None:
+                try:
+                    state_path = require_processing_root() / ro.STATE_FILE_NAME
+                except Exception:
+                    state_path = None
+                try:
+                    log_path = config.get_log_dir() / ro.TRANSFER_LOG_NAME
+                except Exception:
+                    log_path = None
+                sender = self._outbox_sender = ro.RecordingSender(
+                    settings, Paths.NAS_ROOT, state_path=state_path,
+                    transfer_log=log_path, should_stop=self._stop_requested)
+            # Fresh settings every pass, so edited recording hours apply at once.
+            sender.settings = settings
+            report = sender.run_pass()
+            self._outbox_report = report
+            if report.get("held"):
+                held = ro.held_lines(report)
+                if held != getattr(self, '_outbox_last_held', None):
+                    logger.warning("Recordings HELD on this PC (a person must look): %s",
+                                   "; ".join(held))
+                self._outbox_last_held = held
+        except Exception as e:
+            logger.warning(f"Sending recordings failed this pass: {e}")
+            self._outbox_report = {"held": [{"name": "(sender)", "reason": str(e)}],
+                                   "outbox": str(getattr(config, 'recording_outbox', ''))}
 
     def _begin_work(self, work: dict) -> None:
         """Mark an item as in hand and say so on the shared drive before it starts."""
@@ -1980,6 +2040,15 @@ class BaseOrchestrator:
                 # Every phase of the cycle is timed (cycle_timer explains why:
                 # a node once spent ~95% of its time in scans nobody measured).
                 self._cycle = CycleTimer()
+
+                # Named recordings off this PC, before anything else: a pose can
+                # wait, a recording left on the PC is never analyzed. Does
+                # nothing unless watcher.recording_outbox is set, and never
+                # during recording time.
+                with self._cycle.step("send recordings"):
+                    self._maybe_send_recordings()
+                if getattr(self, "_outbox_report", None) is not None:
+                    self._report_node_status(node_status.WORKING)
 
                 # Periodically pick up freshly-saved reviews / version staleness.
                 with self._cycle.step("version and review scan"):

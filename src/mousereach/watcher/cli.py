@@ -711,7 +711,8 @@ status every node last reported.
             from mousereach.config import Paths
             if Paths.NAS_ROOT:
                 print("Nodes:")
-                print(node_status.describe(Paths.NAS_ROOT))
+                print(node_status.describe(Paths.NAS_ROOT,
+                                          color=node_status.terminal_color(sys.stdout)))
                 print()
         except Exception as e:
             print("Nodes: (could not be read: %s)" % e)

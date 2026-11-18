@@ -684,6 +684,17 @@ class PipelineDashboard(QWidget):
             items = without_repeats(read_items(Paths.NAS_ROOT)) if Paths.NAS_ROOT else []
         except Exception as e:
             items = [{"needs_person": True, "says": "The attention lists could not be read (%s)." % e}]
+        # Recordings a recording PC holds and cannot send (node status,
+        # watcher/recording_outbox.py): red too, because nothing brings such a
+        # recording in until a person acts.
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.node_status import held_recordings
+            items = list(items) + [{"needs_person": True, "says": line}
+                                   for line in (held_recordings(Paths.NAS_ROOT)
+                                                if Paths.NAS_ROOT else [])]
+        except Exception:
+            pass
         urgent = [i for i in items if i.get("needs_person")]
         waiting = [i for i in items if not i.get("needs_person")]
         self._attention_items = urgent

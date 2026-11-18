@@ -1467,6 +1467,14 @@ in that archive folder, which is meant only for cases the pipeline cannot proces
 machine leftover with a current copy elsewhere is worth nothing; a person's work is never thrown
 away or hidden by the machine.
 
+### Recordings held on a recording PC
+
+The same red panel also lists every recording a recording PC holds back instead of sending it to
+the intake (a name that is not a valid session name, an empty or broken file, or a different file
+of the same name already on the shared drive), one line per file: which PC, which file, and why.
+These have no button: the file is on the recording PC. `docs/SENDING_RECORDINGS.md` says what to do
+for each reason.
+
 ### The Resolve... button
 
 When the dashboard's red "Needs your attention" panel lists a review bundle that a route left

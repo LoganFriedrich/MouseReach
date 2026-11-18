@@ -171,8 +171,13 @@ def read_all(nas_root) -> List[dict]:
     return out
 
 
-def describe(nas_root) -> str:
-    """One line per node, for a person: what it is doing, or that it is not running."""
+def describe(nas_root, color: bool = False) -> str:
+    """One line per node, for a person: what it is doing, or that it is not running.
+
+    A node that sends recordings (watcher.recording_outbox) gets a second line
+    with what it sent and holds, and one ``[!] HELD`` line per held recording --
+    in red when ``color`` (a terminal that shows color).
+    """
     rows = read_all(nas_root)
     if not rows:
         return ("No node has reported yet. Either no watcher has run since this was "
@@ -206,4 +211,80 @@ def describe(nas_root) -> str:
                                          if isinstance(doing, (list, tuple)) else doing)
             lines.append("  %-20s %-13s %s; %s done in the last hour"
                          % (host, r.get("state", "?"), now, r.get("done_last_hour", "?")))
+        lines.extend(outbox_lines(r, color=color))
     return "\n".join(lines)
+
+
+RED, RESET = "\033[31m", "\033[0m"
+
+
+def terminal_color(stream) -> bool:
+    """True when ``stream`` is a terminal that will show color codes as color.
+
+    WHY: a Windows console prints the codes as text unless its color mode is
+    switched on, which Python does not do; a held recording shown as
+    "[31m ... [0m" is harder to read than plain text. So: not a terminal ->
+    False; Windows -> switch the mode on and say whether that worked;
+    elsewhere -> True.
+    """
+    try:
+        if not stream.isatty():
+            return False
+    except Exception:
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GetStdHandle.restype = wintypes.HANDLE
+        handle = k.GetStdHandle(-11)                 # STD_OUTPUT_HANDLE
+        mode = wintypes.DWORD()
+        if not k.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(k.SetConsoleMode(handle, mode.value | 0x0004))   # VIRTUAL_TERMINAL_PROCESSING
+    except Exception:
+        return False
+
+
+def outbox_lines(record: dict, color: bool = False) -> List[str]:
+    """The recording-send lines of one node's report ([] when it does not send).
+
+    WHY held recordings are red: a held recording stays on its recording PC
+    until a person acts -- a name to correct, an empty file to look at, or two
+    different files with one name -- and nothing else will ever bring it in.
+    """
+    try:
+        from mousereach.watcher.recording_outbox import STATUS_KEY, held_lines, summary_line
+        rep = record.get(STATUS_KEY) if isinstance(record, dict) else None
+        if not isinstance(rep, dict):
+            return []
+        out = ["  %-20s %s" % ("", summary_line(rep))]
+        held = held_lines(rep)
+        for line in held[:20]:
+            text = "  %-20s [!] HELD %s" % ("", line)
+            out.append(RED + text + RESET if color else text)
+        more = max(int(rep.get("held_count") or 0), len(held)) - min(len(held), 20)
+        if more > 0:
+            text = "  %-20s [!] ... and %d more held (mousereach-send-recordings --preview on that PC lists them)" % ("", more)
+            out.append(RED + text + RESET if color else text)
+        return out
+    except Exception:
+        return []
+
+
+def held_recordings(nas_root) -> List[str]:
+    """Every recording any node holds, as "<host>: ... <name>: <reason>". Never raises.
+
+    For the Pipeline Dashboard's red attention panel.
+    """
+    try:
+        from mousereach.watcher.recording_outbox import STATUS_KEY, held_lines
+        out = []
+        for r in read_all(nas_root):
+            for line in held_lines(r.get(STATUS_KEY)):
+                out.append("%s: recording held on this PC -- %s" % (r.get("hostname"), line))
+        return out
+    except Exception:
+        return []

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from mousereach.watcher import recording_outbox as ro
+from mousereach.watcher import node_status
 
 NAMED = "20240102_TST0101,TST0102,TST0103,TST0104,TST0105,TST0106,TST0107,TST0108_P1.mkv"
 NAMED2 = "20240102_TST0101,TST0102,TST0103,TST0104,TST0105,TST0106,TST0107,TST0108_P2.mkv"
@@ -430,6 +431,75 @@ def test_preview_copies_and_deletes_nothing(env):
 
 # ---------------------------------------------------------------- report and config
 
+def test_held_items_appear_in_red_in_the_node_status(env):
+    put(env.outbox, NAMED, b"")
+    clock = Clock()
+    rep = two_passes(make_sender(env, clock=clock), clock)
+    assert node_status.write(env.nas, node_status.WORKING, hostname="pc1",
+                             extra={"doing": None, "done_last_hour": 0,
+                                    ro.STATUS_KEY: rep})
+    plain = node_status.describe(env.nas)
+    assert "[!] HELD " + NAMED in plain and "\033[31m" not in plain
+    colored = node_status.describe(env.nas, color=True)
+    assert "\033[31m" in colored
+    assert node_status.held_recordings(env.nas)[0].startswith("pc1: ")
+
+
+def test_work_report_carries_the_last_send_report():
+    from mousereach.watcher.orchestrator import BaseOrchestrator
+    fake = types.SimpleNamespace(_outbox_report={"held": []})
+    out = BaseOrchestrator._work_report(fake)
+    assert out[ro.STATUS_KEY] == {"held": []}
+    out = BaseOrchestrator._work_report(types.SimpleNamespace())
+    assert ro.STATUS_KEY not in out
+
+
+def test_terminal_color_is_off_when_not_a_terminal():
+    import io
+    assert node_status.terminal_color(io.StringIO()) is False
+
+
+def _watcher_stub(config):
+    from mousereach.watcher.orchestrator import BaseOrchestrator
+    stub = types.SimpleNamespace(config=config, _stop_requested=lambda: False,
+                                 _OUTBOX_MIN_INTERVAL_S=0.0)
+    return stub, (lambda: BaseOrchestrator._maybe_send_recordings(stub))
+
+
+def test_watcher_turn_without_outbox_does_nothing():
+    from mousereach.config import WatcherConfig
+    stub, turn = _watcher_stub(WatcherConfig({}))
+    turn()
+    assert stub._outbox_report is None
+
+
+def test_watcher_turn_sends_and_keeps_the_report(env, monkeypatch):
+    from mousereach.config import WatcherConfig
+    from mousereach.watcher import orchestrator
+    monkeypatch.setattr(orchestrator.Paths, "NAS_ROOT", env.nas)
+    cfg = WatcherConfig({"recording_outbox": str(env.outbox), "recording_hours": "08:00-18:00",
+                         "recording_days": "Mon-Fri"})
+    stub, turn = _watcher_stub(cfg)
+    turn()
+    assert stub._outbox_report["outbox"] == str(env.outbox)
+    assert isinstance(stub._outbox_sender, ro.RecordingSender)
+    # The settings are taken fresh on every turn: an edited hour applies at once.
+    cfg.recording_hours = "00:00-24:00"
+    turn()
+    assert stub._outbox_sender.settings.recording_hours == "00:00-24:00"
+
+
+def test_watcher_turn_survives_a_failing_pass(env, monkeypatch):
+    from mousereach.config import WatcherConfig
+    from mousereach.watcher import orchestrator
+    monkeypatch.setattr(orchestrator.Paths, "NAS_ROOT", env.nas)
+
+    def boom(self, preview=False):
+        raise RuntimeError("disk gone")
+    monkeypatch.setattr(ro.RecordingSender, "run_pass", boom)
+    stub, turn = _watcher_stub(WatcherConfig({"recording_outbox": str(env.outbox)}))
+    turn()                                   # must not raise
+    assert stub._outbox_report["held"][0]["reason"] == "disk gone"
 
 
 def test_config_keys_and_defaults():

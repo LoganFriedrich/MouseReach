@@ -5757,3 +5757,68 @@ Tests: `tests/test_recut_one_span_rule.py` (reaches file written by the reach de
 fails on 5546de0: gate CLEAN where it must be TRIAGE, results step drops a moved pellet's answer
 without refusing), `tests/test_recut_voids_earlier_answers.py`,
 `tests/test_recut_voided_pellets_are_asked_again.py`.
+
+## Update 2026-11-18: a recording PC sends the recordings people have named
+
+WHY. A recording reached the intake (`Unanalyzed/Multi-Animal`) only when a person copied it
+there by hand. A person's rename on the recording PC is the check that a recording is what its
+name says, and nothing may replace that check; but a recording that was named and never copied
+was simply never analyzed, and nothing reported it.
+
+WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORDINGS.md`).
+- **Off unless configured.** `watcher.recording_outbox` names the folder the recording program
+  saves into. Unset = nothing is sent, nothing changes.
+- **Every turn of the watcher's loop** (not while it is paused, at most once a minute), before the
+  scan: `BaseOrchestrator._maybe_send_recordings` runs one pass of `RecordingSender`. One pass may
+  copy for at most `recording_outbox_pass_minutes` (30); the rest waits for the next pass.
+- **Only outside recording time** (`recording_days`, `recording_hours`, read fresh each pass). With
+  neither set, nothing is ever sent (`send_window_reason`). Recording time and a stop request
+  (`watcher_stop.flag`) are checked between every 8 MB block; a copy that is stopped removes its own
+  `.partial` and keeps the source. Whether the source changed is checked once the copy is complete.
+  While sending is not allowed, what is already known to be held (too small, a duration read on an
+  earlier pass, a conflict, repeated failures) is still reported; nothing new is read from a file.
+- **Which files.** Top of the folder only, video extensions only. The recording program's own name
+  (`YYYY-MM-DD hh-mm-ss`) is never touched ("waiting for a name"). Any other name must pass
+  `validator.validate_collage_filename`; one that fails is held with the validator's reason.
+- **Never moved:** a file whose size or modified time changed in the last
+  `recording_outbox_stable_minutes` (5) of this watcher's looks; a file another program holds open
+  (Windows exclusive open, `is_open_for_writing`); the newest video while a program from
+  `pause_while_running` is running; a file under `recording_outbox_min_mb` (1), shorter than
+  `recording_outbox_min_seconds` (10) or whose duration cannot be read (`probe_duration`: ffprobe,
+  else ffmpeg from the PATH or imageio-ffmpeg). The last three are held.
+- **Already there?** Before copying, the name is looked up in every place a collage rests on the
+  shared drive (`resting_places`: the intake, `Unanalyzed/Unsupported_Tray_Type` and
+  `Processing/Quarantine` all the way down, every `Multi-Animal` folder up to four levels under
+  `Analyzed` and `Archive`). Same size and SHA-256: only the local file is deleted. Different: held
+  as a conflict; nothing is overwritten or deleted, and the conflict is not hashed again until
+  either file changes.
+- **The copy:** to `<intake>/<name>.partial` (exclusive create; `.partial` is in
+  `fsutil.TEMP_SUFFIXES`, so no picker takes it) at low I/O priority (Windows thread background
+  mode), source hashed as read, fsync; the source re-checked unchanged; the `.partial` read back
+  from the share and hashed; size and hash must match; renamed to the final name without ever
+  replacing a file (`_rename_no_overwrite`); the final file's size checked; the source checked
+  unchanged once more; THEN the local original is deleted. No `_sent` folder and no waiting period:
+  once the verified copy is on the shared drive, the recording does not stay on the recording PC
+  (decided 2026-11-18).
+- **Failures.** A failed verification removes the bad `.partial`, keeps the source and tries again
+  next pass; from `recording_outbox_warn_after_failures` (3) failures in a row it is also held (red).
+- **Crash safety.** A `.partial` left by a killed copy is removed once its size is unchanged between
+  two passes (so a copy another machine is still writing is never pulled away), then the copy starts
+  again. A crash after the rename and before the delete leaves an identical file in the intake; the
+  next pass's lookup finds it and deletes only the local copy.
+- **Report.** The last pass is kept on the orchestrator and written into every status report
+  (`Processing/.node_status/<host>.json`, key `recording_outbox`): sent this pass, the last ten sent,
+  held (with reasons), waiting (with reasons), not yet named, named files still on the PC, and why
+  nothing is being sent if so. `mousereach-watch-status` prints a summary line per sending node and
+  one `[!] HELD` line per held file (red on a terminal that can show color -- on a Windows console
+  the command switches on color first, and prints plain text if it cannot --
+  `node_status.outbox_lines`); the Pipeline
+  Dashboard puts held files in its red attention panel (`node_status.held_recordings`). Every send,
+  skip, stopped copy, removed `.partial` and delete is a line in `recording_sends.jsonl` in the
+  watcher's log folder; the state between passes is `recording_outbox_state.json` in the processing
+  folder.
+- **By hand.** `mousereach-send-recordings --preview` lists what a pass would do (copies and deletes
+  nothing, any hour); `--once` runs one pass with the same rules, for a PC whose watcher is not
+  running.
+
+Tests: `tests/test_recording_outbox.py` (fails on 0c36d0d: the module does not exist).
