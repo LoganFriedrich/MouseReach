@@ -3454,6 +3454,11 @@ both roles); `watcher/review_gate.py` `QC_TRIAGE_FAILED`, `evaluate_gate`; tests
 
 ## Update 2026-11-15: Escalate and Flag Session record the move in the watcher database
 
+*Superseded in part by "a login that cannot name the watcher database refuses" below: the database
+is no longer "else `<processing_root>/watcher.db`" for a processing-server login with no
+`watcher.db_path` -- that login cannot name it, the move still happens, and the window says the
+watcher's record was not updated.*
+
 The review tool's **Escalate: bad segmentation** and **Flag Session** buttons move a video from the
 triage queue into deep review. They used to move it with no database, so the row still said
 `triage` while the bundle was in deep review. They now open the watcher's own database
@@ -5153,6 +5158,9 @@ On the processing server, check every login's `watcher` section for `"mode":
 Tests: `tests/test_watcher_db_must_be_named.py`, `tests/test_route_cli_db.py`.
 
 ## Update: publication locks are set and lifted on the processing server only
+
+*Superseded in part by the next update ("a publication lock is a record beside the filed results
+that every machine honours"): the lock is no longer known to one machine only.*
 
 A publication lock (`mousereach-crystallize`, state `crystallized`) is written only to the
 watcher database of the machine that runs the command, and only that machine's version scan
