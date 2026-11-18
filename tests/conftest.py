@@ -9,7 +9,12 @@ that folder was renamed during a maintenance freeze.
 
 HOW: an audit hook (sys.addaudithook) records every folder create, rename or
 delete, every write-mode open, and every SQLite connection under the real
-roots. The roots are resolved from this machine's configuration when this file
+roots -- and, while a test is running, REFUSES it (PermissionError) before it
+happens. WHY refuse, not only record: a test that wrote one row into the real
+shared version index failed afterwards, as designed, but the row stayed in the
+live index, where it was the newest entry; a failing test must leave nothing
+behind. Code that swallows the error (best-effort bookkeeping) still has the
+attempt recorded, so the test still fails. The roots are resolved from this machine's configuration when this file
 is imported, before any test patches Paths. After each test, any such event
 fails that test and names the path. A folder create is recorded even when the
 folder already exists -- exactly the case that hid the original bug. On a
@@ -64,6 +69,9 @@ def _real_roots():
 
 _REAL_ROOTS = _real_roots()
 _hits = []
+# True only while a test body (and its fixtures) runs; outside a test -- at
+# import and collection -- an attempt is recorded but not refused.
+_refusing = [False]
 
 
 def _inside_real_root(path):
@@ -93,6 +101,10 @@ def _audit(event, args):
         hit = _inside_real_root(candidate)
         if hit:
             _hits.append((event, hit))
+            if _refusing[0]:
+                raise PermissionError(
+                    f"test guard: {event} on this machine's real pipeline folder "
+                    f"refused: {hit}")
 
 
 if _REAL_ROOTS:
@@ -102,7 +114,11 @@ if _REAL_ROOTS:
 @pytest.fixture(autouse=True)
 def _no_writes_to_real_pipeline_folders():
     start = len(_hits)
-    yield
+    _refusing[0] = True
+    try:
+        yield
+    finally:
+        _refusing[0] = False
     new = _hits[start:]
     if new:
         del _hits[start:]
