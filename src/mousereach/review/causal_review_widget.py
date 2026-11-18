@@ -2999,6 +2999,31 @@ The notes box travels with the video.
             self._status_label.setText(
                 f"[NOT MOVED] {self._video_stem}: the review did not save")
             return
+        # Everything below -- setting an old clear aside and the move -- runs
+        # under the video's bundle claim, the one the watcher's return scan
+        # takes before it touches a bundle. WHY: this button moved a queue
+        # bundle with no claim, so the scan could be returning or diverting
+        # the same folder at that moment. When another program holds it,
+        # nothing is touched and the person is told to press again.
+        from mousereach.watcher import review_gate as _rg
+        stem = self._video_stem
+        if not _rg.take_bundle_claim(stem):
+            show_error(f"Session {key} is flagged, but {stem} was NOT moved: "
+                       f"{_rg.BUSY_MESSAGE}.")
+            self._status_label.setText(f"[NOT MOVED] {stem}: another program is moving it")
+            return
+        try:
+            # Called through the class so stand-in windows in the tests need
+            # no extra attribute.
+            moved = CausalReviewWidget._flag_session_divert(self, key, Path(bundle), reason)
+        finally:
+            _rg.release_bundle_claim(stem)
+        if moved:
+            self._load_next_video()
+
+    def _flag_session_divert(self, key, bundle, reason) -> bool:
+        """The move part of Flag Session, run under the bundle claim. True
+        when the window should go on to the next video."""
         # Flagging means a person found a new problem, exactly like Escalate:
         # an earlier re-segmentation clear travelling with the bundle would let
         # the return scan release the video straight back on the same cuts. Set
@@ -3012,7 +3037,7 @@ The notes box travels with the video.
                        f"of {self._video_stem} could not be set aside, so the video "
                        f"was NOT moved: {e}")
             logger.exception("flag session: could not set aside the earlier clear")
-            return
+            return False
         from mousereach.config import Paths
         from mousereach.watcher.review_routing import same_path
         deep_root = getattr(Paths, "DEEP_REVIEW", None)
@@ -3031,8 +3056,7 @@ The notes box travels with the video.
             self._status_label.setText(
                 f"[FLAG] Session {key} flagged -- {self._video_stem} already in "
                 f"re-segmentation.")
-            self._load_next_video()
-            return
+            return True
         # The move is recorded in the watcher database as 'deep_review', so
         # the folder and the database agree (_watcher_db_for_move says why).
         db, db_note = self._watcher_db_for_move()
@@ -3047,12 +3071,12 @@ The notes box travels with the video.
             show_error(f"Flagged session {key}, but could not divert "
                        f"{self._video_stem} to the re-segmentation queue: {e}")
             logger.exception("flag session: divert to deep review failed")
-            return
+            return False
         show_info(f"Session {key} flagged; {self._video_stem} moved to the "
                   f"re-segmentation queue." + db_note)
         self._status_label.setText(
             f"[FLAG] Session {key} flagged -- {self._video_stem} -> re-segmentation.")
-        self._load_next_video()
+        return True
 
     @staticmethod
     def _watcher_db_for_move():

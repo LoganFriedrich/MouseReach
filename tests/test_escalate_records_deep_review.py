@@ -62,8 +62,9 @@ def test_the_existing_database_is_opened(tmp_path, monkeypatch):
 def test_the_review_tool_buttons_pass_the_database():
     from mousereach.review import causal_review_widget as w
     cls = w.CausalReviewWidget
-    for fn in (cls._flag_session, cls._escalate_to_deep_review):
+    # Flag Session's move is in _flag_session_divert (run under the claim).
+    for fn in (cls._flag_session_divert, cls._escalate_to_deep_review):
         src = inspect.getsource(fn)
         assert "_watcher_db_for_move()" in src, fn.__name__
         assert "db=None" not in src, fn.__name__
-    assert 'db_state="deep_review"' in inspect.getsource(cls._flag_session)
+    assert 'db_state="deep_review"' in inspect.getsource(cls._flag_session_divert)

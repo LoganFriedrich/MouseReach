@@ -439,13 +439,21 @@ def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
     (db_location.open_watcher_db_if_present). With ``db`` None the move still
     happens (the person's decision is what matters) and the disagreement is
     logged; it heals when the video returns from deep review."""
-    supersede_deep_review_clear(video_id, bundle)
-    if db is None:
-        logger.warning(f"Escalate {video_id}: no watcher database given; the bundle "
-                       f"moves to deep review but the row keeps its state until "
-                       f"the video returns")
-    return route_to_queue(video_id, Path(bundle), Paths.DEEP_REVIEW,
-                          reason=reason, db=db, db_state="deep_review")
+    # Under the bundle claim, from setting the old clear aside to the end of
+    # the move: the return scan acts on the same bundle under that claim, and
+    # without it both could work on one folder at once (BundleBusyError).
+    if not take_bundle_claim(video_id):
+        raise BundleBusyError(f"{video_id}: {BUSY_MESSAGE}")
+    try:
+        supersede_deep_review_clear(video_id, bundle)
+        if db is None:
+            logger.warning(f"Escalate {video_id}: no watcher database given; the bundle "
+                           f"moves to deep review but the row keeps its state until "
+                           f"the video returns")
+        return route_to_queue(video_id, Path(bundle), Paths.DEEP_REVIEW,
+                              reason=reason, db=db, db_state="deep_review")
+    finally:
+        release_bundle_claim(video_id)
 
 
 class AlreadyInQueueError(RuntimeError):
@@ -453,6 +461,45 @@ class AlreadyInQueueError(RuntimeError):
     queue already holds the video's LIVE bundle (the video is held there) and
     the source is somewhere else. See route_to_queue for why nothing is
     merged, and _clear_the_way for the folders that are not a live bundle."""
+
+
+class BundleBusyError(AlreadyInQueueError):
+    """Raised by route_to_queue (and escalate_to_deep_review), before anything
+    moves, when the video's queue bundle is being moved by another program
+    right now: another process or machine holds the bundle claim the return
+    scan takes (review_return._claim_return). A subclass of
+    AlreadyInQueueError so every caller that already treats "refused, nothing
+    moved, try later" handles it the same way (the watcher waits and runs the
+    video again; it never counts as a failure of the video)."""
+
+
+def is_queue_bundle_folder(folder) -> bool:
+    """Is ``folder`` a per-video folder directly inside a review queue?"""
+    if not folder:
+        return False
+    parent = Path(folder).parent
+    return any(_same_folder(parent, getattr(Paths, q, None))
+               for q in ("TRIAGE_REVIEW", "DEEP_REVIEW"))
+
+
+def take_bundle_claim(video_id: str) -> bool:
+    """Take the video's bundle claim for this thread (re-entrant; see the
+    block comment above review_return._claim_return). True when held; every
+    True must be matched by one release_bundle_claim. For a review window
+    that does several things to one bundle (set aside an old clear, then
+    move it) under one claim."""
+    from .review_return import _claim_return
+    return _claim_return(video_id)
+
+
+def release_bundle_claim(video_id: str) -> None:
+    from .review_return import _release_return_claim
+    _release_return_claim(video_id)
+
+
+BUSY_MESSAGE = ("another program (the watcher's return scan, the route command or "
+                "a re-pose) is moving this video's bundle right now; nothing was "
+                "moved -- try again in a minute")
 
 
 # Watcher states in which a bundle in a queue is the video's live copy.
@@ -695,6 +742,9 @@ def route_to_queue(
 
     Raises CrystallizedError, before anything moves, when ``db`` says the
     video is crystallized (publication-locked; db.crystallized_refusal).
+    Raises BundleBusyError, before anything moves, when the source is a queue
+    bundle and another program holds its bundle claim (see the comment in
+    the body).
 
     DEEP REVIEW SUPERSEDES TRIAGE (review_routing, block comment above
     deep_review_stems):
@@ -726,11 +776,46 @@ def route_to_queue(
         generation replaced the held run's results, and a review a person had
         saved in the bundle could be replaced by an older one."""
     from .db import CrystallizedError, crystallized_refusal
-    from .review_routing import in_deep_review
     locked = crystallized_refusal(db, video_id, "routed to a review queue")
     if locked:
         raise CrystallizedError(locked)
+    # A move OUT OF a review queue (Escalate, Flag Session, the route command,
+    # the return scan's diverts) happens under the video's bundle claim, the
+    # one the return scan takes before it touches a bundle. WHY: the window's
+    # buttons moved a queue bundle with no claim, so the scan on another
+    # machine (or the watcher on this one) could be returning or diverting
+    # the same folder at that moment and the bundle was torn between two
+    # places. The claim is re-entrant per thread, so a route started by a
+    # holder (the scan, the route command) goes on as before. A route from
+    # Processing takes no claim here; _clear_the_way claims before it clears
+    # a folder already in the destination queue.
+    from_queue = is_queue_bundle_folder(processing_dir)
+    if from_queue and not take_bundle_claim(video_id):
+        raise BundleBusyError(f"{video_id}: {BUSY_MESSAGE}")
+    try:
+        return _route_to_queue_claimed(
+            video_id, processing_dir, dest_root, reason, db=db,
+            db_state=db_state, extra_sources=extra_sources,
+            held_at_step=held_at_step, all_or_nothing=all_or_nothing)
+    finally:
+        if from_queue:
+            release_bundle_claim(video_id)
 
+
+def _route_to_queue_claimed(
+    video_id: str,
+    processing_dir: Path,
+    dest_root: Path,
+    reason: str,
+    db=None,
+    db_state: Optional[str] = None,
+    extra_sources: Optional[Iterable[Path]] = None,
+    held_at_step: Optional[str] = None,
+    all_or_nothing: bool = False,
+) -> Path:
+    """route_to_queue's work, run under the bundle claim when the source is a
+    queue bundle (see route_to_queue)."""
+    from .review_routing import in_deep_review
     from .resume_point import QUEUE_STEP
 
     def _step_for(state: str) -> Optional[str]:

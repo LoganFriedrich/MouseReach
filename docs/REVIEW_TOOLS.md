@@ -244,6 +244,23 @@ cases they do nothing, and the message says why:
   works. Flag Session has already recorded its session note by then; only the move waits.
   **Why:** Escalate and Flag Session used to move the video and load the next one anyway, so
   the answers, which existed only on screen, were lost without a word.
+- **Another program is moving the video right now.** Escalate and Flag Session take the same
+  per-video claim the watcher's return scan takes before it touches a bundle (the marker in
+  `<review root>/.return_claims/`, described under "bundle claims" below). If the watcher, the
+  route command or a re-pose holds it at that moment, the button says "another program ... is
+  moving this video's bundle right now; nothing was moved -- try again in a minute" and the
+  window stays on the video. Press the button again a minute later. The same holds for every
+  route of a bundle OUT of a queue (`route_to_queue`, `mousereach-route-to-queue`): it is
+  refused with nothing moved, and the watcher treats that like any other refused route (it
+  waits and tries again; it never counts against the video). **Why:** these moves used to take
+  no claim, so the return scan could be moving the same folder at the same moment and the
+  bundle ended up split between two places. **Limit:** the claim protects a move only when every
+  machine and program that moves queue bundles runs this version. In an older version only the
+  return scan takes the claim; its other routes out of a queue (a watcher's re-route, the route
+  command, a review window's Escalate or Flag Session) move the bundle without looking for it.
+  A mixed set
+  of machines is no worse than before, but the protection is complete only once every machine
+  has been updated and every review window restarted.
 
 **Escalating cancels any earlier re-segmentation clear (since 2026-10-27).**
 Pressing the button means a new problem with the cuts has been found, so a
