@@ -5908,3 +5908,30 @@ and held such files on the recording PC.
 
 Tests: tests/test_recording_issue.py, tests/test_recording_outbox.py.
 Operator guide: docs/RECORDING_ISSUES.md.
+
+## Update 2026-11-18: a video cut on a GPU machine with no DLC queue is never stranded
+
+A GPU machine cuts each child of a collage, puts it in its own claim folder on the shared drive
+(`Unanalyzed/Single_Animal/.inflight/<machine>/`) and copies it into its local DLC queue. With no
+DLC queue configured on that machine, nothing can be posed there. The child's row used to be parked
+`unresolvable` ("no local DLC queue is configured on this node") with a reason nothing ever took
+again, while the collage was recorded `cropped`: if no other machine took the video, its session
+was never posed -- even after a person had configured the queue.
+
+Now (`DLCOrchestrator._adopt_single_for_dlc`, `single_claim.NO_DLC_QUEUE_REASON`,
+`state.WatcherStateManager._queue_now_configured`):
+- the machine's claim on the video goes back to the top of the shared singles folder at once
+  (never overwriting a file already there), so any machine with a DLC queue takes it the ordinary
+  way;
+- the row is parked `unresolvable` with a reason starting "no local DLC queue is configured on this
+  node; the video waits in the shared singles folder for any node that has one ...";
+- the singles intake takes such a row again on this machine ONCE a DLC queue is configured here
+  (while the video is at the top of the folder, stable, and no other machine holds a claim on it).
+  It is not taken again while there is still no queue, so the row does not flip on every poll.
+  Rows written by older versions carry the same opening words and are taken again the same way.
+
+The collage stays recorded `cropped`: every child of it is in a place a machine can take it from.
+For an operator: if a GPU machine's log shows "no local DLC queue is configured on this node", set
+the machine's processing folder in `mousereach-setup` (the DLC queue lives inside it) and restart
+its watcher; the videos it parked are taken again by themselves. Tests:
+`tests/test_cut_child_on_a_node_without_a_queue.py`.

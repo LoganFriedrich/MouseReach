@@ -3537,8 +3537,20 @@ class DLCOrchestrator(BaseOrchestrator):
 
         dlc_queue = Paths.DLC_QUEUE
         if not dlc_queue:
+            # Nothing can be posed here. A copy this node holds in its claim
+            # folder (a video it cut from a collage, published there as its
+            # claim) goes back to the top of the singles folder at once, for
+            # any node with a queue. The row is parked with
+            # single_claim.NO_DLC_QUEUE_REASON, which the singles intake takes
+            # again once this node has a queue (state.discover_new_singles).
+            # WHY: such a child was parked with nothing that ever took it
+            # again, while its collage was recorded 'cropped' -- if no other
+            # node took it, its session was never posed.
             self.db.mark_unresolvable(
-                video_id, "no local DLC queue is configured on this node")
+                video_id, f"{single_claim.NO_DLC_QUEUE_REASON}; the video waits in "
+                          f"the shared singles folder for any node that has one, and "
+                          f"is taken again here once this node has one")
+            self._release_claim_given_up(video_id, single_claim.NO_DLC_QUEUE_REASON)
             return False
 
         # A copy already in THIS node's claim folder is this node's own claim:

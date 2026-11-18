@@ -371,6 +371,23 @@ class WatcherStateManager:
                     f"quarantined -> validated")
         return True
 
+    @staticmethod
+    def _queue_now_configured(row: dict) -> bool:
+        """True for a row parked because this node had no DLC queue
+        (single_claim.NO_DLC_QUEUE_REASON) once a queue IS configured here.
+        WHY only then: re-driven while there is still no queue, the row would
+        go validated -> unresolvable on every poll; never re-driven, a video
+        this node cut waited for ever once nobody else took it, even after a
+        person had configured the queue. Never raises."""
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.single_claim import NO_DLC_QUEUE_REASON
+            return (row.get('state') == 'unresolvable'
+                    and (row.get('error_message') or '').startswith(NO_DLC_QUEUE_REASON)
+                    and bool(Paths.DLC_QUEUE))
+        except Exception:
+            return False
+
     def discover_new_singles(self, scan_dir: Path) -> List[str]:
         """
         Scan directory for new single-animal videos and register them.
@@ -386,7 +403,9 @@ class WatcherStateManager:
         shared folder (single_claim.REDRIVE_REASONS: it left the folder before
         this node could take it, or this node put it there for any node --
         cut but not kept, or given back on pausing) is validated again when
-        the video is at the top of the folder and stable.
+        the video is at the top of the folder and stable. So is a row parked
+        because this node had no DLC queue (single_claim.NO_DLC_QUEUE_REASON),
+        once it has one (_queue_now_configured).
 
         Args:
             scan_dir: Directory to scan for videos
@@ -440,7 +459,8 @@ class WatcherStateManager:
             if row is not None:
                 came_back = ((row.get('state') == 'unresolvable'
                               and (row.get('error_message') or '').startswith(REDRIVE_REASONS))
-                             or self._copy_failed_retry_due(row))
+                             or self._copy_failed_retry_due(row)
+                             or self._queue_now_configured(row))
                 if came_back and self._single_is_stable(file_path):
                     # Not while a node still holds a claim of that name: then
                     # the file is a second copy dropped in while the first is

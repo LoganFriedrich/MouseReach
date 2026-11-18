@@ -137,6 +137,19 @@ ELSEWHERE_BEFORE_POSE_REASON = "no file on this node; another node had it before
 # there when it is back and stable" (state.WatcherStateManager.discover_new_singles).
 REDRIVE_REASONS = (LEFT_FOLDER_REASON, SHARED_REASON, ELSEWHERE_BEFORE_POSE_REASON)
 
+# The start of the reason a GPU node records ('unresolvable') for a video it
+# was about to take for pose while no local DLC queue is configured on it
+# (DLCOrchestrator._adopt_single_for_dlc). The video is put back at the top of
+# the singles folder for any node that has a queue. The singles intake takes
+# such a row again ONLY once this node has a DLC queue configured
+# (discover_new_singles). WHY not one of REDRIVE_REASONS: re-driven while the
+# node still has no queue, the row would go validated -> unresolvable on every
+# poll. WHY re-driven at all: before, nothing took such a row again, so a video
+# this node cut from a collage (the collage then recorded 'cropped') waited
+# for ever when no other node took it -- even after a person had configured
+# the queue. The text is the one older versions wrote, so their rows match.
+NO_DLC_QUEUE_REASON = "no local DLC queue is configured on this node"
+
 # The start of the error_message of a 'failed' row whose copy from the shared
 # singles folder into this node's DLC queue failed. The video was given back
 # to the folder. The singles intake validates such a row again (this node may
