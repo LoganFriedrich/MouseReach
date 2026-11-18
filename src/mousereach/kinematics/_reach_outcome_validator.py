@@ -458,10 +458,13 @@ class ReachOutcomeValidator(QWidget):
             self.viewer.layers.remove(self.pellet_points_layer)
 
         seg_data = self.current_segment_data['features']
-        start_frame = seg_data['start_frame']
-        end_frame = seg_data['end_frame']
+        # The segment's first and last frame, both included, whichever
+        # extractor wrote the file (features_segment_span says why it matters).
+        from mousereach.review.causal_review_io import features_segment_span
+        start_frame, last_frame = features_segment_span(
+            seg_data, self.features_data.get('extractor_version'))
 
-        seg_df = self.dlc_df.iloc[start_frame:end_frame]
+        seg_df = self.dlc_df.iloc[start_frame:last_frame + 1]
 
         # Get pellet positions
         pellet_x = seg_df['Pellet_x'].values

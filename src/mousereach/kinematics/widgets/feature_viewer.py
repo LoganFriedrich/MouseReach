@@ -76,7 +76,10 @@ class FeatureViewer:
         print("=" * 80)
 
         # Basic info
-        print(f"Frames: {seg['start_frame']} to {seg['end_frame']} ({seg['end_frame'] - seg['start_frame'] + 1} frames)")
+        # First and last frame, both included, whichever extractor wrote the file.
+        from mousereach.review.causal_review_io import features_segment_span, frames_in
+        first, last = features_segment_span(seg, self.features.get('extractor_version'))
+        print(f"Frames: {first} to {last} ({frames_in(first, last)} frames)")
         print(f"Outcome: {seg['outcome']} (confidence: {seg['outcome_confidence']:.2f})")
         if seg['outcome_flagged']:
             print(f"  *** FLAGGED FOR REVIEW ***")

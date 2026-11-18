@@ -165,6 +165,63 @@ def test_the_session_only_file_uses_the_convention(tmp_path):
     assert seg["reaches"][0]["duration_frames"] == 5
 
 
+def _pellet_seen_only_at(df, frame):
+    """The pellet is tracked (likelihood 1) in ONE frame only: a window that
+    holds that frame has pellet-position values, one that does not has none."""
+    df["Pellet_x"], df["Pellet_y"] = 130.0, 70.0
+    df["Pellet_likelihood"] = 0.0
+    df.loc[frame, "Pellet_likelihood"] = 1.0
+    return df
+
+
+def test_the_pellet_window_ends_before_the_first_reach():
+    # The first reach starts at 100, so frame 100 is the reach, not "before" it.
+    df = _pellet_seen_only_at(_pose_table(), 100)
+    got = FeatureExtractor()._compute_pellet_positioning(df, 40, 100, 34.0, seg_last=CUT - 1)
+    assert got["pellet_position_idealness"] is None
+    df = _pellet_seen_only_at(_pose_table(), 99)
+    got = FeatureExtractor()._compute_pellet_positioning(df, 40, 100, 34.0, seg_last=CUT - 1)
+    assert got["pellet_position_idealness"] is not None
+
+
+def test_a_pellet_with_no_reach_uses_its_first_30_frames():
+    # Frames 40..69 are the first 30; frame 70 is the 31st.
+    df = _pellet_seen_only_at(_pose_table(), 70)
+    got = FeatureExtractor()._compute_pellet_positioning(df, 40, None, 34.0, seg_last=CUT - 1)
+    assert got["pellet_position_idealness"] is None
+    df = _pellet_seen_only_at(_pose_table(), 69)
+    got = FeatureExtractor()._compute_pellet_positioning(df, 40, None, 34.0, seg_last=CUT - 1)
+    assert got["pellet_position_idealness"] is not None
+
+
+def test_the_no_reach_window_never_runs_into_the_next_pellet():
+    # A pellet of 5 frames (200..204): frame 205 is the next pellet's.
+    df = _pellet_seen_only_at(_pose_table(), 205)
+    got = FeatureExtractor()._compute_pellet_positioning(df, 200, None, 34.0, seg_last=204)
+    assert got["pellet_position_idealness"] is None
+
+
+def test_the_extractor_bounds_the_pellet_window_by_the_pellet(tmp_path, monkeypatch):
+    seen = []
+    real = FeatureExtractor._compute_pellet_positioning
+
+    def spy(self, df, start, first_reach, ruler, *a, **k):
+        seen.append((start, first_reach, k.get("seg_last")))
+        return real(self, df, start, first_reach, ruler, *a, **k)
+    monkeypatch.setattr(FeatureExtractor, "_compute_pellet_positioning", spy)
+    pose, reaches, outcomes = _bundle(tmp_path)
+    FeatureExtractor().extract(pose, reaches, outcomes)
+    assert seen == [(40, 100, CUT - 1)]
+
+
+def test_a_features_file_segment_is_read_by_its_version():
+    from mousereach.review.causal_review_io import features_segment_span
+    seg = {"start_frame": 40, "end_frame": 200}
+    assert features_segment_span(seg, "2.4.0") == (40, 199)   # stored the next cut
+    assert features_segment_span(seg, "2.6.0") == (40, 200)   # stores the last frame
+    assert features_segment_span(seg, None) == (40, 200)
+
+
 # --- ground truth (the results step) --------------------------------------------------
 
 def test_a_ground_truth_reach_duration_is_exact():

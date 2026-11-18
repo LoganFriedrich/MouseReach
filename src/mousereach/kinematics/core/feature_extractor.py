@@ -439,7 +439,11 @@ class FeatureExtractor:
                        # segment_duration_sec and time_to_outcome_sec were one frame
                        # long, and the features file's segment end_frame was the next
                        # pellet's first frame (now the pellet's last frame, as in the
-                       # outcomes file). And a reach's duration_frames is counted from
+                       # outcomes file). The pellet-positioning window ("before the
+                       # first reach") ended ON the first reach's start frame; it now
+                       # ends at the frame before, and a segment with no reach uses
+                       # exactly its first 30 frames (it was 31). And a reach's
+                       # duration_frames is counted from
                        # its frames (end - start + 1) instead of copied: reaches a
                        # person moved or added in the reach review window, and every
                        # ground-truth reach, carried a stored value one frame short.
@@ -817,7 +821,8 @@ class FeatureExtractor:
                 df,
                 seg_first,
                 first_reach_start,
-                seg_data['ruler_pixels']
+                seg_data['ruler_pixels'],
+                seg_last=seg_last,
             )
 
             # Compute quality metrics
@@ -1565,7 +1570,8 @@ class FeatureExtractor:
         df: pd.DataFrame,
         start_frame: int,
         first_reach_start: Optional[int],
-        ruler_pixels: float
+        ruler_pixels: float,
+        seg_last: Optional[int] = None,
     ) -> Dict:
         """
         Compute pellet positioning metrics before first interaction.
@@ -1578,6 +1584,8 @@ class FeatureExtractor:
             start_frame: Segment start frame
             first_reach_start: Frame of first reach, or None if no reaches
             ruler_pixels: Ruler size in pixels
+            seg_last: the segment's LAST frame, included (reach_file_segment_span);
+                bounds the 30-frame window of a segment with no reaches
 
         Returns:
             Dict with pellet positioning features
@@ -1585,12 +1593,23 @@ class FeatureExtractor:
         features = {}
         mm_per_pixel = self.RULER_MM / ruler_pixels if ruler_pixels > 0 else 0
 
-        # Use frames before first reach, or first 30 frames if no reaches
+        # The assessment window, first and last frame both included (the one
+        # frame convention, causal_review_io.reach_file_segment_span): the
+        # frames BEFORE the first reach -- it ends at the frame before the
+        # reach's start, because the start frame is already the reach -- or,
+        # with no reach, the segment's first 30 frames. Before extractor 2.6.0
+        # it took in the first reach's start frame, and the no-reach window was
+        # 31 frames and could run past the segment into the next pellet.
         if first_reach_start is not None:
-            end_assessment = first_reach_start
+            end_assessment = first_reach_start - 1
         else:
-            end_assessment = min(start_frame + 30, len(df) - 1)
+            end_assessment = start_frame + 30 - 1
+            if seg_last is not None:
+                end_assessment = min(end_assessment, seg_last)
+        end_assessment = min(end_assessment, len(df) - 1)
 
+        # Empty when the first reach starts on the segment's first frame: no
+        # frame comes before it, and the values below are then None.
         assessment_df = df.iloc[start_frame:end_assessment + 1]
 
         # Need pellet position and box opening (BOXR)

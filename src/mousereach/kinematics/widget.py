@@ -18,6 +18,7 @@ from typing import Optional, Dict, List
 
 import napari
 import numpy as np
+from mousereach.review.causal_review_io import features_segment_span
 import pandas as pd
 from napari.layers import Image, Shapes, Points, Labels
 from qtpy.QtWidgets import (
@@ -575,9 +576,11 @@ class DataViewerWidget(QWidget):
         if self.pellet_points_layer is not None and self.pellet_points_layer in self.viewer.layers:
             self.viewer.layers.remove(self.pellet_points_layer)
 
-        start_frame = seg_data['start_frame']
-        end_frame = seg_data['end_frame']
-        seg_df = self.dlc_df.iloc[start_frame:end_frame]
+        # The segment's first and last frame, both included, whichever
+        # extractor wrote the file (features_segment_span says why it matters).
+        start_frame, last_frame = features_segment_span(
+            seg_data, self.features_data.get('extractor_version'))
+        seg_df = self.dlc_df.iloc[start_frame:last_frame + 1]
 
         pellet_x = seg_df['Pellet_x'].values
         pellet_y = seg_df['Pellet_y'].values

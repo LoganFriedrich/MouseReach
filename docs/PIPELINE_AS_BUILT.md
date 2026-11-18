@@ -5881,7 +5881,12 @@ kinematics read that as the segment's last frame. So every segment-level value
 threshold line) took in one frame of the next pellet. Each pellet's
 `segment_duration_sec` and `time_to_outcome_sec` were one frame long, and the
 features file's segment `end_frame` was the next pellet's first frame. It is now the
-pellet's last frame, as in the outcomes file.
+pellet's last frame, as in the outcomes file. The pellet-position window ("before the
+first reach") also took in the first reach's start frame; it now ends at the frame
+before, and a pellet with no reach uses exactly its first 30 frames (it was 31). The
+review windows that draw a pellet's track from a features file read its frames through
+`causal_review_io.features_segment_span`, so files from before and after 2.6.0 both
+show the whole pellet and nothing more.
 
 A reach's `duration_frames` is now counted from its frames (`end - start + 1`). It
 used to be copied, which left reaches a person moved or added in the reach review

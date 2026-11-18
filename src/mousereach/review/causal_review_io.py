@@ -1077,6 +1077,29 @@ def reach_file_segment_span(seg) -> Tuple[int, int]:
     return int(seg["start_frame"]), int(seg["end_frame"]) - 1
 
 
+# The first kinematic extractor whose features file stores a segment's end_frame
+# as the pellet's LAST frame. Earlier features files copied the reaches file's
+# end (the next pellet's first frame).
+FEATURES_SEGMENT_END_INCLUSIVE_FROM = (2, 6, 0)
+
+
+def features_segment_span(seg, extractor_version) -> Tuple[int, int]:
+    """The frames of one segment of a ``*_features.json`` file, as
+    ``(first frame, last frame)``, both included (reach_file_segment_span
+    states the convention).
+
+    Features files written before extractor 2.6.0 store the reaches file's
+    end (the frame after the pellet's last one); from 2.6.0 they store the
+    last frame. ``extractor_version`` is the file's own ``extractor_version``;
+    one that cannot be read is taken as current."""
+    first, end = int(seg["start_frame"]), int(seg["end_frame"])
+    try:
+        ver = tuple(int(p) for p in str(extractor_version).split(".")[:3])
+    except (TypeError, ValueError):
+        ver = FEATURES_SEGMENT_END_INCLUSIVE_FROM
+    return (first, end) if ver >= FEATURES_SEGMENT_END_INCLUSIVE_FROM else (first, end - 1)
+
+
 def frames_in(first: int, last: int) -> int:
     """How many frames the window ``first .. last`` holds, both ends included
     (reach_file_segment_span states the convention): ``last - first + 1``."""
