@@ -192,6 +192,15 @@ def _classify(path: Path, video_id: str, old_scorer: Optional[str]) -> Optional[
     return None
 
 
+def is_outcome_free_tray(video_id: str) -> bool:
+    """Easy/Flat tray (config.is_outcome_free_tray); False if it cannot tell."""
+    try:
+        from ..config import is_outcome_free_tray as _free
+        return bool(_free(video_id))
+    except Exception:
+        return False
+
+
 def is_human_cuts(path) -> bool:
     """True when ``path`` is a segments file whose cuts a person set
     (``boundary_source: "human"``, the fixer's mark; the same test as
@@ -282,7 +291,21 @@ def supersede_video_outputs(
         if cat == "never":
             summary["kept"].append(f.name)
             continue
-        if f.name.endswith("_segments.json") and is_human_cuts(f):
+        # POLICY -- Easy and Flat trays are exempt from the person's-cuts rule.
+        # On those trays filing replaces ANY segments file, a person's
+        # included, with the algorithm's whole-video span. WHY: they are never
+        # cut. The segmenter gives every Easy/Flat video one whole-video span
+        # before it even looks for a person's cuts (segmentation/core/batch.py,
+        # is_outcome_free_tray), so a run never produces a person's file for
+        # one, and protecting a person's file here would refuse every filing of
+        # such a video for good. The review tools treat those trays as uncut
+        # (the segmentation fixer's queue releases them rather than asking for
+        # cuts), so a person's cuts on one are not expected; whether a
+        # person can ever set them is a question for the lab owner, recorded in
+        # docs/PIPELINE_AS_BUILT.md. Before this rule existed every filing
+        # replaced such a file too.
+        if (f.name.endswith("_segments.json") and is_human_cuts(f)
+                and not is_outcome_free_tray(video_id)):
             repl = (incoming or {}).get(f.name)
             if repl is not None and Path(repl).is_file() and verify_file_hash(
                     f, Path(repl), "sha256"):

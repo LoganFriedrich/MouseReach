@@ -189,3 +189,17 @@ def test_the_stager_makes_no_triage_bundle_for_a_video_in_deep_review(tmp_path, 
     with pytest.raises(Exception):
         staging.stage_video(V, connectome_root=root, pending_dir=pending, verbose=False)
     assert not (pending / V).exists()
+
+
+def test_easy_and_flat_trays_are_not_protected_so_their_filing_goes_on(tmp_path):
+    """An Easy/Flat tray is never cut: its whole-video span replaces any cuts on
+    every run, so supersede must archive them rather than block filing."""
+    from mousereach.archive.supersede import supersede_video_outputs
+    vid = "20990101_CNT9901_E1"
+    folder = tmp_path / "filed"
+    seg = _write(folder / f"{vid}_segments.json", dict(HUMAN, video_name=vid))
+    span = _write(tmp_path / "new" / f"{vid}_segments.json",
+                  {"boundaries": [0], "boundary_source": "outcome_free_tray"})
+    out = supersede_video_outputs(vid, folder, tmp_path / "Archive",
+                                  incoming={span.name: span})
+    assert out["human_cuts_kept"] == [] and not seg.exists()
