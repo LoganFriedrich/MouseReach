@@ -206,3 +206,46 @@ def test_a_retry_after_everything_was_filed_but_processing_kept_a_copy(
     assert not any(proc.iterdir())
     for n in OUTPUTS:
         assert _gen_of(dest / n) == NEW
+
+
+@pytest.mark.parametrize("stuck_suffix", ["_features.json", "_segments.json"])
+def test_the_watchers_retry_after_a_stuck_local_copy_files_and_never_fails(
+        folders, monkeypatch, tmp_path, stuck_suffix):
+    """The watcher asks its own filing check before every attempt. After an
+    attempt that filed everything but could not remove one local copy, that
+    check must pass (this run's features and manifest are filed or still
+    beside the copy) and the next attempt must finish -- never mark the video
+    failed and re-run it."""
+    import time as _time
+    from mousereach.watcher.db import WatcherDB
+    from mousereach.watcher.orchestrator import refuse_filing_without_features
+    proc, dest, _ = folders
+    db = WatcherDB(db_path=tmp_path / "w.db")
+    db.register_video(video_id=V, source_path="x")
+    for st in ("validated", "dlc_queued", "dlc_running", "dlc_complete",
+               "processing", "processed"):
+        db.update_state(V, st)
+    later = _time.time() + 5           # this run's files: made after it started
+    for p in proc.iterdir():
+        if p.suffix == ".json":
+            os.utime(p, (later, later))
+    stuck = proc / f"{V}{stuck_suffix}"
+    real_unlink = Path.unlink
+
+    def unlink(self, *a, **k):
+        if self == stuck:
+            raise PermissionError(13, "in use")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    r = _file(proc)
+    assert not r["success"]
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert refuse_filing_without_features(db, V, proc) is False
+    assert db.get_video(V)["state"] == "processed"
+    r2 = _file(proc)
+    assert r2["success"], r2
+    assert not any(proc.iterdir())
+    for n in OUTPUTS:
+        assert _gen_of(dest / n) == NEW

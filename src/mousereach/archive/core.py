@@ -451,12 +451,14 @@ def archive_video(
     #      place, the manifest second to last and the features file last.
     #      A rename that fails is undone by renaming back, so the complete
     #      previous generation stands again. Renames in one folder take
-    #      milliseconds, and during them the folder holds no features file,
-    #      so the database integrator skips the video rather than read a mix.
+    #      milliseconds, and during them the folder holds no features file:
+    #      a reader that takes a video by its features file finds none, rather
+    #      than one beside a mix.
     #   4. CLEAN UP: only now are the replaced files dropped (their copy is
-    #      in the Archive) and the files in Processing removed. A file that
-    #      cannot be removed from Processing makes the attempt report failure;
-    #      the retry finds everything already filed (identical) and finishes.
+    #      in the Archive) and the files in Processing removed, features file
+    #      first. The first file that cannot be removed from Processing stops
+    #      the clean-up and makes the attempt report failure; the retry finds
+    #      everything already filed (identical) and finishes.
     #
     # The one case this cannot cover is the process being killed outright
     # during the renames of step 3. Then the folder may hold part of the new
@@ -501,15 +503,27 @@ def archive_video(
         if pre.get("human_cuts_kept"):
             return _refuse_persons_cuts(result, video_id, dest,
                                         pre["human_cuts_kept"], verbose)
+        if pre.get("error"):
+            # No Archive to keep the previous generation in: refused before
+            # anything is copied.
+            result["error"] = ("refusing to archive: could not preserve the previous "
+                               "generation of %s (%s); nothing in the filed folder "
+                               "changed" % (video_id, pre["error"]))
+            if verbose:
+                print(f"  {result['error']}")
+            return result
 
     def _discard(paths):
         for p in paths:
             remove_temp_file(p)
 
-    # 1. STAGE. Temporary files an interrupted earlier attempt left are
-    # removed first (one filing of a video runs at a time: the watcher's
-    # archive step, or the command, which refuses while the watcher runs).
-    for f in files:
+    # 1. STAGE. Temporary files an interrupted earlier filing left beside the
+    # files it is about to replace are removed first (one filing of a video
+    # runs at a time: the watcher's archive step, or the command, which
+    # refuses while the watcher runs). Only those names: a review or
+    # ground-truth file that is not changing may be being saved this moment
+    # by a review window, through a temporary file of its own.
+    for f in changing:
         remove_leftover_temps(dest / f.name)
     staged = {}
     for f in changing:
@@ -615,8 +629,10 @@ def archive_video(
                   f"{f.name}")
 
     # The local copies go: features first, then the manifest, then the rest,
-    # so a retry that still finds the features file in Processing also finds
-    # the manifest beside it (the filing step's provenance check).
+    # stopping at the first that cannot be removed. So a retry that still
+    # finds the features file in Processing also finds the manifest beside
+    # it (the filing step's provenance check), and one that finds no features
+    # file there finds this run's features file filed (filed_this_run).
     moved = []
     failed = []
     by_name = {f.name: f for f in files}
@@ -631,6 +647,7 @@ def archive_video(
         except Exception as e:
             failed.append(f"{n} (filed, but its copy in Processing could not be "
                           f"removed: {e})")
+            break
 
     result["files_moved"] = moved
     result["success"] = len(moved) == len(files)

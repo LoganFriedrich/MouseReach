@@ -5427,8 +5427,9 @@ after a re-run -- nothing in that folder changes until every new file is already
    second to last and the new `<video>_features.json` last. If one rename fails, the renames
    already done are undone, so the earlier results stand again as they were.
 4. Only then are the replaced files dropped (their copy is in the Archive) and the local copies
-   in Processing deleted. A local copy that cannot be deleted makes the attempt count as
-   failed; the next attempt finds everything already filed and only deletes it.
+   in Processing deleted, the features file first. The first local copy that cannot be deleted
+   stops this and makes the attempt count as failed; the next attempt finds everything already
+   filed and only deletes what is left.
 
 After a failed attempt the watcher tries again after 1 minute, then 5, 15 and 60 minutes.
 WHY: the features file is what the nightly database import takes from the filed folder and
@@ -5436,8 +5437,8 @@ what the watcher reads as "this video is filed". Filing used to move the earlier
 the Archive first and then move the new ones in one by one, so one file that would not move
 left the cohort folder with some new files and some missing -- neither the old results nor the
 new -- until a retry up to an hour later. During the renames of step 3 there is no features
-file in the folder, so an import running at that moment skips the video instead of reading a
-mix.
+file in the folder, so a reader that takes a video by its features file (as the nightly
+database import does) finds none at that moment, rather than one beside a mix.
 
 What is left (a known limit): if the program is killed outright during the renames of step 3
 (power cut, ended from Task Manager), the cohort folder can hold part of the new files and no
