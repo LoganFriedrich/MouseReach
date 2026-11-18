@@ -138,14 +138,14 @@ The shared location you choose here affects the GPU machine:
 
 | Component | Machine | Location |
 |-----------|---------|----------|
-| MouseReach Code | Analysis PC | `<shared drive>\MouseReach\` |
-| Conda Environment | Analysis PC | `<shared drive>\conda_envs\mousereach\` |
+| MouseReach Code | Each machine | wherever you cloned it (often beside `<processing_root>`) |
+| Conda Environment | Each machine | that machine's conda environment folder |
 | Shared pipeline folders (Unanalyzed, Processing\Posed, Processing\Review, Processing\Failed, Analyzed) | **All** (shared) | `<nas_root>` |
 | Local working folders (DLC_Queue, Processing) | Each machine | `<processing_root>` |
-| NAS Archive (raw videos) | Both (shared) | configurable |
+| NAS Archive (raw videos) | All (shared) | configurable |
 
 **Key Point:** The GPU machine must be able to reach the SAME `<nas_root>` folder. This means:
-- Both machines need network access to the shared drive
+- Every machine needs network access to the shared drive
 - Or the shared drive is a mapped network location (UNC path)
 - Configure the paths identically on both machines (Part 6)
 

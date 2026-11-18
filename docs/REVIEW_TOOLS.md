@@ -194,7 +194,7 @@ re-segmentation** (see "Escalating out of triage").
 
 Two answers can never be used for the segment they are given for, and the tool
 refuses them at the moment of answering, with a message saying why and what to
-do -- nothing is recorded for that segment, and *Save & next* stays on it:
+do -- nothing is recorded for that segment, and *Save Segment + Next* stays on it:
 
 - **a reach outside the segment's frames.** As the video is cut, that reach
   cannot have touched this segment's pellet;

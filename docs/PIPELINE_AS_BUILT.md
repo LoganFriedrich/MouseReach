@@ -63,7 +63,7 @@ The pipeline watcher is started by the command `mousereach-watch` (pyproject.tom
 The two roles watch DIFFERENT folders, which is the cleanest way to tell them apart:
 
   - The graphics-card role watches the collage front door, Unanalyzed\Multi-Animal, plus Unanalyzed\Single_Animal (src/mousereach/watcher/watcher.py:62-70). It crops collages, runs DeepLabCut, and hands the results off.
-  - The processing-server role never looks at the front door at all. It watches only NAS_ROOT\Processing\Posed, the folder where posed videos are staged (src/mousereach/config.py:128, src/mousereach/watcher/orchestrator.py:1364-1371). It never crops a collage and never runs DeepLabCut - its work queue only contains archive, intake, pipeline and reprocess items (src/mousereach/watcher/orchestrator.py:1432-1531).
+  - The processing-server role never looks at the front door at all. It watches only NAS_ROOT\Processing\Posed, the folder where posed videos are staged (src/mousereach/config.py:128, src/mousereach/watcher/orchestrator.py:1364-1371). It never crops a collage and never runs DeepLabCut - its work queue only contains archive, failed-video retry, intake, pipeline and reprocess items (src/mousereach/watcher/orchestrator.py:1432-1531).
 
 The clean two-role split has an important exception. A second setting, `watcher.also_process` (src/mousereach/config.py:678), when true, makes the graphics-card role skip the handoff entirely: it runs the analysis algorithms locally and archives the finished results itself (src/mousereach/watcher/orchestrator.py:513, :528, :548). On a graphics-card machine with also_process set to true, ONE watcher does the entire job end to end and the processing node never sees those videos.
 
