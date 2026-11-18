@@ -21,7 +21,29 @@ lost or poisons the data:
 3. The file is replaced in one step (a temporary file, then ``os.replace``),
    so a crash or a full disk never leaves half a segments file.
 
-The segmentation fixer (review/fix_segmentation_widget.py) saves this way.
+The segmentation fixer (review/fix_segmentation_widget.py) has always saved
+this way. The per-step boundary review screen ("Step 2b - Review Boundaries",
+``mousereach-segment-review``, the Boundaries tab of "Review Tool (Tabbed)")
+used to rewrite the segments file in place WITHOUT the mark: the next segmenter
+run replaced the person's cuts, answers given on the old cuts were not voided,
+and nothing after segmentation was recomputed. Both now save through here.
+
+WHERE A CUT EDITOR MAY NOT SAVE (``save_refusal``)
+--------------------------------------------------
+The boundary screen opens any folder, so it asks first:
+
+* a folder inside the filed tree, or a video locked for a publication
+  (crystallized): a filed video has passed every check. The segmentation
+  fixer works only on the re-segmentation queue and has no rule for changing a
+  filed video's cuts, so nothing is written there (how a filed video's cuts
+  should be corrected is an open question for the lab, not something a screen
+  may decide);
+* a review-queue folder other than the re-segmentation (deep review) queue,
+  i.e. triage: a re-cut belongs in deep review (deep review beats triage). The
+  review window's "Escalate: bad segmentation -> re-segmentation" sends the
+  video there, where its cuts are set;
+* a folder that is no longer there (the bundle left its queue while open):
+  writing would recreate it holding only these cuts.
 
 Qt-free so every rule here is testable without a window.
 ASCII-only console output (Windows consoles cannot print Unicode).
@@ -74,6 +96,78 @@ def invalidate_stale_downstream(seg_path, video_stem, archive_dir):
             stale.unlink()
             removed.append(stale.name)
     return removed
+
+
+def archive_dir_for(seg_path) -> Path:
+    """The dated folder a save copies the replaced files into.
+
+    The segmentation fixer's place: ``<Processing>/_archived/
+    segmentation_before_human_fix_<time>``, where ``<Processing>`` is the
+    shared Processing folder that holds the review queues. WHY the same
+    place for every editor: one place to look for what a person's cuts
+    replaced, and no new folder kind in the lab's tree. A machine with no
+    review queues configured (steps run by hand) keeps it beside the segments
+    file instead. "_archived" folders are never read as live outputs
+    (pipeline/analyzed_tree.SUPERSEDED_DIR_NAMES).
+    """
+    stamp = "segmentation_before_human_fix_%s" % datetime.now().strftime("%Y%m%d_%H%M%S")
+    root = None
+    try:
+        from mousereach.config import Paths
+        review_root = getattr(Paths, "REVIEW_ROOT", None)
+        if review_root:
+            root = Path(review_root).parent / "_archived"
+    except Exception:
+        root = None
+    if root is None:
+        root = Path(seg_path).parent / "_archived"
+    return root / stamp
+
+
+def _inside(folder: Path, root) -> bool:
+    if not root:
+        return False
+    try:
+        f, r = Path(folder).resolve(), Path(root).resolve()
+    except Exception:
+        return False
+    return f == r or r in f.parents
+
+
+def save_refusal(folder, video_stem: str) -> Optional[str]:
+    """Why a person's cuts may NOT be saved into ``folder`` from a cut editor
+    that can open any folder, or None when they may (module docstring says
+    why each rule exists). The text is shown to the person as it is."""
+    folder = Path(folder)
+    if not folder.is_dir():
+        return ("%s is no longer there (the watcher or another window moved this "
+                "video while it was open here). Nothing was saved. Load the video "
+                "again from where it is now." % folder)
+    from mousereach.pipeline.analyzed_tree import filed_tree_refusal
+    if filed_tree_refusal(folder):
+        return ("%s is filed: it passed every check and its files are the record "
+                "of that run. Its cuts are not changed from this screen. Nothing "
+                "was saved." % video_stem)
+    from mousereach.pipeline.publication_lock import lock_refusal
+    try:
+        locked = lock_refusal(video_stem, "saving cuts")
+    except Exception as e:
+        locked = ("whether %s is locked for a publication could not be checked "
+                  "(%s); not saving cuts." % (video_stem, e))
+    if locked:
+        return locked + " Nothing was saved."
+    try:
+        from mousereach.config import Paths
+        review_root = getattr(Paths, "REVIEW_ROOT", None)
+        deep = getattr(Paths, "DEEP_REVIEW", None)
+    except Exception:
+        review_root = deep = None
+    if _inside(folder, review_root) and not _inside(folder, deep):
+        return ("%s is in a review queue other than re-segmentation. Cuts are "
+                "set in re-segmentation: in the review window press 'Escalate: "
+                "bad segmentation -> re-segmentation', then set the cuts there. "
+                "Nothing was saved." % video_stem)
+    return None
 
 
 def mark_as_hand_cuts(seg: dict, boundaries, algo_boundaries, corrected_by: str) -> dict:

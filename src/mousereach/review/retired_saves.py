@@ -24,14 +24,20 @@ Each kind of correction has one tool whose save the pipeline honours:
 * reach start/end frames -> the Ground Truth tool (``mousereach-gt``), whose
   file the results step layers over the algorithm's.
 
-NOT retired here: the separate per-step screens (boundary review
-``mousereach-segment-review``, reach review ``mousereach-review-reaches``,
-outcome review ``mousereach-review-pellet-outcomes`` and their napari menu
-entries). They still save into the step's own file and mark it
+NOT retired here: the separate per-step screens. The boundary review screen
+(``mousereach-segment-review``, "Step 2b - Review Boundaries", the Boundaries
+tab of "Review Tool (Tabbed)") now saves a person's cuts exactly as the
+Segmentation Fixer does (review/hand_cuts.py): marked
+``boundary_source: "human"``, the outputs of the old cuts archived and
+removed, and refused for a filed, crystallized or triage-queue video. The
+reach review ``mousereach-review-reaches`` and outcome review
+``mousereach-review-pellet-outcomes`` (and their napari menu entries and
+tabs) still save into the step's own file and mark it
 ``validation_status: "validated"``, which is the only sign-off a person
 running the steps by hand, without the watcher, has for a step that triage
-marked ``needs_review``. Whether to retire them, and what would replace that
-sign-off, is an open design question.
+marked ``needs_review``. Whether to keep them as editors, open them
+read-only or remove them, and what would replace that sign-off, is an open
+question for the lab.
 """
 from __future__ import annotations
 

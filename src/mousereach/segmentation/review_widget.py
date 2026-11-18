@@ -51,8 +51,21 @@ HELP_TEXT = """
 <li><b>Load Video</b> - Select a video file, DLC data loads automatically</li>
 <li><b>Navigate</b> - Use buttons or keyboard to move between boundaries</li>
 <li><b>Adjust</b> - Press SPACE to set a boundary to the current frame</li>
-<li><b>Save Validated</b> - Saves results and updates validation status</li>
+<li><b>Save Validated</b> - Saves the cuts as YOUR cuts (see below)</li>
 </ol>
+
+<h3>What Saving Does</h3>
+<p>Saving marks the cuts as a person's, exactly as the Segmentation Fixer does:
+re-running segmentation keeps them, and every answer given on the old cuts is
+asked again. The old segments file and everything computed from the old cuts
+(reaches, outcomes, reach assignment, kinematics) are copied into an
+<code>_archived</code> folder and removed -- on every save, even when no boundary
+was moved -- so reach detection and every later step must run again on the new
+cuts.</p>
+<p>Nothing is saved, and the reason is shown, when the video is filed or locked
+for a publication, when it is in the triage queue (press "Escalate: bad
+segmentation -&gt; re-segmentation" in the review window and set the cuts
+there), or when its folder has moved away while it was open.</p>
 
 <h3>Keyboard Shortcuts</h3>
 <ul>
@@ -1262,16 +1275,35 @@ class BoundaryReviewWidget(QWidget):
         self._save_validated()
     
     def _save_validated(self):
-        """Save corrected boundaries as validated output for pipeline.
+        """Save the corrected boundaries as a PERSON'S cuts.
 
-        New architecture (v2.3+): Files stay in Processing/, validation status
-        is set in JSON metadata. No folder-based triage.
+        Written exactly as the segmentation fixer writes them
+        (review/hand_cuts.py says why each part is needed): marked
+        ``boundary_source: "human"`` with ``corrected_at``, so the segmenter
+        never re-cuts them and every answer given on the old cuts is void;
+        the replaced segments file and everything computed from the old cuts
+        (reaches, outcomes, reach assignment, kinematics) are archived and
+        removed, so the later steps run again on the new cuts; and the file is
+        replaced in one step. ``validation_status: "validated"`` is still set:
+        a person running the steps by hand signs off segmentation with it.
+
+        Before this, the save rewrote the segments file in place without the
+        mark: the next segmenter run replaced the person's cuts, answers on
+        the old cuts were kept, and nothing after segmentation was redone.
+
+        Nothing is written for a filed or publication-locked video, a video
+        in a review queue other than re-segmentation, or a folder that is
+        gone (hand_cuts.save_refusal says why); the reason is shown.
+        Returns True when the cuts were saved, False when nothing was written.
         """
         if not self.video_path:
-            return
+            return False
 
         import os
         from datetime import datetime
+        from mousereach.review.hand_cuts import (
+            save_refusal, mark_as_hand_cuts, commit_hand_cuts,
+            HandCutsNotSaved, archive_dir_for, release_after_hand_cuts)
 
         # Get username
         try:
@@ -1283,6 +1315,12 @@ class BoundaryReviewWidget(QWidget):
         video_id = self.video_path.stem
         if 'DLC_' in video_id:
             video_id = video_id.split('DLC_')[0]
+
+        why_not = save_refusal(self.video_path.parent, video_id)
+        if why_not:
+            self.status_label.setText("NOT saved: " + why_not)
+            show_error(why_not)
+            return False
 
         # Load original boundaries for change tracking
         original_boundaries = getattr(self, '_original_boundaries', self.boundaries)
@@ -1327,7 +1365,6 @@ class BoundaryReviewWidget(QWidget):
             "items_changed": len(changes)
         }
 
-        # Save updated segments file (overwrites algorithm output)
         segments_path = self.video_path.parent / f"{video_id}_segments.json"
 
         # Load existing data if present (to preserve algorithm diagnostics)
@@ -1342,15 +1379,20 @@ class BoundaryReviewWidget(QWidget):
         # Update with validated info
         existing_data.update({
             "video_name": video_id,
-            "boundaries": self.boundaries,
             "n_boundaries": len(self.boundaries),
             "boundary_corrections": boundary_corrections,  # Per-boundary human correction tracking
-            "validation_status": "validated",  # KEY: marks as human-reviewed
+            "validation_status": "validated",  # sign-off for steps run by hand
             "validation_record": validation_record,  # Embedded audit trail
         })
-
-        with open(segments_path, 'w') as f:
-            json.dump(existing_data, f, indent=2)
+        seg = mark_as_hand_cuts(existing_data, self.boundaries,
+                                original_boundaries, username)
+        try:
+            removed = commit_hand_cuts(segments_path, video_id, seg,
+                                       archive_dir_for(segments_path))
+        except HandCutsNotSaved as e:
+            self.status_label.setText("NOT saved: %s" % e)
+            show_error("Cuts NOT saved: %s" % e)
+            return False
 
         # Update pipeline index
         try:
@@ -1376,8 +1418,14 @@ class BoundaryReviewWidget(QWidget):
             pass  # Don't block validation if logging fails
 
         changes_text = f"{len(changes)} boundaries corrected" if changes else "no changes"
-        self.status_label.setText(f"Validated: {video_id} ({changes_text})")
-        show_info(f"Saved validated segmentation ({changes_text})")
+        rerun = ("  %d file(s) computed from the old cuts were archived and "
+                 "removed; reach detection and every later step must run again "
+                 "on the new cuts." % len(removed) if removed else "")
+        released = release_after_hand_cuts(segments_path.parent, video_id)
+        self.status_label.setText(
+            f"Saved as a person's cuts: {video_id} ({changes_text})." + rerun + released)
+        show_info(f"Saved as a person's cuts ({changes_text})." + rerun + released)
+        return True
 
     def _save_ground_truth(self):
         """Save as ground truth (for dev/accuracy measurement only).

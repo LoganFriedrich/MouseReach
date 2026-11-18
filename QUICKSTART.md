@@ -74,7 +74,10 @@ The per-step review screens below are still there and still save, each opened
 on its own: `mousereach-segment-review` (Step 2b), `mousereach-review-pellet-outcomes`
 (Step 3b) and `mousereach-review-reaches` (Step 4b). Saving one marks
 that step "validated"; when you run the steps by hand, without the watcher,
-that is how you sign off a step that triage flagged for review.
+that is how you sign off a step that triage flagged for review. Saving in
+`mousereach-segment-review` also marks the cuts as a person's (a re-run of
+segmentation keeps them) and removes the old reaches, outcomes and kinematics
+files of that video into an `_archived` folder, so run those steps again.
 
 ---
 

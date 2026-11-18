@@ -74,13 +74,15 @@ Launch with `mousereach` command. Available tabs:
 | Kind of correction | Tool | Saved to |
 |------|---------|----------|
 | A pellet's outcome or causal reach | Review window (`mousereach-review-tool`, or Review Queues tab) | `{video}_causal_review.json` (a review record the watcher reads) |
-| Segment cuts | Segmentation Fixer (`mousereach-fix-segmentation`) | `{video}_segments.json`, marked as a person's cuts |
+| Segment cuts | Segmentation Fixer (`mousereach-fix-segmentation`), or the boundary review screen (`mousereach-segment-review`) | `{video}_segments.json`, marked as a person's cuts (both save the same way) |
 | Reach frames, or a full frame-by-frame record | GT Tool (`mousereach-gt`) | `{video}_unified_ground_truth.json` |
-| Sign off one step by hand (no watcher) | Per-step review screen (`mousereach-segment-review`, `mousereach-review-reaches`, `mousereach-review-pellet-outcomes`) | That step's own file, marked `validation_status: "validated"` |
+| Sign off reaches or outcomes by hand (no watcher) | Per-step review screen (`mousereach-review-reaches`, `mousereach-review-pellet-outcomes`) | That step's own file, marked `validation_status: "validated"` |
 
 The old "Step 3 - Review Tool" tab is gone (`mousereach --reviews` and `mousereach-review-legacy` print a note instead): it saved corrections into all three algorithm output files, where the next run erased them and the watcher never saw them.
 
-The per-step review commands below (`mousereach-segment-review`, `mousereach-review-reaches`, `mousereach-review-pellet-outcomes`) still save into that step's own file and mark it validated. That is how a person running the steps by hand, without the watcher, signs off a step triage flagged. Know its limit: a later run of the same step writes the file again from the algorithm, so a correction saved there lasts only until that step is run again. With the watcher, review from the Review Queues tab instead.
+The boundary review screen (`mousereach-segment-review`) saves a person's cuts exactly as the Segmentation Fixer does: they are kept by every later segmentation run, the reaches, outcomes and kinematics computed from the old cuts are archived and removed (run those steps again), and answers given on the old cuts are asked again. It writes nothing for a filed or publication-locked video or one in the triage queue, and says why (docs/REVIEW_TOOLS.md, "Review Tool (retired) and the per-step review screens").
+
+The other per-step review commands (`mousereach-review-reaches`, `mousereach-review-pellet-outcomes`) still save into that step's own file and mark it validated. That is how a person running the steps by hand, without the watcher, signs off a step triage flagged. Know its limit: a later run of the same step writes the file again from the algorithm, so a correction saved there lasts only until that step is run again. With the watcher, review from the Review Queues tab instead.
 
 ---
 

@@ -220,11 +220,15 @@ skips one that still reads `needs_review`.
 Do not run `mousereach-advance`: on the current version it stops with an error
 (`TypeError ... require_validation`) and moves nothing.
 
-Know the limit of the review screen's save: running segmentation again on the
-same video writes `*_segments.json` again from the algorithm, so the saved
-correction lasts only until that step is re-run. With the watcher running,
-review from the **Review Queues** tab instead (cuts are corrected there in the
-Segmentation Fixer, which marks them as a person's so a re-run keeps them).
+What the review screen's save does: it saves the cuts as a person's cuts,
+exactly as the Segmentation Fixer does, so running segmentation again keeps
+them. Every save, even with no boundary moved, also copies the old
+`*_segments.json` and the reaches, outcomes, reach-assignment and kinematics
+files of that video into an `_archived` folder and removes them: run reach
+detection and the later steps again afterwards. It saves nothing, and says
+why, for a video that is filed, locked for a publication, or in the triage
+queue. With the watcher running, review from the **Review Queues** tab instead
+(cuts are corrected there in the Segmentation Fixer).
 
 ### Output
 Segmentation JSON files:
@@ -530,7 +534,8 @@ mousereach-crop -i Multi-Animal/ -o Single_Animal/ --queue   # hands the cut vid
 # 3. Segment (v2.3+ single-folder architecture)
 mousereach-segment -i Processing/
 # Auto-triage updates validation_status in JSON
-# Review flagged videos: mousereach-segment-review (saving marks them validated;
+# Review flagged videos: mousereach-segment-review (saving marks them validated and
+# as a person's cuts, and removes the old reaches/outcomes/kinematics;
 # reach detection skips a video whose segmentation still reads needs_review)
 
 # 4. Detect reaches

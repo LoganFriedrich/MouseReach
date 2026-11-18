@@ -471,6 +471,8 @@ Previous boundary S Save validated boundaries Left / Right Step 1 frame
 Shift+Arrows Step 10 frames
 ```
 
+Saving (S) writes the cuts as a person's cuts, exactly as `mousereach-fix-segmentation` does: `boundary_source: "human"` and `corrected_at` in `{video}_segments.json`, the old segments file and the reaches, outcomes, reach-assignment and kinematics files of the old cuts copied into `_archived/segmentation_before_human_fix_<time>/` and removed (reach detection and the later steps must run again). Nothing is written, and the reason is shown, for a filed video, a publication-locked one, one in the triage queue, or a folder that moved away while open. See docs/REVIEW_TOOLS.md, "Review Tool (retired) and the per-step review screens".
+
 ### `mousereach-review`
 
 *Deprecated: use mousereach-segment-review*
