@@ -260,6 +260,56 @@ def copy_file_atomic(src, dest, attempts: int = REPLACE_ATTEMPTS,
     return dest
 
 
+def stage_copy(src, dest) -> Path:
+    """Copy ``src`` to a temporary file beside ``dest`` (same folder, named
+    like every temporary file here: ".<name>.<random>.tmp") and return that
+    file's path; ``dest`` itself is not touched. The copy keeps ``src``'s
+    modified time and is checked to be the same size. On failure nothing is
+    left behind and the error is raised.
+
+    WHY: a mover that must put several files in place together (filing a
+    video's whole generation, archive/core.py) copies every file in first
+    under a name no reader takes for the real one, and only then swaps them
+    in with put_staged -- a rename inside one folder, which is quick and
+    cannot leave half a file."""
+    import os
+    import shutil
+    import tempfile
+    dest = Path(dest)
+    fd, tmp_name = tempfile.mkstemp(prefix=_temp_prefix(dest), suffix=".tmp",
+                                    dir=str(dest.parent))
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(str(src), str(tmp))
+        _fsync_file(tmp)
+        if tmp.stat().st_size != Path(src).stat().st_size:
+            raise OSError(f"the copy of {Path(src).name} came out a different size")
+    except BaseException:
+        _unlink_temp(tmp)
+        raise
+    return tmp
+
+
+def aside_path(path) -> Path:
+    """A free temporary name beside ``path`` (".<name>.<random>.tmp") to move
+    the current file to while a new one takes its place (put_staged). Only the
+    name is chosen; nothing is created."""
+    import uuid
+    path = Path(path)
+    return path.with_name(f"{_temp_prefix(path)}{uuid.uuid4().hex[:12]}.old.tmp")
+
+
+def rename_with_retry(src, dst, attempts: int = REPLACE_ATTEMPTS,
+                      base_delay: float = REPLACE_BASE_DELAY) -> None:
+    """``os.replace(src, dst)``, retried while another program briefly holds
+    one of them (retry_transient). Raises the last error. Unlike the atomic
+    writers it removes nothing when it fails: the caller decides."""
+    import os
+    retry_transient(lambda: os.replace(str(src), str(dst)),
+                    attempts=attempts, base_delay=base_delay, what=str(dst))
+
+
 def remove_leftover_temps(path) -> int:
     """Delete temporary files a crashed atomic write of ``path`` left behind.
 

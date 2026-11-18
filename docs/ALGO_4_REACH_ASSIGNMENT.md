@@ -255,7 +255,7 @@ So the two-signal agreement gate — the thing this stage exists to provide — 
 - **The worklist builder** of the old triage-clearing tool (`review/triage_queue.py`) and its spot-check pool (`review/qc_pool.py`) used a wider "has a committed causal reach" test. Both are removed with that tool; `triage_status` is now the only test.
 - **The review tool.** `review/causal_review_widget.py:878` loads the file, `:996-999` indexes it by segment, `:1059-1068` picks out the committed reach for display; `:2580-2581` and `:2639-2641` use it to decide whether a bundle still has anything to review.
 - **Version tracking.** `pipeline/manifest.py:156` reads the top-level `version` key into the processing manifest, so a video can be marked stale when this stage's version changes. The declared current value lives in `<nas_root>/pipeline_versions.json` (`"assignment": "2.1.0"`).
-- **Archiving.** `archive/supersede.py:49-52` moves the file aside on reprocess rather than overwriting it.
+- **Archiving.** `archive/supersede.py` (`_ALGO_SUFFIXES`) keeps a checksum-verified copy of the earlier file in `Analyzed/Archive` on reprocess; filing then swaps the new file in with the rest of the generation in one step (`archive/core.py`, "FILING IS ONE STEP"), never overwriting it without that copy.
 - **Auditing and evaluation.** `pipeline/field_audit.py:61`. (Per-reach Sankey evaluation lives in the improvement accessory tool, outside this repo.)
 
 ## How failure behaves

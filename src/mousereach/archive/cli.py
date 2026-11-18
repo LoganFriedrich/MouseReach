@@ -87,6 +87,11 @@ own) is judged on the files alone. After filing, 'archived' is recorded in this 
 watcher database; if the database knows the video and that cannot be
 recorded, the command says so and exits 1. --list shows only videos that
 pass these checks; --status VIDEO_ID names the reason one would be refused.
+Filing is one step: every file is first copied into the cohort folder
+under a temporary name (.<name>.<random>.tmp), and only when all are there
+are they renamed into place, the features file last. An attempt that fails
+leaves the cohort folder exactly as it was and every file in Processing;
+a re-run's earlier results are kept in Analyzed/Archive.
 """
     )
 

@@ -5408,22 +5408,42 @@ triage one stage's files (the reach and outcome steps' own batch, advance and tr
 and the re-pose helper (`mousereach-repose-videos`) still take files by the bare name prefix.
 The watcher does not use them to move a video's files.
 
-**Filing moves the features file and the provenance file last.** When a finished video is
-filed into its Analyzed cohort folder, every other file moves first. Only when all of them are
-in does `<video>_processing_manifest.json` move, and `<video>_features.json` is the very last
-file. If any file cannot be moved (a review window or a virus scanner still holding it), those
-two stay in the local Processing folder, the attempt counts as failed, and the watcher tries
-again after 1 minute, then 5, 15 and 60 minutes; the attempt that succeeds finishes the job.
-WHY: the features file is what the nightly database import takes from the filed folder and
-what the watcher reads as "this video is filed". Before, the files moved in listing order, so
-one stuck file could leave new kinematics filed next to missing or old outputs, or a video
-filed without its `.mp4` that the next attempt then marked "no kinematics".
+**Filing is one step: the filed folder holds the old results or the new ones, never a mix.**
+When a finished video is filed into its Analyzed cohort folder -- the first time, or again
+after a re-run -- nothing in that folder changes until every new file is already there:
 
-What is still not one step (a known leftover): on a re-run, the previous generation's files
-that are about to be replaced are moved into `Analyzed/Archive` before the new ones go in. If a
-new file then fails to move, the cohort folder holds neither a whole old nor a whole new result
-until the retry succeeds. Because the features file is held back, the database import and the
-watcher do not treat that folder as filed in the meantime.
+1. Every new file is first COPIED into the cohort folder under a temporary name that starts
+   with a dot and ends in `.tmp` (for example `.<video>_reaches.json.k3j9x.tmp`). No step of
+   the pipeline and no import takes such a file for one of the video's files. If any copy
+   fails (a full disk, the share dropping, a file held open), the copies are removed again,
+   nothing in the cohort folder has changed, and every file stays in the local Processing
+   folder.
+2. On a re-run, a copy of each earlier file about to be replaced is put in `Analyzed/Archive`
+   (checked byte for byte), while the earlier file itself stays where it is. If that fails,
+   the copies from step 1 are removed and nothing has changed.
+3. Then the files are switched by renaming them inside the cohort folder, which takes
+   milliseconds: the earlier features file and processing manifest are taken out of sight
+   first, then each new file takes its place, the new `<video>_processing_manifest.json`
+   second to last and the new `<video>_features.json` last. If one rename fails, the renames
+   already done are undone, so the earlier results stand again as they were.
+4. Only then are the replaced files dropped (their copy is in the Archive) and the local copies
+   in Processing deleted. A local copy that cannot be deleted makes the attempt count as
+   failed; the next attempt finds everything already filed and only deletes it.
+
+After a failed attempt the watcher tries again after 1 minute, then 5, 15 and 60 minutes.
+WHY: the features file is what the nightly database import takes from the filed folder and
+what the watcher reads as "this video is filed". Filing used to move the earlier files into
+the Archive first and then move the new ones in one by one, so one file that would not move
+left the cohort folder with some new files and some missing -- neither the old results nor the
+new -- until a retry up to an hour later. During the renames of step 3 there is no features
+file in the folder, so an import running at that moment skips the video instead of reading a
+mix.
+
+What is left (a known limit): if the program is killed outright during the renames of step 3
+(power cut, ended from Task Manager), the cohort folder can hold part of the new files and no
+features file. Nothing is lost: the earlier results are in `Analyzed/Archive`, every new file
+is still in Processing, and the watcher's retry after it restarts files the rest. Temporary
+`.tmp` files left by such a stop are removed by the next filing of the same video.
 
 **The features file is written whole or not at all.** Kinematics write
 `<video>_features.json` in Processing to a temporary file and swap it in, as every other

@@ -8,6 +8,7 @@ This is the only way files leave the Processing/ folder.
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import json
+import logging
 import shutil
 import time
 from datetime import datetime
@@ -426,155 +427,210 @@ def archive_video(
     # Create destination if needed
     dest.mkdir(parents=True, exist_ok=True)
 
-    # Anything already at the destination is the PREVIOUS generation's results,
-    # and the move below would replace it silently -- shutil.move overwrites. On
-    # a reprocess that destroyed the earlier segments, reaches, outcomes,
-    # assignments, manifest and kinematics with no copy kept, so there was no way
-    # afterwards to see what an earlier model produced or to reproduce a figure
-    # made from it.
+    # FILING IS ONE STEP. Re-filing a filed video replaces a whole generation
+    # of results (segments, reaches, outcomes, assignments, manifest,
+    # kinematics), and anything that reads the filed folder -- the database
+    # integrator's nightly import above all, which takes the features file --
+    # must see either the previous generation, complete, or the new one,
+    # complete; never a folder of some new and some old files. It used to set
+    # the old generation aside first and then move the new files in one by
+    # one, so one file that would not move (a handle still open on the share)
+    # left the folder split until the retry, up to an hour later. Now:
     #
-    # supersede_video_outputs sweeps that generation into the versioned Archive
-    # first, checksum-verified, reading the OLD manifest sitting there to decide
-    # which model generation and algorithm stack it belonged to. It deliberately
-    # leaves the video and any ground-truth or human-review file in place, so a
-    # review still travels with its video.
+    #   1. STAGE: every incoming file that differs from the filed one is
+    #      copied into the filed folder under a temporary name
+    #      (".<name>.<random>.tmp", fsutil.stage_copy), which no reader and no
+    #      mover takes for a file of the video. Nothing visible has changed;
+    #      a failure here removes the copies and stops.
+    #   2. KEEP: the previous generation's files about to be replaced are
+    #      copied, checksum-verified, into the versioned Analyzed/Archive
+    #      (supersede_video_outputs, keep_source). They stay in the folder.
+    #      A failure stops here, nothing visible changed.
+    #   3. SWITCH: renames inside the one folder. The old features file and
+    #      manifest are taken out of sight first, then each new file takes its
+    #      place, the manifest second to last and the features file last.
+    #      A rename that fails is undone by renaming back, so the complete
+    #      previous generation stands again. Renames in one folder take
+    #      milliseconds, and during them the folder holds no features file,
+    #      so the database integrator skips the video rather than read a mix.
+    #   4. CLEAN UP: only now are the replaced files dropped (their copy is
+    #      in the Archive) and the files in Processing removed. A file that
+    #      cannot be removed from Processing makes the attempt report failure;
+    #      the retry finds everything already filed (identical) and finishes.
     #
-    # Failing to archive must not cost the results: if the sweep reports failures
-    # we stop rather than move new files on top of the old ones.
-    # A file identical to the one already archived is not a new generation --
-    # a re-run copies the video and pose down from here and hands them back
-    # unchanged. Sweeping them into the versioned Archive and moving them back
-    # stored a duplicate pose for every re-run and cost a minute or more of
-    # copying. They are left in place and the local copy dropped.
+    # The one case this cannot cover is the process being killed outright
+    # during the renames of step 3. Then the folder may hold part of the new
+    # generation and no features file (so it is not imported), the previous
+    # generation is complete in the Archive from step 2, every file is still
+    # in Processing, and the retry after restart files the rest.
+    #
+    # A file identical to the one already filed is not a new generation -- a
+    # re-run copies the video and pose down from here and hands them back
+    # unchanged. Such files are left in place and the local copy dropped,
+    # except the features file and the manifest: when anything else changes
+    # they are always swapped too, so step 3 can keep the old features file
+    # out of sight while the others change.
+    from mousereach.pipeline.fsutil import (
+        files_of_video as _fov, stage_copy, aside_path, rename_with_retry,
+        remove_leftover_temps, remove_temp_file, retry_transient)
+    last_names = (f"{video_id}_processing_manifest.json",
+                  f"{video_id}_features.json")
     identical = {f.name for f in files
                  if (dest / f.name).exists() and _same_file(f, dest / f.name)}
-    superseded = None
-    from mousereach.pipeline.fsutil import files_of_video as _fov
-    if _fov(dest, video_id) and any(f.name not in identical for f in files):
+    if any(f.name not in identical for f in files):
+        identical -= set(last_names)
+    changing = [f for f in files if f.name not in identical]
+    incoming = {f.name: f for f in changing}
+    refiling = bool(changing) and bool(_fov(dest, video_id))
+
+    if refiling:
+        # A person's cuts in the filed folder are never overwritten by an
+        # algorithm's (see archive/supersede.py). Asked with a DRY RUN before
+        # anything is copied or renamed. ``only``: just the files this
+        # filing replaces -- an unscoped sweep would treat files a part-way
+        # earlier attempt already filed as a previous generation.
         try:
             from mousereach.archive.supersede import supersede_video_outputs
-            # only=: sweep just the destination files this archive is about to
-            # replace. Without the scope, a retry after a partial move sweeps
-            # the files its own first attempt archived.
-            sweep = {f.name for f in files} - identical
-            incoming = {f.name: f for f in files}
-            # A person's cuts in the filed folder are never overwritten by an
-            # algorithm's (see archive/supersede.py). The question is asked
-            # with a DRY RUN, before anything moves. WHY first: supersede
-            # keeps the person's file but sweeps every OTHER filed file into
-            # the Archive, so refusing after the real sweep would leave a
-            # half-filed folder (only the person's cuts and the manifest; the old
-            # reaches and kinematics archived, the new ones still in
-            # Processing) that every retry refused again.
-            pre = supersede_video_outputs(video_id, dest, only=sweep,
+            pre = supersede_video_outputs(video_id, dest, only=set(incoming),
                                           incoming=incoming, dry_run=True)
-            if pre.get("human_cuts_kept"):
-                return _refuse_persons_cuts(result, video_id, dest,
-                                            pre["human_cuts_kept"], verbose)
-            superseded = supersede_video_outputs(
-                video_id, dest, only=sweep, incoming=incoming)
-            # Backstop: the dry run said no, so this cannot fire unless the
-            # folder changed in between; refused rather than overwritten.
-            if superseded.get("human_cuts_kept"):
-                return _refuse_persons_cuts(result, video_id, dest,
-                                            superseded["human_cuts_kept"], verbose)
-            if superseded.get("failed"):
-                result["error"] = (
-                    "refusing to archive: could not preserve the previous "
-                    "generation of %s (%s)"
-                    % (video_id, ", ".join(superseded["failed"])))
-                if verbose:
-                    print(f"  {result['error']}")
-                return result
-            n = len(superseded.get("algo", [])) + len(superseded.get("pose", []))
-            if n and verbose:
-                print(f"  Superseded {n} earlier file(s) -> "
-                      f"{superseded.get('generation')}/{superseded.get('stack')}")
         except Exception as e:
             result["error"] = f"refusing to archive: superseding failed ({e})"
             if verbose:
                 print(f"  {result['error']}")
             return result
+        if pre.get("human_cuts_kept"):
+            return _refuse_persons_cuts(result, video_id, dest,
+                                        pre["human_cuts_kept"], verbose)
+
+    def _discard(paths):
+        for p in paths:
+            remove_temp_file(p)
+
+    # 1. STAGE. Temporary files an interrupted earlier attempt left are
+    # removed first (one filing of a video runs at a time: the watcher's
+    # archive step, or the command, which refuses while the watcher runs).
+    for f in files:
+        remove_leftover_temps(dest / f.name)
+    staged = {}
+    for f in changing:
+        try:
+            staged[f.name] = stage_copy(f, dest / f.name)
+        except Exception as e:
+            _discard(staged.values())
+            result["error"] = (f"failed to move: could not copy {f.name} into the "
+                               f"filed folder ({e}); nothing in {dest} changed and "
+                               f"every file stays in Processing")
+            if verbose:
+                print(f"  {result['error']}")
+            return result
+
+    # 2. KEEP the previous generation, as a verified copy in the Archive.
+    superseded = None
+    if refiling:
+        try:
+            superseded = supersede_video_outputs(
+                video_id, dest, only=set(incoming), incoming=incoming,
+                keep_source=True)
+        except Exception as e:
+            superseded = {"error": str(e)}
+        if superseded.get("human_cuts_kept"):
+            # Backstop: the dry run said no, so this cannot fire unless the
+            # folder changed in between; refused rather than overwritten.
+            _discard(staged.values())
+            return _refuse_persons_cuts(result, video_id, dest,
+                                        superseded["human_cuts_kept"], verbose)
+        why = superseded.get("error") or ", ".join(superseded.get("failed") or [])
+        if why:
+            _discard(staged.values())
+            result["error"] = ("refusing to archive: could not preserve the previous "
+                               "generation of %s (%s); nothing in the filed folder "
+                               "changed" % (video_id, why))
+            if verbose:
+                print(f"  {result['error']}")
+            return result
+        n = len(superseded.get("algo", [])) + len(superseded.get("pose", []))
+        if n and verbose:
+            print(f"  Kept a copy of {n} earlier file(s) -> "
+                  f"{superseded.get('generation')}/{superseded.get('stack')}")
     result["superseded"] = superseded
 
-    # Move files. Idempotent and loud:
-    #  - A file already at the destination with identical content counts as
-    #    moved (the local copy is dropped). WHY: a partially-failed attempt
-    #    leaves most files already archived, so without this a retry can
-    #    never converge -- one silent per-file failure can leave a video's
-    #    retry loop failing forever.
-    #  - A per-file failure is named in result["error"], never swallowed
-    #    into a bare success=False with error=None.
-    #
-    # ORDER (filing is one step as far as any reader can tell): every other
-    # file first; then <stem>_processing_manifest.json; then
-    # <stem>_features.json LAST, and those two only when every other file
-    # is in. WHY: the features file is what the database integrator takes
-    # from the filed folder and what the watcher's filing checks read as
-    # "this run is filed"; the manifest is the provenance the version scan
-    # reads. Moved in listing order, a failure part-way could leave new
-    # features beside old (or missing) outputs, or an analysed video filed
-    # without its .mp4 that the next attempt then read as "no kinematics".
-    # Now, when anything else fails, both stay in Processing with
-    # success=False and the watcher's retry (60 s, rising to 1 h) finishes
-    # the job; until then the filed folder simply does not read as filed.
-    # A narrower window remains (see docs/PIPELINE_AS_BUILT.md): the
-    # previous generation's files that are about to be replaced were swept
-    # into the versioned Archive above, so between a failure here and the
-    # retry the filed folder holds no complete generation.
-    last_names = (f"{video_id}_processing_manifest.json",
-                  f"{video_id}_features.json")
-    rest = [f for f in files if f.name not in last_names]
-    last = [f for n in last_names for f in files if f.name == n]
+    # 3. SWITCH. done: (path, aside) pairs; aside None = a new file now at
+    # path, else the file that was at path now sits at aside.
+    done = []
+    order = ([n for n in incoming if n not in last_names]
+             + [n for n in last_names if n in incoming])
+    try:
+        for n in last_names:
+            if n in staged and (dest / n).exists():
+                aside = aside_path(dest / n)
+                rename_with_retry(dest / n, aside)
+                done.append((dest / n, aside))
+        for n in order:
+            final = dest / n
+            if final.exists():
+                aside = aside_path(final)
+                rename_with_retry(final, aside)
+                done.append((final, aside))
+            rename_with_retry(staged[n], final)
+            done.append((final, None))
+    except Exception as e:
+        undone = True
+        for path, aside in reversed(done):
+            try:
+                if aside is None:
+                    # The new file's source is still in Processing.
+                    retry_transient(path.unlink)
+                else:
+                    rename_with_retry(aside, path)
+            except Exception as e2:
+                undone = False
+                logging.getLogger(__name__).error(
+                    "%s: could not put %s back after a failed filing (%s); a copy "
+                    "of the previous generation is in the Archive",
+                    video_id, path.name, e2)
+        _discard(p for p in staged.values() if p.exists())
+        result["error"] = (f"failed to move: could not put {video_id}'s files in "
+                           f"place in {dest} ({e}); "
+                           + ("the previous generation was put back as it was"
+                              if undone else
+                              "the previous generation could not all be put back, "
+                              "but a copy of it is in the Archive")
+                           + " and every file stays in Processing")
+        if verbose:
+            print(f"  {result['error']}")
+        return result
 
+    # 4. CLEAN UP. The replaced files have their verified copy in the Archive
+    # (step 2); a file supersede leaves alone by rule (the video, a person's
+    # review, ground truth) or does not know was replaced by the move-based
+    # filing too.
+    for path, aside in done:
+        if aside is not None and not remove_temp_file(aside):
+            logging.getLogger(__name__).warning(
+                "%s: could not remove the replaced %s (left as %s)",
+                video_id, path.name, aside.name)
+    if verbose:
+        for f in files:
+            print(f"    {'Already archived (identical)' if f.name in identical else 'Filed'}: "
+                  f"{f.name}")
+
+    # The local copies go: features first, then the manifest, then the rest,
+    # so a retry that still finds the features file in Processing also finds
+    # the manifest beside it (the filing step's provenance check).
     moved = []
     failed = []
-
-    def _move_one(f):
-        dest_path = dest / f.name
+    by_name = {f.name: f for f in files}
+    drop_order = ([n for n in reversed(last_names) if n in by_name]
+                  + [n for n in by_name if n not in last_names])
+    for n in drop_order:
         try:
-            if f.name in identical or (dest_path.exists() and _same_file(f, dest_path)):
-                f.unlink()  # identical copy already archived
-                moved.append(f.name)
-                if verbose:
-                    print(f"    Already archived (identical): {f.name}")
-                return
-            # A handle another process is just closing (a video reader on the
-            # success path) makes the first move fail with WinError 32; a few
-            # seconds later it succeeds. Try briefly before calling it failed.
-            last_err = None
-            for attempt in range(3):
-                try:
-                    shutil.move(str(f), str(dest_path))
-                    last_err = None
-                    break
-                except PermissionError as e:
-                    last_err = e
-                    time.sleep(2.0)
-            if last_err is not None:
-                raise last_err
-            moved.append(f.name)
-            if verbose:
-                print(f"    Moved: {f.name}")
+            retry_transient(by_name[n].unlink)
+            moved.append(n)
+        except FileNotFoundError:
+            moved.append(n)
         except Exception as e:
-            failed.append(f"{f.name} ({e})")
-            if verbose:
-                print(f"    FAILED: {f.name} - {e}")
-
-    for f in rest:
-        _move_one(f)
-    if failed:
-        for f in last:
-            failed.append(f"{f.name} (held back: the other files are not all filed yet)")
-    else:
-        for f in last:
-            _move_one(f)
-            if failed:
-                break
-        for f in last:
-            if f.exists() and f.name not in moved and not any(
-                    x.startswith(f.name + " ") for x in failed):
-                failed.append(f"{f.name} (held back: the manifest did not file)")
+            failed.append(f"{n} (filed, but its copy in Processing could not be "
+                          f"removed: {e})")
 
     result["files_moved"] = moved
     result["success"] = len(moved) == len(files)

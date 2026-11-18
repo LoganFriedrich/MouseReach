@@ -144,18 +144,24 @@ def _versioned_or_existing(src: Path, dst: Path) -> Path:
         i += 1
 
 
-def _checksummed_move(src: Path, dst: Path) -> Optional[Path]:
+def _checksummed_move(src: Path, dst: Path, keep_source: bool = False) -> Optional[Path]:
     """Copy ``src`` to ``dst``, verify sha256, then delete ``src``. Never clobbers:
     an identical file already at ``dst`` (base or any .N version) -> drop src and
     return the existing copy; a genuinely new same-named file -> version the
-    incoming one. Returns the final dest, or None on failure (source left intact)."""
+    incoming one. Returns the final dest, or None on failure (source left intact).
+
+    ``keep_source``: copy and verify only; ``src`` stays where it is (see
+    supersede_video_outputs)."""
+    def _drop():
+        if not keep_source:
+            src.unlink()
     if dst.exists():
         if verify_file_hash(src, dst, "sha256"):
-            src.unlink()               # already archived, byte-identical
+            _drop()                    # already archived, byte-identical
             return dst
         dst = _versioned_or_existing(src, dst)   # identical .N, or first free slot
         if dst.exists():
-            src.unlink()               # already archived under a .N version
+            _drop()                    # already archived under a .N version
             return dst
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -169,7 +175,7 @@ def _checksummed_move(src: Path, dst: Path) -> Optional[Path]:
         logger.error(f"supersede checksum mismatch, source kept: {src.name}")
         dst.unlink(missing_ok=True)
         return None
-    src.unlink()
+    _drop()
     return dst
 
 
@@ -235,6 +241,7 @@ def supersede_video_outputs(
     dry_run: bool = False,
     only: Optional[set] = None,
     incoming: Optional[Dict[str, Path]] = None,
+    keep_source: bool = False,
 ) -> Dict:
     """Move ``video_id``'s current (about-to-be-superseded) outputs from
     ``source_dir`` into the versioned Archive, checksum-verified, leaving the
@@ -250,6 +257,13 @@ def supersede_video_outputs(
     is archived only when ``incoming`` holds a human segments file of the same
     name; otherwise it stays and is listed in ``human_cuts_kept`` (see the
     module docstring).
+
+    ``keep_source``: put a checksum-verified COPY of each file in the Archive
+    and leave the file itself in ``source_dir``. Filing uses it
+    (archive/core.py): the previous generation must stay complete in the
+    filed folder until the new one is swapped in, so a filing that stops
+    part-way leaves the old results standing, and a copy of them is already
+    kept in the Archive by the time anything in the folder changes.
 
     Returns a summary dict; never raises on an individual file (logs + continues)."""
     source_dir = Path(source_dir)
@@ -323,7 +337,7 @@ def supersede_video_outputs(
         if dry_run:
             summary[cat].append(f.name)
             continue
-        res = _checksummed_move(f, dst)
+        res = _checksummed_move(f, dst, keep_source=keep_source)
         if res is None:
             summary["failed"].append(f.name)
         else:
