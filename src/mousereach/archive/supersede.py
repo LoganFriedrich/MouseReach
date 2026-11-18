@@ -33,6 +33,15 @@ Rules honored (one live copy of the data, plus an archive of superseded results)
    the video.
  - The video itself (``{stem}.mp4`` / ``.mkv``) is NEVER archived -- one live copy
    stays with the video; the collage can regenerate it if ever needed.
+ - A person's cuts (``{stem}_segments.json`` with ``boundary_source: "human"``,
+   written by the segmentation fixer) are archived ONLY when the file replacing
+   them is a person's cuts too (a newer re-cut). Otherwise they stay in place
+   and are reported under ``human_cuts_kept``. WHY: boundaries are frame
+   numbers, valid whatever pose or algorithm version comes next, and the
+   segmenter keeps a human file it finds (segmentation/core/batch.py) -- so a
+   sweep that archives one is the only way a re-run or re-pose can replace a
+   person's cuts with the algorithm's. A caller about to move an algorithm
+   segments file on top of a kept one must refuse (archive/core.py does).
  - Moves are CHECKSUM-verified (sha256); the source is deleted ONLY after the copy
    is confirmed byte-identical at the destination.
  - The archive is never clobbered: an identical file already there -> the source is
@@ -183,6 +192,19 @@ def _classify(path: Path, video_id: str, old_scorer: Optional[str]) -> Optional[
     return None
 
 
+def is_human_cuts(path) -> bool:
+    """True when ``path`` is a segments file whose cuts a person set
+    (``boundary_source: "human"``, the fixer's mark; the same test as
+    review.causal_review_io.segmentation_is_human). An unreadable file is not
+    taken for a person's: it is reported by whoever reads it."""
+    import json
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(doc, dict) and doc.get("boundary_source") == "human"
+
+
 def _load_manifest(source_dir: Path, video_id: str) -> Optional[dict]:
     import json
     p = source_dir / f"{video_id}_processing_manifest.json"
@@ -203,6 +225,7 @@ def supersede_video_outputs(
     extra_files: Optional[List[Path]] = None,
     dry_run: bool = False,
     only: Optional[set] = None,
+    incoming: Optional[Dict[str, Path]] = None,
 ) -> Dict:
     """Move ``video_id``'s current (about-to-be-superseded) outputs from
     ``source_dir`` into the versioned Archive, checksum-verified, leaving the
@@ -212,6 +235,12 @@ def supersede_video_outputs(
     (or the ``manifest`` override): its DLC scorer picks the generation folder and
     its pipeline_versions picks the algo-stack subfolder. ``extra_files`` archives
     additional artifacts (e.g. figures/summary) into the algo-stack subfolder.
+
+    ``incoming``: name -> path of the files the caller is about to put in
+    ``source_dir``. Read only to decide a person's cuts: a human segments file
+    is archived only when ``incoming`` holds a human segments file of the same
+    name; otherwise it stays and is listed in ``human_cuts_kept`` (see the
+    module docstring).
 
     Returns a summary dict; never raises on an individual file (logs + continues)."""
     source_dir = Path(source_dir)
@@ -229,7 +258,7 @@ def supersede_video_outputs(
 
     summary = {"video_id": video_id, "generation": gen, "stack": stack,
                "archive_root": str(archive_root), "pose": [], "algo": [],
-               "kept": [], "failed": [], "dry_run": dry_run}
+               "kept": [], "failed": [], "human_cuts_kept": [], "dry_run": dry_run}
 
     # The shared rule (pipeline.fsutil.files_of_video): never another video
     # whose stem merely begins with this one, never an unfinished copy.
@@ -253,6 +282,20 @@ def supersede_video_outputs(
         if cat == "never":
             summary["kept"].append(f.name)
             continue
+        if f.name.endswith("_segments.json") and is_human_cuts(f):
+            repl = (incoming or {}).get(f.name)
+            if repl is not None and Path(repl).is_file() and verify_file_hash(
+                    f, Path(repl), "sha256"):
+                # The same person's cuts coming back (a re-run kept them):
+                # not a new generation, nothing to archive.
+                summary["kept"].append(f.name)
+                continue
+            if repl is None or not is_human_cuts(repl):
+                summary["kept"].append(f.name)
+                summary["human_cuts_kept"].append(f.name)
+                logger.info(f"{video_id}: a person's cuts ({f.name}) kept in "
+                            f"place -- not replaced by algorithm cuts")
+                continue
         dst = (pose_dir if cat == "pose" else algo_dir) / f.name
         if dry_run:
             summary[cat].append(f.name)

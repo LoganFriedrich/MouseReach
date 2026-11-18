@@ -103,6 +103,55 @@ def write_list(nas_root, hostname: str, kind: str, items) -> bool:
         return False
 
 
+def note_video(nas_root, hostname: str, kind: str, video_id: str, says: str) -> bool:
+    """List ``video_id`` in this machine's ``<host>_<kind>.json`` (one item per
+    video; a newer note replaces the older) with ``needs_person`` true. The
+    read, change and write happen under the list's lock file, so two programs
+    on one machine never overwrite each other's change. True when written.
+    Never raises (logged at WARNING instead), for the reason write_list gives.
+
+    WHY one item per VIDEO, not per folder: the lists keyed by folder
+    (review_routing.note_for_a_person) suit queue folders, which belong to one
+    video; a filed cohort folder holds many videos."""
+    item = {"kind": kind, "needs_person": True, "video_id": video_id, "says": says}
+    return _change_video_list(
+        nas_root, hostname, kind,
+        lambda items: [i for i in items if i.get("video_id") != video_id] + [item])
+
+
+def drop_video(nas_root, hostname: str, kind: str, video_id: str) -> bool:
+    """Take ``video_id`` off this machine's ``<host>_<kind>.json``. Nothing is
+    written (and no folder made) when the list does not name it. Never raises."""
+    return _change_video_list(
+        nas_root, hostname, kind,
+        lambda items: [i for i in items if i.get("video_id") != video_id])
+
+
+def _change_video_list(nas_root, hostname, kind, change) -> bool:
+    import logging
+    if not nas_root:
+        return False
+    path = Path(nas_root) / "attention" / f"{hostname}_{kind}.json"
+    try:
+        try:
+            before = list((json.loads(path.read_text(encoding="utf-8")) or {}).get("items") or [])
+        except FileNotFoundError:
+            before = []
+        if change(list(before)) == before:
+            return False
+        from mousereach.review.causal_review_io import _locked_update
+
+        def _apply(doc):
+            doc["items"] = change(list(doc.get("items") or []))
+            doc["written_by"] = hostname
+        _locked_update(path, _apply, wait_s=10.0)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Could not update the attention list %s: %s", path.name, e)
+        return False
+
+
 def without_repeats(items) -> List[dict]:
     """``items`` with repeats of the same collage problem dropped, keeping the
     first. WHY: every GPU node that asks about a stuck crop claim lists the

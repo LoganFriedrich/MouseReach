@@ -361,7 +361,26 @@ def stage_video(
     # Carry them forward instead. Passing them back in as boundaries_override
     # takes the manual branch below, which is exactly what the reviewer chose.
     # (This is a guard put in before the first one is lost, not a repair.)
-    if boundaries_override is None and seg_out.exists():
+    #
+    # A person's cuts made in the segmentation fixer are marked
+    # boundary_source "human" (the mark every other step reads), not with the
+    # old "manual" markers below. Such a file -- in the bundle, or beside the
+    # filed video when the bundle is new -- is kept AS IT IS and the segmenter
+    # does not run. WHY as-is: rewriting it through the manual branch would
+    # drop the "human" mark, and the watcher's segmenter would then re-cut it.
+    _human_seg = None
+    if boundaries_override is None:
+        from mousereach.archive.supersede import is_human_cuts
+        if seg_out.exists() and is_human_cuts(seg_out):
+            _human_seg = seg_out
+        elif not seg_out.exists() and mp4_dir is not None:
+            _filed = Path(mp4_dir) / f"{stem}_segments.json"
+            if _filed.is_file() and is_human_cuts(_filed):
+                shutil.copy2(str(_filed), str(seg_out))
+                _human_seg = seg_out
+        if _human_seg is not None:
+            log("keeping the person's cuts (boundary_source human); not re-segmenting")
+    if boundaries_override is None and _human_seg is None and seg_out.exists():
         try:
             _prev = _load_json(seg_out)
             if _prev.get("manual_resegmentation") or _prev.get("segmenter_algorithm") == "manual":
@@ -403,7 +422,7 @@ def stage_video(
             "anomaly_summary": {"critical": 0, "warning": 0, "info": 0},
             "manual_resegmentation": True,
         }, indent=2), encoding="utf-8")
-    else:
+    elif _human_seg is None:
         log("segment...")
         boundaries, diagnostics = segment_video_multi(h5)
         save_segmentation(boundaries, diagnostics, seg_out)

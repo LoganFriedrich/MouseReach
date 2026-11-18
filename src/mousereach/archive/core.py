@@ -273,6 +273,49 @@ def _same_file(a: Path, b: Path) -> bool:
     return verify_file_hash(a, b, "sha256")
 
 
+# The attention list a filing refused over a person's cuts goes on
+# (<NAS root>/attention/<host>_filing_held_persons_cuts.json).
+HELD_PERSONS_CUTS_KIND = "filing_held_persons_cuts"
+
+
+def _refuse_persons_cuts(result: Dict, video_id: str, dest: Path,
+                         kept: List[str], verbose: bool) -> Dict:
+    """Refuse to file ``video_id`` because ``dest`` holds a person's cuts this
+    run's algorithm cuts would replace. Nothing has moved when this is called.
+    Sets ``result["error"]`` and ``result["held_for_person"]``, and lists the
+    video in the attention panel (watcher/attention.py) so a person sees it
+    without reading a log; filing it later takes it off the list.
+
+    WHY a person: which cuts stand is a judgment about the video. The filed
+    cuts are a person's answer, and an answer a person gave is never replaced
+    by the algorithm's; but this run's later steps were computed on the
+    algorithm's cuts, so its results cannot be filed beside the person's
+    either. Retrying cannot change that, so every retry refuses the same way."""
+    import socket
+    names = ", ".join(kept)
+    says = (f"{video_id}: filing stopped before anything moved. Its filed folder "
+            f"{dest} holds a person's cuts ({names}), and this run's segments "
+            f"file is the algorithm's, so filing would replace the person's cuts. "
+            f"The filed results are unchanged and this run's files stay in "
+            f"Processing; filing is tried again and refused again until a person "
+            f"decides which cuts are right. No button resolves this yet: tell "
+            f"whoever maintains the pipeline.")
+    result["error"] = (f"refusing to archive: the filed folder of {video_id} holds a "
+                       f"person's cuts ({names}) and this run's segments file is not "
+                       f"a person's; it would replace them (nothing moved)")
+    result["held_for_person"] = {"kind": HELD_PERSONS_CUTS_KIND, "says": says,
+                                 "persons_cuts": list(kept)}
+    try:
+        from mousereach.watcher.attention import note_video
+        note_video(getattr(Paths, "NAS_ROOT", None), socket.gethostname(),
+                   HELD_PERSONS_CUTS_KIND, video_id, says)
+    except Exception:
+        pass   # note_video never raises; the error string still says it
+    if verbose:
+        print(f"  {result['error']}")
+    return result
+
+
 def archive_video(
     video_id: str,
     dry_run: bool = False,
@@ -389,8 +432,28 @@ def archive_video(
             # only=: sweep just the destination files this archive is about to
             # replace. Without the scope, a retry after a partial move sweeps
             # the files its own first attempt archived.
+            sweep = {f.name for f in files} - identical
+            incoming = {f.name: f for f in files}
+            # A person's cuts in the filed folder are never overwritten by an
+            # algorithm's (see archive/supersede.py). The question is asked
+            # with a DRY RUN, before anything moves. WHY first: supersede
+            # keeps the person's file but sweeps every OTHER filed file into
+            # the Archive, so refusing after the real sweep would leave a
+            # half-filed folder (only the person's cuts and the manifest; the old
+            # reaches and kinematics archived, the new ones still in
+            # Processing) that every retry refused again.
+            pre = supersede_video_outputs(video_id, dest, only=sweep,
+                                          incoming=incoming, dry_run=True)
+            if pre.get("human_cuts_kept"):
+                return _refuse_persons_cuts(result, video_id, dest,
+                                            pre["human_cuts_kept"], verbose)
             superseded = supersede_video_outputs(
-                video_id, dest, only={f.name for f in files} - identical)
+                video_id, dest, only=sweep, incoming=incoming)
+            # Backstop: the dry run said no, so this cannot fire unless the
+            # folder changed in between; refused rather than overwritten.
+            if superseded.get("human_cuts_kept"):
+                return _refuse_persons_cuts(result, video_id, dest,
+                                            superseded["human_cuts_kept"], verbose)
             if superseded.get("failed"):
                 result["error"] = (
                     "refusing to archive: could not preserve the previous "
@@ -496,6 +559,14 @@ def archive_video(
 
     # Update index - remove video
     if result["success"]:
+        # Filed: an earlier refusal over a person's cuts is resolved.
+        try:
+            import socket
+            from mousereach.watcher.attention import drop_video
+            drop_video(getattr(Paths, "NAS_ROOT", None), socket.gethostname(),
+                       HELD_PERSONS_CUTS_KIND, video_id)
+        except Exception:
+            pass
         try:
             index = PipelineIndex()
             index.load()

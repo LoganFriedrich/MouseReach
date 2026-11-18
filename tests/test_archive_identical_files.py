@@ -31,7 +31,11 @@ def test_unchanged_files_are_not_superseded_and_changed_ones_are(tmp_path, monke
     monkeypatch.setattr(core, "get_archive_destination", lambda vid: dest)
     swept = {}
 
-    def fake_supersede(video_id, source_dir, archive_root=None, *, only=None, **kw):
+    def fake_supersede(video_id, source_dir, archive_root=None, *, only=None,
+                       dry_run=False, **kw):
+        if dry_run:                     # filing asks first; nothing moves
+            return {"algo": sorted(only), "pose": [], "failed": [],
+                    "human_cuts_kept": []}
         swept["only"] = set(only)
         for name in only:
             (source_dir / name).unlink()

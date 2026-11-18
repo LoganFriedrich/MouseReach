@@ -40,7 +40,10 @@ that let the existing round trip carry it, IN THIS ORDER:
 The video file itself is never archived and never deleted:
 
   * a FILED video's mp4 stays where it is, beside its human review (if any);
-    the re-run copies that folder down and applies the review again;
+    the re-run copies that folder down and applies the review again. A
+    person's cuts there (``_segments.json`` marked ``boundary_source:
+    "human"``) stay too -- cuts are frame numbers, valid on any pose, and the
+    segmenter keeps them on the re-run (archive/supersede.py keeps them);
   * a HELD video's bundle (triage / deep review) leaves its queue FIRST, as
     one folder rename to ``Processing/Repose_Queue/_parked/<video_id>/``,
     under the review queues' own claim (step 0 in the code says why); the
@@ -55,7 +58,9 @@ The video file itself is never archived and never deleted:
 REFUSED, left untouched and reported:
   * a held video with a saved human review (``_causal_review.json``,
     ``_deep_review_cleared.json`` or ``_unified_ground_truth.json`` in its
-    bundle, or a durable review): a person is working on it; ask them first;
+    bundle, or a durable review), or with a person's cuts in its bundle (a
+    ``_segments.json`` marked ``boundary_source: "human"``): a person is
+    working on it; ask them first;
   * a row in any state other than archived / triage / deep_review (in flight,
     crystallized, failed ...), or with no row at all;
   * a video whose request is already out (queued or claimed by a GPU node).
@@ -240,8 +245,10 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
 
     if bundle is not None:
         rep["where"] = bundle.parent.name
+        from mousereach.archive.supersede import is_human_cuts
         human = [f.name for f in _files(bundle, video_id)
-                 if f.name.endswith(HUMAN_SUFFIXES)]
+                 if f.name.endswith(HUMAN_SUFFIXES)
+                 or (f.name.endswith("_segments.json") and is_human_cuts(f))]
         durable = _durable_review(video_id)
         if human or durable is not None:
             return refuse("held for a person who has saved work on it ("

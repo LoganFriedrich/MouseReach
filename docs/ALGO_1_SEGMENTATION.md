@@ -55,6 +55,8 @@ Seven call sites, in three groups.
 5. A manual single-video run -> `pipeline/run_all.py:74`
 6. Reprocessing to current versions -> `pipeline/reprocess_to_current.py:211`
 
+A person's cuts (a segments file marked `boundary_source: "human"`) survive every one of these: `process_single` keeps such a file when it finds one in its output folder, bring-current copies it from beside the filed video into its work folder first, and the stager (7) keeps it as it is and does not segment.
+
 **Bypassing `process_single` entirely:**
 
 7. The review-bundle stager calls `segment_video_multi` and `save_segmentation` directly (`review/staging.py:299-300`). Because it skips `process_single`, it also skips the grading of section 9 and never calls `add_validation_status`. The same function instead writes a **hand-built** segments JSON when a reviewer supplies their own boundaries (`staging.py:284-296`): that file has `segmenter_version: "manual_resegmentation"`, and no `detection` block, no `intervals`, no `sa_coverage`, no `candidates` and no `needs_human`. Since 2026-10-23 nothing calls it with boundaries: the review tool's re-cut editor, its only caller, was removed (a wrong cut found in triage is escalated to re-segmentation).

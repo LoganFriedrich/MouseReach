@@ -194,6 +194,25 @@ def reprocess_video_to_current(
     if meta.is_file() and not work_meta.exists():
         safe_copy(meta, work_meta, verify=True)
 
+    # A person's work beside the video goes into the work folder BEFORE any
+    # step runs: their cuts (a segments file marked boundary_source "human",
+    # which the segmenter keeps instead of re-cutting -- segmentation/core/
+    # batch.py) and their clear marker (which the gate reads). WHY: the work
+    # folder used to start empty, so the segmenter re-cut over a person's
+    # boundaries, the gate asked again for a clear a person had given, and
+    # finalize then archived the person's cuts and filed the algorithm's.
+    if video_dir is not None:
+        from mousereach.archive.supersede import is_human_cuts
+        for name in (f"{video_id}_segments.json", f"{video_id}_deep_review_cleared.json"):
+            src = Path(video_dir) / name
+            if not src.is_file() or (work_dir / name).exists():
+                continue
+            if name.endswith("_segments.json") and not is_human_cuts(src):
+                continue            # the algorithm's own cuts are made again
+            if not safe_copy(src, work_dir / name, verify=True):
+                summary["error"] = f"could not copy a person's {name} into the work folder"
+                return summary
+
     def _step(name, fn):
         s = time.time()
         try:
@@ -301,7 +320,27 @@ def reprocess_video_to_current(
         summary["error"] = "cannot finalize: video dir unknown"
         return summary
     from mousereach.archive.supersede import supersede_video_outputs
-    sup = supersede_video_outputs(video_id, video_dir, archive_root)
+    from mousereach.pipeline.fsutil import files_of_video
+    new_files = {f.name: f for f in files_of_video(work_dir, video_id)}
+    # A person's cuts beside the video would be replaced by this run's
+    # algorithm cuts: refused, asked with a DRY RUN before anything moves.
+    # WHY first: supersede keeps the person's file but sweeps every other
+    # file beside the video into the Archive, so refusing after the real
+    # sweep would leave the video with its old results archived and no new ones.
+    # (Cannot happen while the person's file is copied into the work folder
+    # above; refused rather than overwritten if it ever does.)
+    pre = supersede_video_outputs(video_id, video_dir, archive_root,
+                                  incoming=new_files, dry_run=True)
+    if pre.get("human_cuts_kept") and any(n in new_files for n in pre["human_cuts_kept"]):
+        summary["error"] = ("refusing to finalize: a person's cuts beside the video "
+                            "would be replaced by the algorithm's (nothing moved)")
+        return summary
+    sup = supersede_video_outputs(video_id, video_dir, archive_root,
+                                  incoming=new_files)
+    if sup.get("human_cuts_kept") and any(n in new_files for n in sup["human_cuts_kept"]):
+        summary["error"] = ("refusing to finalize: a person's cuts beside the video "
+                            "would be replaced by the algorithm's")
+        return summary
     summary["superseded"] = {"generation": sup.get("generation"),
                              "stack": sup.get("stack"),
                              "n_pose": len(sup.get("pose", [])),
