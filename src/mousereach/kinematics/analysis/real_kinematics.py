@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 
 from mousereach.config import Paths
-from mousereach.kinematics.core.anchored_path import anchored_hand_path, tracked_steps
+from mousereach.kinematics.core.anchored_path import (
+    REPEATED_FRAME_MAX_PX, anchored_hand_path, fill_repeated_frames, tracked_steps)
 from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 
 RULER_MM = 9.0  # ruler = 9mm
@@ -35,15 +36,17 @@ def compute_kinematics(x, y, ruler_px, fps):
     x_mm = x * px_to_mm
     y_mm = y * px_to_mm
 
-    # Frame-to-frame displacements
-    dx = np.diff(x_mm)
-    dy = np.diff(y_mm)
+    # Path length (total distance traveled), on the positions as tracked
+    path_length = np.sum(np.sqrt(np.diff(x_mm)**2 + np.diff(y_mm)**2))
+
+    # Frame-to-frame displacements for speed, acceleration and jerk, read through
+    # repeated frames (anchored_path: REPEATED FRAMES)
+    sx_mm, sy_mm = fill_repeated_frames(x_mm, y_mm, max_px=REPEATED_FRAME_MAX_PX * px_to_mm)
+    dx = np.diff(sx_mm)
+    dy = np.diff(sy_mm)
 
     # Instantaneous speed (mm/frame -> mm/sec)
     inst_speed = np.sqrt(dx**2 + dy**2) * fps
-
-    # Path length (total distance traveled)
-    path_length = np.sum(np.sqrt(dx**2 + dy**2))
 
     # Direct distance (start to max extent)
     max_x_idx = np.argmax(x_mm)

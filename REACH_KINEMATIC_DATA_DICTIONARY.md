@@ -55,6 +55,18 @@ and how it is computed.
   it), with `frame_rate_source` saying which (extractor 2.5.0 and later; see
   `kinematics/core/frame_rate.py`). Never assume a rate: a value converted with
   the wrong one is off by the ratio of the two rates.
+* **Speeds read through repeated frames** (extractor 2.5.0 and later). A video
+  whose recorder repeats a picture until the camera sends a new one has frames on
+  which nothing moved, followed by a frame that moved two frames' worth. Every
+  speed, jerk and speed-correlation column (`_peak_speed_*`, `_apex_speed_*`,
+  `_motion_smoothness`, `paw_velocity_correlation`) is measured after placing each
+  repeated frame on the straight line between the pictures around it
+  (`anchored_path.fill_repeated_frames`), so a speed is distance between pictures
+  over the frames between them. Positions and path lengths read the frames as
+  tracked. On older rows these columns measure the repetition as well as the paw.
+* **A value per frame compares only between videos of the same frame rate.** A
+  step per frame at 30 frames per second covers twice the time of one at 60. To
+  compare across rates, multiply by that row's video `frame_rate` to get per second.
 * **Speed units:** `_px_per_frame` and `_mm_per_frame`. There are no
   `_per_second` columns.
 * **Tracking quality is not a gate.** If a reach was emitted by reach

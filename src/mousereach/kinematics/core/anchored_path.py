@@ -32,6 +32,20 @@ reports that jump on about half of all reaches, and a speed "at the apex" taken 
 one says nothing about the apex. So a value that claims to be how fast the hand was
 moving comes only from steps between two detected frames, and needs no anchor at all.
 
+REPEATED FRAMES. A recording program can write frames faster than its cameras take
+pictures; it then repeats the last picture until a new one arrives. The video's frame
+rate is how often a frame is shown, not how often the hand was seen. On a repeated
+frame the tracked hand has not moved, and on the next new frame it has moved for two
+(or more) frame times at once. A speed read step by step therefore swings between
+nothing and double: the peak is the double, the speed at the apex is one or the other
+depending on which frame the apex fell on, and jerk and the agreement between the paw
+points' speeds measure the repetition rather than the hand. ``fill_repeated_frames``
+puts each repeated frame where the hand passed between the two new pictures around it,
+so a speed is the distance between two pictures over the frames between them. It
+assumes no particular pattern: a video with no repeated frames comes out unchanged.
+Only the speed measures (peak, apex, jerk, velocity correlation) read it; positions,
+the path, its length and straightness read the frames as tracked.
+
 WHEN A LANDMARK CANNOT BE TRUSTED. An anchor is never invented silently. Each reach
 records in ``start_source`` and ``end_source`` how its anchor was placed:
 
@@ -102,6 +116,53 @@ class AnchoredPath:
         """The path with the nose subtracted frame by frame, so head movement does
         not count as paw movement."""
         return self.x - self.nose_x, self.y - self.nose_y
+
+
+# A frame whose point sits within this many pixels of the last new position is a
+# repeat of that picture, not a new one. Tracking the same picture twice moves a point
+# by a few hundredths of a pixel; a hand that is really moving leaves this distance
+# within a frame or two, and a hand that creeps slower than this is merged into a
+# straight, steady path between the pictures, where its speed is the same.
+REPEATED_FRAME_MAX_PX = 0.5
+
+
+def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX):
+    """``(x, y)`` of an anchored path with each repeated detected frame moved to where
+    the hand passed between the two new positions around it (module docstring: REPEATED
+    FRAMES). Returns new arrays; the inputs are not changed.
+
+    Only the detected frames (``[1:-1]``) are considered: the anchors are calculated
+    points, never pictures. A detected frame is a new position when it lies at least
+    ``max_px`` from the last new position. The frames between two new positions are
+    spread evenly along the straight line between them, so each step between them is
+    the distance over the frames it took. Frames after the last new position, and any
+    run that holds an untracked (NaN) frame, are left as they are.
+    """
+    x = np.array(x, dtype=float)
+    y = np.array(y, dtype=float)
+    n = len(x)
+    if n < 4:
+        return x, y
+    fresh = []
+    last = None
+    for k in range(1, n - 1):
+        if not (np.isfinite(x[k]) and np.isfinite(y[k])):
+            last = None          # an untracked frame ends the run; the next tracked one is new
+            continue
+        if last is None or np.hypot(x[k] - x[last], y[k] - y[last]) >= max_px:
+            fresh.append(k)
+            last = k
+    out_x, out_y = x.copy(), y.copy()
+    for a, b in zip(fresh[:-1], fresh[1:]):
+        if b - a < 2:
+            continue
+        between = slice(a + 1, b)
+        if not (np.all(np.isfinite(x[between])) and np.all(np.isfinite(y[between]))):
+            continue
+        t = (np.arange(a + 1, b) - a) / float(b - a)
+        out_x[between] = x[a] + (x[b] - x[a]) * t
+        out_y[between] = y[a] + (y[b] - y[a]) * t
+    return out_x, out_y
 
 
 def tracked_steps(steps: np.ndarray) -> np.ndarray:

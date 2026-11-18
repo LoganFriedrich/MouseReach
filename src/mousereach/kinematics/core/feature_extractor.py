@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 
 from mousereach.pipeline.manifest import NOT_RESOLVED
-from mousereach.kinematics.core.anchored_path import AnchoredPath, anchored_hand_path, tracked_steps
+from mousereach.kinematics.core.anchored_path import (
+    AnchoredPath, anchored_hand_path, fill_repeated_frames, tracked_steps)
 from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 
 
@@ -299,7 +300,17 @@ class KinematicsProblem(Exception):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.5.0"  # 2.5 (2026-11-17): seconds come from the video's own frame
+    VERSION = "2.5.0"  # 2.5 (2026-11-17), also: speeds read through repeated frames
+                       # (anchored_path.fill_repeated_frames). A video whose recorder
+                       # repeats a picture until the camera sends a new one has steps
+                       # of nothing followed by steps of two frames' movement, so peak
+                       # speed read double, speed at the apex read nothing or double by
+                       # which frame the apex fell on, and jerk and velocity
+                       # correlation measured the repetition. Peak and apex speed
+                       # (wrist and per point), both smoothness values and
+                       # paw_velocity_correlation change; positions, paths, lengths,
+                       # straightness and mean speed do not.
+                       # 2.5 (2026-11-17): seconds come from the video's own frame
                        # rate (frame_rate.py) instead of an assumed 30, so on a
                        # 60 frames-per-second video the segment length, time to first
                        # reach, time to outcome and inter-reach interval were twice
@@ -896,7 +907,10 @@ class FeatureExtractor:
         anchors.
         """
         velocity = np.sqrt(np.diff(path.x)**2 + np.diff(path.y)**2)
-        tracked = tracked_steps(velocity)
+        # Peak and apex read through repeated frames (anchored_path: REPEATED FRAMES);
+        # the mean is the whole trip's length over its steps, which repeats do not change.
+        fx, fy = fill_repeated_frames(path.x, path.y)
+        tracked = tracked_steps(np.sqrt(np.diff(fx)**2 + np.diff(fy)**2))
         measured = tracked[~np.isnan(tracked)]
 
         # apex_idx counts detected frames, and tracked[i] is the step leaving frame i.
@@ -940,13 +954,17 @@ class FeatureExtractor:
 
         straightness = straight_dist / path_length if path_length > 0 else None
 
-        # Smoothness: inverse of normalized jerk
-        if len(rh_x) < 3:
+        # Smoothness: inverse of normalized jerk, read through repeated frames
+        # (anchored_path: REPEATED FRAMES), or it measures the repetition.
+        sm_x, sm_y = fill_repeated_frames(path.x, path.y)
+        sm_valid = ~(np.isnan(sm_x) | np.isnan(sm_y))
+        sm_x, sm_y = sm_x[sm_valid], sm_y[sm_valid]
+        if len(sm_x) < 3:
             smoothness = None
         else:
             # Jerk = third derivative of position
-            vel_x = np.diff(rh_x)
-            vel_y = np.diff(rh_y)
+            vel_x = np.diff(sm_x)
+            vel_y = np.diff(sm_y)
             acc_x = np.diff(vel_x)
             acc_y = np.diff(vel_y)
             jerk_x = np.diff(acc_x)
@@ -1492,7 +1510,9 @@ class FeatureExtractor:
         # steps measure geometry, not how fast the hand moved (anchored_path.tracked_steps).
         # tracked[i] is the step leaving detected frame i, so an apex on the last
         # detected frame has no speed.
-        tracked = tracked_steps(np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2))
+        # Read through repeated frames (anchored_path: REPEATED FRAMES).
+        sx, sy = fill_repeated_frames(x, y)
+        tracked = tracked_steps(np.sqrt(np.diff(sx) ** 2 + np.diff(sy) ** 2))
         peak_speed = float(np.nanmax(tracked)) if tracked.size and not np.all(np.isnan(tracked)) else None
         apex_speed = None
         if apex_idx_real is not None and apex_idx_real < tracked.size and not np.isnan(tracked[apex_idx_real]):
@@ -1547,10 +1567,11 @@ class FeatureExtractor:
         else:
             out[f'{prefix}_path_directness'] = None
 
-        # Motion smoothness = 1 / (1 + mean |jerk|), where jerk is the third diff.
+        # Motion smoothness = 1 / (1 + mean |jerk|), where jerk is the third diff,
+        # read through repeated frames like the speeds above.
         if x.size >= 4:
-            jx = np.diff(np.diff(np.diff(x)))
-            jy = np.diff(np.diff(np.diff(y)))
+            jx = np.diff(np.diff(np.diff(sx)))
+            jy = np.diff(np.diff(np.diff(sy)))
             jmag = np.sqrt(jx ** 2 + jy ** 2)
             mean_jerk = float(np.nanmean(jmag)) if jmag.size and not np.all(np.isnan(jmag)) else None
             if mean_jerk is not None:
@@ -1605,13 +1626,15 @@ class FeatureExtractor:
 
         # Velocity-correlation: mean pairwise Pearson r of frame-to-frame speed
         # series across the four paw points, on the anchored paths: speed is about
-        # where the paw is, so the steps to and from the nose count.
+        # where the paw is, so the steps to and from the nose count. Read through
+        # repeated frames: otherwise every point's speed drops to nothing on the same
+        # repeated frames, and the points agree about the repetition, not the paw.
         speed_series = []
         for p in self.PAW_POINTS:
             path = anchored_hand_path(df, p, start_frame, end_frame, other_reaches)
             if not path.ok:
                 continue
-            px, py = path.nose_relative()
+            px, py = fill_repeated_frames(*path.nose_relative())
             sp = np.sqrt(np.diff(px) ** 2 + np.diff(py) ** 2)
             speed_series.append(sp)
 

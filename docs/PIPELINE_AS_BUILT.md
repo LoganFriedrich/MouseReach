@@ -3020,7 +3020,7 @@ in `ANCHOR_FRACTION_FROM_NOSE`. It was an assumption before this update.
 **Where the detail is.** `tracked_steps` in `kinematics/core/anchored_path.py` and
 sections 5.4, 6.1 and 6.2 of `docs/KINEMATICS_FIELDS.md`.
 
-## Update 2026-11-17: values in seconds use the video's own frame rate
+## Update 2026-11-17: values in seconds use the video's own frame rate; speeds read through repeated frames
 
 **What changed.** The kinematics divided every frame count by a constant 30 to get
 seconds. That number was an assumption written into the code, not a measurement. Videos
@@ -3039,8 +3039,19 @@ other kinematics problem instead of being filed with its seconds missing.
 jerk and durations) and the explorer's `duration_sec` read each video's rate the same
 way; `dlc_to_trc` no longer defaults to 200 frames per second.
 
-**What is not affected.** Reach start, apex and end frames, every value per frame, and
-every value in pixels or millimetres. The segmenter counts frames; its fps argument
+**Speeds read through repeated frames.** A video's frame rate is how often it shows a
+frame, not how often the camera took a picture. A recording program that writes frames
+faster than its cameras deliver pictures repeats the last one, so step by step the hand
+moves nothing, then two frames' worth: peak speeds read about double, a speed at the
+apex nothing or double by which frame the apex fell on, and the smoothness and
+velocity-correlation values measured the repetition. Since 2.5.0 the speed measures
+place each repeated frame on the straight line between the pictures around it
+(`anchored_path.fill_repeated_frames`), which leaves a video without repeats unchanged.
+The columns are listed in `docs/KINEMATICS_FIELDS.md` ("Repeated frames").
+
+**What is not affected.** Reach start, apex and end frames, positions, extension, paths
+and their lengths, straightness and mean speeds, and every value in pixels or
+millimetres that is not a speed. The segmenter counts frames; its fps argument
 (always 60) only turns its anomaly limits, written in seconds, into frames, and 60 is
 what the videos are.
 

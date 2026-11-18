@@ -86,6 +86,12 @@ Measured over the Processing corpus, `ruler_pixels` sits in a narrow band for no
 
 **Before 2.5.0** the extractor divided by a constant 30 that was an assumption, never a measurement. Videos recorded at 60 frames per second therefore carry, on rows older than 2.5.0, seconds values twice their true length and a `velocity_at_apex_mm_per_sec` converted on a 30-per-second time base. `extractor_version` on the row says which applies.
 
+**Repeated frames (since 2.5.0).** A video's frame rate is how often it shows a frame, not how often a camera took a picture. A recording program that writes frames faster than its cameras deliver pictures repeats the last picture until the next arrives. On a repeated frame the tracked hand does not move; on the next new frame it has moved for two or more frame times at once. Read step by step, a speed then swings between nothing and double. So every *speed* measure reads the path through `fill_repeated_frames` (`kinematics/core/anchored_path.py`): a detected frame within 0.5 px (`REPEATED_FRAME_MAX_PX`) of the last new position counts as a repeat of it, and the repeats are placed evenly on the straight line to the next new position, so each step is the distance between two pictures over the frames between them. A video with no repeated frames is unchanged by this. It applies to `peak_velocity_px_per_frame`, `velocity_at_apex_px_per_frame` and `_mm_per_sec`, `trajectory_smoothness`, each point's `_peak_speed_*`, `_apex_speed_*` and `_motion_smoothness`, and `paw_velocity_correlation`. Positions, extension, the path and its length, straightness, directness and the mean speeds read the frames as tracked (repeats do not change a path's length).
+
+**Before 2.5.0**, on a video with repeated frames, the peak speeds read about twice the hand's speed, a speed at the apex was nothing or about double depending on which frame the apex fell on, the smoothness values measured the alternation, and `paw_velocity_correlation` was raised by every point stopping on the same repeated frames. Do not compare these columns across that version.
+
+**Per frame is per frame of that video.** A value per frame on a 30 frames-per-second video covers twice the time of one on a 60 frames-per-second video. Compare per-frame values only between videos of the same `frame_rate`, or multiply by it to get per second.
+
 **Angles.** Degrees, from `atan2`, so in the range -180 to +180.
 
 **Likelihood.** DeepLabCut's own confidence, 0 to 1, dimensionless.
