@@ -15,6 +15,9 @@ conda activate mousereach
 # Install
 cd /path/to/MouseReach
 pip install -e .
+# On any PC that runs the watcher or mousereach-sync, install the sync extra too:
+#   pip install -e ".[sync]"
+# (without its sqlalchemy the watcher cannot reach the shared coordination database and crops no collage)
 
 # Configure
 mousereach-setup
@@ -126,10 +129,10 @@ This works fine for testing, but remember:
 
 ## Multi-Machine Considerations
 
-MouseReach is designed for a **2-machine workflow**:
-
-1. **Analysis PC** (main development machine) - Where you'll run this installation
-2. **GPU Machine** (optional, for fast DLC processing) - Separate machine with NVIDIA GPU
+MouseReach runs on one machine or several. Each machine has a role (`watcher.mode`):
+**GPU PCs** (dlc_pc) cut collages and pose videos with DeepLabCut; one **processing
+machine** (processing_server) analyzes the posed videos and files the results. All of
+them share one pipeline folder (`nas_root`).
 
 The shared location you choose here affects the GPU machine:
 
@@ -137,7 +140,8 @@ The shared location you choose here affects the GPU machine:
 |-----------|---------|----------|
 | MouseReach Code | Analysis PC | `<shared drive>\MouseReach\` |
 | Conda Environment | Analysis PC | `<shared drive>\conda_envs\mousereach\` |
-| Pipeline Folders (DLC_Queue, Processing, Failed) | **Both** (shared) | `<nas_root>` |
+| Shared pipeline folders (Unanalyzed, Processing\Posed, Processing\Review, Processing\Failed, Analyzed) | **All** (shared) | `<nas_root>` |
+| Local working folders (DLC_Queue, Processing) | Each machine | `<processing_root>` |
 | NAS Archive (raw videos) | Both (shared) | configurable |
 
 **Key Point:** The GPU machine must be able to reach the SAME `<nas_root>` folder. This means:
@@ -337,7 +341,7 @@ mousereach-grasp-analyze --help     # Step 5: Kinematic features
 mousereach-export --help            # Step 6: Export to Excel
 
 # Check Napari plugin
-napari  # Once Napari loads, click on plugins in toolbar. Should see: Plugins → MouseReach Segmentation → Boundary Review Tool
+napari  # Once Napari loads, click on plugins in toolbar. Should see: Plugins -> MouseReach - Mouse Reaching Behavior Analysis -> Step 2b - Review Boundaries
 ```
 
 ---
@@ -362,8 +366,9 @@ mousereach-setup --set-role "Processing Server"   # Reach detection + kinematics
 ```
 
 This saves a small file (`~/.mousereach/machine_role.json`) that the wizard
-reads on this machine. If you skip this step, the wizard will try to auto-detect
-based on drive patterns, or prompt manually.
+reads on this machine. If you skip this step, the wizard looks in the lab profiles
+file for a profile that matches this PC (by hostname, or the drive rules a profile
+gives), or asks you for every path.
 
 ### Step 2: Run the Setup Wizard
 
@@ -378,8 +383,10 @@ The wizard prompts for:
    machine in the lab points at the same one. Without it, nothing that works on
    shared folders (watcher, intake, review queues) will run: each says
    "nas_root is not configured" and names this command.
-3. **Processing Root** (REQUIRED) - Parent folder for DLC_Queue, Processing, Failed, on a fast local disk
+3. **Processing Root** (REQUIRED) - Parent folder for this machine's DLC_Queue and Processing folders, on a fast local disk (Failed is in the shared pipeline folder)
 4. **Watcher** (optional) - Automated pipeline for a pipeline PC
+5. **Pipeline Directories** - if any of this machine's working folders or the shared
+   pipeline folders do not exist yet, it lists them and asks "Create them now? [Y/n]".
 
 If you set a machine role, defaults are pre-filled — just hit Enter through.
 
@@ -484,9 +491,11 @@ setting for themselves by putting it in their own `config.json`.
 section in a person's own `config.json` is ignored, because one machine filing
 videos somewhere else would hide them from every other machine.
 
-**If something is wrong:** if the file is missing, or is not valid JSON,
-MouseReach says so once (a warning naming the file) and carries on with the
-setting unset. A running watcher and an open review window read the file
+**If something is wrong:** if the file is missing, MouseReach says so once (a
+warning naming the file) and carries on with the setting unset. If it exists but
+cannot be read (not valid JSON, or empty), or the shared folder cannot be reached,
+the hand-score check and filing stop and wait as described above; other settings
+carry on unset. A running watcher and an open review window read the file
 again each time they need it, so a fix takes effect without a restart.
 
 ---
@@ -513,16 +522,16 @@ mousereach "path/to/video.mp4"
 # Review: open the Review Queues tab, or
 mousereach-review-tool
 
-# Or launch only batch processing tools:
-mousereach --batch
+# Or open only the Run Pipeline tab:
+mousereach --step 2
 ```
 
 ### Alternative: Individual CLI Commands
 
 ```bash
 mousereach-segment --help      # Step 2 batch segmentation
-mousereach-detect-reaches      # Step 3 batch reach detection
-mousereach-detect-outcomes     # Step 4 batch outcome detection
+mousereach-detect-reaches -i Processing/    # Step 3 batch reach detection
+mousereach-detect-outcomes -i Processing/   # Step 4 batch outcome detection
 ```
 
 ---
@@ -537,7 +546,7 @@ mousereach-detect-outcomes     # Step 4 batch outcome detection
 | 3 | mousereach.reach | `mousereach-detect-reaches` | `mousereach-review-reaches` |
 | 4 | mousereach.outcomes | `mousereach-detect-outcomes` | `mousereach-review-pellet-outcomes` |
 | 5 | mousereach.kinematics | `mousereach-grasp-analyze` | `mousereach-grasp-review` |
-| Sync | mousereach.sync | `mousereach-sync` | `mousereach-sync --status` |
+| Sync | mousereach.sync | `mousereach-sync` | `mousereach-sync-status` |
 | 6 | mousereach.export | `mousereach-export` | `mousereach-summary` |
 
 ---
@@ -655,10 +664,12 @@ This guide was tested with:
 
 ## Appendix: Deploy the Watcher on the NAS PC (Step by Step)
 
-**What this does:** Sets up the NAS-attached PC to automatically process new
-reaching videos. Once running, you drop collage videos on the NAS and the
-watcher handles everything — cropping, DLC, segmentation, reach detection,
-outcomes, and archiving.
+**What this does:** Sets up a PC to process new reaching videos automatically.
+What it does depends on its role (`watcher.mode`): a GPU PC (dlc_pc) cuts
+collages and poses the videos with DLC, then puts them in Processing\Posed; the
+processing machine (processing_server) takes them from there, runs segmentation,
+reach detection, outcomes and kinematics, and files the results in Analyzed. (A
+GPU PC with `watcher.also_process` true does both itself.)
 
 **You can drop new videos at any time**, even while the watchers are running
 on several machines: collages into `Unanalyzed\Multi-Animal`, already-cut
@@ -947,12 +958,13 @@ When you're ready to process videos for real:
 mousereach-watch
 ```
 
-The watcher is now running. It will:
-1. Check the NAS every 30 seconds for new collage videos
-2. Crop them into single-animal videos
-3. Run DLC pose tracking (using the GPU)
-4. Run segmentation, reach detection, and outcome detection
-5. Archive the results
+The watcher is now running. Every `poll_interval_seconds` (30 by default) it looks
+for work. On a GPU PC (mode dlc_pc, the default) it cuts new collages into
+single-animal videos, poses them with DLC on the GPU and puts each posed video in
+Processing\Posed. On the processing machine (mode processing_server) it takes posed
+videos from there, runs segmentation, reach detection, outcome detection and
+kinematics, holds a video for review when a check needs a person, and files
+finished videos in Analyzed.
 
 **To stop the watcher:** Press **Ctrl+C** in the terminal window.
 
@@ -1007,8 +1019,9 @@ From then on:
   you set the recording time (A2 below), outside which an open program is ignored.
 - While it is open, nothing new starts. A pose (DeepLabCut) that was part-way
   is stopped and put back in the queue; it runs again later, nothing is lost,
-  and the video is not marked failed. A collage crop that had already started
-  finishes first.
+  and the video is not marked failed. A collage crop that had started is stopped
+  too: its half-made videos are deleted and the collage waits to be cut again (not
+  marked failed).
 - After you close it, the PC waits 2 minutes and then starts working again by
   itself (in case you open the program again straight away). To change the
   wait, set **Resume after (seconds)** in Watcher Control, or run
@@ -1043,6 +1056,9 @@ program pauses it as before.
   inside it right now.
 - Set it to cover every time anyone might record. Outside it, a recording made
   with a pose running could drop frames.
+- To pause for the whole recording time whether or not the program is open, put
+  `"pause_during_recording_hours": true` in the `watcher` section of
+  `~/.mousereach/config.json` (default false; needs the days and/or hours above).
 
 **B. Pause by hand**
 
@@ -1068,6 +1084,15 @@ To install:
    Startup folder (`Win+R` → `shell:startup`)
 2. **Toggle shortcut:** Copy `deploy/MouseReach-Toggle.bat` to your Desktop
 
+`deploy\install.bat` makes both copies for you once your PCs' hostnames are written
+into it (it ships with EXAMPLE-HOST placeholders).
+
+Set `MOUSEREACH_ENV` (the environment folder), `MOUSEREACH_NAS_ROOT` (the shared
+pipeline folder) and `MOUSEREACH_PROCESSING_ROOT` (this PC's processing root) as user
+environment variables. MouseReach itself also reads `MOUSEREACH_PROCESSING_ROOT` and
+`MOUSEREACH_NAS_DRIVE` as `processing_root` / `nas_drive` when config.json has none,
+so keep them equal to config.json.
+
 The startup script finds the MouseReach environment from the
 `MOUSEREACH_ENV` user environment variable, or in the default conda
 environment locations; the toggle script searches a fixed list of
@@ -1076,7 +1101,9 @@ environment folders (see the script).
 On login, the startup script automatically:
 1. Waits for the shared pipeline folder (`MOUSEREACH_NAS_ROOT`, if set) to be available
 2. Launches the watcher daemon in its own terminal window
-3. Launches a status monitor that refreshes every 60 seconds
+3. Opens a window that shows the watcher log live (`<processing root>\watcher_logs\watcher.log`,
+   found through `MOUSEREACH_PROCESSING_ROOT` or `MOUSEREACH_NAS_ROOT`); it closes when
+   the watcher stops
 
 The **MouseReach Toggle** shortcut lets you quickly pause/resume processing
 without opening a terminal. On a PC that records, also list the recording
@@ -1105,6 +1132,8 @@ Useful commands (no environment activation needed):
 (`<env folder>` is the folder of the mousereach conda environment.)
 
 ---
+
+*Current version: MouseReach 2.16. The line below and its change list are the v2.3.0 history.*
 
 *MouseReach v2.3.0 - Last updated: 2025-01-21*
 
