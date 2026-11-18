@@ -763,8 +763,12 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
     """Why an answer cannot count for the segment it was given for, in words
     for the reviewer -- or None when it can.
 
-    These are the SAME tests the matching applies (index_review_by_segment):
-    an answer failing them is dropped there. WHY the review tool asks this at
+    The span and reach-position tests are the SAME tests the matching applies
+    (index_review_by_segment): an answer failing them is dropped there. Two
+    tests are asked only here, when answering: a touched outcome needs its
+    causal reach, and an ignore window may not cover that whole reach. A
+    stored record of either shape is still matched; the results then use the
+    reach assignment's causal reach for it (truth_resolver). WHY the review tool asks this at
     the moment of answering: until 2026-10-23 it recorded such an answer, the
     pipeline dropped it without a word, and the video came back asking the same
     question -- a reviewer could answer one segment again and again. Part of
@@ -787,7 +791,33 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
         return ("The reach you chose (frames %d-%d) is outside segment %s, which runs "
                 "from frame %d to %d. As this video is cut, that reach cannot have "
                 "touched this segment's pellet." % (cr[0], cr[1], n, span[0], span[1]))
-    typed = ((rec.get("human") or {}).get("causal_reach") or {}).get("typed")
+    human = rec.get("human") or {}
+    if human.get("outcome") in _TOUCHED_OUTCOMES and cr is None:
+        # WHY: a touched pellet with no causal reach was saved as a complete
+        # answer, and the results then shipped the pellet with no causal reach
+        # at all (the person's empty pick blocked the reach assignment's).
+        # Saying which reach touched it is part of answering a touched pellet.
+        return ("Pellet %s is marked %s, but no reach is picked as the one that "
+                "touched it. Pick that reach, or type its frames under 'Undetected "
+                "reach'. If no reach touched the pellet, choose 'untouched', or "
+                "mark the frames where something else moved it under 'Ignore "
+                "windows'." % (rec.get("pellet_num") or n, human.get("outcome")))
+    for w in (rec.get("answers") or {}).get("abnormal_ranges") or []:
+        # WHY: an ignore window takes its frames out of the measurements, so
+        # one over the whole causal reach leaves the pellet's own reach
+        # unmeasured -- the two answers contradict each other.
+        try:
+            ws, we = int(w["start_frame"]), int(w["end_frame"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if cr is not None and ws <= cr[0] and we >= cr[1]:
+            return ("The ignore window at frames %d-%d covers the whole reach you "
+                    "chose as the one that touched the pellet (frames %d-%d), so "
+                    "that reach would not be measured at all. If something other "
+                    "than a reach moved the pellet, leave the reach unpicked; "
+                    "otherwise make the window cover only the frames that are not "
+                    "the reach." % (ws, we, cr[0], cr[1]))
+    typed = (human.get("causal_reach") or {}).get("typed")
     if typed and typed[1] - typed[0] + 1 > MAX_TYPED_REACH_FRAMES:
         return ("The reach you typed runs %d frames (frames %d-%d); no reach lasts that "
                 "long. Check the two frame numbers and type them again."
@@ -1765,6 +1795,11 @@ def apply_review_overrides(
         seg["outcome"] = ho
         seg["causal_reach_id"] = hc.get("reach_id") if ho in _TOUCHED_OUTCOMES else None
         seg["outcome_source"] = "human_review"
+        if seg["causal_reach_id"] is not None:
+            # Who chose the causal reach (the kinematics read this to keep a
+            # person's pick; a touched pellet with no pick is left to the
+            # reach assignment -- feature_extractor.causal_reach_owned_by_person).
+            seg["causal_reach_source"] = "human_review"
         # Who answered this segment; the file-level reviewer only for files
         # saved before records carried their own (segment_reviewer).
         who = rec.get("reviewer") or reviewer

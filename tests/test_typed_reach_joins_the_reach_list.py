@@ -85,7 +85,10 @@ def test_a_typed_reach_longer_than_any_reach_is_never_added(monkeypatch):
     r, o, rev = _data({"outcome": "retrieved", "causal_reach": {"start": 300, "end": 1031}})
     reaches, outcomes = _resolve(monkeypatch, r, o, rev)
     assert len(reaches["segments"][0]["reaches"]) == 2
-    assert outcomes["segments"][0]["causal_reach_id"] is None
+    # No causal reach from the review: the typed one is not a reach, so the
+    # causal reach is left to the reach assignment (key absent).
+    assert outcomes["segments"][0].get("causal_reach_id") is None
+    assert outcomes["segments"][0].get("causal_reach_source") != "human_review"
 
 
 def test_the_review_window_refuses_a_typed_reach_longer_than_any_reach():

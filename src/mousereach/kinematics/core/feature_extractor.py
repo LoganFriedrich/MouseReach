@@ -249,9 +249,13 @@ def causal_reach_owned_by_person(seg: dict) -> bool:
     layering (review.truth_resolver), which stamps who decided each segment.
 
     Owned by a person:
-      - a review decided the segment (outcome_source "human_review"): its
-        pick, or its None for an untouched pellet or a touched pellet left
-        without a pick, is the person's answer;
+      - a review decided the segment (outcome_source "human_review") and
+        either the pellet was not touched (its None means "no reach did
+        this") or the review named the reach (causal_reach_source
+        "human_review"). A review that marks a pellet touched and names no
+        reach did not decide the reach: the reach assignment's answer is used.
+        WHY: counting that empty pick as a person's shipped touched pellets
+        with no causal reach although the assignment had one;
       - ground truth decided it and either the pellet was untouched (no reach
         did it) or a causal reach was found for it from a person's statement
         (causal_reach_source "ground_truth" -- the reach holding the ground
@@ -269,7 +273,9 @@ def causal_reach_owned_by_person(seg: dict) -> bool:
         return True
     src = seg.get('outcome_source')
     if src == 'human_review':
-        return True
+        if seg.get('outcome') not in _TOUCHED:
+            return True
+        return seg.get('causal_reach_source') == 'human_review'
     if src == 'ground_truth':
         if seg.get('outcome') not in _TOUCHED:
             return True

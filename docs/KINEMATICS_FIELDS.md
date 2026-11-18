@@ -625,7 +625,7 @@ merely holds a `causal_reach_id` key:
 
 | The segment | Its causal reach in the features file |
 |---|---|
-| A review answered it (`outcome_source` = `human_review`) | The reviewer's pick. An untouched answer, or a touched answer with no pick, stays without a causal reach. |
+| A review answered it (`outcome_source` = `human_review`) | The reviewer's pick (`causal_reach_source` = `human_review`). An untouched answer stays without a causal reach. A touched answer with no pick did not say which reach: the reach assignment's pick, when it has one (the review window no longer accepts such an answer; older reviews hold a few). |
 | Ground truth decided it and the pellet was untouched | No causal reach. |
 | Ground truth decided it, pellet touched, and a reach was found from a person's statement (`causal_reach_source` = `ground_truth`: the reach holding the ground truth's interaction frame; or `human_review`: the review's pick for the same outcome) | That reach. |
 | Ground truth decided it, pellet touched, but no reach holds its interaction frame and no review named one | The reach assignment's pick. |
@@ -634,7 +634,8 @@ merely holds a `causal_reach_id` key:
 
 If the reach a person excluded in the ground-truth tool is the segment's causal reach, the segment
 keeps `causal_reach_id` naming a reach that is now only in `reaches_left_out`, and no measured
-reach is marked causal. A reviewer's ignore window does the same. Nothing is substituted.
+reach is marked causal. A reviewer's ignore window does the same (the review window refuses a new
+ignore window over the whole causal reach; older reviews may hold one). Nothing is substituted.
 
 On every person-owned segment the assignment's pick is still recorded as
 `algo_causal_reach_id`, so an override stays visible as one. No extractor version

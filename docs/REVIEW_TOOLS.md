@@ -196,7 +196,25 @@ do -- nothing is recorded for that segment, and *Save & next* stays on it:
 - **any answer on a segment too short to be a pellet presentation** (fewer than
   5 frames: two cuts almost on top of each other), unless a person made the cuts.
 
-The same two tests decide what the pipeline drops when it applies answers
+Two more answers are refused the same way, because they contradict themselves:
+
+- **a touched outcome (retrieved, displaced_sa, displaced_outside) with no reach
+  picked.** Saying which reach touched the pellet is part of the answer. Pick
+  the reach, or type its frames under *Undetected reach*. If no reach touched
+  the pellet, choose *untouched*, or mark the frames where something else moved
+  it under *Ignore windows* (with no reach picked, that records the pellet as
+  moved by something other than a reach). WHY: such an answer used to be saved
+  as complete, and the pellet reached the results with no causal reach at all;
+- **an ignore window that covers the whole reach picked as causal.** An ignore
+  window takes its frames out of the measurements, so the pellet's own reach
+  would not be measured. Make the window cover only the frames that are not the
+  reach, or leave the reach unpicked if no reach moved the pellet.
+
+A review saved before this rule that marks a pellet touched with no reach is
+still used for its outcome; its causal reach in the results is the reach
+assignment's, because the person did not say which reach it was.
+
+The first two tests decide what the pipeline drops when it applies answers
 (`causal_review_io.answer_problem`, shared with `index_review_by_segment`), so
 the tool never accepts an answer the pipeline will throw away. Part of triage is
 checking that what happened, happened to the pellet shown: when the algorithm

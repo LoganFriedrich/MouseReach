@@ -253,7 +253,9 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
       whichever layer wins the outcome -- they say which frames are not
       behaviour and which reach the detector missed, and ground truth
       records neither.
-    - causal reach: the review's pick when the review wins. When ground truth
+    - causal reach: the review's pick when the review wins. A review that
+      marks the pellet touched and picks no reach leaves the causal reach to
+      the reach assignment (it did not say which reach). When ground truth
       wins and the pellet was touched, ground truth stores no causal reach a
       person chose (the tool has no control for it; any id in the file was
       copied from the algorithm's reach list of an older run). So, in order:
@@ -308,6 +310,18 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
         seg.pop("causal_reach_source", None)
 
         if top.get("source") != "ground_truth":
+            if (top["outcome"] in _TOUCHED_OUTCOMES and top.get("causal_reach_id") is None
+                    and not top.get("review_reach")):
+                # A review that marks the pellet touched but names no reach
+                # says nothing about WHICH reach: it is not a person's "no
+                # reach". The causal reach is left to the reach assignment, as
+                # on any pellet whose reach no person decided (the extractor
+                # merges it; causal_reach_owned_by_person). WHY: written as
+                # None it blocked the assignment's answer and the pellet
+                # shipped touched with no causal reach.
+                if seg.get("algo_causal_reach_id") is None:
+                    seg.pop("causal_reach_id", None)
+                continue
             seg["causal_reach_id"] = top.get("causal_reach_id")
             if seg["causal_reach_id"] is not None:
                 seg["causal_reach_source"] = top.get("source")
