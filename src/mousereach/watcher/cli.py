@@ -217,6 +217,20 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         print("\nRun: mousereach-setup", file=sys.stderr)
         sys.exit(1)
 
+    # The watcher must be able to NAME its database before anything starts:
+    # a processing server whose settings have no watcher.db_path is refused
+    # here (db_location says why), before logging, the one-watcher lock or
+    # any file is created -- it never builds <processing folder>/watcher.db
+    # by default for the other logins' tools to disagree about.
+    from mousereach.watcher.db_location import WatcherDbUnnamed, resolve_watcher_db_path
+    try:
+        resolve_watcher_db_path()
+    except WatcherDbUnnamed as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        pass        # an unconfigured processing root is reported below
+
     # Setup logging
     try:
         log_dir = config.get_log_dir()

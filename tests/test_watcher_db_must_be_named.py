@@ -130,3 +130,23 @@ def test_a_login_with_no_settings_file_refuses(login, monkeypatch):
     assert "settings" in str(err.value)
     db, why = db_location.open_watcher_db_if_present()
     assert db is None and why
+
+
+def test_the_watcher_will_not_start_on_an_unnamed_database(login, monkeypatch, capsys):
+    """A processing server whose settings name no watcher.db_path: the watcher
+    refuses before logging, the one-watcher lock or any file -- it does not
+    build <processing folder>/watcher.db for the other logins to disagree
+    about."""
+    from mousereach.watcher import singleton
+    login({"processing_root": str(login.root),
+           "watcher": {"mode": "processing_server"}})
+    taken = []
+    monkeypatch.setattr(singleton, "acquire_watcher_lock",
+                        lambda *a, **k: taken.append(1) or None)
+    monkeypatch.setattr(sys, "argv", ["mousereach-watch", "--once"])
+    with pytest.raises(SystemExit) as ex:
+        cli.main_watch()
+    assert ex.value.code not in (0, None)
+    assert taken == []
+    assert not (login.root / "watcher.db").exists()
+    assert "db_path" in capsys.readouterr().err

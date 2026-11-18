@@ -902,6 +902,18 @@ already has is never replaced by the profile's.
 
 When it says "Configuration saved!", you're done with setup.
 
+**On the processing server only:** the settings must also name the watcher
+database, `watcher.db_path` (the lab profile's server entry carries it). The
+watcher refuses to start without it, and so does every tool run from a login
+whose settings lack it -- they print "... name no watcher database
+(watcher.db_path) ..." and change nothing. On a new server where no watcher
+has run yet, choose the file the watcher should create (for example
+`<processing root>\watcher.db`), put it in the `watcher` section of
+`~/.mousereach/config.json` (or the Watcher Control panel's settings), and put
+the SAME value in the settings of every other login on that machine that uses
+MouseReach (reviewers' logins included). `mousereach-watch-status` prints the
+file in use on its first line, `[watcher db] <path>`.
+
 ---
 
 ### Step 9: Test the Watcher (Dry Run)

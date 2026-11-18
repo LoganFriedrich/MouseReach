@@ -99,7 +99,10 @@ def resolve_watcher_db_path() -> Path:
             f"database its watcher writes: copy watcher.db_path from the settings of "
             f"the login that runs the watcher (mousereach-watch-status there prints it on "
             f"its first line, [watcher db]), "
-            f"or set it with the Watcher Control panel's settings. Nothing was read "
+            f"or set it with the Watcher Control panel's settings. On a new machine "
+            f"where no watcher has run yet, set watcher.db_path to the file the watcher "
+            f"should create (for example <processing folder>/watcher.db) in every login, "
+            f"then start the watcher. Nothing was read "
             f"from or written to <processing folder>/watcher.db, which may be an old "
             f"copy the watcher does not use.")
     return require_processing_root() / "watcher.db"

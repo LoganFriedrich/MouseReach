@@ -547,6 +547,7 @@ See INSTALL.md, Step 6.
 | `processing_root` | Pipeline working folders (DLC_Queue, Processing, Failed) | **Yes** |
 | `nas_drive` | Data repository / archive location | Optional |
 | `watcher.*` | Automated pipeline settings (DLC config, GPU, polling) | For watcher PC |
+| `watcher.db_path` | The watcher database file. On the processing server it is REQUIRED in every login's settings (the watcher and every tool refuse without it, rather than guess); on a GPU PC it defaults to `<processing_root>/watcher.db` | Processing server: **Yes** |
 | `hand_scores.*` | The hand-scores file, and the projects whose sessions must all have hand scores, checked right after a video is analysed, before triage (see "Checked against the hand scores before triage"). Usually kept in the lab settings file instead (below) | Optional |
 
 Configuration is saved to `~/.mousereach/config.json` and persists across sessions.

@@ -78,6 +78,7 @@
         "processing_root": "<local drive>:\\<path>\\MouseReach_Pipeline",
         "watcher": {
           "mode": "processing_server",
+          "db_path": "<local drive>:\\<path>\\MouseReach_Pipeline\\watcher.db",
           "max_local_pending": 2
         }
       }
