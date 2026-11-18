@@ -4101,9 +4101,13 @@ work and extra ways to fail a cleared video.
    review bundle; the routing reason in the watcher log ends "(answered_before_recut: <pellets>)".
    A voided answer is found in the pellet list or among the answers a later save kept aside
    (`unmatched_answers`). A voided pellet never takes the algorithm's call unasked.
-   STILL OPEN: a triage return whose algorithm cuts are out of date or unreadable (point 4 moves
-   its start back to segmentation and the segmenter cuts again) still matches the earlier answers
-   to the new cuts by frame overlap, because the segmenter's cuts record no time.
+   A triage return whose algorithm cuts are out of date or unreadable (point 4 moves its start
+   back to segmentation and the segmenter cuts again) is covered by the same rule: the segmenter
+   records when it cut and which cuts it replaced (`segmenter_recut_at`,
+   `segmenter_recut_replaced`), and earlier answers on pellets that moved are void and asked
+   again. STILL OPEN: a segmenter run that finds no earlier segments file anywhere records
+   nothing (it cannot tell a first cut from a re-cut), so answers found elsewhere for that video
+   are still matched to its cuts by frame overlap.
 3. **Every later step runs.** The quality triage, the hand-score comparison and the review gate
    always run on a returned video -- they come after every algorithm step -- and then kinematics.
    A returned video is never treated as a filed video's "downstream calculation only" re-run,
@@ -4575,14 +4579,17 @@ queue never deletes or overwrites a person's file".
   triage" above). No answer is carried into the deep-review bundle by `_empty_triage_copy`. WHY:
   re-segmentation voids every answer after it; a review or ground truth moved into the deep-review
   bundle travelled back into Processing with it. The review's copy in the durable store is still
-  read by the review readers, but once a person has saved new cuts, an answer in it given
-  before then counts only on a pellet whose frames did not change; every other is void, kept in the
-  file as a record, and the pellet counts as unanswered again (`index_review_by_segment`, keyed on the segments file's `corrected_at`;
-  see REVIEW_TOOLS.md, "A re-cut voids the answers given before it"). Escalate and the mislabel
-  divert still carry the triage bundle's review and ground truth into deep review, where the same
-  rule voids the answers once the cuts are saved. NOT COVERED: when the SEGMENTER cuts again
-  (a triage return whose algorithm cuts are out of date), earlier answers are still matched to the
-  new cuts by frame overlap -- the segmenter's cuts record no time. Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
+  read by the review readers, but once the video is re-cut -- by a person saving new cuts, or by
+  the segmenter cutting again (a triage return whose algorithm cuts are out of date) -- an answer
+  in it given before then counts only on a pellet whose frames did not change; every other is
+  void, kept in the file as a record, and the pellet counts as unanswered again
+  (`index_review_by_segment`, keyed on `causal_review_io.cuts_set_at`: the segments file's
+  `corrected_at`, or `segmenter_recut_at` on the segmenter's cuts; see REVIEW_TOOLS.md, "A re-cut
+  voids the answers given before it"). Escalate and the mislabel divert still carry the triage
+  bundle's review and ground truth into deep review, where the same rule voids the answers once
+  the cuts are saved. NOT COVERED: a segmenter run that finds no earlier segments file anywhere
+  records nothing (it cannot tell a first cut from a re-cut), so answers found elsewhere for that
+  video are still matched to its cuts by frame overlap. Tests: `tests/test_deep_review_keeps_triage_person_files.py`.
 - **Queue folder check reads the dict entries.** `orchestrator.queue_folder_holds_this_run`
   reads each `failed_files` entry's `name` (entries are dicts with `name`, `error`, `source`; the
   oldest records hold bare names), so a route that could not move the run's processing manifest is

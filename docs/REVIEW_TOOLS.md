@@ -680,9 +680,14 @@ says that a video was re-cut or that a pellet was answered before (see "Nothing 
 voided pellet is simply open again. Which answers were voided, and why, is logged at debug level
 and kept in the review file.
 
-What is NOT covered yet: when the SEGMENTER (not a person) cuts a video again -- for example a
-triage return whose algorithm cuts are out of date -- earlier answers are still matched to the
-new cuts by frame overlap, because the segmenter's cuts record no time.
+A re-cut by the SEGMENTER (not a person) -- for example a triage return whose algorithm cuts are
+out of date -- voids earlier answers through this same rule: the segmenter records when it cut
+and which cuts it replaced (see "The segmenter's re-cut is a re-cut too" above).
+
+What is NOT covered yet: a segmenter run that finds no earlier segments file anywhere (none at
+the output path and none passed to it) records nothing, because it cannot tell a first cut from
+a re-cut. If review answers for that video exist elsewhere (for example a review copy whose
+segments file was lost), they are still matched to the new cuts by frame overlap.
 
 ### The record format
 
