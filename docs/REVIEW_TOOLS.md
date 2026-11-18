@@ -246,7 +246,10 @@ cases they do nothing, and the message says why:
   bundle loaded: nothing was flagged or moved" (it writes no session note anywhere -- not in the
   queue and not beside the video you opened), and Clear says there is nothing to clear. The
   window still knows which queue it was walking: press **Save Review + Next Video** to save the
-  review of the video you opened and go back to the next video in the queue. The queue video
+  review of the video you opened and go back to the next video in the queue. That review is
+  saved beside the video you opened (as the Save Review button saves it for any video opened by
+  hand), and only when you answered at least one segment; with nothing answered the window says
+  "No segments reviewed yet", writes nothing, and goes on to the queue. The queue video
   you left counts as visited for the rest of this window's session, as it would if you had
   moved on with Save Review + Next Video. **Why:** the window used to keep the previous queue
   video's bundle, so these buttons moved THAT video's folder under the name of the video you
@@ -259,9 +262,12 @@ cases they do nothing, and the message says why:
   cleanly, except **Save Review + Next Video**, which stays usable when the window was walking
   a queue: with nothing loaded it saves nothing and goes straight on to the next video in the
   queue. The bundle that failed is skipped for the rest of this window's session (also when its
-  video file could not be found at all). **Why:** the window used to set the new video's name
-  before the load failed, and a save then wrote the previous video's answers under the new
-  name.
+  video file could not be found at all). This holds for the very first bundle of a launch too:
+  if it cannot be opened, Save Review + Next Video is usable at once and moves on to the next
+  bundle, with no need to close and relaunch the window. **Why:** the window used to set the new
+  video's name before the load failed, and a save then wrote the previous video's answers under
+  the new name; and a launch whose first bundle had no video never learned which queue it was
+  in, so the next-video button stayed disabled.
 - **Your answers did not save.** Each of the three buttons saves the review first. If that save
   fails (the share is unreachable, a file is locked), the button shows "Your answers did not
   save, so <video> was NOT moved" (Clear: "was NOT cleared"), the window stays on the video

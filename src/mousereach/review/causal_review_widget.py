@@ -822,6 +822,17 @@ The notes box travels with the video.
             if seen is None:
                 seen = self._reviewed_this_session = set()
             seen.add(str(bundle_dir))
+            # The queue is known even though this bundle cannot be shown. WHY:
+            # when this is the FIRST bundle of a launch nothing else ever set
+            # the queue folder, so the next-video button stayed disabled and,
+            # pressed later, said "No review queue found" -- the reviewer had
+            # to relaunch to get past one unopenable bundle.
+            self._queue_pending_dir = bundle_dir.parent
+            if not getattr(self, "video_path", None):
+                try:
+                    self._save_next_video_btn.setEnabled(True)
+                except Exception:
+                    pass
             show_error(
                 f"Could not open review bundle {stem}: no video at the "
                 f"manifest's path ({manifest.get('canonical_video_path')}) and "
@@ -3423,6 +3434,7 @@ The notes box travels with the video.
         import random
         pending_dir = Path(pending_dir)
         root = pending_dir.parent
+        self._queue_pending_dir = pending_dir   # the queue this window walks
         self._reviewed_this_session = set()
         self._pool_cache = self._review_pool_paths(pending_dir, root)  # folder listing, by name
         b, tier_n = self._pick_eligible(self._pool_cache, root)

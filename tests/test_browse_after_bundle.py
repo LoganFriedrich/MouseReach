@@ -285,3 +285,23 @@ def test_flag_session_with_no_queue_writes_nothing_beside_the_video(tmp_path, mo
 
     assert sorted(p.name for p in filed.iterdir()) == [f"{C}.mp4"]
     assert ("show_info", "No bundle loaded: nothing was flagged or moved.") in msgs
+
+
+def test_a_first_bundle_with_no_video_does_not_strand_the_queue(tmp_path, monkeypatch):
+    # The first bundle of a launch has no video anywhere: the next-video button
+    # must still reach the rest of the queue, without a relaunch.
+    msgs = _quiet(monkeypatch)
+    monkeypatch.setattr("mousereach.review.bundle_media.filed_media_dirs", lambda s: [])
+    pending = _queue(tmp_path, OLD, NEW)
+    (pending / OLD / f"{OLD}.mp4").unlink()
+    w = _QueueWindow()
+    w.load_from_manifest(_manifest(pending / OLD), pending / OLD)
+
+    assert w.loaded == [] and w._bundle_dir is None
+    assert any("Could not open review bundle" in m for _, m in msgs)
+    assert w._save_next_video_btn.enabled
+
+    w._save_and_next_video()
+
+    assert w.saves == []
+    assert w.loaded == [(NEW, pending / NEW)]
