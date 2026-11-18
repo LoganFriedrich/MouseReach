@@ -34,6 +34,12 @@ def deep_bundle(tmp_path, monkeypatch):
     deep.mkdir(parents=True)
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
+    # The claim folder (<Review>/.return_claims) and the backup folder
+    # (<Analyzed>/Archive/manual_corrections) hang off REVIEW_ROOT and
+    # ANALYZED_OUTPUT; left unpatched they resolve to the configured real
+    # pipeline, which the test guard refuses.
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review")
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
     bundle = deep / VID
     bundle.mkdir()
     for i, n in enumerate(FILES):

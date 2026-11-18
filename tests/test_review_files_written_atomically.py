@@ -230,6 +230,12 @@ def review_roots(tmp_path, monkeypatch):
     from mousereach.review import causal_review_io as cio
     records = tmp_path / "review_records"
     monkeypatch.setattr(cio, "_default_index_dir", lambda: records)
+    # The return step backs the durable copy up into
+    # <Analyzed>/Archive/manual_corrections; unpatched, that is the configured
+    # real pipeline (the test guard refuses it, and a backup was once left there).
+    from mousereach.config import Paths
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review")
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     return SimpleNamespace(records=records, bundle=bundle)

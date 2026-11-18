@@ -28,6 +28,12 @@ def queues(tmp_path, monkeypatch):
         (triage / VID / name).write_text("x")
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
+    # The claim folder (<Review>/.return_claims) and the backup folder
+    # (<Analyzed>/Archive/manual_corrections) hang off REVIEW_ROOT and
+    # ANALYZED_OUTPUT; left unpatched they resolve to the configured real
+    # pipeline, which the test guard refuses.
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path)
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
     db = WatcherDB(db_path=tmp_path / "w.db")
     db.register_video(video_id=VID, source_path="x")
     for st in ("validated", "dlc_queued", "dlc_running", "dlc_complete",

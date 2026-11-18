@@ -27,6 +27,12 @@ def setup(tmp_path, monkeypatch):
         (triage / VID / name).write_text("x")
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", triage)
     monkeypatch.setattr(Paths, "DEEP_REVIEW", deep)
+    # The claim folder (<Review>/.return_claims) and the backup folder
+    # (<Analyzed>/Archive/manual_corrections) hang off REVIEW_ROOT and
+    # ANALYZED_OUTPUT; left unpatched they resolve to the configured real
+    # pipeline, which the test guard refuses.
+    monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path)
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
     wrong_db = WatcherDB(db_path=tmp_path / "other.db")      # no row for VID
     infos = []
     monkeypatch.setattr(crw, "show_info", lambda msg, *a, **k: infos.append(msg))

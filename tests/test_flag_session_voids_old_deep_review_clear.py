@@ -27,7 +27,11 @@ def _window(bundle, tmp_path):
     )
 
 
-def _bundle_with_clear(tmp_path):
+def _bundle_with_clear(tmp_path, monkeypatch):
+    # The move claims the bundle in <Review>/.return_claims; unpatched, that is
+    # the configured real pipeline, which the test guard refuses.
+    monkeypatch.setattr(rg.Paths, "REVIEW_ROOT", tmp_path)
+    monkeypatch.setattr(rg.Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
     b = tmp_path / "triage" / STEM
     b.mkdir(parents=True)
     (b / f"{STEM}_deep_review_cleared.json").write_text(
@@ -36,7 +40,7 @@ def _bundle_with_clear(tmp_path):
 
 
 def test_flag_session_sets_the_old_clear_aside_before_moving(tmp_path, monkeypatch):
-    b = _bundle_with_clear(tmp_path)
+    b = _bundle_with_clear(tmp_path, monkeypatch)
     seen = {}
 
     def route(stem, source, dest, reason, db=None, **kw):
@@ -58,7 +62,7 @@ def test_flag_session_sets_the_old_clear_aside_before_moving(tmp_path, monkeypat
 
 def test_flag_session_does_not_move_a_video_whose_clear_cannot_be_set_aside(
         tmp_path, monkeypatch):
-    b = _bundle_with_clear(tmp_path)
+    b = _bundle_with_clear(tmp_path, monkeypatch)
     moved, errors = [], []
 
     def fail(stem, source):

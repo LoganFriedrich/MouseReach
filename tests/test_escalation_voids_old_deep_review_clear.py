@@ -20,6 +20,12 @@ def _triage_bundle(tmp_path, monkeypatch):
     deep.mkdir(parents=True)
     monkeypatch.setattr(rg.Paths, "DEEP_REVIEW", deep)
     monkeypatch.setattr(rg.Paths, "TRIAGE_REVIEW", triage)
+    # The claim folder (<Review>/.return_claims) and the backup folder
+    # (<Analyzed>/Archive/manual_corrections) hang off REVIEW_ROOT and
+    # ANALYZED_OUTPUT; left unpatched they resolve to the configured real
+    # pipeline, which the test guard refuses.
+    monkeypatch.setattr(rg.Paths, "REVIEW_ROOT", tmp_path / "Review")
+    monkeypatch.setattr(rg.Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
     b = triage / STEM
     b.mkdir(parents=True)
     (b / f"{STEM}_segments.json").write_text(json.dumps({"boundaries": []}), encoding="utf-8")
