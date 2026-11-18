@@ -5425,6 +5425,12 @@ new file then fails to move, the cohort folder holds neither a whole old nor a w
 until the retry succeeds. Because the features file is held back, the database import and the
 watcher do not treat that folder as filed in the meantime.
 
+**The features file is written whole or not at all.** Kinematics write
+`<video>_features.json` in Processing to a temporary file and swap it in, as every other
+output is written. Before, it was written in place, so a crash, a full disk or a value that
+could not be written stopped part-way left a cut-off features file (or emptied the previous
+one). Now the earlier file stays exactly as it was, and the video is held with the reason.
+
 **Filing by hand (`mousereach-archive`) files only what the watcher has passed.** The command
 used to file a video on the verdict written into its three stage files alone. The quality
 triage writes that verdict before the hand-score comparison, the review gate and kinematics

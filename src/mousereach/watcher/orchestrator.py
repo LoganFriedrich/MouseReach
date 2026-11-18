@@ -627,8 +627,12 @@ class BaseOrchestrator:
             from mousereach.pipeline.manifest import record_kinematic_version
             extractor = FeatureExtractor()
             features = extractor.extract_session_only(dlc_path, reach_path)
-            with open(Path(processing_dir) / f"{video_id}_features.json", 'w') as f:
-                json.dump(features.to_dict(), f, indent=2)
+            # Atomic (fsutil.write_json_atomic), as every other output this
+            # module writes: written in place, a crash or a full disk part-way
+            # left a truncated features file in Processing.
+            from mousereach.pipeline.fsutil import write_json_atomic
+            write_json_atomic(Path(processing_dir) / f"{video_id}_features.json",
+                              features.to_dict(), indent=2)
             if record_kinematic_version(video_id, processing_dir, extractor.VERSION,
                                             review_path=None) is False:
                 # See _make_features: no provenance stamp, no filing.
@@ -718,8 +722,14 @@ class BaseOrchestrator:
                 keep = self._filed_decisions_to_keep(video_id)
             features = extractor.extract(dlc_path, reach_path, outcome_path,
                                          review_path=review_path, **keep)
-            with open(processing_dir / f"{video_id}_features.json", 'w') as f:
-                json.dump(features.to_dict(), f, indent=2)
+            # Written to a temporary file and swapped in
+            # (fsutil.write_json_atomic). WHY: written in place, a crash, a
+            # full disk or a value that cannot be written as JSON left a
+            # truncated features file in Processing -- or emptied the
+            # previous one -- instead of the old file or the new one whole.
+            from mousereach.pipeline.fsutil import write_json_atomic
+            write_json_atomic(processing_dir / f"{video_id}_features.json",
+                              features.to_dict(), indent=2)
 
             # The manifest was composed before this ran, so it still says
             # kinematics never happened. Stamp the truth -- including WHICH
