@@ -1513,6 +1513,11 @@ options:
   -h, --help  show this help message and exit
 ```
 
+Since 2026-11-18 this command changes nothing: ALGORITHM_REFERENCE.md no longer has the
+AUTO-GENERATED markers it writes between (the evaluation figures it wrote there describe one
+lab's data and were moved out of the public document), so it prints "Could not find
+AUTO-GENERATED markers" and leaves the file as it is.
+
 ### `mousereach-algo-vs-human`
 
 ```
