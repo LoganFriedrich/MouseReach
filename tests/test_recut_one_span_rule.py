@@ -358,8 +358,15 @@ def test_the_same_answer_given_again_after_the_recut_counts(run, monkeypatch):
     io.save_causal_review(VID, folder, [_window_record(1, "untouched"),
                                         _window_record(2, "untouched"),
                                         _window_record(3, "retrieved")],
-                          provenance={}, reviewer="reviewer_b", cuts_set_at=CUT_AT)
+                          provenance={}, reviewer="reviewer_b", cuts_set_at=CUT_AT,
+                          cuts_replaced=OLD_CUTS)
     assert rg.recut_voided_open(VID, folder) == set()
+    saved = {r["segment_num"]: r for r in json.loads(
+        (folder / f"{VID}_causal_review.json").read_text(encoding="utf-8"))["segments"]}
+    # pellet 1 did not move: its earlier answer is kept with who gave it and when;
+    # pellet 2 moved: the answer given again is this save's
+    assert (saved[1]["reviewer"], saved[1]["reviewed_at"]) == ("reviewer_a", BEFORE)
+    assert saved[2]["reviewer"] == "reviewer_b" and saved[2]["reviewed_at"] > CUT_AT
     decision, reason, _ = rg.evaluate_gate(VID, folder)
     assert decision == rg.DECISION_CLEAN, reason
     seg2 = _extract(folder, pose)["segments"][1]

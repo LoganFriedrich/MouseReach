@@ -47,6 +47,7 @@ from .causal_review_io import (
     _answer_signature,
     cuts_set_at,
     recut_keys,
+    replaced_cuts,
     UNDECIDED_OUTCOMES,
     build_segment_record,
     is_answered,
@@ -3604,8 +3605,10 @@ The notes box travels with the video.
             other_copies=[self.video_path.parent] if self.video_path else (),
             problems=save_problems,
             # An answer given now on a person's cuts is stamped now, never
-            # with a voided earlier answer's time (stamp_segment_reviewers).
+            # with a voided earlier answer's time; an earlier answer the
+            # re-cut keeps (pellet unmoved) keeps its own (stamp_segment_reviewers).
             cuts_set_at=cuts_set_at(getattr(self, "_segments_data", None)),
+            cuts_replaced=replaced_cuts(getattr(self, "_segments_data", None)),
         )
         # A durable-copy failure does not stop the save (refusing would lose
         # the answers outright), but the reviewer must see it, not only the log.

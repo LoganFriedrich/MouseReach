@@ -447,6 +447,7 @@ def stamp_segment_reviewers(
     timestamp: str,
     recut: Optional[datetime] = None,
     carried=(),
+    replaced=None,
 ) -> List[Dict[str, Any]]:
     """Give every answered record its own "reviewer" and "reviewed_at"
     (see the comment block above for why). For each record:
@@ -468,6 +469,13 @@ def stamp_segment_reviewers(
     did not answer but took back from an earlier copy (carry_earlier_answers)
     -- those keep their own time, so a voided answer carried along as a record
     is never made to look as if it had been given on the new cuts.
+    ``replaced``: the cut frames the person's re-cut replaced (replaced_cuts).
+    An earlier answer the re-cut rule KEEPS (answer_survives_recut: its
+    pellet's frames are the same on those cuts and on this record's frames)
+    keeps its own reviewer and time: it was given by that person, then, and
+    restamping it would credit it to whoever saved next. Without
+    ``replaced`` no earlier answer can be shown to be kept, and it is
+    restamped as above.
 
     Returns new record dicts; the caller's are not changed."""
     prev_doc = previous or {}
@@ -495,23 +503,43 @@ def stamp_segment_reviewers(
         same = next((p for p in cands if p is not None
                      and (p.get("answers") or {}).get("reviewed") is not False
                      and _answer_signature(p) == sig), None)
+        source = None
         if same is not None:
             who, when = segment_reviewer(same, prev_doc)
+            source = same
         elif not prev_doc and rec.get("reviewer") and rec.get("reviewed_at"):
             # No previous file to compare with (moved, or not readable) and the
             # record already says who answered it: it came back from a saved
             # review unchanged -- keep it.
             who, when = rec["reviewer"], rec["reviewed_at"]
+            source = rec
         else:
             who, when = reviewer, timestamp
         if (recut is not None and when and rec.get("segment_num") is not None
                 and int(rec["segment_num"]) not in carried
-                and given_before_recut(when, recut)):
+                and given_before_recut(when, recut)
+                and not _kept_across_recut(source, rec, when, recut, replaced)):
             who, when = reviewer, timestamp
         rec["reviewer"] = who or reviewer
         rec["reviewed_at"] = when or timestamp
         out.append(rec)
     return out
+
+
+def _kept_across_recut(source, rec, when, recut, replaced) -> bool:
+    """stamp_segment_reviewers: does the re-cut rule keep the earlier answer
+    ``source`` (given at ``when``) as the answer on ``rec``'s pellet? Decided
+    by answer_survives_recut, with the current pellet being ``rec``'s frames."""
+    if source is None or not replaced or len(replaced) < 2:
+        return False
+    span = _span_of(rec)
+    if span is None:
+        return False
+    old = sorted(int(b) for b in replaced)
+    cut = Recut(recut, frozenset(pellet_span(old, i) for i in range(len(old) - 1)),
+                frozenset({span}))
+    return answer_survives_recut(dict(source, reviewed_at=when), None, cut) \
+        and _span_of(source) == span
 
 
 def save_causal_review(
@@ -525,13 +553,16 @@ def save_causal_review(
     other_copies=(),
     problems: Optional[List[str]] = None,
     cuts_set_at: Optional[str] = None,
+    cuts_replaced: Optional[List[int]] = None,
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
 
     ``cuts_set_at``: when a person set the cuts this save's answers were given
     on (the segments file's ``corrected_at``, causal_review_io.cuts_set_at);
     an answer given in this save is then never stamped with an earlier time
-    (stamp_segment_reviewers says why).
+    (stamp_segment_reviewers says why) -- except an earlier answer the re-cut
+    rule keeps, recognised with ``cuts_replaced`` (the cuts the re-cut
+    replaced, replaced_cuts), which keeps its own reviewer and time.
 
     A save can add or change answers; it never drops one. Before writing, every
     existing copy is read -- the working copy about to be replaced, the durable
@@ -594,7 +625,8 @@ def save_causal_review(
             video_stem, ", ".join(str(k) for k in kept))
     segments = stamp_segment_reviewers(
         segments, _previous_reviews(earlier), reviewer, timestamp,
-        recut=_when(cuts_set_at) if cuts_set_at else None, carried=set(kept))
+        recut=_when(cuts_set_at) if cuts_set_at else None, carried=set(kept),
+        replaced=cuts_replaced)
 
     doc: Dict[str, Any] = {
         "type": "causal_review",
