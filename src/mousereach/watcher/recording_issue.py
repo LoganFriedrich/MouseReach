@@ -165,6 +165,41 @@ class CannotCheck(Exception):
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 _FPS_RE = re.compile(r"Video:.*?,\s*([\d.]+)\s*fps")
+_PROGRESS_TIME_RE = re.compile(r"time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_PROGRESS_FRAME_RE = re.compile(r"frame=\s*(\d+)")
+READ_TIMEOUT_S = 900
+
+
+def measure_by_reading(path: Path, fps: Optional[float]) -> dict:
+    """Duration and frame count found by reading the whole video stream
+    (copied to nowhere, nothing decoded). WHY: a recording whose program was
+    killed has a video stream but no duration in its header ("Duration:
+    N/A"), and may still hold a whole session -- it must not be called a
+    failed recording just because its header was never finished. Raises
+    CannotCheck when the tool cannot run or reads nothing."""
+    ffmpeg = find_tool("ffmpeg")
+    if not ffmpeg:
+        raise CannotCheck("ffmpeg is not installed on this machine")
+    try:
+        out = subprocess.run([ffmpeg, "-hide_banner", "-nostdin", "-i", str(path),
+                              "-map", "0:v:0", "-c", "copy", "-f", "null", "-"],
+                             capture_output=True, text=True, timeout=READ_TIMEOUT_S,
+                             errors="replace")
+    except subprocess.TimeoutExpired:
+        raise CannotCheck("reading the whole file took longer than %d s" % READ_TIMEOUT_S)
+    except OSError as e:
+        raise CannotCheck("could not run ffmpeg: %s" % e)
+    err = out.stderr or ""
+    times = _PROGRESS_TIME_RE.findall(err)
+    frames = _PROGRESS_FRAME_RE.findall(err)
+    if not times:
+        raise CannotCheck("the header has no duration and reading the file gave none")
+    h, mi, sec = times[-1]
+    duration = int(h) * 3600 + int(mi) * 60 + float(sec)
+    n = int(frames[-1]) if frames else (int(round(duration * fps)) if fps else None)
+    return {"readable": True, "duration": duration, "fps": fps, "frames": n,
+            "frames_counted": bool(frames), "error": None,
+            "duration_from": "reading the file (no duration in its header)"}
 
 
 def _rate(text) -> Optional[float]:
@@ -199,6 +234,10 @@ def probe(path: Path) -> dict:
                 data = {}
             video = [s for s in data.get("streams") or [] if s.get("codec_type") == "video"]
             duration = _rate((data.get("format") or {}).get("duration"))
+            if video and duration is None:
+                v = video[0]
+                return measure_by_reading(
+                    path, _rate(v.get("avg_frame_rate")) or _rate(v.get("r_frame_rate")))
             if not video or duration is None:
                 return {"readable": False, "duration": duration, "fps": None, "frames": None,
                         "frames_counted": False,
@@ -223,6 +262,8 @@ def probe(path: Path) -> dict:
         m = _DURATION_RE.search(err)
         fm = _FPS_RE.search(err)
         has_video = "Video:" in err
+        if has_video and not m:
+            return measure_by_reading(path, _rate(fm.group(1)) if fm else None)
         if not m or not has_video:
             last = [ln.strip() for ln in err.splitlines() if ln.strip()]
             return {"readable": False, "duration": None, "fps": None, "frames": None,
@@ -302,6 +343,8 @@ def assess(path: Path, settings: Optional[CheckSettings] = None,
     except Exception as e:                                   # pragma: no cover
         return Verdict("cannot_check", _ascii("%s: %s" % (type(e).__name__, e)), m)
     m.update({k: info.get(k) for k in ("duration", "fps", "frames", "frames_counted")})
+    if info.get("duration_from"):
+        m["duration_from"] = info["duration_from"]
     if not info.get("readable"):
         return Verdict("issue", _ascii(
             "recording issue: the file cannot be read as a video (%d bytes; %s) -- "

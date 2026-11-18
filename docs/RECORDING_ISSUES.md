@@ -29,6 +29,11 @@ If the check itself cannot run (ffmpeg is not installed, or the shared drive did
 not answer), **nothing is set aside**: an outage is never taken for a failed
 recording.
 
+A recording whose program was killed part-way can have a video in it but no
+length written in its header. Such a file is NOT called failed for that: its
+length and frames are measured by reading the whole file, and it is judged on
+those.
+
 ## Where it goes
 
 The recording is moved from `Unanalyzed/Multi-Animal` to
@@ -41,6 +46,11 @@ says in plain words what was wrong (for example
 measurements, who or what found it (the intake check on a named machine, or a
 person) and when, and which single-mouse sessions the recording was meant to
 hold.
+
+If a different file of the same name is already in _Problematic, nothing is
+moved or renamed: the recording stays in the intake, is not cut, and after a
+few attempts is listed for a person ("could not be set aside") to compare the
+two.
 
 It is **never cut, never reviewed, and never deleted**. No machine tries it
 again. Its sessions will never have reach data or kinematics; their hand pellet

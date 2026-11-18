@@ -5841,6 +5841,9 @@ and held such files on the recording PC.
   and a frame near the end decode. Three outcomes: ok (cut as usual), issue,
   or could not check (no tool, timeout, file unreachable -- cut as usual with a
   WARNING; an outage is never taken for a failed recording).
+  A video stream whose header has no duration (a recording program killed
+  part-way) is measured by reading the stream through (ffmpeg -c copy -f null)
+  and judged on that length, never called unreadable for the missing header.
 * **Set aside.** An issue's reason file
   (`Processing/Review/_Problematic/<collage>.recording_issue.json`: reason,
   measurements, flagged_by, flagged_at, original_path, sessions) is written
