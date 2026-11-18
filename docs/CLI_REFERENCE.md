@@ -47,7 +47,7 @@ walkthroughs of the review tools themselves.
 - [Analysis Dashboard](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
 - [Database Sync - Automatic sync to central database](#database-sync-automatic-sync-to-central-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
-- [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`
+- [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`, `mousereach-send-recordings`
 - [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-reconcile`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
 - [Archive migration - One-time Sort/ -> project/cohort restructure](#archive-migration-one-time-sort-project-cohort-restructure) -- `mousereach-migrate-archive`
@@ -2048,6 +2048,24 @@ Examples:
   mousereach-watch-recorders --remove recorder.exe
   mousereach-watch-recorders --grace 300
   mousereach-watch-recorders --days Mon-Fri --hours 08:00-18:00
+```
+
+### `mousereach-send-recordings`
+
+```
+usage: mousereach-send-recordings [-h] (--preview | --once)
+
+Send recordings a person has named from this PC's recording folder
+(watcher.recording_outbox) to the shared intake, verify each copy, then delete
+the local original. The running watcher does this on its own outside recording
+hours; this command shows what it would do (--preview) or does one pass now
+(--once).
+
+options:
+  -h, --help  show this help message and exit
+  --preview   list what would be sent, held or left; copy and delete nothing
+  --once      do one pass now (still never during recording time); for a PC
+              whose watcher is not running
 ```
 
 ## Version tracking and reprocessing

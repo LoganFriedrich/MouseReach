@@ -205,6 +205,7 @@ mousereach-watch-process-animal = "mousereach.watcher.cli:main_process_animal"
 mousereach-watch-info = "mousereach.watcher.cli:main_info"
 mousereach-watch-toggle = "mousereach.watcher.cli:main_toggle"
 mousereach-watch-recorders = "mousereach.watcher.cli:main_recorders"
+mousereach-send-recordings = "mousereach.watcher.recording_outbox:main"
 
 # Version tracking and reprocessing
 mousereach-version-check = "mousereach.watcher.cli:main_version_check"

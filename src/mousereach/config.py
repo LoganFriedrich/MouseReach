@@ -968,6 +968,16 @@ def print_config():
 # WATCHER CONFIGURATION
 # =============================================================================
 
+def _num(value, default, minimum):
+    """A number from the config file, or ``default`` when it is missing or not a
+    number; never below ``minimum``. WHY lenient: a hand-edited value that is
+    not a number must not stop the watcher from starting."""
+    try:
+        return max(minimum, float(value)) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
 class WatcherConfig:
     """Configuration for the automated watcher pipeline.
 
@@ -1082,6 +1092,31 @@ class WatcherConfig:
         # the GPU and disk are free. Only ever shown when programs are listed
         # above. See mousereach.watcher.record_notice.
         self.notify_safe_to_record: bool = bool(cfg.get('notify_safe_to_record', True))
+        # The folder on a recording PC where people save and rename recordings.
+        # Set = this watcher sends every recording in it whose name passes the
+        # collage name check to the shared intake, outside recording time, and
+        # deletes the local original once the copy on the shared drive is
+        # verified. Unset (the default) = nothing is ever sent. WHY: a person's
+        # rename is the check that a recording is what its name says; once
+        # named, a recording left on the PC is simply never analyzed. See
+        # mousereach.watcher.recording_outbox for every rule.
+        outbox = cfg.get('recording_outbox')
+        self.recording_outbox: Optional[Path] = (
+            Path(outbox) if isinstance(outbox, str) and outbox.strip() else None)
+        # How long a file's size and time must stay unchanged before it counts
+        # as finished; the smallest size and duration that count as a real
+        # recording; after how many failed copies in a row a file is shown in
+        # red; and how long one pass may spend sending before the watcher goes
+        # back to its other work.
+        self.recording_outbox_stable_minutes: float = _num(
+            cfg.get('recording_outbox_stable_minutes'), 5.0, 0.0)
+        self.recording_outbox_min_mb: float = _num(cfg.get('recording_outbox_min_mb'), 1.0, 0.0)
+        self.recording_outbox_min_seconds: float = _num(
+            cfg.get('recording_outbox_min_seconds'), 10.0, 0.0)
+        self.recording_outbox_warn_after_failures: int = int(_num(
+            cfg.get('recording_outbox_warn_after_failures'), 3, 1))
+        self.recording_outbox_pass_minutes: float = _num(
+            cfg.get('recording_outbox_pass_minutes'), 30.0, 1.0)
         # The file these settings were read from, and its modified time then.
         # Set only by load(). WHY: a running watcher re-reads the two recording
         # settings above when that file changes (see
@@ -1135,6 +1170,18 @@ class WatcherConfig:
         # hides the settings someone actually chose.
         if not self.notify_safe_to_record:
             d['notify_safe_to_record'] = False
+        # The sender's settings are written only when the outbox is set (or a
+        # value differs from its default), so a node that does not send keeps a
+        # config file that says nothing about it.
+        if self.recording_outbox:
+            d['recording_outbox'] = str(self.recording_outbox)
+        for key, default in (('recording_outbox_stable_minutes', 5.0),
+                             ('recording_outbox_min_mb', 1.0),
+                             ('recording_outbox_min_seconds', 10.0),
+                             ('recording_outbox_warn_after_failures', 3),
+                             ('recording_outbox_pass_minutes', 30.0)):
+            if getattr(self, key) != default:
+                d[key] = getattr(self, key)
         if self.dlc_shuffle is not None:
             d['dlc_shuffle'] = self.dlc_shuffle
         if self.dlc_config_path:

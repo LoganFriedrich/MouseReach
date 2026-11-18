@@ -309,6 +309,13 @@
     "src/mousereach/watcher/coordination.py",
     "src/mousereach/watcher/db.py"
    ]
+  },
+  {
+   "doc": "docs/SENDING_RECORDINGS.md",
+   "what": "Sending recordings from a recording PC",
+   "covers": [
+    "src/mousereach/watcher/recording_outbox.py"
+   ]
   }
  ]
 }
