@@ -138,23 +138,33 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
     return out
 
 
-def _finalize_refusal(video_id: str) -> Optional[str]:
+def _finalize_refusal(video_id: str, action: str = "brought current",
+                      tool: str = "bring-current",
+                      require_record: bool = False) -> Optional[str]:
     """Why finalize must not touch this video's filed results, or None.
-    Reads this machine's watcher database (never creates it)."""
+    Reads this machine's watcher database (never creates it).
+
+    Also the review-bundle stager's check (review/staging.stage_video), with
+    its own words (``action``, ``tool``) and ``require_record`` True: a
+    bundle put into a review queue must have a watcher record to hold its
+    queue state, so a video the watcher does not know is refused there."""
     from mousereach.watcher.db import crystallized_refusal
     from mousereach.watcher.db_location import open_watcher_db_if_present
     db, why = open_watcher_db_if_present()
     if db is None:
         return (f"cannot tell whether it is crystallized or being worked ({why}); "
-                f"run bring-current on the machine whose watcher database holds it")
-    locked = crystallized_refusal(db, video_id, "brought current")
+                f"run {tool} on the machine whose watcher database holds it")
+    locked = crystallized_refusal(db, video_id, action)
     if locked:
         return locked
     try:
-        row = db.get_video(video_id) or {}
+        row = db.get_video(video_id)
     except Exception as e:
         return f"its watcher record could not be read ({e})"
-    state = row.get("state")
+    if row is None and require_record:
+        return ("the watcher database on this machine has no record of it, so its "
+                "queue state could not be recorded")
+    state = (row or {}).get("state")
     if state not in (None, "archived"):
         return f"the watcher is working on it (state '{state}'); it is not touched"
     return None

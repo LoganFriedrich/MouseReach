@@ -6079,3 +6079,26 @@ place, with no earlier generation kept and no watcher record.
 hand scores (the watcher's restart path, `_restore_score_waits`), so a held video is not analysed
 again in full, and the other held videos stay on the machine's list.
 
+## Update 2026-11-18: the review-bundle stager goes through the watcher's router
+
+`review/staging.py` (`stage_video`; `python -m mousereach.review.staging --stems ...`) builds a
+causal-review bundle by running the four algorithms on a filed video's files. It used to write
+`<queue>/<video>` itself: the watcher database never learned the video was held (its record
+stayed 'archived', or 'crystallized' for a locked video), a crystallized video got a bundle, and
+`--overwrite` regenerated a live bundle in place, under the reviewer.
+
+Now, when the destination is the configured triage or deep-review queue (the default):
+
+- **Refused before anything is written** (the reason is raised and printed as FAILED for that
+  video): a live bundle of the video already in that queue, whether or not `--overwrite` is
+  given; a video this machine's watcher database does not know; one it is working on or holds
+  (any state but 'archived'); a crystallized video; a machine with no readable watcher database.
+  Run the stager on the processing machine.
+- **Otherwise** the four files are built in a temporary folder (a few hundred KB, removed after)
+  and handed to the watcher's router (`review_gate.route_to_queue`): deep review beats triage,
+  the hold is recorded in the watcher database ('triage' or 'deep_review'), and the router writes
+  the bundle's manifest. The bundle holds no copy of the video or pose; the review tools find
+  them where the video is filed. The video then returns from review like any other held video.
+- A `--pending-dir` that is not one of the two queues (a scratch folder) is written directly,
+  as before; nothing reads it as a queue and the watcher record is left alone.
+

@@ -303,6 +303,28 @@ def stage_video(
 
     Returns the bundle directory. Reads only canonical shared-storage paths; writes only
     the four small JSONs + manifest into ``pending_dir/{stem}/``. No copies.
+
+    INTO A REVIEW QUEUE (``pending_dir`` is the configured triage or deep-review
+    folder, the default): the bundle goes in through the watcher's own router
+    (review_gate.route_to_queue), never written into the queue here. WHY: this
+    stager used to write ``<queue>/<stem>`` itself, so the watcher database
+    never learned the video was held (its row stayed 'archived' or
+    'crystallized'), a crystallized video got a bundle, and ``overwrite=True``
+    regenerated a live bundle in place, under a reviewer. Now:
+      * the video must be known to this machine's watcher database and be
+        filed ('archived'); a crystallized video, one the watcher is working on
+        or holds, one it does not know, and a machine with no readable watcher
+        database are refused before anything is written
+        (reprocess_to_current._finalize_refusal);
+      * a live bundle of the video in that queue is never regenerated
+        (overwrite or not); without ``overwrite`` it is returned as it is;
+      * the four JSONs are built in a temporary work folder (a few hundred KB,
+        removed afterwards), then routed: deep review beats triage, the move
+        is recorded in the watcher database ('triage' / 'deep_review'), and
+        the router writes the bundle's manifest (the review tools find the
+        filed video and pose by name, review/bundle_media.py).
+    Any other ``pending_dir`` (a scratch folder) is written directly, as before:
+    it is not a queue, and nothing reads it as one.
     """
     _neutralize_pipeline_side_effects()  # no local index / DB writes; parallel-safe
 
@@ -323,11 +345,7 @@ def stage_video(
     paths = resolve_canonical_paths(stem, connectome_root, pose_dirs=pose_dirs, mp4_dirs=mp4_dirs)
     mp4, h5, mp4_dir = paths["mp4"], paths["h5"], paths["mp4_dir"]
 
-    bundle = pending_dir / stem
-    seg_out = bundle / f"{stem}_segments.json"
-    reach_out = bundle / f"{stem}_reaches.json"
-    outcome_out = bundle / f"{stem}_pellet_outcomes.json"
-    assign_out = bundle / f"{stem}_reach_assignments.json"
+    bundle = Path(pending_dir) / stem
     manifest_out = bundle / f"{stem}_manifest.json"
 
     # Deep review beats triage, and a bundle being built by the watcher's
@@ -336,8 +354,15 @@ def stage_video(
     # triage bundle for a video held in deep review, which a reviewer would
     # answer while the deep-review copy is the one that counts.
     from mousereach.watcher.review_routing import in_deep_review, INCOMING_DIR_NAME
-    deep_root = getattr(_Paths, "DEEP_REVIEW", None) if "_Paths" in globals() else None
+    # The queue roots are read now, not at import (a changed configuration and
+    # a test's patched Paths both apply).
+    from mousereach.config import Paths
+    deep_root = getattr(Paths, "DEEP_REVIEW", None)
+    triage_root = getattr(Paths, "TRIAGE_REVIEW", None)
     into_deep = bool(deep_root) and Path(pending_dir).resolve() == Path(deep_root).resolve()
+    into_triage = (bool(triage_root)
+                   and Path(pending_dir).resolve() == Path(triage_root).resolve())
+    into_queue = into_deep or into_triage
     if not into_deep and in_deep_review(stem):
         raise RuntimeError(f"{stem} is held in deep review; a triage bundle is not made "
                            f"beside it (deep review supersedes triage)")
@@ -347,7 +372,28 @@ def stage_video(
     if bundle.exists() and (manifest_out.exists() or (bundle / "manifest.json").exists()) and not overwrite:
         log(f"already staged (manifest present); skipping. Use overwrite=True to redo.")
         return bundle
-    bundle.mkdir(parents=True, exist_ok=True)
+    work = bundle
+    if into_queue:
+        # Into a review queue: the router's rules (docstring above).
+        from mousereach.watcher.review_routing import is_queue_bundle
+        if is_queue_bundle(bundle):
+            raise RuntimeError(
+                f"{stem} already has a live bundle in {pending_dir}; a live bundle is "
+                f"never regenerated in place (a reviewer may be working in it). It "
+                f"returns by itself once reviewed.")
+        from mousereach.pipeline.reprocess_to_current import _finalize_refusal
+        refusal = _finalize_refusal(stem, action="staged for review",
+                                    tool="the stager", require_record=True)
+        if refusal:
+            raise RuntimeError(f"{stem} not staged: {refusal}")
+        import tempfile
+        work = Path(tempfile.mkdtemp(prefix=f"stage_{stem}_"))
+    seg_out = work / f"{stem}_segments.json"
+    reach_out = work / f"{stem}_reaches.json"
+    outcome_out = work / f"{stem}_pellet_outcomes.json"
+    assign_out = work / f"{stem}_reach_assignments.json"
+    manifest_out = work / f"{stem}_manifest.json"
+    work.mkdir(parents=True, exist_ok=True)
 
     # A human review is not the algorithms' output and staging must never be
     # able to lose one. The bundle is transient -- this function regenerates it,
@@ -358,7 +404,7 @@ def stage_video(
     #
     # So: find the review wherever it survives (this bundle, the durable store,
     # the canonical results dir) and make sure the regenerated bundle has it.
-    _restore_review_into_bundle(stem, bundle, log)
+    _restore_review_into_bundle(stem, work, log)
 
     # Clear-guard: capture any human triage-clears BEFORE the fresh run
     # overwrites the JSONs, so they can be re-applied afterwards. Skipped when
@@ -508,8 +554,43 @@ def stage_video(
     )
     manifest_out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
+    if into_queue:
+        bundle = _route_staged_bundle(stem, work, Path(pending_dir), into_deep, log)
     log(f"bundle ready: {bundle}")
     return bundle
+
+
+def _route_staged_bundle(stem: str, work: Path, queue_root: Path, into_deep: bool,
+                         log) -> Path:
+    """Move a bundle built in ``work`` into its review queue through the
+    watcher's router, recorded in this machine's watcher database
+    (stage_video's docstring says why). Raises RuntimeError, with nothing
+    put in the queue, when the router refuses; the work folder is removed
+    when the move emptied it."""
+    from mousereach.watcher.db import CrystallizedError
+    from mousereach.watcher.db_location import open_watcher_db_if_present
+    from mousereach.watcher.review_gate import (route_to_queue, AlreadyInQueueError,
+                                                DECISION_DEEP, DECISION_TRIAGE)
+    db, why = open_watcher_db_if_present()
+    if db is None:
+        raise RuntimeError(f"{stem} not staged: {why}")
+    report: Dict[str, Any] = {}
+    try:
+        bundle = route_to_queue(stem, work, queue_root, "staged for review",
+                                db=db,
+                                db_state=DECISION_DEEP if into_deep else DECISION_TRIAGE,
+                                report=report)
+    except (CrystallizedError, AlreadyInQueueError) as e:
+        raise RuntimeError(f"{stem} not staged: {e}") from e
+    if not report.get("state_recorded"):
+        log(f"WARNING the watcher database did not record the hold: "
+            f"{report.get('state_note') or '?'}")
+    try:
+        if work.is_dir() and not any(work.iterdir()):
+            work.rmdir()
+    except OSError:
+        pass
+    return Path(bundle)
 
 
 def _mtime_iso(p: Path) -> Optional[str]:
