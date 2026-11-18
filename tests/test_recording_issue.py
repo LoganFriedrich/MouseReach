@@ -136,6 +136,22 @@ def test_real_tiny_and_real_garbage_files_are_issues(tmp_path):
     assert v.outcome == "issue" and "cannot be read as a video" in v.reason
 
 
+def test_a_recording_with_no_duration_in_its_header_is_measured_not_failed(tmp_path):
+    """A recording program killed mid-session leaves a video with no duration
+    in its header ("Duration: N/A") that may hold a whole session. It is
+    measured by reading it, never called failed for the missing header."""
+    ff = _ffmpeg()
+    vid = tmp_path / "killed.mkv"
+    with open(vid, "wb") as out:
+        subprocess.run([ff, "-hide_banner", "-v", "error", "-f", "lavfi", "-i",
+                        "testsrc=size=64x48:rate=10", "-t", "8", "-f", "matroska",
+                        "-live", "1", "pipe:1"], stdout=out, check=True)
+    v = ri.assess(vid, ri.CheckSettings(min_seconds=5, min_frames=50, min_kb_per_second=0))
+    assert v.outcome == "ok", v
+    assert v.measurements["duration_from"].startswith("reading the file")
+    assert v.measurements["duration"] > 7
+
+
 def test_real_recording_long_enough_passes(tmp_path):
     ff = _ffmpeg()
     vid = tmp_path / "ok.mkv"
@@ -326,6 +342,17 @@ def test_a_name_clash_in_problematic_moves_nothing(env, monkeypatch):
     assert env.cuts == []
     assert (env.multi_animal_source / COLLAGE).exists(), "never overwritten, never renamed"
     assert (env.problematic / COLLAGE).read_bytes() == b"another file"
+    # 'failed' (retried, then listed for a person) -- not 'recording_issue',
+    # which with no reason file the next scan would take for a release and loop.
+    row = env.db.get_collage(COLLAGE)
+    assert row["state"] == "failed" and "could not be set aside" in row["validation_error"]
+    # Retried at most watcher.max_retries times; out of retries it is parked
+    # for a person, not retried for ever.
+    env.db.force_collage_state(COLLAGE, "failed", retry_count=3)
+    state = WatcherStateManager(env.db, SimpleNamespace(stability_wait_seconds=0, max_retries=3))
+    state.discover_new_collages(env.multi_animal_source)
+    assert env.db.get_collage(COLLAGE)["state"] == "failed"
+    assert COLLAGE in state.parked_collages
 
 
 # --------------------------------------------------------- outbox and intake agree

@@ -4877,15 +4877,23 @@ class DLCOrchestrator(BaseOrchestrator):
                              verdict.measurements, nas)
             except Exception as e:
                 # Not moved (e.g. a different file of the same name is already
-                # set aside). Never cut: release the claim so a person can act,
-                # and list it.
-                logger.warning(f"Collage {collage_filename}: {reason}; it could not be set "
-                               f"aside ({e}). Not cut.")
+                # set aside). Never cut. The row goes to 'failed' with the
+                # reason, NOT to 'recording_issue': with no reason file beside
+                # it, the next scan would read that as a person's release and
+                # loop. 'failed' retries up to watcher.max_retries and then the
+                # collage is listed for a person (_list_parked_collages).
+                why = f"{reason}; it could not be set aside ({e}). Not cut."
+                logger.warning(f"Collage {collage_filename}: {why}")
                 try:
                     self.coordinator.release_collage_claim(collage_filename, self.hostname)
                 except Exception:
                     pass
-                ri.mark_row(self.db, collage_filename, f"{reason} (not moved: {e})")
+                try:
+                    self.db.force_collage_state(collage_filename, 'failed',
+                                                validation_error=why[:500])
+                except Exception as e2:
+                    logger.warning(f"Collage {collage_filename}: could not record "
+                                   f"the failure ({e2})")
                 return True
         ri.mark_row(self.db, collage_filename, reason)
         try:

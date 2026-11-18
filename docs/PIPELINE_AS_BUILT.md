@@ -5850,7 +5850,10 @@ and held such files on the recording PC.
   FIRST, then the collage is moved beside it. A reason file whose collage is
   still in the intake is an interrupted move, finished by the next scan. A
   different file of the same name already in `_Problematic` stops the move
-  (nothing renamed, nothing overwritten); the collage is not cut either.
+  (nothing renamed, nothing overwritten); the collage is not cut either, and
+  its row goes to `failed` with the reason (not `recording_issue`, which with
+  no reason file the next scan would read as a release and loop), so it is
+  retried up to watcher.max_retries and then listed for a person.
 * **State.** The collage row goes to the new terminal state
   `recording_issue` (from discovered, validated, stable, cropping, failed or
   quarantined); the shared claim (`pipeline_collages`) is marked
