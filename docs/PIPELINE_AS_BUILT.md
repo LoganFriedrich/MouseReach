@@ -2138,6 +2138,47 @@ graphics-card PC's stopped videos could be seen only from a terminal on that PC;
 
 Tests: `tests/test_stopped_videos_are_listed_and_rerun.py`.
 
+## Update 2026-11-18: filed videos that were never compared with their hand scores are compared when the scores arrive
+
+Before the rule that holds a video until its hand scores are found, a video of a project that
+requires hand scores could be filed with none, uncompared; its filed `<video>_pellet_outcomes.json`
+keeps `"hand_scores": {"verdict": "never_scored", ...}`. Missing scores are the pipeline's defect
+(the sheet row absent, misnamed or not matched), and when a later sheet import brought them nothing
+compared them, so a pellet the pipeline and the bench disagree about stayed in the analysis data
+with no flag.
+
+Now the processing server's watcher, after every change of the hand-scores file or its manifest
+(the same stamp the hold uses), looks at every filed outcomes file in Analyzed (never a superseded
+copy under `Archive/`) whose kept verdict is `never_scored`, and runs the ordinary hand-score check
+on it, read-only, on a thread of its own (`watcher/filed_hand_scores.py`). It writes
+`<NAS root>/attention/<host>_filed_hand_scores.json`, replaced whole each time, which the Pipeline
+Dashboard's red "Needs your attention" panel and `mousereach-watch-status` show:
+
+- the scores have arrived and a pellet disagrees: one red item per video naming each pellet ("pellet
+  2: the hand score says displaced; the algorithm says untouched");
+- every pellet agrees: nothing listed;
+- still no scores, and the cohort's sheet has been imported since the video was filed: one red item
+  per cohort listing those videos -- fix the sheet, and the next import compares them (this item
+  names its cohort, so a database tool can copy it beside that cohort's sheet; the per-video items
+  name none, because their remedy is not the sheet);
+- still no scores and no import of the cohort since: nothing yet;
+- the cuts' pellet numbering is in doubt, or the check could not run, or it ran but did not compare
+  the pellets (verdict label_mismatch, sheet_error or not_checked): one red item per video saying it
+  was not compared and why, naming the verdict.
+
+The filed video is never moved, re-filed, re-opened or written to (filed means done; a filed file
+whose time changed could also look newer than its features file). Whether a filed video found to
+disagree should be re-opened is a decision for the lab, not made: until then it is listed and left
+as it is. Sessions the lab's settings exempt from the comparison (`suspended_sessions`, where that
+setting exists) are passed over. What each outcomes file says is remembered for the life of the
+watcher, so later runs read only files that changed. When the Analyzed folder cannot be read at
+that moment, when the walk finds no outcomes file at all (an unreachable share looks empty), or
+when the list cannot be written, the list is left exactly as it was -- red items are never wiped by
+a failed look -- and the comparison is tried again at the watcher's next scan. Not built here: a list, per cohort, of the
+sheet rows the import could not turn into a video name -- that list can only come from the import
+itself (mousedb), which writes the scores file. Tests:
+`tests/test_filed_never_scored_compared_later.py`.
+
 ## Update 2026-10-22: a list of sessions can lead within its project
 
 The work order could say "this project, these cohorts" but not "these sessions a study needs".
@@ -4394,9 +4435,13 @@ sheet is there under a misspelled cohort, correct the cohort in its file name. I
 video's name carries the wrong cohort, do not rename the held files (same reason as above): tell
 whoever maintains the pipeline. After the next sheet import the video is compared and carries on.
 
-**Videos filed before this change** with the kept verdict `never_scored` were filed without the
-comparison. They can be listed from their outcomes files (key `hand_scores`, `verdict`
-`never_scored`) without running anything; the watcher does not compare them again by itself.
+**Videos filed before this change** with the kept verdict `never_scored` (key `hand_scores`,
+`verdict` `never_scored` in their outcomes file) were filed without the comparison. The processing
+server's watcher now compares them by itself after every change of the hand-scores file, leaves
+them filed and unchanged, and lists every disagreement, every video whose scores are still missing
+after its cohort's import, and every comparison that could not run in the attention list
+`<NAS root>/attention/<host>_filed_hand_scores.json` -- see "Update 2026-11-18: filed videos that
+were never compared with their hand scores are compared when the scores arrive".
 
 Tests: `tests/test_missing_hand_scores_hold.py`, `tests/test_hand_score_check_before_triage.py`.
 

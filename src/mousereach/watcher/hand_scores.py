@@ -35,7 +35,9 @@ goes to triage, deep review or on to kinematics and filing:
             scores arrive. It is never filed without the comparison.
             (Before, such a video went on as "never scored by hand" -- which
             could not be told from a row the import failed to match -- and
-            was filed uncompared, never to be compared again.)
+            was filed uncompared. Those filed videos are compared once their
+            scores arrive, and each disagreement is listed for a person:
+            watcher/filed_hand_scores.py.)
 
 WHY before triage and not before filing (moved 2026-10-28; from 2026-10-26
 it was the last step before filing): checked at filing, a video with a
@@ -908,7 +910,9 @@ def clear_bench_flags(folder: Path, video_id: str, keep=()) -> list:
 # docstring, "EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO"). A WAITING verdict
 # is never recorded by the watcher any more: such a video is held until its
 # scores arrive. "never_scored" stays here because videos filed before that
-# rule carry it (they were filed uncompared; a person can list them by it).
+# rule carry it (they were filed uncompared). The processing server compares
+# those once their scores arrive and lists every disagreement for a person,
+# never touching the filed video (watcher/filed_hand_scores.py).
 RECORD_WORDS = {AGREES: "agrees", DISAGREES: "disagrees", WAITING: "never_scored",
                 NOT_CHECKED: "not_required", LABEL_MISMATCH: "label_mismatch",
                 SUSPENDED: "suspended", SHEET_ERROR: "sheet_error"}

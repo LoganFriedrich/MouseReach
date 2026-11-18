@@ -6995,6 +6995,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
             logger.warning(f"Re-pose adoption scan failed (non-fatal): {e}")
         with cycle.step("scan/parked re-pose leftovers"):
             self._maybe_clear_finished_parked()
+        # Filed videos that were never compared with their hand scores: compared
+        # once their scores arrive, and listed for a person -- on its own
+        # thread, only after the scores file changes (filed_hand_scores.py).
+        try:
+            from mousereach.watcher.filed_hand_scores import Rechecker
+            if getattr(self, "_filed_score_rechecker", None) is None:
+                self._filed_score_rechecker = Rechecker()
+            self._filed_score_rechecker.maybe_start(
+                Paths.NAS_ROOT, self.hostname, Paths.ANALYZED_OUTPUT)
+        except Exception as e:
+            logger.debug(f"filed hand-score recheck not started: {e}")
 
         # A video someone put in the posed-video folder without a pose is
         # invisible to the scan below, which finds videos BY their pose file.
