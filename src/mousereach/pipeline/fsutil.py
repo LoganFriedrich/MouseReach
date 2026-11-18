@@ -270,7 +270,7 @@ def stage_copy(src, dest) -> Path:
     WHY: a mover that must put several files in place together (filing a
     video's whole generation, archive/core.py) copies every file in first
     under a name no reader takes for the real one, and only then swaps them
-    in with put_staged -- a rename inside one folder, which is quick and
+    in with rename_with_retry (as archive_video does) -- a rename inside one folder, which is quick and
     cannot leave half a file."""
     import os
     import shutil
@@ -293,7 +293,7 @@ def stage_copy(src, dest) -> Path:
 
 def aside_path(path) -> Path:
     """A free temporary name beside ``path`` (".<name>.<random>.tmp") to move
-    the current file to while a new one takes its place (put_staged). Only the
+    the current file to while a new one takes its place (the renames in archive_video, archive/core.py). Only the
     name is chosen; nothing is created."""
     import uuid
     path = Path(path)

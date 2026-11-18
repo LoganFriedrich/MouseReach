@@ -80,7 +80,7 @@ def no_manifest_attention_items(video_ids) -> list:
                  f"never re-runs it for a newer one. Its filed results are unchanged. "
                  f"To bring it current, press 'Re-run video' for it in the Pipeline "
                  f"Dashboard: it is run again from segmentation and filed with a manifest, "
-                 f"and it leaves this list at the next version scan."),
+                 f"and it leaves this list at the next version scan. The re-run may ask the video's review questions again, because a new cut voids the earlier answers."),
     } for vid in sorted(video_ids)]
 
 

@@ -5580,7 +5580,7 @@ a count and nothing more. Now:
   the processing server, and a graphics-card PC whose `watcher.also_process` is on; writing
   the list never stops that scan from going on to ask for re-poses), shown in the Pipeline Dashboard's red panel.
   What to do for one: press **Re-run video** for it in the Pipeline Dashboard; it is run again
-  from segmentation and filed with a manifest, and it leaves the list at the next scan. The
+  from segmentation and filed with a manifest, and it leaves the list at the next scan. That re-run may ask the video's review questions again, because a new cut voids the earlier answers. The
   scan itself does not re-run such a video (it does not know which versions made it);
 - a video is named only when the scan's listing of the Analyzed tree shows its features file
   filed and no manifest beside it; a scan that could not list the tree, or listed nothing (a
