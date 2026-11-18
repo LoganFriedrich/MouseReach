@@ -62,6 +62,49 @@ def _routing_reason(bundle: Path, stem: str) -> str:
         return ""
 
 
+QC_HOLD_REASON = "qc_needs_review"
+
+
+def qc_hold_findings(bundle: Path, stem: str) -> list:
+    """What the automatic quality check found that held this video, in plain
+    words: one line per CRITICAL flag in the bundle's ``<stem>_triage.json``
+    ("segment 3: ..." or "whole video: ..."). Empty when the file is missing,
+    unreadable or holds no critical flag.
+
+    WHY: a quality-check hold is routed with the bare reason
+    ``qc_needs_review``, and what the check actually found was only in
+    ``_triage.json``, a file no review tool read -- the person was told the
+    video was flagged but not what to look at. The routed reason itself is
+    left as the bare word on purpose: the return scan matches it exactly to
+    re-check and release such holds, and the re-segmentation tool releases a
+    video whose reason names segmentation; a flag description in the reason
+    could match either by accident."""
+    p = Path(bundle) / f"{stem}_triage.json"
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    out = []
+    for f in doc.get("flags") or []:
+        if not isinstance(f, dict) or f.get("severity") != "critical":
+            continue
+        where = ("segment %s" % f["segment_num"]
+                 if f.get("segment_num") is not None else "whole video")
+        out.append("%s: %s" % (where, f.get("description") or f.get("category") or "?"))
+    return out
+
+
+def describe_routing_reason(bundle: Path, stem: str) -> str:
+    """The routed reason for showing to a person: for a quality-check hold,
+    followed by what the check found (qc_hold_findings)."""
+    reason = _routing_reason(bundle, stem)
+    if reason == QC_HOLD_REASON:
+        found = qc_hold_findings(bundle, stem)
+        if found:
+            return "%s (the quality check found: %s)" % (reason, "; ".join(found))
+    return reason
+
+
 def _boundary_source_human(bundle: Path, stem: str) -> bool:
     """True when a person set this bundle's segment cuts by hand."""
     p = Path(bundle) / f"{stem}_segments.json"

@@ -655,9 +655,10 @@ automatic.
         # an earlier hand fix, or sent for a flagged session, looks fine to the
         # segmenter, and the person must still see what is asked of them.
         try:
-            from .release_cli import _routing_reason
+            from .release_cli import describe_routing_reason
             from .resegmented import resegmented_since_entry
-            sent_for = _routing_reason(bundle, stem)
+            # For a quality-check hold this includes what the check found.
+            sent_for = describe_routing_reason(bundle, stem)
             _, pending = resegmented_since_entry(bundle, stem)
             extra = (("Sent here: %s. " % sent_for) if sent_for else "") + pending
             note = (note + "   |   " + extra) if note else extra

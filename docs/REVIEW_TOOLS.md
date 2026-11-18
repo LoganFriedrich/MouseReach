@@ -141,7 +141,16 @@ and what to do (since 2026-11-17 every recorded reason is shown):
   Re-segmentation tool, save, then press Clear; if the tracking is broken press
   "Flag Session (needs review)" instead;
 - a **quality hold** (`qc_needs_review`): the same, and the flag stays with the
-  video's data;
+  video's data. The banner lists what the quality check found -- each critical
+  finding, as "whole video: ..." or "segment N: ...", read from the
+  `<video>_triage.json` file that travels with the bundle -- and the
+  re-segmentation tool shows the same list after "Sent here:". Look at exactly
+  those things. If the bundle has no such file (an older hold), the banner says
+  so. The stored routing reason stays the bare word `qc_needs_review`: the
+  watcher's re-check of quality holds and the re-segmentation tool's release
+  both match that word, and a finding written into it could match by accident.
+  (Which kinds of finding should hold a video at all is a question for the lab;
+  until it is settled, every critical finding holds it, as before.);
 - a **flagged session**: the banner shows the session and the note the
   reviewer wrote when flagging it; check the video for that, confirm or fix the
   cuts, answer anything flagged, then press Clear;

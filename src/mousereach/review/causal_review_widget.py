@@ -892,17 +892,28 @@ The notes box travels with the video.
                 "tracking is visibly broken, do NOT Clear: press \"Flag "
                 "Session (needs review)\" instead." % shown)
         elif reason and "qc" in reason.lower():
+            # What the check found, read from the bundle's _triage.json (the
+            # routed reason is only the bare word; release_cli.qc_hold_findings
+            # says why it stays that way).
+            from mousereach.review.release_cli import qc_hold_findings
+            found = qc_hold_findings(Path(bundle), stem)
+            found_html = ("<b>What the check found:</b><br>&nbsp;&bull; %s<br>"
+                          % "<br>&nbsp;&bull; ".join(_html.escape(f) for f in found)
+                          if found else
+                          "<b>What the check found:</b> not recorded with this "
+                          "video (no quality-check file in the bundle).<br>")
             banner.setStyleSheet(base + "background:#5a4a16; color:white;")
             banner.setText(
                 "<b>Why this video is here:</b> the pipeline's own quality "
-                "self-check flagged the whole video (%s).<br>"
+                "self-check flagged the video (%s).<br>" % shown
+                + found_html +
                 "<b>Your job:</b> watch enough to judge whether the tracking "
                 "follows the paw and pellet. If it does, confirm the cuts in "
                 "the Re-segmentation tool and save, then press Clear -- nothing "
                 "leaves this queue until its cuts have been saved there; the "
                 "flag stays attached to this video's data either way. If the "
                 "tracking is visibly broken, do NOT Clear: press \"Flag "
-                "Session (needs review)\" instead." % shown)
+                "Session (needs review)\" instead.")
         elif reason and reason.lower().startswith(flagged):
             # "reviewer flagged session <key> -- <the reviewer's note>"
             head, _, note = reason.partition(" -- ")
