@@ -6069,7 +6069,7 @@ copy of the video, wherever the file picked in Browse sits. Nothing is pushed in
 - A crystallized video (locked for a publication).
 - A video the watcher on this machine has no record of and that is not waiting in the posed folder.
 - A video with no pose yet, a quarantined one, or one this machine has no file for.
-- On a machine whose role is not the processing machine; while a watcher runs on the machine (it
+- On a machine whose role is not the processing machine (this tab runs only there; a graphics-card PC set to analyse does so through its own watcher); when the machine has no watcher database (the tab never creates one: check the processing folder in `mousereach-setup`); while a watcher runs on the machine (it
   does the video by itself -- use "Put first" on the Run Pipeline tab); while a stop is requested
   (`watcher_stop.flag`) or the watcher is paused.
 

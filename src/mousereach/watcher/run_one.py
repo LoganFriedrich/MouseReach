@@ -35,8 +35,9 @@ WHAT IS REFUSED (nothing is run or moved; the reason is shown)
   * a video the watcher on this machine does not know and that is not waiting
     in the posed folder (it has no record to run);
   * a video not yet posed, quarantined, or with no file on this machine;
-  * when this machine is not the processing machine (its role does not
-    analyse), when a watcher already runs on it (it does the video by itself;
+  * when this machine is not the processing machine (this tab runs only
+    there; a graphics-card PC set to analyse does so through its own
+    watcher), when a watcher already runs on it (it does the video by itself;
     "Put first" on the Run Pipeline tab puts the video's animal first), when a
     stop is requested, or when the watcher is paused.
 
@@ -234,8 +235,9 @@ def run_one_video(video, progress: Optional[Callable[[str, str], None]] = None) 
         if getattr(cfg, "mode", None) != "processing_server":
             return _refuse(
                 f"This machine's role is '{getattr(cfg, 'mode', '?')}', not the processing "
-                f"machine: it does not analyse or file videos. Run the video on the "
-                f"processing machine (or press \"Run the pipeline now\" on the Run "
+                f"machine, and this tab runs only on the processing machine (a "
+                f"graphics-card PC set to analyse does so through its own watcher). "
+                f"Run the video on the processing machine (or press \"Run the pipeline now\" on the Run "
                 f"Pipeline tab here for this machine's own work).")
 
         from mousereach.watcher import singleton
@@ -290,12 +292,17 @@ def run_one_video(video, progress: Optional[Callable[[str, str], None]] = None) 
 
 def _drive(video_id, video, cfg, result, _p, _refuse) -> Dict:
     """The run itself, under the watcher lock (run_one_video)."""
-    from mousereach.config import require_processing_root
-    from mousereach.watcher.db import WatcherDB, crystallized_refusal
+    from mousereach.watcher.db import crystallized_refusal
+    from mousereach.watcher.db_location import open_watcher_db_if_present
     from mousereach.watcher.orchestrator import ProcessingOrchestrator
 
-    db_path = cfg.db_path or (require_processing_root() / "watcher.db")
-    db = WatcherDB(Path(db_path))
+    # Never create a database: WatcherDB(path) would build an empty decoy and
+    # then 'no record' would be the confusing answer.
+    db, why_no_db = open_watcher_db_if_present()
+    if db is None:
+        return _refuse(f"There is no watcher database on this machine to run the video "
+                       f"against ({why_no_db}). Check the processing folder in "
+                       f"mousereach-setup; nothing was started.")
     orch = ProcessingOrchestrator(cfg, db)
     # This machine's hand-score holds, read first (module docstring).
     orch._score_waits = orch._restore_score_waits()

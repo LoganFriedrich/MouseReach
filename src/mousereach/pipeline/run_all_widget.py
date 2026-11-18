@@ -55,8 +55,9 @@ class RunAllStepsWidget(QWidget):
             "in, segmentation -> reaches -> outcomes -> causal reach, the quality "
             "check, the hand-score comparison and the review gate, then "
             "kinematics and filing -- or a review queue, as the watcher would. "
-            "Runs on the processing machine only, and only when no watcher is "
-            "running there. Not run (the reason is shown): a filed video, a video "
+            "Runs on the processing machine only (this tab is not for a "
+            "graphics-card PC, whose own watcher does its work), and only when no "
+            "watcher is running there. Not run (the reason is shown): a filed video, a video "
             "in a review queue, a crystallized video, or one the watcher does not "
             "know (a posed video waits in the posed folder with its pose)."
         )

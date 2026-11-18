@@ -208,6 +208,7 @@ def test_a_video_in_processing_runs_the_watchers_own_steps_and_is_filed(env):
 
 
 def test_a_posed_video_is_taken_in_analysed_and_filed_by_the_watcher(env):
+    env["db"]()                      # the machine's watcher database exists
     from mousereach.pipeline.run_all import run_all_steps
     posed = env["roots"]["DLC_STAGING"]
     mp4 = _video_folder(posed)
@@ -232,12 +233,36 @@ def test_a_crystallized_video_is_refused(env):
 
 def test_a_video_the_watcher_does_not_know_is_refused(env):
     from mousereach.pipeline.run_all import run_all_steps
+    env["db"]()                      # the machine's watcher database exists
     elsewhere = env["tmp"] / "elsewhere"
     mp4 = _video_folder(elsewhere)
     res = run_all_steps(mp4)
     _kept(elsewhere)
     assert env["steps"] == [] and env["dispatched"] == []
     assert "no record" in (res.get("refused") or "")
+
+
+def test_no_watcher_database_is_refused_and_none_is_created(env):
+    from mousereach.pipeline.run_all import run_all_steps
+    elsewhere = env["tmp"] / "elsewhere"
+    mp4 = _video_folder(elsewhere)
+    res = run_all_steps(mp4)
+    assert env["steps"] == [] and env["dispatched"] == []
+    assert "no watcher database" in (res.get("refused") or "")
+    assert not (env["tmp"] / "local" / "watcher.db").exists()
+
+
+def test_a_graphics_card_pc_is_told_this_tab_runs_only_on_the_processing_machine(env,
+                                                                               monkeypatch):
+    from mousereach.config import WatcherConfig
+    from mousereach.pipeline.run_all import run_all_steps
+    cfg = WatcherConfig({"mode": "dlc_pc", "also_process": True,
+                         "db_path": str(env["tmp"] / "local" / "watcher.db")})
+    monkeypatch.setattr(WatcherConfig, "load", classmethod(lambda cls: cfg))
+    mp4 = _video_folder(env["tmp"] / "elsewhere")
+    why = run_all_steps(mp4).get("refused") or ""
+    assert "runs only on the processing machine" in why
+    assert "does not analyse" not in why
 
 
 def test_nothing_runs_while_a_watcher_runs_on_this_machine(env, monkeypatch):
