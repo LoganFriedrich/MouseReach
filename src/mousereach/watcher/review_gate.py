@@ -427,7 +427,7 @@ def supersede_deep_review_clear(video_id: str, source_dir: Path) -> Optional[Pat
 
 
 def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
-                            db=None) -> Path:
+                            db=None, report: Optional[dict] = None) -> Path:
     """The triage tool's Escalate button: set aside any earlier deep-review
     clear (see supersede_deep_review_clear), then move the video to deep review
     and record 'deep_review' in the watcher database ``db``.
@@ -451,7 +451,8 @@ def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
                            f"moves to deep review but the row keeps its state until "
                            f"the video returns")
         return route_to_queue(video_id, Path(bundle), Paths.DEEP_REVIEW,
-                              reason=reason, db=db, db_state="deep_review")
+                              reason=reason, db=db, db_state="deep_review",
+                              report=report)
     finally:
         release_bundle_claim(video_id)
 
@@ -725,6 +726,7 @@ def route_to_queue(
     extra_sources: Optional[Iterable[Path]] = None,
     held_at_step: Optional[str] = None,
     all_or_nothing: bool = False,
+    report: Optional[dict] = None,
 ) -> Path:
     """Move a video bundle into a review queue, write the review manifest, and
     set the DB hold state. Returns the bundle dir.
@@ -745,6 +747,13 @@ def route_to_queue(
     Raises BundleBusyError, before anything moves, when the source is a queue
     bundle and another program holds its bundle claim (see the comment in
     the body).
+
+    ``report`` (a dict, optional) is filled with ``state_recorded`` (True
+    when the watcher database now holds the video's queue state) and, when
+    it does not, ``state_note`` saying why. WHY: a review window's Escalate
+    and Flag Session open the database through the reviewer's own login,
+    and a database that could not be written was only logged, so the window
+    said "moved" while the row kept its old state. The window shows the note.
 
     DEEP REVIEW SUPERSEDES TRIAGE (review_routing, block comment above
     deep_review_stems):
@@ -796,7 +805,8 @@ def route_to_queue(
         return _route_to_queue_claimed(
             video_id, processing_dir, dest_root, reason, db=db,
             db_state=db_state, extra_sources=extra_sources,
-            held_at_step=held_at_step, all_or_nothing=all_or_nothing)
+            held_at_step=held_at_step, all_or_nothing=all_or_nothing,
+            report=report)
     finally:
         if from_queue:
             release_bundle_claim(video_id)
@@ -812,6 +822,7 @@ def _route_to_queue_claimed(
     extra_sources: Optional[Iterable[Path]] = None,
     held_at_step: Optional[str] = None,
     all_or_nothing: bool = False,
+    report: Optional[dict] = None,
 ) -> Path:
     """route_to_queue's work, run under the bundle claim when the source is a
     queue bundle (see route_to_queue)."""
@@ -824,8 +835,17 @@ def _route_to_queue_claimed(
             return QUEUE_STEP["deep_review"]
         return held_at_step or QUEUE_STEP.get(state or "")
 
+    def _note(recorded: bool, note: str = "") -> None:
+        if report is not None:
+            report["state_recorded"] = recorded
+            if note:
+                report["state_note"] = note
+
     def _record_state(state: str, why: str) -> None:
-        if db is None or not state:
+        if not state:
+            return
+        if db is None:
+            _note(False, "no watcher database was given")
             return
         # The step that sent it, and no resume point yet (one is set when a
         # person's answers return it): a resume point from an earlier round
@@ -833,6 +853,7 @@ def _route_to_queue_claimed(
         hold = {"held_at_step": _step_for(state), "resume_stage": None}
         try:
             db.update_state(video_id, state, **hold)
+            _note(True)
         except Exception as e:
             # The bundle has ALREADY been moved into the review queue above, so
             # the filesystem is the ground truth here and the DB has to follow it.
@@ -844,7 +865,9 @@ def _route_to_queue_claimed(
                 db.force_state(
                     video_id, state,
                     reason=f"{why}; normal transition rejected ({e})", **hold)
+                _note(True)
             except Exception as e2:
+                _note(False, f"the watcher database could not record it ({e2})")
                 logger.error(
                     f"Gate: {video_id} is in the '{state}' queue ON DISK but its "
                     f"DB state could not be set ({e2}). Disk and DB now disagree.")

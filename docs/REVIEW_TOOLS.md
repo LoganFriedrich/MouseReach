@@ -212,6 +212,20 @@ database the watcher writes; it is never created by the tool). Before, the row k
 `triage` while the video sat in re-segmentation, so status views and the queue folders
 disagreed until it came back. If the tool cannot open that database, the video still moves and
 the message says the record was not updated; the record catches up when the video returns.
+The same note appears when the database opened but could not RECORD the move -- the reviewer's
+login cannot write it, or the file it found is not the watcher's (it has no record of the video):
+"Note: the watcher's record was NOT updated (<why>) ... Tell whoever runs the watcher."
+Before, that case was only written to the log and the message just said "moved".
+
+**Checking a reviewer's login (whoever installs or updates the review tools).** The window finds
+the watcher database the same way the watcher does: `watcher.db_path` in that login's
+`~/.mousereach/config.json` if set, otherwise `watcher.db` in that login's processing folder. So
+in every login people review from, check once that this resolves to the database the watcher
+actually writes, and that the login may write it: escalate one test video and read the message.
+No "record was NOT updated" note means it is right. The login must also be able to create and
+delete files in `<review root>/.return_claims/` (the bundle claims, below). Without that, Escalate
+and Flag Session refuse every time with the "another program ... is moving this video's bundle
+right now" message, although nothing else is moving it.
 
 ### When the window will not move a video
 

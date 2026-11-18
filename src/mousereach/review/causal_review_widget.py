@@ -204,6 +204,20 @@ def is_bench_mismatch(reason) -> bool:
     return str(reason or "").strip().lower().startswith("bench disagreement")
 
 
+def _record_note(report) -> str:
+    """The line a move's message adds when the watcher database did NOT
+    record the video's new state (route_to_queue's ``report``); '' when it
+    did. WHY: the database is opened through the reviewer's own login, and
+    one that cannot be written (wrong file, no write access, no row for the
+    video) used to fail silently while the message said the video moved."""
+    if not report or report.get("state_recorded", True):
+        return ""
+    return ("\n\nNote: the watcher's record was NOT updated ("
+            + str(report.get("state_note") or "reason unknown")
+            + "); the folder is right, the record says the old state until the "
+            "video returns. Tell whoever runs the watcher.")
+
+
 def plain_flag_reason(reason) -> str:
     """A pellet's flag reason as a short label ('' when the open question
     already says it). See _FLAG_REASON_LABELS."""
@@ -3062,18 +3076,19 @@ The notes box travels with the video.
         db, db_note = self._watcher_db_for_move()
         try:
             from mousereach.watcher.review_gate import route_to_queue
+            report = {}
             route_to_queue(
                 self._video_stem, Path(bundle), Paths.DEEP_REVIEW,
                 reason=(f"reviewer flagged session {key}"
                         + (f" -- {reason}" if reason else "")),
-                db=db, db_state="deep_review")
+                db=db, db_state="deep_review", report=report)
         except Exception as e:
             show_error(f"Flagged session {key}, but could not divert "
                        f"{self._video_stem} to the re-segmentation queue: {e}")
             logger.exception("flag session: divert to deep review failed")
             return False
         show_info(f"Session {key} flagged; {self._video_stem} moved to the "
-                  f"re-segmentation queue." + db_note)
+                  f"re-segmentation queue." + (db_note or _record_note(report)))
         self._status_label.setText(
             f"[FLAG] Session {key} flagged -- {self._video_stem} -> re-segmentation.")
         return True
@@ -3129,9 +3144,11 @@ The notes box travels with the video.
         db, db_note = self._watcher_db_for_move()
         try:
             from mousereach.watcher.review_gate import escalate_to_deep_review
-            escalate_to_deep_review(self._video_stem, Path(bundle), reason, db=db)
+            report = {}
+            escalate_to_deep_review(self._video_stem, Path(bundle), reason, db=db,
+                                    report=report)
             show_info(f"{self._video_stem} moved to the re-segmentation queue "
-                      "(re-segmentation)." + db_note)
+                      "(re-segmentation)." + (db_note or _record_note(report)))
             self._status_label.setText(
                 f"[ESCALATED] {self._video_stem} -> re-segmentation (bad segmentation).")
         except Exception as e:
