@@ -3080,6 +3080,18 @@ not applied yet -- a review saved after filing, or ground truth saved or changed
 judged by the same rules the version scan uses to start such a re-run. That answer may change
 what it decides, because applying it is the reason for the re-run.
 
+**A filed reach that is simply gone (since 2026-11-18).** Owed ground truth explains a filed
+reach that disappears without a person's reach over the same frames only when the ground truth
+replaced that pellet's whole reach list with one it declares complete (its reaches marked
+complete, and every reach it lists for that pellet set by a person). Ground truth that covers
+only outcomes, or lists some reaches without declaring the list complete, removes no reach: if a
+filed reach is gone anyway, it went for another reason (a changed reach rule, a review copy the
+filing run did not see), and the run is held with the line
+`reaches: 1 filed gone, ... ; the owed ground truth does not list this pellet's reaches as
+complete, so it removed none of them`. A causal reach that changed because of that lost reach is
+not explained either. Before, any owed ground truth at all let every lost reach, and the causal
+reach that followed from it, be filed without a check.
+
 **What happens when the rule is broken.** Nothing is written. The kinematics step stops with
 one line, naming each pellet that would change, what it would change from and to, and who
 the new decision would come from, for example:

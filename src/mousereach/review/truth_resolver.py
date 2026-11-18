@@ -618,6 +618,15 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
             # every algo reach here was a false positive and is dropped).
             seg["reaches"] = [_gt_reach_dict(r, i + 1) for i, r in enumerate(gtr)]
             seg["n_reaches"] = len(seg["reaches"])
+            # Said on the segment because this is the ONE place ground truth
+            # removes reaches outright (elsewhere a ground-truth reach only
+            # replaces the reach it overlaps, or an exclusion lists what it
+            # took out). A kinematics-only re-run of a filed video accepts a
+            # filed reach going only when something decided it
+            # (kinematics/core/filed_decisions.changes_not_owed); this is how
+            # it knows that ground truth, complete for this pellet, did.
+            # Never set on a segment ground truth left open (branch above).
+            seg["reach_list_complete_by_ground_truth"] = True
         elif gtr:
             seg["reaches"] = _merge_reaches(seg.get("reaches", []), gtr)
             seg["n_reaches"] = len(seg["reaches"])

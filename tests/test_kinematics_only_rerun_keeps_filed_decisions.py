@@ -367,3 +367,85 @@ def test_an_owed_review_does_not_let_a_ground_truth_change_through():
                  "causal_reach_source": None, "reach_sources": {(10, 18): "ground_truth"}}}
     assert fd.changes_not_owed(filed, fresh, owed={"human_review"})
     assert fd.changes_not_owed(filed, fresh, owed={"ground_truth"}) == []
+
+
+# ---------------------------------------------------------------------------
+# Owed ground truth explains a filed reach that is simply gone only when it
+# replaced the pellet's reaches with a list it declares complete.
+# ---------------------------------------------------------------------------
+
+def _outcomes_only_ground_truth(folder, outcome="untouched"):
+    """Ground truth that decides the pellet's outcome and lists no reach."""
+    p = folder / f"{VID}_unified_ground_truth.json"
+    p.write_text(json.dumps({
+        "video_name": VID,
+        "reaches": {"exhaustive": False, "reaches": []},
+        "outcomes": {"exhaustive": False, "segments": [
+            {"segment_num": 1, "outcome": outcome, "determined": True,
+             "start_frame": 0, "end_frame": 199}]},
+    }), encoding="utf-8")
+    return p
+
+
+def _drop_detected_reach(proc, reach_id):
+    """The reaches file now lacks one filed reach -- as a changed reach rule or
+    a review copy the filing run did not see would leave it; not the ground
+    truth's doing."""
+    p = proc / f"{VID}_reaches.json"
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    seg = doc["segments"][0]
+    seg["reaches"] = [r for r in seg["reaches"] if r["reach_id"] != reach_id]
+    seg["n_reaches"] = len(seg["reaches"])
+    p.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_owed_ground_truth_without_a_complete_reach_list_removes_no_reach():
+    from mousereach.kinematics.core import filed_decisions as fd
+    filed = {1: {"outcome": "displaced_sa", "causal": (10, 20),
+                 "reaches": [(10, 20), (40, 50)], "left_out": []}}
+    fresh = {1: {"outcome": "displaced_sa", "causal": (10, 20), "reaches": [(10, 20)],
+                 "left_out": [], "outcome_source": "algo", "causal_reach_source": None,
+                 "reach_sources": {(10, 20): "algo"}, "reaches_complete_by": None}}
+    changes = fd.changes_not_owed(filed, fresh, owed={"ground_truth"})
+    assert changes and "1 filed gone" in changes[0]
+    assert "does not list this pellet's reaches as complete" in changes[0]
+    # The same change made by ground truth that replaced the pellet's reach
+    # list with its complete one is owed.
+    fresh[1]["reaches_complete_by"] = "ground_truth"
+    assert fd.changes_not_owed(filed, fresh, owed={"ground_truth"}) == []
+    # ... but only while that ground truth is owed.
+    assert fd.changes_not_owed(filed, fresh, owed={"human_review"})
+
+
+def test_a_reach_gone_for_another_reason_holds_the_run_though_ground_truth_is_owed(dirs):
+    """Outcome-only ground truth saved after filing is owed; the re-run also
+    loses the filed causal reach for a reason that is not the ground truth.
+    The outcome change is the ground truth's and would be fine; the lost reach
+    and the changed causal reach are not, so nothing is written."""
+    from mousereach.kinematics.core.feature_extractor import KinematicsProblem
+    proc, filed, pose = dirs
+    _outcomes_only_ground_truth(proc)
+    _drop_detected_reach(proc, 1)
+    with pytest.raises(KinematicsProblem) as e:
+        _rerun(proc, filed, pose, owed={"ground_truth"})
+    msg = str(e.value)
+    assert "pellet 1" in msg and "1 filed gone" in msg
+    assert "displaced_sa -> untouched" not in msg      # the owed outcome is not the problem
+
+
+def test_complete_ground_truth_that_leaves_a_reach_out_is_applied(dirs):
+    """Ground truth that lists the pellet's reaches as complete and leaves
+    filed reach 1 out removed it: owed, so it is applied."""
+    proc, filed, pose = dirs
+    (proc / f"{VID}_unified_ground_truth.json").write_text(json.dumps({
+        "video_name": VID,
+        "reaches": {"exhaustive": True, "reaches": [
+            {"reach_id": 2, "segment_num": 1, "start_frame": 120, "end_frame": 135,
+             "start_determined": True, "end_determined": True, "apex_frame": 128}]},
+        "outcomes": {"exhaustive": False, "segments": [
+            {"segment_num": 1, "outcome": "untouched", "determined": True,
+             "start_frame": 0, "end_frame": 199}]},
+    }), encoding="utf-8")
+    feats = _rerun(proc, filed, pose, owed={"ground_truth"})
+    assert _reach_frames(feats) == [(120, 135)]
+    assert feats.to_dict()["segments"][0]["outcome"] == "untouched"

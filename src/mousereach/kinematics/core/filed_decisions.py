@@ -119,6 +119,11 @@ def decision_of_resolved(seg_data, outcome_data, measured, left_out) -> dict:
     d["reach_sources"] = {w: (r.get("reach_source") or "algo")
                           for r in list(seg_data.get("reaches") or [])
                           for w in [_window(r)] if w}
+    # Whether ground truth replaced this pellet's whole reach list with one it
+    # declares complete (truth_resolver._apply_gt_reaches stamps it). Only
+    # then may ground truth explain a filed reach that is simply gone.
+    d["reaches_complete_by"] = (GROUND_TRUTH if seg_data.get(
+        "reach_list_complete_by_ground_truth") else None)
     return d
 
 
@@ -149,9 +154,18 @@ def changes_not_owed(filed: Dict[int, dict], fresh: Dict[int, dict],
         owed way (a reach replaced by a person's frames gets a new id);
       - a reach, when every reach that appears is a person's (reach_source
         owed), every reach that goes is replaced by one of those or left out
-        by an owed statement (ground truth may also drop reaches outright,
-        when it says its reach list is complete), and every change to the
-        left-out reaches comes from an owed kind of statement.
+        by an owed statement, or -- ground truth owed -- the pellet's whole
+        reach list now IS the ground truth's, which declares it complete
+        (``reaches_complete_by``), and every change to the left-out reaches
+        comes from an owed kind of statement.
+
+    WHY a reach that just goes is not explained by owed ground truth alone:
+    ground truth that covers only outcomes, or lists some reaches without
+    declaring the list complete, removes no reach. A filed reach that is gone
+    then went for another reason -- a changed reach rule in the extractor, a
+    review copy the filing run did not see -- and filing that silently is
+    exactly what this check exists to stop. Only ground truth that replaced
+    the pellet's reaches with its complete list can have removed it.
     """
     owed = set(owed or ())
     problems: List[str] = []
@@ -170,20 +184,25 @@ def changes_not_owed(filed: Dict[int, dict], fresh: Dict[int, dict],
         reaches_owed = False
         if reaches_changed:
             srcs = b.get("reach_sources") or {}
+            gt_complete = (GROUND_TRUTH in owed
+                           and b.get("reaches_complete_by") == GROUND_TRUTH)
             newly_left_out = {(s, e) for s, e, kind in lo_b - lo_a if kind in owed}
             reaches_owed = (
                 all(srcs.get(w) in owed for w in added)
                 and all(kind in owed for _, _, kind in lo_changed)
                 and all(any(_overlaps(w, x) for x in added) or w in newly_left_out
-                        or GROUND_TRUTH in owed for w in removed))
+                        or gt_complete for w in removed))
             if not reaches_owed:
                 first = (" (first: %s -> %s)" % (
                     _fmt(min(removed)) if removed else "-",
                     _fmt(min(added)) if added else "-")) if (removed or added) else ""
-                words.append("reaches: %d filed gone, %d new by %s%s%s" % (
+                words.append("reaches: %d filed gone, %d new by %s%s%s%s" % (
                     len(removed), len(added),
                     ", ".join(sorted({srcs.get(w, "?") for w in added})) or "-", first,
-                    "; the reaches left out changed" if lo_changed else ""))
+                    "; the reaches left out changed" if lo_changed else "",
+                    "; the owed ground truth does not list this pellet's reaches as "
+                    "complete, so it removed none of them"
+                    if removed and GROUND_TRUTH in owed and not gt_complete else ""))
         if a["outcome"] != b["outcome"] and b.get("outcome_source") not in owed:
             words.append("outcome %s -> %s (by %s)" % (
                 a["outcome"], b["outcome"], b.get("outcome_source") or "algo"))
