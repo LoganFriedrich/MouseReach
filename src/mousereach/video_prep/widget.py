@@ -8,7 +8,8 @@ Features:
 - Browse and select input folder or single file
 - Preview collage layout (8-camera grid)
 - Run batch cropping with progress
-- Auto-copy to DLC queue
+- Hand the cut videos to the pose step (the shared singles folder, where a
+  watcher claims each one; never copied straight into a DLC queue)
 
 Install as plugin:
     pip install -e .
@@ -136,7 +137,14 @@ class VideoPrepWidget(QWidget):
         self.select_output_btn.clicked.connect(self._select_output_folder)
         output_layout.addWidget(self.select_output_btn)
 
-        self.copy_to_queue_cb = QCheckBox("Copy outputs to DLC Queue")
+        # WHY not "copy to the DLC queue" any more: that copied every mp4 of
+        # the output folder into this machine's queue with no claim, so a
+        # second machine could pose the same video (cropper.hand_to_pose).
+        self.copy_to_queue_cb = QCheckBox("Hand the cut videos to the pose step")
+        self.copy_to_queue_cb.setToolTip(
+            "Puts each video this run cut in the shared singles folder, where a "
+            "graphics-card PC's watcher claims and poses it (one machine per "
+            "video). Nothing is copied straight into a DLC queue.")
         self.copy_to_queue_cb.setChecked(True)
         output_layout.addWidget(self.copy_to_queue_cb)
 
@@ -261,7 +269,7 @@ class VideoPrepWidget(QWidget):
     def _crop_worker(self):
         """Background worker for cropping"""
         try:
-            from mousereach.video_prep.core import crop_collage, copy_to_dlc_queue
+            from mousereach.video_prep.core import crop_collage, hand_to_pose
 
             total = len(self.collage_files)
             results = {
@@ -305,12 +313,12 @@ class VideoPrepWidget(QWidget):
                 except Exception as e:
                     results['failed'] += 8  # Assume all 8 positions failed
 
-            # Copy to queue if requested
+            # Hand the videos THIS run cut to the pose step, if asked
             if self.copy_to_queue_cb.isChecked() and results['success'] > 0:
-                self.signals.progress.emit(total, total, "Copying to DLC queue...")
+                self.signals.progress.emit(total, total, "Handing to the pose step...")
                 try:
-                    copied = copy_to_dlc_queue(output_dir, verbose=False)
-                    results['copied_to_queue'] = copied
+                    handed = hand_to_pose(results['output_files'], verbose=False)
+                    results['handed_to_pose'] = handed
                 except Exception as e:
                     results['queue_error'] = str(e)
 
@@ -339,10 +347,16 @@ Videos created: {results['success']}<br>
 Skipped (blank): {results['skipped']}<br>
 Failed: {results['failed']}
 """
-        if 'copied_to_queue' in results:
-            text += f"<br><br>Copied to DLC queue: {results['copied_to_queue']}"
+        if 'handed_to_pose' in results:
+            h = results['handed_to_pose']
+            text += (f"<br><br>Handed to the pose step (shared singles folder): "
+                     f"{h['handed']} put there, {h['waiting']} already waiting there")
+            if h['not_handed']:
+                text += (f"<br>NOT handed on: {h['not_handed']} (a video of that name "
+                         f"is already there or held for pose)")
+            text += ("<br>A graphics-card PC's watcher claims and poses each one.")
         if 'queue_error' in results:
-            text += f"<br><br>Queue copy error: {results['queue_error']}"
+            text += f"<br><br>Could not hand to the pose step: {results['queue_error']}"
 
         self.results_label.setText(text)
 

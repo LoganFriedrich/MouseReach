@@ -118,7 +118,7 @@ Cropping is the LOWEST-priority job the graphics-card machine does. On each cycl
 
 The cropping step itself
 
-The collage is copied - copied, not moved - from the network folder to a scratch folder on the machine's own fast disk, at PROCESSING_ROOT/watcher_working (watcher/orchestrator.py:146, 741-745). The original stays on the network untouched; nothing in the watcher ever moves or deletes it. (A separate archive_collages function exists that would move collages away, but it is only reachable from the hand-run command-line tool, never from the watcher - video_prep/core/cropper.py:264, video_prep/cli.py:121.)
+The collage is copied - copied, not moved - from the network folder to a scratch folder on the machine's own fast disk, at PROCESSING_ROOT/watcher_working (watcher/orchestrator.py:146, 741-745). The original stays on the network untouched; nothing in the watcher ever moves or deletes it. (A separate archive_collages function, reachable only from the hand-run command `mousereach-prep --archive` and never from the watcher, moves a collage to Analyzed/Multi-Animal - since 2026-11-18 only when every single-animal video cut from it is filed with the current versions and has no review pending, the watcher's own retire_completed_collages rule; see "Update 2026-11-18: the hand crop tools use the claim; prep --archive moves only finished collages" near the end of this document.)
 
 crop_collage then does the split (video_prep/core/cropper.py:105-184). It reads the eight mouse identifiers out of the file name and pairs them, strictly in order, with eight fixed rectangles: four across the top row and four across the bottom, each 480 pixels wide and 540 tall, which assumes the collage is exactly 1920 by 1080 (video_prep/core/cropper.py:39-48, 129). Nothing checks the real resolution of the incoming file. For each occupied position it shells out to ffmpeg with a crop filter and writes an .mp4 (video_prep/core/cropper.py:149-158). Video is re-encoded (only audio is copied through). Failures are recorded per position and the other positions continue.
 
@@ -1393,8 +1393,10 @@ Known gaps:
 
   * GPU nodes still running older code copy singles without claiming, so a
     double pose stays possible until every node runs this version.
-  * `mousereach-watch-process-animal` and `mousereach-crop --queue` copy
-    singles into a DLC queue without claiming them.
+  * `mousereach-watch-process-animal` copies singles into a DLC queue
+    without claiming them. (`mousereach-crop --queue`, `mousereach-prep` and
+    the crop tab no longer do: since 2026-11-18 they put the videos in the
+    shared singles folder, where a watcher claims them.)
   * Originals that the old adoption left behind in Single_Animal are not cleaned
     up. A node that has a row for one skips it. A node without a row checks the
     archive and review holds before it would claim one.
@@ -6101,4 +6103,36 @@ Now, when the destination is the configured triage or deep-review queue (the def
   them where the video is filed. The video then returns from review like any other held video.
 - A `--pending-dir` that is not one of the two queues (a scratch folder) is written directly,
   as before; nothing reads it as a queue and the watcher record is left alone.
+
+## Update 2026-11-18: the hand crop tools use the claim; prep --archive moves only finished collages; a hand bundle move is all or nothing
+
+**Handing cut videos to the pose step.** The crop tab's checkbox (now "Hand the cut videos to the
+pose step", on by default), `mousereach-crop --queue` and `mousereach-prep` (step 2, unless
+`--no-queue`) used to copy EVERY mp4 of the output folder straight into this machine's DLC queue,
+with no claim. The watcher then picked the copies up as untracked queue files while the same videos
+still waited, unclaimed, in the shared singles folder -- so another machine could claim and pose
+them as well (two poses of one video), and a video already posed, filed or held was queued again.
+
+Now each video THIS run cut (nothing else in the folder) is put in the shared singles folder
+(`Unanalyzed/Single_Animal`), unclaimed; a video already there is left where it is. A
+graphics-card PC's watcher claims each one (the rename into `.inflight/<machine>/`) and poses it --
+one machine per video. Nothing is copied straight into a DLC queue. A video whose name is already
+in the shared folder, or that a machine already holds for pose, is not handed again; the tab and
+the command say how many were "NOT handed on". With no watcher running, press "Run the pipeline
+now" on a graphics-card PC's Run Pipeline tab to pose them (`video_prep/core/cropper.py`,
+`hand_to_pose`; `copy_to_dlc_queue` keeps its name for scripts and does the same).
+
+**`mousereach-prep --archive`** used to move every collage of the folder after cropping, whatever
+its children's state. It now applies the watcher's own retirement rule
+(`collage_provenance.retire_completed_collages`, which the processing machine runs every few
+hours): a collage moves to `Analyzed/Multi-Animal` only when every single-animal video cut from it
+is filed with the current versions and has no review pending; the command lists how many were
+kept because a child is not done yet, and how many have not been cut.
+
+**Moving a video's files by hand (`mousereach-triage`, `mousereach-advance`).** The bundle move
+skipped a file whose name was already taken at the destination and moved the rest, so a video
+ended up split between two folders. Now, if any of the video's file names is already taken there,
+nothing of that video moves; the command prints "NOT moved" with the names, and the video is not
+counted as moved (`segmentation/core/triage.py`, `move_bundle_all_or_nothing`). A move that fails
+part-way puts back what it had moved before reporting the error.
 

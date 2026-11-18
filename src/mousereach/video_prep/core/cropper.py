@@ -286,37 +286,74 @@ def crop_all(
 # FILE MOVEMENT
 # =============================================================================
 
+def hand_to_pose(output_paths, verbose: bool = True) -> dict:
+    """Hand cut single-animal videos to the pose step, the watcher's way.
+
+    ``output_paths`` are the videos THIS crop made (each crop result's
+    ``output_path``); nothing else in their folder is touched. Each one is put
+    in the shared singles folder (``Paths.SINGLE_ANIMAL_OUTPUT``), unclaimed,
+    where a graphics-card PC's watcher claims it (a rename into
+    ``.inflight/<host>/``) and poses it -- exactly one machine per video
+    (watcher/single_claim.py). A video already in that folder is left where it
+    is: it is already waiting there. Nothing is copied into a DLC queue.
+
+    WHY: the hand crop tools ("Copy outputs to DLC Queue" on the crop tab,
+    ``mousereach-crop --queue``, ``mousereach-prep``) copied EVERY mp4 of the
+    output folder straight into this machine's DLC queue, with no claim. The
+    watcher then adopted the copies as untracked queue files while the same
+    videos still waited, unclaimed, in the shared folder -- so another machine
+    could claim and pose them too (two poses of one video), and a video that
+    was already posed, filed or held was queued again.
+
+    Never overwrites: a video of the same name already in the shared folder,
+    or one some machine already holds for pose, is not handed again
+    (single_claim.publish_to_front_door). Returns counts and one line per
+    video: ``handed`` (put in the shared folder), ``waiting`` (already there),
+    ``not_handed`` (refused; see the line), ``lines``.
+    """
+    from mousereach.watcher import single_claim
+    out = {"handed": 0, "waiting": 0, "not_handed": 0, "lines": []}
+    door = single_claim.front_door()
+    if door is None:
+        raise ConfigurationError(
+            "No shared singles folder: MouseReach is not configured on this machine "
+            "(Paths.SINGLE_ANIMAL_OUTPUT is unset).\n\nRun: mousereach-setup")
+    for raw in output_paths or []:
+        if not raw:
+            continue
+        f = Path(raw)
+        if single_claim.in_front_door(f):
+            out["waiting"] += 1
+            line = f"{f.name}: waiting in the shared singles folder for a pose"
+        elif single_claim.publish_to_front_door(f) is not None:
+            out["handed"] += 1
+            line = f"{f.name}: put in the shared singles folder for a pose"
+        else:
+            out["not_handed"] += 1
+            line = (f"{f.name}: NOT handed on -- a video of that name is already in "
+                    f"{door} or held for pose by a machine (see the log)")
+        out["lines"].append(line)
+        if verbose:
+            print(f"  {line}")
+    return out
+
+
 def copy_to_dlc_queue(
     source_dir: Path = None,
     dest_dir: Path = None,
     move: bool = False,
     verbose: bool = True
 ) -> int:
-    """Copy/move cropped videos to DLC queue."""
+    """Hand the mp4s of ``source_dir`` to the pose step (``hand_to_pose``).
+
+    Kept under its old name for scripts that call it. It no longer copies or
+    moves anything into a DLC queue (``dest_dir`` and ``move`` are ignored):
+    the only way into a DLC queue is a watcher's claim (``hand_to_pose`` says
+    why). Returns how many videos are now waiting for a pose in the shared
+    singles folder (handed on, or already there)."""
     source_dir = Path(source_dir) if source_dir else default_dir("single_animal")
-    dest_dir = Path(dest_dir) if dest_dir else default_dir("dlc_queue")
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    
-    mp4_files = list(source_dir.glob("*.mp4"))
-    action = "Moving" if move else "Copying"
-    
-    if verbose:
-        print(f"{action} {len(mp4_files)} videos to {dest_dir}")
-    
-    count = 0
-    for f in mp4_files:
-        try:
-            if move:
-                shutil.move(str(f), str(dest_dir / f.name))
-            else:
-                shutil.copy2(str(f), str(dest_dir / f.name))
-            count += 1
-            if verbose:
-                print(f"  {f.name}")
-        except Exception as e:
-            print(f"  ERROR: {f.name} - {e}")
-    
-    return count
+    res = hand_to_pose(sorted(source_dir.glob("*.mp4")), verbose=verbose)
+    return res["handed"] + res["waiting"]
 
 
 def archive_collages(
@@ -324,31 +361,36 @@ def archive_collages(
     dest_dir: Path = None,
     verbose: bool = True
 ) -> int:
-    """Move processed collages to archive."""
+    """Move collages whose single-animal videos are ALL done to the archive.
+
+    The watcher's own retirement rule (collage_provenance.
+    retire_completed_collages, run by the processing machine every few hours):
+    a collage moves only when every one of its single-animal videos is filed
+    with the current versions and has no review pending; a collage with a
+    child still in the pipeline, held in a review queue or not yet cut stays
+    where it is. Returns how many collages moved.
+
+    WHY: ``mousereach-prep --archive`` used to move EVERY collage of the folder
+    after cropping, whatever its children's state: a collage whose children
+    had failed, were held in a review queue, or had not been cut at all left
+    the intake folder, and nothing could cut it again from there."""
+    from .collage_provenance import (retire_completed_collages, build_downstream_index,
+                                     build_complete_stems)
     source_dir = Path(source_dir) if source_dir else default_dir("multi_animal")
     dest_dir = Path(dest_dir) if dest_dir else default_dir("archive")
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    
-    mkv_files = list(source_dir.glob("*.mkv"))
-    
+    summ = retire_completed_collages(source_dir, build_downstream_index(),
+                                     complete_stems=build_complete_stems(),
+                                     dest_dir=dest_dir, dry_run=False)
     if verbose:
-        print(f"Archiving {len(mkv_files)} collages to {dest_dir}")
-    
-    count = 0
-    for f in mkv_files:
-        try:
-            shutil.move(str(f), str(dest_dir / f.name))
-            # Keep the crop-provenance sidecar with its collage.
-            sidecar = f.parent / f"{f.stem}_crop_manifest.json"
-            if sidecar.exists():
-                shutil.move(str(sidecar), str(dest_dir / sidecar.name))
-            count += 1
-            if verbose:
-                print(f"  {f.name}")
-        except Exception as e:
-            print(f"  ERROR: {f.name} - {e}")
-
-    return count
+        print(f"Collages in {source_dir}: {summ.get('scanned', 0)}")
+        print(f"  moved to {dest_dir} (every child done): {summ.get('retired', 0)}")
+        for name in summ.get("moved", []):
+            print(f"    {name}")
+        print(f"  kept (a child not done yet): {summ.get('not_complete', 0)}")
+        print(f"  kept (not cut yet): {summ.get('uncropped', 0)}")
+        if summ.get("errors"):
+            print(f"  [!] could not be checked or moved: {summ['errors']} (see the log)")
+    return int(summ.get("retired", 0))
 
 
 def sort_to_experiment_folders(

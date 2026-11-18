@@ -5,7 +5,14 @@ CLI entry points for MouseReach Video Prep
 Commands:
     mousereach-crop      - Crop multi-animal collages
     mousereach-convert   - Convert MKV to MP4
-    mousereach-prep      - Full workflow (crop + copy to queue)
+    mousereach-prep      - Full workflow (crop + hand the cut videos to the pose step)
+
+Handing cut videos to the pose step (--queue, and mousereach-prep's step 2)
+puts each video THIS run cut into the shared singles folder, where a
+graphics-card PC's watcher claims and poses it -- one machine per video. It
+never copies anything straight into a DLC queue (video_prep.core.cropper.
+hand_to_pose says why). --archive moves only collages whose single-animal
+videos are all done (the watcher's own retirement rule).
 """
 
 import argparse
@@ -14,7 +21,7 @@ from pathlib import Path
 
 def main_crop():
     """Crop collages entry point"""
-    from mousereach.video_prep.core import crop_all, crop_collage, copy_to_dlc_queue
+    from mousereach.video_prep.core import crop_all, crop_collage, hand_to_pose
     from mousereach.config import Paths
 
     parser = argparse.ArgumentParser(description="Crop 8-camera collages into single-animal videos")
@@ -23,7 +30,10 @@ def main_crop():
     parser.add_argument('-o', '--output', type=Path,
                         help=f"Output directory (default: {Paths.SINGLE_ANIMAL_OUTPUT})")
     parser.add_argument('--queue', action='store_true',
-                        help="Also copy outputs to DLC_Queue")
+                        help="Also hand the cut videos to the pose step: each video this "
+                             "run cut goes into the shared singles folder, where a "
+                             "graphics-card PC's watcher claims and poses it (never "
+                             "copied straight into a DLC queue)")
     parser.add_argument('-q', '--quiet', action='store_true')
 
     args = parser.parse_args()
@@ -52,7 +62,8 @@ def main_crop():
             'total_collages': 1,
             'success': success,
             'skipped': skipped,
-            'failed': failed
+            'failed': failed,
+            'results': results_list,
         }
     else:
         # Directory mode
@@ -65,10 +76,25 @@ def main_crop():
     print(f"  Failed: {results['failed']}")
 
     if args.queue and results['success'] > 0:
-        print("\nCopying to DLC queue...")
-        output_dir = args.output or Paths.SINGLE_ANIMAL_OUTPUT
-        copied = copy_to_dlc_queue(output_dir, verbose=not args.quiet)
-        print(f"Copied {copied} files to DLC_Queue")
+        print("\nHanding the cut videos to the pose step (shared singles folder)...")
+        handed = hand_to_pose(_made_by_this_run(results), verbose=not args.quiet)
+        _print_handed(handed)
+
+
+def _made_by_this_run(results: dict) -> list:
+    """The videos this run cut (each successful crop result's output_path)."""
+    return [r.get('output_path') for r in results.get('results', [])
+            if r.get('status') == 'success' and r.get('output_path')]
+
+
+def _print_handed(handed: dict) -> None:
+    print(f"  Put in the shared singles folder: {handed['handed']}")
+    print(f"  Already waiting there:            {handed['waiting']}")
+    if handed['not_handed']:
+        print(f"  [!] Not handed on:                {handed['not_handed']} "
+              f"(a video of that name is already there or held for pose)")
+    print("  A graphics-card PC's watcher claims and poses each one (press "
+          "\"Run the pipeline now\" there when no watcher is running).")
 
 
 def main_convert():
@@ -89,15 +115,17 @@ def main_convert():
 
 def main_prep():
     """Full video prep workflow"""
-    from mousereach.video_prep.core import crop_all, copy_to_dlc_queue, archive_collages
+    from mousereach.video_prep.core import crop_all, hand_to_pose, archive_collages
     
     parser = argparse.ArgumentParser(description="Full video prep workflow")
     parser.add_argument('-i', '--input', type=Path,
                         help="Input Multi-Animal directory")
     parser.add_argument('--no-queue', action='store_true',
-                        help="Don't copy to DLC queue")
+                        help="Don't hand the cut videos to the pose step")
     parser.add_argument('--archive', action='store_true',
-                        help="Archive original collages after cropping")
+                        help="Move collages whose single-animal videos are ALL done "
+                             "(filed, current, no review pending) to the archive; "
+                             "every other collage stays")
     parser.add_argument('-q', '--quiet', action='store_true')
     
     args = parser.parse_args()
@@ -114,17 +142,16 @@ def main_prep():
     print(f"  Created:  {results['success']}")
     print(f"  Skipped:  {results['skipped']}")
     
-    # Step 2: Copy to queue
+    # Step 2: hand the cut videos to the pose step (the watcher claims them)
     if not args.no_queue and results['success'] > 0:
-        print("\n[2/3] Copying to DLC queue...")
-        copied = copy_to_dlc_queue(verbose=not args.quiet)
-        print(f"  Copied: {copied}")
+        print("\n[2/3] Handing the cut videos to the pose step...")
+        _print_handed(hand_to_pose(_made_by_this_run(results), verbose=not args.quiet))
     else:
-        print("\n[2/3] Skipping queue copy")
+        print("\n[2/3] Not handing anything to the pose step")
     
     # Step 3: Archive
     if args.archive:
-        print("\n[3/3] Archiving collages...")
+        print("\n[3/3] Archiving collages whose videos are all done...")
         archived = archive_collages(args.input, verbose=not args.quiet)
         print(f"  Archived: {archived}")
     else:

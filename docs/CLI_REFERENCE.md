@@ -265,7 +265,10 @@ options:
   -o OUTPUT, --output OUTPUT
                         Output directory (default: <path>
                         useReach_Pipeline\Unanalyzed\Single_Animal)
-  --queue               Also copy outputs to DLC_Queue
+  --queue               Also hand the cut videos to the pose step: each video
+                        this run cut goes into the shared singles folder, where
+                        a graphics-card PC's watcher claims and poses it (never
+                        copied straight into a DLC queue)
   -q, --quiet
 ```
 
@@ -295,8 +298,10 @@ options:
   -h, --help            show this help message and exit
   -i INPUT, --input INPUT
                         Input Multi-Animal directory
-  --no-queue            Don't copy to DLC queue
-  --archive             Archive original collages after cropping
+  --no-queue            Don't hand the cut videos to the pose step
+  --archive             Move collages whose single-animal videos are ALL done
+                        (filed, current, no review pending) to the archive;
+                        every other collage stays
   -q, --quiet
 ```
 
