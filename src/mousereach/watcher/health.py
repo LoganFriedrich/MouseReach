@@ -222,12 +222,17 @@ def health_report(db=None) -> List[str]:
                 names = ", ".join(v["video_id"] for v in failed[:3])
                 lines.append(
                     "%d video(s) FAILED and wait for a person (fix the cause, "
-                    "then select the row and press Re-run): %s%s"
+                    "then select it in the 'Stopped: needs a person' tab and press "
+                    "Re-run): %s%s"
                     % (len(failed), names, " ..." if len(failed) > 3 else ""))
             if unres:
+                # WHY the tab and not File Details: File Details reads a video
+                # the folders hold, and an unresolvable video is usually in
+                # none of them (this machine has no file for it).
                 lines.append(
-                    "%d video(s) are parked as unresolvable -- each carries "
-                    "its reason (File Details shows it)." % len(unres))
+                    "%d video(s) are stopped as unresolvable (this machine has "
+                    "no file for them) -- each is listed with its reason in the "
+                    "'Stopped: needs a person' tab." % len(unres))
             # Collages this machine could not crop. WHY here: a failed collage
             # is a whole recording whose sessions are not cut, and until
             # no screen named one -- only a count in the status

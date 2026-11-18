@@ -29,7 +29,8 @@ def test_health_names_stuck_videos():
     text = "\n".join(lines)
     assert "2 video(s) FAILED" in text
     assert "20240101_ABC0101_P1" in text
-    assert "1 video(s) are parked" in text
+    assert "1 video(s) are stopped as unresolvable" in text
+    assert "'Stopped: needs a person' tab" in text
 
 
 def test_health_says_nothing_stuck():

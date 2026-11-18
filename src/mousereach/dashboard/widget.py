@@ -91,7 +91,9 @@ STAGE_INFO = {
     "crystallized": ("Locked (published)",         "Locked against reprocessing (e.g. frozen for a publication).", "done"),
     "triage":       ("Waiting for triage review",  "Held out of the database -- a reviewer must answer a per-element question (Review Queues tab).", "act"),
     "deep_review":  ("Waiting for re-segmentation", "Held out -- segmentation failed or was escalated; needs its cuts fixed in the re-segmentation tools (Review Queues tab).", "act"),
-    "failed":       ("Failed, needs a look",       "Processing errored out -- needs investigation.", "bad"),
+    "failed":       ("Failed, needs a look",       "Processing errored out -- needs investigation. The 'Stopped: needs a person' tab shows why; Re-run there once the cause is fixed.", "bad"),
+    "unresolvable": ("Stopped: no file here",      "This machine has no file for it -- usually another machine holds it, or a person set it aside on purpose. The 'Stopped: needs a person' tab shows the reason.", "act"),
+    "parked_repose_stopped": ("Stopped: re-pose unfinished", "Its bundle was taken out of its review queue for a new pose, but the re-pose run stopped part way. Run mousereach-repose-videos again for it.", "bad"),
     # Folder-scan stages (video's stage = which pipeline folder it sits in)
     "raw_collage":  ("Raw collage, needs cropping", "An 8-camera collage in the intake folder -- not yet cropped into single-mouse videos.", "wait"),
     "cropped":      ("Cropped, waiting for DLC",   "Cropped to a single-mouse video, waiting for DLC (DeepLabCut).", "wait"),
@@ -117,7 +119,8 @@ def stage_label(state: str):
 # plain-language label to a set of raw states (None = show everything).
 STAGE_FILTERS = [
     ("All videos", None),
-    ("Needs attention", {"triage", "deep_review", "failed", "outdated", "quarantined"}),
+    ("Needs attention", {"triage", "deep_review", "failed", "outdated", "quarantined",
+                         "parked_repose_stopped"}),
     ("Not started (raw/cropped)", {"raw_collage", "cropped"}),
     ("In progress", {"validated", "dlc_queued", "dlc_running", "dlc_complete", "processing",
                      "archiving", "raw_collage", "cropped", "parked_for_repose"}),
@@ -125,7 +128,11 @@ STAGE_FILTERS = [
     ("Needs triage review", {"triage"}),
     ("Needs re-segmentation", {"deep_review"}),
     ("Needs reprocessing (outdated)", {"outdated"}),
+    # Matched by the folder stage OR the watcher row's state (watcher/stopped.py
+    # merge_row_states): a failed video whose file sits in the working folder,
+    # or in no scanned folder at all, is listed here too.
     ("Failed", {"failed"}),
+    ("Stopped: no file on this machine", {"unresolvable", "parked_repose_stopped"}),
     ("Quarantined", {"quarantined"}),
 ]
 _STAGE_FILTER_MAP = dict(STAGE_FILTERS)
@@ -696,6 +703,17 @@ class PipelineDashboard(QWidget):
                                                 if Paths.NAS_ROOT else [])]
         except Exception:
             pass
+        # Videos FAILED on any machine (its status report's "stopped" counts,
+        # watcher/node_status.py): red, because a failed video waits for a
+        # person and a graphics-card PC's were seen only from a terminal there.
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.node_status import stopped_lines
+            items = list(items) + [{"needs_person": True, "says": line}
+                                   for line in (stopped_lines(Paths.NAS_ROOT)
+                                                if Paths.NAS_ROOT else [])]
+        except Exception:
+            pass
         # Recordings set aside as RECORDING ISSUES (watcher/recording_issue.py):
         # failed recordings, never cut. Listed under the panel, not as alarms:
         # the pipeline has nothing left to do with them, and the lab
@@ -845,6 +863,9 @@ class PipelineDashboard(QWidget):
         stats_widget = self._build_stats_tab()
         tabs.addTab(stats_widget, "Statistics")
 
+        # --- Stopped videos: failed / no file here, with the reason and Re-run ---
+        tabs.addTab(self._build_stopped_tab(), "Stopped: needs a person")
+
         # --- Tab 3: Publication Lock (freeze a dataset for a paper) ---
         tabs.addTab(self._build_lock_tab(), "Publication Lock")
 
@@ -933,8 +954,9 @@ class PipelineDashboard(QWidget):
             "Send the selected video back through the pipeline. You will be "
             "asked WHY (recorded with the mark). It re-enters at segmentation "
             "on the existing tracking; its current results are replaced when "
-            "it finishes. Also un-sticks a FAILED or parked (unresolvable) "
-            "video once its problem is fixed. Select a row to enable.")
+            "it finishes. A FAILED video, or an unresolvable one with no filed "
+            "results, is restarted through the same reset as the 'Stopped: needs a "
+            "person' tab instead (once its problem is fixed). Select a row to enable.")
         self.rerun_btn.setEnabled(False)
         self.rerun_btn.clicked.connect(self._rerun_selected)
         btn_layout.addWidget(self.rerun_btn)
@@ -1068,10 +1090,21 @@ class PipelineDashboard(QWidget):
                 f"belong to another machine). Nothing was changed.")
             return
         # archived: ordinary "redo it". failed / unresolvable: retry after the
-        # underlying problem is fixed -- previously terminal states could only
-        # be reset from a terminal, which is exactly the operator dead-end
-        # this button exists to remove.
-        if row["state"] not in ("archived", "failed", "unresolvable"):
+        # underlying problem is fixed, through the reset paths below.
+        if row["state"] in ("failed", "unresolvable"):
+            from mousereach.watcher.stopped import filed_results_present
+            if not (row["state"] == "unresolvable" and filed_results_present(stem)):
+                # A stopped video goes through the reset paths
+                # (watcher/stopped.py), the same as the Stopped tab and the
+                # terminal commands. WHY not the 'outdated' mark below: that
+                # re-runs a FILED video from its filed folder, and a failed
+                # video, or an unresolvable one with no filed results, has
+                # none to re-run from.
+                self._rerun_stopped_video(stem)
+                return
+            # An unresolvable video whose filed results ARE on disk is re-run
+            # from them, as before (the mark below).
+        elif row["state"] != "archived":
             QMessageBox.information(
                 self, "Re-run video",
                 f"{stem} is currently '{row['state']}' -- it is already "
@@ -1085,15 +1118,9 @@ class PipelineDashboard(QWidget):
             QMessageBox.information(self, "Re-run video",
                                     f"{locked}\n\nNothing was changed.")
             return
-        prior_note = ""
-        if row["state"] in ("failed", "unresolvable"):
-            why_stuck = (row.get("error_message") or "").strip()
-            prior_note = (f"\n\nIt is currently '{row['state']}'"
-                          + (f":\n  {why_stuck[:300]}" if why_stuck else "")
-                          + "\nOnly re-run it if that problem is fixed.")
         reason, ok = QInputDialog.getText(
             self, "Re-run video",
-            f"Why re-run {stem}?{prior_note}\n(Recorded with the mark; required.)")
+            f"Why re-run {stem}?\n(Recorded with the mark; required.)")
         if not ok:
             return
         reason = (reason or "").strip()
@@ -1132,6 +1159,8 @@ class PipelineDashboard(QWidget):
             self.health_label.setText("\n".join(health_report(db)))
         except Exception:
             pass
+        # The stopped table reads a copy of the same database (stopped.py).
+        self._update_stopped(db)
 
     def _restart_watcher_clicked(self):
         if QMessageBox.question(
@@ -1146,6 +1175,135 @@ class PipelineDashboard(QWidget):
         (QMessageBox.information if ok else QMessageBox.warning)(
             self, "Restart the auto-processor", msg)
         self._update_health()
+
+    # ------------------------------------------------------------- stopped
+    def _build_stopped_tab(self) -> QWidget:
+        """Every video this machine's pipeline has stopped working on, with
+        its reason, read from the watcher database (watcher/stopped.py).
+
+        WHY a table of its own: a failed or unresolvable video is in no
+        review queue, and the overview finds videos by the folders they sit
+        in -- a stopped video whose file is in no scanned folder could not be
+        seen or selected anywhere, and its reason was only in a terminal."""
+        widget = QWidget()
+        lay = QVBoxLayout(widget)
+        intro = QLabel(
+            "Videos the pipeline on THIS computer has stopped working on. 'failed': "
+            "a step went wrong and its automatic retries are used up -- fix the cause "
+            "in the reason, then press Re-run. 'unresolvable': this computer has no "
+            "file for it, usually because another computer holds it or a person set "
+            "it aside on purpose; Re-run takes it back only when its file is here. "
+            "Other computers' failed videos are counted in the red panel above.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color:#888;")
+        lay.addWidget(intro)
+        self.stopped_table = QTableWidget()
+        self.stopped_table.setColumnCount(4)
+        self.stopped_table.setHorizontalHeaderLabels(["Video", "State", "Since", "Why"])
+        self.stopped_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.stopped_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.stopped_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.stopped_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        lay.addWidget(self.stopped_table, 1)
+        row = QHBoxLayout()
+        rerun = QPushButton("Re-run selected")
+        rerun.setToolTip(
+            "Failed: restart it at the step its files allow, with its automatic "
+            "retries given back (the same as mousereach-watch-reprocess). "
+            "Unresolvable: take it back when its file is on this computer (the same "
+            "as mousereach-watch-unresolvable --retry). It always reads the video "
+            "again first, so a video the watcher has already retried is left alone.")
+        rerun.clicked.connect(self._rerun_stopped)
+        row.addWidget(rerun)
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(lambda: self._update_stopped())
+        row.addWidget(refresh)
+        row.addStretch()
+        lay.addLayout(row)
+        self.stopped_note = QLabel("")
+        self.stopped_note.setWordWrap(True)
+        lay.addWidget(self.stopped_note)
+        return widget
+
+    def _update_stopped(self, db=None):
+        """Fill the stopped table from a COPY of the watcher database
+        (stopped.read_stopped; about a second for a large database). Never
+        raises: an unreadable database is said in the table's note."""
+        table = getattr(self, "stopped_table", None)
+        note = getattr(self, "stopped_note", None)
+        try:
+            from mousereach.watcher.stopped import read_stopped
+            if db is None:
+                db = self._watcher_db()
+            rows = read_stopped(db=db)
+        except Exception as e:
+            self._stopped_rows = []
+            if note is not None:
+                note.setText(f"Stopped videos could not be read: {e}")
+            if table is not None:
+                table.setRowCount(0)
+            return
+        self._stopped_rows = rows
+        if table is not None:
+            table.setColumnCount(4)
+            table.setRowCount(len(rows))
+            for i, r in enumerate(rows):
+                label = stage_label(r["state"])[0]
+                cells = [r["video_id"], label, (r.get("since") or "")[:19], r["reason"]]
+                for j, text in enumerate(cells):
+                    item = QTableWidgetItem(str(text))
+                    item.setToolTip(f"{r['reason']}\n\nWhat to do: {r['what_to_do']}")
+                    if j == 0:
+                        item.setData(Qt.UserRole, r["video_id"])
+                    table.setItem(i, j, item)
+        if note is not None:
+            n_failed = sum(1 for r in rows if r["state"] == "failed")
+            note.setText(f"{len(rows)} stopped video(s), {n_failed} failed."
+                         if rows else "No stopped videos on this computer.")
+        update = getattr(self, "_update_overview_table", None)
+        if update is not None and hasattr(self, "overview_table"):
+            try:
+                update()
+            except Exception:
+                pass
+
+    def _rerun_stopped(self):
+        """Re-run the video selected in the stopped table, through the
+        existing reset paths (stopped.rerun reads the live row first)."""
+        table = getattr(self, "stopped_table", None)
+        sel = table.selectedItems() if table is not None else []
+        if not sel:
+            QMessageBox.information(self, "Re-run", "Select a video in the table first.")
+            return
+        vid = table.item(sel[0].row(), 0).data(Qt.UserRole)
+        self._rerun_stopped_video(vid)
+
+    def _rerun_stopped_video(self, video_id: str):
+        from mousereach.watcher.stopped import filed_results_present, rerun
+        try:
+            db = self._watcher_db()
+            row = db.get_video(video_id) or {}
+            if row.get("state") == "unresolvable" and filed_results_present(video_id):
+                # Filed results on disk: re-run from them, as the overview's
+                # Re-run video button does (it asks why).
+                self._selected_file = f"{video_id}.mp4"
+                self._rerun_selected()
+                self._update_stopped()
+                return
+            ok, msg = rerun(db, video_id)
+            if not ok and msg.startswith("Choose the step"):
+                # Its files are not on this computer: a person names the step,
+                # as mousereach-watch-reprocess --from-step does.
+                step, chosen = QInputDialog.getItem(
+                    self, "Re-run", msg + "\n\nRestart it at:",
+                    list(db.RESET_STEP_CHOICES), 0, False)
+                if not chosen:
+                    return
+                ok, msg = rerun(db, video_id, from_step=step)
+        except Exception as e:
+            ok, msg = False, f"Could not re-run {video_id}: {e}"
+        QMessageBox.information(self, "Re-run", msg)
+        self._update_stopped()
 
     # ------------------------------------------------------------- pub lock
     def _build_lock_tab(self) -> QWidget:
@@ -1640,8 +1798,13 @@ class PipelineDashboard(QWidget):
     def _update_overview_table(self):
         """Update the overview table with validation status columns."""
         # Filter out unsupported tray types (F) - they shouldn't clutter the view
+        # The folders' view plus each stopped video's watcher-row state
+        # (watcher/stopped.py): the Failed filter must show every failed
+        # video, also one whose file is in no scanned folder.
+        from mousereach.watcher.stopped import matches, merge_row_states
+        merged = merge_row_states(self.all_files, getattr(self, "_stopped_rows", None) or [])
         filtered_files = {
-            k: v for k, v in self.all_files.items()
+            k: v for k, v in merged.items()
             if v.get("tray_supported", True)
         }
 
@@ -1652,7 +1815,7 @@ class PipelineDashboard(QWidget):
         _states = getattr(self, '_stage_filter_map', _STAGE_FILTER_MAP).get(stage_filter)
         if _states is not None:
             filtered_files = {k: v for k, v in filtered_files.items()
-                              if v.get("current_stage") in _states}
+                              if matches(v, _states)}
 
         # Apply "needs review" filter
         if hasattr(self, 'show_needs_review') and self.show_needs_review.isChecked():

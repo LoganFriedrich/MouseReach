@@ -526,7 +526,7 @@ def main_status():
 usage: mousereach-watch-status [--by-animal] [--json] [--log N]
 
 Show this node's pipeline state: counts by state; the videos held after a
-failed filing attempt, the failed videos with their errors, and what the
+failed filing attempt, the failed and unresolvable videos with their reasons, and what the
 watchers list for a person (each list with its age); recent activity; and the
 status every node last reported.
 
@@ -751,8 +751,8 @@ def _held_and_failed(db) -> dict:
     others (and never breaks the status command); a part that cannot be read
     says so.
     """
-    out = {"archive_held": [], "failed": [], "attention": [], "recording_issues": [],
-           "errors": []}
+    out = {"archive_held": [], "failed": [], "unresolvable": [], "attention": [],
+           "recording_issues": [], "errors": []}
     try:
         out["archive_held"] = list(db.get_videos_held_by_failed_archive())
     except Exception as e:
@@ -763,6 +763,15 @@ def _held_and_failed(db) -> dict:
                          for v in db.get_videos_in_state("failed")]
     except Exception as e:
         out["errors"].append("failed videos could not be read: %s" % e)
+    # Unresolvable: this machine has no file for the video. In no queue and
+    # no work step, so like a failed video it was on no screen with its
+    # reason (stopped.py says why both are listed).
+    try:
+        out["unresolvable"] = [{"video_id": v.get("video_id"),
+                                "error_message": v.get("error_message")}
+                               for v in db.get_videos_in_state("unresolvable")]
+    except Exception as e:
+        out["errors"].append("unresolvable videos could not be read: %s" % e)
     try:
         from mousereach.config import Paths
         from mousereach.watcher import attention
@@ -817,6 +826,14 @@ def _print_held_and_failed(db, limit: int = 20) -> None:
               "mousereach-watch-reprocess <video_id>:" % len(failed))
         _some(failed, lambda r: "%s: %s" % (r.get("video_id"),
                                             r.get("error_message") or "no error recorded"))
+        print()
+    unres = data.get("unresolvable") or []
+    if unres:
+        print("Stopped, no file on this machine (%d) -- usually another machine holds "
+              "it, or a person set it aside on purpose (the reason says which); "
+              "mousereach-watch-unresolvable --list and --retry:" % len(unres))
+        _some(unres, lambda r: "%s: %s" % (r.get("video_id"),
+                                           r.get("error_message") or "no reason recorded"))
         print()
     items = data["attention"]
     # Label mismatches first, under their own heading: they are held outside
@@ -2934,9 +2951,7 @@ def _retry_unresolvable(db, unresolvable, dry_run: bool) -> int:
         top of the shared singles folder is left for the singles intake,
         which claims it properly (its row gets the shared-folder reason the
         intake re-drives); any other copy is listed and left alone."""
-    from mousereach.config import Paths, WatcherConfig
-    from mousereach.watcher import single_claim
-    from mousereach.watcher.locate import locate_video_file
+    from mousereach.config import WatcherConfig
 
     try:
         mode = WatcherConfig.load().mode
@@ -2951,44 +2966,19 @@ def _retry_unresolvable(db, unresolvable, dry_run: bool) -> int:
         print("forced. 'mousereach-watch-unresolvable --list' shows why each one waits.")
         return 0
 
-    queue = Path(Paths.DLC_QUEUE) if Paths.DLC_QUEUE else None
-    keep_reasons = (single_claim.DUPLICATE_OF_CLAIM_REASON,) + single_claim.REDRIVE_REASONS
+    # One row at a time through stopped.retry_unresolvable_row, which the
+    # dashboard's Re-run button also uses: one implementation, two ways in.
+    from mousereach.watcher.stopped import retry_unresolvable_row
     back = shared = 0
     for row in unresolvable:
-        video_id = row['video_id']
-        local = queue / f"{video_id}.mp4" if queue else None
-        try:
-            in_queue = local is not None and local.is_file()
-        except OSError:
-            in_queue = False
-        if in_queue:
-            print(f"  {video_id}: in this node's DLC queue ({local}) -> dlc_queued")
-            if not dry_run:
-                db.force_state(video_id, 'dlc_queued',
-                               reason="a person's retry: the file is in this node's DLC queue",
-                               source_path=str(local), current_path=str(local),
-                               error_message=None)
+        outcome, msg = retry_unresolvable_row(db, row, server=False, dry_run=dry_run)
+        if outcome == "none":
+            continue
+        print(f"  {msg}")
+        if outcome == "queued":
             back += 1
-            continue
-        found = locate_video_file(video_id, search_archive=True, search_staging=True)
-        if found is None:
-            continue
-        if single_claim.in_front_door(found):
-            reason = row.get('error_message') or ''
-            if reason.startswith(keep_reasons):
-                print(f"  {video_id}: in the shared singles folder; already waiting "
-                      f"for the intake ({reason[:60]}) -- left as it is")
-                continue
-            print(f"  {video_id}: in the shared singles folder ({found}) -> left for "
-                  f"the intake to claim it")
-            if not dry_run:
-                db.mark_unresolvable(
-                    video_id, f"{single_claim.SHARED_REASON}: put back for the intake "
-                              f"by a person's retry ({found})")
+        elif outcome == "shared":
             shared += 1
-            continue
-        print(f"  {video_id}: a copy is at {found}, which is not this node's (filed, "
-              f"posed for the server, or another node's claim) -- left as it is")
     print()
     print(f"{'Would return' if dry_run else 'Returned'} {back} video(s) from this "
           f"node's DLC queue to the pipeline; {shared} left for the singles intake.")

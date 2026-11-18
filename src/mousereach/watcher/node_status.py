@@ -212,6 +212,9 @@ def describe(nas_root, color: bool = False) -> str:
                                          if isinstance(doing, (list, tuple)) else doing)
             lines.append("  %-20s %-13s %s; %s done in the last hour"
                          % (host, r.get("state", "?"), now, r.get("done_last_hour", "?")))
+        stopped = stopped_text(r)
+        if stopped:
+            lines.append("  %-20s %s" % ("", stopped))
         lines.extend(outbox_lines(r, color=color))
     return "\n".join(lines)
 
@@ -289,3 +292,46 @@ def held_recordings(nas_root) -> List[str]:
         return out
     except Exception:
         return []
+
+
+STOPPED_KEY = "stopped"
+
+
+def stopped_text(record: dict) -> str:
+    """One line on a node's stopped videos, from its report's "stopped"
+    counts ({"failed": n, "unresolvable": m}, watcher/stopped.py), or "" when
+    it has none stopped. A report without the key says "not reported" --
+    never 0: a node on older code, or one whose database could not be read,
+    has not said it has none."""
+    try:
+        if not isinstance(record, dict):
+            return ""
+        s = record.get(STOPPED_KEY)
+        if not isinstance(s, dict):
+            return "stopped videos: not reported by this node"
+        f, u = int(s.get("failed") or 0), int(s.get("unresolvable") or 0)
+        if not (f or u):
+            return ""
+        return ("stopped videos: %d failed, %d unresolvable (listed with their reasons in "
+                "the Pipeline Dashboard's 'Stopped: needs a person' tab on that PC, or "
+                "mousereach-watch-status there)" % (f, u))
+    except Exception:
+        return ""
+
+
+def stopped_lines(nas_root) -> List[str]:
+    """For the Pipeline Dashboard's red panel: one line per RUNNING-or-not
+    node that reports failed videos. Only failed ones are an alarm: an
+    unresolvable video usually means another machine holds it. Never raises."""
+    out = []
+    try:
+        for r in read_all(nas_root):
+            s = r.get(STOPPED_KEY)
+            if isinstance(s, dict) and int(s.get("failed") or 0) > 0:
+                out.append("%s: %d video(s) FAILED there and wait for a person -- open "
+                           "the Pipeline Dashboard on that PC ('Stopped: needs a person' "
+                           "tab) to see why and re-run them."
+                           % (r.get("hostname"), int(s.get("failed"))))
+    except Exception:
+        return []
+    return out

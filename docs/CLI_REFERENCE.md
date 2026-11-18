@@ -1833,7 +1833,7 @@ Before it starts working it checks two things (watcher/singleton.py):
 usage: mousereach-watch-status [--by-animal] [--json] [--log N]
 
 Show this node's pipeline state: counts by state; the videos held after a
-failed filing attempt, the failed videos with their errors, and what the
+failed filing attempt, the failed and unresolvable videos with their reasons, and what the
 watchers list for a person (each list with its age); recent activity; and the
 status every node last reported.
 
@@ -1852,7 +1852,13 @@ have something in them):
   share being unreachable or a file being open). Before this list existed such
   a video looked like any other `processed` one.
 - **Failed** -- each failed video with the error recorded on it. Fix the cause,
-  then run `mousereach-watch-reprocess <video_id>` (below).
+  then run `mousereach-watch-reprocess <video_id>` (below), or select it in the
+  Pipeline Dashboard's "Stopped: needs a person" tab and press Re-run.
+- **Stopped, no file on this machine** -- each `unresolvable` video with its
+  reason. Usually another machine holds the video, or a person set it aside on
+  purpose (the reason says which). `mousereach-watch-unresolvable --list` and
+  `--retry` (below) act on them. Earlier versions listed failed videos but not
+  these.
 - **Listed by the watchers for a person** -- every item of every list in
   `<NAS root>/attention/` (hand-score holds, collages that could not be cut,
   failed re-runs ...), tagged `[NEEDS A PERSON]` or `[waiting]`, with the list
@@ -1862,7 +1868,13 @@ have something in them):
 
 Each list is read on its own; one that cannot be read prints a `[!]` line
 saying so and the rest of the status still shows. `--json` carries the same
-three lists under `held_and_failed`.
+lists under `held_and_failed` (keys `archive_held`, `failed`, `unresolvable`,
+`attention`, `recording_issues`).
+
+The Nodes section also says, under each node, how many videos are stopped
+there: `stopped videos: N failed, M unresolvable` (nothing when none), or
+`stopped videos: not reported by this node` for a node on older code or one
+whose database could not be read -- never a 0 it did not report.
 
 ### `mousereach-watch-reprocess`
 

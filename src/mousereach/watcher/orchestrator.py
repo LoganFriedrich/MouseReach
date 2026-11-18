@@ -2055,6 +2055,16 @@ class BaseOrchestrator:
         report = {"doing": getattr(self, "_doing", None),
                   "last_done": getattr(self, "_last_done", None),
                   "done_last_hour": len(done)}
+        # How many of this machine's videos are stopped (failed /
+        # unresolvable). WHY on the shared drive: a graphics-card PC's
+        # stopped videos were visible only from a terminal on that PC; the
+        # processing server's dashboard reads every node's report
+        # (node_status.stopped_lines). Counted at most every few minutes --
+        # this runs every loop turn -- and left out when it cannot be read,
+        # so a reader says "not reported", never 0.
+        stopped = BaseOrchestrator._stopped_counts(self)
+        if stopped is not None:
+            report["stopped"] = stopped
         # The last recording-send pass (recording_outbox), kept on self so every
         # status write carries it, not only the one right after the pass.
         outbox = getattr(self, "_outbox_report", None)
@@ -2062,6 +2072,27 @@ class BaseOrchestrator:
             from mousereach.watcher.recording_outbox import STATUS_KEY
             report[STATUS_KEY] = outbox
         return report
+
+    _STOPPED_COUNT_EVERY_S = 300.0
+
+    def _stopped_counts(self):
+        """{"failed": n, "unresolvable": m} for the status report, re-counted
+        at most every _STOPPED_COUNT_EVERY_S (watcher/stopped.counts); None
+        when it cannot be read. Never raises."""
+        now = time.monotonic()
+        cached = getattr(self, "_stopped_cache", None)
+        every = getattr(self, "_STOPPED_COUNT_EVERY_S", 300.0)
+        if cached is not None and now - cached[0] < every:
+            return cached[1]
+        try:
+            from mousereach.watcher.stopped import counts
+            db = getattr(self, "db", None)
+            value = counts(db) if db is not None else None
+        except Exception as e:
+            logger.debug(f"could not count stopped videos: {e}")
+            value = None
+        self._stopped_cache = (now, value)
+        return value
 
     # Seconds between two looks at the recording folder. A look is a listing
     # of a local folder; the copies themselves are bounded by

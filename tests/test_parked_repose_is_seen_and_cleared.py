@@ -220,3 +220,23 @@ def test_the_command_clears_on_request_and_dry_runs_first(env, monkeypatch, caps
     assert f"{VID}: would_clear" in out and env.parked.exists()
     assert rv.main(["--clear-finished"]) == 0
     assert not env.parked.exists()
+
+
+def test_rerun_of_a_stopped_repose_says_what_to_do_not_not_stopped(env):
+    """The Stopped tab lists a re-pose that stopped part way; its Re-run must
+    answer with the re-pose command, not "is 'triage' now, not stopped"."""
+    import mousereach.watcher.stopped as stopped
+    _park(env)
+    _state(env, "triage")
+    changed, msg = stopped.rerun(env.db, VID)
+    assert changed is False
+    assert "mousereach-repose-videos" in msg
+    assert "not stopped" not in msg
+    assert env.db.get_video(VID)["state"] == "triage"      # nothing was changed
+
+
+def test_rerun_of_a_held_video_that_is_not_stopped_still_says_so(env):
+    import mousereach.watcher.stopped as stopped
+    _state(env, "triage")                                 # nothing parked
+    changed, msg = stopped.rerun(env.db, VID)
+    assert changed is False and "not stopped" in msg

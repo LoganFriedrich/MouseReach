@@ -2093,6 +2093,51 @@ section of `mousereach-watch-status` shows them on each node's line. A node show
 runs this code. The last item and the hourly count are kept by the running watcher, so they
 start again from nothing when it restarts. Tests: `tests/test_node_status_says_what_it_is_doing.py`.
 
+## Update 2026-11-18: every stopped video is on a screen, with its reason and a Re-run
+
+A video whose row is `failed` (a step went wrong and its automatic retries are used up) or
+`unresolvable` (this machine has no file for it) is in no review queue. The Pipeline Dashboard
+finds videos by the folders they sit in, so such a video was on no screen when its file was in no
+scanned folder; its reason was only in a terminal command on the machine holding the row; a
+graphics-card PC's stopped videos could be seen only from a terminal on that PC; and
+`mousereach-watch-status` listed failed rows but never unresolvable ones. Now
+(`watcher/stopped.py` is the one reader for every screen):
+
+- **The dashboard's "Stopped: needs a person" tab** lists every stopped video on this computer:
+  video, state, since when, and the reason (hover a row for what to do). Failed videos come first.
+  A held video whose re-pose run stopped part way (its bundle parked in
+  `Repose_Queue/_parked/<video>/`, no request out, its queue empty) is listed too, as "Stopped:
+  re-pose unfinished": run `mousereach-repose-videos` again for it. Re-run on such a row changes nothing and
+  shows that same instruction (there is no reset path for it; the re-pose command is the action). The table is read from a COPY
+  of the watcher database (SQLite's own online backup into a temporary file, deleted after
+  reading; about a second for a large database), never from the live file, when the dashboard
+  opens and on every Refresh.
+- **Re-run selected** (and the overview's "Re-run video" button for a failed or unresolvable
+  video) goes through the existing reset paths only, after reading the video's row again (the
+  watcher retries failed videos by itself, so the table may be out of date): a failed video
+  through `WatcherDB.reset_failed`, exactly as `mousereach-watch-reprocess` (restart at the step
+  its files on this computer allow, retries given back; when its files are not here the dashboard
+  asks which step, the `--from-step` choices); an unresolvable video through
+  `stopped.retry_unresolvable_row`, exactly as `mousereach-watch-unresolvable --retry` (which now
+  calls the same function): on a processing server nothing is forced; on a graphics-card PC only
+  a copy in its own DLC queue is taken back. Before, the overview's button marked a failed video
+  'outdated' -- a re-run from its filed folder, which a failed video does not have. An
+  unresolvable video whose filed results ARE on disk (features file and processing manifest in its
+  filed folder) is still re-run from them that way, from either button, asking why.
+- **The overview's "Failed" filter** matches by the folder stage OR the row's state, so a failed
+  video in the working folder (shown as "Failed, needs a look") or in no scanned folder at all
+  (added as its own row) is listed. A new filter, "Stopped: no file on this machine", lists the
+  unresolvable ones and unfinished re-poses.
+- **Other machines.** Each node's status report (`Processing/.node_status/<host>.json`) carries
+  `stopped: {"failed": N, "unresolvable": M}`, counted at most every 5 minutes. The server's red
+  "Needs your attention" panel shows one line for each node with failed videos ("<host>: N
+  video(s) FAILED there ..."), and `mousereach-watch-status` shows both counts under each node. A
+  report without the key reads "not reported", never 0. Only counts travel: a per-video failure
+  record on the shared drive is an open question for the lab, not built.
+- `mousereach-watch-status` lists unresolvable videos with their reasons, after the failed ones.
+
+Tests: `tests/test_stopped_videos_are_listed_and_rerun.py`.
+
 ## Update 2026-10-22: a list of sessions can lead within its project
 
 The work order could say "this project, these cohorts" but not "these sessions a study needs".
