@@ -1130,6 +1130,166 @@ def _routed_reason(bundle: Path, stem: str) -> str:
         return ""
 
 
+# A triage bundle is re-compared with the hand scores (bench_recheck) only
+# when none of its files changed for this long. WHY: the review window has no
+# lock a scan could see; a file written in the last half hour may be a person
+# answering it now, and moving the bundle -- or rewriting its outcomes file --
+# under them would send their next save to a folder that is gone, or change
+# what they are looking at mid-answer.
+BENCH_RECHECK_QUIET_S = 30 * 60
+
+# bundle path -> (key, action) so each bundle is compared once per change of
+# its files, its durable review copy or the scores file, not on every scan.
+_bench_cache: Dict[str, tuple] = {}
+
+# What bench_recheck found for a triage bundle.
+BENCH_NOTHING = None                      # not held over its hand scores, or nothing to do
+BENCH_LABEL_MISMATCH = "label_mismatch"   # move it to the label-mismatch hold
+BENCH_RELEASE = "release"                 # now agrees, nobody answered: return it
+BENCH_REFRESHED = "refreshed"             # its kept scores and flags were brought up to date
+
+
+def _held_over_hand_scores(out: dict) -> bool:
+    """The bundle's outcomes say it was compared with the hand scores and
+    disagreed: a "bench disagreement" flag, or a kept verdict of disagrees /
+    label_mismatch (hand_scores.record)."""
+    from mousereach.watcher import hand_scores
+    kept = (out.get(hand_scores.RECORD_KEY) or {}).get("verdict")
+    return (kept in ("disagrees", "label_mismatch", "suspended")
+            or bool(_bench_flags(out)))
+
+
+def _bench_flags(out: dict) -> set:
+    """Segments carrying a "bench disagreement" flag."""
+    from mousereach.watcher import hand_scores
+    return {int(s["segment_num"]) for s in out.get("segments") or []
+            if s.get("segment_num") is not None
+            and str(s.get("flag_reason") or "").lower().startswith(hand_scores.FLAG_REASON)}
+
+
+def _other_open_flags(out: dict) -> bool:
+    """A segment flagged for review for a reason other than the hand scores
+    (the outcome detector could not call it, say), or a pellet with no call."""
+    from mousereach.watcher import hand_scores
+    return any(s.get("flagged_for_review")
+               and not str(s.get("flag_reason") or "").lower().startswith(hand_scores.FLAG_REASON)
+               for s in out.get("segments") or [])
+
+
+def bench_recheck(bundle: Path, stem: str, signature: tuple, st=None):
+    """Compare a triage bundle that is there over its hand scores with the hand
+    scores AS THEY ARE NOW, with the pipeline's own check (hand_scores.check,
+    read-only), and say what to do. Never raises: anything it cannot read
+    answers BENCH_NOTHING and the bundle stays as it is.
+
+    WHY: a bundle keeps the scores it was compared with (the "hand_scores" key
+    of its outcomes file) and its "bench disagreement" flags, and the review
+    window shows those (score_from_outcomes). Nothing compared it again, and a
+    bundle leaves triage only once every flag is answered, so after a sheet
+    was corrected and imported a bundle kept showing the old scores and
+    disagreements that no longer existed -- a person was asked to overrule a
+    score the sheet no longer gives, and an unanswered bundle whose only
+    questions had gone away had no way out at all.
+
+      label mismatch (its results match another tray's scores) -> leaves
+          triage for the label-mismatch hold (BENCH_LABEL_MISMATCH): no answer
+          given here can fix a swapped name or sheet. Its other flags do not
+          keep it here: with the tray in doubt none of its questions is ready.
+      now agrees, nobody answered anything, and no other question is open ->
+          returned through the ordinary return (BENCH_RELEASE): the pipeline
+          compares again, the gate finds nothing to ask, and it is filed.
+      otherwise (still disagrees, or agrees but a person answered something
+          or another question is open) -> refreshed IN PLACE
+          (BENCH_REFRESHED): old bench flags taken back, the current
+          disagreements flagged, the current scores kept -- so the window
+          shows what the sheet says now. The person's answers are in the
+          review file, which this never touches; a bundle whose remaining
+          questions are all answered then leaves by the ordinary return.
+    Only after BENCH_RECHECK_QUIET_S with no change to the bundle."""
+    try:
+        if not signature or max(m for _, _, m in signature) > (
+                time.time() - BENCH_RECHECK_QUIET_S) * 1e9:
+            return BENCH_NOTHING
+        from mousereach.watcher import hand_scores
+        if not (hand_scores.settings() or {}).get("path"):
+            return BENCH_NOTHING
+        stamp = hand_scores.scores_pair_stamp()
+        key = (signature, stamp, _durable_signature(stem))
+        hit = _bench_cache.get(str(bundle))
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        import json
+        out = json.loads((bundle / f"{stem}_pellet_outcomes.json").read_text(encoding="utf-8"))
+        action = BENCH_NOTHING
+        if _held_over_hand_scores(out):
+            action = _bench_act(bundle, stem, out, stamp, st)
+        if action != BENCH_REFRESHED:
+            _bench_cache[str(bundle)] = (key, action)
+        return action
+    except Exception as e:
+        logger.debug("hand-score recheck of triage bundle %s skipped: %s", stem, e)
+        return BENCH_NOTHING
+
+
+def _bench_act(bundle: Path, stem: str, out: dict, stamp, st=None):
+    """bench_recheck's decision for one bundle (see there); refreshes in place
+    when that is the answer. Raises on what it cannot read."""
+    from mousereach.watcher import hand_scores
+    from mousereach.watcher.route_cli import answered_segments_of
+    try:
+        v = hand_scores.check(stem, bundle)
+    except hand_scores.PelletNumbersUnknown:
+        return BENCH_NOTHING          # the triage return diverts it by its own rule
+    if v.status == hand_scores.LABEL_MISMATCH:
+        return BENCH_LABEL_MISMATCH
+    if v.status not in (hand_scores.AGREES, hand_scores.DISAGREES, hand_scores.SUSPENDED,
+                        hand_scores.SHEET_ERROR):
+        return BENCH_NOTHING          # no row any more: left as it is, for a person
+    # SUSPENDED (hand_scores.suspension): the lab left the comparison out for
+    # this session -- handled exactly like "now agrees": returned when nothing
+    # else holds it, else its bench flags are taken back in place.
+    answered = answered_segments_of(stem, bundle)
+    # Anything else still open? The scan's own reading of the bundle (``st``,
+    # triage_status) counts every kind of question -- an uncertain causal reach
+    # too, not only outcome flags -- so it decides; the outcome flags are the
+    # fallback when it is not given. Without this a suspended bundle held for
+    # another question was returned, sent back by the gate, and returned again.
+    if st is not None:
+        others_open = bool(set(st.unresolved) - _bench_flags(out))
+    else:
+        others_open = _other_open_flags(out)
+    if (v.status in (hand_scores.AGREES, hand_scores.SUSPENDED, hand_scores.SHEET_ERROR)
+            and not answered and not others_open):
+        return BENCH_RELEASE
+    kept = out.get(hand_scores.RECORD_KEY) or {}
+    want_scores = {str(int(k)): int(x) for k, x in sorted((v.hand or {}).items())}
+    keep = set(v.disagreements) | ({"all"} if "all" in answered else
+                                   {int(s) for s in answered})
+    still_flagged = _bench_flags(out)
+    expect = (still_flagged if "all" in keep
+              else set(v.disagreements) | (still_flagged & keep))
+    if (still_flagged == expect and kept.get("pellets") == want_scores
+            and kept.get("verdict") == hand_scores.RECORD_WORDS.get(v.status)
+            and (v.status != hand_scores.SUSPENDED or kept.get("reason") == v.reason)):
+        return BENCH_NOTHING          # already what the sheet says now
+    if not _claim_return(stem):
+        return BENCH_NOTHING
+    try:
+        # A pellet a person answered keeps its flag (clear_bench_flags says
+        # why): the ordinary return then releases the bundle once every
+        # remaining question is answered.
+        hand_scores.clear_bench_flags(bundle, stem, keep=keep)
+        if v.status == hand_scores.DISAGREES:
+            hand_scores.flag_disagreements(bundle, stem, v)
+        hand_scores.record(bundle, stem, v, stamp[0] if isinstance(stamp, tuple) else None)
+    finally:
+        _release_return_claim(stem)
+    logger.info("Return scan: %s triage bundle compared again with the current hand "
+                "scores (%s); its kept scores and flags were updated in place", stem,
+                v.reason)
+    return BENCH_REFRESHED
+
+
 def _person_touched(signature: tuple) -> bool:
     return any(name.endswith(_PERSON_FILE_SUFFIXES) or "ground_truth" in name
                for name, _, _ in signature)
@@ -2124,6 +2284,32 @@ def scan_review_queues(db, processing_dir: Path,
             finally:
                 _release_return_claim(stem)
             continue
+        # A bundle sent here over its hand scores is compared again with the
+        # hand scores as they are now (bench_recheck says why and what each
+        # answer does). A label mismatch leaves for the label-mismatch hold,
+        # and a bundle that now agrees, with no answer in it and nothing else
+        # to ask, is returned -- both through the ordinary return, so the
+        # review file travels with it and no answer is lost; the pipeline's
+        # hand-score check runs again on the return and holds or passes it
+        # (orchestrator._hand_score_precheck).
+        bench = (bench_recheck(bundle, stem, signature, st)
+                 if not st.seg_failed and not _return_backing_off(stem) else BENCH_NOTHING)
+        if bench in (BENCH_LABEL_MISMATCH, BENCH_RELEASE):
+            if _return_to_processing(bundle, stem, processing_dir, db,
+                                     "label_mismatch" if bench == BENCH_LABEL_MISMATCH
+                                     else "hand_scores_agree"):
+                summary["triage_returned"] += 1
+                summary["bench_" + bench] = summary.get("bench_" + bench, 0) + 1
+                logger.info("Return scan: %s left triage: %s", stem,
+                            "its results match another tray's hand scores (a label "
+                            "mismatch no review can fix); the pipeline holds it until "
+                            "the name or the sheet is corrected"
+                            if bench == BENCH_LABEL_MISMATCH else
+                            "it now agrees with the corrected hand scores")
+            continue
+        if bench == BENCH_REFRESHED:
+            summary["bench_refreshed"] = summary.get("bench_refreshed", 0) + 1
+            continue      # its files changed: read again on the next scan
         still_open = set(st.unresolved) - set(short)
         # Listed for a person, never released here (_note_gt_not_counted).
         _note_gt_not_counted(bundle, stem, st, still_open,

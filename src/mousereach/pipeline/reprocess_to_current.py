@@ -34,7 +34,9 @@ or with a person's work lost:
    finalized, never filed uncompared. That refusal is only in the returned
    summary's ``error`` (and in reprocess_batch's ``results``): nothing is
    printed or moved, and the video is put on no attention list or queue, so
-   whoever runs this must read the summaries.
+   whoever runs this must read the summaries. A video whose results match
+   another tray's hand scores (hand_scores.label_mismatch) is refused the
+   same way: not finalized and not routed to triage.
  - A held video goes into its queue through the watcher's own router
    (review_gate.route_to_queue): deep review beats triage, a bundle already
    there is never overwritten, the move is recorded in this machine's watcher
@@ -350,6 +352,22 @@ def reprocess_video_to_current(
             summary["error"] = (f"no hand scores found for this session ({verdict.reason}); "
                                 f"held, nothing finalized")
             return summary
+        if verdict.status == hand_scores.LABEL_MISMATCH:
+            # The results match another tray's hand scores: the name or the
+            # sheet has the trays swapped. No review can fix that, so it is
+            # neither routed to triage nor filed (hand_scores.label_mismatch).
+            summary["error"] = (f"label mismatch: {verdict.reason}; held, nothing "
+                                f"finalized")
+            return summary
+        if verdict.status in (hand_scores.AGREES, hand_scores.DISAGREES,
+                              hand_scores.SUSPENDED, hand_scores.SHEET_ERROR):
+            try:
+                from mousereach.watcher.route_cli import answered_segments_of
+                _answered = set(answered_segments_of(video_id, work_dir))
+            except Exception:
+                _answered = {"all"}
+            hand_scores.clear_bench_flags(work_dir, video_id,
+                                          keep=set(verdict.disagreements) | _answered)
         if verdict.status == hand_scores.DISAGREES:
             hand_scores.flag_disagreements(work_dir, video_id, verdict)
         hand_scores.record(work_dir, video_id, verdict, hand_scores.scores_file_stamp())

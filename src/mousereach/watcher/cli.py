@@ -819,6 +819,34 @@ def _print_held_and_failed(db, limit: int = 20) -> None:
                                             r.get("error_message") or "no error recorded"))
         print()
     items = data["attention"]
+    # Label mismatches first, under their own heading: they are held outside
+    # every review queue (no review can fix them), so this is the only screen
+    # besides the dashboard and the database tool where they show at all
+    # (watcher/hand_scores.label_mismatch).
+    swapped = [r for r in items if r.get("kind") == "label_mismatch"]
+    items = [r for r in items if r.get("kind") != "label_mismatch"]
+    if swapped:
+        print("Held as LABEL MISMATCH (%d) -- results match another tray's hand scores; "
+              "the file name or the sheet has the trays swapped. Fix the sheet's tray "
+              "rows or the recording's name; never sent to triage:" % len(swapped))
+        _some(swapped, lambda r: "[NEEDS A PERSON] " + str(r.get("says") or r.get("video_id")))
+        print()
+    # Sessions whose hand-score comparison the lab suspended
+    # (hand_scores.suspension): shown so nobody wonders why they were never
+    # compared. Read from the same settings the check reads.
+    try:
+        from mousereach.watcher import hand_scores
+        suspended = [e for e in (hand_scores.settings().get("suspended_sessions") or [])
+                     if isinstance(e, dict) and e.get("video_key")]
+    except Exception as e:
+        suspended = []
+        print("  [!] the hand-score settings could not be read (%s)" % e)
+    if suspended:
+        print("Bench comparison SUSPENDED by the lab (%d session(s)) -- not compared "
+              "with their hand scores; every other check still applies:" % len(suspended))
+        _some(suspended, lambda e: "%s: %s" % (e.get("video_key"),
+                                              hand_scores.suspension_words(e)))
+        print()
     if items:
         print("Listed by the watchers for a person (from <NAS>/attention):")
 

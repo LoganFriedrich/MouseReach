@@ -1007,6 +1007,13 @@ The notes box travels with the video.
             why = plain_flag_reason(seg.get("flag_reason")) if seg.get("flag_reason") else ""
             lines.append("<b>Open:</b> %s%s" % (self._TRIAGE_KIND_WORDS.get(kind, "open"),
                                                 " (%s)" % why if why else ""))
+        # The lab suspended the hand-score comparison for this session
+        # (hand_scores.suspension): say so on every segment, so a reviewer
+        # knows there is no bench score to weigh and why.
+        kept = (getattr(self, "_outcomes_data", None) or {}).get("hand_scores") or {}
+        if kept.get("verdict") == "suspended":
+            lines.append("<b>Bench comparison suspended</b> for this session: %s"
+                         % (kept.get("reason") or "no reason recorded"))
         if not lines:
             banner.setVisible(False)
             return

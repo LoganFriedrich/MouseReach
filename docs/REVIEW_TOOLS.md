@@ -415,6 +415,34 @@ not. A pellet the algorithm itself could not decide still opens on
 `-- select outcome --`: there is no outcome to offer (`_make_outcome_picker`,
 `is_bench_mismatch`).
 
+### Hand-score questions that are never asked here (since 2026-11-18)
+
+Three cases a reviewer will NOT meet in triage, and why:
+
+- **A label mismatch.** A video whose results match ANOTHER tray's hand scores
+  of the same animal and day, not its own (the recording carries the wrong tray
+  in its name, or the sheet has two trays' rows the other way round). No answer
+  in this window can settle that, so the pipeline holds such a video outside
+  every queue and lists it in red (mousereach-watch-status, the dashboard, the
+  database tool's Where Is My Data tab and FIX THESE file). A person decides
+  which is wrong with `mousereach-label-mismatch` (`--name-wrong` or
+  `--sheet-error`, or `--labels-right` when neither is wrong); a sheet error is
+  kept as it is and recorded, never edited.
+  A bundle that was already in triage over such a video leaves the queue by
+  itself (the review file goes with it; answers are kept).
+- **A disagreement that went away.** When the sheet changes and is imported,
+  each bundle in triage over its hand scores is compared again (after 30
+  minutes with no change to the bundle, so never while someone is answering
+  it). If it now agrees and nobody answered anything in it, it leaves the queue
+  and is filed. Otherwise its bench flags and the score shown are brought up to
+  date in place: the window always shows what the sheet says now.
+- **A session the lab suspended.** For sessions listed in the lab settings
+  (`"suspended_sessions"`), the hand-score comparison is left out entirely. The
+  banner then says "Bench comparison suspended for this session: <reason>", the
+  check-your-answer box has no score to weigh and the console says why. Every
+  other question on such a video (a pellet the algorithm could not call, say) is
+  still asked.
+
 ### A pellet asked again: "are you sure?" (since 2026-10-26)
 
 A pellet a person already answered can be sent back to triage on purpose, when

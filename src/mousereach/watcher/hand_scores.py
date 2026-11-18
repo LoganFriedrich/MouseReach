@@ -134,6 +134,332 @@ AGREES = "agrees"
 DISAGREES = "disagrees"
 WAITING = "waiting"
 NOT_CHECKED = "not_checked"
+# The video's calls match ANOTHER hand-score row of the same animal and day
+# (another tray) clearly better than its own: the file name or the sheet has
+# the trays swapped (label_mismatch says how it is decided and why).
+LABEL_MISMATCH = "label_mismatch"
+# The lab suspended the comparison for this session (suspension): it is left
+# out of the decision to triage -- no bench flags, no label-mismatch hold.
+SUSPENDED = "suspended"
+# A label mismatch a person decided is a SHEET error (label_decision): the
+# sheet is kept as it is, the video goes on and is filed with the
+# disagreement and the decision recorded, never flagged for triage over it.
+SHEET_ERROR = "sheet_error"
+
+# The two decisions a person can make about a label mismatch.
+DECISION_SHEET_ERROR = "sheet_error"
+DECISION_NAME_WRONG = "name_wrong"
+# "Neither: the labels are right" -- the rule called a mismatch where there is
+# none (another tray's row happened to fit). The video is then compared with
+# its own row as usual, and a real disagreement goes to triage.
+DECISION_LABELS_RIGHT = "labels_right"
+
+# When another row "matches clearly better" (label_mismatch). All three must
+# hold for a row other than the video's own:
+#   * at least LABEL_MIN_PELLETS pellets compared with it (a pellet counts
+#     when the algorithm called it and the row scored it);
+#   * the algorithm agrees with it on at least LABEL_MIN_AGREEMENT of them;
+#   * it beats the video's own row by at least LABEL_MIN_MARGIN pellets, counted
+#     only where the two rows differ: (pellets the algorithm agrees with the
+#     other row on and not the own row) minus (the reverse).
+# WHY these numbers (the data behind them is in the lab's work record,
+# 2026-11-18): when the label is right, the algorithm disagrees with its own
+# row on no pellet in most videos and on at most two in nearly all, and one
+# tray's row of an animal often looks like its other trays' (a mouse that
+# retrieves nearly everything gives near-identical rows) -- so agreement with
+# another row alone proves nothing, and the margin is counted only where the
+# two rows DIFFER. A margin of 1 or 2 is within the algorithm's ordinary
+# error on a correctly labeled video. At 3 the other tray's own video
+# rarely matched this video's row back -- mostly not swaps. From 4 up most did, the pattern a swap
+# leaves. Fewer than 10 compared pellets is too few to tell a swap from
+# chance.
+LABEL_MIN_PELLETS = 10
+LABEL_MIN_AGREEMENT = 0.90
+LABEL_MIN_MARGIN = 4
+
+
+@dataclass
+class RowMatch:
+    """How a video's calls compare with one hand-score row (label_mismatch)."""
+    key: str                 # the row's video_key, e.g. 20250709_ABC0207_P4
+    agree: int               # pellets the algorithm agrees with this row on
+    compared: int            # pellets compared (called AND scored in the row)
+    margin: int = 0          # vs the own row, where the two rows differ (see above)
+
+
+@dataclass
+class LabelMismatch:
+    """A video whose calls match another tray's hand scores, not its own."""
+    video_id: str
+    own: RowMatch                           # the video's own row
+    matches: list                           # [RowMatch], best first; ties all listed
+    # The reverse check, when the partner's own video is analyzed: how its calls
+    # compare with THIS video's row. None when it was not found or not compared.
+    partner_back: Optional[RowMatch] = None
+    partner_video: Optional[str] = None
+
+
+def algo_classes(outcomes_doc) -> Dict[int, int]:
+    """{segment: 0/1/2} for every segment the algorithm called with an outcome
+    a hand score can be compared with (ALGO_CLASS); a 'triaged' segment, or one
+    with no outcome, is left out."""
+    out = {}
+    for seg in (outcomes_doc or {}).get("segments") or []:
+        n, a = seg.get("segment_num"), ALGO_CLASS.get(seg.get("outcome"))
+        if n is not None and a is not None:
+            out[int(n)] = a
+    return out
+
+
+def suspension(video_id: str, cfg: Optional[dict] = None) -> Optional[dict]:
+    """The lab's entry suspending the hand-score comparison for this session,
+    or None. Read from the "suspended_sessions" list of the "hand_scores"
+    settings (settings() says where; read on every check, so adding or
+    removing an entry applies to a running watcher):
+
+        "suspended_sessions": [
+            {"video_key": "<date>_<animal>_<tray>",
+             "reason": "<why, in plain words>",
+             "set_by": "<who decided>", "set_at": "<when, ISO 8601>"}
+        ]
+
+    WHY: when the lab cannot trust a session's hand scores to belong to its
+    video -- a recording whose tray labels disagree with the sheet, while
+    nobody knows yet whether the file names or the sheet rows are the swapped
+    ones -- no conclusion about a mismatch can be drawn, and asking a person
+    to overrule the bench pellet by pellet is wrong. The comparison is then
+    left out for exactly those sessions; every other reason to triage (an
+    undecided pellet, a quality check) still applies. A list in the lab's
+    settings, never in code: which sessions is a lab fact, and removing the
+    entry restores the comparison (the triage recheck then compares again).
+    An entry with no "video_key" is ignored; one with no reason still
+    suspends, and says no reason was given."""
+    if cfg is None:
+        cfg = settings()
+    for e in (cfg or {}).get("suspended_sessions") or []:
+        if isinstance(e, dict) and str(e.get("video_key") or "") == str(video_id):
+            return e
+    return None
+
+
+def suspension_words(entry: dict) -> str:
+    """'the bench comparison is suspended for this session: <reason> (set by
+    <who>, <when>)' for a suspension entry."""
+    who = ", ".join(str(x) for x in (entry.get("set_by"), entry.get("set_at")) if x)
+    return "the bench comparison is suspended for this session: %s%s" % (
+        entry.get("reason") or "no reason given", " (set by %s)" % who if who else "")
+
+
+def _same_animal_day(video_id: str, keys) -> list:
+    """The hand-score rows of the same animal on the same day, other trays
+    (every row whose key has the video's date and animal parts and another
+    tray part), sorted."""
+    parts = str(video_id).split("_")
+    if len(parts) < 3:
+        return []
+    prefix = "%s_%s_" % (parts[0], parts[1])
+    return sorted(k for k in keys if k != video_id and str(k).startswith(prefix)
+                  and "_" not in str(k)[len(prefix):])
+
+
+def label_mismatch(video_id: str, calls: Dict[int, int],
+                   scores: Dict[str, Dict[int, int]]) -> Optional[LabelMismatch]:
+    """The other tray(s) whose hand scores the calls match clearly better than
+    the video's own row, or None. Pure: reads nothing.
+
+    ``calls`` is algo_classes() of the video's outcomes; ``scores`` the whole
+    scores file as load() reads it. Every pellet the algorithm called is
+    compared, answered or not: the question is which tray the recording is,
+    not whether one pellet's call is right.
+
+    WHY this exists (owner ruling 2026-11-18): when the calls disagree with
+    the video's own row on many pellets but match another tray of the same
+    animal and day on nearly all, the file name or the sheet has the trays
+    swapped. No review answer can fix that -- a person in triage would be
+    asked to overrule the bench pellet by pellet, or to confirm a call that
+    is right for the wrong tray -- so it must never go to triage. The video is
+    held until the name or the sheet is corrected (orchestrator
+    _hand_score_precheck).
+
+    The thresholds and why: LABEL_MIN_PELLETS, LABEL_MIN_AGREEMENT,
+    LABEL_MIN_MARGIN above. When several rows qualify, every row as good as
+    the best (no pellet between them) is named: identical rows cannot be
+    told apart, and it is still not this video's own row."""
+    own_row = scores.get(video_id)
+    if not own_row or not calls:
+        return None
+    own_n = [n for n in calls if n in own_row]
+    own = RowMatch(video_id, sum(1 for n in own_n if calls[n] == own_row[n]), len(own_n))
+    good = []
+    for key in _same_animal_day(video_id, scores.keys()):
+        row = scores.get(key) or {}
+        both = [n for n in calls if n in row]
+        agree = sum(1 for n in both if calls[n] == row[n])
+        if len(both) < LABEL_MIN_PELLETS or agree < LABEL_MIN_AGREEMENT * len(both):
+            continue
+        differ = [n for n in both if n in own_row and row[n] != own_row[n]]
+        margin = (sum(1 for n in differ if calls[n] == row[n])
+                  - sum(1 for n in differ if calls[n] == own_row[n]))
+        if margin >= LABEL_MIN_MARGIN:
+            good.append(RowMatch(key, agree, len(both), margin))
+    if not good:
+        return None
+    good.sort(key=lambda m: (-(m.agree / m.compared), -m.margin, m.key))
+    best = good[0]
+    ties = [m for m in good if m.agree * best.compared == best.agree * m.compared]
+    return LabelMismatch(video_id, own, ties)
+
+
+def check_partner(mismatch: LabelMismatch, partner_calls: Optional[Dict[int, int]],
+                  scores: Dict[str, Dict[int, int]]) -> LabelMismatch:
+    """Fill in the reverse check: the best matching row's OWN video, when it
+    is analyzed (``partner_calls``, algo_classes of its outcomes), compared
+    with THIS video's row. A swap shows both ways. Evidence for the reason
+    text only: a hold never waits for it, because the partner may not be
+    analyzed yet. Returns ``mismatch``."""
+    if not mismatch.matches or not partner_calls:
+        return mismatch
+    row = scores.get(mismatch.video_id) or {}
+    both = [n for n in partner_calls if n in row]
+    mismatch.partner_video = mismatch.matches[0].key
+    mismatch.partner_back = RowMatch(mismatch.video_id,
+                                     sum(1 for n in both if partner_calls[n] == row[n]),
+                                     len(both))
+    return mismatch
+
+
+def partner_calls(partner_id: str, folder=None) -> Optional[Dict[int, int]]:
+    """algo_classes of the partner video's outcomes, wherever its live copy is:
+    the same working folder, a review queue bundle (deep review first, it
+    supersedes triage), or its archive folder (computed from its id, no tree
+    walk -- locate.archive_dir_for). None when it is not analyzed or cannot be
+    read. Never raises: the reverse check is evidence, never a condition."""
+    try:
+        from mousereach.config import Paths
+        from mousereach.watcher.locate import archive_dir_for
+        places = [Path(folder)] if folder else []
+        for q in (getattr(Paths, "DEEP_REVIEW", None), getattr(Paths, "TRIAGE_REVIEW", None)):
+            if q:
+                places.append(Path(q) / partner_id)
+        places.append(archive_dir_for(partner_id))
+        for d in places:
+            if not d:
+                continue
+            p = Path(d) / f"{partner_id}_pellet_outcomes.json"
+            if p.is_file():
+                return algo_classes(json.loads(p.read_text(encoding="utf-8")))
+    except Exception as e:
+        logger.debug("reverse label check for %s skipped: %s", partner_id, e)
+    return None
+
+
+def decisions_path() -> Optional[Path]:
+    """The append-only record of every decision a person made about a label
+    mismatch: <storage drive>/review_records/label_decisions.jsonl (beside
+    the review answers, which are also a person's statements of record), or
+    None when no storage drive is configured. One JSON object per line."""
+    try:
+        from mousereach.review.causal_review_io import _default_index_dir
+        d = _default_index_dir()
+    except Exception:
+        d = None
+    return Path(d) / "label_decisions.jsonl" if d else None
+
+
+def record_decision(video_id: str, decision: str, by: str, mismatch: Optional["LabelMismatch"] = None,
+                    new_name: Optional[str] = None, note: str = "") -> dict:
+    """Append a person's decision about a label mismatch to the record
+    (decisions_path) and return it. Raises when it cannot be written: a
+    decision that is not on record does not count.
+
+    ``decision`` is DECISION_SHEET_ERROR ("the sheet is a human error, keep it
+    as it is": the video is filed with the disagreement recorded) or
+    DECISION_NAME_WRONG ("the file name is wrong": the recording is renamed
+    the documented way, ``new_name`` saying to what) or DECISION_LABELS_RIGHT
+    ("neither: the labels are right", the rule was wrong here -- the video is
+    compared with its own row as usual).
+
+    WHY a record of its own, kept for good: the lab's rule is that the sheets
+    are what they are -- a sheet error is never corrected, because how often
+    the bench gets a tray wrong is itself something to measure. Each line
+    says who decided, when, about which video and which two sheet rows (the
+    video's own and the one its results match, with how well each agreed), so
+    the human error rate can be counted from this file alone."""
+    from datetime import datetime
+    if decision not in (DECISION_SHEET_ERROR, DECISION_NAME_WRONG, DECISION_LABELS_RIGHT):
+        raise ValueError("unknown decision %r" % decision)
+    if not str(by or "").strip():
+        raise ValueError("say who decided (--by NAME)")
+    if decision == DECISION_NAME_WRONG and not new_name:
+        raise ValueError("a wrong file name needs the right one (--as NEW_NAME)")
+    entry = {"video_id": video_id, "decision": decision, "by": str(by).strip(),
+             "at": datetime.now().isoformat(timespec="seconds")}
+    if new_name:
+        entry["new_name"] = new_name
+    if note:
+        entry["note"] = note
+    if mismatch is not None:
+        entry["own_row"] = {"key": mismatch.own.key, "agree": mismatch.own.agree,
+                            "compared": mismatch.own.compared}
+        entry["matched_rows"] = [{"key": m.key, "agree": m.agree, "compared": m.compared}
+                                 for m in mismatch.matches]
+    p = decisions_path()
+    if p is None:
+        raise RuntimeError("no storage drive configured: the decision cannot be recorded")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+        f.flush()
+        import os
+        os.fsync(f.fileno())
+    return entry
+
+
+def decision_for(video_id: str) -> Optional[dict]:
+    """The latest decision recorded for this video (record_decision), or None.
+    Raises when the record exists but cannot be read: a decision that cannot
+    be read must not be taken as none (the video would be held for ever
+    silently) -- the caller's check then fails in the open."""
+    p = decisions_path()
+    if p is None or not p.is_file():
+        return None
+    last = None
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        e = json.loads(line)
+        if e.get("video_id") == video_id:
+            last = e
+    return last
+
+
+def _tray(key: str) -> str:
+    return str(key).rsplit("_", 1)[-1]
+
+
+def describe_mismatch(m: LabelMismatch) -> str:
+    """The plain-words reason for a held label mismatch: which row the results
+    match and how well, which row they were checked against, the reverse check
+    when there is one, and the two fixes."""
+    parts = str(m.video_id).split("_")
+    who = "%s %s" % (parts[1], parts[0]) if len(parts) >= 3 else m.video_id
+    named = " and ".join("%s (%d/%d)" % (_tray(x.key), x.agree, x.compared) for x in m.matches)
+    text = ("results match %s %s's hand scores, not %s's (%d/%d): the file name or the "
+            "sheet has the trays swapped" % (who, named, _tray(m.video_id), m.own.agree,
+                                             m.own.compared))
+    if m.partner_back is not None:
+        text += ("; the %s video matches %s's scores (%d/%d)" % (
+            _tray(m.partner_video), _tray(m.video_id), m.partner_back.agree,
+            m.partner_back.compared))
+    text += (" -- a person decides which is wrong: the recording's NAME (it is renamed the "
+             "documented way, original and a record kept in Archive/manual_corrections: "
+             "mousereach-label-mismatch --name-wrong %s --as <right name> --by <name>) or "
+             "the SHEET (a sheet error is kept as it is and recorded, and the video is "
+             "filed with the disagreement: mousereach-label-mismatch --sheet-error %s "
+             "--by <name>). No review answer can settle this, so it is not sent to triage"
+             % (m.video_id, m.video_id))
+    return text
 
 
 @dataclass
@@ -149,6 +475,10 @@ class Verdict:
     # was read and has no row for it, None when it was not read at all (Easy/
     # Flat tray, no scores file configured). record() keeps it with the video.
     hand: Optional[Dict[int, int]] = None
+    # LABEL_MISMATCH / SHEET_ERROR: which other row(s) the calls match.
+    mismatch: Optional["LabelMismatch"] = None
+    # A person's decision about the label mismatch (label_decision), or None.
+    decision: Optional[dict] = None
 
 
 def settings() -> dict:
@@ -394,6 +724,14 @@ def check(video_id: str, folder: Path) -> Verdict:
     if not cfg.get("path"):
         return Verdict(NOT_CHECKED, "no hand-scores file configured")
     subject = parse_subject_id(video_id) or ""
+    # Suspended by the lab (suspension): left out of the decision entirely --
+    # not compared, not waited for, never a label mismatch. ``hand`` is {} so
+    # record() keeps the word and the reason with the video for the review
+    # window, and no score to check answers against.
+    held_out = suspension(video_id, cfg)
+    if held_out is not None:
+        return Verdict(SUSPENDED, suspension_words(held_out),
+                       cohort_id="_".join(subject.split("_")[:2]) or None, hand={})
     project = subject.split("_")[0]
     cohort_id = "_".join(subject.split("_")[:2]) or None
     scores, manifest = load(Path(cfg["path"]))
@@ -414,12 +752,52 @@ def check(video_id: str, folder: Path) -> Verdict:
     # pellet is compared because a person answered them all.
     hand = dict(hand)
 
+    # Which tray is this, before anything else (label_mismatch says why). Run
+    # before the "every pellet answered" shortcut: a person who confirmed the
+    # calls of a recording carrying another tray's name has not made it this
+    # tray, and the video must not be filed under the wrong tray. Not run
+    # while a reviewer's statement that the cuts number a pellet wrongly
+    # stands (the numbering itself is then in doubt; the check below routes
+    # the video to manual segmentation instead).
+    out_path = Path(folder) / f"{video_id}_pellet_outcomes.json"
+    out = (json.loads(out_path.read_text(encoding="utf-8"))
+           if out_path.is_file() else None)
+    if out is not None:
+        mm = label_mismatch(video_id, algo_classes(out), scores)
+        if mm is not None and (decision_for(video_id) or {}).get("decision") == DECISION_LABELS_RIGHT:
+            mm = None          # a person said the labels are right: compare as usual
+        if mm is not None:
+            review, seg_doc = _review_and_segments(video_id, folder)
+            if not unresolved_mislabels(review, seg_doc):
+                check_partner(mm, partner_calls(mm.matches[0].key, folder), scores)
+                # A person's decision about it (label_decision). The sheet
+                # is a human error: kept as it is, the video goes on and is
+                # filed with the disagreement recorded. The name is wrong: it
+                # stays held until the rename replaces its files.
+                dec = decision_for(video_id)
+                if dec and dec.get("decision") == DECISION_SHEET_ERROR:
+                    return Verdict(SHEET_ERROR, (
+                        "a person (%s, %s) decided the sheet is wrong for this session: "
+                        "kept as it is and recorded; %s" % (
+                            dec.get("by"), dec.get("at"), describe_mismatch(mm).split(" -- ")[0])),
+                        cohort_id=cohort_id, last_import=last, hand=hand, mismatch=mm,
+                        decision=dec)
+                reason = describe_mismatch(mm)
+                if dec and dec.get("decision") == DECISION_NAME_WRONG:
+                    reason = ("%s -- %s decided %s the recording's name is wrong (it should be "
+                              "%s); held until it is renamed" % (
+                                  reason.split(" -- ")[0], dec.get("by"), dec.get("at"),
+                                  dec.get("new_name")))
+                return Verdict(LABEL_MISMATCH, reason, cohort_id=cohort_id,
+                               last_import=last, hand=hand, mismatch=mm, decision=dec)
+
     from mousereach.watcher.route_cli import answered_segments_of
     answered = answered_segments_of(video_id, folder)
     if "all" in answered:
         return Verdict(AGREES, "every pellet answered by a person", cohort_id=cohort_id,
                        last_import=last, hand=hand)
-    out = json.loads((Path(folder) / f"{video_id}_pellet_outcomes.json").read_text(encoding="utf-8"))
+    if out is None:
+        out = json.loads(out_path.read_text(encoding="utf-8"))   # raises: as before
     # Segment N is compared with hand pellet N only while nothing says the
     # cuts number the pellets wrongly. A person's mislabel that the current
     # cuts still contradict means the numbering of every other segment is in
@@ -486,13 +864,54 @@ def flag_disagreements(folder: Path, video_id: str, verdict: Verdict) -> list:
     return flag_segments(out_path, list(details), FLAG_REASON, details=details)
 
 
+def clear_bench_flags(folder: Path, video_id: str, keep=()) -> list:
+    """Take back every "bench disagreement" flag in the video's outcomes file
+    except on the segments in ``keep``; returns the segments cleared. A flag
+    that carried an earlier reason, "(also: <reason>)", goes back to that
+    reason and stays flagged; one that did not is unflagged.
+
+    WHY: a bench flag is the result of ONE comparison with ONE sheet row. When
+    that row turns out to be the wrong tray (a label mismatch), or the sheet
+    is corrected and the video now agrees, a flag left from the old comparison
+    would send the video to triage over a disagreement that no longer exists.
+    Called before every comparison result is applied, so the flags in the
+    file are always those of the latest comparison. Callers keep the flags of
+    pellets a person answered (``keep``): the flag is part of the record of
+    why that pellet was asked, and a bundle whose every flag is answered is
+    what the ordinary return releases -- taking an answered pellet's flag away
+    could leave a bundle with nothing flagged and nothing to release it. A
+    person's answers are in the review file and are not touched."""
+    out_path = Path(folder) / f"{video_id}_pellet_outcomes.json"
+    if not out_path.is_file():
+        return []
+    data = json.loads(out_path.read_text(encoding="utf-8"))
+    keep = {k if k == "all" else int(k) for k in (keep or ())}
+    cleared = []
+    for seg in data.get("segments", []):
+        n, reason = seg.get("segment_num"), str(seg.get("flag_reason") or "")
+        if "all" in keep:
+            break
+        if n is None or int(n) in keep or not reason.lower().startswith(FLAG_REASON):
+            continue
+        i = reason.find(" (also: ")
+        old = reason[i + len(" (also: "):-1] if i >= 0 and reason.endswith(")") else ""
+        seg["flag_reason"] = old or None
+        seg["flagged_for_review"] = bool(old)
+        cleared.append(int(n))
+    if cleared:
+        from mousereach.pipeline.fsutil import write_json_atomic
+        write_json_atomic(out_path, data, indent=2)
+    return cleared
+
+
 # The word kept in the outcomes file for each verdict (see the module
 # docstring, "EVERY PELLET'S SCORE IS KEPT WITH THE VIDEO"). A WAITING verdict
 # is never recorded by the watcher any more: such a video is held until its
 # scores arrive. "never_scored" stays here because videos filed before that
 # rule carry it (they were filed uncompared; a person can list them by it).
 RECORD_WORDS = {AGREES: "agrees", DISAGREES: "disagrees", WAITING: "never_scored",
-                NOT_CHECKED: "not_required"}
+                NOT_CHECKED: "not_required", LABEL_MISMATCH: "label_mismatch",
+                SUSPENDED: "suspended", SHEET_ERROR: "sheet_error"}
 RECORD_KEY = "hand_scores"
 
 
@@ -522,6 +941,19 @@ def record(folder: Path, video_id: str, verdict: Verdict, stamp: Optional[float]
         "cohort_last_import": verdict.last_import,
         "read_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if verdict.status == SUSPENDED:
+        data[RECORD_KEY]["reason"] = verdict.reason
+    # A label mismatch and a person's decision about it travel with the video
+    # into its filed folder, so a filed sheet error can be counted from the
+    # filed results too (the decisions record is the other place).
+    if verdict.mismatch is not None:
+        m = verdict.mismatch
+        data[RECORD_KEY]["label_mismatch"] = {
+            "own_row": {"key": m.own.key, "agree": m.own.agree, "compared": m.own.compared},
+            "matched_rows": [{"key": x.key, "agree": x.agree, "compared": x.compared}
+                             for x in m.matches]}
+    if verdict.decision:
+        data[RECORD_KEY]["decision"] = verdict.decision
     # fsutil.write_json_atomic, not a "<name>.tmp" of our own. WHY: that
     # temporary name starts with the video's name, so one left by a crash was
     # taken by the router and the archiver as one of the video's files; it
@@ -575,6 +1007,8 @@ def score_from_outcomes(outcomes_doc, pellet):
         s = (kept.get("pellets") or {}).get(str(int(pellet)))
     except Exception as e:
         return None, "hand scores kept with this video could not be read (%s)" % e
+    if kept.get("verdict") == RECORD_WORDS[SUSPENDED]:
+        return None, kept.get("reason") or "the bench comparison is suspended for this session"
     if s not in HAND_WORDS:
         if not kept.get("pellets"):
             return None, "this session has no hand scores (%s)" % kept.get("verdict")
@@ -652,6 +1086,23 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                              "PC's config.json if it has its own), or the file it names; "
                              "the video goes on by itself once the check runs."
                              % (vid, w["error"])),
+                })
+                continue
+            if w.get("label_mismatch"):
+                # The results match another tray's hand scores (label_mismatch):
+                # held outside the review queues until the name or the sheet is
+                # corrected. The structured fields let a reader (a database
+                # tool's fix-these list) name both trays without parsing "says".
+                items.append({
+                    "kind": "label_mismatch", "needs_person": True,
+                    "video_id": vid, "cohort_id": w.get("cohort_id"),
+                    "ready_since": w.get("ready_since"),
+                    "own_row": w.get("own_row"),
+                    "matched_rows": w.get("matched_rows") or [],
+                    "partner_back": w.get("partner_back"),
+                    "answers_kept": w.get("answers_kept") or [],
+                    "says": "%s is analyzed but held outside the review queues: %s." % (
+                        vid, w.get("says") or "its results match another tray's hand scores"),
                 })
                 continue
             if w.get("missing") and w.get("no_sheet"):

@@ -1246,6 +1246,17 @@ class BaseOrchestrator:
         # HAND_SCORE_ERROR_RETRY_S even with no change (that constant says why).
         if w.get("error") and time.time() >= w.get("retry_at", 0):
             return False
+        # A label mismatch is also checked again when the video's own results
+        # change: a corrected name replaces them (_hold_label_mismatch).
+        if self._label_mismatch_calls_changed(video_id, w):
+            return False
+        if w.get("label_mismatch"):
+            try:
+                from mousereach.watcher import hand_scores as _hs
+                if _hs.decision_for(video_id) != w.get("decision"):
+                    return False          # a person decided since: check again
+            except Exception:
+                return False              # unreadable: the check says so in red
         from mousereach.watcher import hand_scores
         return w.get("stamp") == hand_scores.scores_pair_stamp()
 
@@ -1402,7 +1413,27 @@ class BaseOrchestrator:
                                                "no_sheet": no_sheet}
                 self._write_score_attention()
                 return False
-            elif v.status == hand_scores.DISAGREES:
+            if v.status == hand_scores.LABEL_MISMATCH:
+                return self._hold_label_mismatch(video_id, folder, v, stamp, prev)
+            # The flags in the outcomes file are always those of THIS
+            # comparison: a bench flag left from an earlier one (a row since
+            # corrected, or the wrong tray's row) is taken back first
+            # (hand_scores.clear_bench_flags says why).
+            if v.status in (hand_scores.AGREES, hand_scores.DISAGREES,
+                            hand_scores.SUSPENDED, hand_scores.SHEET_ERROR):
+                hand_scores.clear_bench_flags(
+                    folder, video_id,
+                    keep=set(v.disagreements) | self._answered_or_all(video_id, folder))
+            if v.status == hand_scores.SHEET_ERROR:
+                # A person decided the sheet is wrong here: kept as it is,
+                # recorded with the video (hand_scores.record), and the
+                # disagreement is not asked in triage.
+                logger.info(f"{video_id}: {v.reason}")
+                self.db.log_step(video_id, 'hand_score_check', 'sheet_error',
+                                 message=v.reason[:500])
+            if v.status == hand_scores.SUSPENDED:
+                logger.info(f"{video_id}: {v.reason} -- not compared with its hand scores")
+            if v.status == hand_scores.DISAGREES:
                 # Flagged only; the gate then sends the video to triage once,
                 # with every open question (flag_disagreements says how an
                 # earlier reason is kept).
@@ -1469,6 +1500,114 @@ class BaseOrchestrator:
         if self._score_waits.pop(video_id, None) is not None or prev:
             self._write_score_attention()
         return False
+
+    def _hold_label_mismatch(self, video_id: str, folder: Path, v, stamp,
+                             prev: dict) -> bool:
+        """The video's results match another tray's hand scores, not its own
+        (hand_scores.label_mismatch): HOLD it where it is -- 'processing', its
+        files in ``folder`` -- listed in red for a person, and stop this run
+        before the gate (returns False).
+
+        WHY held and never triaged (owner ruling 2026-11-18): "that kind of
+        thing isn't for triage to do. That's not something any triage process
+        could repair." The fix is a corrected sheet or a corrected file name,
+        neither of which a review tool can make. Held HERE, in the hand-score
+        hold, because it is one: the video is analyzed and waits for the
+        sheet or its name to change -- the same place, the same list, the same
+        restart-safe record (_restore_score_waits) as a video waiting for its
+        scores. Not _Problematic: that is for recordings that cannot be
+        processed. A video is in exactly one place: here, not in a queue.
+
+        RELEASE: checked again when the scores file or its manifest changes
+        (a corrected sheet, after its import) or when the video's own results
+        change (its files replaced under a corrected name;
+        _label_mismatch_calls_changed). If it then agrees it goes on; if it
+        disagrees with no better row it goes to triage as a genuine scoring
+        disagreement.
+
+        Every "bench disagreement" flag is taken back (they compared the
+        wrong tray's row), so none survives into a later triage. A person's
+        answers are in the review file and are kept; the hold says which
+        pellets are answered."""
+        from mousereach.watcher import hand_scores
+        mm = v.mismatch
+        hand_scores.clear_bench_flags(folder, video_id,
+                                      keep=self._answered_or_all(video_id, folder))
+        try:
+            hand_scores.record(folder, video_id, v,
+                               stamp[0] if isinstance(stamp, tuple) else None)
+        except Exception as e:
+            logger.warning(f"{video_id}: could not keep the hand scores with the video ({e})")
+        try:
+            from mousereach.watcher.route_cli import answered_segments_of
+            answered = sorted(s for s in answered_segments_of(video_id, folder) if s != "all")
+        except Exception:
+            answered = []
+        says = v.reason
+        if answered:
+            says += ("; a person's answers on pellet(s) %s are kept and apply once it is "
+                     "released" % ", ".join(str(s) for s in answered))
+        row = self.db.get_video(video_id) or {}
+        ready = (prev.get("ready_since") or row.get("processing_started_at")
+                 or datetime.now().isoformat())
+        if not prev.get("label_mismatch"):
+            logger.warning(f"Holding {video_id} outside the review queues: {says}")
+            self.db.log_step(video_id, 'hand_score_check', 'label_mismatch',
+                             message=f"held: {says}")
+        self._score_waits[video_id] = {
+            "stamp": stamp, "cohort_id": v.cohort_id, "ready_since": ready,
+            "label_mismatch": True, "says": says,
+            "folder": str(folder),
+            "calls": self._label_mismatch_calls(video_id, folder),
+            "own_row": {"key": mm.own.key, "agree": mm.own.agree,
+                        "compared": mm.own.compared} if mm else None,
+            "matched_rows": [{"key": m.key, "agree": m.agree, "compared": m.compared}
+                             for m in (mm.matches if mm else [])],
+            "partner_back": ({"video_id": mm.partner_video, "agree": mm.partner_back.agree,
+                              "compared": mm.partner_back.compared}
+                             if mm and mm.partner_back is not None else None),
+            "answers_kept": answered,
+            "decision": v.decision,
+        }
+        self._write_score_attention()
+        return False
+
+    @staticmethod
+    def _answered_or_all(video_id: str, folder) -> set:
+        """The segments a person answered (route_cli.answered_segments_of), or
+        {"all"} when that cannot be read -- so a bench flag on a pellet a
+        person may have answered is never taken back on a guess
+        (hand_scores.clear_bench_flags says why answered flags stay)."""
+        try:
+            from mousereach.watcher.route_cli import answered_segments_of
+            return set(answered_segments_of(video_id, folder))
+        except Exception:
+            return {"all"}
+
+    def _label_mismatch_calls(self, video_id: str, folder=None):
+        """The algorithm's calls in the video's outcomes file as a sorted list
+        of [segment, 0/1/2] (hand_scores.algo_classes), or None when there is
+        no readable file. What a label-mismatch hold compares to see whether
+        the video's own results changed (a corrected name replaces them)."""
+        from mousereach.watcher import hand_scores
+        if not folder:
+            return None
+        p = Path(folder) / f"{video_id}_pellet_outcomes.json"
+        try:
+            calls = hand_scores.algo_classes(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:
+            return None
+        return sorted([int(k), int(c)] for k, c in calls.items())
+
+    def _label_mismatch_calls_changed(self, video_id: str, w: dict) -> bool:
+        """True when a label-mismatch hold's video no longer has the results it
+        was held with: its outcomes file now carries other calls, or is gone
+        (its files were moved aside by a name correction). Either way it is
+        checked again -- a run on files that are gone fails in the open, as
+        any check that cannot run does, never silently."""
+        if not w.get("label_mismatch"):
+            return False
+        return self._label_mismatch_calls(video_id, w.get("folder")) != w.get("calls")
 
     def __init__(self, config: WatcherConfig, db: WatcherDB):
         self.config = config
@@ -6546,7 +6685,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         for item in items:
             kind = item.get("kind")
             vid, ready = item.get("video_id"), item.get("ready_since")
-            if kind not in ("hand_scores_waiting", "hand_scores_missing") or not vid or not ready:
+            if (kind not in ("hand_scores_waiting", "hand_scores_missing", "label_mismatch")
+                    or not vid or not ready):
                 continue
             try:
                 row = self.db.get_video(vid) or {}
@@ -6559,6 +6699,15 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         "last_import": item.get("last_import"),
                         "missing": kind == "hand_scores_missing",
                         "no_sheet": bool(item.get("no_sheet"))}
+            if kind == "label_mismatch":
+                # Kept as a label mismatch so the restored hold still says so on
+                # the dashboard; it is checked again once, like every restored
+                # hold, and held again only if it still matches the other tray.
+                out[vid].update({"label_mismatch": True, "says": item.get("says"),
+                                 "own_row": item.get("own_row"),
+                                 "matched_rows": item.get("matched_rows"),
+                                 "partner_back": item.get("partner_back"),
+                                 "answers_kept": item.get("answers_kept")})
         if out:
             logger.info(f"Restored {len(out)} video(s) held for their hand scores before "
                         f"the restart; each is checked again once")

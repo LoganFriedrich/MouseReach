@@ -505,7 +505,7 @@ def test_the_census_says_how_many_analysed_videos_wait_for_hand_scores(capsys):
     assert "of which waiting for hand scores: 3" in out
     out.encode("ascii")
     assert set(runner.HAND_SCORE_HOLD_KINDS) == {"hand_scores_waiting", "hand_scores_missing",
-                                                 "hand_score_check_failed"}
+                                                 "hand_score_check_failed", "label_mismatch"}
 
 
 @pytest.fixture(autouse=True)

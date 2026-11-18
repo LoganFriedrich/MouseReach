@@ -387,7 +387,12 @@ def estimate_eta(machine_backlog: int, human_backlog: int,
 # (watcher/hand_scores.write_attention): waiting for the sheet's import, its
 # scores missing after that import, or a check that could not run.
 HAND_SCORE_HOLD_KINDS = ("hand_scores_waiting", "hand_scores_missing",
-                         "hand_score_check_failed")
+                         "hand_score_check_failed", "label_mismatch")
+# Of those, the holds whose results match ANOTHER tray's hand scores: the file
+# name or the sheet has the trays swapped (hand_scores.label_mismatch). Counted
+# on their own too, because the fix is a person's (correct the sheet or the
+# name), not a wait.
+LABEL_MISMATCH_KIND = "label_mismatch"
 
 
 def run_census(window_days: int = 14) -> dict:
@@ -567,12 +572,22 @@ def run_census(window_days: int = 14) -> dict:
     # the same lists the dashboard shows; an unreadable list counts nothing
     # here (the dashboard already shows it as an alarm).
     held_for_hand_scores = 0
+    held_for_label_mismatch = []
     try:
         from mousereach.watcher.attention import read_items
-        held = {i.get("video_id") for i in (read_items(nas) if nas else [])
+        listed = read_items(nas) if nas else []
+        held = {i.get("video_id") for i in listed
                 if i.get("kind") in HAND_SCORE_HOLD_KINDS}
         held_for_hand_scores = sum(1 for sid, el in elements.items()
                                    if el == "mousereach" and sid in held)
+        # Listed by video, with what each matched, so a reader (the database
+        # tool's Where Is My Data tab) can show them without the watcher's lists.
+        held_for_label_mismatch = sorted(
+            ({"video_id": i.get("video_id"), "cohort_id": i.get("cohort_id"),
+              "own_row": i.get("own_row"), "matched_rows": i.get("matched_rows") or [],
+              "says": i.get("says")}
+             for i in listed if i.get("kind") == LABEL_MISMATCH_KIND),
+            key=lambda d: str(d.get("video_id")))
     except Exception:
         pass
 
@@ -590,6 +605,7 @@ def run_census(window_days: int = 14) -> dict:
                        for k in ELEMENT_ORDER if by_element.get(k)},
         "by_project": by_project,
         "held_for_hand_scores": held_for_hand_scores,   # part of "mousereach"
+        "held_for_label_mismatch": held_for_label_mismatch,   # of those, label mismatches
         "eta": eta,                               # question 4
         "review": review,
         "sessions": per_session,                  # per-sid, for the DB-side join
@@ -635,6 +651,10 @@ def _print_table(c: dict) -> None:
         if el == "mousereach" and c.get("held_for_hand_scores"):
             print("  %-12s %6s  of which waiting for hand scores: %d (analysed, held "
                   "before triage)" % ("", "", c["held_for_hand_scores"]))
+        if el == "mousereach" and c.get("held_for_label_mismatch"):
+            print("  %-12s %6s  of which a LABEL MISMATCH: %d (results match another "
+                  "tray's hand scores; fix the sheet or the name)"
+                  % ("", "", len(c["held_for_label_mismatch"])))
     print()
     projs = sorted(c["by_project"])
     if projs:

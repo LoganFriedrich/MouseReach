@@ -30,6 +30,7 @@ walkthroughs of the review tools themselves.
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
 - [Bulk release check for re-segmentation bundles (human-invoked; every segment answered)](#bulk-release-check-for-re-segmentation-bundles-human-invoked-every-segment-answered) -- `mousereach-review-release`
 - [Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)](#pipeline-census-total-workload-per-stage-breakdown-pace-and-eta-headless-json) -- `mousereach-census`
+- [Decide about a video held as a label mismatch](#mousereach-label-mismatch) -- `mousereach-label-mismatch`
 - [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
 - [Send named videos back to a GPU for a new pose when their pose is not trusted (same model, distrusted machine); the re-pose round trip does the rest](#send-named-videos-back-to-a-gpu-for-a-new-pose-when-their-pose-is-not-trusted-same-model-distrusted-machine-the-re-pose-round-trip-does-the-rest) -- `mousereach-repose-videos`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
@@ -718,6 +719,36 @@ options:
 ```
 
 ## Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)
+
+### `mousereach-label-mismatch`
+
+List the videos held as a LABEL MISMATCH (results match another tray's hand
+scores of the same animal and day, not their own), and record a person's
+decision about one. No review queue can settle a label mismatch, so this is the
+way a held video is released (watcher/label_decision_cli.py has the details).
+
+```
+mousereach-label-mismatch --list
+mousereach-label-mismatch --sheet-error VIDEO --by NAME [--note TEXT]
+mousereach-label-mismatch --name-wrong VIDEO --as RIGHT_NAME --by NAME [--note TEXT]
+mousereach-label-mismatch --labels-right VIDEO --by NAME [--note TEXT]
+mousereach-label-mismatch --decisions
+```
+
+- `--sheet-error`: the sheet is a human error and stays as it is. The watcher
+  files the video on its next pass, with the disagreement and the decision
+  recorded in its outcomes file.
+- `--name-wrong`: the recording's name is wrong. Recorded only; the video stays
+  held until the recording is renamed the documented way (original and a record
+  in `Archive/manual_corrections`), which this command does not do.
+- `--labels-right`: neither is wrong (another tray's row happened to fit). The
+  video is compared with its own row as usual; a real disagreement goes to
+  triage.
+- Every decision is appended to `<NAS>/review_records/label_decisions.jsonl`
+  (who, when, which video, which two sheet rows) and never removed, so the
+  bench's tray error rate can be counted; `--decisions` prints it.
+- Refuses a video that is not held as a label mismatch, and a decision without
+  `--by`. Exit code 1 and nothing recorded on any refusal.
 
 ### `mousereach-route-to-queue`
 

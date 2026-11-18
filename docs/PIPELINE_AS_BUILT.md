@@ -6523,3 +6523,129 @@ What a machine that ran the pool may still carry, and why each is harmless:
 For an operator: remove the scheduled task that started the pool, if the machine has one. Where it
 lived: `watcher/cpu_pose_pool.py` (deleted). Tests: `tests/test_cpu_pose_pool_removed.py` and
 `test_a_removed_cpu_pools_leftover_claim_comes_back` in `tests/test_singles_intake_claim.py`.
+
+## Update 2026-11-18: label mismatches are held outside the queues; triage bundles are compared again with the hand scores; the lab can suspend the comparison for named sessions
+
+Owner rulings, 2026-11-18: a label mismatch "isn't for triage to do. That's not
+something any triage process could repair, so it's not something to put into
+triage over." -- and the sheets "just are what they are, and if they're wrong
+... that speaks to human error rate, which is kind of something we want to
+capture by leaving it in." A triage question must be shown in the review window
+and answerable there; a recording carrying another tray's name, or a sheet with
+two trays' rows the other way round, is neither.
+
+**What a label mismatch is.** When the hand-score check
+(`_hand_score_precheck`, `watcher/hand_scores.py`) reads a video's sheet row, it
+also compares the algorithm's calls with every OTHER row of the same animal and
+day (`hand_scores.label_mismatch`). Another row "matches clearly better" when all
+three hold: at least 10 pellets compared with it (`LABEL_MIN_PELLETS`); the
+algorithm agrees with it on at least 90% of them (`LABEL_MIN_AGREEMENT`); and it
+beats the video's own row by at least 4 pellets, counted only where the two rows
+differ (`LABEL_MIN_MARGIN`). WHY counted only where the rows differ: a mouse that
+retrieves nearly everything has near-identical rows on every tray, so agreement
+with another row alone proves nothing. WHY 4: on correctly labeled videos the
+algorithm disagrees with its own row on no pellet in most videos and on at most
+two in nearly all, so a margin of 1-2 is ordinary error; at 3 the other tray's own
+video rarely matched this video's row back -- mostly not swaps; from 4 up most
+did, which is what a swap leaves. All pellets the algorithm called are
+compared, answered or not, and BEFORE the "every pellet answered" shortcut: a
+person confirming the calls of a recording that carries another tray's name has
+not made it that tray. Not called while a reviewer's statement that the cuts
+number a pellet wrongly stands (the numbering itself is then in doubt). When the
+other tray's own video is analyzed (same folder, a queue, or its filed folder),
+it is compared with THIS video's row and the result is added to the reason ("the
+P4 video matches P3's scores (19/19)") -- evidence, never a condition.
+
+**What happens to it.** It is HELD where it is -- row 'processing', files in the
+processing folder -- in the same hold as a video waiting for its hand scores (the
+same attention list `<NAS>/attention/<host>_hand_scores.json`, the same restore
+after a restart), as kind `label_mismatch`, needs_person, with the plain reason,
+the own row, the matched row(s) with their counts, the reverse check and the
+pellets a person already answered (those answers stay in the review file and
+apply after release). Never a review queue, never `_Problematic` (that is for
+recordings that cannot be processed). Every "bench disagreement" flag is taken
+back (`hand_scores.clear_bench_flags`) -- they compared the wrong tray's row.
+The outcomes file keeps `"hand_scores": {"verdict": "label_mismatch",
+"label_mismatch": {...}}`. `mousereach-watch-status` lists such videos under their
+own heading; the dashboard's red panel and the database tool's Where Is My Data
+tab and FIX THESE files show them; the census counts them
+(`held_for_label_mismatch`).
+
+**How it is released: a person decides, the sheet is never edited.**
+`mousereach-label-mismatch --list` shows the held videos. Then one of:
+
+- `mousereach-label-mismatch --sheet-error <video> --by <name>`: the sheet is a
+  human error and stays as it is. On its next pass the watcher checks the video
+  again, gets verdict `sheet_error`, flags no bench disagreement, and the video
+  goes on through every other check to kinematics and filing. Its outcomes file
+  keeps `"verdict": "sheet_error"`, the two rows and the decision.
+- `mousereach-label-mismatch --name-wrong <video> --as <right name> --by <name>`:
+  the recording's name is wrong. Recorded; the video stays held (its reason now
+  says so) until the recording is renamed the documented way (an evident-typo
+  correction, the original and a record kept in `Archive/manual_corrections`).
+  This command only RECORDS the decision; it renames nothing: the rename touches
+  the recording and every video cut from it, and is done by whoever maintains
+  the pipeline. When the maintainer puts the renamed results in place of the
+  held ones in the processing folder (the algorithm's calls in the outcomes file
+  change), the video checks itself again; when the recording is re-cut under the
+  right name instead, the maintainer retires the held video's row. Files moved
+  away with neither done leave the video listed in red as "the hand-score check
+  could not run".
+- `mousereach-label-mismatch --labels-right <video> --by <name>`: neither is
+  wrong -- another tray's row happened to fit (the rule's false alarm). The video
+  is compared with its own row as usual, and a real disagreement goes to triage.
+
+There is no button for these yet: the decision is made with the command on the
+processing server.
+
+Every decision is appended, never removed, to
+`<NAS>/review_records/label_decisions.jsonl`: who, when, which video, which two
+sheet rows and how well each agreed -- so the bench's tray error rate can be
+counted from that file alone (`mousereach-label-mismatch --decisions` prints it).
+A change of the scores file also re-checks the hold, as for every hand-score
+hold; nothing in the pipeline asks anyone to edit a sheet.
+
+**Triage bundles are compared again with the hand scores
+(`review_return.bench_recheck`).** Before: a bundle kept the scores it was
+compared with and its "bench disagreement" flags for ever, and the review window
+showed those; a bundle leaves triage only once every flag is answered, so an
+unanswered bundle whose only disagreements had gone away had no way out. Now the
+return scan compares each triage bundle that is there over its hand scores (a
+bench flag, or a kept verdict of disagrees / label_mismatch / suspended) with the
+scores as they are now, using the pipeline's own check, once per change of the
+bundle, its durable review copy or the scores file, and only when no bundle file
+changed for 30 minutes (`BENCH_RECHECK_QUIET_S`; the window has no lock, and a
+recent file may be a person answering now):
+
+- a label mismatch -> returned through the ordinary return (the review file
+  travels with it; no answer is lost); the pipeline's check holds it;
+- now agrees (or suspended, or a sheet-error decision), nobody answered
+  anything, no other flag open -> returned the same way; the pipeline compares
+  again, the gate has nothing to ask, and it is filed;
+- otherwise -> refreshed in place: old bench flags taken back, the current
+  disagreements flagged, the current scores kept, so the window shows what the
+  sheet says now. The review file is never touched.
+
+"Anything else open" is read from the scan's own reading of the bundle (every
+kind of question, an uncertain causal reach included), so a bundle held for
+another question is never returned only to be sent back. A pellet a person
+answered keeps its bench flag everywhere (here and in the pipeline's check): the
+flag records why it was asked, and a bundle whose remaining flags are all
+answered is then released by the ordinary return.
+
+**The lab can suspend the comparison for named sessions.** The "hand_scores"
+section of the lab settings (`mousereach_lab_config.json` on the storage drive)
+takes a list `"suspended_sessions"`: `{"video_key", "reason", "set_by",
+"set_at"}`. For a session on it the check returns `suspended`: no comparison, no
+wait for scores, no bench flags (old ones taken back), no label-mismatch hold;
+every other reason to triage (an undecided pellet, the quality check) still
+applies. The outcomes file keeps the word and the reason; the review window's
+banner says "Bench comparison suspended for this session: <reason>" and its
+answer check says why there is no score; `mousereach-watch-status` lists the
+suspended sessions. Removing an entry restores the comparison, and the triage
+recheck compares the bundle again. WHY in the settings and not in code: which
+sessions is a lab fact. The bring-current routine (`reprocess_to_current`)
+follows all of this: a label mismatch is not finalized and not routed.
+
+Tests: tests/test_label_mismatch_hold.py,
+tests/test_bench_suspension_and_label_decisions.py.
