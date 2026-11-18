@@ -62,26 +62,20 @@ def get_associated_files(validation_path: Path) -> Dict:
 
 def move_file_bundle(associated_files: Dict, destination: Path, log_file: Path,
                      source_stage: str = None) -> List[str]:
-    """Move all associated files to destination folder."""
+    """Move all associated files to destination folder -- all of them or none
+    (triage.move_bundle_all_or_nothing says why). Returns the moved names;
+    empty when nothing was moved (the reason is printed and logged)."""
+    from .triage import move_bundle_all_or_nothing
     video_id = associated_files["video_id"]
-    moved_files = []
-
-    for key, src_path in associated_files.items():
-        if key == "video_id" or src_path is None:
-            continue
-
-        dst_path = destination / src_path.name
-
-        if dst_path.exists():
-            continue
-
-        shutil.move(str(src_path), str(dst_path))
-        moved_files.append(src_path.name)
+    moved_files, refused = move_bundle_all_or_nothing(associated_files, destination)
+    if refused:
+        print(f"  {video_id}: {refused}")
 
     # Log
     timestamp = datetime.now().isoformat()
     user = get_username()
-    log_entry = f"{timestamp}\t{user}\t{video_id}\tadvanced_to_validated\t{moved_files}\n"
+    log_entry = (f"{timestamp}\t{user}\t{video_id}\tadvanced_to_validated\t"
+                 f"{moved_files if not refused else refused}\n")
 
     with open(log_file, "a") as f:
         f.write(log_entry)
@@ -148,10 +142,16 @@ def advance_videos(
         
         associated = get_associated_files(val_file)
         moved = move_file_bundle(associated, dest_dir, log_file, source_stage=source_dir.name)
-        
+
+        if not moved:
+            # Refused (a name already taken there) or nothing to move: not
+            # counted as advanced.
+            if verbose:
+                print("NOT moved")
+            continue
         if verbose:
             print(f"OK ({len(moved)} files)")
-        
+
         advanced += 1
     
     if verbose:

@@ -525,6 +525,43 @@ def classify_segments_graduated(segments_path: Path) -> Tuple[str, str, dict]:
     }
 
 
+def move_bundle_all_or_nothing(associated_files: Dict, destination: Path):
+    """Move a video's files to ``destination`` together, or none of them.
+
+    Returns ``(moved names, None)``, or ``([], why)`` when nothing was moved.
+
+    WHY: the two hand "move the bundle" helpers (this module's and
+    advance.py's) skipped a file whose name already existed at the
+    destination and moved the rest, so a video ended up split between two
+    folders -- its pose in one, its video and segments in the other -- with
+    nothing saying so. Now, if any file's name is already taken at the
+    destination, nothing moves and the reason names the files; and a move
+    that fails part-way puts back what it had moved before raising.
+    """
+    import shutil as _shutil
+    files = [(k, Path(p)) for k, p in associated_files.items()
+             if k != "video_id" and p is not None]
+    taken = [p.name for _, p in files if (Path(destination) / p.name).exists()]
+    if taken:
+        return [], (f"not moved: {', '.join(taken)} already in {destination}; "
+                    f"nothing of this video was moved, so it is not split between "
+                    f"two folders. Compare the two copies and remove the wrong one.")
+    done = []
+    try:
+        for _, src in files:
+            dst = Path(destination) / src.name
+            _shutil.move(str(src), str(dst))
+            done.append((src, dst))
+    except Exception:
+        for src, dst in reversed(done):
+            try:
+                _shutil.move(str(dst), str(src))
+            except Exception:
+                pass
+        raise
+    return [src.name for src, _ in done], None
+
+
 def move_file_bundle(associated_files: Dict, destination: Path, log_file: Path,
                      source_stage: str = None, update_index: bool = True) -> List[str]:
     """Move all associated files to destination folder.
@@ -540,19 +577,10 @@ def move_file_bundle(associated_files: Dict, destination: Path, log_file: Path,
         List of moved filenames
     """
     video_id = associated_files["video_id"]
-    moved_files = []
-
-    for key, src_path in associated_files.items():
-        if key == "video_id" or src_path is None:
-            continue
-
-        dst_path = destination / src_path.name
-
-        if dst_path.exists():
-            continue
-
-        shutil.move(str(src_path), str(dst_path))
-        moved_files.append(src_path.name)
+    # All or nothing (move_bundle_all_or_nothing says why).
+    moved_files, refused = move_bundle_all_or_nothing(associated_files, destination)
+    if refused:
+        print(f"  {video_id}: {refused}")
 
     # Log the move
     timestamp = datetime.now().isoformat()
@@ -561,7 +589,8 @@ def move_file_bundle(associated_files: Dict, destination: Path, log_file: Path,
     except (OSError, AttributeError):
         user = os.environ.get('USERNAME', os.environ.get('USER', 'unknown'))
 
-    log_entry = f"{timestamp}\t{user}\t{video_id}\t{destination.name}\t{moved_files}\n"
+    log_entry = (f"{timestamp}\t{user}\t{video_id}\t{destination.name}\t"
+                 f"{moved_files if not refused else refused}\n")
 
     with open(log_file, "a") as f:
         f.write(log_entry)
@@ -693,7 +722,10 @@ def triage_results(
         moved = move_file_bundle(associated, dest, log_file, source_stage=source_dir.name)
 
         if verbose:
-            print(f"  {video_id} -> {dest.name} ({category}: {reason})")
+            if moved:
+                print(f"  {video_id} -> {dest.name} ({category}: {reason})")
+            else:
+                print(f"  {video_id}: NOT moved to {dest.name} ({category}: {reason})")
 
     if verbose:
         print("-" * 60)

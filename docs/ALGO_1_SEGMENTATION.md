@@ -443,6 +443,7 @@ The most useful list in this document.
 - `pellet_swap_proposer` (`proposers.py:200-269`) -- reachable only if `pellet_enabled` is flipped in source.
 - `_validate_and_correct_boundaries` (`segmenter_robust.py:375`) -- superseded by the copy in `consensus.py`; the production pipeline never reaches it.
 - `mousereach-advance` **cannot run**: `segmentation/cli.py:179` calls `advance_videos(args.input, require_validation=not args.force)`, and `advance_videos` (`core/advance.py:104-108`) takes `(source_dir, dest_dir, verbose)` with no such keyword and no `**kwargs`. The command raises `TypeError` immediately. Even if it ran it would find nothing, because it globs for `_seg_validation.json`, which nothing writes.
+- The hand bundle move behind `mousereach-triage` and `mousereach-advance` (`move_file_bundle` in `core/triage.py` and `core/advance.py`) is all or nothing since 2026-11-18 (`core/triage.py`, `move_bundle_all_or_nothing`): if any of a video's file names is already taken at the destination, nothing of that video moves and it prints "NOT moved" with the names; before, the other files moved and the video was split between two folders. A move that fails part-way puts back what it had moved.
 - The backfill script's "interpolated or fell back" reason -- it reads a key, `boundary_methods`, that no segments file has (`backfill_segmentation_candidates.py:188`).
 
 ---
