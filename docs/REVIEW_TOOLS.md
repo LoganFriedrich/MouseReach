@@ -601,7 +601,9 @@ the same answer and wrote the algorithm's call in its place -- with only a log l
   A voided answer is never dropped silently.
 - answering a voided pellet again counts at once, even with the same answer as before: the save
   stamps it with the time you gave it, never with the voided answer's older time (which would
-  leave it void and ask it again on every pass).
+  leave it void and ask it again on every pass). An earlier answer the re-cut KEEPS (its pellet
+  did not move) keeps the name and time of the person who gave it when a later save carries it
+  along (`save_causal_review(cuts_replaced=...)`); it is not credited to whoever saved next.
 
 WHY: an earlier answer on a pellet whose frames moved was given about other footage; fitting it
 onto the new cuts, by overlapping frames or by pellet number, is a guess about footage nobody
