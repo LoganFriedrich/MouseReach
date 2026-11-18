@@ -5493,12 +5493,17 @@ the start of the run; otherwise the video is marked failed with "not filed: no k
 and the reason, and nothing moves. And a failed video can no longer be reset straight to
 'processed' (`mousereach-watch-reprocess --from-step processed` is gone): 'processed' means
 "passed every check, file it", so a failed video re-runs from 'processing' or earlier and
-earns it again.
+earns it again. The same now holds for a row coming back from 'unresolvable' (this machine
+had no file for it): it can go back to 'processing' or earlier, never straight to
+'processed'.
 
 Not done yet (a known leftover): the filing step does not ask the review gate again, and
 does not look for the record of the hand-score comparison itself; it relies on 'processed'
-having been reached through those checks, and a person's reset of a failed video can no
-longer skip them.
+having been reached through those checks. A person's reset of a failed video and a row coming
+back from 'unresolvable' can no longer skip them. Startup recovery of a video whose files sit
+in a machine's pose queue with no database row still records it as 'processed' when the
+outputs are there; such a video is filed only if its own features file and its own manifest
+are beside them (the checks above), but the gate is not asked again.
 
 **Intake takes in all of a video's files or none.** When the processing server takes a posed
 video into its Processing folder, it copies the video, its pose and any other file of the
@@ -5554,8 +5559,12 @@ written left a filed manifest saying kinematics never ran, which the scan read a
 and re-ran the video from segmentation. Now either failure holds the video as failed, not
 filed, with the reason "no provenance manifest of this run" or "the kinematic version could
 not be stamped on the provenance manifest"; the failed-video retry runs it again. The filing
-step also refuses a video with no manifest in Processing (one already in the filed folder from
-an earlier part-way attempt counts).
+step also refuses a video with no manifest in Processing. A manifest already in the filed
+folder counts only when it is this run's, that is, not older than the features file being
+filed (kinematics stamp the manifest after writing the features file, and filing keeps file
+times). WHY: the filed folder normally holds the PREVIOUS run's manifest, and accepting it
+filed a run that had none of its own beside the old provenance, so the version scan read the
+old versions.
 
 Not done yet (a known leftover, in the version scan): a filed video that has no manifest is
 still only counted, not named in the scan's log line or listed for a person, and a stage whose

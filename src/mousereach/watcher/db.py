@@ -96,8 +96,14 @@ VIDEO_TRANSITIONS = {
     # 'unresolvable' is terminal for the work loop (no handler selects it) and
     # self-healing: _recover_local_dlc_queue re-drives one the moment its file
     # actually appears on this node.
+    #
+    # Not 'processed', for the reason 'failed' cannot go there: 'processed'
+    # means "passed every check, file it", and only a run that made its
+    # kinematics (_make_features) earns it. A row coming back from
+    # 'unresolvable' re-runs from 'processing' or earlier, so the review gate,
+    # the hand-score check and the kinematics run again before it is filed.
     'unresolvable': ['validated', 'dlc_queued', 'dlc_complete', 'processing',
-                     'processed', 'archived'],
+                     'archived'],
 }
 
 

@@ -349,8 +349,11 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
   failed        -> validated, dlc_queued, dlc_complete, processing,
                    unresolvable   (not processed: a failed video re-runs
                    and earns 'processed', so it is never filed unchecked)
-  unresolvable  -> validated, dlc_queued, dlc_complete, processing, processed,
-                   archived
+  unresolvable  -> validated, dlc_queued, dlc_complete, processing, archived
+                   (not processed, for the same reason as failed: a row
+                   coming back re-runs from processing or earlier, so the
+                   review gate, the hand-score check and kinematics run
+                   again before it is filed)
 
 READ THIS BEFORE INTERPRETING A STATE
 

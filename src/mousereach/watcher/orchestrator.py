@@ -461,6 +461,28 @@ def refuse_filing_with_failed_measures(db, video_id, results_dir) -> bool:
     return True
 
 
+def filed_manifest_is_this_runs(video_id, results_dir) -> bool:
+    """True when the filed folder holds a ``<stem>_processing_manifest.json``
+    that belongs to the run whose ``<stem>_features.json`` sits in
+    ``results_dir``: it is not older than that features file.
+
+    WHY that test: _make_features writes the features file and THEN stamps
+    the kinematic version onto the manifest (record_kinematic_version), and
+    filing keeps modified times, so this run's manifest is never older than
+    its features file. The previous generation's manifest was written before
+    this run began, so it is older. An unreadable time counts as not this
+    run's (the cautious side: the video is held, not filed)."""
+    from mousereach.archive.core import get_archive_destination, _MTIME_SLACK_S
+    folder = Path(results_dir)
+    try:
+        filed = Path(get_archive_destination(video_id)) / f"{video_id}_processing_manifest.json"
+        m_mtime = filed.stat().st_mtime
+        f_mtime = (folder / f"{video_id}_features.json").stat().st_mtime
+    except Exception:
+        return False
+    return m_mtime >= f_mtime - _MTIME_SLACK_S
+
+
 def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     """The archive step's own check that a video has its kinematics: True
     (and the row marked failed, nothing moved) when ``results_dir`` holds the
@@ -502,15 +524,17 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
             manifest = f"{video_id}_processing_manifest.json"
             have_manifest = (folder / manifest).is_file()
             if not have_manifest:
-                # A retry after a part-way move: the manifest is filed before
-                # the features file (archive_video's order), so it may be
-                # there already.
-                try:
-                    from mousereach.archive.core import get_archive_destination
-                    have_manifest = (Path(get_archive_destination(video_id))
-                                     / manifest).is_file()
-                except Exception:
-                    pass
+                # A manifest already in the FILED folder counts only when it
+                # is this run's: not older than the features file about to be
+                # filed (filed_manifest_is_this_runs). WHY the test: the filed
+                # folder normally holds the PREVIOUS generation's manifest,
+                # and a run whose own manifest was never written (a row put
+                # to 'processed' some other way than _make_features) would
+                # otherwise pass on it -- new outputs filed beside old
+                # provenance, and the version scan reading the old versions.
+                # The case it is kept for: an older filing step that moved the
+                # manifest before the features file and stopped in between.
+                have_manifest = filed_manifest_is_this_runs(video_id, folder)
             if have_manifest:
                 return refuse_filing_with_failed_measures(db, video_id, folder)
             why = f"no {manifest} (the provenance of this run)"
