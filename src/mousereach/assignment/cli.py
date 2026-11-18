@@ -189,6 +189,9 @@ def main_batch():
     parser.add_argument("-i", "--input", type=Path, required=True,
                         help="Processing root or single video dir.")
     args = parser.parse_args()
+    # Never into the filed tree (analyzed_tree.filed_tree_refusal says why).
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(None, args.input)
 
     print(f"mousereach-assign-reaches (assignment v{VERSION})")
     print(f"  input: {args.input}")

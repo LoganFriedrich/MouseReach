@@ -1165,6 +1165,11 @@ options:
                         Processing root or single video dir.
 ```
 
+Refuses an input folder inside the filed (Analyzed) tree, before writing
+anything (the triage and advance commands of each step refuse it too). Filed
+results are brought up to date by the watcher's re-run
+(mousereach-version-check --mark).
+
 ## Step 5 - Grasp Kinematics
 
 ### `mousereach-grasp-analyze`

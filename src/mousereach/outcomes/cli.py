@@ -173,6 +173,9 @@ Videos with issues are flagged for human review.
     parser.add_argument('-i', '--input', type=Path, required=True,
                         help="Directory with *_pellet_outcomes.json files")
     args = parser.parse_args()
+    # Never into the filed tree (analyzed_tree.filed_tree_refusal says why).
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(None, args.input)
 
     results = triage_results(args.input)
 
@@ -214,6 +217,9 @@ NOTE: In v2.3+ single-folder architecture, files stay in Processing/.
     parser.add_argument('--force', action='store_true',
                         help="Process all videos even without validation flag")
     args = parser.parse_args()
+    # Never into the filed tree (analyzed_tree.filed_tree_refusal says why).
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(None, args.input)
 
     moved = advance_videos(args.input, require_validation=not args.force)
     print(f"\nAdvanced {moved} video(s) - ready for export")

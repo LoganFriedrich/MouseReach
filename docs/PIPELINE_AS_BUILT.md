@@ -5703,9 +5703,9 @@ copies each manifest into a dated folder under the pipeline's `_archived` folder
 (`--archive-dir` chooses another place; the folder is printed), replaces it in one step, and leaves
 alone any video this machine's watcher database calls crystallized.
 
-Not covered (known leftovers): `mousereach-assign-reaches` walks folders it is given and writes
-beside each video it finds; the review commands and the other backfill commands were not checked
-line by line.
+Not covered (known leftovers): the review commands and the other backfill commands were not
+checked line by line. (`mousereach-assign-reaches` and the triage and advance commands are
+covered since 2026-11-18; see the update of that date below.)
 
 ## Update 2026-11-18: one pellet frame and one re-cut rule for the gate, the window and the results step
 
@@ -6135,4 +6135,21 @@ ended up split between two folders. Now, if any of the video's file names is alr
 nothing of that video moves; the command prints "NOT moved" with the names, and the video is not
 counted as moved (`segmentation/core/triage.py`, `move_bundle_all_or_nothing`). A move that fails
 part-way puts back what it had moved before reporting the error.
+
+## Update 2026-11-18: the other hand step commands refuse the filed tree too
+
+`mousereach-assign-reaches`, `mousereach-triage`, `mousereach-advance`,
+`mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-triage-outcomes` and
+`mousereach-advance-outcomes` now refuse a `-i` folder inside the configured Analyzed tree, before
+reading or writing anything, exactly as `mousereach-segment` and the other step commands do
+(update 2026-11-17 above): "ERROR: <folder> is inside the filed tree ... Nothing was written." and
+exit code 1. `mousereach-assign-reaches` used to rewrite a filed video's
+`<video>_reach_assignments.json` in place; the triage and advance commands rewrote or moved its
+files.
+
+What the step commands still do NOT do (a known leftover, not a change): run on a folder outside
+the filed tree, each runs only its own step, with none of the watcher's checks, review queues or
+filing. They are research tools for a copy in a folder of your own. To run the pipeline by hand on
+a video with every check, use the Run Pipeline tab ("Run the pipeline now") or the Run All Steps
+tab (one chosen video).
 
