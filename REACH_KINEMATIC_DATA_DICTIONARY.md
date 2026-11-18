@@ -65,6 +65,18 @@ and how it is computed.
   over the frames between them. Only runs of one or two repeated frames are
   filled; a longer still run is a hand at rest. Positions and path lengths read the frames as
   tracked. On older rows these columns measure the repetition as well as the paw.
+* **A reach can end on a repeated frame.** The last detected frame can repeat the
+  picture before it; the hand was still moving toward the end point then, so that
+  frame is placed on the line from the last new picture to the end anchor. Peak and
+  apex speed leave out the steps from the last new picture onward (hidden travel,
+  like the anchor step), so an apex on that last new picture has no speed; the
+  smoothness and correlation columns keep them. On rows made before this change
+  the closing repeat read as a stop: apex speed 0 there, and a false stop in
+  the smoothness and correlation columns.
+* **Boundary timing carries up to one picture interval of slack.** When a recorder
+  writes frames faster than its cameras deliver pictures, `start_frame` and
+  `end_frame` are up to one picture interval after the true start and end,
+  `duration_frames` carries that slack, and the furthest extension is a lower bound.
 * **A value per frame compares only between videos of the same frame rate.** A
   step per frame at 30 frames per second covers twice the time of one at 60. To
   compare across rates, multiply by that row's video `frame_rate` to get per second.
@@ -148,7 +160,7 @@ apply to `rhleft_*`, `rhright_*`, `rhout_*`.
 | `righthand_lateral_deviation_px` / `_mm` | Maximum perpendicular distance from the synthetic-pre-to-synthetic-post line. | `max(|((p - pre) x (post - pre))| / |post - pre|)` over all augmented trajectory points. |
 | `righthand_mean_speed_px_per_frame` / `_mm_per_frame` | Average speed across the reach. | `total_path / number_of_inter_frame_segments` (segments include the ones bridging the synthetic anchors). |
 | `righthand_peak_speed_px_per_frame` / `_mm_per_frame` | Fastest single step along the path. | `max(frame_to_frame_distance)` over steps between two detected frames on the nose-relative trajectory; the steps from the start anchor and to the end anchor do not count. Empty for a reach of one detected frame. |
-| `righthand_apex_speed_px_per_frame` / `_mm_per_frame` | Speed leaving the per-point apex. | Frame-to-frame distance from the per-point apex frame to the next detected frame on the nose-relative trajectory. Empty when the apex is the last detected frame, because the next point would be the end anchor. |
+| `righthand_apex_speed_px_per_frame` / `_mm_per_frame` | Speed leaving the per-point apex. | Frame-to-frame distance from the per-point apex frame to the next detected frame on the nose-relative trajectory. Empty when the apex is the last detected frame, because the next point would be the end anchor, and when the apex is the last new picture before a closing repeated frame, whose step is hidden travel toward the end anchor. |
 
 ## Section 5. Cross-paw timing
 

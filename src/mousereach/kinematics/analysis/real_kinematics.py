@@ -9,7 +9,7 @@ import pandas as pd
 
 from mousereach.config import Paths
 from mousereach.kinematics.core.anchored_path import (
-    REPEATED_FRAME_MAX_PX, anchored_hand_path, fill_repeated_frames, tracked_steps)
+    REPEATED_FRAME_MAX_PX, anchored_hand_path, fill_repeated_frames, tracked_speeds)
 from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 
 RULER_MM = 9.0  # ruler = 9mm
@@ -24,7 +24,7 @@ def compute_kinematics(x, y, ruler_px, fps):
 
     x[0] and x[-1] are the anchors, from get_hand_trajectory. Peak speed leaves out
     the steps to and from them, which measure geometry and not how fast the hand moved
-    (anchored_path.tracked_steps). Path, straightness, mean speed, acceleration and
+    (anchored_path.tracked_speeds), as are the steps of a closing repeated frame. Path, straightness, mean speed, acceleration and
     jerk stay on the whole path. Needs two tracked positions, so one step between them.
     """
     n = len(x)
@@ -44,6 +44,9 @@ def compute_kinematics(x, y, ruler_px, fps):
     sx_mm, sy_mm = fill_repeated_frames(x_mm, y_mm, max_px=REPEATED_FRAME_MAX_PX * px_to_mm)
     dx = np.diff(sx_mm)
     dy = np.diff(sy_mm)
+
+    # Peak speed reads only steps the tracked hand made (anchored_path.tracked_speeds)
+    peak_steps = tracked_speeds(x_mm, y_mm, max_px=REPEATED_FRAME_MAX_PX * px_to_mm)
 
     # Instantaneous speed (mm/frame -> mm/sec)
     inst_speed = np.sqrt(dx**2 + dy**2) * fps
@@ -87,7 +90,7 @@ def compute_kinematics(x, y, ruler_px, fps):
         "path_length_mm": round(path_length, 3),
         "direct_distance_mm": round(direct_dist, 3),
         "straightness": round(straightness, 3),
-        "peak_speed_mm_s": round(np.max(tracked_steps(inst_speed)), 2),
+        "peak_speed_mm_s": round(float(np.nanmax(peak_steps)) * fps, 2) if np.isfinite(peak_steps).any() else None,
         "mean_speed_mm_s": round(np.mean(inst_speed), 2) if len(inst_speed) > 0 else 0,
         "peak_accel_mm_s2": round(np.max(accel_mag), 2) if len(accel_mag) > 0 else 0,
         "mean_accel_mm_s2": round(np.mean(accel_mag), 2) if len(accel_mag) > 0 else 0,

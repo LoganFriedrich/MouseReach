@@ -51,6 +51,19 @@ one or two frames has those frames' movement evened out with the step that follo
 Only the speed measures (peak, apex, jerk, velocity correlation) read it; positions,
 the path, its length and straightness read the frames as tracked.
 
+THE LAST DETECTED FRAME CAN BE A REPEAT. The paw is seen until the first new picture
+that no longer shows it, so the reach's last detected frame (end_frame) can repeat the
+picture before it. A repeat is never stillness: the hand went on moving, towards the end
+point, which it reached by end_frame + 1. So a run of repeats (at most
+``MAX_REPEATED_FRAMES``) that closes the detected frames is placed on the line from the
+last new picture to the end point, exactly as a run between two pictures is placed on the
+line to the next one. The start needs no such rule: the fill always counts the first
+detected frame as a new position, whatever the frame before the reach holds, because the
+hand is never read in that frame (only the nose and slit corner are). The steps from the
+last new picture onward then carry hidden travel towards a calculated point, just like the end
+anchor step, so ``tracked_speeds`` leaves them out of peak and apex speed for the same
+reason ``tracked_steps`` leaves out the anchor steps.
+
 WHEN A LANDMARK CANNOT BE TRUSTED. An anchor is never invented silently. Each reach
 records in ``start_source`` and ``end_source`` how its anchor was placed:
 
@@ -145,24 +158,22 @@ def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX,
     points, never pictures. A detected frame is a new position when it lies at least
     ``max_px`` from the last new position. The frames between two new positions are
     spread evenly along the straight line between them, so each step between them is
-    the distance over the frames it took. A run of more than ``max_repeats`` frames
-    (a hand that is really still), frames after the last new position, and any run
-    that holds an untracked (NaN) frame are left as they are.
+    the distance over the frames it took. A run of repeats that closes the detected
+    frames is spread the same way along the line to the end anchor (module docstring:
+    THE LAST DETECTED FRAME CAN BE A REPEAT). A run of more than ``max_repeats``
+    frames (a hand that is really still), a closing run when the end anchor does not
+    exist, and any run that holds an untracked (NaN) frame are left as they are.
     """
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
     n = len(x)
     if n < 4:
         return x, y
-    fresh = []
-    last = None
-    for k in range(1, n - 1):
-        if not (np.isfinite(x[k]) and np.isfinite(y[k])):
-            last = None          # an untracked frame ends the run; the next tracked one is new
-            continue
-        if last is None or np.hypot(x[k] - x[last], y[k] - y[last]) >= max_px:
-            fresh.append(k)
-            last = k
+    fresh = _new_positions(x, y, max_px)
+    # The end anchor is the next place the hand is known to be: a closing run of
+    # repeats is spread towards it like any other run.
+    if fresh and np.isfinite(x[-1]) and np.isfinite(y[-1]):
+        fresh = fresh + [n - 1]
     out_x, out_y = x.copy(), y.copy()
     for a, b in zip(fresh[:-1], fresh[1:]):
         if b - a < 2 or b - a - 1 > max_repeats:
@@ -174,6 +185,51 @@ def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX,
         out_x[between] = x[a] + (x[b] - x[a]) * t
         out_y[between] = y[a] + (y[b] - y[a]) * t
     return out_x, out_y
+
+
+def _new_positions(x, y, max_px: float = REPEATED_FRAME_MAX_PX):
+    """Indices of the detected frames (``[1:-1]``) of an anchored path that show a new
+    position: at least ``max_px`` from the last new one. An untracked (NaN) frame ends
+    a run, so the next tracked frame counts as new."""
+    fresh = []
+    last = None
+    for k in range(1, len(x) - 1):
+        if not (np.isfinite(x[k]) and np.isfinite(y[k])):
+            last = None
+            continue
+        if last is None or np.hypot(x[k] - x[last], y[k] - y[last]) >= max_px:
+            fresh.append(k)
+            last = k
+    return fresh
+
+
+def tracked_speeds(x, y, max_px: float = REPEATED_FRAME_MAX_PX,
+                   max_repeats: int = MAX_REPEATED_FRAMES) -> np.ndarray:
+    """Per-frame speeds of an anchored path that come from the tracked hand only, read
+    through repeated frames. This is what peak speed and speed at the apex read.
+
+    Lines up like ``tracked_steps``: value i is the step leaving detected frame i, and a
+    reach of n detected frames has n - 1 values. The anchor steps are left out
+    (``tracked_steps`` says why). When the detected frames close on a run of repeats,
+    the steps from the last new picture onward are left out too (NaN): those frames are
+    placed on the line to the end anchor, so their steps are hidden travel towards a
+    calculated point, not a speed anybody saw (module docstring: THE LAST DETECTED FRAME
+    CAN BE A REPEAT).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    fx, fy = fill_repeated_frames(x, y, max_px=max_px, max_repeats=max_repeats)
+    speeds = tracked_steps(np.sqrt(np.diff(fx) ** 2 + np.diff(fy) ** 2)).copy()
+    if len(x) < 4:
+        return speeds
+    fresh = _new_positions(x, y, max_px)
+    if fresh and np.isfinite(x[-1]) and np.isfinite(y[-1]):
+        closing = (len(x) - 2) - fresh[-1]
+        if 0 < closing <= max_repeats:
+            # Detected frame index of the last new picture is fresh[-1] - 1, and
+            # speeds[i] leaves detected frame i.
+            speeds[fresh[-1] - 1:] = np.nan
+    return speeds
 
 
 def tracked_steps(steps: np.ndarray) -> np.ndarray:

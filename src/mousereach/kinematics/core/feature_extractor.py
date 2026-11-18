@@ -15,7 +15,7 @@ import pandas as pd
 
 from mousereach.pipeline.manifest import NOT_RESOLVED
 from mousereach.kinematics.core.anchored_path import (
-    AnchoredPath, anchored_hand_path, fill_repeated_frames, tracked_steps)
+    AnchoredPath, anchored_hand_path, fill_repeated_frames, tracked_speeds)
 from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 
 
@@ -303,7 +303,12 @@ class KinematicsProblem(Exception):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.5.0"  # 2.5 (2026-11-17), also: speeds read through repeated frames
+    VERSION = "2.5.0"  # 2.5 (2026-11-17), also: a reach whose last detected frame
+                       # repeats the picture before it no longer reads as a stop: that
+                       # frame is placed on the line to the end anchor, and peak and
+                       # apex speed leave out its steps (anchored_path.tracked_speeds).
+                       # Same version: 2.5.0 had not been released when this was added.
+                       # 2.5 (2026-11-17), also: speeds read through repeated frames
                        # (anchored_path.fill_repeated_frames). A video whose recorder
                        # repeats a picture until the camera sends a new one has steps
                        # of nothing followed by steps of two frames' movement, so peak
@@ -947,8 +952,9 @@ class FeatureExtractor:
         velocity = np.sqrt(np.diff(path.x)**2 + np.diff(path.y)**2)
         # Peak and apex read through repeated frames (anchored_path: REPEATED FRAMES);
         # the mean is the whole trip's length over its steps, which repeats do not change.
-        fx, fy = fill_repeated_frames(path.x, path.y)
-        tracked = tracked_steps(np.sqrt(np.diff(fx)**2 + np.diff(fy)**2))
+        # A last detected frame that repeats the picture before it is hidden travel
+        # towards the end point, so its step is left out too (anchored_path.tracked_speeds).
+        tracked = tracked_speeds(path.x, path.y)
         measured = tracked[~np.isnan(tracked)]
 
         # apex_idx counts detected frames, and tracked[i] is the step leaving frame i.
@@ -1549,8 +1555,10 @@ class FeatureExtractor:
         # tracked[i] is the step leaving detected frame i, so an apex on the last
         # detected frame has no speed.
         # Read through repeated frames (anchored_path: REPEATED FRAMES).
+        # A closing repeat's steps are hidden travel to the end point and are left out
+        # (anchored_path.tracked_speeds); sx, sy feed the smoothness below.
         sx, sy = fill_repeated_frames(x, y)
-        tracked = tracked_steps(np.sqrt(np.diff(sx) ** 2 + np.diff(sy) ** 2))
+        tracked = tracked_speeds(x, y)
         peak_speed = float(np.nanmax(tracked)) if tracked.size and not np.all(np.isnan(tracked)) else None
         apex_speed = None
         if apex_idx_real is not None and apex_idx_real < tracked.size and not np.isnan(tracked[apex_idx_real]):
