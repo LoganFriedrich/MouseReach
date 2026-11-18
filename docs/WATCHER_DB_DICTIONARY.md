@@ -371,6 +371,15 @@ READ THIS BEFORE INTERPRETING A STATE
   same way (docs/PIPELINE_AS_BUILT.md, "a video is filed only with its
   kinematics").
 
+  'failed' with an error starting "not filed: a reach's measures could not be
+  computed" means a reach in the features file carries
+  _extended_features_error; NOT filed, retried the same way. "not filed: no
+  kinematics (feature extraction failed: kinematics not written: ...)" lists
+  what kept the kinematics from being the true result: an unreadable review
+  copy, ground-truth file or reach assignment file, a failed truth layering,
+  or a reach whose measures failed (docs/PIPELINE_AS_BUILT.md, "kinematics
+  that are not the true result are not written").
+
   'processing' can also mean "analysed, and HELD for its hand scores": since
   2026-10-28 the hand-score comparison runs after the analysis and before the
   review gate, and a video whose session has no hand scores yet stays in

@@ -1360,11 +1360,16 @@ def merge_review_copies(docs, current_segments=None, human_segmentation: bool = 
     return merged, notes
 
 
-def review_copies(video_stem: str, dirs=(), include_durable: bool = True) -> List[Dict[str, Any]]:
+def review_copies(video_stem: str, dirs=(), include_durable: bool = True,
+                  unreadable: Optional[list] = None) -> List[Dict[str, Any]]:
     """Every readable copy of a video's review: ``{stem}_causal_review.json``
     in each of ``dirs`` (in that order), then the durable copy. A copy that
     cannot be read is logged and skipped -- never treated as "no answers"
-    silently."""
+    silently. When ``unreadable`` is a list, each such copy is also added to
+    it as words for a person: the kinematics step refuses to write features
+    while a copy of the person's answers cannot be read
+    (truth_resolver.resolve_truth_layers), because the answers in it would be
+    missing from the result."""
     paths: List[Path] = [Path(d) / f"{video_stem}_causal_review.json" for d in dirs if d]
     if include_durable:
         try:
@@ -1384,6 +1389,8 @@ def review_copies(video_stem: str, dirs=(), include_durable: bool = True) -> Lis
                 out.append(_read_json(p))
         except Exception as err:
             logger.warning("Could not read the review copy %s: %s", p, err)
+            if unreadable is not None:
+                unreadable.append(f"the review copy {p} could not be read ({err})")
     return out
 
 
@@ -1416,7 +1423,7 @@ def review_dirs(video_stem: str, primary=None) -> List[Path]:
 
 
 def effective_review(video_stem: str, dirs=(), seg_doc=None, current_segments=None,
-                     human_segmentation=None):
+                     human_segmentation=None, unreadable: Optional[list] = None):
     """THE way to read a video's review: every copy (``{stem}_causal_review.json``
     in each of ``dirs``, then the durable copy -- review_copies), merged per
     current segment to the newest answer or recheck a person gave about its
@@ -1433,7 +1440,8 @@ def effective_review(video_stem: str, dirs=(), seg_doc=None, current_segments=No
     current = current_segments or (segments_from_segmentation(seg_doc) if seg_doc else None)
     human = (segmentation_is_human(seg_doc) if human_segmentation is None
              else bool(human_segmentation))
-    doc, _ = merge_review_copies(review_copies(video_stem, dirs), current or None,
+    doc, _ = merge_review_copies(review_copies(video_stem, dirs, unreadable=unreadable),
+                                 current or None,
                                  human_segmentation=human)
     return doc
 

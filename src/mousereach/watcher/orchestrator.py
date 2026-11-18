@@ -278,6 +278,9 @@ NO_KINEMATICS_REASON = "not filed: no kinematics"
 # What a video's row says when its features file still holds a pellet nobody
 # decided (refuse_filing_with_undecided_pellet says why).
 UNDECIDED_PELLET_REASON = "not filed: a pellet is still undecided in its kinematics"
+# The archive step's refusal of a features file in which a reach's extended
+# measures failed (refuse_filing_with_failed_measures).
+FAILED_MEASURES_REASON = "not filed: a reach's measures could not be computed"
 
 # How long a video held because its hand-score check could not run waits
 # before it is checked again even though the scores file has not changed.
@@ -402,11 +405,54 @@ def refuse_filing_with_undecided_pellet(db, video_id, results_dir) -> bool:
     return True
 
 
+def reaches_with_failed_measures(features_path):
+    """``(segment_num, reach_id)`` of every reach in a features file whose
+    extended measures failed: the extractor then stored only
+    ``{"_extended_features_error": ...}`` in place of its 165 values. Empty for
+    a file that cannot be read (not this check's question)."""
+    try:
+        with open(features_path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for seg in (doc or {}).get("segments") or []:
+        for r in (seg or {}).get("reaches") or []:
+            if isinstance(r, dict) and "_extended_features_error" in (r.get("extended") or {}):
+                out.append((seg.get("segment_num"), r.get("reach_id")))
+    return out
+
+
+def refuse_filing_with_failed_measures(db, video_id, results_dir) -> bool:
+    """True (and the row marked failed, nothing moved) when the video's
+    features file holds a reach whose extended measures could not be computed.
+
+    WHY: such a reach would be filed with all its extended values missing.
+    The extractor no longer writes a features file with one
+    (feature_extractor.KinematicsProblem), so this is the archive step's own
+    last check on a file made by an older extractor or reaching 'processed'
+    another way. Retried and listed like the other refusals here."""
+    folder = Path(results_dir) if results_dir else None
+    if folder is None:
+        return False
+    bad = reaches_with_failed_measures(folder / f"{video_id}_features.json")
+    if not bad:
+        return False
+    names = ", ".join(f"pellet {s} reach {r}" for s, r in bad)
+    message = (f"{FAILED_MEASURES_REASON} ({names} in {video_id}_features.json carry "
+               f"_extended_features_error; the archive step does not file missing measures)")
+    db.mark_failed(video_id, message)
+    db.log_step(video_id, 'archive', 'failed', message=message)
+    logger.error(f"{video_id}: {message} -- held as failed, not filed")
+    return True
+
+
 def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     """The archive step's own check that a video has its kinematics: True
     (and the row marked failed, nothing moved) when ``results_dir`` holds the
     video's files but no ``<stem>_features.json``, or a features file that
-    still holds an undecided pellet (refuse_filing_with_undecided_pellet).
+    still holds an undecided pellet (refuse_filing_with_undecided_pellet) or a
+    reach whose measures failed (refuse_filing_with_failed_measures).
 
     WHY a second check after _make_features: 'processed' means "file it", and
     a row can reach 'processed' by other ways than a fresh run (a person
@@ -421,7 +467,8 @@ def refuse_filing_without_features(db, video_id, results_dir) -> bool:
     if folder is None:
         return False
     if (folder / f"{video_id}_features.json").is_file():
-        return refuse_filing_with_undecided_pellet(db, video_id, folder)
+        return (refuse_filing_with_undecided_pellet(db, video_id, folder)
+                or refuse_filing_with_failed_measures(db, video_id, folder))
     if not _has_files_of(folder, video_id):
         return False
     if _filed_by_this_run(db, video_id) is not None:
@@ -585,6 +632,10 @@ class BaseOrchestrator:
             review_path = resolve_review_path(video_id, processing_dir)
             if review_path is not None:
                 logger.info(f"Applying human review corrections: {review_path.name}")
+            # Raises KinematicsProblem when a person's answers could not be
+            # applied or a reach's measures failed: no features file is
+            # written, and the except below returns the reason, so the video
+            # is held (_hold_without_kinematics) instead of filed.
             features = extractor.extract(dlc_path, reach_path, outcome_path,
                                          review_path=review_path)
             with open(processing_dir / f"{video_id}_features.json", 'w') as f:
@@ -603,8 +654,11 @@ class BaseOrchestrator:
             # the latter would certify ground truth that was never applied.
             from mousereach.pipeline.manifest import (
                 record_kinematic_version, NOT_RESOLVED)
+            # The review counts as applied only when the extractor says it
+            # read every copy of it (FeatureExtractor.review_applied).
             record_kinematic_version(video_id, processing_dir, extractor.VERSION,
-                                     review_path=review_path,
+                                     review_path=(review_path if getattr(
+                                         extractor, "review_applied", False) else None),
                                      ground_truth_path=getattr(
                                          extractor, "applied_ground_truth", NOT_RESOLVED))
 

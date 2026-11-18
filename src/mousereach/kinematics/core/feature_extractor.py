@@ -268,6 +268,27 @@ def causal_reach_owned_by_person(seg: dict) -> bool:
     return False
 
 
+class KinematicsProblem(Exception):
+    """Raised by FeatureExtractor.extract when the features it would write are
+    not the video's true result: a person's answers (review or ground truth)
+    could not be read or applied, the reach assignment file is unreadable, or
+    a reach's extended measures could not be computed. ``problems`` lists each
+    one in words for a person.
+
+    WHY an exception and not a printed line: every caller of extract() -- the
+    watcher's kinematics step, the manual kinematics command, the run-all
+    command and the bring-current routine -- already treats an exception as
+    "no features file", and the watcher then holds the video in Processing
+    instead of filing it (filing means done for good). A printed line let the
+    video be filed with the algorithm's answers in place of the person's, or
+    with a reach whose 165 extended values were missing, and nothing read it.
+    """
+
+    def __init__(self, problems):
+        self.problems = list(problems)
+        super().__init__("kinematics not written: " + "; ".join(self.problems))
+
+
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
@@ -312,6 +333,14 @@ class FeatureExtractor:
         # applied (None: it found none). Left as NOT_RESOLVED when the layering
         # did not run to that point, so a caller never records a guess.
         self.applied_ground_truth = NOT_RESOLVED
+        # Set by extract(): True only once the truth layering ran through and
+        # read every copy of the person's answers it found. The kinematics step
+        # stamps the review it handed in as applied only on this confirmation
+        # (pipeline.manifest.record_kinematic_version).
+        self.review_applied = False
+        # What extract() could not do; any entry makes it raise
+        # KinematicsProblem instead of returning features.
+        self.problems = []
 
     def extract(
         self,
@@ -331,7 +360,14 @@ class FeatureExtractor:
 
         Returns:
             VideoFeatures object with all extracted features
+
+        Raises:
+            KinematicsProblem: when the result would not be the video's true
+            result (see that class); nothing is returned, so no caller can
+            write a features file from it.
         """
+        self.problems = []
+        self.review_applied = False
         # Load DLC data
         df = self._load_dlc(dlc_path)
 
@@ -365,8 +401,9 @@ class FeatureExtractor:
                             'segment_ifr': _r.get('segment_ifr'),
                         }
             except Exception as _e:
-                print(f"[feature_extractor] assignment file unreadable, "
-                      f"algo causality unavailable: {_e}")
+                self.problems.append(
+                    f"the reach assignment file {Path(assignments_path).name} could not "
+                    f"be read ({_e}), so no causal reach of the algorithm can be given")
 
         # HUMAN-TRUTH LAYERING: resolve every element by
         #     GT > causal review > triage review > algo
@@ -375,8 +412,10 @@ class FeatureExtractor:
         # flag is set. Unlike review-only, this also lets GROUND TRUTH -- and GT
         # reach boundaries/existence, which review never touches -- flow into the
         # shipped kinematics. Non-destructive; provenance in outcome_source /
-        # reach_source. Falls back to review-only if the resolver errors; a
-        # pure-algo video resolves unchanged.
+        # reach_source. A pure-algo video resolves unchanged. If the layering
+        # fails, or a copy of the person's answers cannot be read, extract()
+        # raises KinematicsProblem: there is no "algorithm answers instead"
+        # fallback, because those features would be filed as the result.
         # Whether a person made this segmentation: their cuts are logged as
         # made, however short (causal_review_io.index_review_by_segment).
         _human_seg = False
@@ -405,21 +444,13 @@ class FeatureExtractor:
                 human_segmentation=_human_seg,
                 applied=_applied)
             self.applied_ground_truth = _applied.get('ground_truth', NOT_RESOLVED)
+            self.problems.extend(_applied.get('problems') or [])
+            self.review_applied = not _applied.get('problems')
         except Exception as _e:
-            print(f"[feature_extractor] truth layering skipped: {_e}")
-            if review_path is not None:
-                try:
-                    from mousereach.review.causal_review_io import load_and_apply_review
-                    outcomes_data = load_and_apply_review(
-                        outcomes_data, review_path,
-                        video_stem=reaches_data.get('video_name'),
-                        # The segmentation being applied to, so a review is
-                        # matched to the frames the reviewer saw rather than to a
-                        # segment number the segmenter may have reassigned.
-                        current_segments=reaches_data.get('segments'),
-                        human_segmentation=_human_seg)
-                except Exception as _e2:
-                    print(f"[feature_extractor] review override skipped: {_e2}")
+            self.problems.append(
+                f"the person's answers (review and ground truth) could not be applied: {_e}")
+        if self.problems:
+            raise KinematicsProblem(self.problems)
 
         video_name = reaches_data['video_name']
         total_frames = reaches_data['total_frames']
@@ -586,6 +617,11 @@ class FeatureExtractor:
                       f"causal -- kept reach {getattr(_causal[0], 'reach_id', '?')}, cleared the rest")
 
             segment_features.append(seg_features)
+
+        # A reach whose extended measures failed carries only an error marker
+        # (_extract_reach_features); its 165 values are missing. Not written.
+        if self.problems:
+            raise KinematicsProblem(self.problems)
 
         # Compute summary statistics
         summary = self._compute_summary(segment_features)
@@ -783,6 +819,12 @@ class FeatureExtractor:
             )
         except Exception as exc:
             features.extended = {'_extended_features_error': str(exc)}
+            # Reported, so extract() writes nothing (KinematicsProblem). The
+            # marker stays for direct callers of this method.
+            if isinstance(getattr(self, 'problems', None), list):
+                self.problems.append(
+                    f"reach {reach_id} (frames {start_frame}-{end_frame}): the extended "
+                    f"measures could not be computed: {exc}")
 
         return features
 

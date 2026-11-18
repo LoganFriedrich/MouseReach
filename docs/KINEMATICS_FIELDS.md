@@ -239,7 +239,7 @@ Four more with the same story as `tracking_quality_score`: a name in the datacla
 
 ## 6. The `extended` block: 165 values per reach
 
-Produced by `_extended_features` and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message — the reach still ships, with all 165 values missing and no other warning.
+Produced by `_extended_features` and stored as one nested dictionary. If any part of it raises, the whole block is replaced by a single key `_extended_features_error` holding the message. Before the kinematics-problems change the reach then shipped with all 165 values missing and no other warning; now `extract()` raises `KinematicsProblem` naming the reach and writes no features file, and the archive step refuses a features file that still carries the key (§11).
 
 Rows from an extractor before 2.3.0 hold the same block without the four anchor columns of §6.7, so 161 values. The ten `_at_contact` columns are null almost always (§2). A reach with no anchor (§6.1) also has null path measures: 12 path columns of each paw point (§6.2) and `paw_velocity_correlation`. Its peak and apex speed are still given, because they read detected frames only (on 2.3.0 rows they were null too).
 
@@ -478,8 +478,8 @@ Two things segments do **not** control. Reach frame windows are never clipped to
 
 | Failure | What happens | Where |
 |---|---|---|
-| Anything inside the extended feature block raises | The reach ships with `extended = {'_extended_features_error': message}` — all 165 values missing, one key present | `_extract_reach_features` in `feature_extractor.py` |
-| Truth layering raises | Printed, then fall back to review-only, then to raw algorithm | `:226-227`, `:238-239` |
+| Anything inside the extended feature block raises | No longer produces a file: `extract()` raises `KinematicsProblem` naming the reach, no features file is written and the watcher holds the video as failed. The archive step refuses a features file still carrying `_extended_features_error` (from an older extractor) | `_extract_reach_features`, `KinematicsProblem` in `feature_extractor.py`; `refuse_filing_with_failed_measures` in `orchestrator.py` |
+| Truth layering raises, or a review copy, the ground-truth file or the reach assignment file cannot be read | No longer produces a file: `extract()` raises `KinematicsProblem` listing each problem (it used to print a line and fall back to the review alone, then to the algorithm's answers) | `extract` in `feature_extractor.py`; `resolve_truth_layers(applied=...)['problems']` in `truth_resolver.py` |
 | Database sync fails, for any reason | `sync_file_to_database` returns `False` and never raises | `sync/database.py:857-858` |
 | Database sync fails, from the CLI | `except Exception: pass` — and the call cannot raise anyway, so nothing is printed either way | `kinematics/cli.py:143-144` |
 | Database sync fails, from the watcher | `logger.debug("Database sync skipped ... subject not in DB or DB unavailable")` — the wrong cause | `orchestrator.py:2126-2130`; the other watcher path (`:1166-1170`) logs nothing at all on a `False` return |

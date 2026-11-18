@@ -3148,6 +3148,45 @@ re-filed or re-queued.
 `tests/test_repose_videos.py`, including one that fails if the row is marked while any copy of the
 pose is still in place.
 
+## Update: kinematics that are not the true result are not written
+
+**What a person sees.** A video whose kinematics would not be its true result is held, not filed:
+its row goes to `failed` with an error starting `not filed: no kinematics (feature extraction
+failed: kinematics not written: ...)`, followed by each problem in words. The problems are:
+
+- a copy of the person's review (`<video>_causal_review.json`, in Processing, a review queue, the
+  filed folder or the durable review store) could not be read -- the message names the file;
+- the video's ground-truth file could not be read -- the message names the file;
+- applying the person's answers (the truth layering) failed;
+- the reach assignment file (`<video>_reach_assignments.json`) is there but could not be read;
+- a reach's extended measures could not be computed -- the message names the reach and its frames.
+
+No `<video>_features.json` is written (an existing one is left as it was). The same happens when
+the kinematics are made by hand (`mousereach-kinematics`, the Run Pipeline window, the bring-current
+routine): the command reports the error and writes no file.
+
+**What happens next.** The failed-video retry runs it again, like any other kinematics failure
+(below). A torn file usually means it was being written at that moment, so a retry often succeeds.
+If it keeps failing: open the named file. A review or ground-truth file that is truly broken is
+restored from its other copy (the durable review store keeps one of every review) or saved again
+from the review tool; then `mousereach-watch-reprocess <video>`.
+
+**The archive step checks the file too.** A features file in which a reach carries
+`_extended_features_error` (written by an older extractor) is not filed: the row goes to `failed`
+with an error starting `not filed: a reach's measures could not be computed`, naming the pellet and
+reach, and is retried the same way (`refuse_filing_with_failed_measures`, `orchestrator.py`).
+
+**The review stamp.** The processing manifest's `applied_review` names the review these kinematics
+applied only when the extractor confirms it read every copy of the review
+(`FeatureExtractor.review_applied`); otherwise no review is stamped, so the version scan still
+counts the review as not yet applied.
+
+**Why.** Before, each of these printed one line and the extractor carried on: with the algorithm's
+answers in place of the person's, or with a reach whose 165 extended values were missing. The
+features file was written, the review was stamped as applied, and the video was filed -- done for
+good with the wrong numbers. (`KinematicsProblem`, `kinematics/core/feature_extractor.py`; test
+`tests/test_kinematics_problems_hold_the_video.py`.)
+
 ## Update 2026-11-15: a video is filed only with its kinematics
 
 **What a person sees.** A video whose kinematics could not be made is NOT filed into Analyzed. Its
@@ -3163,7 +3202,9 @@ On a GPU machine with `also_process` true a failed video waits for a person in t
 
 **What counts as "no kinematics".**
 - Pillar trays: the reaches file or the pellet-outcomes file is missing (kinematics never ran), or
-  the feature extractor raised.
+  the feature extractor raised. Since the update "kinematics that are not the true result are not
+  written" below, the extractor also raises -- and writes nothing -- when a person's answers
+  could not be applied or a reach's measures failed.
 - Easy and Flat trays: the session file (reaches and attention) could not be written, including
   when there is no reaches file.
 

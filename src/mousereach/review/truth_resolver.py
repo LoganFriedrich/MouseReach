@@ -696,7 +696,13 @@ def resolve_truth_layers(
     filed video whose filed ground truth differs from it. Recording the file
     that happened to sit beside the run instead could name a file this call
     never read (the corpus index is built once per process), and the video
-    would then count as brought up to date when it was not."""
+    would then count as brought up to date when it was not.
+
+    ``applied`` also receives ``'problems'``: a list (empty when none) of the
+    copies of a person's answers this call found but could not read -- a
+    review copy or the ground-truth file. Such a file is left out of the
+    layering, so the result is NOT the person's result; the kinematics
+    extractor refuses to write features while the list is not empty."""
     from mousereach.config import Paths
     from mousereach.review.causal_review_io import find_gt
 
@@ -716,12 +722,15 @@ def resolve_truth_layers(
     if primary is not None and Path(primary).is_file() and \
             Path(primary).name != f"{stem}_causal_review.json":
         primary = None   # some other video's file is never read for this one
+    problems: List[str] = []
+    if applied is not None:
+        applied['problems'] = problems
     review_doc = effective_review(
         stem, review_dirs(stem, primary),
         current_segments=[{"segment_num": s.get("segment_num"),
                            "start_frame": s.get("start_frame"),
                            "end_frame": s.get("end_frame")} for s in _cur_segs] or None,
-        human_segmentation=human_segmentation) if stem else None
+        human_segmentation=human_segmentation, unreadable=problems) if stem else None
 
     layers: List[Dict[int, dict]] = [
         _seg_overrides_from_review(review_doc, "human_review", _cur_segs, human_segmentation),
@@ -730,7 +739,17 @@ def resolve_truth_layers(
     gt_path = find_gt(stem, extra_dirs=extra_gt_dirs) if stem else None
     if applied is not None:
         applied['ground_truth'] = gt_path
-    gt = _read_json(gt_path) if gt_path else None
+    gt = None
+    if gt_path:
+        try:
+            with open(gt_path) as f:
+                gt = json.load(f)
+        except FileNotFoundError:
+            gt = None
+        except Exception as err:
+            logger.error('Could not read %s, so the ground truth in it is not applied: %s',
+                         gt_path, err)
+            problems.append(f"the ground-truth file {gt_path} could not be read ({err})")
     if gt:
         gt_out, _exhaustive_out = _seg_overrides_from_gt(gt, _cur_segs, human_segmentation)
         layers.append(gt_out)                                     # GT tier (top)
