@@ -1081,8 +1081,7 @@ The notes box travels with the video.
             # frames, and windowing the overlay is the biggest load-time win.
             self._load_dlc_data()
             self._load_algo_data()
-            # Restore any prior manual re-segmentation before building segments.
-            self._manual_boundaries = self._peek_manual_boundaries()
+            # The cuts are the segments file's, always (_build_segment_list).
             self._build_segment_list()
             self._progress.setValue(60)
 
@@ -1092,8 +1091,8 @@ The notes box travels with the video.
             self._progress.setValue(85)
 
             self._enable_controls(True)
-            # Resume: load any prior review, restore answers, skip to first
-            # segment that is unscored or whose algo output changed since review.
+            # Resume: load any prior review, restore answers, skip to the first
+            # segment no person has answered.
             self._load_saved_review()
             self._show_current_segment()
 
@@ -1443,12 +1442,14 @@ The notes box travels with the video.
         return Path(bd) if bd else self.video_path.parent
 
     def _load_saved_review(self):
-        """Load a prior review (if any) so scored segments restore their answers
-        and the walk RESUMES at the first unscored / algo-changed segment.
+        """Load a prior review (if any) so answered segments restore their
+        answers and the walk RESUMES at the first segment no person has answered.
 
-        A segment counts as already done only if it was ACTUALLY reviewed AND the
-        algo's outcome for it is unchanged since. If the algo output changed, it's
-        worth re-checking -- so it's treated as needing review again.
+        A segment counts as done when a person's answer covers its frames
+        (segment_answered), whatever the algorithm has said since: a person's
+        answer is what happened in those frames. An answer given before a
+        person re-cut the video counts only on a pellet whose frames did not
+        move (index_review_by_segment).
         """
         self._review_records = {}
         # Check next to the video (canonical) first, then the bundle dir, so a
@@ -1472,8 +1473,7 @@ The notes box travels with the video.
         current = [{"segment_num": s["segment_num"],
                     "start_frame": s.get("start_frame"),
                     "end_frame": s.get("end_frame")} for s in self._segment_list]
-        human = (bool(getattr(self, "_manual_boundaries", None))
-                 or segmentation_is_human(getattr(self, "_segments_data", None)))
+        human = self._segmentation_is_human()
         doc, merge_notes = merge_review_copies(copies, current, human_segmentation=human)
         # Each saved answer goes back on the CURRENT segment whose frames it
         # covers, as the release check and the results step match it -- never
@@ -1502,8 +1502,7 @@ The notes box travels with the video.
         # used to walk those too, showing the earlier answers -- "the thing that
         # was unsure has already been answered". A pellet
         # answered in this session stays in the walk (it was open at load), so
-        # Prev reaches it; one whose algorithm call changed since its answer is
-        # open again (_done says so).
+        # Prev reaches it.
         if self._triage_only and self._triaged_indices:
             still_open = open_triaged_indices(self._triaged_indices,
                                               self._segment_list, self._review_records)
@@ -1525,19 +1524,23 @@ The notes box travels with the video.
                 f"Opening segment {self._segment_list[idx]['segment_num']}")
 
     def _build_segment_list(self):
-        """Build the unified segment list from segments + outcomes + assignments."""
-        self._segment_list = []
+        """Build the unified segment list from segments + outcomes + assignments.
 
-        # Manual re-segmentation override: when the reviewer re-cut the video via
-        # the segmentation editor (Q1 = No), use THEIR boundaries and score every
-        # segment fresh (the algo's per-old-segment outcomes no longer apply).
-        manual = getattr(self, "_manual_boundaries", None)
+        The cuts come from the segments file and nowhere else. WHY: this window
+        once had its own re-cut editor, which saved cuts as a
+        ``manual_segmentation`` block inside the review file. That editor is
+        gone (a wrong cut is fixed in deep review, which writes the segments
+        file), but the window kept building its pellets from such a block when
+        an old review had one -- so it showed cuts no pipeline step uses, asked
+        about segments with no algorithm outcome, and its answers were matched
+        against the real cuts later. An old block is now history only: the
+        save carries it along unchanged (causal_review_io.save_causal_review),
+        and nothing reads it."""
+        self._segment_list = []
 
         # Extract boundaries
         boundaries = []
-        if manual:
-            boundaries = sorted({int(x) for x in manual})
-        elif "boundaries" in self._segments_data:
+        if "boundaries" in self._segments_data:
             for b in self._segments_data["boundaries"]:
                 if isinstance(b, dict):
                     boundaries.append(int(b.get("frame", b.get("index", 0))))
@@ -1583,13 +1586,9 @@ The notes box travels with the video.
             for _s in self._reaches_data["segments"]:                # nested
                 _all_raw.extend(_s.get("reaches", []))
 
-        if manual or isinstance(self._reaches_data.get("reaches"), list):
-            # Assign each reach to the segment whose window contains its midpoint.
-            # REQUIRED after manual re-segmentation: a reach's ORIGINAL segment_num
-            # no longer maps to the reviewer's new cuts, so the Q2 candidates must
-            # be re-derived by frame -- otherwise the picker offers reaches from
-            # other windows entirely (the nested format grouped them by old
-            # segment_num). The flat format already worked this way.
+        if isinstance(self._reaches_data.get("reaches"), list):
+            # Flat reach list: each reach goes to the segment whose window
+            # contains its midpoint.
             for r in _all_raw:
                 mid = (int(r.get("start_frame", 0)) + int(r.get("end_frame", 0))) // 2
                 for seg_idx in range(n_segments):
@@ -1618,34 +1617,26 @@ The notes box travels with the video.
             is_boundary = False
             pellet_num = seg_num
 
-            if manual:
-                # Fresh segments from the reviewer's cuts -- no algo outcome maps.
-                outcome = None
-                interaction_frame = None
-                flagged = False
-                flag_reason = None
-                causal_reach = None
-            else:
-                outcome_info = outcomes_by_seg.get(seg_num, {})
-                outcome = outcome_info.get("outcome")
-                interaction_frame = outcome_info.get("interaction_frame")
-                flagged = bool(outcome_info.get("flagged_for_review", False))
-                # Why something outside the pipeline sent this pellet back
-                # (mousereach-route-to-queue); shown in the triage banner.
-                flag_reason = outcome_info.get("flag_reason") if flagged else None
+            outcome_info = outcomes_by_seg.get(seg_num, {})
+            outcome = outcome_info.get("outcome")
+            interaction_frame = outcome_info.get("interaction_frame")
+            flagged = bool(outcome_info.get("flagged_for_review", False))
+            # Why something outside the pipeline sent this pellet back
+            # (mousereach-route-to-queue); shown in the triage banner.
+            flag_reason = outcome_info.get("flag_reason") if flagged else None
 
-                # Find the causal reach from assignments
-                causal_reach = None
-                assigned_reaches = assignments_by_seg.get(seg_num, [])
-                for ar in assigned_reaches:
-                    if ar.get("is_causal"):
-                        causal_reach = {
-                            "start": int(ar["start_frame"]),
-                            "end": int(ar["end_frame"]),
-                            "reach_id": ar.get("reach_id"),
-                            "label": ar.get("label"),
-                        }
-                        break
+            # Find the causal reach from assignments
+            causal_reach = None
+            assigned_reaches = assignments_by_seg.get(seg_num, [])
+            for ar in assigned_reaches:
+                if ar.get("is_causal"):
+                    causal_reach = {
+                        "start": int(ar["start_frame"]),
+                        "end": int(ar["end_frame"]),
+                        "reach_id": ar.get("reach_id"),
+                        "label": ar.get("label"),
+                    }
+                    break
 
             # All reaches in this segment (for the reach picker) -- only those
             # inside the segment's own frames. WHY: the reach file's grouping
@@ -1683,7 +1674,6 @@ The notes box travels with the video.
                 "flag_reason": flag_reason,
                 "outcome_uncertain": outcome_uncertain,
                 "reach_uncertain": reach_uncertain,
-                "manual": bool(manual),
                 "causal_reach": causal_reach,
                 "all_reaches": all_reaches,
             })
@@ -2027,29 +2017,6 @@ The notes box travels with the video.
         }
 
         return group
-
-    # The tool no longer re-cuts videos (2026-10-23): a wrong pellet or
-    # wrong cuts is escalated to deep review. Cuts a reviewer saved with
-    # the editor it used to have are still honoured on reopen.
-
-    def _peek_manual_boundaries(self):
-        """Restore a prior manual re-segmentation (saved in the review doc) so the
-        segments rebuild from the reviewer's cuts on reopen; else None."""
-        candidates = []
-        bd = getattr(self, "_bundle_dir", None)
-        if bd:
-            candidates.append(Path(bd))
-        if self.video_path and self.video_path.parent not in candidates:
-            candidates.append(self.video_path.parent)
-        for d in candidates:
-            try:
-                doc, _ = load_causal_review(self._video_stem, d)
-            except Exception:
-                doc = None
-            b = (doc or {}).get("manual_segmentation", {}).get("boundaries")
-            if b:
-                return sorted({int(x) for x in b})
-        return None
 
     def _candidate_reach_ids(self, seg: Dict):
         """Reach ids algo-4's reduction could NOT rule out as misses for this
@@ -2643,8 +2610,7 @@ The notes box travels with the video.
     def _segmentation_is_human(self) -> bool:
         """The current cuts were made by a person (the matching takes a person's
         cuts as made, however short)."""
-        return (bool(getattr(self, "_manual_boundaries", None))
-                or segmentation_is_human(getattr(self, "_segments_data", None)))
+        return segmentation_is_human(getattr(self, "_segments_data", None))
 
     def _refusal_text(self) -> str:
         """The full message for an answer that was not recorded."""
@@ -3567,16 +3533,12 @@ The notes box travels with the video.
 
         # Save per-video file
         save_problems: List[str] = []
-        mb = getattr(self, "_manual_boundaries", None)
-        manual_seg = ({"boundaries": list(mb), "by": reviewer, "at": timestamp,
-                       "n_segments": max(0, len(mb) - 1)} if mb else None)
         out_path = save_causal_review(
             video_stem=self._video_stem,
             output_dir=self._review_dir(),
             segments=segments,
             provenance=provenance,
             reviewer=reviewer,
-            manual_segmentation=manual_seg,
             unmatched_answers=getattr(self, "_unmatched_answers", None),
             other_copies=[self.video_path.parent] if self.video_path else (),
             problems=save_problems,

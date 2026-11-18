@@ -540,6 +540,10 @@ def save_causal_review(
         Reviewer name; defaults to OS username. Saved at file level as "who
         saved the file last"; per segment only for the answers this save
         gives or changes.
+    manual_segmentation : dict, optional
+        History only: cuts an old version of the review window stored in the
+        review file. When not given, the block an earlier copy holds is kept
+        unchanged. No reader uses it; the segments file holds the cuts.
     unmatched_answers : list of dict, optional
         Earlier answers whose frames match no current segment
         (``restore_review_for_segments``). Kept under ``UNMATCHED_ANSWERS_KEY``
@@ -578,6 +582,16 @@ def save_causal_review(
         "provenance": provenance,
         "segments": segments,
     }
+    # Cuts an old version of the review window saved inside the review file.
+    # Nothing reads them any more (the segments file holds the cuts), but they
+    # are a record of what a person did, so they ride along UNCHANGED: the
+    # block given here, else the first one an earlier copy holds. WHY: a save
+    # from a window that had not loaded the block wrote the review without
+    # it, and the record was gone from every copy.
+    if not manual_segmentation:
+        manual_segmentation = next(
+            (d["manual_segmentation"] for d in earlier
+             if isinstance(d, dict) and d.get("manual_segmentation")), None)
     if manual_segmentation:
         doc["manual_segmentation"] = manual_segmentation
     if unmatched_answers:
