@@ -27,12 +27,13 @@ existing `Reach`/`SegmentReaches`/`VideoReaches` dataclasses from
 
 SEGMENT CONVENTION
 ==================
-Critically, the feature extractor zips reach-segments with outcome-segments
-POSITIONALLY (`zip(reaches_data['segments'], outcomes_data['segments'])`), and
-the outcome detector matches reach-segments by `segment_num`. Misordering or
-dropping any segment -- even an empty one -- corrupts everything after the first
-gap. So this translator emits EXACTLY ONE segment entry per input segment, in
-input order, including segments that contain zero spans.
+Critically, the feature extractor pairs reach-segments with outcome-segments
+by `segment_num` (feature_extractor.pair_segments_by_number) and holds a video
+whose reach segments skip a pellet the outcomes file has; the outcome detector
+also matches reach-segments by `segment_num`. Dropping any segment -- even an
+empty one -- would hold every such video. So this translator emits EXACTLY ONE
+segment entry per input segment, in input order, including segments that
+contain zero spans.
 
 The caller is responsible for building the `segments` list using the SAME
 boundary->segment convention the old reach detector used

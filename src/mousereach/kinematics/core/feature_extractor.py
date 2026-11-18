@@ -283,11 +283,82 @@ def causal_reach_owned_by_person(seg: dict) -> bool:
     return False
 
 
+def pair_segments_by_number(reach_segments, outcome_segments):
+    """Pair each pellet's reach segment with its outcome segment BY
+    ``segment_num``, and return ``(pairs, problems)``: ``pairs`` is a list of
+    ``(reach_segment, outcome_segment)`` in the reach file's order, and
+    ``problems`` lists, in words for a person, every reason the two files do
+    not describe the same pellets. Any problem means no pairing is trusted:
+    the caller raises KinematicsProblem and writes nothing.
+
+    WHY by number and not by position: the two lists used to be zipped by
+    position. If the two files disagree on how many pellets there are, or list
+    them in another order, a zip pairs a pellet's reaches with ANOTHER pellet's
+    outcome and causal reach, and nothing said so -- the kinematics, the
+    outcome and the causal-reach flag of every reach after the first gap were
+    filed against the wrong pellet. Pairing by number either pairs a pellet
+    with its own outcome or stops.
+
+    The one difference that is expected: the reaches file has one segment per
+    boundary, the last one running from the last boundary to the end of the
+    video (span_to_reaches.segments_from_boundaries); the outcomes file has
+    one segment per pellet, i.e. per PAIR of boundaries, one fewer. So a reach
+    segment numbered after every outcome segment is the stretch after the last
+    boundary, not a pellet: it is left out here exactly as the positional zip
+    left it out (whether its reaches should be counted is a separate question,
+    see ALGO_2_REACH_DETECTION.md). Anything else is a problem:
+      - a segment without a usable ``segment_num`` (nothing to pair it by);
+      - a number listed twice in either file (which one is the pellet's?);
+      - an outcome for a pellet the reaches file has no segment for (its
+        outcome would be dropped silently);
+      - a reach segment with no outcome, numbered before the last outcome (a
+        pellet in the middle with no outcome means the files were made on
+        different cuts).
+    """
+    problems = []
+
+    def _numbered(segments, which):
+        out = []
+        for i, seg in enumerate(segments or []):
+            try:
+                out.append((int(seg.get('segment_num')), seg))
+            except (TypeError, ValueError, AttributeError):
+                problems.append(f"{which} segment at position {i + 1} has no usable "
+                                f"segment number")
+        nums = [n for n, _ in out]
+        dup = sorted({n for n in nums if nums.count(n) > 1})
+        if dup:
+            problems.append(f"the {which} file lists segment(s) "
+                            f"{', '.join(str(n) for n in dup)} more than once")
+        return out
+
+    reach_num = _numbered(reach_segments, "reaches")
+    outcome_num = _numbered(outcome_segments, "outcomes")
+    outcome_by = {n: seg for n, seg in outcome_num}
+    reach_set = {n for n, _ in reach_num}
+    no_reach = sorted(set(outcome_by) - reach_set)
+    if no_reach:
+        problems.append(f"the outcomes file has pellet(s) {', '.join(str(n) for n in no_reach)} "
+                        f"that the reaches file has no segment for")
+    last = max(outcome_by) if outcome_by else 0
+    no_outcome = sorted(n for n in reach_set if n not in outcome_by and n <= last)
+    if no_outcome:
+        problems.append(f"the reaches file has segment(s) {', '.join(str(n) for n in no_outcome)} "
+                        f"that the outcomes file has no outcome for")
+    if problems:
+        problems.append("the reaches and outcomes files do not describe the same pellets "
+                        "(made on different cuts?); re-run the video from reach detection")
+        return [], problems
+    return [(seg, outcome_by[n]) for n, seg in reach_num if n in outcome_by], []
+
+
 class KinematicsProblem(Exception):
     """Raised by FeatureExtractor.extract when the features it would write are
     not the video's true result: a person's answers (review or ground truth)
     could not be read or applied, the reach assignment file is unreadable, or
-    a reach's extended measures could not be computed, or -- in a
+    a reach's extended measures could not be computed, the reaches and
+    outcomes files do not describe the same pellets
+    (pair_segments_by_number), or -- in a
     kinematics-only re-run of a filed video (``keep_filed``) -- the reaches,
     outcomes or causal reaches would differ from the filed ones without an
     owed answer deciding them (filed_decisions.py). ``problems`` lists each
@@ -570,6 +641,15 @@ class FeatureExtractor:
         total_frames = reaches_data['total_frames']
         n_segments = reaches_data['n_segments']
 
+        # Each pellet's reaches with ITS outcome, matched by segment number,
+        # never by position (pair_segments_by_number says why). Both loops
+        # below -- the filed-decisions comparison and the measurements --
+        # use these pairs, so they can never pair differently.
+        _pairs, _pair_problems = pair_segments_by_number(
+            reaches_data.get('segments'), outcomes_data.get('segments'))
+        if _pair_problems:
+            raise KinematicsProblem(_pair_problems)
+
         # Extract features for each segment
         segment_features = []
 
@@ -635,7 +715,7 @@ class FeatureExtractor:
                     f"({_e}), so this kinematics-only re-run cannot show that it keeps "
                     f"the filed reaches, outcomes and causal reaches"])
             _fresh = {}
-            for _sd, _od in zip(reaches_data['segments'], outcomes_data['segments']):
+            for _sd, _od in _pairs:
                 _m, _lo = split_reaches_by_ignore_windows(_sd['reaches'], _od.get('abnormal_ranges'))
                 _lo = list(_sd.get('excluded_reaches') or []) + _lo
                 _fresh[int(_sd['segment_num'])] = _fd.decision_of_resolved(_sd, _od, _m, _lo)
@@ -645,7 +725,7 @@ class FeatureExtractor:
                 print(f"[feature_extractor] {video_name}: {_msg}")
                 raise KinematicsProblem([_msg])
 
-        for seg_data, outcome_data in zip(reaches_data['segments'], outcomes_data['segments']):
+        for seg_data, outcome_data in _pairs:
             seg_num = seg_data['segment_num']
 
             # Compute behavioral/postural features for this segment

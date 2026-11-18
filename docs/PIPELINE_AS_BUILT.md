@@ -3285,7 +3285,16 @@ failed: kinematics not written: ...)`, followed by each problem in words. The pr
 - the video's ground-truth file could not be read -- the message names the file;
 - applying the person's answers (the truth layering) failed;
 - the reach assignment file (`<video>_reach_assignments.json`) is there but could not be read;
-- a reach's extended measures could not be computed -- the message names the reach and its frames.
+- a reach's extended measures could not be computed -- the message names the reach and its frames;
+- the reaches file and the pellet outcomes file do not describe the same pellets (since
+  2026-11-18): the outcomes file has a pellet the reaches file has no segment for, a reach segment
+  before the last pellet has no outcome, or a segment number is missing or listed twice. The
+  message names the pellets and ends "re-run the video from reach detection". The two files are
+  matched pellet by pellet by their segment number (`pair_segments_by_number`); they used to be
+  matched by position, so such a disagreement measured a pellet's reaches against another
+  pellet's outcome with nothing said. The reaches file's one extra last segment (after the last
+  cut, not a pellet) is normal and is left out, as before. A retry gives the same answer: the
+  files have to be made again (`mousereach-watch-reprocess <video>` re-runs it from the start).
 
 No `<video>_features.json` is written (an existing one is left as it was). The same happens when
 the kinematics are made by hand (`mousereach-kinematics`, the Run All Steps tab): the command
