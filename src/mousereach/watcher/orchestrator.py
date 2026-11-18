@@ -2213,6 +2213,7 @@ class BaseOrchestrator:
             summary = self._reprocess_scanner.scan(mark_outdated=True,
                                                    adopt_orphans=self.adopts_orphans,
                                                    full_only=not self.reprocesses_partial)
+            self._write_no_manifest_attention(summary)
             n_out = summary.get('outdated', 0)
             if n_out:
                 logger.info(
@@ -2235,6 +2236,28 @@ class BaseOrchestrator:
             # must still leave a full idle gap before the next one, or the
             # node scans continuously and processes nothing.
             self._last_reprocess_scan = time.monotonic()
+
+    def _write_no_manifest_attention(self, summary: dict) -> None:
+        """Rewrite this machine's list of filed videos with no processing
+        manifest (attention/<host>_filed_without_manifest.json) from a version
+        scan's summary. Defined here on the base class, not on the processing
+        role only, because every role that runs the version scan calls it --
+        a pose node with also_process on runs the scan too, and a missing
+        method there would abort the scan before it asks for re-poses. It is
+        rewritten so a video that has since been given a manifest
+        leaves the list. Left alone when the scan could not list the archive
+        (summary 'no_manifest_listed' False): then every filed video looks
+        manifest-less and the list would be a guess. Never raises."""
+        try:
+            if not summary.get('no_manifest_listed') or not Paths.NAS_ROOT:
+                return
+            from mousereach.watcher.attention import write_list
+            from mousereach.watcher.reprocessor import (
+                NO_MANIFEST_KIND, no_manifest_attention_items)
+            write_list(Paths.NAS_ROOT, self.hostname, NO_MANIFEST_KIND,
+                       no_manifest_attention_items(summary.get('no_manifest_videos') or []))
+        except Exception as e:
+            logger.warning(f"could not rewrite the filed-without-manifest list: {e}")
 
     # Whether the version scan on this node may register disk-archived videos
     # that have no row here. True for the processing role, whose ledger is

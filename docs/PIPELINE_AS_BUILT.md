@@ -5566,10 +5566,30 @@ times). WHY: the filed folder normally holds the PREVIOUS run's manifest, and ac
 filed a run that had none of its own beside the old provenance, so the version scan read the
 old versions.
 
-Not done yet (a known leftover, in the version scan): a filed video that has no manifest is
-still only counted, not named in the scan's log line or listed for a person, and a stage whose
-version is unrecorded while its output exists still re-runs from segmentation rather than from
-that stage.
+**The version scan names the filed videos it cannot check.** A filed video with no
+`<video>_processing_manifest.json` has no recorded versions, so the version scan can never
+find it out of date: a newer algorithm never reaches it. The scan used to add such a video to
+a count and nothing more. Now:
+
+- the scan's log line says how many there are and names them (the first 50, then "and N
+  more"), and `mousereach-version-check` lists them under "Filed videos with no processing
+  manifest";
+- the watcher rewrites the attention list `<NAS root>/attention/<machine>_filed_without_manifest.json`
+  after every version scan, one item per video (on every machine that runs the version scan:
+  the processing server, and a graphics-card PC whose `watcher.also_process` is on; writing
+  the list never stops that scan from going on to ask for re-poses), shown in the Pipeline Dashboard's red panel.
+  What to do for one: press **Re-run video** for it in the Pipeline Dashboard; it is run again
+  from segmentation and filed with a manifest, and it leaves the list at the next scan. The
+  scan itself does not re-run such a video (it does not know which versions made it);
+- a scan that could not list the Analyzed tree (a share hiccup) leaves the list as it was,
+  because then every filed video looks as if it had no manifest.
+
+A video with no manifest but a saved review or ground truth its kinematics have not applied is
+not on the list: the scan already re-runs its kinematics, which writes a manifest.
+
+A stage the manifest never recorded a version for counts like an out-of-date one AT ITS OWN
+stage: a manifest missing only its kinematics version re-runs kinematics only, one missing
+the reach detector's version re-runs from reach detection (tests/test_version_scan_start_stage.py).
 
 ## Update 2026-11-17: the kinematics carry an earlier swipe-measure definition (extractor 2.6.0)
 

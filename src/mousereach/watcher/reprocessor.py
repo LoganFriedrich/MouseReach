@@ -43,6 +43,47 @@ _STAGE_FOR_COMPONENT = {
 _POST_DLC_ORDER = ["segmentation", "reach", "outcome", "kinematics"]
 
 
+# How many filed videos with no manifest the scan's log line names before it
+# says "and N more" (all of them are on the attention list).
+NO_MANIFEST_NAMED_IN_LOG = 50
+
+# The attention list (watcher/attention.py) of filed videos with no manifest:
+# <NAS root>/attention/<host>_filed_without_manifest.json.
+NO_MANIFEST_KIND = "filed_without_manifest"
+
+
+def no_manifest_log_line(video_ids) -> str:
+    """The scan's log line naming the filed videos it found with no processing
+    manifest (the first NO_MANIFEST_NAMED_IN_LOG of them).
+
+    WHY named: such a video has no recorded versions, so no version scan ever
+    marks it outdated -- a newer algorithm never reaches it. As a bare count
+    in the summary nobody could tell which videos those were."""
+    ids = sorted(video_ids)
+    shown = ", ".join(ids[:NO_MANIFEST_NAMED_IN_LOG])
+    more = len(ids) - NO_MANIFEST_NAMED_IN_LOG
+    return (f"{len(ids)} filed video(s) have no processing manifest, so no version "
+            f"check covers them: {shown}"
+            + (f" ... and {more} more" if more > 0 else "")
+            + f" (all listed in attention/<host>_{NO_MANIFEST_KIND}.json)")
+
+
+def no_manifest_attention_items(video_ids) -> list:
+    """The attention-list items (watcher/attention.write_list) for filed
+    videos with no processing manifest: one per video, needs_person."""
+    return [{
+        "kind": NO_MANIFEST_KIND,
+        "needs_person": True,
+        "video_id": vid,
+        "says": (f"{vid} is filed with no processing manifest, so nothing records which "
+                 f"model and algorithm versions made its results and the version scan "
+                 f"never re-runs it for a newer one. Its filed results are unchanged. "
+                 f"To bring it current, press 'Re-run video' for it in the Pipeline "
+                 f"Dashboard: it is run again from segmentation and filed with a manifest, "
+                 f"and it leaves this list at the next version scan."),
+    } for vid in sorted(video_ids)]
+
+
 def earliest_stale_stage(stale_components) -> str:
     """The earliest post-DLC stage to re-run given the stale components (that
     stage + everything downstream re-runs; upstream is reused). Falls back to
@@ -303,6 +344,16 @@ class ReprocessingScanner:
                                         # (re-run once if they have no session file)
             'crystallized_skipped': 0,
             'no_manifest': 0,
+            # The filed videos with no processing manifest, by name. No
+            # version comparison covers them (there are no versions to
+            # compare), so a newer algorithm never re-runs them: they are
+            # named in the scan's log line and listed for a person
+            # (no_manifest_attention_items). Filled only when this pass
+            # listed the archive -- without the listing every filed video
+            # looks manifest-less -- and 'no_manifest_listed' says whether
+            # it did, so a caller never rewrites the list from a guess.
+            'no_manifest_videos': [],
+            'no_manifest_listed': False,
             'review_triggered': 0,  # version-current but a newer human review to apply
             'no_manifest_review': 0,  # no manifest, but a saved review its
                                       # kinematics have not applied: re-run them
@@ -349,6 +400,7 @@ class ReprocessingScanner:
         try:
             manifest_index, manifest_mtime, feats_mtime = self._index_archive()
             archive_listed = True
+            summary['no_manifest_listed'] = True
         except Exception as e:
             manifest_index, manifest_mtime, feats_mtime = {}, {}, {}
             # A listing that stopped part-way may have seen a video's ground
@@ -529,6 +581,7 @@ class ReprocessingScanner:
                     gt_pending = self._pending_ground_truth(video_id, None, feats_mtime)
                     if review_path is None and not gt_pending:
                         summary['no_manifest'] += 1
+                        summary['no_manifest_videos'].append(video_id)
                         continue
                     if (review_path is not None
                             and self._review_declares_mislabel(review_path)
@@ -770,8 +823,11 @@ class ReprocessingScanner:
             f"{summary['current']} current, {summary['outdated']} outdated, "
             f"{summary['unmarked_current']} un-marked (were outdated, now current), "
             f"{summary['crystallized_skipped']} crystallized, "
+            f"{summary['no_manifest']} with no manifest, "
             f"{summary.get('adopted', 0)} adopted from disk"
         )
+        if summary['no_manifest_videos']:
+            logger.warning(no_manifest_log_line(summary['no_manifest_videos']))
         self._save_caches(manifest_index, review_index)
 
         return summary
@@ -1167,9 +1223,19 @@ class ReprocessingScanner:
         lines.append(f"  Crystallized:       {summary['crystallized_skipped']}")
         lines.append(f"  Unsupported tray:   {summary['unsupported_tray']} "
                      f"(Easy/Flat -- not re-run for versions: they need only the session's reaches)")
-        lines.append(f"  No manifest:        {summary['no_manifest']}")
+        lines.append(f"  No manifest:        {summary['no_manifest']}"
+                     + (" (never compared with the current versions)"
+                        if summary['no_manifest'] else ""))
         lines.append(f"  Errors:             {summary['errors']}")
         lines.append("")
+
+        if summary['no_manifest_videos']:
+            lines.append("Filed videos with no processing manifest:")
+            for vid in summary['no_manifest_videos'][:20]:
+                lines.append(f"  {vid}")
+            if len(summary['no_manifest_videos']) > 20:
+                lines.append(f"  ... and {len(summary['no_manifest_videos']) - 20} more")
+            lines.append("")
 
         # Outdated details
         if summary['outdated_videos']:
