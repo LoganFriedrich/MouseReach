@@ -267,3 +267,69 @@ def test_route_recut_voided_to_triage_flags_then_routes(run, monkeypatch):
     assert [s["segment_num"] for s in outcomes["segments"] if s.get("flagged_for_review")] == [3]
     (vid, reason, kw), = calls
     assert vid == VID and rg.RECUT_FLAG_REASON in reason and kw["db_state"] == "triage"
+
+
+# ---------------------------------------------------------------------------
+# Answering again after the re-cut ends the question (the real save path)
+# ---------------------------------------------------------------------------
+
+def _window_record(num, outcome, answered=True):
+    return io.build_segment_record(
+        segment_num=num, pellet_num=num, algo_outcome="retrieved", algo_causal_reach=None,
+        algo_interaction_frame=None, human_outcome=outcome if answered else None,
+        human_causal_reach=None, is_phantom=False, agreed=False,
+        answers={} if answered else {"reviewed": False}, notes="",
+        segment_span=_window_span(NEW_CUTS, num))
+
+
+def test_the_same_answer_given_again_after_the_recut_counts(run, monkeypatch):
+    """Pellet 1's cuts did not move; its pre-cut answer is void and asked
+    again. The person gives the SAME answer on the new cuts. The save must
+    stamp it with this save's time -- inheriting the voided answer's time
+    (same number, same answer) would leave it void and ask it for ever."""
+    folder, pose = run
+    monkeypatch.setattr(io, "durable_review_path", lambda stem: None)
+    # the earlier answer as the window saved it (pellet 1 has the same frames)
+    _review(folder, dict(_window_record(1, "untouched"), reviewer="reviewer_a",
+                         reviewed_at=BEFORE))
+    assert rg.recut_voided_open(VID, folder) == {1}
+    io.save_causal_review(VID, folder, [_window_record(1, "untouched"),
+                                        _window_record(2, "retrieved"),
+                                        _window_record(3, "retrieved")],
+                          provenance={}, reviewer="reviewer_b", cuts_set_at=CUT_AT)
+    assert rg.recut_voided_open(VID, folder) == set()
+    decision, reason, _ = rg.evaluate_gate(VID, folder)
+    assert decision == rg.DECISION_CLEAN, reason
+    seg1 = _extract(folder, pose)["segments"][0]
+    assert seg1["outcome"] == "untouched"
+    assert {r.get("outcome_source") for r in seg1["reaches"]} == {"human_review"}
+
+
+def test_a_voided_answer_carried_by_a_save_stays_void(run, monkeypatch):
+    """A save that leaves the voided pellet unanswered carries the old answer
+    along as a record with its own (pre-cut) time: still void, still asked."""
+    folder, _ = run
+    monkeypatch.setattr(io, "durable_review_path", lambda stem: None)
+    _review(folder, dict(_window_record(1, "untouched"), reviewer="reviewer_a",
+                         reviewed_at=BEFORE))
+    io.save_causal_review(VID, folder, [_window_record(1, None, answered=False),
+                                        _window_record(2, "retrieved"),
+                                        _window_record(3, "retrieved")],
+                          provenance={}, reviewer="reviewer_b", cuts_set_at=CUT_AT)
+    assert rg.recut_voided_open(VID, folder) == {1}
+
+
+def test_a_reaches_file_made_on_other_cuts_is_refused_not_guessed(run):
+    """A reaches file left from the old cuts beside the person's new cuts
+    (a step command or backfill, where no gate checks for stale outputs):
+    answers matched to the new pellets would land on the old reaches."""
+    from mousereach.kinematics.core.feature_extractor import KinematicsProblem
+    folder, pose = run
+    reaches_path = folder / f"{VID}_reaches.json"
+    reaches = json.loads(reaches_path.read_text(encoding="utf-8"))
+    reaches["segments"][2]["start_frame"] = OLD_CUTS[2]          # pellet 3 began at 190
+    reaches_path.write_text(json.dumps(reaches), encoding="utf-8")
+    _review(folder, _answer(1, AFTER, cuts=NEW_CUTS))
+    with pytest.raises(KinematicsProblem) as refused:
+        _extract(folder, pose)
+    assert "not made on the cuts" in str(refused.value)

@@ -577,6 +577,9 @@ the same answer and wrote the algorithm's call in its place -- with only a log l
   (`review_gate.route_recut_voided_to_triage`); every other way of running kinematics (the step
   command, bring-current, the backfill) writes no features file for the video and says why.
   A voided answer is never dropped silently.
+- answering a voided pellet again counts at once, even with the same answer as before: the save
+  stamps it with the time you gave it, never with the voided answer's older time (which would
+  leave it void and ask it again on every pass).
 
 WHY: re-segmentation voids everything after it. The earlier answers were given on cuts that
 turned out wrong; fitting them onto the new cuts, by overlapping frames or by pellet number, is a

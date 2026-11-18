@@ -3602,6 +3602,9 @@ The notes box travels with the video.
             unmatched_answers=getattr(self, "_unmatched_answers", None),
             other_copies=[self.video_path.parent] if self.video_path else (),
             problems=save_problems,
+            # An answer given now on a person's cuts is stamped now, never
+            # with a voided earlier answer's time (stamp_segment_reviewers).
+            cuts_set_at=cuts_set_at(getattr(self, "_segments_data", None)),
         )
         # A durable-copy failure does not stop the save (refusing would lose
         # the answers outright), but the reviewer must see it, not only the log.

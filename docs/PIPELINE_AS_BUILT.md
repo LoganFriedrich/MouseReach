@@ -5697,6 +5697,18 @@ WHAT HOLDS NOW.
   triage (`review_gate.route_recut_voided_to_triage`), a hold, not a failure. The step command,
   bring-current and the kinematic backfill treat it like any KinematicsProblem: no features file,
   and the reason printed.
+- **Answering again ends the question.** A person who answers a voided pellet again on the new
+  cuts often gives the same answer as before. The save used to keep the earlier record's time for
+  an unchanged answer (`stamp_segment_reviewers`), so the new answer still read as given before the
+  re-cut, stayed void and was asked again on every pass. The window now passes the cuts' time to
+  `save_causal_review(cuts_set_at=...)`, and an answer given in the save is never stamped with a
+  time before it; an old answer a save only carries along as a record keeps its own time and stays
+  void.
+- **A reaches file made on other cuts is refused.** The results step checks that each pellet's
+  segment in the reaches file starts at the same cut as in the segments file; if not, it writes no
+  features file and says to re-run reach detection on the current cuts, instead of putting a
+  person's answer on another pellet's reaches (the watcher's gate already holds such a video as
+  stale; the step command and the backfill have no gate).
 - Ground truth is unchanged: it is matched to the same pellets by frames and put back only where its
   own cuts match (`index_gt_outcomes_by_segment`, `unified_gt`); the review-answer re-cut rule is
   not applied to it.

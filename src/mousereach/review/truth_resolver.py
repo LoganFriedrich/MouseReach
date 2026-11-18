@@ -762,12 +762,33 @@ def resolve_truth_layers(
     if applied is not None:
         applied['problems'] = problems
         applied['recut_voided'] = []
+    # The reaches file must have been made on these cuts: each pellet's
+    # segment there starts at the same cut. WHY: answers are matched to the
+    # segments file's pellets and the reaches/outcomes are keyed by number; a
+    # reaches file made on other cuts (a step command or backfill run beside
+    # newer cuts, where no review gate checks for stale outputs) would put a
+    # person's answer on another pellet's reaches. Refused, never guessed.
+    _cut_mismatch = []
+    if _cur_segs and segments_doc:
+        _starts = {}
+        for _s in reaches_data.get("segments") or []:
+            try:
+                _starts[int(_s["segment_num"])] = int(_s["start_frame"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        _cut_mismatch = [p["segment_num"] for p in _cur_segs
+                         if _starts.get(p["segment_num"]) != p["start_frame"]]
     if _recut_cuts_unreadable:
         # A person cut this video, but their cuts cannot be read: which of
         # their answers a re-cut voided cannot be told, so nothing is applied
         # as if it could (the extractor refuses while problems is not empty).
         problems.append("the segments file a person saved holds no usable cuts, so "
                         "which of their answers still stand cannot be told")
+    if _cut_mismatch:
+        problems.append("the reaches file was not made on the cuts in the segments file "
+                        "(segment(s) %s start elsewhere), so a person's answers cannot be "
+                        "matched to its reaches; re-run reach detection on the current cuts"
+                        % ", ".join(str(n) for n in _cut_mismatch[:10]))
     # Plus the folders the caller names (the run's own folder): the copy the
     # extractor was handed may be the durable one, and the copy beside the run
     # must still be merged in -- every copy counts, never one picked by time.

@@ -445,6 +445,8 @@ def stamp_segment_reviewers(
     previous: Optional[Dict[str, Any]],
     reviewer: str,
     timestamp: str,
+    recut: Optional[datetime] = None,
+    carried=(),
 ) -> List[Dict[str, Any]]:
     """Give every answered record its own "reviewer" and "reviewed_at"
     (see the comment block above for why). For each record:
@@ -456,6 +458,16 @@ def stamp_segment_reviewers(
       and time, or, if the previous file had none per record, the previous
       file's own -- the person who saved that file gave that answer;
     - otherwise (new or changed): this save's reviewer and time.
+
+    ``recut``: when a person set the current cuts. A person's answer in THIS
+    save never inherits a time from before then -- it was given now, on the
+    new cuts. WHY: an answer re-given after a re-cut is often the same as the
+    voided one (same pellet number, same outcome); inheriting the old time
+    left it void (answer_survives_recut), so the pellet was asked again on
+    every pass for ever. ``carried``: segment numbers whose record this save
+    did not answer but took back from an earlier copy (carry_earlier_answers)
+    -- those keep their own time, so a voided answer carried along as a record
+    is never made to look as if it had been given on the new cuts.
 
     Returns new record dicts; the caller's are not changed."""
     prev_doc = previous or {}
@@ -492,6 +504,10 @@ def stamp_segment_reviewers(
             who, when = rec["reviewer"], rec["reviewed_at"]
         else:
             who, when = reviewer, timestamp
+        if (recut is not None and when and rec.get("segment_num") is not None
+                and int(rec["segment_num"]) not in carried
+                and not answer_survives_recut({"reviewed_at": when}, None, recut)):
+            who, when = reviewer, timestamp
         rec["reviewer"] = who or reviewer
         rec["reviewed_at"] = when or timestamp
         out.append(rec)
@@ -508,8 +524,14 @@ def save_causal_review(
     unmatched_answers: Optional[List[Dict[str, Any]]] = None,
     other_copies=(),
     problems: Optional[List[str]] = None,
+    cuts_set_at: Optional[str] = None,
 ) -> Path:
     """Write (or overwrite) the per-video causal review JSON.
+
+    ``cuts_set_at``: when a person set the cuts this save's answers were given
+    on (the segments file's ``corrected_at``, causal_review_io.cuts_set_at);
+    an answer given in this save is then never stamped with an earlier time
+    (stamp_segment_reviewers says why).
 
     A save can add or change answers; it never drops one. Before writing, every
     existing copy is read -- the working copy about to be replaced, the durable
@@ -571,7 +593,8 @@ def save_causal_review(
             "copy holds a person's answer for their frames; that answer is kept",
             video_stem, ", ".join(str(k) for k in kept))
     segments = stamp_segment_reviewers(
-        segments, _previous_reviews(earlier), reviewer, timestamp)
+        segments, _previous_reviews(earlier), reviewer, timestamp,
+        recut=_when(cuts_set_at) if cuts_set_at else None, carried=set(kept))
 
     doc: Dict[str, Any] = {
         "type": "causal_review",
