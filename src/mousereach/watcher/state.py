@@ -37,6 +37,37 @@ VIDEO_EXTENSIONS = {'.mkv', '.avi', '.mp4', '.mov', '.wmv'}
 from mousereach.pipeline.fsutil import TEMP_SUFFIXES  # noqa: E402  (one list)
 
 
+def _scandir_files(folder: Path) -> List[Path]:
+    """The regular files at the top of ``folder``, from ONE listing.
+
+    os.scandir hands back each entry's type with the listing (on Windows it
+    comes in the same directory read), so DirEntry.is_file() asks the share
+    nothing more. Path.iterdir() followed by Path.is_file() asks once per
+    name -- on a network share that is one round trip per file, every scan.
+    An entry whose type cannot be read is left out, as is_file() would.
+    """
+    files = []
+    with os.scandir(folder) as it:
+        for entry in it:
+            try:
+                if entry.is_file():
+                    files.append(Path(entry.path))
+            except OSError:
+                continue
+    return files
+
+
+def _same_path(recorded: str, listed: Path) -> bool:
+    """True when a recorded path names the file just listed. String
+    comparison only (case and separators normalised): no request to disk."""
+    def norm(p) -> str:
+        return os.path.normcase(os.path.normpath(os.path.abspath(str(p))))
+    try:
+        return norm(recorded) == norm(listed)
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class WorkItem:
     """A unit of work for the orchestrator."""
@@ -112,10 +143,22 @@ class WatcherStateManager:
         newly_registered = []
         parked: Dict[str, str] = {}
 
-        for file_path in scan_dir.iterdir():
-            if not file_path.is_file():
-                continue
+        # ONE directory listing, and no per-file request to the share for a
+        # collage already on record. WHY: this runs every poll on every GPU
+        # node over the intake folder, which keeps every collage ever filmed
+        # (well over a thousand). The old loop asked the share twice per file
+        # -- Path.is_file() on each listed name, then is_file() again on the
+        # row's recorded path -- so a scan cost two network round trips per
+        # collage. On a healthy link that was the whole ~10 s scan; when one
+        # node's link to the share slowed to seconds per request, the same
+        # scan took over two hours and the node stopped posing. os.scandir
+        # returns each entry's file/folder type with the listing itself, so
+        # entry.is_file() costs nothing more, and a recorded path that IS the
+        # listed path needs no check: the listing just showed the file there.
+        # (tests/test_discover_collages_no_per_file_requests.py)
+        listed = _scandir_files(scan_dir)
 
+        for file_path in listed:
             # Check extension
             if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
                 continue
@@ -131,7 +174,8 @@ class WatcherStateManager:
                 try:
                     known = self.db.get_collage(filename) or {}
                     recorded = (known.get('source_path') or '').strip()
-                    if not recorded or not Path(recorded).is_file():
+                    if not recorded or (not _same_path(recorded, file_path)
+                                        and not Path(recorded).is_file()):
                         self.db.set_collage_source_path(filename, str(file_path))
                         logger.info(
                             f"Collage {filename}: recorded path was not a file "
@@ -423,13 +467,10 @@ class WatcherStateManager:
         newly_registered = []
         seen = set()
 
-        for file_path in scan_dir.iterdir():
+        # One listing, file types included (_scandir_files): no request to
+        # the share per name just to learn it is a file.
+        for file_path in _scandir_files(scan_dir):
             if not self._is_single_intake_name(file_path, scan_dir):
-                continue
-            try:
-                if not file_path.is_file():
-                    continue
-            except OSError:
                 continue
 
             filename = file_path.name

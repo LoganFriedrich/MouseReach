@@ -5963,3 +5963,32 @@ For an operator: if a GPU machine's log shows "no local DLC queue is configured 
 the machine's processing folder in `mousereach-setup` (the DLC queue lives inside it) and restart
 its watcher; the videos it parked are taken again by themselves. Tests:
 `tests/test_cut_child_on_a_node_without_a_queue.py`.
+
+## Update 2026-11-18: the collage intake scan asks the share nothing per file
+
+**What was wrong.** Every GPU node scans the shared collage intake folder
+(`Unanalyzed/Multi-Animal`) on every poll, and that folder keeps every collage
+ever filmed. `WatcherStateManager.discover_new_collages` listed the folder and
+then asked the share about each file twice: `Path.is_file()` on the listed
+name, then `is_file()` again on the path recorded in the collage's row. So one
+scan cost two network round trips per collage, every poll. On a healthy link
+that was most of a ~10 s scan. When a node's connection to the share slowed to
+seconds per request, the same scan took one to two hours, the node did almost
+no posing, and new collages waited hours to be registered.
+
+**What changed.** The folder is read with ONE `os.scandir`, which returns each
+entry's file/folder type with the listing (`_scandir_files`), so no further
+request is made to learn that an entry is a file. A collage on record whose
+recorded path is the path just listed needs no check (`_same_path`, a string
+comparison); only a row recorded somewhere else is still checked, as before,
+and corrected when that path is not a file. The singles intake
+(`discover_new_singles`) reads its folder the same way. Measured against an
+intake folder of about 1,800 collages: 3,552 requests per scan before, 1 after.
+
+**What an operator sees.** Nothing changes in what the scan does. The
+`Cycle ... scan N s` line in the watcher log is shorter, and it no longer grows
+with the number of collages in the intake folder. A scan that is still long
+means the connection to the share itself is slow: one plain request is slow
+too, for example listing the intake folder in File Explorer from that PC.
+
+Tests: tests/test_discover_collages_no_per_file_requests.py.
