@@ -116,3 +116,49 @@ def first_file(root, pattern: str) -> Optional[Path]:
     """The first matching file, or None -- the replacement for
     ``next(root.rglob(pattern), None)``."""
     return next(iter_files(root, pattern), None)
+
+
+def filed_tree_refusal(folder) -> Optional[str]:
+    """Why a step command must not write its output into ``folder``, or None.
+
+    A folder inside the configured filed tree (``Paths.ANALYZED_OUTPUT``) is
+    refused. WHY: a filed video has passed every check, and its files are the
+    record of the run that passed them. A step command run by hand (e.g.
+    ``mousereach-grasp-analyze -i <folder> --overwrite``) rewrote them in
+    place: no earlier generation kept, no watcher record, no crystallize lock
+    asked -- one wrong folder argument and filed results changed silently.
+    Bringing a filed video up to date is the watcher's version re-run
+    (``mousereach-version-check --mark``), which keeps every check and the
+    earlier generation. None when no filed tree is configured or the path
+    cannot be resolved (nothing to compare with).
+    """
+    try:
+        from ..config import Paths
+        root = getattr(Paths, "ANALYZED_OUTPUT", None)
+        if not root:
+            return None
+        f, r = Path(folder).resolve(), Path(root).resolve()
+    except Exception:
+        return None
+    if f == r or r in f.parents:
+        return (f"{folder} is inside the filed tree ({root}). Step commands never "
+                f"write into filed results; to bring filed videos up to date use "
+                f"the watcher's re-run (mousereach-version-check --mark), or "
+                f"choose an output folder outside the filed tree with -o.")
+    return None
+
+
+def refuse_filed_output(output, input_path) -> None:
+    """For a step command: print why and exit 1 when its output folder -- the
+    ``-o`` folder, or by default the input folder (the input file's folder) --
+    is inside the filed tree (filed_tree_refusal says why). Nothing has been
+    written when it exits."""
+    import sys
+    folder = output
+    if folder is None and input_path is not None:
+        p = Path(input_path)
+        folder = p if p.is_dir() else p.parent
+    why = filed_tree_refusal(folder) if folder is not None else None
+    if why:
+        print(f"ERROR: {why} Nothing was written.")
+        sys.exit(1)

@@ -92,6 +92,10 @@ Examples:
                         help="Skip videos with files matching patterns (e.g., '*_reaches.json')")
     args = parser.parse_args()
 
+    # Never into the filed tree (pipeline/analyzed_tree.filed_tree_refusal).
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(args.output, args.input)
+
     results = process_batch(
         args.input,
         output_dir=args.output,

@@ -17,7 +17,11 @@ from .core import FeatureExtractor
 def main_batch():
     """Batch feature extraction from validated outcomes and reaches."""
     parser = argparse.ArgumentParser(
-        description="Extract features from reaches linked to outcomes (Step 5)"
+        description="Extract features from reaches linked to outcomes (Step 5)",
+        epilog="Refuses an output folder inside the filed (Analyzed) tree -- also "
+               "the default, the input folder, when the input is there. Filed "
+               "results are brought up to date by the watcher's re-run "
+               "(mousereach-version-check --mark)."
     )
     parser.add_argument(
         '-i', '--input',
@@ -57,6 +61,13 @@ def main_batch():
 
     if not input_dir.exists():
         print(f"ERROR: Input directory not found: {input_dir}")
+        sys.exit(1)
+
+    # Never into the filed tree (analyzed_tree.filed_tree_refusal says why).
+    from mousereach.pipeline.analyzed_tree import filed_tree_refusal
+    why = filed_tree_refusal(output_dir)
+    if why:
+        print(f"ERROR: {why} Nothing was written.")
         sys.exit(1)
 
     # Create output directory

@@ -95,6 +95,10 @@ Examples:
         print("No DLC files found. Looking for *DLC*.h5 files.")
         return
 
+    # Never into the filed tree (pipeline/analyzed_tree.filed_tree_refusal).
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(args.output, args.input)
+
     # Run batch processing
     results = process_batch(
         args.input,

@@ -1186,6 +1186,10 @@ options:
                         causal reach OVERRIDE the algo for the reviewed
                         segments (provenance: outcome_source). The input dir
                         is also checked.
+
+Refuses an output folder inside the filed (Analyzed) tree -- also the default,
+the input folder, when the input is there. Filed results are brought up to date
+by the watcher's re-run (mousereach-version-check --mark).
 ```
 
 ### `mousereach-grasp-triage`
@@ -2144,6 +2148,7 @@ never copied in again.
 
 ```
 usage: mousereach-backfill-kinematic-versions [-h] [--apply] [--root ROOT]
+                                              [--archive-dir ARCHIVE_DIR]
 
 Stamp the real kinematic extractor version onto processing manifests. Manifests are composed before feature extraction runs, so every one of them records kinematic_extractor='not_run' even when kinematics completed. This reads the version from each video's _features.json and writes it to the sibling manifest, making version currency work for kinematics without re-extracting anything.
 
@@ -2151,6 +2156,9 @@ options:
   -h, --help   show this help message and exit
   --apply      Write the corrections (default: report only)
   --root ROOT  Directory to walk (default: the Analyzed output tree)
+  --archive-dir ARCHIVE_DIR
+               Where each manifest is copied before it is changed (default: a
+               dated folder under the pipeline's _archived)
 
 Reports without changing anything unless --apply is given.
 Example:

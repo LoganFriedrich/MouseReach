@@ -130,6 +130,10 @@ Examples:
             from mousereach.outcomes.v6_cascade import VERSION
             print(f"[outcome detector] v6 cascade (VERSION {VERSION})")
 
+    # Never into the filed tree (pipeline/analyzed_tree.filed_tree_refusal).
+    from mousereach.pipeline.analyzed_tree import refuse_filed_output
+    refuse_filed_output(args.output, args.input)
+
     results = process_batch(
         args.input,
         output_dir=args.output,

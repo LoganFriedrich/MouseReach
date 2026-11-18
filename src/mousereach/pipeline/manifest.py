@@ -645,7 +645,8 @@ def main_backfill_manifest_versions():
     return 0
 
 
-def backfill_kinematic_versions(root: Path, apply: bool = False) -> Dict:
+def backfill_kinematic_versions(root: Path, apply: bool = False,
+                                archive_dir: Optional[Path] = None) -> Dict:
     """Repair manifests that say kinematics never ran when the features exist.
 
     Every manifest ever written records kinematic_extractor as 'not_run',
@@ -658,18 +659,34 @@ def backfill_kinematic_versions(root: Path, apply: bool = False) -> Dict:
     sibling manifest. Videos with no features file are left alone: 'not_run' is
     the correct answer there.
 
+    With ``apply`` each manifest is first copied into ``archive_dir`` (as
+    backfill_manifest_versions does) and then replaced in one step; a video
+    this machine's watcher database calls crystallized (publication-locked)
+    is skipped. WHY: this rewrites filed records in place, and it used to keep
+    no copy and ask no lock.
+
     Args:
         root: directory to walk (e.g. the Analyzed tree)
         apply: False (default) reports what would change and writes nothing
+        archive_dir: where manifests are copied before they are modified.
+            Required when apply is True.
 
     Returns:
         Counts by outcome, plus the version histogram found on disk.
     """
+    import shutil
     from collections import Counter
 
     stats = Counter()
     versions = Counter()
     root = Path(root)
+    if apply and archive_dir is None:
+        raise ValueError("archive_dir is required when apply=True -- "
+                         "manifests are archived before they are modified")
+    db = None
+    if apply:
+        from mousereach.watcher.db_location import open_watcher_db_if_present
+        db, _ = open_watcher_db_if_present()
 
     # WHY iter_files, not rglob: superseded manifests keep their names under
     # Analyzed/Archive/; with --apply, rglob would rewrite an archived record
@@ -697,12 +714,26 @@ def backfill_kinematic_versions(root: Path, apply: bool = False) -> Dict:
             stats['already correct'] += 1
             continue
 
+        if apply:
+            from mousereach.watcher.db import crystallized_refusal
+            if crystallized_refusal(db, stem, "backfilled"):
+                stats['crystallized -- left alone'] += 1
+                continue
+            try:
+                Path(archive_dir).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(manifest_path, Path(archive_dir) / manifest_path.name)
+            except Exception as e:
+                logger.warning("Could not archive %s, skipping it: %s", manifest_path.name, e)
+                stats['archive failed -- skipped'] += 1
+                continue
         stats['would fix' if not apply else 'fixed'] += 1
         if apply:
             manifest.setdefault('pipeline_versions', {})['kinematic_extractor'] = actual
             try:
-                with open(manifest_path, 'w') as f:
+                tmp = manifest_path.with_suffix('.json.tmp')
+                with open(tmp, 'w') as f:
                     json.dump(manifest, f, indent=2)
+                os.replace(tmp, manifest_path)
                 try:
                     from mousereach.pipeline.version_index import VersionIndex
                     VersionIndex().upsert_from_manifest(stem, manifest, manifest_path)
@@ -741,6 +772,9 @@ def main_backfill_kinematic_versions():
                    help="Write the corrections (default: report only)")
     p.add_argument('--root', type=Path, default=None,
                    help="Directory to walk (default: the Analyzed output tree)")
+    p.add_argument('--archive-dir', type=Path, default=None,
+                   help="Where each manifest is copied before it is changed "
+                        "(default: a dated folder under the pipeline's _archived)")
     args = p.parse_args()
 
     root = args.root or Paths.ANALYZED_OUTPUT
@@ -751,8 +785,19 @@ def main_backfill_kinematic_versions():
         print(f"ERROR: root does not exist: {root}")
         raise SystemExit(1)
 
+    archive_dir = args.archive_dir
+    if args.apply and archive_dir is None:
+        from datetime import datetime as _dt
+        # The same place as backfill-manifest-versions keeps its copies, and
+        # for the same reason: outside the tree every walker reads as live.
+        base = ((Path(Paths.NAS_ROOT) if Paths.NAS_ROOT else Path(root).parent)
+                / "_archived")
+        archive_dir = base / ("manifests_pre_kinematic_backfill_%s"
+                              % _dt.now().strftime("%Y%m%d_%H%M%S"))
     print(f"{'Applying' if args.apply else 'Checking'}: {root}")
-    result = backfill_kinematic_versions(root, apply=args.apply)
+    if args.apply:
+        print(f"Originals copied to: {archive_dir}")
+    result = backfill_kinematic_versions(root, apply=args.apply, archive_dir=archive_dir)
     print()
     for k, v in sorted(result['counts'].items(), key=lambda kv: -kv[1]):
         print(f"  {v:6d}  {k}")

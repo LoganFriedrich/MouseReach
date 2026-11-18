@@ -5624,3 +5624,23 @@ all is a question for the lab owner; until then it keeps the same rules as the w
   database. The filed results stay in Analyzed until the video is filed again.
 - **A clean video is filed only with its features file**, and nothing is pushed to any database:
   the database tool pulls filed results itself. The `sync_db` argument is accepted and ignored.
+
+## Update 2026-11-17: hand-run step commands do not write into the filed tree
+
+`mousereach-segment`, `mousereach-detect-reaches`, `mousereach-detect-outcomes` and
+`mousereach-grasp-analyze` write their output beside their input unless `-o` names another folder.
+Pointed at a filed video's folder (anywhere under the configured Analyzed tree), they rewrote its
+filed results in place: no earlier generation kept, no watcher record, no publication lock asked.
+Now each refuses before writing anything, with "ERROR: <folder> is inside the filed tree ...
+Nothing was written." and exit code 1. To bring filed videos up to date use the watcher's re-run
+(`mousereach-version-check --mark`, or change the declared versions on the Watcher Control tab);
+to run a step by hand on a copy, point `-o` at a folder outside the filed tree.
+
+`mousereach-backfill-kinematic-versions --apply`, whose job is to correct filed manifests, now
+copies each manifest into a dated folder under the pipeline's `_archived` folder before changing it
+(`--archive-dir` chooses another place; the folder is printed), replaces it in one step, and leaves
+alone any video this machine's watcher database calls crystallized.
+
+Not covered (known leftovers): `mousereach-assign-reaches` walks folders it is given and writes
+beside each video it finds; the review commands and the other backfill commands were not checked
+line by line.

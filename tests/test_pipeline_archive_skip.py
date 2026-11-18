@@ -50,6 +50,12 @@ def an(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg.Paths, "ANALYZED_OUTPUT", root)
     monkeypatch.setattr(cfg.Paths, "TRIAGE_REVIEW", None)
     monkeypatch.setattr(cfg.Paths, "DEEP_REVIEW", None)
+    # The watcher database is found through this machine's configuration, not
+    # through Paths; on a configured machine the kinematic backfill would open
+    # the live one. No database here: nothing is crystallized.
+    import mousereach.watcher.db_location as db_location
+    monkeypatch.setattr(db_location, "open_watcher_db_if_present",
+                        lambda: (None, "no watcher database in this test"))
     return SimpleNamespace(root=root, live=live, model4=model4,
                            archive=archive, archive_model4=archive_model4)
 
@@ -104,7 +110,8 @@ def test_backfill_kinematic_versions_never_visits_archived_manifest(an, monkeypa
     decoy = an.archive / f"{VID}_processing_manifest.json"
     decoy_before = decoy.read_bytes()
 
-    res = manifest.backfill_kinematic_versions(an.root, apply=True)
+    res = manifest.backfill_kinematic_versions(an.root, apply=True,
+                                               archive_dir=an.root.parent / "bak")
 
     # Old rglob: 2 manifests, 2 fixed, and the archived one rewritten.
     assert res["counts"]["manifests"] == 1
