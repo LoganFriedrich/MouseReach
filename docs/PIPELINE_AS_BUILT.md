@@ -5822,3 +5822,67 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
   running.
 
 Tests: `tests/test_recording_outbox.py` (fails on 0c36d0d: the module does not exist).
+
+## Update 2026-11-18: a failed recording is a recording issue, set aside before any cut
+
+**Before:** nothing at the intake looked at a multi-animal recording's length or
+readability. A recording that stopped after 0.08 s (74 KB, 4 frames) would have
+been cut into eight empty single-animal videos that landed in a reviewer's
+queue. The recording outbox had its own, separate size and duration minimums
+and held such files on the recording PC.
+
+**Now** (`watcher/recording_issue.py`):
+
+* **The check.** Before a GPU node cuts a collage, under the shared crop claim,
+  it reads the recording with ffprobe (or ffmpeg alone): readable at all;
+  duration at least `recording_min_minutes` (default 5); frames at least
+  `recording_min_frames` (default 3000; the container's count, else duration x
+  frame rate); at least `recording_min_kb_per_second` (default 5); first frame
+  and a frame near the end decode. Three outcomes: ok (cut as usual), issue,
+  or could not check (no tool, timeout, file unreachable -- cut as usual with a
+  WARNING; an outage is never taken for a failed recording).
+* **Set aside.** An issue's reason file
+  (`Processing/Review/_Problematic/<collage>.recording_issue.json`: reason,
+  measurements, flagged_by, flagged_at, original_path, sessions) is written
+  FIRST, then the collage is moved beside it. A reason file whose collage is
+  still in the intake is an interrupted move, finished by the next scan. A
+  different file of the same name already in `_Problematic` stops the move
+  (nothing renamed, nothing overwritten); the collage is not cut either.
+* **State.** The collage row goes to the new terminal state
+  `recording_issue` (from discovered, validated, stable, cropping, failed or
+  quarantined); the shared claim (`pipeline_collages`) is marked
+  `recording_issue`, which, like `cropped`, is never released or taken over.
+  Only a person leaves it: collage back in the intake AND reason file gone ->
+  `validated`, and the check runs again.
+* **Every machine.** A collage's row lives in each GPU node's own watcher.db,
+  and the shared database has no row until a node claims it. So the reason
+  files are the shared signal: every scan (`FileWatcher.scan` ->
+  `WatcherStateManager.apply_recording_issue_marks`) reads them and takes each
+  named collage's local row to `recording_issue` before the intake is read. A
+  node never logs a crop failure for a collage that was set aside elsewhere,
+  and `_process_collage` checks the reason file again under the claim.
+* **By hand.** `mousereach-recording-issue FILE --reason TEXT [--by NAME]`
+  does the same from any machine (refused when the collage was already cut
+  or another machine is cutting it); `--check` runs the check only; `--list`
+  lists them.
+* **Other cutting paths.** The prep window's crop, `mousereach-crop` and
+  `crop_all` refuse a recording issue the same way (they do not move it).
+* **Outbox.** `recording_outbox_min_mb` and `recording_outbox_min_seconds`
+  are gone. The outbox runs the SAME check with the SAME three settings
+  (`OutboxSettings.check`); a failed recording is SENT (it documents what
+  happened) and reported under `recording_issues`, not held. Only "the check
+  could not run here" is held in red. `_Problematic` is now one of the
+  places the outbox looks for an already-sent name, so a set-aside recording
+  is not sent again.
+* **Shown.** `mousereach-watch-status` (collage count `Recording issue`, and a
+  "Set aside as RECORDING ISSUES" section), the Pipeline Dashboard (listed
+  under the red panel, not as an alarm), and the census: element
+  `recording_issue` (rank above every other) plus a top-level
+  `recording_issues` list (collage, reason, flagged_by, flagged_at,
+  measurements, sessions). mousedb reads that list; it never imports
+  MouseReach. The acknowledgement lives in mousedb (`mousedb missing-videos
+  --acknowledge`), which cannot write back here, which is why the dashboard
+  does not show these as alarms.
+
+Tests: tests/test_recording_issue.py, tests/test_recording_outbox.py.
+Operator guide: docs/RECORDING_ISSUES.md.

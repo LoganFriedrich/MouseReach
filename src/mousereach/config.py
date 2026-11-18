@@ -1104,19 +1104,29 @@ class WatcherConfig:
         self.recording_outbox: Optional[Path] = (
             Path(outbox) if isinstance(outbox, str) and outbox.strip() else None)
         # How long a file's size and time must stay unchanged before it counts
-        # as finished; the smallest size and duration that count as a real
-        # recording; after how many failed copies in a row a file is shown in
+        # as finished; after how many failed copies in a row a file is shown in
         # red; and how long one pass may spend sending before the watcher goes
-        # back to its other work.
+        # back to its other work. (What counts as a real recording is the
+        # recording check's three settings below, shared with the intake.)
         self.recording_outbox_stable_minutes: float = _num(
             cfg.get('recording_outbox_stable_minutes'), 5.0, 0.0)
-        self.recording_outbox_min_mb: float = _num(cfg.get('recording_outbox_min_mb'), 1.0, 0.0)
-        self.recording_outbox_min_seconds: float = _num(
-            cfg.get('recording_outbox_min_seconds'), 10.0, 0.0)
         self.recording_outbox_warn_after_failures: int = int(_num(
             cfg.get('recording_outbox_warn_after_failures'), 3, 1))
         self.recording_outbox_pass_minutes: float = _num(
             cfg.get('recording_outbox_pass_minutes'), 30.0, 1.0)
+        # The recording check (mousereach.watcher.recording_issue): a
+        # multi-animal recording shorter than this many minutes, with fewer
+        # frames than this, or smaller than this many kilobytes per second of
+        # recording, is a RECORDING ISSUE -- a recording that failed. It is
+        # set aside in Processing/Review/_Problematic with a reason file and
+        # never cut. The same check, with the same settings, labels such a
+        # file in the recording outbox before it is sent. WHY these defaults:
+        # far below any real session recording, far above any recording that
+        # stopped by accident; a lab with shorter sessions lowers them.
+        self.recording_min_minutes: float = _num(cfg.get('recording_min_minutes'), 5.0, 0.0)
+        self.recording_min_frames: int = int(_num(cfg.get('recording_min_frames'), 3000, 0))
+        self.recording_min_kb_per_second: float = _num(
+            cfg.get('recording_min_kb_per_second'), 5.0, 0.0)
         # The file these settings were read from, and its modified time then.
         # Set only by load(). WHY: a running watcher re-reads the two recording
         # settings above when that file changes (see
@@ -1176,10 +1186,11 @@ class WatcherConfig:
         if self.recording_outbox:
             d['recording_outbox'] = str(self.recording_outbox)
         for key, default in (('recording_outbox_stable_minutes', 5.0),
-                             ('recording_outbox_min_mb', 1.0),
-                             ('recording_outbox_min_seconds', 10.0),
                              ('recording_outbox_warn_after_failures', 3),
-                             ('recording_outbox_pass_minutes', 30.0)):
+                             ('recording_outbox_pass_minutes', 30.0),
+                             ('recording_min_minutes', 5.0),
+                             ('recording_min_frames', 3000),
+                             ('recording_min_kb_per_second', 5.0)):
             if getattr(self, key) != default:
                 d[key] = getattr(self, key)
         if self.dlc_shuffle is not None:

@@ -281,6 +281,16 @@ class VideoPrepWidget(QWidget):
                 self.signals.progress.emit(i + 1, total, f"Processing {collage.name}...")
 
                 try:
+                    # A failed recording is never cut (watcher/recording_issue.py):
+                    # refused here like in the watcher, with the reason shown.
+                    from mousereach.watcher.recording_issue import (
+                        refuse_if_issue, RecordingIssueError)
+                    try:
+                        refuse_if_issue(collage)
+                    except RecordingIssueError as e:
+                        self.signals.progress.emit(i + 1, total, str(e))
+                        results.setdefault('recording_issues', []).append(str(e))
+                        continue
                     crop_results = crop_collage(collage, output_dir, verbose=False)
 
                     for r in crop_results:

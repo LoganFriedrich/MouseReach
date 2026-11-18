@@ -60,6 +60,8 @@ state it set was lost).
         state             'cropping' = claimed, crop not finished;
                           'cropped'  = the holder finished the crop (or found every
                                        child already finished or held)
+                          'recording_issue' = the recording failed and was set
+                                       aside, never cut (watcher/recording_issue.py)
         claimed_at        when the holder took or last re-used the claim, on the
                           holder's clock
         completed_at, singles_created
@@ -76,7 +78,7 @@ state it set was lost).
         * The holder deletes its row after a failed crop, unless it still
           carries a child of the collage. WHY: a claim that outlives a failed
           crop blocked that collage for every node.
-        * A 'cropped' row is never taken over or released.
+        * A 'cropped' or 'recording_issue' row is never taken over or released.
 
       pipeline_videos     one row per video a GPU node has synced
         video_id, collage_id, hostname (last node to write it), state,
@@ -491,13 +493,23 @@ READ THIS BEFORE INTERPRETING A STATE
 
 collages.state (db.COLLAGE_TRANSITIONS):
 
-  discovered -> validated, quarantined
-  quarantined -> validated
-  validated -> stable
-  stable -> cropping
-  cropping -> cropped, failed
+  discovered -> validated, quarantined, recording_issue
+  quarantined -> validated, recording_issue
+  validated -> stable, recording_issue
+  stable -> cropping, recording_issue
+  cropping -> cropped, failed, recording_issue
   cropped -> archived
-  failed -> validated
+  failed -> validated, recording_issue
+  recording_issue -> validated
+
+  'recording_issue' (since 2026-11-18): the recording itself failed (empty, a
+  fraction of a second, unreadable) and was moved to
+  Processing/Review/_Problematic with a <name>.recording_issue.json reason
+  file; it is never cut. validation_error holds the reason. Every node's scan
+  takes its own row here when it sees the reason file, whichever machine (or
+  person) set the recording aside. It leaves only when a person puts the
+  recording back in the intake AND takes the reason file away -> validated.
+  See docs/RECORDING_ISSUES.md.
 
 
 ## 5. WHAT IS NOT IN HERE

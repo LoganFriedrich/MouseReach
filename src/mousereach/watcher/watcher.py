@@ -58,6 +58,15 @@ class FileWatcher:
         result = ScanResult()
 
         try:
+            # Recordings set aside as recording issues (by any machine, or by a
+            # person): finish an interrupted move and record each one here, so
+            # this machine never treats the vanished file as a failed cut.
+            # Before the intake is read, so a file still there is moved first.
+            try:
+                self.state.apply_recording_issue_marks(Paths.MULTI_ANIMAL_SOURCE)
+            except Exception as e:
+                logger.warning(f"Recording issues could not be read this scan: {e}")
+
             # Discover new collages
             if Paths.MULTI_ANIMAL_SOURCE and Paths.MULTI_ANIMAL_SOURCE.exists():
                 new_collages = self.state.discover_new_collages(Paths.MULTI_ANIMAL_SOURCE)

@@ -20,14 +20,21 @@ from typing import List, Optional, Dict, Any
 logger = logging.getLogger(__name__)
 
 # Valid state transitions
+# 'recording_issue' (watcher/recording_issue.py): the recording itself failed
+# (empty, a fraction of a second, unreadable). It was set aside in
+# Processing/Review/_Problematic with a reason file and is never cut. Reached
+# from every state before the cut; it leaves only when a person moves the
+# recording back into the intake AND takes its reason file away
+# ('recording_issue' -> 'validated'; the check then runs again).
 COLLAGE_TRANSITIONS = {
-    'discovered': ['validated', 'quarantined'],
-    'quarantined': ['validated'],  # After renaming
-    'validated': ['stable'],
-    'stable': ['cropping'],
-    'cropping': ['cropped', 'failed'],
+    'discovered': ['validated', 'quarantined', 'recording_issue'],
+    'quarantined': ['validated', 'recording_issue'],  # After renaming
+    'validated': ['stable', 'recording_issue'],
+    'stable': ['cropping', 'recording_issue'],
+    'cropping': ['cropped', 'failed', 'recording_issue'],
     'cropped': ['archived'],
-    'failed': ['validated'],  # Retry
+    'failed': ['validated', 'recording_issue'],  # Retry
+    'recording_issue': ['validated'],
 }
 
 VIDEO_TRANSITIONS = {

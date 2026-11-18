@@ -4840,6 +4840,61 @@ class DLCOrchestrator(BaseOrchestrator):
             self._note_unsynced_collage_claim(collage_filename, 0, e)
         return True
 
+    def _set_aside_if_recording_issue(self, collage_filename: str, collage_data: dict) -> bool:
+        """True when the collage is a recording issue and has been dealt with:
+        set aside (or already set aside by another machine or a person), its
+        row here 'recording_issue', the shared claim marked 'recording_issue'
+        so no machine takes it over. False: crop it as usual.
+
+        A check that could not run (no ffmpeg, the share did not answer) is
+        False with a WARNING: the crop then runs and fails, or not, on its own
+        -- an outage is never taken for a failed recording."""
+        from mousereach.watcher import recording_issue as ri
+        nas = getattr(Paths, 'NAS_ROOT', None)
+        folder = ri.problematic_dir(nas) if nas else None
+        source = Path(collage_data.get('source_path') or '')
+        reason = None
+        if folder is not None and ri.reason_path(folder, collage_filename).exists():
+            data = ri.read_marks(nas).get(collage_filename) or {}
+            reason = data.get('reason') or 'set aside as a recording issue'
+            ri.finish_interrupted_moves(source.parent if source.name else None, nas,
+                                        {collage_filename: data})
+        else:
+            verdict = ri.assess(source, ri.CheckSettings.from_config(self.config))
+            if verdict.outcome == 'cannot_check':
+                logger.warning(f"Collage {collage_filename}: the recording check could not "
+                               f"run ({verdict.reason}); cutting as usual")
+                return False
+            if not verdict.is_issue:
+                return False
+            reason = verdict.reason
+            if folder is None:
+                logger.warning(f"Collage {collage_filename}: {reason}; but nas_root is not "
+                               f"set, so it cannot be set aside -- not cut this poll")
+                return True
+            try:
+                ri.set_aside(source, reason, ri._flagged_by_machine(),
+                             verdict.measurements, nas)
+            except Exception as e:
+                # Not moved (e.g. a different file of the same name is already
+                # set aside). Never cut: release the claim so a person can act,
+                # and list it.
+                logger.warning(f"Collage {collage_filename}: {reason}; it could not be set "
+                               f"aside ({e}). Not cut.")
+                try:
+                    self.coordinator.release_collage_claim(collage_filename, self.hostname)
+                except Exception:
+                    pass
+                ri.mark_row(self.db, collage_filename, f"{reason} (not moved: {e})")
+                return True
+        ri.mark_row(self.db, collage_filename, reason)
+        try:
+            self.coordinator.update_collage_state(
+                collage_filename, ri.STATE, only_if_held_by=self.hostname)
+        except Exception as e:
+            logger.debug(f"could not mark the shared claim on {collage_filename}: {e}")
+        return True
+
     def _process_collage(self, work: dict):
         """Copy collage from NAS to local, crop into singles, queue for DLC.
 
@@ -4860,6 +4915,13 @@ class DLCOrchestrator(BaseOrchestrator):
         # closed -- see _hold_collage_claim.
         if not self._hold_collage_claim(collage_filename):
             return False
+
+        # A failed recording (empty, a fraction of a second, unreadable) is
+        # never cut: it is set aside as a recording issue instead
+        # (watcher/recording_issue.py). Checked under the claim, so exactly one
+        # machine moves it.
+        if self._set_aside_if_recording_issue(collage_filename, collage_data):
+            return True
 
         # A collage whose children are ALL finished or held needs no crop.
         # Asked before cropping because the children's ids follow from the

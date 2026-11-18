@@ -256,6 +256,11 @@ def crop_all(
     
     for mkv in mkv_files:
         try:
+            # A failed recording (empty, a fraction of a second, unreadable) is
+            # never cut: the same check the watcher's intake applies
+            # (watcher/recording_issue.py). Raises RecordingIssueError.
+            from mousereach.watcher.recording_issue import refuse_if_issue
+            refuse_if_issue(mkv)
             results = crop_collage(mkv, output_dir, verbose)
             all_results.extend(results)
         except Exception as e:

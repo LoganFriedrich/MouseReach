@@ -24,7 +24,8 @@ the reason.
 | Renamed to a valid session name (`YYYYMMDD_<8 animal ids>_<tray>.mkv`) | Sent outside recording hours, then deleted here once the copy is verified. |
 | Renamed, but the name is not a valid session name (seven animals, a missing tray, a date that does not exist ...) | **Held, in red**, with the reason. Correct the name in the folder; it goes on the next evening by itself. |
 | Still being recorded, or changed in the last 5 minutes, or open in any program | Waits. Looked at again on the next pass. |
-| Empty, smaller than 1 MB, shorter than 10 seconds, or its length cannot be read | **Held, in red.** A person looks at it (see below). |
+| A **failed recording**: empty, a fraction of a second long, unreadable, or broken at its start or end (the recording check, see [RECORDING_ISSUES.md](RECORDING_ISSUES.md)) | **Sent anyway**, and listed as a recording issue (not red). The pipeline sets it aside on the shared drive, never cuts it, and the database records that the session's recording failed. A failed recording still documents what happened that day, so it is not left on this PC. |
+| The recording check cannot run on this PC (no ffmpeg) | **Held, in red**, until ffmpeg is installed. |
 | The same name is already on the shared drive with the **same** content | It was sent before. Only the copy on this PC is deleted. |
 | The same name is already on the shared drive with **different** content | **Held, in red.** Nothing is overwritten and nothing is deleted. A person decides which is right. |
 
@@ -50,7 +51,8 @@ The watcher also sends nothing while it is paused by hand (Pause button or
 ## How a recording is sent safely
 
 1. The shared drive is searched for the name first: the intake, the
-   unsupported-tray and quarantine folders, and every `Multi-Animal` folder under
+   unsupported-tray, quarantine and recording-issue (`Processing/Review/_Problematic`)
+   folders, and every `Multi-Animal` folder under
    `Analyzed` and `Archive`. A recording is not sent twice just because the
    pipeline has already moved it on.
 2. The recording is copied to `<name>.partial` in the intake. Nothing in the
@@ -80,7 +82,7 @@ Held recordings appear in red in two places:
 | The reason says | What to do |
 |---|---|
 | `name is not a valid session name: ...` | Rename the file in the recording folder. The reason says what is wrong. |
-| `only N bytes` / `only N s long` / `duration cannot be read` | Open the file in a video player. If it is an empty or failed recording, move it out of the recording folder (keep it, do not delete it) and note it. If it plays and is real, ask whoever looks after MouseReach. |
+| `the recording check could not run here (...)` | Ask whoever looks after MouseReach to install ffmpeg in the mousereach environment. |
 | `a different file of the same name is already on the shared drive` | Two different recordings carry one name. Look at both. The usual cause is a typing mistake in one of the names: correct the wrong one. Never delete either until you know which is which. |
 | `... (failed N times in a row)` | The copy keeps failing (shared drive unreachable, disk full ...). The rest of the reason says why. When the cause is fixed it goes by itself. |
 | `the recording folder does not exist or cannot be read` | `watcher.recording_outbox` points at the wrong folder. Correct it. |
@@ -123,8 +125,7 @@ simply deleted.
 |---|---|---|
 | `recording_outbox` | not set (sending off) | The folder the recording program saves into, where people rename the files. |
 | `recording_outbox_stable_minutes` | 5 | How long a file must be seen unchanged before it counts as finished. |
-| `recording_outbox_min_mb` | 1 | Smaller than this is held as empty or broken. |
-| `recording_outbox_min_seconds` | 10 | Shorter than this is held as empty or broken. |
+| `recording_min_minutes`, `recording_min_frames`, `recording_min_kb_per_second` | 5, 3000, 5 | The recording check, shared with the intake: a recording below any of these is a recording issue (see RECORDING_ISSUES.md). It is still sent. |
 | `recording_outbox_warn_after_failures` | 3 | Failed copies in a row before a file is shown in red. |
 | `recording_outbox_pass_minutes` | 30 | How long one pass may spend copying before the watcher does its other work. |
 | `recording_days`, `recording_hours` | (already exist) | Recording time. Nothing is sent inside it, and nothing at all is sent if both are unset. |

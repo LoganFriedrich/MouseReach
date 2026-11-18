@@ -150,6 +150,26 @@ def _no_real_hand_scores(monkeypatch):
     monkeypatch.setattr(hand_scores, "settings", lambda: {})
 
 
+@pytest.fixture(autouse=True)
+def _recording_check_passes(request, monkeypatch):
+    """Every test's stand-in recordings pass the recording check
+    (watcher/recording_issue.py) unless the test is marked
+    ``real_recording_check``. WHY: tests use a few bytes as a "collage", which
+    the real check rightly calls a failed recording -- and would set aside
+    before the behavior the test is about could run. A test of the check
+    itself is marked, and injects its own probe."""
+    if request.node.get_closest_marker("real_recording_check"):
+        return
+    from mousereach.watcher import recording_issue
+    monkeypatch.setattr(recording_issue, "assess",
+                        lambda path, settings=None, **kw: recording_issue.Verdict("ok"))
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_recording_check: run the real recording check (no stand-in)")
+
+
 # The filing layout every test sees unless it sets its own: one project folder
 # level, cohort folders named code+number. Tests written before the filing
 # rules were settings build their fixtures in this shape.

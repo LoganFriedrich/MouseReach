@@ -75,6 +75,26 @@ class WatcherStateManager:
         self.parked_collages: Dict[str, str] = {}
         self._parked_warned: set = set()
 
+    @staticmethod
+    def _nas_root():
+        try:
+            from mousereach.config import Paths
+            return Paths.NAS_ROOT
+        except Exception:
+            return None
+
+    def apply_recording_issue_marks(self, intake: Optional[Path] = None) -> List[str]:
+        """Read the recording-issue reason files on the shared drive and take
+        this machine's rows for those recordings to 'recording_issue'
+        (watcher/recording_issue.py says why the reason file is the signal
+        every machine shares). Called once per scan, before the intake is
+        read. Never raises."""
+        from mousereach.watcher import recording_issue
+        nas = self._nas_root()
+        if not nas:
+            return []
+        return recording_issue.apply_marks(self.db, nas, intake)
+
     def discover_new_collages(self, scan_dir: Path) -> List[str]:
         """
         Scan directory for new collage videos and register them.
@@ -119,6 +139,23 @@ class WatcherStateManager:
                     # A 'quarantined' collage whose file is back in the
                     # intake folder was released by a person under its old
                     # name (_recheck_released_collage).
+                    # A 'recording_issue' collage whose file is back in the
+                    # intake: with its reason file gone, a person released
+                    # it -- check it again from the start (the recording
+                    # check runs again before any cut). With the reason file
+                    # still there, the move was interrupted and the scan's
+                    # recording_issue.apply_marks finishes it.
+                    if known.get('state') == 'recording_issue':
+                        from mousereach.watcher import recording_issue as _ri
+                        folder = _ri.problematic_dir(self._nas_root())
+                        if folder is not None and not _ri.reason_path(folder, filename).exists():
+                            self.db.update_collage_state(filename, 'validated',
+                                                         validation_error=None)
+                            logger.info(f"Collage {filename}: back in the intake without "
+                                        f"its recording-issue reason file; checked again "
+                                        f"(recording_issue -> validated)")
+                            newly_registered.append(filename)
+                        continue
                     if known.get('state') == 'quarantined':
                         try:
                             if self._recheck_released_collage(file_path, filename):

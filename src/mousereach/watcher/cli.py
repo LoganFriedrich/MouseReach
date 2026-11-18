@@ -590,6 +590,7 @@ status every node last reported.
     print(f"  Cropped:      {collage_states.get('cropped', 0)}")
     print(f"  Quarantined:  {collage_states.get('quarantined', 0)}")
     print(f"  Failed:       {collage_states.get('failed', 0)}")
+    print(f"  Recording issue: {collage_states.get('recording_issue', 0)}")
     print()
 
     # Video summary
@@ -731,7 +732,8 @@ def _held_and_failed(db) -> dict:
     others (and never breaks the status command); a part that cannot be read
     says so.
     """
-    out = {"archive_held": [], "failed": [], "attention": [], "errors": []}
+    out = {"archive_held": [], "failed": [], "attention": [], "recording_issues": [],
+           "errors": []}
     try:
         out["archive_held"] = list(db.get_videos_held_by_failed_archive())
     except Exception as e:
@@ -758,6 +760,16 @@ def _held_and_failed(db) -> dict:
                 out["attention"].append(dict(item, list_age_seconds=ages[name]))
     except Exception as e:
         out["errors"].append("the attention lists could not be read: %s" % e)
+    # Recordings set aside as recording issues (watcher/recording_issue.py),
+    # from the reason files every machine shares.
+    try:
+        from mousereach.config import Paths
+        from mousereach.watcher.recording_issue import attention_items
+        nas = getattr(Paths, "NAS_ROOT", None)
+        if nas:
+            out["recording_issues"] = attention_items(nas)
+    except Exception as e:
+        out["errors"].append("the recording-issue reason files could not be read: %s" % e)
     return out
 
 
@@ -801,6 +813,14 @@ def _print_held_and_failed(db, limit: int = 20) -> None:
             return "[%s] %s (%s, %s)" % (tag, r.get("says") or r.get("video_id") or "?",
                                         r.get("listed_in"), when)
         _some(items, _item)
+        print()
+    issues = data.get("recording_issues") or []
+    if issues:
+        print("Set aside as RECORDING ISSUES (%d) -- failed recordings, never cut, in "
+              "Processing/Review/_Problematic; list them with mousereach-recording-issue "
+              "--list:" % len(issues))
+        _some(issues, lambda r: ("[NEEDS A PERSON] " if r.get("needs_person") else "")
+              + str(r.get("says")))
         print()
     for err in data["errors"]:
         print("  [!] " + err)

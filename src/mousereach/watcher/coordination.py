@@ -203,6 +203,7 @@ def _is_live_local_work(local_row) -> bool:
 
 COLLAGE_STATE_ORDER = [
     'discovered', 'quarantined', 'validated', 'stable', 'cropping', 'cropped', 'archived',
+    'recording_issue',
 ]
 
 # A collage claim left in 'cropping' this long by another host is taken over.
@@ -218,7 +219,10 @@ COLLAGE_CLAIM_STALE_S = 24 * 3600
 # Collage claim states that mean the crop FINISHED: its children exist and
 # have been handed on. Such a claim is never taken over and never released --
 # reopening it would crop and pose every child a second time.
-_COLLAGE_DONE_STATES = ('cropped', 'archived')
+# 'recording_issue' (watcher/recording_issue.py) is done in the same sense: the
+# recording failed and was set aside, so it is never cut, and its claim is
+# never released or taken over.
+_COLLAGE_DONE_STATES = ('cropped', 'archived', 'recording_issue')
 
 CREATE_PIPELINE_VIDEOS_SQL = """
 CREATE TABLE IF NOT EXISTS pipeline_videos (
@@ -743,7 +747,7 @@ class PipelineCoordinator:
             result = conn.execute(text(
                 "DELETE FROM pipeline_collages "
                 "WHERE filename = :filename AND hostname = :hostname "
-                "AND state NOT IN ('cropped', 'archived')"
+                "AND state NOT IN ('cropped', 'archived', 'recording_issue')"
             ), {'filename': filename, 'hostname': hostname})
             conn.commit()
         released = result.rowcount > 0

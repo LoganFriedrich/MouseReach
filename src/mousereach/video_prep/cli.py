@@ -35,6 +35,13 @@ def main_crop():
         output_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"Processing single file: {args.input.name}")
+        # A failed recording is never cut (watcher/recording_issue.py).
+        from mousereach.watcher.recording_issue import refuse_if_issue, RecordingIssueError
+        try:
+            refuse_if_issue(args.input)
+        except RecordingIssueError as e:
+            print(f"[FAIL] {e}")
+            return 1
         results_list = crop_collage(args.input, output_dir, verbose=not args.quiet)
 
         success = sum(1 for r in results_list if r.get('status') == 'success')

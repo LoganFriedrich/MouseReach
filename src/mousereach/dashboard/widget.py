@@ -695,6 +695,18 @@ class PipelineDashboard(QWidget):
                                                 if Paths.NAS_ROOT else [])]
         except Exception:
             pass
+        # Recordings set aside as RECORDING ISSUES (watcher/recording_issue.py):
+        # failed recordings, never cut. Listed under the panel, not as alarms:
+        # the pipeline has nothing left to do with them, and the lab
+        # acknowledges each in its database tool. A reason file that cannot be
+        # read IS an alarm.
+        try:
+            from mousereach.config import Paths
+            from mousereach.watcher.recording_issue import attention_items
+            items = list(items) + (attention_items(Paths.NAS_ROOT) if Paths.NAS_ROOT else [])
+        except Exception as e:
+            items = list(items) + [{"needs_person": True, "says":
+                                    "The recording-issue reason files could not be read (%s)." % e}]
         urgent = [i for i in items if i.get("needs_person")]
         waiting = [i for i in items if not i.get("needs_person")]
         self._attention_items = urgent
@@ -722,7 +734,9 @@ class PipelineDashboard(QWidget):
         if waiting:
             # Grey, not an alarm: each line is something that goes on by itself.
             pose = [i for i in waiting if i.get("kind") == "waiting_for_pose"]
-            scores = [i for i in waiting if i.get("kind") != "waiting_for_pose"]
+            failed_rec = [i for i in waiting if i.get("kind") == "recording_issue"]
+            scores = [i for i in waiting
+                      if i.get("kind") not in ("waiting_for_pose", "recording_issue")]
             lines = []
             if scores:
                 lines.append(
@@ -736,6 +750,12 @@ class PipelineDashboard(QWidget):
                     "no review fixes a pose." % (
                         len(pose), ", ".join(i.get("video_id", "?") for i in pose[:5])
                         + (" ..." if len(pose) > 5 else "")))
+            if failed_rec:
+                lines.append(
+                    "%d recording(s) failed and were set aside as recording issues "
+                    "(Processing/Review/_Problematic; never cut, never reviewed): %s"
+                    % (len(failed_rec), "; ".join(i.get("says", "") for i in failed_rec[:3])
+                       + (" ..." if len(failed_rec) > 3 else "")))
             self.waiting_label.setText("<br>".join(lines))
             self.waiting_label.show()
         else:

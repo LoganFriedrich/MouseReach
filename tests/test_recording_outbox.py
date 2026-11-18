@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from mousereach.watcher import recording_outbox as ro
+from mousereach.watcher import recording_issue as ri
 from mousereach.watcher import node_status
 
 NAMED = "20240102_TST0101,TST0102,TST0103,TST0104,TST0105,TST0106,TST0107,TST0108_P1.mkv"
@@ -46,10 +47,21 @@ def env(tmp_path):
                                  intake=nas / "Unanalyzed" / "Multi-Animal")
 
 
-def make_sender(env, now=SATURDAY_NOON, clock=None, probe=None, open_check=None,
+OK = ri.Verdict("ok")
+
+
+def issue(reason="recording issue: 4 frames, 0.08 s -- the recording failed"):
+    return ri.Verdict("issue", reason)
+
+
+def cannot(reason="neither ffprobe nor ffmpeg is installed on this machine"):
+    return ri.Verdict("cannot_check", reason)
+
+
+def make_sender(env, now=SATURDAY_NOON, clock=None, assess=None, open_check=None,
                 recorder_running=None, should_stop=None, chunk_size=8192, **settings):
-    s = ro.OutboxSettings(outbox=env.outbox, stable_minutes=5, min_bytes=100,
-                          min_seconds=10, warn_after_failures=3, pass_minutes=30,
+    s = ro.OutboxSettings(outbox=env.outbox, stable_minutes=5, warn_after_failures=3,
+                          pass_minutes=30,
                           recording_hours="08:00-18:00", recording_days="Mon-Fri")
     for k, v in settings.items():
         setattr(s, k, v)
@@ -57,7 +69,7 @@ def make_sender(env, now=SATURDAY_NOON, clock=None, probe=None, open_check=None,
         s, env.nas, state_path=env.tmp / "state.json",
         transfer_log=env.tmp / "logs" / ro.TRANSFER_LOG_NAME,
         clock=clock or Clock(), local_now=(lambda: now),
-        probe=probe or (lambda p: (600.0, None)),
+        assess=assess or (lambda p: OK),
         open_check=open_check or (lambda p: False),
         recorder_running=recorder_running or (lambda: False),
         should_stop=should_stop or (lambda: False),
@@ -159,25 +171,44 @@ def test_newest_file_is_left_while_the_recording_program_runs(env):
 
 # --------------------------------------------------------------- empty or broken
 
-def test_empty_file_is_held_and_reported(env):
+def test_failed_recording_is_sent_and_labeled_not_held(env):
+    """A recording that only documents a mistake still goes to the shared
+    drive; the intake sets it aside there as a recording issue."""
     p = put(env.outbox, NAMED, b"")
     clock = Clock()
-    rep = two_passes(make_sender(env, clock=clock), clock)
-    assert p.exists() and not (env.intake / NAMED).exists()
-    assert [h["name"] for h in rep["held"]] == [NAMED]
+    rep = two_passes(make_sender(env, clock=clock, assess=lambda path: issue()), clock)
+    assert not p.exists() and (env.intake / NAMED).exists()
+    assert rep["held"] == []
+    assert [r["name"] for r in rep["recording_issues"]] == [NAMED]
+    assert "0.08 s" in rep["recording_issues"][0]["reason"]
+    assert "recording issue" in rep["sent_this_pass"][0]["how"]
+    assert "recording_issue" in log_events(env)
 
 
-def test_tiny_or_unreadable_duration_is_held(env):
+def test_check_that_cannot_run_holds_the_file_in_red(env):
     p = put(env.outbox, NAMED)
     q = put(env.outbox, NAMED2)
     clock = Clock()
-    probe = lambda path: (2.0, None) if path.name == NAMED else (None, "no duration")
-    rep = two_passes(make_sender(env, clock=clock, probe=probe), clock)
-    assert p.exists() and q.exists()
-    assert list(env.intake.iterdir()) == []
+    assess = lambda path: cannot() if path.name == NAMED else OK
+    rep = two_passes(make_sender(env, clock=clock, assess=assess), clock)
+    assert p.exists() and not (env.intake / NAMED).exists()
+    assert (env.intake / NAMED2).exists()
     reasons = {h["name"]: h["reason"] for h in rep["held"]}
-    assert "2.0 s long" in reasons[NAMED]
-    assert "cannot be read" in reasons[NAMED2]
+    assert "could not run" in reasons[NAMED] and "ffmpeg" in reasons[NAMED]
+
+
+def test_failed_recording_already_set_aside_is_not_sent_again(env):
+    """Once the intake set it aside, the recording PC finds it there (same
+    content) and only deletes its local copy."""
+    folder = env.nas / "Processing" / "Review" / "_Problematic"
+    folder.mkdir(parents=True)
+    put(folder, NAMED, b"tiny")
+    p = put(env.outbox, NAMED, b"tiny")
+    clock = Clock()
+    rep = two_passes(make_sender(env, clock=clock, assess=lambda path: issue()), clock)
+    assert not p.exists()
+    assert not (env.intake / NAMED).exists(), "never sent a second time"
+    assert rep["sent_this_pass"][0]["how"].startswith("already on the shared drive")
 
 
 # ------------------------------------------------------------------ recording time
@@ -382,13 +413,12 @@ def test_holds_stay_reported_during_recording_time(env):
     short = put(env.outbox, NAMED2)
     clock = Clock()
     now = {"t": SATURDAY_NOON}
-    probe = lambda path: (2.0, None)
-    sender = make_sender(env, clock=clock, probe=probe)
+    sender = make_sender(env, clock=clock, assess=lambda path: cannot())
     sender._local_now = lambda: now["t"]
     two_passes(sender, clock)
     now["t"] = WEDNESDAY_10
     probes = []
-    sender._probe = lambda path: probes.append(path) or (2.0, None)
+    sender._assess = lambda path: probes.append(path) or cannot()
     rep = sender.run_pass()
     assert "recording time" in rep["not_sending"]
     assert sorted(h["name"] for h in rep["held"]) == sorted([NAMED, NAMED2])
@@ -434,7 +464,7 @@ def test_preview_copies_and_deletes_nothing(env):
 def test_held_items_appear_in_red_in_the_node_status(env):
     put(env.outbox, NAMED, b"")
     clock = Clock()
-    rep = two_passes(make_sender(env, clock=clock), clock)
+    rep = two_passes(make_sender(env, clock=clock, assess=lambda path: cannot()), clock)
     assert node_status.write(env.nas, node_status.WORKING, hostname="pc1",
                              extra={"doing": None, "done_last_hour": 0,
                                     ro.STATUS_KEY: rep})
@@ -509,10 +539,14 @@ def test_config_keys_and_defaults():
     assert ro.OutboxSettings.from_config(off).outbox is None
     assert "recording_outbox" not in off.to_dict()
     on = WatcherConfig({"recording_outbox": "D:/rec", "recording_outbox_stable_minutes": 2,
-                        "recording_outbox_min_mb": "bad", "recording_hours": "08:00-18:00"})
+                        "recording_min_minutes": "bad", "recording_min_frames": 100,
+                        "recording_hours": "08:00-18:00"})
     s = ro.OutboxSettings.from_config(on)
     assert s.outbox == Path("D:/rec") and s.stable_minutes == 2
-    assert s.min_bytes == 1_000_000 and s.recording_hours == "08:00-18:00"
+    # The outbox reads the intake's own check settings: one set, never two.
+    assert s.check.min_seconds == 300.0 and s.check.min_frames == 100
+    assert s.check == ri.CheckSettings.from_config(on)
+    assert s.recording_hours == "08:00-18:00"
     d = on.to_dict()
     assert d["recording_outbox"] and d["recording_outbox_stable_minutes"] == 2
 

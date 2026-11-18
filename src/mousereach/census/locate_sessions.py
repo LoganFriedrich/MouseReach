@@ -15,6 +15,9 @@ everything" is asking about these:
   triage        held for a person, quick per-element questions
   deep_review   held for a person, segmentation failed or was escalated
   quarantined   held out as unprocessable (malformed name, unsupported content)
+  recording_issue  the recording itself failed (empty, a fraction of a second,
+                unreadable): set aside, never cut. Terminal -- no kinematics
+                will ever exist for these sessions.
   analyzed      finished: see the THREE conditions below
   session_only  a legitimate terminal state for outcome-free trays
 
@@ -61,10 +64,13 @@ ELEMENT_RANK = {
     "deep_review": 40,
     "triage": 40,
     "quarantined": 40,
+    # Above everything: a recording set aside as failed is the final word on
+    # its sessions, even if a stray single of it exists somewhere.
+    "recording_issue": 50,
 }
 
 ELEMENT_ORDER = ["unanalyzed", "crop_dlc", "mousereach", "triage", "deep_review", "quarantined",
-                 "analyzed", "session_only"]
+                 "recording_issue", "analyzed", "session_only"]
 
 
 class DatabaseViewUnavailable(RuntimeError):

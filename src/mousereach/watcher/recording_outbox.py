@@ -30,20 +30,34 @@ WHAT NEVER MOVES
   test), and while a program from ``watcher.pause_while_running`` is running,
   the newest video in the folder is taken to be its current file and left
   alone.
-* An empty or broken file: smaller than ``recording_outbox_min_mb`` (default
-  1 MB), or a duration under ``recording_outbox_min_seconds`` (default 10 s),
-  or a duration that cannot be read at all. Held and reported in red.
+* A file the recording check cannot be run on (no ffprobe or ffmpeg on this
+  PC): held and reported in red until the tool is installed.
 * Anything at all during recording time (``watcher.recording_days`` and
   ``watcher.recording_hours``). With neither set, recording time cannot be told
   apart from any other time, so NOTHING is ever sent and the report says why.
   A copy running when recording time begins is stopped between two blocks and
   its unfinished copy removed.
 
+A FAILED RECORDING IS SENT, AND LABELED AT THE INTAKE
+-----------------------------------------------------
+A finished, named file that fails the recording check (watcher/recording_issue.py:
+empty, a fraction of a second, unreadable, implausibly small, or its start or
+end will not decode -- the SAME check, with the SAME settings
+``recording_min_minutes``, ``recording_min_frames`` and
+``recording_min_kb_per_second``, that the intake applies) is still sent. WHY:
+a recording that only documents a mistake is still a record of what happened
+that day; left on the recording PC it would be red here for ever and nobody
+downstream would know the session was recorded and failed. On the shared drive
+the intake sets it aside as a recording issue (Processing/Review/_Problematic,
+with a reason file), never cuts it, and the database learns of it. The report
+lists it under ``recording_issues`` (not red: nothing is wrong with the
+sending) and the send log records the reason.
+
 HOW A FILE IS SENT (the order is what makes the delete safe)
 -----------------------------------------------------------
 1. Look for the name on the shared drive first, everywhere a collage rests
-   (the intake, the unsupported-tray and quarantine folders, and every
-   ``Multi-Animal`` folder under Analyzed and Archive). WHY everywhere: a
+   (the intake, the unsupported-tray, quarantine and recording-issue
+   folders, and every ``Multi-Animal`` folder under Analyzed and Archive). WHY everywhere: a
    collage leaves the intake once its videos are filed, so "not in the
    intake" does not mean "never sent"; sending it again would cut it again.
    Found with the same content (size and SHA-256, both files read in full):
@@ -92,8 +106,6 @@ import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -104,6 +116,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from mousereach.watcher.recording_guard import (
     _ascii, format_days, format_hours, parse_days, parse_hours, within_hours)
 from mousereach.watcher.validator import VIDEO_EXTENSIONS, validate_collage_filename
+from mousereach.watcher import recording_issue
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +144,9 @@ class OutboxSettings:
     """What the sender needs from the watcher section of the config file."""
     outbox: Optional[Path] = None
     stable_minutes: float = 5.0
-    min_bytes: int = 1_000_000
-    min_seconds: float = 10.0
+    # What counts as a real recording: the intake's own check settings, so
+    # the two never disagree (watcher/recording_issue.py).
+    check: recording_issue.CheckSettings = field(default_factory=recording_issue.CheckSettings)
     warn_after_failures: int = 3
     pass_minutes: float = 30.0
     recording_hours: Optional[str] = None
@@ -146,8 +160,7 @@ class OutboxSettings:
         return cls(
             outbox=Path(raw) if raw else None,
             stable_minutes=float(getattr(cfg, "recording_outbox_stable_minutes", 5)),
-            min_bytes=int(float(getattr(cfg, "recording_outbox_min_mb", 1)) * 1_000_000),
-            min_seconds=float(getattr(cfg, "recording_outbox_min_seconds", 10)),
+            check=recording_issue.CheckSettings.from_config(cfg),
             warn_after_failures=int(getattr(cfg, "recording_outbox_warn_after_failures", 3)),
             pass_minutes=float(getattr(cfg, "recording_outbox_pass_minutes", 30)),
             recording_hours=getattr(cfg, "recording_hours", None),
@@ -209,56 +222,6 @@ def is_open_for_writing(path: Path) -> bool:
         return True
     kernel32.CloseHandle(handle)
     return False
-
-
-def _find_tool(name: str) -> Optional[str]:
-    exe = shutil.which(name)
-    if exe:
-        return exe
-    if name == "ffmpeg":
-        try:
-            import imageio_ffmpeg
-            return imageio_ffmpeg.get_ffmpeg_exe()
-        except Exception:
-            return None
-    return None
-
-
-_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
-
-
-def probe_duration(path: Path) -> Tuple[Optional[float], Optional[str]]:
-    """(seconds, None), or (None, why it could not be read).
-
-    ffprobe when it is installed, otherwise ffmpeg (on the PATH, or the copy
-    the imageio-ffmpeg package carries). A recording the program never
-    finished has no readable duration, which is reported as the reason.
-    """
-    try:
-        ffprobe = _find_tool("ffprobe")
-        if ffprobe:
-            out = subprocess.run(
-                [ffprobe, "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-                capture_output=True, text=True, timeout=120)
-            text = (out.stdout or "").strip()
-            try:
-                return float(text), None
-            except ValueError:
-                return None, _ascii("no duration in the file (ffprobe said %r)"
-                                    % (text or (out.stderr or "").strip()[:120]))
-        ffmpeg = _find_tool("ffmpeg")
-        if not ffmpeg:
-            return None, "neither ffprobe nor ffmpeg is installed, so the duration cannot be checked"
-        out = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path)],
-                             capture_output=True, text=True, timeout=120)
-        m = _DURATION_RE.search(out.stderr or "")
-        if not m:
-            return None, "no duration in the file (the recording may be unfinished or broken)"
-        h, mi, s = m.groups()
-        return int(h) * 3600 + int(mi) * 60 + float(s), None
-    except Exception as e:
-        return None, _ascii("could not read the duration: %s: %s" % (type(e).__name__, e))
 
 
 _THREAD_MODE_BACKGROUND_BEGIN = 0x00010000
@@ -341,8 +304,12 @@ def resting_places(nas_root: Path, depth: int = 4) -> List[Path]:
             out.append(p)
 
     add(nas_root / "Unanalyzed" / "Multi-Animal")
+    # The recording-issue folder too: a failed recording is set aside there
+    # once it arrives, and without looking there the recording PC would send
+    # the same file again after each set-aside.
     for top in (nas_root / "Unanalyzed" / "Unsupported_Tray_Type",
-                nas_root / "Processing" / "Quarantine"):
+                nas_root / "Processing" / "Quarantine",
+                nas_root / "Processing" / "Review" / recording_issue.FOLDER_NAME):
         if top.is_dir():
             for d, _dirs, _files in os.walk(top):
                 add(Path(d))
@@ -439,7 +406,7 @@ class RecordingSender:
                  transfer_log: Optional[Path] = None,
                  clock: Callable[[], float] = time.time,
                  local_now: Callable[[], datetime] = datetime.now,
-                 probe: Callable[[Path], Tuple[Optional[float], Optional[str]]] = probe_duration,
+                 assess: Optional[Callable[[Path], "recording_issue.Verdict"]] = None,
                  open_check: Callable[[Path], bool] = is_open_for_writing,
                  recorder_running: Optional[Callable[[], bool]] = None,
                  should_stop: Callable[[], bool] = lambda: False,
@@ -450,7 +417,7 @@ class RecordingSender:
         self.transfer_log = transfer_log
         self._clock = clock
         self._local_now = local_now
-        self._probe = probe
+        self._assess = assess or (lambda p: recording_issue.assess(p, settings.check))
         self._open_check = open_check
         self._recorder_running = recorder_running or self._default_recorder_running
         self._should_stop = should_stop
@@ -562,38 +529,37 @@ class RecordingSender:
         """Why this file is held, from what is already known, or None.
 
         Used while sending is not allowed: reads no file, runs no probe."""
-        if st.st_size < self.settings.min_bytes:
-            return "only %d bytes (the minimum is %d); empty or broken recording?" % (
-                st.st_size, self.settings.min_bytes)
         held = self._held_conflict(path, st)
         if held:
             return held
         rec = self.state["probes"].get(path.name.lower())
-        if rec and rec.get("sig") == [st.st_size, st.st_mtime]:
-            problem = self._duration_problem(path, st)
-            if problem:
-                return problem
+        if (rec and rec.get("sig") == [st.st_size, st.st_mtime]
+                and rec.get("outcome") == "cannot_check"):
+            return self._check_hold(rec)
         fail = self.state["failures"].get(path.name.lower()) or {}
         if int(fail.get("count", 0)) >= self.settings.warn_after_failures:
             return _ascii("%s (failed %d times in a row)" % (
                 fail.get("last_error", "copy failed"), int(fail["count"])))
         return None
 
-    def _duration_problem(self, path: Path, st) -> Optional[str]:
+    def _verdict(self, path: Path, st) -> dict:
+        """The recording check's verdict on this file ({outcome, reason}),
+        remembered while its size and time are unchanged so a file is read
+        once, not every pass."""
         key = path.name.lower()
         sig = [st.st_size, st.st_mtime]
         rec = self.state["probes"].get(key)
-        if rec and rec.get("sig") == sig:
-            seconds, err = rec.get("seconds"), rec.get("error")
-        else:
-            seconds, err = self._probe(path)
-            self.state["probes"][key] = {"sig": sig, "seconds": seconds, "error": err}
-        if seconds is None:
-            return "duration cannot be read: %s" % (err or "unknown reason")
-        if seconds < self.settings.min_seconds:
-            return "only %.1f s long (the minimum is %.0f s); empty or broken recording?" % (
-                seconds, self.settings.min_seconds)
-        return None
+        if not (rec and rec.get("sig") == sig and rec.get("outcome")):
+            v = self._assess(path)
+            rec = {"sig": sig, "outcome": v.outcome, "reason": v.reason,
+                   "measurements": v.measurements}
+            self.state["probes"][key] = rec
+        return rec
+
+    @staticmethod
+    def _check_hold(rec: dict) -> str:
+        return _ascii("the recording check could not run here (%s); install ffmpeg "
+                      "(or ffprobe) on this PC" % (rec.get("reason") or "unknown reason"))
 
     def _fail(self, name: str, why: str) -> None:
         rec = self.state["failures"].setdefault(name.lower(), {"count": 0})
@@ -780,7 +746,7 @@ class RecordingSender:
                   "outbox": str(s.outbox) if s.outbox else None,
                   "not_sending": None, "sent_this_pass": [], "held": [],
                   "waiting": [], "waiting_for_name": [], "on_this_pc": 0,
-                  "sent_recently": []}
+                  "sent_recently": [], "recording_issues": []}
         if s.outbox is None:
             report["not_sending"] = "watcher.recording_outbox is not set (sending is off)"
             return report
@@ -836,18 +802,15 @@ class RecordingSender:
             if why:
                 report["waiting"].append({"name": name, "reason": why})
                 continue
-            if st.st_size < s.min_bytes:
-                report["held"].append({"name": name, "reason": "only %d bytes (the minimum is %d); "
-                                       "empty or broken recording?" % (st.st_size, s.min_bytes)})
-                continue
             held = self._held_conflict(path, st)
             if held:
                 report["held"].append({"name": name, "reason": held})
                 continue
-            problem = self._duration_problem(path, st)
-            if problem:
-                report["held"].append({"name": name, "reason": problem})
+            verdict = self._verdict(path, st)
+            if verdict.get("outcome") == "cannot_check":
+                report["held"].append({"name": name, "reason": self._check_hold(verdict)})
                 continue
+            issue = verdict.get("reason") if verdict.get("outcome") == "issue" else None
             if preview:
                 if index is None and self.nas_root is not None:
                     index = build_index(self.nas_root)
@@ -864,6 +827,9 @@ class RecordingSender:
                             "would be deleted once a full content check agrees" % same[0][0])
                 else:
                     text = "ready: would be copied, verified, then deleted here"
+                if issue:
+                    text += ("; it fails the recording check (%s), so the intake will set it "
+                             "aside as a recording issue" % issue)
                 report["waiting"].append({"name": name, "reason": text})
                 continue
             if self._clock() >= deadline or self._abort_reason():
@@ -873,9 +839,12 @@ class RecordingSender:
                 index = build_index(self.nas_root)
             outcome, text = self._send_one(path, st, index)
             if outcome in ("sent", "already"):
-                report["sent_this_pass"].append({"name": name, "bytes": st.st_size,
-                                                 "how": "copied and verified" if outcome == "sent"
-                                                 else "already on the shared drive"})
+                how = "copied and verified" if outcome == "sent" else "already on the shared drive"
+                if issue:
+                    how += "; a recording issue, set aside at the intake: " + issue
+                    report["recording_issues"].append({"name": name, "reason": issue})
+                    self._log("recording_issue", name, reason=issue)
+                report["sent_this_pass"].append({"name": name, "bytes": st.st_size, "how": how})
                 report["on_this_pc"] -= 1
                 index.setdefault(name.lower(), []).append(self.intake / name)
             elif outcome == "held":
@@ -968,6 +937,9 @@ def _print_report(report: dict) -> None:
         print("  not named yet (never sent): %s" % n)
     for s in report.get("sent_this_pass") or []:
         print("  sent     %s (%s, %s bytes)" % (s.get("name"), s.get("how"), s.get("bytes")))
+    for r in report.get("recording_issues") or []:
+        print("  recording issue (sent; set aside at the intake) %s: %s"
+              % (r.get("name"), r.get("reason")))
 
 
 def main(argv=None) -> int:

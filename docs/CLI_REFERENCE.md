@@ -47,7 +47,7 @@ walkthroughs of the review tools themselves.
 - [Analysis Dashboard](#analysis-dashboard) -- `mousereach-build-database`
 - [Data Explorer (pre-computed statistics database)](#data-explorer-pre-computed-statistics-database) -- `mousereach-build-explorer`, `mousereach-explore`
 - [Database Sync - Automatic sync to central database](#database-sync-automatic-sync-to-central-database) -- `mousereach-sync`, `mousereach-sync-watch`, `mousereach-sync-status`
-- [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`, `mousereach-send-recordings`
+- [Watcher - Automated pipeline orchestration](#watcher-automated-pipeline-orchestration) -- `mousereach-watch`, `mousereach-watch-status`, `mousereach-watch-reprocess`, `mousereach-watch-quarantine`, `mousereach-watch-unresolvable`, `mousereach-watch-prioritize`, `mousereach-watch-process-animal`, `mousereach-watch-info`, `mousereach-watch-toggle`, `mousereach-watch-recorders`, `mousereach-send-recordings`, `mousereach-recording-issue`
 - [Version tracking and reprocessing](#version-tracking-and-reprocessing) -- `mousereach-version-check`, `mousereach-reconcile`, `mousereach-aspa-import-collages`, `mousereach-backfill-kinematic-versions`, `mousereach-version-index-build`, `mousereach-version-index-status`, `mousereach-crystallize`, `mousereach-uncrystallize`
 - [Backup watcher](#backup-watcher) -- `mousereach-backup`
 - [Archive migration - One-time Sort/ -> project/cohort restructure](#archive-migration-one-time-sort-project-cohort-restructure) -- `mousereach-migrate-archive`
@@ -2067,6 +2067,30 @@ options:
   --once      do one pass now (still never during recording time); for a PC
               whose watcher is not running
 ```
+
+### `mousereach-recording-issue`
+
+```
+usage: mousereach-recording-issue [-h] [--reason REASON] [--by BY] [--check] [--list] [file]
+
+Set a multi-animal recording aside as a RECORDING ISSUE: a recording that
+failed (empty, a fraction of a second, unreadable). It is moved to
+Processing/Review/_Problematic with a reason file, never cut, never reviewed,
+never deleted, and every watcher stops trying to cut it.
+
+positional arguments:
+  file             the recording's file name (in the intake
+                   Unanalyzed/Multi-Animal) or full path
+
+options:
+  --reason REASON  why, in plain words (required to set one aside)
+  --by BY          who is setting it aside (default: your login name)
+  --check          only run the automatic check on FILE and say what it
+                   finds; move nothing
+  --list           list every recording set aside
+```
+
+See docs/RECORDING_ISSUES.md.
 
 ## Version tracking and reprocessing
 

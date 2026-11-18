@@ -458,6 +458,28 @@ def run_census(window_days: int = 14) -> dict:
                                         (nas / "Processing" / "Quarantine")
                                         if nas else None)),
     }
+    # Recordings set aside as RECORDING ISSUES (watcher/recording_issue.py):
+    # their collage left the intake for Processing/Review/_Problematic, so the
+    # collage expansion above no longer sees it. The reason file names the
+    # sessions it was meant to hold; they are their own element, and each
+    # recording is listed with its reason (recording_issues below) so a
+    # database tool can say "recording failed" instead of "video missing".
+    from mousereach.watcher import recording_issue as _ri
+    _root("recording_issues", _ri.problematic_dir(nas) if nas else None)
+    issue_marks = _ri.read_marks(nas) if nas else {}
+    recording_issues = []
+    issue_sessions = set()
+    for collage, mark in sorted(issue_marks.items()):
+        stems = [s for s in (mark.get("sessions") or _ri.expected_sessions(collage)) if s]
+        issue_sessions.update(stems)
+        recording_issues.append({
+            "collage": collage, "reason": mark.get("reason"),
+            "flagged_by": mark.get("flagged_by"), "flagged_at": mark.get("flagged_at"),
+            "measurements": mark.get("measurements") or {}, "sessions": stems,
+            "unreadable": mark.get("unreadable")})
+    locations["recording_issue"] = issue_sessions
+    issue_of = {s: r for r in recording_issues for s in r["sessions"]}
+
     # Deep review supersedes triage (watcher/review_routing.py): a video with
     # a bundle in both queues is counted in deep review only.
     locations["triage"] = set(locations["triage"]) - set(locations["deep_review"])
@@ -496,6 +518,10 @@ def run_census(window_days: int = 14) -> dict:
         per_session[sid] = {"element": el, "finished": sid in finished,
                             "tray": tray, "project": proj,
                             "source": info.get("source")}
+        if el == "recording_issue" and sid in issue_of:
+            per_session[sid]["recording_issue"] = {
+                "collage": issue_of[sid]["collage"], "reason": issue_of[sid]["reason"],
+                "flagged_at": issue_of[sid]["flagged_at"]}
 
     fpd = pace_per_day(fin_at.values(), window_days)
     rpd = review_pace(window_days)
@@ -563,6 +589,7 @@ def run_census(window_days: int = 14) -> dict:
         "eta": eta,                               # question 4
         "review": review,
         "sessions": per_session,                  # per-sid, for the DB-side join
+        "recording_issues": recording_issues,     # failed recordings, set aside
         "diagnostics": diagnostics,               # problems, never absences
         "roots": roots,                           # question 3: real folders
     }
@@ -594,6 +621,7 @@ def _print_table(c: dict) -> None:
         "triage": "waiting for a person: triage queue",
         "deep_review": "waiting for a person: deep review queue",
         "quarantined": "held out: quarantine (unprocessable as-is)",
+        "recording_issue": "recording failed: set aside in Review/_Problematic, never cut",
         "analyzed": "finished and landed",
         "session_only": "finished (outcome-free tray)",
     }
