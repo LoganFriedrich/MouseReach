@@ -995,6 +995,16 @@ def note_folder_in_the_way(video_id: str, folder, says: str) -> None:
     note_for_a_person("queue_folder_in_the_way", video_id, folder, says)
 
 
+def listed_for_a_person(kind: str) -> set:
+    """The video ids this machine's list names under ``kind`` (one read of the
+    list). Never raises; an unreadable list gives an empty set."""
+    try:
+        return {str(i.get("video_id")) for i in _read_items()
+                if i.get("kind") == kind and i.get("video_id")}
+    except Exception:
+        return set()
+
+
 def drop_for_a_person(video_id: Optional[str] = None, folder=None,
                       kind: Optional[str] = None) -> None:
     """Take items off this machine's list: those of ``video_id`` and/or of

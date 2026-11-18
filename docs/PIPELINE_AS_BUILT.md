@@ -6374,3 +6374,27 @@ WHAT IS BUILT:
 Tests: `tests/test_review_writers_never_recreate_a_moved_bundle.py` (on the commit before this one
 the Clear button recreated the folder and overwrote another person's marker).
 
+## Update: a triage bundle its own ground truth holds is listed for a person
+
+WHY: the release predicates give the gate and the return scan's divert test an in-bundle reading
+of ground truth for whole-video certification, but the release check (`triage_status`) still
+reads only the ground-truth index (MRR-03d, an open owner decision: releasing these bundles would
+re-run and file each of them). A triage bundle whose segmentation failed and whose ground truth
+INSIDE the bundle certifies the whole video was therefore not diverted to re-segmentation (it
+counts as cleared), not released (its triaged pellets stay open) and not offered by the review
+window (it has ground truth) -- stuck, with nothing logged.
+
+WHAT IS BUILT (visibility only; nothing is released): in `review_return.scan_review_queues`, a
+triage bundle in that state is listed for a person (`_note_gt_not_counted` ->
+`review_routing.note_for_a_person`, kind `triage_ground_truth_not_counted`, one WARNING line in
+the watcher log when it is first listed) and taken off the list (`drop_for_a_person`) once a scan
+finds it no longer in that state; the list is read once per scan (`listed_for_a_person`) and
+written only when it changes. A bundle the scan leaves gone is dropped by `refresh_for_a_person`
+as before. It shows in the Pipeline Dashboard's red panel and in the Review Queues tab's
+"Folders left for a person"; the Resolve window shows it with "No button"
+(`attention_actions.actions_for`). The value of the scan's `cleared` and the release check's
+index-only reading are unchanged.
+
+Tests: `tests/test_triage_bundle_held_by_its_own_ground_truth_is_listed.py` (on the commit before
+this one the scan listed nothing for such a bundle).
+

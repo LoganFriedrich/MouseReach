@@ -119,6 +119,13 @@ def actions_for(item: dict, db=None) -> List[Action]:
     None and one exists on this computer)."""
     if item.get("kind") in ("left_for_a_person", "queue_folder_in_the_way"):
         return _folder_actions(item)
+    if item.get("kind") == "triage_ground_truth_not_counted":
+        # Shown, never acted on: whether ground truth inside a triage bundle
+        # may release it is an open decision (review_return.GT_NOT_COUNTED_KIND).
+        return [("note:decision", "No button",
+                 "Nothing here can release this video: whether ground truth inside a "
+                 "triage bundle counts as its answers is not decided yet. It stays in "
+                 "the queue, unchanged.")]
     if item.get("kind") != "route_unfinished":
         return []
     vid = item.get("video_id") or ""

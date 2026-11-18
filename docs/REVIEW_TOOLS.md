@@ -1617,7 +1617,15 @@ The segmenter's own `needs_human` verdict is read into the status object (`triag
 index (`triage_status.gt_resolved_segments`, the one reading of ground truth shared by the gate
 and `mousereach-route-to-queue`). The queue's release check does not yet look inside the bundle:
 a triage bundle holding ground truth that answers every open segment would be released on the
-next scan, which waits on a decision. **Why:** the index is built once per watcher
+next scan, which waits on a decision. Until it is decided, one such case is LISTED rather than
+left unseen: a triage bundle whose automatic segmentation failed and whose ground truth inside the
+bundle certifies the whole video is neither sent to re-segmentation (the gate would pass it) nor
+released (its triaged pellets count as open) nor offered by the review window (it has ground
+truth). The return scan lists it for a person -- the Pipeline Dashboard's red panel and the
+Review Queues tab's "Folders left for a person" -- with that reason and no button
+(`review_return._note_gt_not_counted`, kind `triage_ground_truth_not_counted`), and takes it off
+the list once it no longer applies. Nothing is moved; the video stays in the triage queue as it
+is. **Why:** the index is built once per watcher
 process, and a re-run copies the ground truth into the processing folder after that; reading the
 index alone, the gate sent videos whose open segments ground truth had answered back to a person.
 The rule: a segment whose boundaries, causal reach and outcome have all already been answered by a

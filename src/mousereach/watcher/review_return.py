@@ -1827,6 +1827,49 @@ def repair_unfinished_routes(force: bool = False, db=None,
     return out
 
 
+# A triage bundle the scan can neither divert, release nor offer (MR-ND9):
+# its segmentation failed, ground truth INSIDE the bundle certifies the whole
+# video -- so it is not diverted to re-segmentation (the gate would pass it
+# clean) -- but the release check counts only the ground-truth index, not
+# ground truth inside a bundle (triage_status; whether it may is an open
+# decision about moving queue items), so its triaged pellets stay open, and
+# the review window does not offer it because it has ground truth. Listed for
+# a person under this kind, with the reason, so it does not sit unseen.
+GT_NOT_COUNTED_KIND = "triage_ground_truth_not_counted"
+
+
+def _note_gt_not_counted(bundle: Path, stem: str, st, still_open, gt_only: bool,
+                         listed: set) -> None:
+    """List ``stem`` for a person (review_routing.note_for_a_person, kind
+    GT_NOT_COUNTED_KIND) while it is stuck as described there; take it off
+    once it is not. Nothing is moved, released or changed. ``listed`` is the
+    set of ids already listed (read once per scan), updated here so the list
+    is written only when it changes. Never raises."""
+    try:
+        stuck = bool(gt_only and st.seg_failed and still_open)
+        if stuck and stem not in listed:
+            from .review_routing import note_for_a_person
+            segs = ", ".join(str(s) for s in sorted(still_open))
+            says = (f"{stem} (triage queue, {bundle}): its automatic segmentation failed, "
+                    f"and a ground-truth file inside the bundle certifies the whole video, "
+                    f"so it is not sent to re-segmentation. But the release check counts "
+                    f"only ground truth it finds through the ground-truth index, not "
+                    f"ground truth inside a queue bundle, so its triaged pellet(s) {segs} "
+                    f"still count as open -- and the review window does not offer it "
+                    f"because it has ground truth. It stays in the triage queue, unchanged "
+                    f"and with nothing lost, until it is decided whether ground truth "
+                    f"inside a triage bundle may release it; no button does that.")
+            logger.warning("Return scan: %s", says)
+            note_for_a_person(GT_NOT_COUNTED_KIND, stem, bundle, says)
+            listed.add(stem)
+        elif not stuck and stem in listed:
+            from .review_routing import drop_for_a_person
+            drop_for_a_person(video_id=stem, kind=GT_NOT_COUNTED_KIND)
+            listed.discard(stem)
+    except Exception as e:
+        logger.warning("Return scan: could not update the list for %s: %s", stem, e)
+
+
 def scan_review_queues(db, processing_dir: Path,
                        limit: int = MAX_RETURNS_PER_SCAN) -> Dict[str, int]:
     """Re-inject human-cleared held bundles, at most ``limit`` per scan.
@@ -1873,6 +1916,8 @@ def scan_review_queues(db, processing_dir: Path,
     triage_states = _states(triage_bundles)
     from .review_routing import deep_review_stems
     deep_stems = deep_review_stems()
+    from .review_routing import listed_for_a_person
+    gt_listed = listed_for_a_person(GT_NOT_COUNTED_KIND)
     for bundle in triage_bundles:
         if not _budget_left():
             summary["deferred"] += 1
@@ -1933,8 +1978,8 @@ def scan_review_queues(db, processing_dir: Path,
         # ground truth does not: the gate sends that video to re-segmentation
         # anyway, so it goes there now instead of after a re-run. (A ground-
         # truth file of any kind used to count, through _deep_review_cleared.)
-        cleared = (_deep_review_cleared(bundle, stem)
-                   or _gt_certifies_whole_video(bundle, stem))
+        marker_clear = _deep_review_cleared(bundle, stem)
+        cleared = marker_clear or _gt_certifies_whole_video(bundle, stem)
         # DEEP REVIEW SUPERSEDES TRIAGE (review_routing): whatever this triage
         # copy's status, a video that is in deep review is never returned,
         # released or diverted from the triage queue -- the deep-review copy is
@@ -2080,6 +2125,9 @@ def scan_review_queues(db, processing_dir: Path,
                 _release_return_claim(stem)
             continue
         still_open = set(st.unresolved) - set(short)
+        # Listed for a person, never released here (_note_gt_not_counted).
+        _note_gt_not_counted(bundle, stem, st, still_open,
+                             gt_only=cleared and not marker_clear, listed=gt_listed)
         # A bundle whose ONLY flags name segments that do not exist
         # (st.ghost; triage_status.triaged_in_range) has nothing a person
         # could answer. It used to read "no triage" here and was skipped on

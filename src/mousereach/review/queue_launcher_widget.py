@@ -247,7 +247,8 @@ Each tool opens in its own window and has its own ? guide.
             nas = getattr(Paths, "NAS_ROOT", None)
             seen = {i["folder"] for i in items}
             for i in (read_items(nas) if nas else []):
-                if (i.get("kind") == "queue_folder_in_the_way"
+                if (i.get("kind") in ("queue_folder_in_the_way",
+                                      "triage_ground_truth_not_counted")
                         and i.get("folder") not in seen
                         and Path(str(i.get("folder") or "")).is_dir()):
                     items.append(i)
