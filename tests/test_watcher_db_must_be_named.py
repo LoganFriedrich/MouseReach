@@ -116,3 +116,17 @@ def test_archive_command_refuses_when_the_database_cannot_be_named(login, tmp_pa
     assert why and "db_path" in why, (
         "an unnamed watcher database was read as 'no watcher on this machine' "
         "and the row check was skipped")
+
+
+def test_a_login_with_no_settings_file_refuses(login, monkeypatch):
+    """No settings file: the processing folder comes from the machine-wide
+    variable and nothing says which database the watcher uses -- the default
+    file there is a guess, so it is refused."""
+    # login() never called: this login has no settings file.
+    _decoy(login.root)
+    with pytest.raises(Exception) as err:
+        path = db_location.resolve_watcher_db_path()
+        pytest.fail(f"resolved to {path} instead of refusing")
+    assert "settings" in str(err.value)
+    db, why = db_location.open_watcher_db_if_present()
+    assert db is None and why

@@ -92,6 +92,8 @@ def test_kinematic_backfill_keeps_a_copy_and_leaves_a_crystallized_video_alone(t
             V2: {"state": "crystallized", "crystallized_label": "PAPER_X"}}
     monkeypatch.setattr(db_location, "open_watcher_db_if_present", lambda: (
         SimpleNamespace(get_video=lambda vid: rows.get(vid)), None))
+    # A login that can name its watcher database (db_location.watcher_db_unnamed_reason).
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
     monkeypatch.setattr(sys, "argv", ["mousereach-backfill-kinematic-versions",
                                       "--apply", "--root", str(analyzed)])
     manifest.main_backfill_kinematic_versions()

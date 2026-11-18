@@ -80,6 +80,9 @@ def _fake_version_index(monkeypatch):
 
 def test_backfill_manifest_versions_never_visits_archived_manifest(an, tmp_path, monkeypatch):
     import mousereach.pipeline.manifest as manifest
+    from mousereach.watcher import db_location
+    # A login that can name its watcher database (db_location.watcher_db_unnamed_reason).
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
     upserts = _fake_version_index(monkeypatch)
     for folder in (an.live, an.archive):
         _write_json(folder / f"{VID}_processing_manifest.json",
@@ -102,6 +105,9 @@ def test_backfill_manifest_versions_never_visits_archived_manifest(an, tmp_path,
 
 def test_backfill_kinematic_versions_never_visits_archived_manifest(an, monkeypatch):
     import mousereach.pipeline.manifest as manifest
+    from mousereach.watcher import db_location
+    # A login that can name its watcher database (db_location.watcher_db_unnamed_reason).
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
     upserts = _fake_version_index(monkeypatch)
     for folder in (an.live, an.archive):
         _write_json(folder / f"{VID}_processing_manifest.json",

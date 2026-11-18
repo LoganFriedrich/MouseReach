@@ -5114,8 +5114,11 @@ dashboard's Reprocess outdated against the decoy without a word: a publication l
 
 Now `db_location.resolve_watcher_db_path` follows these rules, in order:
 
-1. the settings file cannot be read -> refused (`WatcherDbUnnamed`), naming the file and the
-   problem;
+1. the settings file cannot be read, or this login has no settings file at all -> refused
+   (`WatcherDbUnnamed`), naming the file and the problem. A login with no settings file gets its
+   processing folder from the machine-wide `MouseReach_PROCESSING_ROOT` variable and nothing
+   about which database the watcher uses, so the default file under that folder would be a
+   guess;
 2. `watcher.db_path` is set -> that file;
 3. `watcher.mode` is `processing_server` and `db_path` is not set -> refused (`WatcherDbUnnamed`):
    the processing server's database must be named in the settings of every login that works

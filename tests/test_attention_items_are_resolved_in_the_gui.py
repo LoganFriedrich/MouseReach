@@ -179,6 +179,8 @@ def test_a_file_at_the_source_of_a_video_running_again_gets_no_button(env, monke
     from mousereach.watcher import db_location
     tmp_path, nas, triage, deep, db = env
     monkeypatch.setattr(db_location, "open_watcher_db_if_present", lambda: (db, None))
+    # A login that can name its watcher database (db_location.watcher_db_unnamed_reason).
+    monkeypatch.setattr(db_location, "watcher_db_unnamed_reason", lambda: None)
     running = _files(tmp_path / "Processing", {f"{VID}.mp4": "running video"}) / f"{VID}.mp4"
     b = _unfinished_bundle(tmp_path, triage, running, in_bundle=False)
     item = {"kind": "route_unfinished", "video_id": VID, "folder": str(b),

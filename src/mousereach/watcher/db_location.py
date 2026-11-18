@@ -20,8 +20,8 @@ itself (mousereach-watch and the Watcher Control panel's Start and Run Once)
 uses it too, so the daemon and every tool always name the same file.
 
 The rule, in order:
-  1. the settings file cannot be read -> REFUSE (WatcherDbUnnamed), naming the
-     file and the problem;
+  1. the settings file cannot be read, or this login has none at all ->
+     REFUSE (WatcherDbUnnamed), naming the file and the problem;
   2. the configured ``watcher.db_path`` when set -- the file the daemon writes;
   3. a machine configured as ``processing_server`` with no ``db_path`` ->
      REFUSE (WatcherDbUnnamed): the processing server's watcher database must
@@ -31,7 +31,10 @@ The rule, in order:
      ConfigurationError (from require_processing_root), whose message names
      the setup command.
 
-WHY REFUSE INSTEAD OF FALLING BACK (rules 1 and 3). Every Windows login on a
+WHY REFUSE INSTEAD OF FALLING BACK (rules 1 and 3). A login with no settings
+file at all gets its processing folder from the machine-wide environment
+variable, and nothing about which database the watcher uses; the default file
+under that folder is a guess, so it is refused like an unreadable file. Every Windows login on a
 machine has its own settings file, but they share the processing folder. A
 login whose settings cannot be read, or whose settings say "processing
 server" without naming the database (a reviewer's login set up from a
@@ -50,7 +53,7 @@ from mousereach.settings_file import ConfigurationError
 
 class WatcherDbUnnamed(ConfigurationError):
     """This login's settings do not say which watcher database the watcher on
-    this machine uses (the settings file cannot be read, or a processing
+    this machine uses (the settings file cannot be read or does not exist, or a processing
     server's settings name no ``watcher.db_path``). The message says what to
     fix. Distinct from "named, but the file is not there", which is a machine
     whose watcher never ran (the tools used on their own)."""
@@ -77,6 +80,15 @@ def resolve_watcher_db_path() -> Path:
             f"not be read ({e}), so which watcher database this machine uses cannot "
             f"be told. Fix the settings file (or run mousereach-setup); nothing was "
             f"read from or written to any watcher database.") from e
+    if (getattr(cfg, "source_file", None) is not None
+            and getattr(cfg, "source_mtime", 0) is None):
+        # WatcherConfig.load() found no settings file for this login.
+        raise WatcherDbUnnamed(
+            f"this login has no MouseReach settings file ({_settings_file_name()}), so "
+            f"which watcher database this machine uses cannot be told. Run "
+            f"mousereach-setup in this login (on the processing server, set "
+            f"watcher.db_path to the file the watcher writes); nothing was read from or "
+            f"written to any watcher database.")
     if cfg.db_path:
         return Path(cfg.db_path)
     if (cfg.mode or "") == "processing_server":
