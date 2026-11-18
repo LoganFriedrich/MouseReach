@@ -16,8 +16,10 @@ from `{video}_features.json` (see `docs/KINEMATICS_FIELDS.md`).
 * **Reach window.** A reach has a `start_frame`, an `apex_frame`, and an
   `end_frame`, all integer frame indices into the source video, and
   `end_frame` is inclusive (it is the last frame of the reach). The column
-  `duration_frames` is `end_frame - start_frame + 1` for reaches from reach
-  detection. (There is no `reach_duration_frames` column.)
+  `duration_frames` is `end_frame - start_frame + 1` for every reach (since
+  kinematic extractor 2.6.0 it is counted from the frames; before, reaches from
+  ground truth, typed by a reviewer, or moved in the reach review window carried
+  a value one frame short). (There is no `reach_duration_frames` column.)
 * **Trajectory features are computed in the body-relative frame.** For every
   trajectory feature, the paw point's position is nose-subtracted at every
   frame: `paw_relative = paw - nose`. This isolates paw motion from incidental

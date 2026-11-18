@@ -1053,6 +1053,54 @@ def pellet_span(boundaries, i) -> Tuple[int, int]:
     return int(boundaries[i]), int(boundaries[i + 1]) - 1
 
 
+def reach_file_segment_span(seg) -> Tuple[int, int]:
+    """The frames of one segment of a ``*_reaches.json`` file, as
+    ``(first frame, last frame)``, BOTH ENDS INCLUDED -- the same convention as
+    pellet_span, the outcomes file and every reach's own start/end.
+
+    THE FRAME CONVENTION (one, used everywhere): a window of frames is written
+    as its first frame and its last frame, and both belong to it. A window's
+    length in frames is therefore ``last - first + 1``. Reaches, pellets
+    (pellet_span), outcome segments and every measurement window follow it.
+
+    The one place on disk that does not: the reaches file's own segment list
+    (span_to_reaches.segments_from_boundaries) stores each segment's
+    ``end_frame`` as the frame AFTER its last one -- the next cut, or
+    ``total_frames`` for the stretch after the last cut. That format is kept
+    as it is, because thousands of filed reaches files carry it; this function
+    is where a reader turns it into the convention, so every reader turns it
+    the same way. For pellet i of cuts b it gives exactly ``pellet_span(b, i)``.
+
+    WHY it matters: a reader that took the stored ``end_frame`` as the last
+    frame measured every pellet over one frame of the NEXT pellet and made
+    every pellet one frame too long (kinematics before extractor 2.6.0)."""
+    return int(seg["start_frame"]), int(seg["end_frame"]) - 1
+
+
+def frames_in(first: int, last: int) -> int:
+    """How many frames the window ``first .. last`` holds, both ends included
+    (reach_file_segment_span states the convention): ``last - first + 1``."""
+    return int(last) - int(first) + 1
+
+
+def reach_duration_frames(reach) -> Optional[int]:
+    """A reach's ``duration_frames``: the number of frames from its
+    ``start_frame`` to its ``end_frame``, both included -- what the reach
+    detector writes. None when either frame is missing.
+
+    WHY it is counted from the frames, never copied from a stored
+    ``duration_frames``: the reach review window and the reach command line
+    wrote ``end - start`` (one frame short) for every reach a person moved or
+    added, and the results step wrote the same for every ground-truth reach,
+    so a stored value cannot be trusted. Counting from the frames gives the
+    same answer whoever wrote the file."""
+    s = (reach or {}).get("start_frame")
+    e = (reach or {}).get("end_frame")
+    if s is None or e is None:
+        return None
+    return frames_in(s, e)
+
+
 def _cut_frames(seg_doc) -> Optional[List[int]]:
     """The cut frames of a ``*_segments.json`` document, or None when one of
     them cannot be read."""

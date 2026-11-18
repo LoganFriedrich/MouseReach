@@ -100,7 +100,13 @@ Measured over the Processing corpus, `ruler_pixels` sits in a narrow band for no
 
 **Likelihood.** DeepLabCut's own confidence, 0 to 1, dimensionless.
 
-**Frame windows are inclusive.** A reach's rows are `df.iloc[start_frame:end_frame+1]` (`:396`), so `duration_frames` frames are used. Algorithm-detected reaches set `duration_frames = end - start + 1` (`reach/core/span_to_reaches.py:162`), which matches. Reaches substituted from ground truth set `duration_frames = end - start` (`review/truth_resolver.py:204`), which is one frame short of the window actually measured.
+**One frame convention: a window is its first and last frame, both included.** Stated once in `review/causal_review_io.py` (`reach_file_segment_span`, beside `pellet_span`) and used by every reader. A window from frame `a` to frame `b` holds `b - a + 1` frames. A reach's rows are `df.iloc[start_frame:end_frame+1]`, and its `duration_frames` is `end_frame - start_frame + 1`. A segment's `start_frame` and `end_frame` in this file are the pellet's first and last frames, the same frames as in the outcomes file and the review window (`pellet_span`). Every segment-level value is measured over exactly those frames.
+
+**The one exception on disk, and how it is read.** The reaches file's own segment list stores each segment's `end_frame` as the frame AFTER its last one: the next cut, or `total_frames` for the stretch after the last cut. Thousands of filed reaches files carry that format, so it is kept as it is. The extractor converts it once, through `reach_file_segment_span`, and never reads it as a last frame.
+
+**What extractor 2.6.0 corrected** (2026-11-18, folded into 2.6.0 before 2.6.0 was declared or deployed). Before, the stored segment end was read as the last frame. So every segment-level value took in the first frame of the NEXT pellet: `attention_score`, the body/posture values, the quality values, and the pellet window that sets the `legacy_swipe_*` threshold line and slit zone. `segment_duration_sec` and `time_to_outcome_sec` were one frame too long, and the file's segment `end_frame` was the next pellet's first frame.
+
+A reach's `duration_frames` was copied from the reaches file or from ground truth. It is now counted from the reach's own frames. Two kinds of reach carried a value one frame short (`end - start`): reaches a person moved or added in the reach review window, and every reach substituted from ground truth or typed by a reviewer (`truth_resolver`). Reach `start_frame` and `end_frame` are unchanged, and so is every per-reach measurement computed from them.
 
 ---
 
@@ -401,7 +407,7 @@ One record per pellet presentation. All are written to `{video}_features.json`; 
 | Field | Plain English | How computed | Units | Notes |
 |---|---|---|---|---|
 | `segment_num` | Which pellet presentation | copied (`:289`) | count | The only place the pellet number is recorded correctly |
-| `start_frame`, `end_frame` | Segment bounds | copied (`:290-291`) | frame index | |
+| `start_frame`, `end_frame` | Segment bounds: the pellet's first and last frame, both included | the reaches file's segment, read through `reach_file_segment_span` (section 3, "One frame convention") | frame index | Since extractor 2.6.0 `end_frame` is the pellet's last frame, as in the outcomes file. Before that it was the reaches file's stored end, the next pellet's first frame |
 | `ruler_pixels` | The 9 mm reference in pixels for this segment | copied (`:292`) | pixels | drives every mm conversion in the segment |
 | `outcome` | What happened to the pellet | copied from outcome detection (`:293`) | text | 100% |
 | `outcome_confidence` | Detector's confidence | copied (`:294`) | 0-1 | **Null on every segment the current detector produces.** Present only on the segments of legacy-detector videos. |
@@ -418,7 +424,7 @@ One record per pellet presentation. All are written to `{video}_features.json`; 
 | `mean_head_angle_deg` | Average head orientation | plain arithmetic mean of ear-to-ear angles, over frames with both ears above 0.7 (`:734-739`) | degrees | **Not valid as written.** Measured angles span nearly the full circle; averaging a wrap-around quantity arithmetically is meaningless when it straddles ±180. |
 | `head_angle_variance` | Head-orientation steadiness | plain variance of the same angles (`:740`); null when fewer than 2 frames pass the gate | degrees² | Same problem, worse: the value is dominated by the ±180 jump, not by head steadiness. |
 | `nose_position_variance` | Postural steadiness | `var(Nose_x) + var(Nose_y)` over frames with `Nose_likelihood > 0.7`, null if fewer than 2 (`:749-756`) | **pixels², not converted to mm²** | |
-| `segment_duration_sec` | Length of the presentation | `(end − start + 1) / frame_rate` | seconds (before 2.5.0: an assumed 30 frames per second) | |
+| `segment_duration_sec` | Length of the presentation | `(end_frame − start_frame + 1) / frame_rate`, with this record's inclusive `end_frame` | seconds (before 2.5.0: an assumed 30 frames per second) | Before 2.6.0 one frame too long (section 3, "What extractor 2.6.0 corrected") |
 | `time_to_first_reach_sec` | Delay before the mouse first reached | `(first reach start − segment start) / frame_rate` | seconds | null if the segment has no reaches |
 | `time_to_outcome_sec` | Intended: when the outcome happened | **`= segment_duration_sec`, unconditionally** (`:844`) | seconds | Carries no information beyond segment length. The comment says "assume outcome happens at segment end". The outcome detector *does* compute a real answer, `outcome_known_frame`, present on most current segments; the extractor never reads it. |
 | `mean_inter_reach_interval_sec` | Average gap between reaches | mean of (next start − previous end) / frame_rate | seconds | null when fewer than 2 reaches; can be negative if reaches overlap |
@@ -508,7 +514,7 @@ If a segment boundary is in the wrong place, or a segment is renumbered, these c
 |---|---|---|
 | **Which outcome is attached to which segment** | `pair_segments_by_number` in `feature_extractor.py` | (Update 2026-11-18.) Paired by `segment_num`; any mismatch other than the reaches file's one extra trailing segment raises `KinematicsProblem` and nothing is written. Before 2026-11-18 the two lists were zipped by position. |
 | **Every millimetre value in the segment** | `:292`, then `:406`, `:606`, `:689`, `:884`, `:1048`, `:1246` | `ruler_pixels` is measured over a stable stretch *of that segment*. Move the boundary and you move the frames the SABL/SABR medians come from. |
-| **Every segment-level measurement** | `:784`, `:688`, `:964` | `attention_score`, all six body/posture values, and both quality values are computed over `df.iloc[start_frame:end_frame+1]`. |
+| **Every segment-level measurement** | `:784`, `:688`, `:964` | `attention_score`, all six body/posture values, and both quality values are computed over `df.iloc[start_frame:end_frame+1]`, with the pellet's first and last frame from `reach_file_segment_span` (since 2.6.0; before, the window took in the next pellet's first frame). |
 | **The pellet-position values** | `:886-892` | The assessment window runs from the segment start to the first reach's start. A segment that begins too early measures the *previous* pellet's position; one with no reaches measures a fixed 30 frames from wherever it begins. |
 | **`segment_duration_sec`, `time_to_first_reach_sec`, `time_to_outcome_sec`** | `:832-844` | All three are pure functions of the boundaries. `time_to_outcome_sec` is the duration, so it is nothing but a boundary readout. |
 | **`segment_num`, `is_first_reach`, `is_last_reach`, `n_reaches_in_segment`** | `:307`, `:317-320` | These come from the reach detector's assignment of reaches to segments, not from anything kinematics checks. A reach that lands in the wrong segment gets the wrong pellet number and shifts the first/last flags and the count for two segments at once. |

@@ -67,7 +67,8 @@ def add_reach(data: dict, segment_num: int, start: int, apex: int, end: int) -> 
                 'start_frame': start,
                 'apex_frame': apex,
                 'end_frame': end,
-                'duration_frames': end - start,
+                # Frames start..end, both included (causal_review_io.frames_in)
+                'duration_frames': end - start + 1,
                 'max_extent_pixels': 0,  # Can't compute without DLC data
                 'max_extent_ruler': 0,
                 'manually_added': True

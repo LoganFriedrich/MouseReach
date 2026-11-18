@@ -18,6 +18,10 @@ from mousereach.kinematics.core.anchored_path import (
     AnchoredPath, anchored_hand_path, fill_repeated_frames, tracked_steps)
 from mousereach.kinematics.core.frame_rate import resolve_frame_rate
 from mousereach.kinematics.core.legacy_swipe import legacy_swipe_measures
+# The pipeline's one frame convention (first and last frame both included) and
+# the two readers that apply it: a reaches-file segment and a reach's length.
+from mousereach.review.causal_review_io import (frames_in, reach_duration_frames,
+                                                reach_file_segment_span)
 
 
 @dataclass
@@ -422,9 +426,26 @@ class FeatureExtractor:
     VERSION = "2.6.0"  # 2.6 (2026-11-17): adds the legacy_swipe_* group to the
                        # extended block (legacy_swipe.py): an earlier swipe-measure
                        # definition reproduced on each reach, for continuity with
-                       # analyses built on it. Only adds columns; every other value
-                       # is the same as 2.5.0. Kept separate from 2.5.0 because 2.5.0
+                       # analyses built on it. Kept separate from 2.5.0 because 2.5.0
                        # output without these columns already exists.
+                       # 2.6 also (2026-11-18, folded in before 2.6.0 was declared or
+                       # deployed, so no 2.6.0 output exists without it): ONE frame
+                       # convention, first and last frame both included
+                       # (causal_review_io.reach_file_segment_span). The reaches file
+                       # stores a segment's end as the next pellet's first frame; it
+                       # was read as the segment's last frame, so every segment-level
+                       # value (attention, body/posture, quality, the legacy_swipe
+                       # pellet window) took in the next pellet's first frame,
+                       # segment_duration_sec and time_to_outcome_sec were one frame
+                       # long, and the features file's segment end_frame was the next
+                       # pellet's first frame (now the pellet's last frame, as in the
+                       # outcomes file). And a reach's duration_frames is counted from
+                       # its frames (end - start + 1) instead of copied: reaches a
+                       # person moved or added in the reach review window, and every
+                       # ground-truth reach, carried a stored value one frame short.
+                       # Reach start/end frames are unchanged. So 2.6.0 changes
+                       # those values as well as adding columns; no earlier version
+                       # is compatible.
                        # 2.5 (2026-11-17), also: speeds read through repeated frames
                        # (anchored_path.fill_repeated_frames). A video whose recorder
                        # repeats a picture until the camera sends a new one has steps
@@ -743,17 +764,27 @@ class FeatureExtractor:
         for seg_data, outcome_data in _pairs:
             seg_num = seg_data['segment_num']
 
+            # The pellet's frames, first and last BOTH included (the pipeline's
+            # one frame convention, causal_review_io.reach_file_segment_span).
+            # The reaches file stores a segment's end as the NEXT pellet's first
+            # frame; every segment-level window, length and the features file's
+            # segment start/end below use these two numbers, never that stored
+            # end. Before 2.6.0 the stored end was read as the last frame, so
+            # every pellet's measurements took in the next pellet's first frame
+            # and every pellet was one frame too long.
+            seg_first, seg_last = reach_file_segment_span(seg_data)
+
             # Compute behavioral/postural features for this segment
             attention_score = self._compute_attention_score(
                 df,
-                seg_data['start_frame'],
-                seg_data['end_frame']
+                seg_first,
+                seg_last
             )
 
             body_features = self._compute_body_features_segment(
                 df,
-                seg_data['start_frame'],
-                seg_data['end_frame'],
+                seg_first,
+                seg_last,
                 seg_data['ruler_pixels']
             )
 
@@ -775,7 +806,8 @@ class FeatureExtractor:
 
             # Compute temporal context
             temporal_context = self._compute_temporal_context(
-                seg_data,
+                seg_first,
+                seg_last,
                 measured_reaches
             )
 
@@ -783,7 +815,7 @@ class FeatureExtractor:
             first_reach_start = measured_reaches[0]['start_frame'] if measured_reaches else None
             pellet_positioning = self._compute_pellet_positioning(
                 df,
-                seg_data['start_frame'],
+                seg_first,
                 first_reach_start,
                 seg_data['ruler_pixels']
             )
@@ -791,15 +823,16 @@ class FeatureExtractor:
             # Compute quality metrics
             quality_metrics = self._compute_quality_metrics(
                 df,
-                seg_data['start_frame'],
-                seg_data['end_frame']
+                seg_first,
+                seg_last
             )
 
-            # Create segment features container
+            # Create segment features container. end_frame is the pellet's LAST
+            # frame (included), as in the outcomes file and pellet_span.
             seg_features = SegmentFeatures(
                 segment_num=seg_num,
-                start_frame=seg_data['start_frame'],
-                end_frame=seg_data['end_frame'],
+                start_frame=seg_first,
+                end_frame=seg_last,
                 ruler_pixels=seg_data['ruler_pixels'],
                 outcome=outcome_data.get('outcome'),
                 outcome_confidence=outcome_data.get('confidence'),
@@ -830,7 +863,7 @@ class FeatureExtractor:
                         for sg in reaches_data['segments'] for r in sg['reaches']
                         if r is not reach
                     ],
-                    window=(seg_data['start_frame'], seg_data['end_frame']),
+                    window=(seg_first, seg_last),
                 )
 
                 # Set contextual flags
@@ -914,17 +947,19 @@ class FeatureExtractor:
             seg_reaches = seg.get('reaches', []) or []
             n = len(seg_reaches)
             total_reaches += n
+            # First and last frame, both included (reach_file_segment_span).
+            seg_first, seg_last = reach_file_segment_span(seg)
             sf = SegmentFeatures(
                 segment_num=seg['segment_num'],
-                start_frame=seg['start_frame'],
-                end_frame=seg['end_frame'],
+                start_frame=seg_first,
+                end_frame=seg_last,
                 ruler_pixels=seg.get('ruler_pixels'),
                 outcome=None,
                 outcome_confidence=None,
                 outcome_flagged=False,
                 n_reaches=n,
                 attention_score=self._compute_attention_score(
-                    df, seg['start_frame'], seg['end_frame']),
+                    df, seg_first, seg_last),
             )
             for i, r in enumerate(seg_reaches):
                 sf.reaches.append(ReachFeatures(
@@ -937,7 +972,7 @@ class FeatureExtractor:
                     start_frame=r.get('start_frame', 0),
                     apex_frame=r.get('apex_frame'),
                     end_frame=r.get('end_frame', 0),
-                    duration_frames=r.get('duration_frames', 0),
+                    duration_frames=reach_duration_frames(r),
                 ))
             segments.append(sf)
         return VideoFeatures(
@@ -988,7 +1023,10 @@ class FeatureExtractor:
             start_frame=start_frame,
             apex_frame=apex_frame,
             end_frame=end_frame,
-            duration_frames=reach['duration_frames'],
+            # Counted from the frames, never copied: a stored duration_frames
+            # written by an older review tool is one frame short
+            # (reach_duration_frames says why).
+            duration_frames=reach_duration_frames(reach),
             max_extent_pixels=reach.get('max_extent_pixels'),
             max_extent_ruler=reach.get('max_extent_ruler')
         )
@@ -1335,7 +1373,7 @@ class FeatureExtractor:
         Args:
             df: Full DLC dataframe
             start_frame: Start frame of segment
-            end_frame: End frame of segment
+            end_frame: LAST frame of the segment, included (reach_file_segment_span; never the reaches file's stored end)
             ruler_pixels: Pixels per ruler unit for this segment
 
         Returns:
@@ -1432,7 +1470,7 @@ class FeatureExtractor:
         Args:
             df: Full DLC dataframe
             start_frame: Start frame of segment
-            end_frame: End frame of segment
+            end_frame: LAST frame of the segment, included (reach_file_segment_span; never the reaches file's stored end)
 
         Returns:
             Attention score as percentage (0-100), or None if cannot compute
@@ -1466,14 +1504,18 @@ class FeatureExtractor:
 
     def _compute_temporal_context(
         self,
-        seg_data: Dict,
+        seg_first: int,
+        seg_last: int,
         reaches: List[Dict]
     ) -> Dict:
         """
         Compute temporal context features for a segment.
 
         Args:
-            seg_data: Segment data with start/end frames
+            seg_first: the pellet's first frame
+            seg_last: the pellet's LAST frame, included (reach_file_segment_span:
+                never the reaches file's stored end, which is the next pellet's
+                first frame)
             reaches: List of reach dicts
 
         Returns:
@@ -1486,11 +1528,10 @@ class FeatureExtractor:
             return {'segment_duration_sec': None, 'time_to_first_reach_sec': None,
                     'time_to_outcome_sec': None, 'mean_inter_reach_interval_sec': None}
 
-        start_frame = seg_data['start_frame']
-        end_frame = seg_data['end_frame']
+        start_frame = seg_first
 
-        # Segment duration
-        segment_frames = end_frame - start_frame + 1
+        # Segment duration: the frames the pellet holds, first and last included.
+        segment_frames = frames_in(seg_first, seg_last)
         features['segment_duration_sec'] = float(segment_frames / fps)
 
         # Time to first reach
@@ -1616,7 +1657,7 @@ class FeatureExtractor:
         Args:
             df: Full DLC dataframe
             start_frame: Segment start frame
-            end_frame: Segment end frame
+            end_frame: LAST frame of the segment, included (reach_file_segment_span; never the reaches file's stored end)
 
         Returns:
             Dict with quality metrics

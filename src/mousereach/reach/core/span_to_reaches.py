@@ -280,7 +280,12 @@ def segments_from_boundaries(
     ``reach_detector_v8.ReachDetectorV8.detect`` exactly so produced
     ``segment_num`` values and the segment count are unchanged.
 
-    ``seg_start`` is inclusive, ``seg_end`` exclusive.
+    ``seg_start`` is inclusive, ``seg_end`` exclusive. This is the ONLY
+    exclusive end in the pipeline's files (it is kept because filed reaches
+    files carry it). Every reader that needs a segment's frames turns it into
+    the pipeline's one convention, first and last frame both included, through
+    ``causal_review_io.reach_file_segment_span`` -- never by reading
+    ``end_frame`` as the last frame.
     """
     segments: List[Segment] = []
     n = len(boundaries)

@@ -64,7 +64,9 @@ def _bundle(tmp_path, video_fps=60.0, meta_fps=None):
     reaches = tmp_path / f"{STEM}_reaches.json"
     reaches.write_text(json.dumps({
         "video_name": STEM, "total_frames": N_FRAMES, "n_segments": 1,
-        "segments": [{"segment_num": 1, "start_frame": 40, "end_frame": 339,
+        # As the reaches file stores it: end_frame is the frame AFTER the
+        # segment's last one (span_to_reaches), so this segment is 40..339.
+        "segments": [{"segment_num": 1, "start_frame": 40, "end_frame": 340,
                       "ruler_pixels": 34.0,
                       "reaches": [
                           {"reach_id": 1, "reach_num": 1, "start_frame": 100,

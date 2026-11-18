@@ -76,6 +76,25 @@ try:  # keep the touched-outcome set consistent with the review bridge
 except Exception:  # pragma: no cover - defensive
     _TOUCHED_OUTCOMES = {"retrieved", "displaced_sa", "displaced_outside"}
 
+# The pipeline's one frame convention: a window is its first and last frame,
+# both included (causal_review_io.reach_file_segment_span states it).
+from mousereach.review.causal_review_io import (reach_duration_frames,
+                                                reach_file_segment_span)
+
+
+def _reach_file_pellet(seg: dict) -> dict:
+    """A reaches-file segment as a current pellet, for a run with no segments
+    file: its frames in the one convention (last frame included, as
+    pellet_span gives them), never the stored end, which is the next
+    segment's first frame. Without cuts there is no re-cut to honour, so
+    ``cuts_set_at`` is not carried."""
+    out = {k: v for k, v in seg.items() if k != "cuts_set_at"}
+    try:
+        out["start_frame"], out["end_frame"] = reach_file_segment_span(seg)
+    except (TypeError, ValueError, KeyError):
+        pass
+    return out
+
 
 # ---------------------------------------------------------------------------
 # small IO helpers
@@ -387,7 +406,9 @@ def _gt_reach_dict(r: dict, reach_num: int) -> dict:
         "start_frame": s,
         "end_frame": e,
         "apex_frame": r.get("apex_frame"),
-        "duration_frames": (e - s) if (s is not None and e is not None) else None,
+        # Frames from start to end, both included -- what the detector writes
+        # and the window the extractor measures (it was e - s, one frame short).
+        "duration_frames": reach_duration_frames(r),
         "max_extent_pixels": None,
         "max_extent_ruler": None,
         "reach_source": "ground_truth",
@@ -564,7 +585,10 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
     for seg in out.get("segments", []):
         try:
             sn = int(seg.get("segment_num"))
-            spans[sn] = (int(seg["start_frame"]), int(seg["end_frame"]))
+            # First and last frame, both included: _segment_of_reach counts
+            # overlap that way, and the reaches file's stored end is the next
+            # segment's first frame (reach_file_segment_span).
+            spans[sn] = reach_file_segment_span(seg)
         except (TypeError, ValueError, KeyError):
             continue
     def _place(r, log=True):
@@ -756,7 +780,7 @@ def resolve_truth_layers(
         human_segmentation = human_segmentation or segmentation_is_human(segments_doc)
     else:
         _recut_cuts_unreadable = bool(segments_doc) and segmentation_is_human(segments_doc)
-        _cur_segs = [{k: v for k, v in s.items() if k != "cuts_set_at"}
+        _cur_segs = [_reach_file_pellet(s)
                      for s in (reaches_data.get("segments") or []) if isinstance(s, dict)]
 
     # ---- per-segment OUTCOME layers, low -> high --------------------------
