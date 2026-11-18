@@ -3,6 +3,9 @@
 This widget consumes a per-video JSON describing the detector's TP / FP / FN
 reaches against ground truth. One JSON per video.
 
+**How to open it.** Run `mousereach-fpfn-review`, or in napari open the
+MouseReach plugin's "FP/FN Reach Review" widget.
+
 Manifests are produced by whatever evaluation harness compares your detector
 output to ground truth: group its per-event records by `video_id` and emit one
 JSON per video in the shape below (a worked transform is at the bottom).
@@ -50,8 +53,10 @@ JSON per video in the shape below (a worked transform is at the bottom).
 - **`video_path`** — string (absolute path, or any path resolvable on the
   machine running the widget). Optional. If present, widget auto-loads the
   video; otherwise user is prompted to pick it.
-- **`n_frames`**, **`fps`** — integers. Optional but useful for the widget's
-  header line. If absent, widget reads them from the loaded video.
+- **`n_frames`**, **`fps`** -- integers. Optional; shown in the header.
+  Loading a video always replaces them with the video's own frame count and
+  fps, whether or not the manifest gave them (fps is 60 until a video is
+  loaded).
 - **`detector_version`** — string. Required. Shown in header so the user can
   tell at a glance which algorithm version produced these errors. Example
   values: `"v8.0.0"`, `"v7.2.0"`.
@@ -80,7 +85,7 @@ Required fields:
 - **`gt`** — `{start, end}` integer frame indices for the ground-truth
   reach, or `null` for FP.
 
-Optional fields (rendered as columns / tooltips if present):
+Optional fields:
 
 - **`category`** — string. Failure-mode label. Suggested values:
   - For FP: `"over_extends_end"`, `"over_extends_start"`, `"within_gt"`,
@@ -93,7 +98,18 @@ Optional fields (rendered as columns / tooltips if present):
   - The widget treats `category` as a free-form string; new values can be
     introduced without widget changes.
 - **`start_delta`** — integer. detector_start − gt_start. TP only.
-- **`span_delta`** — integer. detector_span − gt_span. TP only.
+- **`span_delta`** -- integer. detector_span - gt_span. TP only. Accepted
+  but not displayed: the widget shows an End delta (detector end minus gt
+  end), computed from the `detector` and `gt` frames.
+- **`topology`** -- one of `TP`, `TOLERANCE_ERROR`, `MERGED`, `FRAGMENTED`,
+  `FALSE_POSITIVE`, `FALSE_NEGATIVE` (`COMPLEX` is tolerated). Colors the row,
+  decides the marker drawn on the video, and fills the per-video topology
+  table.
+- **`topology_sub`** -- string, shown with the topology.
+- **`component_id`** -- MERGED or FRAGMENTED events that share one id are
+  counted once in the topology table.
+- **`kinematically_excluded`**, **`outside_gt_segmentation`** -- booleans;
+  `true` hides the event while "Hide filtered-out reaches" is ticked.
 
 ## Building manifests from your matcher's output
 
