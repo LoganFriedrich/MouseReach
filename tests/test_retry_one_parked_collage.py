@@ -76,3 +76,67 @@ def test_the_red_panel_names_the_one_collage_retry(env, monkeypatch):
     assert "--collage" in says and "Retry a collage" in says
     assert "raise max_retries" not in says, (
         "the remedy must not be a machine-wide retry of every failed video")
+
+
+# --- Watcher Control "Retry a collage..." button -------------------------------
+
+def test_failed_collage_choices_lists_only_failed_collages_with_their_error(env):
+    cw = pytest.importorskip("mousereach.watcher.control_widget")
+    assert cw.failed_collage_choices(env.db) == []        # nothing failed yet
+    _out_of_retries(env)
+    choices = cw.failed_collage_choices(env.db)
+    assert [name for name, _ in choices] == [COLLAGE]
+    label = choices[0][1]
+    assert "3 time(s)" in label and "crop failed: unreadable stream" in label
+
+
+def test_failed_collage_choices_never_raises():
+    cw = pytest.importorskip("mousereach.watcher.control_widget")
+
+    class Broken:
+        def get_collages_in_state(self, state):
+            raise RuntimeError("database unreadable")
+    assert cw.failed_collage_choices(Broken()) == []
+
+
+def _press_retry(cw, env, monkeypatch, pick_ok=True):
+    """Call the button's handler unbound, with the dialogs replaced."""
+    said = []
+    monkeypatch.setattr(cw, "show_info", lambda m: said.append(("info", m)))
+    monkeypatch.setattr(cw, "show_error", lambda m: said.append(("error", m)))
+    monkeypatch.setattr(cw.QMessageBox, "information",
+                        lambda *a, **k: said.append(("box", a[-1])))
+    asked = []
+
+    def get_item(parent, title, label, items, *a, **k):
+        asked.append(list(items))
+        return items[0], pick_ok
+    monkeypatch.setattr(cw.QInputDialog, "getItem", staticmethod(get_item))
+    refreshed = []
+    me = SimpleNamespace(_db=lambda: env.db, _refresh=lambda: refreshed.append(1))
+    cw.WatcherControlWidget._retry_collage(me)
+    return said, asked, refreshed
+
+
+def test_retry_button_gives_the_picked_collage_its_retries_back(env, monkeypatch):
+    cw = pytest.importorskip("mousereach.watcher.control_widget")
+    _out_of_retries(env)
+    said, asked, refreshed = _press_retry(cw, env, monkeypatch)
+    assert len(asked) == 1 and COLLAGE in asked[0][0]
+    assert int(env.db.get_collage(COLLAGE)["retry_count"]) == 0
+    assert env.db.get_collage(COLLAGE)["state"] == "failed"   # the scan retries it
+    assert said and said[0][0] == "info" and refreshed
+
+
+def test_retry_button_declined_dialog_changes_nothing(env, monkeypatch):
+    cw = pytest.importorskip("mousereach.watcher.control_widget")
+    _out_of_retries(env)
+    _press_retry(cw, env, monkeypatch, pick_ok=False)
+    assert int(env.db.get_collage(COLLAGE)["retry_count"]) == 3
+
+
+def test_retry_button_with_no_failed_collage_says_so(env, monkeypatch):
+    cw = pytest.importorskip("mousereach.watcher.control_widget")
+    said, asked, _ = _press_retry(cw, env, monkeypatch)
+    assert not asked
+    assert said and said[0][0] == "box"
