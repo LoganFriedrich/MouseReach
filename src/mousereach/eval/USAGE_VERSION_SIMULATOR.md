@@ -1,5 +1,30 @@
 # Version Simulator Usage Guide
 
+> **Historical tool -- read this first (Update 2026-11-18).** The versions this tool
+> "simulates" (v0.5.0 to v3.4.0) are filters applied to reach files that already exist.
+> None of them is the reach detector that runs today, which is the v8 trained classifier
+> (`mousereach.reach.v8`, version 8.1.0; see `docs/ALGO_2_REACH_DETECTION.md`). The
+> simulator replays only each version's duration and extent filters; the entry and exit
+> methods listed for a version (nose engagement, retraction ...) are descriptions and are
+> not replayed. Versions that filter on extent (v2.0.0, v2.5.0, v3.0.0, v3.3.0) stop with
+> an error on reach files written by the current detector, which leaves extent empty (null).
+>
+> **WARNING -- run it only on a COPY of your reach files.** While it runs, it deletes each
+> `{video}_reaches.json` in the reach folder you give it, puts a filtered copy in its
+> place, and writes the original back from memory when that video is done. If it is
+> stopped part-way (window closed, crash, power cut), the original is left filtered or
+> missing. First copy the `*_reaches.json` and `*_reach_ground_truth.json` files into a
+> scratch folder and point the simulator at that folder -- never at `Processing` or any
+> other live pipeline folder. The examples below that say `Processing Processing` were
+> written before this warning: put your scratch folder in place of `Processing`.
+>
+> What each simulated version keeps, as defined in `ALGORITHMIC_VERSIONS` in
+> `src/mousereach/eval/version_simulator.py` (that definition is authoritative where the
+> text below disagrees): v0.5.0 every reach; v1.0.0 duration >= 3 frames; v1.5.0
+> duration >= 3; v2.0.0 duration >= 3 and extent > 0; v2.5.0 duration >= 3 and
+> extent > 0; v3.0.0 duration >= 10 and extent >= 5 px; v3.3.0 duration >= 2 and
+> extent >= 0; v3.4.0 duration >= 2. No version requires an apex.
+
 ## Overview
 
 The version simulator simulates how OLD algorithm versions would have performed on the current ground truth data. This is useful for:
@@ -8,6 +33,8 @@ The version simulator simulates how OLD algorithm versions would have performed 
 - Documenting algorithm evolution
 
 ## Quick Start
+
+**Before you start:** the simulator temporarily replaces each `{video}_reaches.json` in the reach folder with a filtered copy and writes the original back afterwards. Run it on a COPY of the reach and ground-truth files in a scratch folder, never on a live pipeline folder (see the warning at the top).
 
 ### Command Line
 
@@ -49,16 +76,18 @@ report = generate_version_report("Processing", "Processing", "report.txt")
 
 ## Version History
 
+(Update 2026-11-18: the simulator also defines v0.5.0 (no filter), v1.5.0 (adds nose
+engagement; filter duration >= 3) and v2.5.0 (duration >= 3, extent > 0, end at
+disappearance or retraction). Only the duration and extent filters are replayed.)
+
 ### v1.0.0 - Basic reach detection
-- Only detected reaches with extent > 5 pixels
-- No apex detection
-- Simple threshold-based start/end
+- Basic threshold: duration >= 3 frames, no extent filter
+- No version requires an apex
 - **Issue**: High false negative rate (missed short reaches)
 
 ### v2.0.0 - Added extent filtering
-- Required extent > 0 (positive only)
-- Added apex detection
-- Better start/end logic with nose engagement
+- duration >= 3 frames and extent > 0 (positive only)
+- Nose engagement was introduced earlier, in v1.5.0
 - **Issue**: Still missed reaches that didn't cross slit
 
 ### v3.0.0 - Stricter filtering
@@ -71,12 +100,10 @@ report = generate_version_report("Processing", "Processing", "report.txt")
 - **BUG**: This dropped ~85% of valid reaches
 - **Root cause**: Hand positions were measured relative to BOXR_x reference
 - Negative extent values are VALID (hand approaches but doesn't cross slit)
-- Human GT analysis (2026-01) revealed many valid reaches have -2 to -15px extent
 
-### v3.4.0 - Current (fixed) ✓
-- Removed the extent filter entirely
-- Best recall (finds all reaches including short approaches)
-- Extent value preserved in Reach object for downstream filtering if needed
+### v3.4.0 - Fixed (simulated)
+- duration >= 2 frames, no extent filter
+- Superseded by the v8 detector, which does not compute extent (max_extent_pixels is null)
 
 ## Understanding the v3.3.0 Bug
 
@@ -105,24 +132,21 @@ reaches = [r for r in reaches if r.max_extent_pixels >= 0]
 
 ## Example Output
 
+The comparison prints a heading, then one block per version, then a summary
+(numbers depend on your data):
+
 ```
-================================================================================
-REACH DETECTION VERSION COMPARISON
-================================================================================
-
-Version    Precision     Recall         F1   Detected         GT
---------------------------------------------------------------------------------
-v1.0.0        87.2%      45.2%       0.59        156        345
-v2.0.0        82.4%      62.8%       0.71        263        345
-v3.0.0        91.3%      48.1%       0.63        182        345
-v3.3.0        93.1%      14.7% ⚠️ BUG!       0.25         55        345
-v3.4.0        78.9%      98.3% ✓ Current    0.88        431        345
---------------------------------------------------------------------------------
-
-IMPACT OF v3.3.0 BUG:
-  - Recall dropped from 98.3% to 14.7%
-  - Lost 85% of valid reaches
-  - v3.4.0 fix improved recall by 568%
+REACH DETECTION ALGORITHM EVOLUTION
+...
+v3.4.0 <marker>
+  Philosophy: ...
+  Precision:  x%  |  Recall:  y%  |  F1: z
+  Detected: n / m GT reaches
+...
+KEY INSIGHTS:
+  Best Precision: ...
+  Best Recall: ...
+  LESSON LEARNED: ...
 ```
 
 ## Custom Analysis
@@ -134,8 +158,10 @@ from mousereach.eval.version_simulator import VersionFilter, apply_version_filte
 
 # Define a custom version
 custom_filter = VersionFilter(
-    version="v2.5.0",
-    description="Custom: extent >= 2, duration >= 5",
+    version="v2.5.0-custom",
+    philosophy="Custom: extent >= 2, duration >= 5",
+    entry_method="likelihood",
+    exit_method="disappear",
     min_extent_pixels=2.0,
     min_duration_frames=5
 )
@@ -152,28 +178,14 @@ for segment in data["segments"]:
     print(f"Segment {segment['segment_num']}: {len(reaches)} -> {len(filtered)} reaches")
 ```
 
-## Recommendations
-
-1. **Use v3.4.0 (current)** for all detection
-2. **Filter by extent at analysis time** if needed:
-   ```python
-   # Load reaches
-   reaches = load_reaches("video_reaches.json")
-
-   # Filter by extent for specific analysis
-   extended_reaches = [r for r in reaches if r.max_extent_pixels >= 5]
-   approach_reaches = [r for r in reaches if -5 <= r.max_extent_pixels < 5]
-   ```
-3. **Document your extent threshold** in your analysis scripts
-4. **Re-run detection with v3.4.0** for any data processed with v3.3.0
-
 ## Troubleshooting
 
 ### "No ground truth files found"
 - Check that your GT directory contains `*_reach_ground_truth.json` files
 - Verify paths are correct
 
-### "No algorithm output files found"
+### "No successful evaluations"
+Printed as `<version>: ERROR - No successful evaluations`. No `*_reaches.json` had a video id matching a `*_reach_ground_truth.json`, or every comparison failed.
 - Check that your reaches directory contains `*_reaches.json` files
 - Verify video IDs match between GT and reaches files
 

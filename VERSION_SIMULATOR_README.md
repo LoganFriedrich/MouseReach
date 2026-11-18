@@ -1,4 +1,29 @@
-# Version Simulator Module - Summary
+# Version Simulator (historical tool) - Summary
+
+> **Historical tool -- read this first (Update 2026-11-18).** The versions this tool
+> "simulates" (v0.5.0 to v3.4.0) are filters applied to reach files that already exist.
+> None of them is the reach detector that runs today, which is the v8 trained classifier
+> (`mousereach.reach.v8`, version 8.1.0; see `docs/ALGO_2_REACH_DETECTION.md`). The
+> simulator replays only each version's duration and extent filters; the entry and exit
+> methods listed for a version (nose engagement, retraction ...) are descriptions and are
+> not replayed. Versions that filter on extent (v2.0.0, v2.5.0, v3.0.0, v3.3.0) stop with
+> an error on reach files written by the current detector, which leaves extent empty (null).
+>
+> **WARNING -- run it only on a COPY of your reach files.** While it runs, it deletes each
+> `{video}_reaches.json` in the reach folder you give it, puts a filtered copy in its
+> place, and writes the original back from memory when that video is done. If it is
+> stopped part-way (window closed, crash, power cut), the original is left filtered or
+> missing. First copy the `*_reaches.json` and `*_reach_ground_truth.json` files into a
+> scratch folder and point the simulator at that folder -- never at `Processing` or any
+> other live pipeline folder. The examples below that say `Processing Processing` were
+> written before this warning: put your scratch folder in place of `Processing`.
+>
+> What each simulated version keeps, as defined in `ALGORITHMIC_VERSIONS` in
+> `src/mousereach/eval/version_simulator.py` (that definition is authoritative where the
+> text below disagrees): v0.5.0 every reach; v1.0.0 duration >= 3 frames; v1.5.0
+> duration >= 3; v2.0.0 duration >= 3 and extent > 0; v2.5.0 duration >= 3 and
+> extent > 0; v3.0.0 duration >= 10 and extent >= 5 px; v3.3.0 duration >= 2 and
+> extent >= 0; v3.4.0 duration >= 2. No version requires an apex.
 
 ## What Was Created
 
@@ -6,9 +31,9 @@ A comprehensive version simulation module at `src/mousereach/eval/version_simula
 
 ## Files Created
 
-1. **`src/mousereach/eval/version_simulator.py`** (530 lines)
+1. **`src/mousereach/eval/version_simulator.py`**
    - Main module with simulation logic
-   - Version filter definitions (v1.0.0 through v3.4.0)
+   - Eight simulated versions: v0.5.0, v1.0.0, v1.5.0, v2.0.0, v2.5.0, v3.0.0, v3.3.0, v3.4.0
    - Evaluation functions
    - Report generation
    - CLI entry point
@@ -31,28 +56,21 @@ A comprehensive version simulation module at `src/mousereach/eval/version_simula
 ## Algorithm Versions Implemented
 
 ### v1.0.0 - Basic reach detection
-- Only extent > 5 pixels
-- No apex detection
-- **Expected recall**: ~45%
+- duration >= 3 frames; no extent filter
 
 ### v2.0.0 - Added extent filtering
-- Only positive extent (> 0)
-- Added apex detection
-- **Expected recall**: ~63%
+- duration >= 3 frames and extent > 0 (no apex requirement)
 
 ### v3.0.0 - Stricter filtering
 - extent >= 5 pixels
 - duration >= 10 frames
-- **Expected recall**: ~48%
 
 ### v3.3.0 - The problematic version ⚠️
 - Filter: `extent >= 0`
-- **BUG**: Dropped ~85% of valid reaches
-- **Expected recall**: ~15%
+- **BUG**: drops every reach with negative extent
 
-### v3.4.0 - Current (fixed) ✓
-- No extent filtering
-- **Expected recall**: ~98%
+### v3.4.0 - Fixed (simulated)
+- duration >= 2 frames, no extent filter (simulated; the current detector is reach.v8 8.1.0)
 
 ## Quick Start
 
@@ -98,18 +116,19 @@ Pretty-prints comparison table showing precision/recall/F1 for each version.
 ### `generate_version_report(reaches_dir, gt_dir, output_path=None)`
 Generates comprehensive report with version history and findings.
 
-### `apply_version_filter(reaches, version_filter)`
-Applies historical version filters to reach list.
+### `apply_version_filter(reaches, version)`
+Applies historical version filters to reach list. Import it from `mousereach.eval.version_simulator`; `mousereach.eval` does not export it.
 
 ## How It Works
 
 1. **Loads current algorithm output** (`*_reaches.json` files)
 2. **Applies old version's filters** to simulate what it would have detected:
-   - v1.0.0: Drops reaches with extent <= 5
-   - v2.0.0: Drops reaches with extent <= 0
+   - v1.0.0: Drops reaches with duration < 3
+   - v2.0.0: Drops reaches with duration < 3 or extent <= 0
    - v3.0.0: Drops reaches with extent < 5 or duration < 10
-   - v3.3.0: Drops reaches with extent < 0 (the bug!)
-   - v3.4.0: No extent filtering (current)
+   - v3.3.0: Drops reaches with duration < 2 or extent < 0 (the bug!)
+   - v3.4.0: Drops reaches with duration < 2 (no extent filter)
+   - The extent filters need a number in `max_extent_pixels`; reach files from the current detector have null extent and make those versions stop with a TypeError.
 3. **Evaluates against ground truth** using standard ReachEvaluator
 4. **Returns metrics** (precision, recall, F1, etc.)
 
@@ -121,14 +140,12 @@ reaches = [r for r in reaches if r.max_extent_pixels >= 0]
 ```
 
 **Why this was wrong:**
-- Extent = `hand_x - BOXR_x` (hand position relative to slit reference)
+- Extent = `hand_x - BOXR_x` (hand position relative to slit reference) under the pre-v8 detectors; the current detector does not compute extent (null)
 - Negative extent = hand approaches but doesn't cross slit line
 - But these are VALID reaches! Mouse is clearly attempting
 - Human GT showed many valid reaches have -2 to -15px extent
 
 **Impact:**
-- Dropped from 98% recall to 15% recall
-- Lost 85% of valid reaches
 - All "approach" reaches were filtered out
 
 **The fix (v3.4.0):**
@@ -144,40 +161,39 @@ cd /path/to/MouseReach\src\mousereach\eval
 python test_version_simulator.py
 ```
 
-Expected output:
+Expected output (Update 2026-11-18: the v1.0.0 test currently FAILS, because it expects an
+extent > 5 filter that the code's v1.0.0 does not have; the run stops there):
 ```
 Testing version_simulator module...
 ============================================================
-✓ All version filters defined
-✓ v1.0.0 filter works
-✓ v2.0.0 filter works
-✓ v3.0.0 filter works
-✓ v3.3.0 filter (bug) works as expected
-✓ v3.4.0 filter (current) works
-✓ Bug impact analysis complete
-✓ All tests passed!
+[OK] All version filters defined
+[OK] v1.0.0 filter works
+[OK] v2.0.0 filter works
+[OK] v3.0.0 filter works
+[OK] v3.3.0 filter (bug) works as expected
+[OK] v3.4.0 filter (current) works
+[OK] Bug impact analysis complete
+
+[OK] All tests passed!
 ```
 
 ## Example Output
 
+The comparison prints a heading, then one block per version, then a summary
+(numbers depend on your data):
+
 ```
-================================================================================
-REACH DETECTION VERSION COMPARISON
-================================================================================
-
-Version    Precision     Recall         F1   Detected         GT
---------------------------------------------------------------------------------
-v1.0.0        87.2%      45.2%       0.59        156        345
-v2.0.0        82.4%      62.8%       0.71        263        345
-v3.0.0        91.3%      48.1%       0.63        182        345
-v3.3.0        93.1%      14.7% ⚠️ BUG!       0.25         55        345
-v3.4.0        78.9%      98.3% ✓ Current    0.88        431        345
---------------------------------------------------------------------------------
-
-IMPACT OF v3.3.0 BUG:
-  - Recall dropped from 98.3% to 14.7%
-  - Lost 85% of valid reaches
-  - v3.4.0 fix improved recall by 568%
+REACH DETECTION ALGORITHM EVOLUTION
+...
+v3.4.0 <marker>
+  Philosophy: ...
+  Precision:  x%  |  Recall:  y%  |  F1: z
+  Detected: n / m GT reaches
+...
+KEY INSIGHTS:
+  Best Precision: ...
+  Best Recall: ...
+  LESSON LEARNED: ...
 ```
 
 ## Integration with Existing Code
@@ -212,11 +228,13 @@ The module is designed to be extensible:
 
 ```python
 # Define custom version
-from mousereach.eval import VersionFilter, apply_version_filter
+from mousereach.eval.version_simulator import VersionFilter, apply_version_filter
 
 custom = VersionFilter(
-    version="v2.5.0",
-    description="Custom: extent >= 2, duration >= 5",
+    version="v2.5.0-custom",
+    philosophy="Custom: extent >= 2, duration >= 5",
+    entry_method="likelihood",
+    exit_method="disappear",
     min_extent_pixels=2.0,
     min_duration_frames=5
 )
@@ -224,13 +242,6 @@ custom = VersionFilter(
 # Apply to data
 filtered = apply_version_filter(reaches, custom)
 ```
-
-## Recommendations
-
-1. **Use v3.4.0 for all detection** - Best recall, preserves all data
-2. **Filter at analysis time** - Apply extent thresholds as needed per study
-3. **Document your thresholds** - Make analysis reproducible
-4. **Re-run v3.3.0 data** - If you have data processed with v3.3.0, re-run with v3.4.0
 
 ## Contact
 
