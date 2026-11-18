@@ -62,7 +62,8 @@ and how it is computed.
   `_motion_smoothness`, `paw_velocity_correlation`) is measured after placing each
   repeated frame on the straight line between the pictures around it
   (`anchored_path.fill_repeated_frames`), so a speed is distance between pictures
-  over the frames between them. Positions and path lengths read the frames as
+  over the frames between them. Only runs of one or two repeated frames are
+  filled; a longer still run is a hand at rest. Positions and path lengths read the frames as
   tracked. On older rows these columns measure the repetition as well as the paw.
 * **A value per frame compares only between videos of the same frame rate.** A
   step per frame at 30 frames per second covers twice the time of one at 60. To

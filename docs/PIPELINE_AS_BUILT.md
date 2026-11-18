@@ -3046,7 +3046,8 @@ moves nothing, then two frames' worth: peak speeds read about double, a speed at
 apex nothing or double by which frame the apex fell on, and the smoothness and
 velocity-correlation values measured the repetition. Since 2.5.0 the speed measures
 place each repeated frame on the straight line between the pictures around it
-(`anchored_path.fill_repeated_frames`), which leaves a video without repeats unchanged.
+(`anchored_path.fill_repeated_frames`). Only runs of one or two repeated frames are
+filled; a longer still run is a hand that is really still and is left as tracked.
 The columns are listed in `docs/KINEMATICS_FIELDS.md` ("Repeated frames").
 
 **What is not affected.** Reach start, apex and end frames, positions, extension, paths

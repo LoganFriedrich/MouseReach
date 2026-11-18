@@ -105,3 +105,14 @@ def test_real_kinematics_reads_through_repeats_too():
         return compute_kinematics(p.x, p.y, ruler_px=9.0, fps=60.0)
     assert kin(REPEATED)["peak_speed_mm_s"] == pytest.approx(kin(EVERY_FRAME)["peak_speed_mm_s"])
     assert kin(REPEATED)["peak_speed_mm_s"] == pytest.approx(2.0 * 60.0)
+
+
+def test_a_hand_that_is_really_still_and_then_moves_keeps_the_move_s_speed():
+    # A pause longer than a recorder repeats a picture is the hand, not the video:
+    # four still frames then a 10 px step stay one 10 px step, not four of 2.5.
+    from mousereach.kinematics.core.anchored_path import fill_repeated_frames
+    x = np.array([0.0, 100.0, 100.0, 100.0, 100.0, 110.0, 0.0])
+    fx, _ = fill_repeated_frames(x, np.zeros_like(x))
+    assert list(fx) == list(x)
+    still = [150.0, 150.0, 150.0, 150.0, 160.0, 162.0, 164.0, 166.0, 168.0]
+    assert _measures(still)["peak"] == pytest.approx(10.0)

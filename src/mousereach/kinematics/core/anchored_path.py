@@ -42,7 +42,12 @@ depending on which frame the apex fell on, and jerk and the agreement between th
 points' speeds measure the repetition rather than the hand. ``fill_repeated_frames``
 puts each repeated frame where the hand passed between the two new pictures around it,
 so a speed is the distance between two pictures over the frames between them. It
-assumes no particular pattern: a video with no repeated frames comes out unchanged.
+assumes no fixed pattern (one repeat, then two, then none are all handled), but a
+recorder repeats a picture for a frame or two, not longer: a point that stays put for
+more frames than ``MAX_REPEATED_FRAMES`` is a hand that is really still, and is left
+as tracked, so a pause followed by a move keeps the move's own speed. The one change
+on a video with no repeats: a point that moves less than ``REPEATED_FRAME_MAX_PX`` for
+one or two frames has those frames' movement evened out with the step that follows.
 Only the speed measures (peak, apex, jerk, velocity correlation) read it; positions,
 the path, its length and straightness read the frames as tracked.
 
@@ -124,9 +129,14 @@ class AnchoredPath:
 # within a frame or two, and a hand that creeps slower than this is merged into a
 # straight, steady path between the pictures, where its speed is the same.
 REPEATED_FRAME_MAX_PX = 0.5
+# The most frames in a row a recorder repeats one picture. A recorder writing about
+# twice as many frames as its cameras deliver repeats a picture once, and now and then
+# twice when a picture arrives late; longer still runs are a hand that is not moving.
+MAX_REPEATED_FRAMES = 2
 
 
-def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX):
+def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX,
+                         max_repeats: int = MAX_REPEATED_FRAMES):
     """``(x, y)`` of an anchored path with each repeated detected frame moved to where
     the hand passed between the two new positions around it (module docstring: REPEATED
     FRAMES). Returns new arrays; the inputs are not changed.
@@ -135,8 +145,9 @@ def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX):
     points, never pictures. A detected frame is a new position when it lies at least
     ``max_px`` from the last new position. The frames between two new positions are
     spread evenly along the straight line between them, so each step between them is
-    the distance over the frames it took. Frames after the last new position, and any
-    run that holds an untracked (NaN) frame, are left as they are.
+    the distance over the frames it took. A run of more than ``max_repeats`` frames
+    (a hand that is really still), frames after the last new position, and any run
+    that holds an untracked (NaN) frame are left as they are.
     """
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
@@ -154,7 +165,7 @@ def fill_repeated_frames(x, y, max_px: float = REPEATED_FRAME_MAX_PX):
             last = k
     out_x, out_y = x.copy(), y.copy()
     for a, b in zip(fresh[:-1], fresh[1:]):
-        if b - a < 2:
+        if b - a < 2 or b - a - 1 > max_repeats:
             continue
         between = slice(a + 1, b)
         if not (np.all(np.isfinite(x[between])) and np.all(np.isfinite(y[between]))):
