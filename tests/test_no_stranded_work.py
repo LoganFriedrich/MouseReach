@@ -16,7 +16,22 @@ import threading
 
 import pytest
 
+from mousereach.config import Paths
 from mousereach.watcher.orchestrator import DLCOrchestrator, ProcessingOrchestrator
+
+
+@pytest.fixture(autouse=True)
+def _pipeline_in_tmp(tmp_path, monkeypatch):
+    """Every folder the startup reclaim looks at, under tmp_path.
+
+    WHY: on a machine with a pipeline configured, the reclaim also sets aside
+    finished local copies (PROCESSING_ROOT, DLC_QUEUE, PROCESSING) and, on the
+    processing server, re-reads and rewrites this machine's hand-score list
+    under NAS_ROOT. Left unpatched those are the real folders: the tests passed
+    only on an unconfigured machine and would have read -- and could have
+    rewritten -- the live ones on a configured one."""
+    for name in ("NAS_ROOT", "PROCESSING_ROOT", "DLC_QUEUE", "PROCESSING"):
+        monkeypatch.setattr(Paths, name, tmp_path / name.lower())
 
 
 class FakeDB:
@@ -62,6 +77,9 @@ class FakeDB:
 def _node(cls, **db):
     o = object.__new__(cls)
     o.db = FakeDB(**db)
+    # What the startup reclaim reads besides the database: this machine's name
+    # (the hand-score list is per machine). __init__ is skipped, so set it here.
+    o.hostname = "TESTNODE"
     return o
 
 

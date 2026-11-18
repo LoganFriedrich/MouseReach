@@ -83,9 +83,16 @@ def test_the_processing_server_sets_aside_archived_copies_but_not_reruns(tmp_pat
         "20250102_CNT0101_P2.mp4", "20250103_CNT0111_P1.mp4"]
 
 
-def test_the_processing_server_runs_it_at_startup(monkeypatch):
+def test_the_processing_server_runs_it_at_startup(monkeypatch, tmp_path):
     calls = []
     server = object.__new__(o.ProcessingOrchestrator)
+    # __init__ is skipped: set what the startup reclaim reads. The hand-score
+    # list it re-reads and rewrites is per machine (hostname) under NAS_ROOT,
+    # so NAS_ROOT goes under tmp_path -- on a configured machine it would be
+    # the real shared folder.
+    server.hostname = "TESTNODE"
+    server.db = None
+    monkeypatch.setattr(o.Paths, "NAS_ROOT", tmp_path / "nas")
     monkeypatch.setattr(o.BaseOrchestrator, "_reclaim_orphaned_work", lambda self: {})
     monkeypatch.setattr(o.ProcessingOrchestrator, "_export_missed_to_central", lambda self: 0)
     monkeypatch.setattr(o.ProcessingOrchestrator, "_set_aside_finished_copies",
