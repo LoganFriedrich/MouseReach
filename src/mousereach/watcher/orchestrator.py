@@ -8418,9 +8418,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # review return's resume_stage resumes through _resume_point,
             # exactly as before holds were restored. WHY: such a video carries
             # a person's answers, and _restored_hold_start re-cuts on any
-            # segmenter version the running code does not make -- a re-cut
-            # under answers matched by frame number. _resume_point keeps the
-            # cuts while they pass the declared-version test.
+            # segmenter version the running code does not make -- a re-cut,
+            # which voids the person's answers on every pellet whose frames
+            # move (asked again in triage). _resume_point keeps the cuts while
+            # they pass the declared-version test.
             _restored_hold = _held and bool(
                 (self._score_waits.get(video_id) or {}).get("restored"))
             if _row.get('resume_stage') and (not _held or _restored_hold):

@@ -853,8 +853,18 @@ def segment_video_robust(dlc_path: Path, fps: float = 60.0) -> Tuple[List[int], 
 def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostics,
                       output_path: Path,
                       segmenter_version: Optional[str] = None,
-                      segmenter_algorithm: Optional[str] = None) -> None:
+                      segmenter_algorithm: Optional[str] = None,
+                      previous_from: Optional[Path] = None) -> None:
     """Save segmentation results and diagnostics.
+
+    A RE-CUT IS RECORDED. When these cuts replace a segments file with
+    different cuts -- the file already at output_path, or
+    previous_from when the caller's earlier cuts are elsewhere (bring-
+    current segments into an empty work folder; the video's filed copy is
+    passed) -- the new file records when, and which cuts it replaced
+    (causal_review_io.segmenter_recut_record). The review readers then void
+    the answers given before it on pellets whose frames moved, exactly as for
+    a person's re-cut (owner ruling R2); identical cuts record no re-cut.
 
     The version stamped here has to be the version of the segmenter that
     actually produced ``boundaries``. This function used to stamp its own module
@@ -922,6 +932,25 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
                 }
             boundary_flags[b_idx]['issues'].append(anomaly_text[:50])  # Truncate for readability
 
+    # What these cuts replace (see the docstring): read BEFORE the file is
+    # overwritten. Unreadable counts as a re-cut with no record of the old
+    # cuts, so every earlier answer is asked again rather than guessed onto
+    # the new cuts.
+    from mousereach.review.causal_review_io import segmenter_recut_record
+    prev_path = Path(previous_from) if previous_from else Path(output_path)
+    prev_doc, prev_unreadable = None, False
+    if prev_path.exists():
+        try:
+            with open(prev_path, 'r', encoding='utf-8') as f:
+                prev_doc = json.load(f)
+            if not isinstance(prev_doc, dict):
+                prev_doc, prev_unreadable = None, True
+        except Exception:
+            prev_doc, prev_unreadable = None, True
+    recut_record = segmenter_recut_record(to_native(boundaries), prev_doc,
+                                          datetime.now().isoformat(),
+                                          previous_unreadable=prev_unreadable)
+
     data = {
         # Version tracking
         'segmenter_version': segmenter_version,
@@ -972,6 +1001,7 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
         'boundary_flags': {str(k): v for k, v in boundary_flags.items()},
         'overall_confidence': to_native(np.mean(diagnostics.boundary_confidences)),
     }
+    data.update(recut_record)
 
     # Absorb a reviewer GUI's brief hold on the output file (a stage write
     # died on exactly this); a persistent hold still raises.

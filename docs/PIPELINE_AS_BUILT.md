@@ -6313,3 +6313,39 @@ reach detection.
 
 Tests: `tests/test_gate_holds_a_mislabel_the_cuts_contradict.py` (on the commit before this one the
 gate returned `clean` for such a video).
+
+## Update: a re-cut by the segmenter voids earlier answers like a person's
+
+WHY: owner ruling R2 (as narrowed): a re-cut voids every answer given before it, except one on a
+pellet whose frames did not change. A person's re-cut in the segment fixer followed it, because
+the fixer stamps its save (`corrected_at`, `algo_boundaries`). A triage return whose algorithm
+cuts are out of date resumes at segmentation (`resume_point.current_start`) and the SEGMENTER
+cuts again; its file recorded no time, so no reader saw a re-cut and earlier answers were fitted
+onto the new cuts by frame overlap.
+
+WHAT IS BUILT:
+- `segmenter_robust.save_segmentation` reads the segments file it is about to replace (or
+  `previous_from`) and writes `causal_review_io.segmenter_recut_record`'s keys into the new file:
+  `segmenter_recut_at` (when) and `segmenter_recut_replaced` (the replaced cut frames) when the
+  cuts differ; the earlier file's own record unchanged when the cuts are the same; the time alone
+  (no record of the old cuts: every earlier answer asked again) when the earlier file cannot be
+  read; nothing when there was no earlier file.
+- `segmentation/core/batch.process_single(previous_cuts=...)` passes an earlier file that is not at
+  the output path; `pipeline/reprocess_to_current` (bring-current, which segments into an empty work
+  folder) passes the filed copy. The watcher's re-run copies the filed segments file down before
+  segmenting, so the segmenter finds it at the output path.
+- `causal_review_io.cuts_set_at` / `replaced_cuts` read a person's keys on a person's cuts and the
+  segmenter's keys otherwise; `recut_of`, `answer_survives_recut` and every reader (the review
+  window, the gate, the release check, the results step) are unchanged and so apply the same rule.
+- `hand_scores.unresolved_mislabels` takes only a PERSON's re-cut time
+  (`causal_review_io.person_cuts_set_at`) and matches the remaining statements by frames without
+  the re-cut keys: a segmenter re-cut neither settles nor voids a "this segment is really pellet
+  N" statement.
+
+LEFT AS IT WAS: a segmenter run with no earlier segments file anywhere it can see records no
+re-cut (a first segmentation has no earlier answers; a run that does not bring the earlier cuts
+along is not detected as a re-cut).
+
+Tests: `tests/test_segmenter_recut_voids_earlier_answers.py` (on the commit before this one a
+segmenter re-cut left every earlier answer applied by overlap and the gate passed the video CLEAN).
+

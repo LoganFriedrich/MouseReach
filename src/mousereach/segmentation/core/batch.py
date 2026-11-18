@@ -101,10 +101,17 @@ def write_whole_video_span(dlc_path: Path, video_id: str, output_path: Path) -> 
             'dlc_path': dlc_path, 'success': True, 'whole_video_span': True}
 
 
-def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
+def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
+                   previous_cuts: Optional[Path] = None) -> Dict:
     """
     Process a single DLC file.
-    
+
+    previous_cuts: the video's earlier segments file when it is not the
+    one at the output path (bring-current segments into an empty work folder
+    and passes the filed copy). New cuts that differ from the earlier ones
+    are recorded as a re-cut (save_segmentation), which voids the answers a
+    person gave on pellets whose frames moved.
+
     Returns dict with video_name, status, and diagnostics.
     """
     if output_dir is None:
@@ -153,7 +160,9 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None) -> Dict:
 
     try:
         boundaries, diag = segment_video_multi(dlc_path)
-        save_segmentation(boundaries, diag, output_path)
+        save_segmentation(boundaries, diag, output_path,
+                          previous_from=(previous_cuts if previous_cuts and not output_path.exists()
+                                         else None))
         
         # Categorize based on what actually matters:
         # - Did we find exactly 21 boundaries?

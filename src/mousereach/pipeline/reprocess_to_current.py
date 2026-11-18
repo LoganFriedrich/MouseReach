@@ -282,7 +282,16 @@ def reprocess_video_to_current(
     outcome_path = work_dir / f"{video_id}_pellet_outcomes.json"
 
     try:
-        _step("segmentation", lambda: seg_single(work_h5, output_dir=work_dir))
+        # The filed cuts are what a new segmentation replaces (segmenter_robust.
+        # save_segmentation records a re-cut against them), so answers on
+        # pellets whose frames move are asked again, never fitted onto the new
+        # cuts. The work folder holds no algorithm cuts of its own.
+        _filed_cuts = (Path(video_dir) / f"{video_id}_segments.json") if video_dir is not None else None
+        if _filed_cuts is not None and not _filed_cuts.is_file():
+            _filed_cuts = None
+        _step("segmentation", lambda: (
+            seg_single(work_h5, output_dir=work_dir, previous_cuts=_filed_cuts)
+            if _filed_cuts is not None else seg_single(work_h5, output_dir=work_dir)))
         _step("reach", lambda: reach_single(work_h5, seg_path, output_dir=work_dir))
         _step("outcome", lambda: outcome_single(work_h5, seg_path, reach_path,
                                                 output_dir=work_dir, video_dir=video_dir))

@@ -283,7 +283,8 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     if not records:
         return {}
     current = segments_from_segmentation(seg_doc) if seg_doc else None
-    from mousereach.review.causal_review_io import given_before_recut, recut_time
+    from mousereach.review.causal_review_io import (CUTS_SET_AT_KEY, REPLACED_CUTS_KEY, _when,
+                                                    given_before_recut, person_cuts_set_at)
     # A person's statement that the cuts number a pellet wrongly, made before
     # a person set the current cuts, is settled by those cuts -- on every
     # pellet, also one whose frames the re-cut did not move. WHY not the
@@ -292,7 +293,16 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     # a re-cut can renumber a pellet without moving its frames; the person who
     # re-cut has had the last word on the cuts, so holding to the older
     # statement would send the video back to re-segmentation for ever.
-    cut_at = recut_time(current)
+    # A PERSON's re-cut only (person_cuts_set_at): the segmenter re-cutting
+    # the video is not anyone's word on the statement, so it settles nothing.
+    cut_at = _when(person_cuts_set_at(seg_doc)) if seg_doc else None
+    # The statements left are matched to the current cuts by their frames
+    # only: the answer rule's re-cut keys are taken off the current pellets,
+    # so a segmenter re-cut does not void a statement (it is still checked
+    # against the new cuts, and holds the video while they disagree).
+    if current:
+        current = [{k: v for k, v in s.items() if k not in (CUTS_SET_AT_KEY, REPLACED_CUTS_KEY)}
+                   for s in current]
     out: Dict[int, Optional[int]] = {}
     for rec in records:
         if given_before_recut(rec.get("reviewed_at") or (review_doc or {}).get("reviewed_at"),

@@ -587,8 +587,32 @@ How the tool tells (`causal_review_io.answer_survives_recut`, the one place this
 Saving the cuts in the fixer counts as a re-cut even if no cut was moved: the save throws away
 every result built on the old cuts, but answers on pellets whose frames did not change stand. A
 statement that the cuts number a pellet wrongly ("this segment is really pellet N", the hand-score
-check) is different: any later re-cut settles it, on every pellet, because a re-cut can renumber a
-pellet without moving its frames.
+check) is different: any later re-cut BY A PERSON settles it, on every pellet, because a re-cut can
+renumber a pellet without moving its frames.
+
+**The segmenter's re-cut is a re-cut too.** When the segmenter cuts a video again and its new cuts
+differ from the ones it replaces (a triage return whose automatic cuts were out of date, a re-run
+of a filed video, `mousereach-bring-current`), it writes into the new segments file when
+(`segmenter_recut_at`) and which cuts it replaced (`segmenter_recut_replaced`) --
+`causal_review_io.segmenter_recut_record`, called from `segmenter_robust.save_segmentation`. Every
+reader then applies the rule above with those in place of `corrected_at` / `algo_boundaries`
+(`causal_review_io.cuts_set_at`, `replaced_cuts`). Where the earlier cuts come from: the segments
+file the new one overwrites (the watcher's re-run copies the filed one down first); bring-current,
+which segments into an empty work folder, passes the filed copy. What is recorded:
+
+- the same cuts as before: no re-cut; the earlier file's own record, if any, is carried over, so
+  running the segmenter again never voids anything;
+- different cuts: the time and the replaced cuts -- earlier answers on pellets that moved are
+  void and asked again, those on unchanged pellets stand;
+- an earlier segments file that cannot be read: a re-cut with no record of the old cuts -- every
+  earlier answer is asked again;
+- no earlier segments file anywhere: nothing is recorded (a video segmented for the first time has
+  no earlier answers).
+
+The segmenter never writes `boundary_source: "human"`, `corrected_at` or `algo_boundaries`: those
+mean "a person set these cuts" to the gate, the re-segmentation proof and the segmenter itself. A
+segmenter re-cut does NOT settle a "this segment is really pellet N" statement; only a person's
+saved cuts do.
 
 **One rule, one pellet frame (2026-11-18).** Before 0c36d0d, an earlier answer was kept when its
 pellet's frames were exactly unchanged. That test broke silently: the review gate and the
@@ -861,14 +885,18 @@ pellet flagged, so you answer it on the new cuts instead of the algorithm's
 call being filed. This holds after a deep-review release and when a filed
 video is run again. See "A re-cut voids the answers given before it" above.
 
-**Known defect that remains: the segmenter's own re-cut.** When a triage
+**The segmenter's own re-cut follows the same rule.** When a triage
 video's automatic cuts turned out to be out of date while it waited and the
-watcher started it again at segmentation, the segmenter cuts it again but
-records no time for its cuts, so nothing can tell which answers came before
-them. There, an earlier answer whose frames still match a pellet on the new
-cuts is applied to it, and one whose frames match no pellet is kept in the
-file but applied to nothing. If you know such a video was cut again by the
-segmenter, check its answered pellets again in the review tool.
+watcher started it again at segmentation, the segmenter cuts it again. If its
+new cuts differ from the ones it replaces, it writes into the segments file
+when (`segmenter_recut_at`) and which cuts it replaced
+(`segmenter_recut_replaced`), and your earlier answers are judged exactly as
+after a person's re-cut: kept on a pellet whose frames did not change, asked
+again on any other. If its new cuts are the same as before, nothing is voided.
+These are separate names from the fixer's `corrected_at` / `algo_boundaries`,
+so the segmenter's cuts are never taken for a person's. (Before this, the
+segmenter's new cuts recorded no time and earlier answers were fitted onto
+them by overlapping frames.)
 
 **If you get a video that is not actually broken**, press *Skip this video* in
 the re-segmentation tool (it stays in the queue), or clear it through Deep

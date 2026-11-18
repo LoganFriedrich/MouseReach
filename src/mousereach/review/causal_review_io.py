@@ -1015,35 +1015,25 @@ def segmentation_is_human(seg_doc) -> bool:
 
 # Carried on each current segment (segments_from_segmentation, and every
 # caller that builds its own list of current segments, through recut_keys):
-# when a person set the current cuts, and the cut frames their re-cut
+# when the current cuts were set by a re-cut, and the cut frames that re-cut
 # replaced. index_review_by_segment uses them to decide which answers given
 # before the re-cut still stand (answer_survives_recut).
 CUTS_SET_AT_KEY = "cuts_set_at"
 REPLACED_CUTS_KEY = "cuts_replaced"
 
+# Written into a segments file by the SEGMENTER (segmenter_recut_record) when
+# its new cuts replace different cuts: when, and the cut frames it replaced.
+# Separate names from the fixer's ``corrected_at`` / ``algo_boundaries``
+# because those mean "a person set these cuts" to every reader (the review
+# gate's stale-output check, the re-segmentation proof, the segmenter's
+# keep-a-person's-cuts rule); the segmenter must never pass for a person.
+SEGMENTER_RECUT_AT_KEY = "segmenter_recut_at"
+SEGMENTER_REPLACED_KEY = "segmenter_recut_replaced"
 
-def cuts_set_at(seg_doc) -> Optional[str]:
-    """When a person saved the current cuts (the fixer's ``corrected_at``), or
-    None for the segmenter's own cuts or a file that does not record it."""
-    if not segmentation_is_human(seg_doc):
-        return None
-    return (seg_doc or {}).get("corrected_at") or None
 
-
-def replaced_cuts(seg_doc) -> Optional[List[int]]:
-    """The cut frames a person's re-cut replaced -- the cuts the segment fixer
-    had loaded when the person saved theirs (its ``algo_boundaries``) -- or
-    None when the segments file does not record them (or no person set the
-    current cuts).
-
-    WHY these are "the cuts an earlier answer was given on": every answer
-    given before the re-cut was given while those cuts, or still older ones,
-    were in force. The fixer stores the cuts it LOADED, so after a second
-    re-cut they are the first re-cut's, not the segmenter's; older cuts are
-    not kept anywhere, which answer_survives_recut allows for."""
-    if not cuts_set_at(seg_doc):
-        return None
-    raw = (seg_doc or {}).get("algo_boundaries")
+def _frames_of(raw) -> Optional[List[int]]:
+    """Sorted cut frames from a list of frames or of ``{frame}`` / ``{index}``
+    entries; None when it is not such a list of at least two cuts."""
     if not isinstance(raw, list) or len(raw) < 2:
         return None
     try:
@@ -1053,12 +1043,99 @@ def replaced_cuts(seg_doc) -> Optional[List[int]]:
         return None
 
 
+def person_cuts_set_at(seg_doc) -> Optional[str]:
+    """When a PERSON saved the current cuts (the fixer's ``corrected_at``), or
+    None for the segmenter's cuts or a file that does not record it. Used
+    where only a person's word about the cuts counts (hand_scores: a person's
+    re-cut settles an older "this segment is really pellet N" statement; a
+    segmenter re-cut does not)."""
+    if not segmentation_is_human(seg_doc):
+        return None
+    return (seg_doc or {}).get("corrected_at") or None
+
+
+def cuts_set_at(seg_doc) -> Optional[str]:
+    """When the current cuts were set by a RE-CUT, or None when the file
+    records none: a person's re-cut (the fixer's ``corrected_at``), else the
+    segmenter's re-cut -- new cuts it wrote over different ones
+    (``segmenter_recut_at``, segmenter_recut_record).
+
+    WHY the segmenter's counts: owner ruling R2 -- a re-cut voids the answers
+    given before it, whoever made it. A triage return whose algorithm cuts are
+    out of date resumes at segmentation and the segmenter cuts again; before
+    this its new cuts recorded no time, and earlier answers were fitted onto
+    them by frame overlap -- an answer about other footage applied to a pellet
+    nobody judged on these cuts."""
+    if segmentation_is_human(seg_doc):
+        return person_cuts_set_at(seg_doc)
+    return (seg_doc or {}).get(SEGMENTER_RECUT_AT_KEY) or None
+
+
+def replaced_cuts(seg_doc) -> Optional[List[int]]:
+    """The cut frames the re-cut behind the current cuts replaced -- for a
+    person's, the cuts the segment fixer had loaded when the person saved
+    theirs (its ``algo_boundaries``); for the segmenter's, the cuts it wrote
+    over (``segmenter_recut_replaced``) -- or None when the segments file does
+    not record them (or no re-cut set the current cuts).
+
+    WHY these are "the cuts an earlier answer was given on": every answer
+    given before the re-cut was given while those cuts, or still older ones,
+    were in force. Both writers store the cuts they REPLACED, so after a
+    second re-cut they are the first re-cut's; older cuts are not kept
+    anywhere, which answer_survives_recut allows for."""
+    if not cuts_set_at(seg_doc):
+        return None
+    key = "algo_boundaries" if segmentation_is_human(seg_doc) else SEGMENTER_REPLACED_KEY
+    return _frames_of((seg_doc or {}).get(key))
+
+
+def segmenter_recut_record(new_cuts, previous_doc, now: str,
+                           previous_unreadable: bool = False) -> Dict[str, Any]:
+    """The re-cut keys the segmenter writes into its new segments file
+    (SEGMENTER_RECUT_AT_KEY, SEGMENTER_REPLACED_KEY), given the segments file
+    it is about to replace (``previous_doc``, already read; None when there
+    was none) -- so that a segmenter re-cut voids the answers given before it
+    exactly as a person's does (cuts_set_at, replaced_cuts, then the one rule,
+    answer_survives_recut: an answer on a pellet whose frames did not move
+    stands, any other is asked again).
+
+    - The same cuts as before: not a re-cut. The previous file's own record
+      (if it had one) is carried over unchanged, so running the segmenter
+      again never voids anything.
+    - Different cuts: ``now`` and the previous cut frames.
+    - A previous file that could not be read (``previous_unreadable``), or
+      one whose cuts cannot be read: a re-cut with no record of the cuts it
+      replaced -- every earlier answer is void and asked again, as for a
+      person's re-cut with no record (RECUT_NO_RECORD).
+    - No previous file at all: nothing is recorded (an empty dict). A video
+      segmented for the first time has no earlier answers; a re-run that
+      does not bring its earlier cuts along is not detected as a re-cut
+      here (the callers bring them: the watcher's re-run copies the filed
+      segments file down, bring-current passes the filed one)."""
+    if previous_doc is None and not previous_unreadable:
+        return {}
+    old = None if previous_unreadable else _cut_frames(previous_doc)
+    try:
+        new = sorted(int(b) for b in new_cuts)
+    except (TypeError, ValueError):
+        new = None
+    if old is not None and new is not None and sorted(old) == new:
+        if segmentation_is_human(previous_doc):
+            return {}
+        return {k: previous_doc[k] for k in (SEGMENTER_RECUT_AT_KEY, SEGMENTER_REPLACED_KEY)
+                if k in previous_doc}
+    out: Dict[str, Any] = {SEGMENTER_RECUT_AT_KEY: now}
+    if old is not None and len(old) >= 2:
+        out[SEGMENTER_REPLACED_KEY] = sorted(old)
+    return out
+
+
 def recut_keys(seg_doc) -> Dict[str, Any]:
     """What every current segment carries for the re-cut rule, to be merged
     into each one by a caller that builds its own list of current segments
-    (the review window does): ``cuts_set_at`` (when a person set the current
-    cuts) and ``cuts_replaced`` (replaced_cuts). Empty for the segmenter's own
-    cuts."""
+    (the review window does): ``cuts_set_at`` (when a re-cut -- a person's or
+    the segmenter's -- set the current cuts) and ``cuts_replaced``
+    (replaced_cuts). Empty for cuts no re-cut set."""
     when = cuts_set_at(seg_doc)
     if not when:
         return {}
@@ -1070,15 +1147,17 @@ def recut_keys(seg_doc) -> Dict[str, Any]:
 
 
 class Recut(NamedTuple):
-    """A person's re-cut as the re-cut rule sees it (recut_of)."""
+    """A re-cut (a person's in the segment fixer, or the segmenter's when it
+    replaced different cuts) as the re-cut rule sees it (recut_of)."""
     at: datetime                       # when the current cuts were set
     replaced: Optional[frozenset]      # pellet spans of the cuts it replaced; None = not recorded
     current: frozenset                 # pellet spans of the current cuts
 
 
 def recut_of(current_segments) -> Optional["Recut"]:
-    """The person's re-cut behind ``current_segments`` (each carrying
-    recut_keys), or None for the segmenter's own cuts."""
+    """The re-cut behind ``current_segments`` (each carrying recut_keys) --
+    a person's or the segmenter's (cuts_set_at) -- or None when no re-cut set
+    them."""
     at = recut_time(current_segments)
     if at is None:
         return None
@@ -1103,8 +1182,9 @@ def given_before_recut(when, recut_at: Optional[datetime]) -> bool:
 
 
 def recut_time(current_segments) -> Optional[datetime]:
-    """When a person set the current cuts (the newest ``cuts_set_at`` the
-    current pellets carry), or None for the segmenter's own cuts."""
+    """When a re-cut set the current cuts (the newest ``cuts_set_at`` the
+    current pellets carry: a person's or the segmenter's, cuts_set_at), or
+    None when no re-cut set them."""
     return max((t for t in (_when((s or {}).get(CUTS_SET_AT_KEY))
                             for s in current_segments or [])
                 if t is not None), default=None)
@@ -1112,7 +1192,7 @@ def recut_time(current_segments) -> Optional[datetime]:
 
 # Why an answer given before a person's re-cut does or does not stand
 # (recut_verdict). Only the RECUT_KEPT verdicts stand.
-RECUT_NONE = "no re-cut"                     # the cuts are the segmenter's own
+RECUT_NONE = "no re-cut"                     # no re-cut set the current cuts
 RECUT_AFTER = "given after the re-cut"
 RECUT_UNCHANGED = "pellet frames unchanged by the re-cut"
 RECUT_MOVED = "pellet frames moved by the re-cut"
@@ -1140,7 +1220,10 @@ def answer_survives_recut(rec, review_doc, recut: Optional[Recut]) -> bool:
     THE re-cut rule, decided here and nowhere else: the review window, the
     review gate, the release check and the results step all reach it through
     index_review_by_segment. ``recut`` is recut_of(current segments): None
-    when the current cuts are the segmenter's own.
+    when no re-cut set the current cuts. A re-cut is a person's in the
+    segment fixer or the segmenter's when its new cuts replaced different
+    ones (cuts_set_at, segmenter_recut_record): the rule is the same for
+    both.
 
     The rule (owner ruling 2026-11-18, narrowing R2 of 2026-11-15: "If
     resegmenting doesn't alter, then it's fine to keep"):

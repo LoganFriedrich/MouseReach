@@ -30,7 +30,7 @@ applies each answer to the segment whose frames it covers, on the remade reach,
 outcome or assignment outputs. That is the case when the start moves earlier
 to reach, outcome or assignment because an output is out of date (below).
 
-A RE-CUT BY A PERSON VOIDS THE EARLIER ANSWERS ON PELLETS IT MOVED. The
+A RE-CUT VOIDS THE EARLIER ANSWERS ON PELLETS IT MOVED. The
 design rule is that re-segmentation voids everything after it, a person's
 earlier outcome and causal-reach answers included -- except an answer on a
 pellet whose frames the re-cut did not change (owner ruling 2026-11-18):
@@ -41,12 +41,13 @@ corrected_at and the cuts it replaced): an answer given before then counts
 only on an unchanged pellet (causal_review_io.answer_survives_recut). So the deep-review return (resumes at reach on the new
 cuts) treats those pellets as unanswered, and the review gate sends the
 video to triage with each one flagged (review_gate.recut_voided_open): they
-are asked again on the new cuts, never left to the algorithm's call. NOT
-COVERED: a triage return whose algorithm cuts are out of date or unreadable
-(current_start moves its start back to segmentation, so the segmenter cuts
-again) -- the segmenter's cuts record no time, and its earlier answers are
-still matched to the new cuts by frame overlap. This module only decides
-where a run starts and does not touch the review file.
+are asked again on the new cuts, never left to the algorithm's call. The
+same holds for a triage return whose algorithm cuts are out of date or
+unreadable (current_start moves its start back to segmentation, so the
+segmenter cuts again): the segmenter records in its new file when its cuts
+replaced different ones and which (causal_review_io.segmenter_recut_record),
+and the same rule voids the earlier answers on pellets that moved. This
+module only decides where a run starts and does not touch the review file.
 
 WHY deep review always resumes at reach: deep review is where cuts are fixed,
 and everything computed from the cuts is remade on the new ones. Segmentation
