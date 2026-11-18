@@ -3,25 +3,22 @@ MouseReach Review Tools - Two-Tool Architecture
 ================================================
 
 This module provides tools for reviewing and correcting algorithm outputs.
-There are TWO distinct tools with different purposes:
+A person's answer is only kept when it is saved where the pipeline reads it:
 
-TWO-TOOL ARCHITECTURE
----------------------
+- review window (causal_review_widget, mousereach-review-tool): outcomes and
+  causal reaches, saved as a review record that survives re-runs;
+- Segmentation Fixer (fix_segmentation_widget): segment cuts, marked as a
+  person's so the segmenter keeps them;
+- GROUND TRUTH TOOL (GroundTruthWidget with review_mode=False): a separate
+  *_unified_ground_truth.json the results step layers over the algorithm.
 
-1. REVIEW TOOL (GroundTruthWidget with review_mode=True)
-   Purpose: Fix algorithm mistakes quickly
-   Output:  Edits algorithm JSON files directly (*_segments.json, *_reaches.json, etc.)
-   Use when: Algorithm made errors that need correction
-
-2. GROUND TRUTH TOOL (GroundTruthWidget with review_mode=False)
-   Purpose: Create comprehensive ground truth for algorithm evaluation
-   Output:  Creates separate *_unified_ground_truth.json files
-   Use when: Creating evaluation datasets for measuring algorithm accuracy
-
-KEY DIFFERENCE
---------------
-- Review Tool: Corrections go INTO the algorithm files (human_corrected=true)
-- GT Tool: Corrections go into SEPARATE ground truth files
+The old REVIEW TOOL (GroundTruthWidget with review_mode=True) saved
+corrections INTO the algorithm's own JSON files, where the next run erased
+them; that save is retired and writes nothing (see retired_saves.py). The
+separate per-step screens (segmentation/reach/outcomes review_widget) still
+save into the step's own file and mark it "validated": for a person running
+the steps by hand without the watcher that is the only sign-off for a step
+triage flagged.
 
 MODULE STRUCTURE
 ----------------
@@ -93,11 +90,8 @@ UNIFIED GT FILE FORMAT
 USAGE EXAMPLES
 --------------
 
-Launch Review Tool (fix algorithm mistakes):
-    >>> from mousereach.review import GroundTruthWidget
-    >>> widget = GroundTruthWidget(viewer, review_mode=True)
-
 Launch GT Tool (create ground truth):
+    >>> from mousereach.review import GroundTruthWidget
     >>> widget = GroundTruthWidget(viewer, review_mode=False)
 
 Load ground truth data:

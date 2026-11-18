@@ -132,7 +132,7 @@ mousereach-backfill-manifest-versions = "mousereach.pipeline.manifest:main_backf
 mousereach-triage-clearing = "mousereach.review.triage_clearing:main"  # RETIRED: prints "use mousereach-review-tool" and exits 1 (kept so old installs get the message)
 mousereach-unified-review = "mousereach.review.ground_truth_widget:main"
 mousereach-gt = "mousereach.review.ground_truth_widget:main"  # GT scoring tool
-mousereach-review-legacy = "mousereach.review.ground_truth_widget:main_review"  # Old whole-video review (kept for compat)
+mousereach-review-legacy = "mousereach.review.ground_truth_widget:main_review"  # RETIRED old whole-video Review Tool: prints where to save instead, exits 1
 mousereach-migrate-gt = "mousereach.review.unified_gt:cli_migrate"
 
 # Triage auto-resolve (pre-check before human review): if a triaged segment

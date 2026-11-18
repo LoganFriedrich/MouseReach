@@ -10,7 +10,7 @@ Complete pipeline for analyzing mouse single-pellet reaching behavior videos.
 conda activate mousereach
 mousereach                           # Launch all tools
 mousereach "path/to/video.mp4"       # Launch with video pre-loaded
-mousereach --reviews                 # Launch only review tools
+mousereach-review-tool               # Review the triage queue
 ```
 
 ---
@@ -65,20 +65,22 @@ Launch with `mousereach` command. Available tabs:
 | **Step 0 - Crop Videos** | Crop multi-animal collage to single animals |
 | **Step 1 - DLC Analysis** | Run DeepLabCut pose estimation |
 | **Step 2 - Run Pipeline** | Batch segmentation, reach, outcome detection |
-| **Step 3 - Review Tool** | Fix algorithm mistakes (edits algo files) |
+| **Review Queues** | Open the triage review window and the re-segmentation review |
 | **Step 4 - View Features** | Visualize kinematic features |
 | **GT Tool** | Create ground truth files for evaluation |
 
-### Review Tool vs GT Tool
+### Where a correction is saved
 
-| Tool | Purpose | Saves To |
+| Kind of correction | Tool | Saved to |
 |------|---------|----------|
-| **Review Tool** | Fix algorithm mistakes | `_segments.json`, `_reaches.json`, `_pellet_outcomes.json` |
-| **GT Tool** | Create evaluation ground truth | `_unified_ground_truth.json` |
+| A pellet's outcome or causal reach | Review window (`mousereach-review-tool`, or Review Queues tab) | `{video}_causal_review.json` (a review record the watcher reads) |
+| Segment cuts | Segmentation Fixer (`mousereach-fix-segmentation`) | `{video}_segments.json`, marked as a person's cuts |
+| Reach frames, or a full frame-by-frame record | GT Tool (`mousereach-gt`) | `{video}_unified_ground_truth.json` |
+| Sign off one step by hand (no watcher) | Per-step review screen (`mousereach-segment-review`, `mousereach-review-reaches`, `mousereach-review-pellet-outcomes`) | That step's own file, marked `validation_status: "validated"` |
 
-**Review Tool**: Use when the algorithm made errors. Corrections are saved with `human_corrected: true` flags directly in the algorithm output files.
+The old "Step 3 - Review Tool" tab is gone (`mousereach --reviews` and `mousereach-review-legacy` print a note instead): it saved corrections into all three algorithm output files, where the next run erased them and the watcher never saw them.
 
-**GT Tool**: Use when creating comprehensive ground truth for algorithm evaluation. Creates separate unified GT files with verification status for every element.
+The per-step review commands below (`mousereach-segment-review`, `mousereach-review-reaches`, `mousereach-review-pellet-outcomes`) still save into that step's own file and mark it validated. That is how a person running the steps by hand, without the watcher, signs off a step triage flagged. Know its limit: a later run of the same step writes the file again from the algorithm, so a correction saved there lasts only until that step is run again. With the watcher, review from the Review Queues tab instead.
 
 ---
 
@@ -148,7 +150,7 @@ mousereach-dlc-quality video.h5
 |---------|-------------|
 | `mousereach-segment` | Run segmentation |
 | `mousereach-triage` | Auto-classify confidence |
-| `mousereach-advance` | Move validated to next stage |
+| `mousereach-advance` | Not needed, and currently stops with an error (see USER_GUIDE); the next step reads `validation_status` itself |
 | `mousereach-segment-review` | Launch review GUI |
 | `mousereach-reject-tray` | Reject unsupported tray types |
 
@@ -166,7 +168,7 @@ mousereach-segment-review
 |---------|-------------|
 | `mousereach-detect-reaches` | Run reach detection |
 | `mousereach-triage-reaches` | Auto-classify confidence |
-| `mousereach-advance-reaches` | Move to next stage |
+| `mousereach-advance-reaches` | Not needed, and currently stops with an error (see USER_GUIDE); the next step reads `validation_status` itself |
 | `mousereach-review-reaches` | Launch review GUI |
 
 ```bash
@@ -182,7 +184,7 @@ mousereach-review-reaches --reaches video_reaches.json
 |---------|-------------|
 | `mousereach-detect-outcomes` | Run outcome detection |
 | `mousereach-triage-outcomes` | Auto-classify confidence |
-| `mousereach-advance-outcomes` | Move to next stage |
+| `mousereach-advance-outcomes` | Not needed, and currently stops with an error (see USER_GUIDE); `mousereach-archive` reads `validation_status` itself |
 | `mousereach-review-pellet-outcomes` | Launch review GUI |
 
 ```bash
@@ -196,12 +198,15 @@ mousereach-review-pellet-outcomes --outcomes video_pellet_outcomes.json
 
 | Command | Description |
 |---------|-------------|
-| `mousereach-review-tool` | Launch Review Tool (edits algo files) |
+| `mousereach-review-tool` | Review window: answer triaged segments (saves a review record) |
+| `mousereach-fix-segmentation` | Segmentation Fixer: correct a video's cuts |
 | `mousereach-unified-review` | Launch GT Tool (creates GT files) |
+| `mousereach-review-legacy` | Retired old Review Tool: prints which tool to use and stops |
+| `mousereach-triage-clearing` | Retired: prints "use mousereach-review-tool" and stops |
 | `mousereach-migrate-gt` | Migrate old GT to unified format |
 
 ```bash
-# Fix algorithm mistakes
+# Answer the triage queue
 mousereach-review-tool
 
 # Create ground truth for evaluation

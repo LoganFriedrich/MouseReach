@@ -34,11 +34,12 @@ KEY DESIGN DECISIONS
    - Handles cross-widget communication (e.g., "segments validated" -> refresh reaches)
 
 3. TAB ORDER: Widgets load in pipeline order:
-   Dashboard -> Step 0 -> Step 1 -> Step 2 -> Step 3 (Review) -> Step 4 -> GT Tool
+   Dashboard -> Step 0 -> Step 1 -> Step 2 -> Step 4 -> GT Tool -> ...
 
-4. TWO REVIEW TOOLS:
-   - "3 - Review Tool" (review_mode=True): Edits algorithm JSON files directly
-   - "GT Tool" (review_mode=False): Creates separate ground truth files
+4. REVIEW: the "Review Queues" tab opens the review window (triage) and the
+   re-segmentation review. The old "3 - Review Tool" tab, which edited the
+   algorithm's JSON files in place, is retired (see review/retired_saves.py):
+   a re-run erased its corrections and the watcher never read them.
 
 ENTRY POINTS
 ------------
@@ -50,15 +51,15 @@ USAGE
 -----
     mousereach                              # Launch all tools
     mousereach path/to/video.mp4            # Launch with video pre-loaded
-    mousereach --step 2b path/to/video.mp4  # Launch only Step 2b review
-    mousereach --reviews                    # Launch only review tools (2b, 3b, 4b)
+    mousereach --reviews                    # Retired: prints a note, then opens the tabs
+                                            # always present (review: Review Queues tab)
 
 PIPELINE STEPS
 --------------
     0   - Video Prep (crop 8-camera collages to single animals)
     1   - DLC Analysis (run DeepLabCut pose estimation)
     2   - Run Pipeline (batch: Segmentation -> Reaches -> Outcomes)
-    3   - Review Tool (fix algorithm mistakes in JSON files)
+    3   - (retired: the old in-place Review Tool; use the Review Queues tab)
     4   - View Features (visualize extracted kinematics)
     GT  - Ground Truth Tool (create evaluation datasets)
 """
@@ -73,10 +74,10 @@ from pathlib import Path
 # Each widget is defined as: (step_id, display_name, module_path, class_name)
 #
 # The step_id determines tab order in the UI:
-#   dashboard < 0 < 1 < 2 < 3 (Review Tool, inserted dynamically) < 4 < GT
+#   dashboard < 0 < 1 < 2 < 4 < GT
 #
-# Note: Review Tool (step 3) is NOT in this list - it's loaded separately
-# because it uses GroundTruthWidget with review_mode=True.
+# There is no step 3 tab any more: the old Review Tool (GroundTruthWidget with
+# review_mode=True) saved into the algorithm's files and is retired.
 # =============================================================================
 
 WIDGETS = [
@@ -93,13 +94,22 @@ WIDGETS = [
     ("2", "2 - Run Pipeline", "mousereach.pipeline.batch_widget", "UnifiedPipelineWidget"),
 
     # Step 4: Visualize extracted kinematic features (trajectories, velocities, etc.)
-    # Note: Step 3 (Review Tool) is inserted dynamically before this
     ("4", "4 - View Features", "mousereach.kinematics.widget", "DataViewerWidget"),
 ]
 
-# Review steps (2b, 3b, 4b) are internal tabs within the Review Tool
-# They're listed here so --step 2b etc. works on the command line
+# The old review steps (2b, 3b, 4b) were tabs of the retired Review Tool.
+# They are still accepted on the command line so an old shortcut does not fail
+# with a usage error; they print REVIEW_STEPS_RETIRED and load no extra tab.
 REVIEW_STEPS = ["2b", "3b", "4b"]
+REVIEW_STEPS_RETIRED = (
+    "Note: the old review tabs (--reviews, --step 2b/3b/4b) are retired. They\n"
+    "saved corrections into the algorithm's own files, where the next run erased\n"
+    "them. Review now happens from the Review Queues tab (mousereach-review-tool\n"
+    "for triage, mousereach-fix-segmentation for cuts, mousereach-gt for reach\n"
+    "frames). Running the steps by hand without the watcher, sign off a flagged\n"
+    "step in its own review screen: mousereach-segment-review,\n"
+    "mousereach-review-reaches, mousereach-review-pellet-outcomes."
+)
 ALL_STEPS = [w[0] for w in WIDGETS] + REVIEW_STEPS
 
 
@@ -267,6 +277,10 @@ def launch(video_path=None, steps=None):
     from mousereach.state import MouseReachStateManager, connect_widget_to_state
     print("OK")
 
+    # Decided before the default is filled in: ALL_STEPS still lists the
+    # retired review steps, so testing after it would print the note on
+    # every plain start.
+    review_steps_asked_for = steps is not None and any(s in REVIEW_STEPS for s in steps)
     if steps is None:
         steps = ALL_STEPS
 
@@ -280,40 +294,16 @@ def launch(video_path=None, steps=None):
     widgets_loaded = []
     dock_widgets = []
 
-    # Check if any review steps are requested - if so, use UnifiedReviewWidget
-    review_steps_requested = [s for s in steps if s in REVIEW_STEPS]
-    unified_review_loaded = False
+    if review_steps_asked_for:
+        print(REVIEW_STEPS_RETIRED)
 
     tprint("Loading widgets:")
 
-    def load_review_tool():
-        """Load the Review Tool widget."""
-        nonlocal unified_review_loaded
-        if unified_review_loaded or not review_steps_requested:
-            return
-        tprint("  3 - Review Tool...", end=" ")
-        try:
-            from mousereach.review.ground_truth_widget import GroundTruthWidget
-            review_widget = GroundTruthWidget(viewer, review_mode=True)
-            dw = viewer.window.add_dock_widget(review_widget, name="3 - Review Tool", area="right")
-            widgets_loaded.append(("review", review_widget))
-            dock_widgets.append(dw)
-            unified_review_loaded = True
-            connect_widget_to_state(review_widget, state, "review")
-            print("OK")
-        except ImportError as e:
-            print(f"SKIP ({e})")
-        except Exception as e:
-            print(f"ERROR ({e})")
-
-    # Load widgets in correct order (Review Tool comes after step 2, before step 4)
+    # Load widgets in pipeline order. (No "3 - Review Tool" tab: retired, see
+    # REVIEW_STEPS_RETIRED.)
     for step_id, name, module_path, class_name in WIDGETS:
         if step_id not in steps:
             continue
-
-        # Insert Review Tool (step 3) before step 4
-        if step_id == "4":
-            load_review_tool()
 
         tprint(f"  {name}...", end=" ")
         try:
@@ -332,9 +322,6 @@ def launch(video_path=None, steps=None):
             print(f"SKIP ({e})")
         except Exception as e:
             print(f"ERROR ({e})")
-
-    # If step 4 wasn't loaded, load Review Tool at the end
-    load_review_tool()
 
     # Load GT Tool (for researchers creating ground truth files)
     tprint("  GT Tool (for researchers)...", end=" ")
@@ -550,23 +537,6 @@ def launch(video_path=None, steps=None):
     print("\n" + "=" * 50)
     print("KEYBOARD SHORTCUTS")
     print("=" * 50)
-    print("\nStep 2b (Boundaries):")
-    print("  ENTER - Accept boundary as-is (algorithm correct)")
-    print("  SPACE - Set boundary to current frame")
-    print("  N/P   - Next/Previous boundary")
-    print("  S     - Save validated")
-    print("\nStep 3b (Outcomes):")
-    print("  ENTER - Accept outcome as-is (algorithm correct)")
-    print("  SPACE - Play/pause")
-    print("  N/P   - Next/Previous segment")
-    print("  R/D/O/U - Set outcome (Retrieved/Displaced SA/Outside/Untouched)")
-    print("\nStep 4b (Reaches):")
-    print("  ENTER - Accept reach as-is (algorithm correct)")
-    print("  SPACE - Play/pause")
-    print("  N/P   - Next/Previous reach")
-    print("  S/E   - Set reach Start/End")
-    print("  A     - Add new reach")
-    print("  DEL   - Delete reach")
     print("\nStep 5 (Features):")
     print("  SPACE - Play/pause")
     print("  1-5   - Speed (1x/2x/4x/8x/16x)")
@@ -577,11 +547,13 @@ def launch(video_path=None, steps=None):
     print("=" * 50)
 
     # Print fast launch tip
-    print("\nTIP: For faster loading, use individual tools:")
+    print("\nTIP: For faster loading, open one tool on its own:")
+    print("  mousereach-review-tool             # Triage review window")
+    print("  mousereach-fix-segmentation        # Correct a video's segment cuts")
+    print("  mousereach-gt video.mp4            # Ground Truth tool")
     print("  mousereach-segment-review video.mp4      # Boundary review only (~15s)")
     print("  mousereach-review-pellet-outcomes        # Outcome review only (~15s)")
     print("  mousereach-review-reaches                # Reach review only (~15s)")
-    print("  mousereach --reviews video.mp4     # All review tools (~25s)")
 
     # Auto-load video if provided
     if video_path:
@@ -590,16 +562,8 @@ def launch(video_path=None, steps=None):
             print(f"\nLoading video: {video_path.name}")
             from qtpy.QtCore import QTimer
 
-            # If unified review widget is loaded, use its internal loading
-            if unified_review_loaded:
-                # Find the review widget and load video into it
-                for step_id, widget in widgets_loaded:
-                    if step_id == "review":
-                        QTimer.singleShot(500, lambda w=widget: w._load_video_from_path(video_path))
-                        break
-            else:
-                # Use state manager to load video (for non-review widgets)
-                QTimer.singleShot(500, lambda: state.load_video(video_path))
+            # The state manager hands the video to every tab that shows one.
+            QTimer.singleShot(500, lambda: state.load_video(video_path))
         else:
             print(f"\nWarning: Video not found: {video_path}")
 
@@ -627,7 +591,9 @@ def main():
                         choices=ALL_STEPS,
                         help="Launch specific step(s). Can be used multiple times.")
     parser.add_argument('--reviews', '-r', action='store_true',
-                        help="Launch only review tools (2b, 3b, 4b)")
+                        help="Retired (the old in-place review tabs): prints a "
+                             "note and opens the tabs that are always present; "
+                             "review from the Review Queues tab")
 
     args = parser.parse_args()
 

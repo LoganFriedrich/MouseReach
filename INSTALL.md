@@ -510,8 +510,8 @@ mousereach
 # Or launch with a video pre-loaded:
 mousereach "path/to/video.mp4"
 
-# Or launch only review tools (2b, 3b, 4b):
-mousereach --reviews "path/to/video.mp4"
+# Review: open the Review Queues tab, or
+mousereach-review-tool
 
 # Or launch only batch processing tools:
 mousereach --batch

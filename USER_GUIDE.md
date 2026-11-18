@@ -23,10 +23,9 @@ This launches all MouseReach tools in a single napari window with tabs. You can:
 mousereach "path/to/your/video.mp4"
 ```
 
-**Review tools only (for ground truth annotation):**
-```bash
-mousereach --reviews "path/to/video.mp4"
-```
+**Reviewing:** open the **Review Queues** tab, or run `mousereach-review-tool`.
+(`mousereach --reviews` used to open review tabs that saved into the
+algorithm's files; it now prints a note and opens the usual tabs.)
 
 ---
 
@@ -209,10 +208,21 @@ Then: **Plugins → MouseReach Segmentation → Boundary Review Tool**
 | N / P | Next/Previous file |
 | Ctrl+S | Save |
 
-**4. Advance validated files (v2.3+ updates JSON status)**
-```bash
-mousereach-advance -i Processing/
-```
+**4. Go on to the next step**
+
+There is no separate "advance" step. Saving in the review screen marks the
+segmentation `validated`, and reach detection (Step 3) reads that mark itself:
+it runs on a video whose segmentation reads `validated` or `auto_approved` and
+skips one that still reads `needs_review`.
+
+Do not run `mousereach-advance`: on the current version it stops with an error
+(`TypeError ... require_validation`) and moves nothing.
+
+Know the limit of the review screen's save: running segmentation again on the
+same video writes `*_segments.json` again from the algorithm, so the saved
+correction lasts only until that step is re-run. With the watcher running,
+review from the **Review Queues** tab instead (cuts are corrected there in the
+Segmentation Fixer, which marks them as a person's so a re-run keeps them).
 
 ### Output
 Segmentation JSON files:
@@ -282,10 +292,18 @@ Then: **Plugins → MouseReach Reach Detection → Reach Annotator**
 
 **Playback speeds:** 1x, 2x, 4x, 8x, 16x (click buttons)
 
-**4. Advance validated files (v2.3+ updates JSON status)**
-```bash
-mousereach-advance-reaches -i Processing/
-```
+**4. Go on to the next step**
+
+There is no separate "advance" step. Saving in the review screen marks the
+reaches file `validated`. Outcome detection (Step 4) does not check that mark;
+`mousereach-archive` does (it files a video only when its segments, reaches and
+outcomes files all read `validated` or `auto_approved`).
+
+Do not run `mousereach-advance-reaches`: on the current version it stops with
+an error (`TypeError ... require_validation`) and moves nothing.
+
+As with segmentation, re-running reach detection on the video writes
+`*_reaches.json` again and the saved correction is gone.
 
 ### Output
 Reach detection JSON files:
@@ -368,10 +386,16 @@ Then: **Plugins → MouseReach Pellet Outcomes → Pellet Outcome Annotator**
 
 **Playback speeds:** 0.25x, 0.5x, 1x, 2x, 4x, 8x, 16x (click buttons or use menu)
 
-**4. Advance validated files (v2.3+ updates JSON status)**
-```bash
-mousereach-advance-outcomes -i Processing/
-```
+**4. Go on to the next step**
+
+There is no separate "advance" step. Saving in the review screen marks the
+outcomes file `validated`, which `mousereach-archive` checks before filing.
+
+Do not run `mousereach-advance-outcomes`: on the current version it stops with
+an error (`TypeError ... require_validation`) and moves nothing.
+
+Re-running outcome detection on the video writes `*_pellet_outcomes.json` again
+and the saved correction is gone.
 
 ### Output
 Outcome JSON files:
@@ -482,11 +506,15 @@ mousereach
 # Or with a specific video
 mousereach "path/to/video.mp4"
 
-# Or just review tools for ground truth annotation
-mousereach --reviews "path/to/video.mp4"
+# Ground truth annotation for one video
+mousereach-gt "path/to/video.mp4"
 ```
 
-Then use the tabs to switch between Step 2b (Boundaries), Step 3b (Reaches), and Step 4b (Outcomes).
+Review happens from the **Review Queues** tab. The old whole-video Review Tool
+that `--reviews` opened is retired: its saves went into the algorithm's own
+files, where the next run erased them. The per-step review screens are still
+opened on their own (`mousereach-segment-review`, `mousereach-review-reaches`,
+`mousereach-review-pellet-outcomes`); see the steps above.
 
 ### Option B: CLI Batch Processing
 
@@ -500,20 +528,18 @@ mousereach-crop -i Multi-Animal/ -o Single_Animal/ --queue
 # 3. Segment (v2.3+ single-folder architecture)
 mousereach-segment -i Processing/
 # Auto-triage updates validation_status in JSON
-# Review in Napari if needed, then advance
-mousereach-advance -i Processing/
+# Review flagged videos: mousereach-segment-review (saving marks them validated;
+# reach detection skips a video whose segmentation still reads needs_review)
 
 # 4. Detect reaches
 mousereach-detect-reaches -i Processing/
 # Auto-triage updates validation_status in JSON
-# Review in Napari if needed, then advance
-mousereach-advance-reaches -i Processing/
+# Review flagged videos: mousereach-review-reaches (saving marks them validated)
 
 # 5. Classify outcomes
 mousereach-detect-outcomes -i Processing/
 # Auto-triage updates validation_status in JSON
-# Review in Napari if needed, then advance
-mousereach-advance-outcomes -i Processing/
+# Review flagged videos: mousereach-review-pellet-outcomes (saving marks them validated)
 
 # 6. Extract kinematic features
 mousereach-grasp-analyze -i Processing/

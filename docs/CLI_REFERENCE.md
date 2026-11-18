@@ -58,6 +58,7 @@ walkthroughs of the review tools themselves.
 ### `mousereach`
 
 ```
+
 MouseReach Tools Launcher v2.3.0
 Loading... (first launch may take 30-60s on network drives)
 
@@ -73,7 +74,9 @@ options:
   -h, --help            show this help message and exit
   --step {dashboard,0,1,2,4,2b,3b,4b}, -s {dashboard,0,1,2,4,2b,3b,4b}
                         Launch specific step(s). Can be used multiple times.
-  --reviews, -r         Launch only review tools (2b, 3b, 4b)
+  --reviews, -r         Retired (the old in-place review tabs): prints a note
+                        and opens the tabs that are always present; review
+                        from the Review Queues tab
 
 MouseReach All Tools Launcher
 =============================
@@ -109,11 +112,12 @@ KEY DESIGN DECISIONS
    - Handles cross-widget communication (e.g., "segments validated" -> refresh reaches)
 
 3. TAB ORDER: Widgets load in pipeline order:
-   Dashboard -> Step 0 -> Step 1 -> Step 2 -> Step 3 (Review) -> Step 4 -> GT Tool
+   Dashboard -> Step 0 -> Step 1 -> Step 2 -> Step 4 -> GT Tool -> ...
 
-4. TWO REVIEW TOOLS:
-   - "3 - Review Tool" (review_mode=True): Edits algorithm JSON files directly
-   - "GT Tool" (review_mode=False): Creates separate ground truth files
+4. REVIEW: the "Review Queues" tab opens the review window (triage) and the
+   re-segmentation review. The old "3 - Review Tool" tab, which edited the
+   algorithm's JSON files in place, is retired (see review/retired_saves.py):
+   a re-run erased its corrections and the watcher never read them.
 
 ENTRY POINTS
 ------------
@@ -125,15 +129,15 @@ USAGE
 -----
     mousereach                              # Launch all tools
     mousereach path/to/video.mp4            # Launch with video pre-loaded
-    mousereach --step 2b path/to/video.mp4  # Launch only Step 2b review
-    mousereach --reviews                    # Launch only review tools (2b, 3b, 4b)
+    mousereach --reviews                    # Retired: prints a note, then opens the tabs
+                                            # always present (review: Review Queues tab)
 
 PIPELINE STEPS
 --------------
     0   - Video Prep (crop 8-camera collages to single animals)
     1   - DLC Analysis (run DeepLabCut pose estimation)
     2   - Run Pipeline (batch: Segmentation -> Reaches -> Outcomes)
-    3   - Review Tool (fix algorithm mistakes in JSON files)
+    3   - (retired: the old in-place Review Tool; use the Review Queues tab)
     4   - View Features (visualize extracted kinematics)
     GT  - Ground Truth Tool (create evaluation datasets)
 ```
@@ -1079,36 +1083,21 @@ Alias of `mousereach-unified-review` (same entry point: `mousereach.review.groun
 
 ### `mousereach-review-legacy`
 
-*Old whole-video review (kept for compat)*
+*RETIRED old whole-video Review Tool: prints where to save instead, exits 1*
 
 ```
-usage: mousereach-review-legacy [-h] [--segment SEGMENT] [--frame FRAME]
-                                [--algo-dir ALGO_DIR]
-                                [--mode {outcome,reach,segmentation,general}]
-                                [--screenshot-dir SCREENSHOT_DIR]
-                                [--pre-pad PRE_PAD] [--post-pad POST_PAD]
-                                [video]
+usage: mousereach-review-legacy [-h]
 
-MouseReach Review Tool
-
-positional arguments:
-  video                 Video file to load
+mousereach-review-legacy (the old whole-video Review Tool) has been retired.
+It saved corrections into the algorithm's own files, where the next run
+erased them and the watcher never saw them. Use instead:
+  - segment cuts: mousereach-fix-segmentation
+  - pellet outcomes and causal reaches: mousereach-review-tool
+  - reach frames, or a full frame-by-frame record: mousereach-gt
+(or the Review Queues tab in the main 'mousereach' window).
 
 options:
-  -h, --help            show this help message and exit
-  --segment SEGMENT     Jump to this segment's decision_window after load
-  --frame FRAME         Jump to this absolute frame after load
-  --algo-dir ALGO_DIR   Directory containing the *_pellet_outcomes.json
-  --mode {outcome,reach,segmentation,general}
-                        Info panel mode (auto-detected from --algo-dir if
-                        omitted)
-  --screenshot-dir SCREENSHOT_DIR
-                        Default save dir for the Screenshot button. Auto-
-                        derived from --algo-dir + --segment if omitted.
-  --pre-pad PRE_PAD     Extra frames to load BEFORE the decision window
-                        (default 0)
-  --post-pad POST_PAD   Extra frames to load AFTER the decision window
-                        (default 0)
+  -h, --help  show this help message and exit
 ```
 
 ### `mousereach-migrate-gt`

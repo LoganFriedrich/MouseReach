@@ -247,8 +247,8 @@ Filled with real values:
 | `end_frame` | Inclusive, after trims and split. |
 | `duration_frames` | `end - start + 1` (`span_to_reaches.py:162`). Always ≥ 3; the minimum observed across the shipped reaches is exactly 3. |
 | `apex_frame` | Frame of maximum nose-to-`RightHand` distance within the reach. |
-| `source` | `"algorithm"` from the detector; `"human_added"` for a reach a person adds in the review window (`review_widget.py:1838`). |
-| `human_corrected` | `false` from the detector; set `true` by the review window when a person moves a boundary (`:1689`, `:1717`). |
+| `source` | `"algorithm"` from the detector; `"human_added"` for a reach a person adds in the napari reach review screen (`review_widget.py:1849`). |
+| `human_corrected` | `false` from the detector; set `true` by the napari reach review screen when a person moves a boundary (`review_widget.py:1700`, `:1728`); written into this file when that screen saves. |
 | `review_note` | `null`, or `"reach_start_outside_all_segments"` for **every** reach in a flagged segment. |
 
 **Written and empty on every reach the current detector produces** — verified across every reach in the shipped `8.1.0` files, where each of these is `null` on every reach:
@@ -260,7 +260,7 @@ Filled with real values:
 | `confidence` | The dataclass declares it (`reach_detector.py:134`); `build_video_reaches` never passes it. Only the dead v6 detector computes one (`reach_detector.py:756-758`, `:815-817`, `:889-891`). |
 | `start_confidence`, `end_confidence` | Same (`reach_detector.py:135-136`). |
 | `pose_alignment` | Declared at `reach_detector.py:147` and documented in the comment at `:138-146` as how squarely the mouse faces the slit. The only code that computes it is in the dead `reach_detector_v8.py:206-252`. |
-| `original_start`, `original_end` | `null` unless a person edits the reach in the review window (`review_widget.py:1688`, `:1716`). |
+| `original_start`, `original_end` | `null` unless a person edits the reach in the review window (`review_widget.py:1699`, `:1727`). |
 | `exclude_reason` | `null` from the detector. |
 | `exclude_from_analysis` | `false` from the detector; only the review window sets it. |
 

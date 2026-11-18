@@ -252,6 +252,7 @@
     "src/mousereach/review/fix_segmentation_widget.py",
     "src/mousereach/review/ground_truth_widget.py",
     "src/mousereach/review/queue_launcher_widget.py",
+    "src/mousereach/review/retired_saves.py",
     "src/mousereach/review/save_panel.py",
     "src/mousereach/review/staging.py",
     "src/mousereach/review/triage_clearing.py",

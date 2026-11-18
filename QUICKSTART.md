@@ -63,14 +63,18 @@ mousereach "C:\path\to\your\video.mp4"
 2. Click "Load Video" button in any tab
 3. Navigate to your video file
 
-### Review Tools Only
+### Reviewing
 
-If you only need the review/annotation tools:
-```
-mousereach --reviews
-```
+Open the **Review Queues** tab in `mousereach` (or run `mousereach-review-tool`).
+The old review-only mode, `mousereach --reviews`, is retired: it opened the old
+whole-video Review Tool, which saved corrections into the algorithm's own files,
+where the next run erased them. It now prints a note and opens the usual tabs.
 
-This loads just Steps 2b, 3b, and 4b (the manual review tools).
+The per-step review screens below are still there and still save, each opened
+on its own: `mousereach-segment-review` (Step 2b), `mousereach-review-pellet-outcomes`
+(Step 3b) and `mousereach-review-reaches` (Step 4b). Saving one marks
+that step "validated"; when you run the steps by hand, without the watcher,
+that is how you sign off a step that triage flagged for review.
 
 ---
 

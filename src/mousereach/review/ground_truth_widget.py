@@ -596,8 +596,12 @@ class GroundTruthWidget(QWidget):
 
         if self.review_mode:
             # Review Tool: single "Save & Continue" button that saves to algo files
-            save_btn = QPushButton("✓ Save & Continue")
-            save_btn.setToolTip("Save corrections to algorithm output files")
+            # The in-place save is retired (see retired_saves): the button
+            # stays so a person who presses it is told where to go instead.
+            save_btn = QPushButton("Save (retired - where to save instead)")
+            save_btn.setToolTip("This screen no longer saves into the algorithm's "
+                                "files. Press to see which tool keeps each kind "
+                                "of correction.")
             save_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #4CAF50;
@@ -2034,172 +2038,21 @@ class GroundTruthWidget(QWidget):
         return self.video_path.parent
 
     def _save_to_algo_files(self):
-        """Save corrections back to algorithm output files (Review Tool mode)."""
-        if not self.gt or not self.video_path:
-            return
+        """Refused: the old Review Tool's save into the algorithm's files.
 
-        from datetime import datetime
-        import os
-
-        username = get_username()
-        timestamp = get_timestamp()
-
-        # Get video stem for finding algo files
-        video_stem = self.video_path.stem
-        if 'DLC_' in video_stem:
-            video_stem = video_stem.split('DLC_')[0]
-        parent = self._algo_files_dir()
-
-        saved_files = []
-
-        # === Save segments ===
-        segments_path = parent / f"{video_stem}_segments.json"
-        if segments_path.exists():
-            try:
-                with open(segments_path, 'r') as f:
-                    seg_data = json.load(f)
-
-                # Update boundaries from GT data
-                original_boundaries = seg_data.get("boundaries", [])
-                new_boundaries = [b.frame for b in self.gt.boundaries]
-
-                # Track per-boundary corrections
-                boundary_corrections = {}
-                changes = []
-                for i, b in enumerate(self.gt.boundaries):
-                    orig_frame = original_boundaries[i] if i < len(original_boundaries) else None
-                    was_corrected = orig_frame is not None and b.frame != orig_frame
-                    if was_corrected:
-                        boundary_corrections[str(i)] = {
-                            "human_corrected": True,
-                            "original_frame": orig_frame,
-                            "corrected_by": username,
-                            "corrected_at": timestamp
-                        }
-                        changes.append({
-                            "index": i,
-                            "original": orig_frame,
-                            "corrected": b.frame,
-                            "delta": b.frame - orig_frame
-                        })
-                    else:
-                        boundary_corrections[str(i)] = {
-                            "human_corrected": False,
-                            "original_frame": orig_frame,
-                            "corrected_by": None,
-                            "corrected_at": None
-                        }
-
-                seg_data.update({
-                    "boundaries": new_boundaries,
-                    "n_boundaries": len(new_boundaries),
-                    "boundary_corrections": boundary_corrections,
-                    "validation_status": "validated",
-                    "validation_record": {
-                        "validated_by": username,
-                        "validated_at": timestamp,
-                        "changes_made": changes,
-                        "total_items": len(new_boundaries),
-                        "items_changed": len(changes)
-                    }
-                })
-
-                with open(segments_path, 'w') as f:
-                    json.dump(seg_data, f, indent=2)
-                saved_files.append("segments")
-            except Exception as e:
-                show_warning(f"Failed to save segments: {e}")
-
-        # === Save reaches ===
-        reaches_path = parent / f"{video_stem}_reaches.json"
-        if reaches_path.exists():
-            try:
-                with open(reaches_path, 'r') as f:
-                    reach_data = json.load(f)
-
-                # Build lookup of original algo reaches for correction detection
-                algo_reaches_by_id = {}
-                for seg in reach_data.get("segments", []):
-                    for ar in seg.get("reaches", []):
-                        algo_reaches_by_id[ar.get("reach_id")] = ar
-
-                updated_reaches = []
-                for r in self.gt.reaches:
-                    algo_r = algo_reaches_by_id.get(r.reach_id, {})
-                    start_corrected = algo_r.get("start_frame") is not None and r.start_frame != algo_r.get("start_frame")
-                    end_corrected = algo_r.get("end_frame") is not None and r.end_frame != algo_r.get("end_frame")
-                    reach_dict = {
-                        "reach_id": r.reach_id,
-                        "segment_num": r.segment_num,
-                        "start_frame": r.start_frame,
-                        "end_frame": r.end_frame,
-                        "human_corrected": start_corrected or end_corrected,
-                    }
-                    if start_corrected:
-                        reach_dict["original_start_frame"] = algo_r.get("start_frame")
-                    if end_corrected:
-                        reach_dict["original_end_frame"] = algo_r.get("end_frame")
-                    if r.exclude_from_analysis:
-                        reach_dict["exclude_from_analysis"] = True
-                        reach_dict["exclude_reason"] = r.exclude_reason
-                    updated_reaches.append(reach_dict)
-
-                reach_data["reaches"] = updated_reaches
-                reach_data["validation_status"] = "validated"
-                reach_data["validated_by"] = username
-                reach_data["validated_at"] = timestamp
-
-                with open(reaches_path, 'w') as f:
-                    json.dump(reach_data, f, indent=2)
-                saved_files.append("reaches")
-            except Exception as e:
-                show_warning(f"Failed to save reaches: {e}")
-
-        # === Save outcomes ===
-        outcomes_path = parent / f"{video_stem}_pellet_outcomes.json"
-        if outcomes_path.exists():
-            try:
-                with open(outcomes_path, 'r') as f:
-                    outcome_data = json.load(f)
-
-                # Update outcomes from GT data
-                for o in self.gt.outcomes:
-                    if not o.determined:
-                        continue  # Skip undetermined outcomes
-
-                    # Find matching segment in algo data
-                    for seg in outcome_data.get("segments", []):
-                        if seg.get("segment_num") == o.segment_num:
-                            algo_outcome = seg.get("outcome", "")
-                            was_corrected = algo_outcome and o.outcome != algo_outcome
-                            if was_corrected:
-                                seg["human_corrected"] = True
-                                seg["original_outcome"] = algo_outcome
-                            seg["outcome"] = o.outcome
-                            if o.interaction_frame is not None:
-                                seg["interaction_frame"] = o.interaction_frame
-                            if o.outcome_known_frame is not None:
-                                seg["outcome_known_frame"] = o.outcome_known_frame
-                            break
-
-                outcome_data["validation_status"] = "validated"
-                outcome_data["validated_by"] = username
-                outcome_data["validated_at"] = timestamp
-
-                with open(outcomes_path, 'w') as f:
-                    json.dump(outcome_data, f, indent=2)
-                saved_files.append("outcomes")
-            except Exception as e:
-                show_warning(f"Failed to save outcomes: {e}")
-
-        if saved_files:
-            show_info(f"Saved corrections to: {', '.join(saved_files)}")
-            self.data_saved.emit(self.video_path)
-
-            # Trigger database update check (async/background)
-            self._maybe_update_database()
-        else:
-            show_warning("No algorithm files found to update")
+        In review mode this widget used to rewrite {video}_segments.json,
+        {video}_reaches.json and {video}_pellet_outcomes.json in place,
+        stamped 'validated', with no mark that the cuts were a person's and
+        nothing after them redone. It now writes nothing. The Ground Truth
+        tool mode (review_mode=False) and its own file are unchanged.
+        WHY no longer saved here: a correction written into the algorithm's
+        own file is erased by the next run of that step, nothing after it is
+        redone, and the watcher's release check never reads it. See
+        mousereach.review.retired_saves for the tool whose save is kept.
+        """
+        from mousereach.review.retired_saves import (
+            refuse_algo_file_save, CUTS, REACHES, OUTCOMES)
+        return refuse_algo_file_save([CUTS, OUTCOMES, REACHES])
 
     def _maybe_update_database(self):
         """
@@ -3061,52 +2914,31 @@ def main():
     napari.run()
 
 
-def main_review():
-    """Launch the Review Tool (saves to algo files, not GT files)."""
+MAIN_REVIEW_RETIRED = (
+    "mousereach-review-legacy (the old whole-video Review Tool) has been retired.\n"
+    "It saved corrections into the algorithm's own files, where the next run\n"
+    "erased them and the watcher never saw them. Use instead:\n"
+    "  - segment cuts: mousereach-fix-segmentation\n"
+    "  - pellet outcomes and causal reaches: mousereach-review-tool\n"
+    "  - reach frames, or a full frame-by-frame record: mousereach-gt\n"
+    "(or the Review Queues tab in the main 'mousereach' window)."
+)
+
+
+def main_review(argv=None):
+    """Retired: print where each kind of correction is saved now and stop.
+
+    WHY a stub instead of removing the command: every machine that installed
+    an earlier version has a mousereach-review-legacy program pointing here;
+    with this it prints the way forward instead of failing on an import.
+    Opens no window and writes nothing."""
     import argparse
-
-    parser = argparse.ArgumentParser(description="MouseReach Review Tool")
-    parser.add_argument('video', nargs='?', type=Path, help="Video file to load")
-    parser.add_argument('--segment', type=int, default=None,
-                        help="Jump to this segment's decision_window after load")
-    parser.add_argument('--frame', type=int, default=None,
-                        help="Jump to this absolute frame after load")
-    parser.add_argument('--algo-dir', type=Path, default=None,
-                        help="Directory containing the *_pellet_outcomes.json")
-    parser.add_argument('--mode', choices=['outcome', 'reach', 'segmentation', 'general'],
-                        default=None,
-                        help="Info panel mode (auto-detected from --algo-dir if omitted)")
-    parser.add_argument('--screenshot-dir', type=Path, default=None,
-                        help="Default save dir for the Screenshot button. "
-                             "Auto-derived from --algo-dir + --segment if omitted.")
-    parser.add_argument('--pre-pad', type=int, default=0,
-                        help="Extra frames to load BEFORE the decision window (default 0)")
-    parser.add_argument('--post-pad', type=int, default=0,
-                        help="Extra frames to load AFTER the decision window (default 0)")
-    args = parser.parse_args()
-
-    viewer = napari.Viewer(title="MouseReach Review Tool")
-    widget = GroundTruthWidget(viewer, review_mode=True)
-    viewer.window.add_dock_widget(widget, name="Review Tool", area="right")
-
-    if args.video:
-        # Resolve frame_range so we only LOAD the decision-window frames.
-        frame_range = None
-        if args.segment is not None:
-            frame_range = _resolve_segment_window(args.video, args.segment, args.algo_dir,
-                                                   pre_pad=args.pre_pad, post_pad=args.post_pad)
-        widget.info_panel_mode = _detect_panel_mode(args.algo_dir, args.mode)
-        widget.screenshot_dir = _resolve_screenshot_dir(
-            args.screenshot_dir, args.algo_dir, args.video, args.segment
-        )
-        widget._screenshot_segment = args.segment
-        widget._load_video(args.video, frame_range=frame_range)
-        if args.segment is not None:
-            _apply_segment_jump(widget, args.video, args.segment, args.algo_dir)
-        elif args.frame is not None:
-            widget._jump_to_frame(args.frame)
-
-    napari.run()
+    parser = argparse.ArgumentParser(
+        prog="mousereach-review-legacy", description=MAIN_REVIEW_RETIRED,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.parse_known_args(argv)
+    print(MAIN_REVIEW_RETIRED)
+    return 1
 
 
 if __name__ == "__main__":

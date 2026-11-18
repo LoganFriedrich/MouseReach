@@ -27,7 +27,7 @@ These two use different matching rules, they look in different places, and right
 | **Re-segmentation Review** | GUI "Review Queues" tab -> Open Re-segmentation Review (no console command) | "Segmentation or quality control failed on this whole video. Is it usable, and can it go back through the pipeline?" | `{stem}_causal_review.json` plus `{stem}_deep_review_cleared.json` |
 | **Segmentation Fixer** | `mousereach-fix-segmentation` | "Are this video's segment cuts in the right places?" — nothing else | Overwrites `{stem}_segments.json` with the corrected cuts |
 | **Ground Truth Tool** | `mousereach-gt` or `mousereach-unified-review` | "What actually happens in this video, frame by frame, regardless of what the algorithm said?" | `{stem}_unified_ground_truth.json` |
-| **Review Tool** | `mousereach-review-legacy`; the "3 - Review Tool" tab of `mousereach` | "The algorithm's output files are wrong — correct them in place." | Overwrites `{stem}_segments.json`, `{stem}_reaches.json`, `{stem}_pellet_outcomes.json` |
+| **Review Tool** (retired) | `mousereach-review-legacy` | Nothing. It prints which tool to use for each kind of correction and stops. The "3 - Review Tool" tab is gone from `mousereach`. | Nothing |
 | **Triage Clearing** (retired) | `mousereach-triage-clearing` | Nothing. It prints "retired -- use mousereach-review-tool" and stops. | Nothing |
 
 Command names come from `pyproject.toml:106`, `:113`, `:115-118`.
@@ -855,13 +855,25 @@ The video dropdown is filled from the pipeline index (`_populate_video_dropdown`
 
 ---
 
-## Review Tool (edits the algorithm's files)
+## Review Tool (retired) and the per-step review screens
 
-`GroundTruthWidget(review_mode=True)` — `mousereach-review-legacy` (`ground_truth_widget.py:3069`), and the tab the `mousereach` launcher loads as "3 - Review Tool" (`launcher.py:274-283`; the comment above it at `:268` about a tabbed widget is stale).
+**The old whole-video Review Tool no longer saves.** `GroundTruthWidget` in review mode -- `mousereach-review-legacy`, and the "3 - Review Tool" tab that `mousereach --reviews` and `mousereach --step 2b/3b/4b` used to open -- saved a person's corrections straight into `_segments.json`, `_reaches.json` and `_pellet_outcomes.json`. Now:
 
-One button, "Save & Continue" -> `_save_to_algo_files` (`:2041`). It rewrites the three algorithm JSONs in place with `validation_status: "validated"`, per-boundary correction records, and `human_corrected` / `original_*` fields, then starts a background database-refresh check in a daemon thread (`_maybe_update_database`, `:2209`).
+- `mousereach-review-legacy` prints which tool to use for each kind of correction and stops (exit code 1) without opening a window;
+- the launcher has no "3 - Review Tool" tab; `mousereach --reviews` and `--step 2b/3b/4b` still start, print a note that the old review tabs are retired, and open the tabs that are always there (Review Queues among them); a video named on that command line is loaded into those tabs;
+- the tool's "Save & Continue" writes nothing and shows the same message. Its background database-refresh check after a save goes with it.
 
-**Its reach corrections do not reach the data.** It reads the existing reaches out of the nested `segments[].reaches` structure (`:2126-2129`), then writes the corrected reaches to a new **top-level** `reaches` key (`:2152`) and leaves the nested `segments` untouched. The reach detector writes the nested form (`reach/core/reach_detector.py:151-158` defines it; `save_results` at `:1104-1119` serialises it), and the kinematics step reads the nested form (`kinematics/core/feature_extractor.py:248`, `:308`). Corrected reach boundaries saved here are therefore invisible to every downstream consumer except the causal review widget, which happens to prefer the flat key when it exists (`causal_review_widget.py:1005-1011`). Outcome and boundary edits in this tool *do* land, because those are written back into the structures that are read (`:2184-2188`).
+**Why it was retired and not repaired.** A correction written into the algorithm's own file is not kept by the pipeline: the next run of that step writes the file again from the algorithm and the correction is gone (corrected cuts were stamped `validation_status: "validated"`, but the segmenter keeps only cuts marked `boundary_source: "human"`); nothing after the corrected step was redone, so the reaches and outcomes still described the old cuts; the watcher's release check does not read these marks, so a video corrected this way did not leave its review queue; and its reach corrections went to a new top-level `reaches` key that the kinematics step does not read.
+
+Which tool keeps which kind of correction instead:
+
+- **Segment cuts** -> the Segmentation Fixer (`mousereach-fix-segmentation`, or Review Queues -> Open Re-segmentation). It marks the cuts as a person's, so a later segmentation run keeps them, and clears what was computed on the old cuts.
+- **A pellet's outcome or causal reach** -> the review window (`mousereach-review-tool`, or Review Queues -> Open Triage Review). The answer is a review record that survives re-runs and releases the video.
+- **Reach start and end frames** -> the Ground Truth tool (`mousereach-gt`). The results step layers its file over the algorithm's reaches.
+
+**The per-step review screens are NOT retired and still save.** Boundary review ("Step 2b - Review Boundaries", `mousereach-segment-review`), outcome review ("Step 3b - Review Outcomes", `mousereach-review-pellet-outcomes`) and reach review ("Step 4b - Review Reaches", `mousereach-review-reaches`, including its "mark as causal reach" button), each also in the napari plugin menu and as the tabs of "Review Tool (Tabbed)", save into that step's own file and mark it `validation_status: "validated"`. They also still send an entry to the algorithm-versus-human comparison log (`PerformanceLogger`) and to the pipeline index (`PipelineIndex.record_validation_changed`); the retired Review Tool never did either. **Why they stay:** for a person running the steps by hand, without the watcher, a per-step screen's save is the only way to sign off a step that triage marked `needs_review` -- reach detection skips a video whose segmentation still reads `needs_review` (unless run with `--skip-validation-check`), and `mousereach-archive` files only a video whose three steps read `validated` or `auto_approved`. **Their limit is the same as the Review Tool's:** a later run of that step writes the file again from the algorithm, so a correction saved there lasts only until that step is run again, and the watcher's review queues never read it. With the watcher, review from the Review Queues tab.
+
+Files that the retired Review Tool already edited keep their marks (`validation_status: "validated"`, `human_corrected`, `human_verified`); the clean-up rules still treat such a file as a person's file. The code that refuses is `review/retired_saves.py`.
 
 ---
 
@@ -1260,10 +1272,12 @@ left of a triage copy when the video moves into deep review; and a released qual
 **Which results files count as a person's.** The review tools save a person's work INTO the
 files the pipeline also writes, so the file's name does not settle it; what is inside does. A
 segments, reaches or outcomes file counts as a person's file when it holds any of:
-`validation_status` "validated" (the segmentation review, and the reach, outcome and ground-truth
-tools when a person saves), `boundary_source` "human" (cuts set in Re-segmentation),
-`human_verified` or `human_corrected` true on any segment or reach (the reach and outcome reviews,
-the ground-truth tool), or `triage_cleared` true on any segment (clearing a triaged segment). A file
+`validation_status` "validated" (the per-step segmentation, reach and outcome review screens when
+a person saves; the retired whole-video Review Tool in files it saved before it was retired),
+`boundary_source` "human" (cuts set in Re-segmentation), `human_verified` or `human_corrected` true
+on any segment or reach (the per-step reach and outcome review screens; the retired Review Tool in
+older files), or `triage_cleared` true on any segment (written by `mousereach-resolve-triage-from-gt`, and by
+the retired triage-clearing tool in files it saved before it was retired). A file
 of those three that cannot be read counts as a person's too (what it holds cannot be told). Such a
 file is never deleted as a leftover, never replaced by a route moving a newer run into a bundle,
 and never replaced by a return moving a bundle back into a processing folder -- unless the other
@@ -1565,7 +1579,7 @@ Each of these is code that runs, produces a value, and has no reader.
 - **`causal_review_index.json`.** Written on every save (`causal_review_io.py:690`, path at `:729`) so that, per the module docstring, the active-learning loop can bulk-read all reviews. Nothing reads it — no reader exists in `src/` or `scripts/`.
 - **`base.py`** — `AlgoGTReviewMixin`, `DiffItem`, `DiffSummary`. Re-exported by `review/__init__.py` (loaded on first use, like every GUI name there) and documented in this folder's `AGENTS.md` as the way to build a review widget. No class in the codebase uses the mixin and no code constructs a `DiffSummary`.
 - **`SavePanel`** in `save_panel.py:24` — never instantiated. Its sibling `SimpleSavePanel` (`:217`) is what the three per-step review widgets use.
-- **`unified_widget.UnifiedReviewWidget`** — reachable only from the napari plugin menu as "Review Tool (Tabbed)" (`napari.yaml:28-30`) and from its own `main` (`unified_widget.py:1123`). Its docstring claims the command `mousereach-review-tool` starts it (`:17`); that command starts the causal review tool. The launcher's "Review Tool" tab loads `GroundTruthWidget` instead (`launcher.py:282`).
+- **`unified_widget.UnifiedReviewWidget`** — reachable only from the napari plugin menu as "Review Tool (Tabbed)" (`napari.yaml:28-30`) and from its own `main` (`unified_widget.py:1123`). Its docstring claims the command `mousereach-review-tool` starts it (`:17`); that command starts the causal review tool. Its three tabs are the per-step review screens, which still save (see "Review Tool (retired) and the per-step review screens").
 
 ### Not on this list, though a previous draft said so
 
@@ -1639,7 +1653,7 @@ Stated here so nobody rediscovers it the hard way:
 | `--cv` | `mousereach-review-tool` | Use pixel-based pellet localisation to narrow candidate reaches. Off by default because it decodes the video over the network; without it the narrowing uses tracking data only (`_get_cv_states`, `:1713`, gated at `:1727`). |
 | `--queue-dir` | `mousereach-fix-segmentation` | Queue of bundles to work through; defaults to the re-segmentation queue (`fix_segmentation_widget.py:482-490`). |
 | `--pre-pad` / `--post-pad` | `mousereach-gt` | Frames of context loaded around the segment. Default 0 for the ground truth tool (`ground_truth_widget.py:3037-3040`). |
-| `--algo-dir` | `mousereach-gt`, `mousereach-review-legacy` | Where to read a segment's decision window and which info panel to show. Does not change where a save writes. |
+| `--algo-dir` | `mousereach-gt` | Where to read a segment's decision window and which info panel to show. Does not change where a save writes. |
 | `preserve_clears` | `staging.stage_video` argument, default `True` | Captures human-cleared segments before re-running the algorithms and re-applies them afterwards, matched by segment number (`clear_guard.py:47`). **Skipped entirely when boundaries change** (`staging.py:339`), because a re-cut renumbers the segments; a cleared segment whose number is gone is reported as skipped, not silently dropped (`:348-350`). |
 
 ---
