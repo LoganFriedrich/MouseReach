@@ -1152,9 +1152,10 @@ def match_saved_boundaries(saved, current, tol: int = BOUNDARY_MATCH_FRAMES):
        saved cut is not placed on any row. After the last cut paired by
        frame, when the saved file does not hold every cut (a "Save as Ground
        Truth" file holds only the determined ones), the stretch has no end to
-       count against: a saved cut is placed there only where it keeps the
-       current cuts in time order (between that row's neighbours). Every
-       placement in step 2 must keep that order.
+       count against: a saved cut is placed there only where that row is
+       also the current cut nearest to it by frame and it keeps the current
+       cuts in time order (between that row's neighbours). Every placement in
+       step 2 must keep that order.
     3. Everything else is unmatched: returned for the caller to keep and
        show, never written onto another cut's row."""
     S = [b for b in saved if getattr(b, "frame", None) is not None]
@@ -1184,6 +1185,13 @@ def match_saved_boundaries(saved, current, tol: int = BOUNDARY_MATCH_FRAMES):
     # holds every cut; otherwise the last stretch is open (ib None).
     anchors.append((len(S), len(C)) if full else (None, None))
 
+    def _nearest(ci, frame):
+        # The row is also the current cut nearest the saved cut by frame.
+        if not (0 <= ci < len(C)):
+            return False
+        d = abs(int(C[ci].frame) - frame)
+        return all(abs(int(c.frame) - frame) >= d for c in C)
+
     def _in_order(ci, frame):
         # Put there, the saved cut keeps the current cuts in time order.
         return ((ci == 0 or int(C[ci - 1].frame) < frame)
@@ -1196,6 +1204,8 @@ def match_saved_boundaries(saved, current, tol: int = BOUNDARY_MATCH_FRAMES):
             if si in pairs or int(s.index) <= ia or (ib is not None and int(s.index) >= ib):
                 continue
             ci = pa + (int(s.index) - ia)
+            if ib is None and not _nearest(ci, int(s.frame)):
+                continue                              # open stretch: see the docstring
             if 0 <= ci < len(C) and ci not in used and _in_order(ci, int(s.frame)):
                 pairs[si] = ci
                 used.add(ci)

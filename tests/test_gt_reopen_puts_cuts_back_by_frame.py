@@ -110,3 +110,14 @@ def test_a_finalized_cut_is_not_put_out_of_order_after_a_new_cut(tmp_path):
     assert _rows(gt) == [(0, False), (1003, True), (1800, False), (2000, False),
                          (3000, False)]
     assert [b.frame for b in gt.unmatched_boundaries] == [2150]
+
+
+def test_a_finalized_cut_after_the_last_match_goes_only_on_its_nearest_cut(tmp_path):
+    # Saved: cuts 1 and 5 determined (1003, 5200). Today a cut is missing
+    # between them: by position 5200 would land on the 6000 row. Its nearest
+    # cut is 5000, not that row, so it is kept and not placed.
+    _algo(tmp_path, [0, 1000, 2000, 4000, 5000, 6000])
+    _saved(tmp_path, [(1, 1003, True), (5, 5200, True)])
+    gt = _open(tmp_path)
+    assert (5200, True) not in _rows(gt)
+    assert [b.frame for b in gt.unmatched_boundaries] == [5200]

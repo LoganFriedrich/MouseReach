@@ -6414,7 +6414,8 @@ WHAT IS BUILT (`unified_gt.match_saved_boundaries`, `_apply_saved_boundaries`):
    place in that stretch only when the stretch holds the same number of cuts on both sides and the
    placement keeps the cuts in time order. After the last frame-paired cut of a file that holds only
    some cuts ("Save as Ground Truth" keeps only determined ones) the stretch has no end to count
-   against; the time-order condition alone decides there.
+   against; there the row must also be the current cut nearest to the saved cut by frame, and
+   the placement must keep time order.
 3. A saved cut that is still unpaired is kept, when a person determined it or commented on it, in
    `UnifiedGroundTruth.unmatched_boundaries` (`segmentation.unmatched` in the file; carried through
    both saves, never read as the file's segmentation), logged, and shown by the ground-truth tool
