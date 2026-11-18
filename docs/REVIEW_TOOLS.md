@@ -237,6 +237,13 @@ cases they do nothing, and the message says why:
   video file could not be found at all). **Why:** the window used to set the new video's name
   before the load failed, and a save then wrote the previous video's answers under the new
   name.
+- **Your answers did not save.** Each of the three buttons saves the review first. If that save
+  fails (the share is unreachable, a file is locked), the button shows "Your answers did not
+  save, so <video> was NOT moved" (Clear: "was NOT cleared"), the window stays on the video
+  with your answers still on screen, and nothing is moved. Press the button again once saving
+  works. Flag Session has already recorded its session note by then; only the move waits.
+  **Why:** Escalate and Flag Session used to move the video and load the next one anyway, so
+  the answers, which existed only on screen, were lost without a word.
 
 **Escalating cancels any earlier re-segmentation clear (since 2026-10-27).**
 Pressing the button means a new problem with the cuts has been found, so a

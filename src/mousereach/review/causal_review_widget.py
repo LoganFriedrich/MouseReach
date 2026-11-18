@@ -2987,7 +2987,18 @@ The notes box travels with the video.
             if self._save_review() is False:
                 return   # take another look: the flag is recorded, the video is not moved
         except Exception as e:
-            logger.warning("flag session: could not save review first: %s", e)
+            # The save failed, so the person's answers exist only on screen.
+            # WHY stop (the rule _clear_deep_review follows): moving anyway
+            # sent the video on and loaded the next one, and the answers were
+            # lost without a word. Stay on this video so they can be saved.
+            logger.error("flag session: %s did not save, so it was not moved: %s",
+                         self._video_stem, e)
+            show_error(f"Session {key} is flagged, but your answers did not save, so "
+                       f"{self._video_stem} was NOT moved: {e}. Press Flag "
+                       f"Session again once saving works.")
+            self._status_label.setText(
+                f"[NOT MOVED] {self._video_stem}: the review did not save")
+            return
         # Flagging means a person found a new problem, exactly like Escalate:
         # an earlier re-segmentation clear travelling with the bundle would let
         # the return scan release the video straight back on the same cuts. Set
@@ -3078,7 +3089,15 @@ The notes box travels with the video.
             if self._save_review() is False:
                 return   # take another look: nothing moved yet
         except Exception as e:
-            logger.warning("escalate: could not save review first: %s", e)
+            # Same rule as Flag Session and Clear: answers that did not save
+            # must not be left behind by moving the video and loading the next.
+            logger.error("escalate: %s did not save, so it was not moved: %s",
+                         self._video_stem, e)
+            show_error(f"Your answers did not save, so {self._video_stem} was NOT "
+                       f"moved: {e}. Press Escalate again once saving works.")
+            self._status_label.setText(
+                f"[NOT MOVED] {self._video_stem}: the review did not save")
+            return
         note = (self._notes_edit.toPlainText().strip()
                 if hasattr(self, "_notes_edit") else "")
         reason = ("reviewer escalated from triage: bad segmentation"
