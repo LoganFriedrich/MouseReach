@@ -192,3 +192,13 @@ def test_the_archive_step_passes_a_complete_features_file(server, run_dir):
                                          "reaches": [{"reach_id": 4, "extended": {"a": 1.0}}]}]}),
         encoding="utf-8")
     assert orch_mod.refuse_filing_without_features(server.db, VID, proc) is False
+
+
+def test_a_ground_truth_file_with_a_byte_order_mark_is_read(run_dir):
+    """A file saved with a byte-order mark is good data; since a read error is
+    now a permanent hold, it must not become one."""
+    proc, pose = run_dir
+    gt = {"video_name": VID, "segments": []}
+    (proc / f"{VID}_unified_ground_truth.json").write_bytes(
+        b"\xef\xbb\xbf" + json.dumps(gt).encode("utf-8"))
+    assert _extract(proc, pose).n_segments == 1

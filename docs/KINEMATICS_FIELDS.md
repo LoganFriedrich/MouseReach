@@ -599,6 +599,10 @@ merely holds a `causal_reach_id` key:
 | An older file marks the segment resolved by a person in place (`triage_cleared` or `human_verified`) | The reach that file names. |
 | Anything else -- including a legacy outcome file that names a causal reach on every segment | The reach assignment's pick, when it has one; otherwise whatever the outcome file says. |
 
+If the reach a person excluded in the ground-truth tool is the segment's causal reach, the segment
+keeps `causal_reach_id` naming a reach that is now only in `reaches_left_out`, and no measured
+reach is marked causal. A reviewer's ignore window does the same. Nothing is substituted.
+
 On every person-owned segment the assignment's pick is still recorded as
 `algo_causal_reach_id`, so an override stays visible as one. No extractor version
 change: the result differs only for a video whose legacy outcome file sits

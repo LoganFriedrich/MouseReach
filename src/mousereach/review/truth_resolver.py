@@ -742,7 +742,9 @@ def resolve_truth_layers(
     gt = None
     if gt_path:
         try:
-            with open(gt_path) as f:
+            # utf-8-sig: a read error is now a permanent hold, so a byte-order mark
+            # written by another tool must not turn a good file into one.
+            with open(gt_path, encoding='utf-8-sig') as f:
                 gt = json.load(f)
         except FileNotFoundError:
             gt = None

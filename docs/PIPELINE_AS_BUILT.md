@@ -3162,8 +3162,20 @@ failed: kinematics not written: ...)`, followed by each problem in words. The pr
 - a reach's extended measures could not be computed -- the message names the reach and its frames.
 
 No `<video>_features.json` is written (an existing one is left as it was). The same happens when
-the kinematics are made by hand (`mousereach-kinematics`, the Run All Steps tab, the bring-current
-routine): the command reports the error and writes no file.
+the kinematics are made by hand (`mousereach-kinematics`, the Run All Steps tab): the command
+reports the error and writes no file.
+
+**Not yet true of bring-current.** The bring-current routine (`reprocess_video_to_current` with
+`finalize=True`) does NOT hold the video in this case. When the extractor refuses, it still moves
+the old outputs into the version-stamped archive and files the video with no features file. That
+is a narrower leftover of the same defect, present before this change and not made worse by it; it
+is a follow-up, not fixed here.
+
+**A person's exclusion can leave a segment without a measured causal reach.** When the reach a
+person excluded in the ground-truth tool is the segment's causal reach, the segment keeps
+`causal_reach_id` naming a reach that now appears only in `reaches_left_out`, and no measured reach
+in the file is marked causal. A reviewer's ignore window does the same on master. The file says so
+rather than naming a different reach in its place.
 
 **What happens next.** The failed-video retry runs it again, like any other kinematics failure
 (below). A torn file usually means it was being written at that moment, so a retry often succeeds.
