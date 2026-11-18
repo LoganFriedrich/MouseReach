@@ -4,7 +4,7 @@ A step-by-step guide to processing mouse reaching behavior videos from raw foota
 
 ---
 
-## Quick Start (NEW in v2.3.0)
+## Quick Start
 
 The fastest way to use MouseReach:
 
@@ -40,7 +40,7 @@ Multi-Animal Video → Crop → DLC → Segment → Reaches → Outcomes → Fea
 
 Each step produces output files that feed into the next step. Human review checkpoints ensure data quality.
 
-**Key Features (v2.3.0):**
+**Key Features:**
 - Unified launcher (`mousereach` command) with all tools in tabs
 - Shared video layer (load once, not 3x per tool)
 - Cross-tool awareness (save in one step, downstream steps auto-refresh)
@@ -55,7 +55,7 @@ Before starting, ensure you have:
 
 1. **MouseReach installed** - See `INSTALL.md`
 2. **FFmpeg installed** - Required for video cropping
-3. **Trained DLC model** - Your 17-point model for pose estimation
+3. **Trained DLC model** - Your 18-point model for pose estimation (Reference, SATL, SABL, SABR, SATR, BOXL, BOXR, Pellet, Pillar, RightHand, RHLeft, RHOut, RHRight, Nose, RightEar, LeftEar, LeftFoot, TailBase)
 4. **Multi-animal collage video(s)** - 2x4 grid layout (.mkv format)
 
 ---
@@ -194,7 +194,7 @@ Updates `validation_status` in JSON:
 ```bash
 napari
 ```
-Then: **Plugins → MouseReach Segmentation → Boundary Review Tool**
+Then: **Plugins -> MouseReach - Mouse Reaching Behavior Analysis -> Step 2b - Review Boundaries** (or run `mousereach-segment-review`)
 
 - Load a `*_segments.json` file
 - Video and boundaries display automatically
@@ -204,11 +204,12 @@ Then: **Plugins → MouseReach Segmentation → Boundary Review Tool**
 **Keyboard shortcuts:**
 | Key | Action |
 |-----|--------|
-| Space | Play/Pause |
+| Space | Set the current boundary to this frame |
+| Enter | Accept the current boundary |
 | Left/Right | Previous/Next frame |
 | Shift+Left/Right | Jump 10 frames |
-| N / P | Next/Previous file |
-| Ctrl+S | Save |
+| N / P | Next/Previous boundary |
+| S | Save |
 
 **4. Go on to the next step**
 
@@ -260,7 +261,7 @@ Contains:
 mousereach-detect-reaches -i Processing/
 
 # Skip videos with ground truth files (for reprocessing)
-mousereach-detect-reaches -i Processing/ -s "*reaches_ground_truth.json"
+mousereach-detect-reaches -i Processing/ -s "*_reach_ground_truth.json"
 ```
 
 **2. Triage results (auto-runs, updates JSON validation_status)**
@@ -276,7 +277,7 @@ Updates `validation_status` in JSON:
 ```bash
 napari
 ```
-Then: **Plugins → MouseReach Reach Detection → Reach Annotator**
+Then: **Plugins -> MouseReach - Mouse Reaching Behavior Analysis -> Step 4b - Review Reaches** (or run `mousereach-review-reaches`)
 
 - Load a `*_reaches.json` file
 - Reaches displayed as colored overlays
@@ -286,24 +287,30 @@ Then: **Plugins → MouseReach Reach Detection → Reach Annotator**
 | Key | Action |
 |-----|--------|
 | Space | Play/Pause forward |
-| Shift+R | Play reverse |
+| R | Play reverse |
 | Left/Right | Previous/Next frame |
 | Shift+Left/Right | Jump 10 frames |
-| N / P | Next/Previous segment |
+| N / P | Next/Previous reach |
 | S | Set reach start at current frame |
 | E | Set reach end at current frame |
 | A | Add new reach |
 | Delete | Delete selected reach |
+| X | Exclude/include the selected reach |
+| Enter | Accept the current reach |
+| Esc | Cancel adding a reach |
 | Ctrl+S | Save progress |
 
-**Playback speeds:** 1x, 2x, 4x, 8x, 16x (click buttons)
+**Playback speeds:** 0.25x, 0.5x, 1x, 2x, 4x, 8x, 16x (click buttons)
 
 **4. Go on to the next step**
 
 There is no separate "advance" step. Saving in the review screen marks the
 reaches file `validated`. Outcome detection (Step 4) does not check that mark;
-`mousereach-archive` does (it files a video only when its segments, reaches and
-outcomes files all read `validated` or `auto_approved`).
+`mousereach-archive` does: it files a video only when its segments, reaches and
+outcomes files all read `validated` or `auto_approved`, it has a
+`<video>_features.json` newer than those files with every pellet decided, and --
+on a machine whose watcher database knows the video -- the watcher has passed it
+(state `processed`).
 
 Do not run `mousereach-advance-reaches`: on the current version it stops with
 an error (`TypeError ... require_validation`) and moves nothing.
@@ -353,7 +360,7 @@ Contains per-segment:
 mousereach-detect-outcomes -i Processing/
 
 # Skip videos with ground truth files (for reprocessing)
-mousereach-detect-outcomes -i Processing/ -s "*outcomes_ground_truth.json"
+mousereach-detect-outcomes -i Processing/ -s "*_outcome_ground_truth.json" "*_outcomes_ground_truth.json"
 ```
 
 **2. Triage results (auto-runs, updates JSON validation_status)**
@@ -369,7 +376,7 @@ Updates `validation_status` in JSON:
 ```bash
 napari
 ```
-Then: **Plugins → MouseReach Pellet Outcomes → Pellet Outcome Annotator**
+Then: **Plugins -> MouseReach - Mouse Reaching Behavior Analysis -> Step 3b - Review Outcomes** (or run `mousereach-review-pellet-outcomes`)
 
 - Load a `*_pellet_outcomes.json` file
 - Review each segment's classification
@@ -440,7 +447,7 @@ mousereach-grasp-triage -i Processing/
 
 **3. Review features (optional)**
 ```bash
-mousereach-grasp-review
+mousereach-grasp-review Processing/<video>_features.json
 ```
 
 ### Output
@@ -484,20 +491,26 @@ mousereach-export -i Processing/ -o csv_folder/ --format csv
 
 ### Output
 
-**Excel file** contains multiple sheets:
-- **Summary** - Per-video statistics
-- **Segments** - Per-segment details
-- **Reaches** - Individual reach data
+**Excel file** has two sheets:
+- **Summary** - one row per video: n_segments, n_retrieved, mean_confidence,
+  total_reaches, n_displaced_sa, n_displaced_outside, n_untouched, and
+  success_rate (n_retrieved / n_segments, a fraction, not a percent)
+- **Details** - one row per pellet
 
-**Key columns:**
+With `--format csv` only the details are written, as `mousereach_details.csv` in
+the output folder.
+
+**Details columns:**
 | Column | Description |
 |--------|-------------|
 | video_name | Source video |
-| segment_id | Pellet segment (1-20) |
-| outcome | R/D/O/U |
+| animal_id | Animal |
+| session | Session |
+| segment_num | Pellet segment (1-20) |
+| outcome | retrieved / displaced_sa / displaced_outside / untouched |
+| confidence | Outcome confidence |
 | n_reaches | Reaches in segment |
-| first_reach_frame | When reaching started |
-| success_rate | % Retrieved |
+| causal_reach_id | The reach that caused the outcome |
 
 ---
 
@@ -596,7 +609,7 @@ three reasons a start is refused, and each is on purpose:
   The Watcher Control panel runs only the kind of watcher this machine is set
   up for (`mode` in its settings). Put **Run as** back to that. If the
   machine's job has really changed, change **mode** in the settings part of the
-  panel, press **Save**, and start again: Save also moves **Run as** to the
+  panel, press **Save config**, and start again: Save config also moves **Run as** to the
   mode it saved, so nothing else needs changing.
 
 ### Segmentation boundaries incorrect
@@ -646,8 +659,9 @@ are recorded. Nothing needs to be stopped first:
   into `Single_Animal\.inflight\<machine>\` while that machine poses it.
   **Leave these files alone.** The file there may be the only copy on the
   share. It is deleted automatically once the video has moved on to its next
-  folder. If that machine gives the video up or stops for a day, the video is
-  put back in `Single_Animal` for another machine.
+  folder. If that machine gives the video up, stops running (its status report quiet
+  for 3 hours), or nobody touches the file for a day, the video is put back in
+  `Single_Animal` for another machine.
 - If you copy the same video in again while a machine still holds it, the
   second copy is left where it is and the watcher log says so. Delete the
   second copy.
@@ -728,10 +742,10 @@ quietly rebuilding the old folder and working there.
 
 ## Getting Help
 
-- Check individual `Step*/README.md` files for detailed options
+- docs/CLI_REFERENCE.md lists every command and its options
 - Use `--help` with any command: `mousereach-segment --help`
 - Report issues: [GitHub Issues](https://github.com/LoganFriedrich/MouseReach/issues)
 
 ---
 
-*MouseReach v2.3.0 | Updated 2025-01-21*
+*MouseReach 2.16*
