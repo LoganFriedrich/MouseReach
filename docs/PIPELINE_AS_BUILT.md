@@ -3300,7 +3300,8 @@ failed: kinematics not written: ...)`, followed by each problem in words. The pr
 - a reach's extended measures could not be computed -- the message names the reach and its frames;
 - the reaches file and the pellet outcomes file do not describe the same pellets (since
   2026-11-18): the outcomes file has a pellet the reaches file has no segment for, a reach segment
-  before the last pellet has no outcome, or a segment number is missing or listed twice. The
+  before the last pellet has no outcome, more than one reach segment comes after the last
+  pellet, a file has no segment list, or a segment number is missing or listed twice. The
   message names the pellets and ends "re-run the video from reach detection". The two files are
   matched pellet by pellet by their segment number (`pair_segments_by_number`); they used to be
   matched by position, so such a disagreement measured a pellet's reaches against another

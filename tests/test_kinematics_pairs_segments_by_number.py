@@ -137,3 +137,27 @@ def test_a_pellet_listed_twice_holds_the_video(proc):
     with pytest.raises(KinematicsProblem) as e:
         _extract(proc)
     assert "lists segment(s) 1 more than once" in str(e.value)
+
+
+def test_pellets_at_the_end_without_an_outcome_hold_the_video(proc):
+    """Reaches file with pellets 1-3 and the stretch after the last cut (4),
+    outcomes file with pellets 1 and 2 only. By position pellet 3 was dropped
+    with nothing said; only the one stretch after the last cut is expected."""
+    _write(proc, [_reach_seg(1, 0, 74, 20), _reach_seg(2, 75, 149, 100),
+                  _reach_seg(3, 150, 224, 170), _reach_seg(4, 225, 299, 240)],
+           [{"segment_num": 1, "outcome": "untouched"},
+            {"segment_num": 2, "outcome": "retrieved"}])
+    with pytest.raises(KinematicsProblem) as e:
+        _extract(proc)
+    assert "segment(s) 3 after the last outcome" in str(e.value)
+
+
+def test_an_outcomes_file_without_segments_holds_the_video(proc):
+    """No list to pair with: nothing is written (never an empty features file)."""
+    _write(proc, REACH_SEGMENTS, [])
+    doc = json.loads((proc / f"{VID}_pellet_outcomes.json").read_text(encoding="utf-8"))
+    del doc["segments"]
+    (proc / f"{VID}_pellet_outcomes.json").write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(Exception) as e:
+        _extract(proc)
+    assert "segments" in str(e.value)

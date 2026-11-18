@@ -302,20 +302,29 @@ def pair_segments_by_number(reach_segments, outcome_segments):
     The one difference that is expected: the reaches file has one segment per
     boundary, the last one running from the last boundary to the end of the
     video (span_to_reaches.segments_from_boundaries); the outcomes file has
-    one segment per pellet, i.e. per PAIR of boundaries, one fewer. So a reach
-    segment numbered after every outcome segment is the stretch after the last
-    boundary, not a pellet: it is left out here exactly as the positional zip
-    left it out (whether its reaches should be counted is a separate question,
-    see ALGO_2_REACH_DETECTION.md). Anything else is a problem:
+    one segment per pellet, i.e. per PAIR of boundaries, one fewer (the legacy
+    outcome detector too). So ONE reach segment numbered after every outcome
+    segment is the stretch after the last boundary, not a pellet: it is left
+    out here exactly as the positional zip left it out (whether its reaches
+    should be counted is a separate question, see ALGO_2_REACH_DETECTION.md).
+    Anything else is a problem:
+      - either file without a ``segments`` list (nothing to pair);
       - a segment without a usable ``segment_num`` (nothing to pair it by);
       - a number listed twice in either file (which one is the pellet's?);
       - an outcome for a pellet the reaches file has no segment for (its
         outcome would be dropped silently);
       - a reach segment with no outcome, numbered before the last outcome (a
         pellet in the middle with no outcome means the files were made on
-        different cuts).
+        different cuts);
+      - more than one reach segment after the last outcome (pellets at the end
+        with no outcome: the zip dropped them silently).
     """
     problems = []
+    for which, segments in (("reaches", reach_segments), ("outcomes", outcome_segments)):
+        if not isinstance(segments, list):
+            problems.append(f"the {which} file has no list of segments")
+    if problems:
+        return [], problems
 
     def _numbered(segments, which):
         out = []
@@ -345,6 +354,12 @@ def pair_segments_by_number(reach_segments, outcome_segments):
     if no_outcome:
         problems.append(f"the reaches file has segment(s) {', '.join(str(n) for n in no_outcome)} "
                         f"that the outcomes file has no outcome for")
+    after_last = sorted(n for n in reach_set if n > last)
+    if len(after_last) > 1:
+        problems.append(f"the reaches file has segment(s) "
+                        f"{', '.join(str(n) for n in after_last[:-1])} after the last outcome "
+                        f"(pellet {last}) that the outcomes file has no outcome for; only the "
+                        f"one stretch after the last cut ({after_last[-1]}) is expected there")
     if problems:
         problems.append("the reaches and outcomes files do not describe the same pellets "
                         "(made on different cuts?); re-run the video from reach detection")
