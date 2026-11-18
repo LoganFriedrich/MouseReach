@@ -388,6 +388,13 @@ class CausalReviewWidget(QWidget):
         self._triaged_indices: List[int] = []
         self._worklist: Optional[Dict[str, set]] = None
         self._has_triage_cache: Dict[str, bool] = {}
+        # The review queue folder (Pending) this window walks, kept apart from
+        # the bundle on screen. WHY: Browse and a failed load forget the bundle
+        # (so no button can act on a bundle that is not the video's), but the
+        # queue is still there -- "Save Review + Next Video" must be able to
+        # take it up again, and corpus files (flagged_sessions.json) must keep
+        # going to the queue root, never beside a video opened by hand.
+        self._queue_pending_dir: Optional[Path] = None
 
         # Video state
         self.video_path: Optional[Path] = None
@@ -755,7 +762,25 @@ The notes box travels with the video.
             "Video Files (*.mp4 *.avi);;All Files (*)"
         )
         if path:
+            # A video opened by hand is not a queue bundle: end the queue
+            # session first. WHY: the window kept the previous bundle's folder
+            # and manifest, so Escalate, Flag Session and Clear acted on that
+            # OTHER video's bundle under this video's name -- a route of the
+            # wrong folder, and answers saved into a bundle that is not this
+            # video's. With no bundle loaded those buttons say so and do
+            # nothing. The queue folder itself is kept (_queue_pending_dir),
+            # so "Save Review + Next Video" takes up the queue again; the bundle
+            # being left counts as visited, as when the next-video button leaves it.
+            left = getattr(self, "_bundle_dir", None)
+            if left is not None:
+                seen = getattr(self, "_reviewed_this_session", None)
+                if seen is None:
+                    seen = self._reviewed_this_session = set()
+                seen.add(str(left))
+            self._bundle_dir = None
+            self._manifest = None
             self._load_video(Path(path))
+            self._update_routing_banner()
 
     def load_from_manifest(self, manifest: Dict[str, Any], bundle_dir: Path) -> None:
         """Load a copy-free review bundle.
@@ -777,6 +802,12 @@ The notes box travels with the video.
             # already on screen must stay paired with its own bundle, or a save
             # would land in the wrong bundle.
             stem = manifest.get("video_stem") or bundle_dir.name
+            # Counted as visited, so the next-video button does not hand the
+            # same unopenable bundle straight back.
+            seen = getattr(self, "_reviewed_this_session", None)
+            if seen is None:
+                seen = self._reviewed_this_session = set()
+            seen.add(str(bundle_dir))
             show_error(
                 f"Could not open review bundle {stem}: no video at the "
                 f"manifest's path ({manifest.get('canonical_video_path')}) and "
@@ -784,6 +815,7 @@ The notes box travels with the video.
             return
         self._manifest = dict(manifest)
         self._bundle_dir = bundle_dir
+        self._queue_pending_dir = bundle_dir.parent
         self._load_video(video)
         self._update_routing_banner()
 
@@ -1015,7 +1047,47 @@ The notes box travels with the video.
             self._progress.setValue(100)
 
         except Exception as e:
-            show_error(f"Error loading video: {e}")
+            # Nothing of a half-loaded video may stay usable. WHY: the new
+            # video's name was already set while the previous video's answers,
+            # segments and bundle were still held, so a save (or Escalate,
+            # Flag Session, Clear) after a failed load wrote the PREVIOUS
+            # video's answers under THIS video's name, into a bundle that is
+            # not its own. Forgetting all of it makes every button say "no
+            # video loaded" until a video loads cleanly. A queue bundle that
+            # failed to load counts as visited this session, so the next-video
+            # button does not hand the same broken bundle straight back. The
+            # queue folder is kept and that button stays usable, so the
+            # reviewer goes on to the next bundle without relaunching.
+            failed_bundle = getattr(self, "_bundle_dir", None)
+            if failed_bundle is not None:
+                seen = getattr(self, "_reviewed_this_session", None)
+                if seen is None:
+                    seen = self._reviewed_this_session = set()
+                seen.add(str(failed_bundle))
+            self.video_path = None
+            self._video_stem = None
+            self._review_records = {}
+            self._segment_list = []
+            self._current_seg_idx = 0
+            self._bundle_dir = None
+            self._manifest = None
+            try:
+                self._enable_controls(False)
+            except Exception:
+                pass
+            try:
+                queue_known = self._pending_dir() is not None
+            except Exception:
+                queue_known = False
+            if queue_known:
+                try:
+                    self._save_next_video_btn.setEnabled(True)
+                except Exception:
+                    pass
+            show_error(f"Error loading video: {e}\n\nNothing is loaded; open "
+                       f"another video"
+                       + (" or press 'Save Review + Next Video' to go on to the "
+                          "next video in the queue." if queue_known else "."))
             import traceback
             traceback.print_exc()
         finally:
@@ -2857,7 +2929,14 @@ The notes box travels with the video.
     # ===================================================================
 
     def _pending_dir(self) -> Optional[Path]:
-        """The review queue root -- the bundle's parent (the Pending folder)."""
+        """The review queue folder (Pending) this window walks.
+
+        Read from _queue_pending_dir, which every queue bundle load sets and which
+        Browse and a failed load do NOT clear -- those forget only the bundle on
+        screen. Falls back to the bundle's parent for a window that never set it."""
+        qd = getattr(self, "_queue_pending_dir", None)
+        if qd is not None:
+            return Path(qd)
         bd = getattr(self, "_bundle_dir", None)
         return Path(bd).parent if bd else None
 
@@ -3320,9 +3399,13 @@ The notes box travels with the video.
             show_error(f"Could not load next video ({nxt.name}): {e}")
 
     def _save_and_next_video(self):
-        """Save this video's review, then load the next video in the queue."""
-        if self._save_review() is False:
-            return   # the reviewer chose to take another look
+        """Save this video's review, then load the next video in the queue.
+
+        With nothing loaded (a load just failed) there is nothing to save, so
+        this goes straight on to the next bundle."""
+        if getattr(self, "video_path", None) and getattr(self, "_video_stem", None):
+            if self._save_review() is False:
+                return   # the reviewer chose to take another look
         self._pop_from_index_if_resolved()
         self._load_next_video()
 

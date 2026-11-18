@@ -213,6 +213,31 @@ database the watcher writes; it is never created by the tool). Before, the row k
 disagreed until it came back. If the tool cannot open that database, the video still moves and
 the message says the record was not updated; the record catches up when the video returns.
 
+### When the window will not move a video
+
+Escalate, Flag Session and Clear act on the **queue bundle** the window is showing. In these
+cases they do nothing, and the message says why:
+
+- **You opened a video yourself with Browse / Load Video.** Opening a video by hand lets go of
+  the queue bundle that was on screen: Escalate says "No bundle loaded", Flag Session records
+  the session note in the queue and says nothing was moved, and Clear says there is nothing to
+  clear. The
+  window still knows which queue it was walking: press **Save Review + Next Video** to save the
+  review of the video you opened and go back to the next video in the queue. The queue video
+  you left counts as visited for the rest of this window's session, as it would if you had
+  moved on with Save Review + Next Video. **Why:** the window used to keep the previous queue
+  video's bundle, so these buttons moved THAT video's folder under the name of the video you
+  had opened, and answers could be saved into the wrong bundle.
+- **The video did not load.** When a video cannot be opened (a missing or broken file), the
+  window shows the error and forgets everything it had loaded -- the previous video's answers,
+  its segments and its bundle. Every button then says no video is loaded until a video loads
+  cleanly, except **Save Review + Next Video**, which stays usable when the window was walking
+  a queue: with nothing loaded it saves nothing and goes straight on to the next video in the
+  queue. The bundle that failed is skipped for the rest of this window's session (also when its
+  video file could not be found at all). **Why:** the window used to set the new video's name
+  before the load failed, and a save then wrote the previous video's answers under the new
+  name.
+
 **Escalating cancels any earlier re-segmentation clear (since 2026-10-27).**
 Pressing the button means a new problem with the cuts has been found, so a
 video that was cleared in re-segmentation before is no longer cleared. Its old
