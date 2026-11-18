@@ -330,6 +330,20 @@ def stage_video(
     assign_out = bundle / f"{stem}_reach_assignments.json"
     manifest_out = bundle / f"{stem}_manifest.json"
 
+    # Deep review beats triage, and a bundle being built by the watcher's
+    # router is not touched (review_routing). WHY: this stager writes into a
+    # queue folder itself, so it must refuse what the router refuses -- a
+    # triage bundle for a video held in deep review, which a reviewer would
+    # answer while the deep-review copy is the one that counts.
+    from mousereach.watcher.review_routing import in_deep_review, INCOMING_DIR_NAME
+    deep_root = getattr(_Paths, "DEEP_REVIEW", None) if "_Paths" in globals() else None
+    into_deep = bool(deep_root) and Path(pending_dir).resolve() == Path(deep_root).resolve()
+    if not into_deep and in_deep_review(stem):
+        raise RuntimeError(f"{stem} is held in deep review; a triage bundle is not made "
+                           f"beside it (deep review supersedes triage)")
+    if (Path(pending_dir) / INCOMING_DIR_NAME / stem).exists():
+        raise RuntimeError(f"{stem} is being routed into this queue right now; try again later")
+
     if bundle.exists() and (manifest_out.exists() or (bundle / "manifest.json").exists()) and not overwrite:
         log(f"already staged (manifest present); skipping. Use overwrite=True to redo.")
         return bundle

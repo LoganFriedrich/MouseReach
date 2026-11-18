@@ -168,3 +168,24 @@ def test_repose_refuses_a_held_bundle_with_a_persons_cuts(tmp_path, monkeypatch)
     assert rep["status"] == "refused", rep
     assert f"{V}_segments.json" in rep["why"]
     assert _doc(bundle / f"{V}_segments.json") == HUMAN
+
+
+def test_the_stager_makes_no_triage_bundle_for_a_video_in_deep_review(tmp_path, monkeypatch):
+    """Deep review beats triage, for the stager as for the watcher's router."""
+    from mousereach.config import Paths
+    from mousereach.review import staging
+    root = tmp_path / "Analyzed"
+    (root / "CNT99").mkdir(parents=True)
+    (root / "CNT99" / f"{V}.mp4").write_bytes(b"video")
+    pose = root / staging.DLC4_SUBDIR / "CNT99" / f"{V}{staging.DLC4_SCORER}.h5"
+    pose.parent.mkdir(parents=True)
+    pose.write_bytes(b"not a real pose")
+    deep = tmp_path / "Deep_Review"
+    _write(deep / V / f"{V}_segments.json", HUMAN)
+    monkeypatch.setattr(Paths, "DEEP_REVIEW", deep, raising=False)
+    monkeypatch.setattr(staging, "_neutralize_pipeline_side_effects", lambda: None)
+    monkeypatch.setattr(staging, "_restore_review_into_bundle", lambda *a, **k: None)
+    pending = tmp_path / "Pending"
+    with pytest.raises(Exception):
+        staging.stage_video(V, connectome_root=root, pending_dir=pending, verbose=False)
+    assert not (pending / V).exists()
