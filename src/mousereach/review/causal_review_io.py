@@ -729,6 +729,7 @@ def save_causal_review(
     # surviving one is the copy nothing else can delete -- the working copy sits
     # in a directory the pipeline regenerates.
     durable = durable_review_path(video_stem)
+    durable_written = False
     if durable is None:
         logger.warning(
             "%s: no NAS or processing root configured, so this review has only "
@@ -738,6 +739,7 @@ def save_causal_review(
     else:
         try:
             _write_json(durable, doc)
+            durable_written = True
         except Exception as e:
             # Loud, and not fatal: refusing to save would lose the reviewer's
             # work outright, which is worse than saving it in one place.
@@ -754,8 +756,9 @@ def save_causal_review(
 
     out_path = output_dir / f"{video_stem}_causal_review.json"
     if not create_folder and not Path(output_dir).is_dir():
+        # This save's own result, never an older copy that happens to exist.
         kept = ("Your answers were saved in the lasting copy (%s)." % durable
-                if durable is not None and durable.is_file() else
+                if durable_written else
                 "Your answers could NOT be saved anywhere: write them down.")
         raise ReviewFolderGone(
             "%s has left this queue (its folder %s is gone): the watcher or another "
@@ -771,8 +774,11 @@ def save_causal_review(
             raise
         raise ReviewFolderGone(
             "%s has left this queue (its folder %s is gone) while it was being saved. "
-            "Your answers were kept in the lasting copy where one is configured. "
-            "Load the next video." % (video_stem, output_dir))
+            "%s Load the next video."
+            % (video_stem, output_dir,
+               "Your answers were saved in the lasting copy (%s)." % durable
+               if durable_written else
+               "Your answers could NOT be saved anywhere: write them down."))
     return out_path
 
 

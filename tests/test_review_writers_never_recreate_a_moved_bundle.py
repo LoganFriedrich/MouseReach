@@ -171,3 +171,36 @@ def test_the_release_button_uses_the_same_writer(tmp_path):
     gone = tmp_path / "deep" / STEM / f"{STEM}_deep_review_cleared.json"
     assert release_cli._write_marker_once(gone, {"by": "a"}) is False
     assert not gone.parent.exists()
+
+
+def test_clear_that_could_not_write_its_marker_says_so_and_stays(tmp_path, quiet, monkeypatch):
+    # The folder is there, but the share refuses the marker file.
+    bundle = tmp_path / "deep_review" / STEM
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(cio, "write_clear_marker_once", lambda path, doc: False)
+    advanced = []
+    crw.CausalReviewWidget._clear_deep_review(_clear_window(bundle, advanced))
+    assert advanced == []
+    assert quiet["error"] and "NOT" in quiet["error"][0]
+    assert not (bundle / f"{STEM}_deep_review_cleared.json").exists()
+
+
+def test_a_failed_lasting_copy_is_not_reported_as_kept(tmp_path, monkeypatch):
+    # An older lasting copy exists, but this save's write of it fails.
+    durable = tmp_path / "review_records" / "reviews"
+    durable.mkdir(parents=True)
+    (durable / f"{STEM}_causal_review.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(cio, "durable_review_dir", lambda: durable, raising=False)
+    real = cio._write_json
+
+    def refuse_durable(path, data, **kw):
+        if path.parent == durable:
+            raise OSError("share unavailable (simulated)")
+        return real(path, data, **kw)
+    monkeypatch.setattr(cio, "_write_json", refuse_durable)
+    with pytest.raises(cio.ReviewFolderGone) as gone:
+        cio.save_causal_review(
+            video_stem=STEM, output_dir=tmp_path / "triage" / STEM,
+            segments=[{"segment_num": 1, "human": {"outcome": "untouched"}, "answers": {}}],
+            provenance={}, reviewer="reviewer_a", create_folder=False)
+    assert "could NOT be saved" in str(gone.value)

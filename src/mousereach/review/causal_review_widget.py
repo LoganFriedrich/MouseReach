@@ -3619,6 +3619,8 @@ The notes box travels with the video.
             )
         except ReviewFolderGone as gone:
             logger.warning("%s: %s", self._video_stem, gone)
+            for msg in save_problems:
+                show_warning(msg)
             show_error(str(gone))
             self._status_label.setText(f"[NOT SAVED IN THE QUEUE] {self._video_stem}")
             return False
@@ -3707,9 +3709,13 @@ The notes box travels with the video.
                         "gated_on": "is_answered",
                     }):
                         show_info("Review complete -- released back to the pipeline.")
-                    else:
+                    elif marker.exists() or not Path(bundle).is_dir():
                         show_info(f"{self._video_stem} was not released from here: it "
                                   f"has already left the queue or been released.")
+                    else:
+                        show_warning(f"Answers saved, but the release marker for "
+                                     f"{self._video_stem} could not be written: press "
+                                     f"Clear to release it.")
         except Exception as e:
             print(f"Warning: auto-release check failed: {e}")
         self._status_label.setText(f"Saved: {out_path.name}")
@@ -3928,6 +3934,15 @@ The notes box travels with the video.
                            f"watcher or another window moved it). Nothing was written. "
                            f"Load the next video.")
                 self._status_label.setText(f"[NOT CLEARED] {stem}: it has left the queue")
+                return
+            if not marker.exists():
+                # The folder is there but the marker could not be written
+                # (the share refused the file): an error, not a clear.
+                show_error(f"Could not write the clear marker for {stem}; it was NOT "
+                           f"cleared. Press Clear again; if it keeps failing, tell "
+                           f"whoever looks after the pipeline.")
+                self._status_label.setText(f"[NOT CLEARED] {stem}: the marker could not "
+                                           f"be written")
                 return
             show_info(f"{stem} was already cleared (someone else released it first).")
             try:
