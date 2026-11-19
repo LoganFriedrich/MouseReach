@@ -7323,3 +7323,26 @@ person picked a different reach, and was exported with that reach although it la
 the algorithm picked always holds its frame (reach assignment picks the reach containing it), so
 nothing changes there. No extractor version change: filed videos keep their files until a kinematics
 re-run happens for another reason.
+
+**Triage answers are the results (owner rules 2026-11-19).** The review records the triage window
+saves are read by the truth layering (`review/truth_resolver.py`) and the features step:
+
+* `human.causal_reach` = {reach_id, start, end} names the causal reach (unchanged).
+  `human.causal_reach_bounds` = {start, end} are that reach's frames as the person checked them (the
+  window always asks; also read from the `human.reach_calls` entry called causal with `bounds: human`):
+  `_apply_reviewed_bounds` puts them on the reach (detector frames kept as
+  `algo_start_frame`/`algo_end_frame`, `reach_source: human_review`, apex outside dropped, extent
+  cleared), so its kinematics are measured over the person's frames; for a reach the detector missed
+  they are its frames. A reach whose frames ground truth determined keeps them.
+* `human.reach_calls` = [{reach_id, start, end, call: causal|miss, detected, bounds}, ...]: the call on
+  every reach of the pellet the answer settles; each `miss` is a person's known miss.
+* Every reach in the features file carries `reach_outcome` and `reach_outcome_source`
+  (`feature_extractor.reach_outcome_of`): the causal reach the pellet's outcome; every other reach of a
+  pellet whose causal reach is known, or that is untouched, `missed`; null while the causal reach is not
+  known. The source is the person's (`human_review`/`ground_truth`) when a person named the causal
+  reach, answered untouched or listed the reach; else `reach_assignment` / `algo`.
+
+The four algorithms' own files (`_reaches.json`, `_pellet_outcomes.json`, `_reach_assignments.json`)
+stay the algorithms' calls: they are what the evaluation of each algorithm compares a person's answer
+with. The person's answer is applied where the result is made (the features file), which is what the
+exports and the database read.

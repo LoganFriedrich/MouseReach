@@ -111,6 +111,65 @@ def _read_json(p) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
+# What a triage answer says about the reaches themselves
+# ---------------------------------------------------------------------------
+# Owner rules 2026-11-19: (1) a causal answer includes the person checking that
+# reach's start and end, so the frames saved with it are a person's frames for
+# that reach; (2) naming the causal reach of a segment also answers every other
+# reach of that segment -- they all missed ("untouched": every reach missed).
+# The triage window saves both on the segment's record
+# (causal_review_io.REACH_CALLS_KEY / CAUSAL_BOUNDS_KEY):
+#
+#   human.causal_reach_bounds = {"start", "end"}    the causal reach's frames
+#                                                   as the person checked them
+#   human.reach_calls = [{"reach_id", "start", "end", "call": "causal"|"miss",
+#                         "detected", "bounds": "human"|"detected"|"typed"}]
+#
+# They are read here so the results use them: the causal reach is measured
+# over the person's frames, and every reach the record calls a miss carries a
+# person's "missed" (feature_extractor: reach_outcome / reach_outcome_source).
+# Older records carry neither field; for them the rule "named causal reach =>
+# every other reach missed" still gives the misses (reach_outcome_of), and the
+# causal reach keeps the detector's frames.
+CAUSAL_BOUNDS_FIELD = "causal_reach_bounds"
+REACH_CALLS_FIELD = "reach_calls"
+
+
+def person_reach_bounds(rec) -> Optional[Tuple[int, int]]:
+    """(start, end) a person checked for the causal reach of ``rec`` (a review
+    segment record): ``human.causal_reach_bounds``, else the ``reach_calls``
+    entry called causal whose bounds are the person's. None when the record
+    holds neither (older records)."""
+    human = (rec or {}).get("human") or {}
+    src = human.get(CAUSAL_BOUNDS_FIELD)
+    if not isinstance(src, dict):
+        src = next((c for c in human.get(REACH_CALLS_FIELD) or []
+                    if isinstance(c, dict) and c.get("call") == "causal"
+                    and c.get("bounds") == "human"), None)
+    if not src:
+        return None
+    try:
+        s, e = int(src["start"]), int(src.get("end", src["start"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (min(s, e), max(s, e))
+
+
+def person_missed_reaches(rec) -> List[Tuple[int, int]]:
+    """The frames of every reach ``rec``'s ``human.reach_calls`` calls a
+    miss ([] when it calls none, or the record is older than the field)."""
+    out = []
+    for c in ((rec or {}).get("human") or {}).get(REACH_CALLS_FIELD) or []:
+        if not isinstance(c, dict) or c.get("call") != "miss":
+            continue
+        try:
+            out.append((int(c["start"]), int(c.get("end", c["start"]))))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(set(out))
+
+
+# ---------------------------------------------------------------------------
 # per-segment OUTCOME layers
 # ---------------------------------------------------------------------------
 def _seg_overrides_from_review(doc: Optional[dict], source: str,
@@ -184,11 +243,21 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
                 else:
                     logger.warning("segment %s: typed reach %d-%d (%d frames) is longer than "
                                    "any reach; not added", sn, _hs, _he, _he - _hs + 1)
+        bounds = person_reach_bounds(rec) if ho in _TOUCHED_OUTCOMES else None
+        if review_reach is not None and bounds is not None:
+            # A reach the detector missed: the frames the person checked are
+            # its frames (they may differ from the frames first typed).
+            review_reach = bounds
         out[int(sn)] = {
             "outcome": ho,
             "causal_reach_id": cid if ho in _TOUCHED_OUTCOMES else None,
             "review_causal_reach_id": stored,
             "review_reach": review_reach,
+            # The frames the person checked for the causal reach they named
+            # (person_reach_bounds), put on that reach by
+            # _apply_reviewed_bounds; None when the record does not say so.
+            "review_reach_bounds": bounds if (cid is not None and review_reach is None) else None,
+            "missed_reaches": person_missed_reaches(rec),
             "abnormal_ranges": ans.get("abnormal_ranges"),
             # Who answered this segment, not who saved the file last
             # (causal_review_io.segment_reviewer).
@@ -327,6 +396,9 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
             seg["review_causal_reach_id"] = review["review_causal_reach_id"]  # the id as reviewed; provenance
         seg.pop("review_reach_frames", None)
         seg.pop("causal_reach_source", None)
+        seg.pop("review_reach_bounds", None)
+        if review is not None and review.get("missed_reaches"):
+            seg["person_missed_reaches"] = [list(w) for w in review["missed_reaches"]]
 
         if top.get("source") != "ground_truth":
             if (top["outcome"] in _TOUCHED_OUTCOMES and top.get("causal_reach_id") is None
@@ -344,6 +416,8 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
             seg["causal_reach_id"] = top.get("causal_reach_id")
             if seg["causal_reach_id"] is not None:
                 seg["causal_reach_source"] = top.get("source")
+                if top.get("review_reach_bounds"):
+                    seg["review_reach_bounds"] = list(top["review_reach_bounds"])
             if top.get("review_reach"):
                 seg["review_reach_frames"] = list(top["review_reach"])
             continue
@@ -372,6 +446,8 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
                     seg["review_reach_frames"] = list(review["review_reach"])
                 else:
                     seg["causal_reach_id"] = review["causal_reach_id"]
+                    if review.get("review_reach_bounds"):
+                        seg["review_reach_bounds"] = list(review["review_reach_bounds"])
                 seg["causal_reach_source"] = "human_review"
             elif seg.get("algo_causal_reach_id") is None:
                 # (c): the outcome file named no causal reach (the current
@@ -505,6 +581,52 @@ def _add_reviewed_reaches(reaches_data: dict, outcomes_data: dict,
             oseg["causal_reach_id"] = next_id
             oseg["causal_reach_source"] = "human_review"
         next_id += 1
+    return out
+
+
+def _apply_reviewed_bounds(reaches_data: dict, outcomes_data: dict) -> dict:
+    """Put the frames a person checked for a causal reach on that reach
+    (person_reach_bounds says where they come from). Non-destructive.
+
+    The reach keeps its id (the causal pick names it); its start and end
+    become the person's, its detector frames are kept as algo_start_frame /
+    algo_end_frame, it is stamped reach_source "human_review", its duration
+    is counted from the new frames, an apex outside them is dropped and the
+    detector's extent (measured over the detector's window) is cleared -- the
+    extractor measures the reach over the person's frames, as it does for a
+    ground-truth reach. A reach whose frames ground truth determined keeps
+    them: ground truth outranks a review (module docstring)."""
+    wanted = {}
+    for seg in outcomes_data.get("segments", []):
+        b = seg.get("review_reach_bounds")
+        if b and seg.get("causal_reach_id") is not None and seg.get("segment_num") is not None:
+            wanted[int(seg["segment_num"])] = (seg["causal_reach_id"], int(b[0]), int(b[1]))
+    if not wanted:
+        return reaches_data
+    out = copy.deepcopy(reaches_data)
+    for seg in out.get("segments", []):
+        try:
+            sn = int(seg.get("segment_num"))
+        except (TypeError, ValueError):
+            continue
+        if sn not in wanted:
+            continue
+        cid, s, e = wanted[sn]
+        for r in seg.get("reaches", []):
+            if r.get("reach_id") != cid or r.get("reach_source") == "ground_truth":
+                continue
+            if (r.get("start_frame"), r.get("end_frame")) != (s, e):
+                r["algo_start_frame"] = r.get("start_frame")
+                r["algo_end_frame"] = r.get("end_frame")
+                r["start_frame"], r["end_frame"] = s, e
+                r["duration_frames"] = reach_duration_frames(r)
+                apex = r.get("apex_frame")
+                if apex is None or not (s <= int(apex) <= e):
+                    r["apex_frame"] = None
+                r["max_extent_pixels"] = None
+                r["max_extent_ruler"] = None
+            r["reach_source"] = "human_review"
+            r["bounds_checked_by_person"] = True
     return out
 
 
@@ -892,6 +1014,8 @@ def resolve_truth_layers(
     reaches_out = _add_reviewed_reaches(
         reaches_out, outcomes_out,
         gt_reaches_complete=bool(((gt or {}).get("reaches") or {}).get("exhaustive")))
+    # ---- and the frames a person checked for the causal reach they named
+    reaches_out = _apply_reviewed_bounds(reaches_out, outcomes_out)
 
     if gt:
         logger.info(
