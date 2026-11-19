@@ -186,7 +186,7 @@ def test_a_filed_kinematics_only_rerun_the_gate_passes_is_extracted_and_processe
     assert calls == ["gate", "kinematics"]
     assert rig.orch.db.get_video(VID)["state"] == "processed"   # on to filing
     feats = json.loads((rig.folder / f"{VID}_features.json").read_text())
-    assert feats == {"extractor": "new"}
+    assert feats == {"extractor": "new", "session_flag": None}   # no session flag
 
 
 def test_a_new_video_goes_through_every_check(rig):

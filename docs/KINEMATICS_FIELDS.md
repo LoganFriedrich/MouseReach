@@ -663,3 +663,12 @@ On every person-owned segment the assignment's pick is still recorded as
 change: the result differs only for a video whose legacy outcome file sits
 beside a reach assignment file, and such a video is re-run by hand if one is
 found.
+
+## Update 2026-11-19: `session_flag` (top level of every features file)
+
+`session_flag` is the note a person made with the review window's Flag Session button on this
+video's mouse+day session -- `{"session_key", "reason", "flagged_by", "flagged_at"}` -- or null when
+the session is not flagged. It is a marker only: nothing in MouseReach acts on it, and a reader
+should not leave a flagged session out or treat it differently because of it (lab decision
+2026-11-19). Written by the kinematics step from `<NAS>/Processing/Review/flagged_sessions.json`;
+a filed video gets it through a kinematics-only recalculation when its session is flagged later.

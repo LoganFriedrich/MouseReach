@@ -359,3 +359,12 @@ anyone noticed. Both watcher paths now write a `db_sync` `failed` row to the
 step audit table and log a warning naming the video. The GPU node's local
 path, which never even checked the return value, checks it now. Feature
 extraction failures on that path also write a `failed` audit row.
+
+## Update 2026-11-19 (session flags)
+
+Every features file now carries `session_flag`: the note a person made with the review window's
+Flag Session button on the video's mouse+day session (`flagged_by`, `flagged_at`, `reason`,
+`session_key`), or null. Export it as a marker column; do not leave a flagged session out or treat
+it differently because of it (lab decision 2026-11-19: a flag is only recorded so it can be found).
+Filed videos receive it through a kinematics-only recalculation when their session is flagged later.
+See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (session flags are only recorded)".

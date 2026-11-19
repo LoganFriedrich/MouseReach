@@ -7291,3 +7291,35 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+---
+
+## Update 2026-11-19 (session flags are only recorded)
+
+**Lab decision 2026-11-19 (D5-10; closes D4-8 and D7-14):** "flags are there so we could in theory
+find them. I don't know that we need to necessarily have a predestined role for them." A session
+flag holds nothing and changes nothing; it is only recorded where it can be found later.
+
+- **The review window's Flag Session** (`review/causal_review_widget._flag_session`, button "Flag
+  Session (note)") records who, when and why (the notes box) in the review root's
+  `flagged_sessions.json`, saves the review, and stops there. Until now it also moved the video on
+  screen to the re-segmentation queue (and only that video, though its name promised the whole
+  session). New records no longer carry `requires_human_review` -- nothing requires anything.
+- **The features file carries it.** Every features file the kinematics step writes (Pillar and
+  Easy/Flat, `orchestrator.with_session_flag`) has a `session_flag` key: the flag record of its
+  mouse+day session (`session_key`: `<date>_<animal>`), or null. Read fresh from
+  `<NAS>/Processing/Review/flagged_sessions.json` each time.
+- **Filed videos get it too.** The version scan marks a filed video for a kinematics-only re-run
+  when its session was flagged after its features file was written (stale component
+  `session_flag`; `ReprocessingScanner._pending_session_flag`, comparing the flag's `flagged_at`
+  with the features file's modified time). Kinematics are the one thing a filed video may have
+  recalculated, so this never re-runs an algorithm or asks anyone anything.
+- **For a database integrator:** export `session_flag.flagged_by`, `.flagged_at` and `.reason` as a
+  marker column per row; nothing should be left out or treated differently because of it.
+
+Tests: `tests/test_session_flag_is_only_a_note.py` (4 of 5 fail on master a534f3c; the fifth is the
+"flag already carried, nothing owed" control). Tests of the old move were changed to "moves nothing":
+test_browse_after_bundle, test_escalate_records_deep_review, test_move_buttons_stop_when_save_fails,
+test_queue_moves_take_the_bundle_claim, test_queue_move_reports_unrecorded_state,
+test_route_onto_itself_moves_nothing; test_flag_session_voids_old_deep_review_clear.py is removed
+(the button no longer touches the clear marker).

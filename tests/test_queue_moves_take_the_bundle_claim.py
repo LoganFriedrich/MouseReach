@@ -96,6 +96,8 @@ def test_the_holder_itself_still_routes(queues):
 
 
 def test_flag_session_touches_nothing_while_held(queues, held_elsewhere, monkeypatch):
+    """Flag Session is only a note (2026-11-19): it takes no claim and touches
+    no file, held elsewhere or not."""
     triage, deep = queues
     touched, errors, advanced = [], [], []
     monkeypatch.setattr(crw, "flag_session", lambda stem, root, reason="", **kw: "key-1")
@@ -114,4 +116,4 @@ def test_flag_session_touches_nothing_while_held(queues, held_elsewhere, monkeyp
     crw.CausalReviewWidget._flag_session(w)
     assert touched == [] and advanced == []
     assert (triage / VID / f"{VID}.mp4").is_file()
-    assert errors and "NOT moved" in errors[0]
+    assert errors == []
