@@ -553,6 +553,18 @@ mousereach-detect-outcomes -i Processing/   # Step 4 batch outcome detection
 
 ## Troubleshooting
 
+### The shared drive dropped
+
+Do nothing: the watchers wait and resume on their own. While the shared pipeline
+folder does not answer, each watcher logs "Shared drive unavailable since HH:MM --
+waiting" (once, then hourly), does no shared-drive work and marks no video failed;
+it logs "Shared drive back after N min ... resuming" when the drive answers. A
+watcher started during the outage waits instead of exiting. If the drive letter's
+mapping disappeared completely, the watcher maps it again to the share it had. To
+stop a watcher during the outage, create `watcher_stop.flag` as usual; it is obeyed.
+Only if the drive answers again and a watcher still says it is waiting, look at its
+log.
+
 ### Slow Startup on Network Drives (napari takes 2-3 minutes)
 
 If your conda environment is on a network drive (mapped drive, UNC path), **napari will be extremely slow** (2-3 minutes) because it scans all installed packages over the network during plugin discovery.

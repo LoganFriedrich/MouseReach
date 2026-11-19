@@ -84,23 +84,97 @@ def declaration_drift(declared: dict) -> list:
             if versions.get(k) is not None and str(versions.get(k)) != str(v)]
 
 
-def get_current_versions(nas_root: Path = None) -> dict:
+# The last declaration read successfully, per file: in memory, and on this
+# machine's own disk (LAST_GOOD_FILENAME in the processing folder) so it
+# survives a restart that happens during an outage.
+LAST_GOOD_FILENAME = "pipeline_versions.last_good.json"
+_LAST_GOOD: Dict[str, dict] = {}
+
+
+def _last_good_file() -> Optional[Path]:
+    try:
+        from mousereach.config import require_processing_root
+        return require_processing_root() / LAST_GOOD_FILENAME
+    except Exception:
+        return None
+
+
+def _remember_good(versions_path: Path, data: dict) -> None:
+    key = str(versions_path)
+    if _LAST_GOOD.get(key) == data:
+        return
+    _LAST_GOOD[key] = data
+    p = _last_good_file()
+    if p is None:
+        return
+    try:
+        p.write_text(json.dumps({"source": key,
+                                 "saved_at": datetime.now().isoformat(timespec="seconds"),
+                                 "data": data}, indent=2) + "\n", encoding="utf-8")
+    except Exception as e:
+        logger.debug(f"could not keep a local copy of the version declaration: {e}")
+
+
+def _last_good(versions_path: Path) -> Optional[dict]:
+    key = str(versions_path)
+    if key in _LAST_GOOD:
+        return _LAST_GOOD[key]
+    p = _last_good_file()
+    if p is None:
+        return None
+    try:
+        saved = json.loads(p.read_text(encoding="utf-8"))
+        if saved.get("source") == key and isinstance(saved.get("data"), dict):
+            _LAST_GOOD[key] = saved["data"]
+            return saved["data"]
+    except Exception:
+        pass
+    return None
+
+
+def get_current_versions(nas_root: Path = None, strict: bool = False) -> dict:
     """Load current pipeline versions from NAS.
 
     Returns dict with 'versions' key containing component versions,
     or empty dict if file doesn't exist yet.
-    """
-    versions_path = _get_versions_path(nas_root)
-    if not versions_path.exists():
-        logger.warning(f"pipeline_versions.json not found at {versions_path}")
-        return {}
 
+    A SHARED DRIVE THAT IS AWAY is not "no declaration". The read has a time
+    limit (shared_drive.read_text_bounded), and when the drive does not answer
+    the last declaration this machine read successfully is returned instead,
+    with a warning. WHY: during an outage this used to return {} -- and a
+    graphics-card node, finding no declared model, stopped posing as if it were
+    misconfigured. With no earlier copy to fall back on, ``strict`` callers get
+    SharedDriveUnavailable (so they can wait); others get {} as before.
+    """
+    from mousereach.shared_drive import SharedDriveUnavailable, read_text_bounded
+    versions_path = _get_versions_path(nas_root)
     try:
-        with open(versions_path) as f:
-            return json.load(f)
+        text = read_text_bounded(versions_path, what="read pipeline_versions.json")
+    except SharedDriveUnavailable as e:
+        cached = _last_good(versions_path)
+        if cached is not None:
+            logger.warning(f"pipeline_versions.json cannot be read right now ({e}); "
+                           f"using the copy last read on this machine")
+            return cached
+        if strict:
+            raise
+        logger.error(f"pipeline_versions.json cannot be read right now ({e}) and "
+                     f"this machine has no earlier copy")
+        return {}
     except Exception as e:
         logger.error(f"Failed to read pipeline_versions.json: {e}")
         return {}
+    if text is None:
+        logger.warning(f"pipeline_versions.json not found at {versions_path}")
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        logger.error(f"Failed to read pipeline_versions.json: {e}")
+        return {}
+    if isinstance(data, dict):
+        _remember_good(versions_path, data)
+    return data
 
 
 def update_current_versions(updates: dict, nas_root: Path = None,

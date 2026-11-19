@@ -51,6 +51,10 @@ DIR_NAME = ".node_status"
 WORKING = "working"      # running and willing, whether or not it has anything to do
 PAUSED = "paused"        # running, deliberately not taking work (with a reason)
 STOPPING = "stopping"    # shutting down cleanly
+# Running, doing no shared-drive work because the shared drive does not answer
+# (shared_drive.ShareMonitor). Written when it can be -- an outage seen by one
+# PC alone (its own connection wedged) leaves the drive readable for the rest.
+WAITING_FOR_SHARE = "waiting for shared drive"
 
 # A report older than this means nobody has written it recently, so the node is not
 # running.
@@ -193,6 +197,9 @@ def describe(nas_root, color: bool = False) -> str:
                          % (host, r.get("state", "?"), when))
         elif r.get("state") == PAUSED:
             lines.append("  %-20s paused        %s" % (host, r.get("reason") or "no reason given"))
+        elif r.get("state") == WAITING_FOR_SHARE:
+            lines.append("  %-20s waiting       %s" % (
+                host, r.get("reason") or "shared drive unavailable -- waiting"))
         elif "doing" not in r:
             # A node on code from before 2026-10-22 does not report its work. Saying
             # "idle" for it would be wrong -- it may be mid-pose -- so say so instead.

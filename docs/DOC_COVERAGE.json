@@ -21,6 +21,7 @@
     "src/mousereach/pipeline/manifest.py",
     "src/mousereach/pipeline/reprocess_to_current.py",
     "src/mousereach/pipeline/versions.py",
+    "src/mousereach/shared_drive.py",
     "src/mousereach/watcher"
    ]
   },

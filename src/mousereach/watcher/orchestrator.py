@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime, timedelta
 
+from mousereach import shared_drive
 from mousereach.watcher import claim_marker, node_status
 from mousereach.watcher.cycle_timer import CycleTimer
 from mousereach.watcher.db import INTAKE_COPY_FAILED, INTAKE_MISS_REASON, WatcherDB
@@ -1588,6 +1589,10 @@ class BaseOrchestrator:
         self.working_dir = require_processing_root() / "watcher_working"
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
+        # No video is marked failed or unresolvable while the shared drive is
+        # away (_refuse_failure_during_outage says why).
+        db.failure_guard = self._refuse_failure_during_outage
+
         logger.info(f"{self.__class__.__name__} initialized on {self.hostname}")
         logger.info(f"Working directory: {self.working_dir}")
 
@@ -2034,8 +2039,12 @@ class BaseOrchestrator:
             nas_root = Paths.NAS_ROOT
             if not nas_root:
                 return
-            node_status.write(nas_root, state, reason, hostname=self.hostname,
-                              extra=self._work_report())
+            # With a time limit: on a drive that does not answer, this write
+            # used to hang the loop like any other shared-drive call.
+            shared_drive.call_bounded(
+                node_status.write, nas_root, state, reason, hostname=self.hostname,
+                extra=self._work_report(), timeout=shared_drive.STATUS_WRITE_TIMEOUT_S,
+                what="node status report")
         except Exception as e:
             logger.debug(f"could not write node status: {e}")
 
@@ -2170,9 +2179,122 @@ class BaseOrchestrator:
             self._last_done = {"type": work.get("type"), "id": work.get("id"),
                                "at": datetime.now().isoformat(timespec="seconds")}
 
+    # =========================================================================
+    # SHARED DRIVE OUTAGES: a pause, never an error (mousereach/shared_drive.py)
+    # =========================================================================
+
+    def _share_monitor(self):
+        """This watcher's ShareMonitor, or None when no shared drive is set."""
+        mon = getattr(self, '_shared_drive_monitor', None)
+        root = Paths.NAS_ROOT
+        if mon is None or mon.nas_root != root:
+            if not root:
+                return None
+            mon = self._shared_drive_monitor = shared_drive.ShareMonitor(root)
+        return mon
+
+    def _share_available(self, max_age: float = 0.0) -> bool:
+        """True when the shared drive answers (or none is configured)."""
+        mon = self._share_monitor()
+        return True if mon is None else mon.check(max_age=max_age)
+
+    def _refuse_failure_during_outage(self, item_id: str, message) -> Optional[str]:
+        """WatcherDB.failure_guard: why a failed/unresolvable mark must not be
+        written now, or None.
+
+        WHY: an outage makes handlers fail all over -- a copy, a listing, a
+        claim -- and a failed mark spends the video's retries and says the
+        VIDEO went wrong; an unresolvable mark says "no file for it" when the
+        folders searched could not be read. Decided by whether the drive
+        answers (a fact, checked now; an answer at most 30 s old); a share-down
+        Windows error code in the message is enough on its own.
+        """
+        if shared_drive.message_names_share_down(message):
+            reason = "the error is the shared drive being unavailable"
+        elif not self._share_available(max_age=30.0):
+            reason = "the shared drive is unavailable"
+        else:
+            return None
+        self._failure_refused = True
+        return reason
+
+    def _outage_error(self, e) -> bool:
+        """Is this error the shared drive being away? Its own code says so, or
+        the drive does not answer right now."""
+        if shared_drive.is_share_down_error(e):
+            return True
+        return Paths.NAS_ROOT is not None and not self._share_available(max_age=30.0)
+
+    def _put_back_after_outage(self, work: dict, error=None) -> None:
+        """Leave a work item as a stopped watcher would leave it, so it is done
+        again once the drive answers. The same put-backs startup recovery uses
+        (_ORPHANED_VIDEO_STATES / _ORPHANED_COLLAGE_STATES: a pose in hand goes
+        back to the pose queue, a crop to 'stable', a filing to 'processed');
+        any other state is already one the work loop picks up again. Nothing is
+        marked failed and no retry is spent. Never raises."""
+        item = work.get('id')
+        why = (shared_drive.describe_error(error) if error is not None
+               else "a failure mark was refused")
+        state = back = None
+        try:
+            if work.get('type') == 'collage':
+                state = (self.db.get_collage(item) or {}).get('state')
+                back = self._ORPHANED_COLLAGE_STATES.get(state)
+                if back:
+                    self.db.force_collage_state(item, back)
+            else:
+                state = (self.db.get_video(item) or {}).get('state')
+                back = self._ORPHANED_VIDEO_STATES.get(state)
+                if back:
+                    self.db.force_state(item, back, reason="shared drive unavailable; "
+                                        "put back to be done again when it answers")
+            logger.warning(f"{work.get('type')} {item}: interrupted by the shared drive "
+                           f"being unavailable ({why}); left as '{back or state}', not "
+                           f"failed -- done again when the drive answers.")
+        except Exception as e:
+            logger.error(f"{item}: interrupted by a shared-drive outage, and could not be "
+                         f"put back ({type(e).__name__}: {e}); startup recovery will.")
+
+    def _dispatch_guarded(self, work: dict):
+        """_dispatch_work, with a shared-drive outage turned into a put-back
+        instead of a failure. Returns False (no progress) for an outage."""
+        self._failure_refused = False
+        try:
+            ok = self._dispatch_work(work)
+        except Exception as e:
+            if self._outage_error(e):
+                self._put_back_after_outage(work, e)
+                return False
+            raise
+        if getattr(self, '_failure_refused', False):
+            self._put_back_after_outage(work)
+            return False
+        return ok
+
+    def _start_stop_watchdog(self):
+        """The thread that honours the stop flag while the loop is stuck on a
+        dead drive (shared_drive.StopWatchdog). None when no drive is set."""
+        if not Paths.NAS_ROOT:
+            return None
+        root = Paths.NAS_ROOT
+
+        def share_ok():
+            state, _ = shared_drive.probe(root, key="stop watchdog")
+            return state == shared_drive.OK
+
+        dog = shared_drive.StopWatchdog(
+            stop_requested=self._stop_requested,
+            last_progress=lambda: getattr(self, '_loop_turn_at', None),
+            posing_since=lambda: getattr(self, '_posing_since', None),
+            share_ok=share_ok)
+        dog.start()
+        return dog
+
     def run(self, shutdown_event: threading.Event):
         """Main orchestrator loop: scan + process in a single thread."""
         logger.info(f"{self.__class__.__name__} starting main loop")
+        self._loop_turn_at = time.monotonic()
+        watchdog = self._start_stop_watchdog()
 
         # Before taking anything new on, put back whatever a previous run was
         # holding when it stopped. Without this an interrupted pose or archive
@@ -2204,6 +2326,21 @@ class BaseOrchestrator:
                     logger.info("Stop requested (watcher_stop.flag); finishing "
                                 "here and exiting.")
                     break
+                self._loop_turn_at = time.monotonic()
+
+                # The shared drive is away: no shared-drive work this turn at
+                # all -- no scan, no claim, no pick, no pause upkeep (which
+                # touches the drive too). Claims and local files stay as they
+                # are; the stop flag above is still read every turn.
+                if not self._share_available():
+                    mon = self._share_monitor()
+                    # Not when the drive answers but the pipeline folder is
+                    # gone: writing the report would create the folder anew.
+                    if mon is None or mon.last_state != shared_drive.MISSING:
+                        self._report_node_status(node_status.WAITING_FOR_SHARE,
+                                                 mon.reason() if mon else None)
+                    shutdown_event.wait(timeout=self.config.poll_interval_seconds)
+                    continue
 
                 # Paused by hand, or a recording program is running. _is_paused
                 # logs once on entering and once on leaving, not every poll.
@@ -2267,7 +2404,7 @@ class BaseOrchestrator:
                 accomplished = False          # stays False if the dispatch raises
                 try:
                     with self._cycle.step("work"):
-                        accomplished = self._dispatch_work(work)
+                        accomplished = self._dispatch_guarded(work)
                 finally:
                     self._end_work(work, accomplished)
                 self._cycle.log_if_slow()
@@ -2278,6 +2415,8 @@ class BaseOrchestrator:
                 logger.error(f"Error in main loop: {e}", exc_info=True)
                 time.sleep(5)
 
+        if watchdog is not None:
+            watchdog.halt()
         self._report_node_status(node_status.STOPPING, "shutting down")
         self.shutdown()
         logger.info(f"{self.__class__.__name__} stopped")
@@ -2305,7 +2444,7 @@ class BaseOrchestrator:
             # which can take hours, and a recording may start part-way.
             if self._run_once_blocked(f"after {processed} item(s)"):
                 break
-            if self._dispatch_work(work) is not False:
+            if self._dispatch_guarded(work) is not False:
                 processed += 1
 
         logger.info(f"Run-once complete: processed {processed} items")
@@ -2315,6 +2454,10 @@ class BaseOrchestrator:
         work: a stop was requested, or the watcher is paused."""
         if self._stop_requested():
             logger.info("Run-once stopped %s: stop requested (watcher_stop.flag).", when)
+            return True
+        if not self._share_available():
+            logger.info("Run-once stopped %s: the shared drive is unavailable. Nothing "
+                        "was started; run it again once the drive answers.", when)
             return True
         if self._is_paused():
             logger.info("Run-once stopped %s: watcher is paused (%s). Nothing "
@@ -4870,7 +5013,13 @@ class DLCOrchestrator(BaseOrchestrator):
             elif work_type == 'adopt_single':
                 ok = self._adopt_single_for_dlc(work)
             elif work_type == 'single_dlc':
-                ok = self._process_single_dlc(work)
+                # While a pose runs, the stop watchdog leaves the process alone
+                # (shared_drive.StopWatchdog): it is local GPU work that ends.
+                self._posing_since = time.monotonic()
+                try:
+                    ok = self._process_single_dlc(work)
+                finally:
+                    self._posing_since = None
             elif work_type == 'stage_to_nas':
                 ok = self._stage_to_nas(work)
             elif work_type == 'local_pipeline':
@@ -4892,6 +5041,8 @@ class DLCOrchestrator(BaseOrchestrator):
             return ok is not False
 
         except Exception as e:
+            if self._outage_error(e):
+                raise              # _dispatch_guarded puts it back; not a failure
             error_msg = f"{work_type} failed: {str(e)}"
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
 
@@ -7949,6 +8100,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             return ok is not False
 
         except Exception as e:
+            if self._outage_error(e):
+                raise              # _dispatch_guarded puts it back; not a failure
             error_msg = f"{work_type} failed: {str(e)}"
             logger.error(f"Work item {work_id} failed: {e}", exc_info=True)
             if not self._already_failed(work_id):

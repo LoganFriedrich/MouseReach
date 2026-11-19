@@ -268,6 +268,26 @@ class WatcherDB:
     Retries transient errors on network drives with exponential backoff.
     """
 
+    # Set by a running watcher (orchestrator.BaseOrchestrator): called with
+    # (item id, message) before a video is marked failed or unresolvable, or a
+    # collage failed; a returned reason REFUSES the mark (SharedDriveUnavailable
+    # is raised). WHY here, at the one place every such mark passes: an
+    # outage of the shared drive makes dozens of handlers fail, and none of
+    # those failures is the video's. Unset (every tool but the watcher): no check.
+    failure_guard = None
+
+    def _refuse_during_outage(self, item_id: str, what: str, message) -> None:
+        guard = self.failure_guard
+        if guard is None:
+            return
+        why = guard(item_id, message)
+        if why:
+            from mousereach.shared_drive import SharedDriveUnavailable
+            logger.warning(f"{item_id}: NOT marked {what} -- {why}. It is put back "
+                           f"and tried again when the shared drive answers. "
+                           f"(Error was: {message})")
+            raise SharedDriveUnavailable(f"{item_id} not marked {what}: {why}")
+
     def __init__(self, db_path: Path = None):
         """
         Initialize WatcherDB.
@@ -1242,7 +1262,11 @@ class WatcherDB:
 
         Raises:
             ValueError: If transition is invalid or collage not found
+            SharedDriveUnavailable: 'failed' refused during an outage
         """
+        if new_state == 'failed':
+            self._refuse_during_outage(filename, "failed",
+                                       kwargs.get('validation_error') or kwargs.get('error_message'))
         with self._lock:
             conn = self._get_connection()
             try:
@@ -1680,7 +1704,11 @@ class WatcherDB:
         video is never re-labelled failed (the same rule force_state keeps;
         crystallized_refusal says why). Its filed results are untouched by
         whatever went wrong, and 'failed' would put it back in the retry work.
+
+        Raises SharedDriveUnavailable, writing nothing, when the watcher's
+        failure_guard says the shared drive is away (see failure_guard).
         """
+        self._refuse_during_outage(video_id, "failed", error_message)
         try:
             # Read and write under one write lock (_state_write).
             with self._state_write() as conn:
@@ -1743,7 +1771,11 @@ class WatcherDB:
         force_state do (crystallized_refusal says why): a publication-locked
         video keeps its state, and 'unresolvable' can be re-driven into the
         pipeline when a file turns up.
+
+        Refused like mark_failed while the shared drive is away: "no file for
+        it" is not a finding when the folders searched cannot be read.
         """
+        self._refuse_during_outage(video_id, "unresolvable", reason)
         try:
             # Read and write under one write lock (_state_write).
             with self._state_write() as conn:

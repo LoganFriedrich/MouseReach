@@ -126,10 +126,15 @@ def check_nas_root(nas_root, origin: str):
                 "holding Unanalyzed, Processing, Analyzed and pipeline_versions.json). "
                 "Run mousereach-setup, or set nas_root in ~/.mousereach/config.json")
     nas_root = Path(nas_root)
-    if not nas_root.exists():
-        return f"NAS root does not exist: {nas_root}"
-    if (nas_root / "pipeline_versions.json").exists():
-        return None
+    try:
+        if not nas_root.exists():
+            return f"NAS root does not exist: {nas_root}"
+        if (nas_root / "pipeline_versions.json").exists():
+            return None
+    except OSError as e:
+        # Path.exists raises for a network error (WinError 64 and the like)
+        # rather than answering False; that used to crash the watcher's start.
+        return f"NAS root could not be read: {nas_root} ({e})"
 
     detail = (
         f"NAS root has no pipeline_versions.json: {nas_root}\n"
@@ -142,6 +147,33 @@ def check_nas_root(nas_root, origin: str):
         "mousereach-version-check --init."
     )
     return detail
+
+
+def _wait_for_shared_drive_at_start(nas_root, sleep=None) -> str:
+    """Wait (with growing pauses, up to 5 minutes apart) until the shared drive
+    answers. Returns 'ok', 'missing' (the drive answers, the folder is not
+    there: check_nas_root refuses that as before) or 'stop' (watcher_stop.flag
+    appeared). Says once that it is waiting, and why."""
+    import time as _time
+    from mousereach import shared_drive
+    from mousereach.config import require_processing_root
+
+    def stop_requested() -> bool:
+        try:
+            return (require_processing_root() / "watcher_stop.flag").exists()
+        except Exception:
+            return False
+
+    monitor = shared_drive.ShareMonitor(nas_root)
+    if monitor.check():
+        return shared_drive.OK
+    if monitor.last_state == shared_drive.MISSING:
+        return shared_drive.MISSING
+    print("The shared drive (%s) does not answer -- waiting for it. The watcher starts "
+          "on its own when it does; to stop waiting, create watcher_stop.flag in this "
+          "machine's processing folder." % nas_root)
+    return shared_drive.wait_for_shared_drive(
+        nas_root, stop_requested, sleep=sleep or _time.sleep, monitor=monitor)
 
 
 def _maybe_print_help(usage: str):
@@ -302,6 +334,27 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
             problems.append(f"Processing root does not exist: {root}")
     except Exception as e:
         problems.append(str(e))
+
+    # A SHARED DRIVE THAT IS AWAY AT START: wait for it, instead of failing the
+    # check below and exiting. WHY: a watcher started during an outage -- at
+    # login, by its scheduled task, by a person -- used to crash here (a
+    # network error out of the first look at the drive), and nothing started it
+    # again once the drive was back. A drive that answers but has no such
+    # folder is a SETTING and is refused below as before; the stop flag is read
+    # while waiting. Not for --dry-run, which a person runs and reads at once.
+    if Paths.NAS_ROOT and not dry_run:
+        _waited = _wait_for_shared_drive_at_start(Paths.NAS_ROOT)
+        if _waited == "stop":
+            from mousereach.watcher import singleton as _singleton
+            try:
+                _left = _singleton.stop_flag_left(require_processing_root() / "watcher_stop.flag")
+            except Exception:
+                _left = None
+            _msg = (_singleton.stop_flag_message(*_left) if _left else
+                    "Stop requested while waiting for the shared drive; not starting.")
+            logger.warning(_msg)
+            print(_msg, file=sys.stderr)
+            sys.exit(_singleton.EXIT_STOP_FLAG_LEFT)
 
     nas_problem = check_nas_root(Paths.NAS_ROOT, Paths.NAS_ROOT_ORIGIN)
     if nas_problem:

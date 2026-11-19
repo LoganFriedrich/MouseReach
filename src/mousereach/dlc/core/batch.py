@@ -132,22 +132,31 @@ def resolve_dlc_shuffle(shuffle: Optional[int] = None) -> tuple:
         has not declared one.
 
     Raises:
+        SharedDriveUnavailable: when only the declaration could name the
+        shuffle and it cannot be read because the shared drive is away (and
+        this machine holds no earlier copy of it) -- wait, nothing is wrong.
         ValueError: if no source names a shuffle. Never fall through to
         DeepLabCut's default: a silent wrong model is far more expensive than
         a stopped batch.
     """
     expected_scorer = ''
     declared_shuffle = None
+    share_away = None
 
     try:
         from mousereach.pipeline.versions import get_current_versions
         expected_scorer = (
-            get_current_versions().get('versions', {}).get('dlc_scorer', '') or ''
+            get_current_versions(strict=True).get('versions', {}).get('dlc_scorer', '') or ''
         )
         m = re.search(r'shuffle(\d+)', expected_scorer)
         if m:
             declared_shuffle = int(m.group(1))
     except Exception as e:
+        from mousereach.shared_drive import is_share_down_error
+        if is_share_down_error(e):
+            # The declaration could not be READ (the shared drive is away and
+            # this machine has no earlier copy) -- not "nothing is declared".
+            share_away = e
         print(f"Warning: could not read declared DLC scorer ({e})")
 
     if shuffle is not None:
@@ -163,6 +172,15 @@ def resolve_dlc_shuffle(shuffle: Optional[int] = None) -> tuple:
 
     if declared_shuffle is not None:
         return declared_shuffle, expected_scorer
+
+    if share_away is not None:
+        # WHY not the ValueError below: that one means "this node is set up
+        # wrong" and stops posing until a person fixes it. An unreadable
+        # declaration on a drive that is away is a wait, not a setting.
+        from mousereach.shared_drive import SharedDriveUnavailable
+        raise SharedDriveUnavailable(
+            f"the DLC model cannot be resolved while the shared drive is away "
+            f"(pipeline_versions.json: {share_away})") from share_away
 
     raise ValueError(
         "No DLC shuffle specified and none could be resolved.\n"

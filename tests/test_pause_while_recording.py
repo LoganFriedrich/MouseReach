@@ -317,6 +317,9 @@ def _node(tmp_path, monkeypatch, scan=None, names=(PROGRAM,), grace=0):
     # <nas>/Processing/.node_status (watcher/node_status.py), and a test must never
     # write a status file onto the live share -- another machine reads those to decide
     # whether a node is alive.
+    # The folder exists, as a real share root does: a root that cannot be found
+    # makes the watcher wait for the shared drive (mousereach/shared_drive.py).
+    (tmp_path / "nas").mkdir(exist_ok=True)
     monkeypatch.setattr(orch.Paths, "NAS_ROOT", tmp_path / "nas", raising=False)
     o._reclaim_orphaned_work = lambda: {}
     o._maybe_review_reprocess_scan = lambda *a, **k: None

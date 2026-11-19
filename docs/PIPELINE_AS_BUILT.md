@@ -7141,3 +7141,91 @@ share; the index, the pointer-not-proof rules, the wait and held rules, the miss
 the server-only build and the send-only-on-an-answer rule each have their own test. Run
 against ac01d37's `recording_outbox.py` (before the constructor took `claim_lookup`), the two
 no-listing tests failed on the walk itself, and so did the index, gone-path and wait tests.
+
+## Update 2026-11-19: a shared-drive outage is a pause; the watcher waits and resumes on its own
+
+**For the person running the lab:** if the shared drive drops, the watchers wait and resume on their
+own. Nobody needs to stop, restart or remap anything. `mousereach-watch-status` shows such a node as
+`waiting  shared drive unavailable since <time> -- waiting (...)` whenever the drive can be written
+at all, and the node's log says it once when the drive goes, once an hour while it stays away, and
+once when it is back. A stop flag (`watcher_stop.flag`) still works during the outage.
+
+What used to happen when the shared drive went away for a while: every graphics-card node's watcher
+sat for hours inside shared-drive calls with no time limit (the scan, the work-order file, the
+version declaration, staging, the shared record) and never came round to read its stop flag; one
+node read the version declaration as "not there" and logged "No DLC shuffle specified ... DLC is
+stopped on this node", treating a passing outage as a setting to fix; and the processing machine's
+watcher, restarted during the outage, crashed at startup (`WinError 64` out of the first look at the
+drive) and stayed down after the drive came back.
+
+What holds now (`src/mousereach/shared_drive.py`, used by the watcher):
+
+* **One question at the top of every cycle.** "Is the pipeline folder a folder?" -- one `os.stat`,
+  asked in a worker thread with a 20 s limit (`ShareMonitor`, `probe`), so the question itself
+  cannot hang. While the answer is no, that turn does NO shared-drive work: no scan, no pick, no
+  claim, no sending recordings, no pause upkeep. Claims and local files are kept as they are. The
+  stop flag is read before the question, every turn. When the drive answers again the next turn
+  works as usual. "No" means: an error Windows gives for a network location that is away (53, 59,
+  64, 67, 121, 1201, 1222, 1231, 1232, 2250), a drive letter that is not there, or no answer in
+  time. A drive that answers but has no such folder also waits mid-run, and then nothing is written
+  there, not even the status report, so the folder is never re-created by accident.
+* **Small shared reads have a time limit and keep the last good value.** The version declaration
+  (`pipeline/versions.get_current_versions`) and the work-order file
+  (`watcher/work_priority.read_lab_priority`) are read with a time limit (`read_text_bounded`,
+  30 s). A drive that is away is never read as "no file". The declaration falls back to the copy
+  this machine last read (in memory, and in `pipeline_versions.last_good.json` in the machine's own
+  processing folder, so it survives a restart during an outage); the work order keeps the order in
+  use. `resolve_dlc_shuffle` raises `SharedDriveUnavailable` -- a wait -- instead of the "no
+  shuffle" setting error when the declaration cannot be read and there is no earlier copy.
+* **One stuck call per purpose, never a pile.** A call that does not answer in time is abandoned,
+  not killed (Windows cannot cancel a pending network call). While it is still stuck, the next call
+  for the same purpose is refused at once (`call_bounded`), so a dead drive costs one waiting thread
+  per purpose, not one per cycle. The node's status report is written the same way (15 s).
+* **No video is marked failed or unresolvable for an outage.** The watcher's database refuses a
+  failed mark (videos and collages) and an unresolvable mark while the drive does not answer, or
+  when the error carries one of the codes above (`WatcherDB.failure_guard`, set by the watcher;
+  other tools are unaffected). The work item is put back the way startup recovery puts back a
+  stopped watcher's work: a pose in hand to the pose queue, a crop to `stable`, a filing to
+  `processed`; any other state is already one the loop picks up again. No retry is spent. The log
+  says "interrupted by the shared drive being unavailable ...; left as '<state>', not failed".
+* **The stop flag works even while a call hangs.** The drive can die in the middle of a cycle, after
+  the question was answered. A watchdog thread (`StopWatchdog`) ends the watcher when ALL of these
+  hold: the stop flag is there; the loop has not come round for 10 minutes; no pose is running (a
+  pose is local GPU work and is left to finish for up to 45 minutes); and the drive does not answer
+  right now. It logs why and exits with code 0, leaving the flag in place. Safe because the local
+  database survives a process exit, files written to the drive go through a temporary name first,
+  and startup recovery puts back what was in hand.
+* **Startup waits instead of crashing.** `mousereach-watch` (not `--dry-run`) first waits for the
+  drive: it says once on screen that it is waiting and how to stop waiting, then asks again after
+  15 s, 30 s, 60 s ... up to every 5 minutes, reading the stop flag every few seconds. A drive that
+  answers but has no such folder is a setting and is still refused, as before. `check_nas_root` no
+  longer raises on a network error.
+* **A vanished drive letter is mapped again.** When the letter is not mapped at all (and no local
+  disk is under it), the watcher maps it again with `net use <letter> <share> /persistent:yes` (no
+  password: the logged-on user's own access, no prompt), at most every 10 minutes, and only to a
+  share that answers. The share is the one this machine noted while the drive worked
+  (`shared_drive_origin.json` in its processing folder) or Windows' remembered mapping. WHY the
+  letter and not the network path: every recorded path (database rows, claim markers, queue copies,
+  folders derived from `nas_root`) uses the letter, and several checks compare paths as text;
+  working on the network path would give one file two names mid-run. A letter that is mapped but not
+  answering is left to Windows' own reconnect, because deleting a wedged mapping is itself what hung
+  for half an hour. (`Paths.NAS_ROOT_ORIGIN` only says where `nas_root` came from -- 'config' or
+  'unset' -- it is not a network path, so there was nothing there to reuse.)
+* **Status.** A new node state, `waiting for shared drive` (`node_status.WAITING_FOR_SHARE`), with
+  the reason. It is written when it can be: an outage seen by one machine alone (its own connection
+  wedged) leaves the drive readable for the rest.
+
+What this does NOT do: a call already in flight when the drive drops cannot be interrupted; the loop
+waits for Windows to give up on it (or the watchdog ends the process on a stop request). A node whose
+status report stays unwritten for 3 hours can lose its posed-video claims to another node, exactly
+as before (the claim rules are unchanged).
+
+Tests: `tests/test_shared_drive_outage.py` -- a dead share stood in by `os.stat` / `os.listdir` /
+`os.scandir` that hang or raise WinError 64/121 for paths on it: a cycle returns within the time
+limit and starts no scan; the stop flag is honored during an outage, and the watchdog ends a watcher
+stuck in a call; work resumes when the share returns, with one "unavailable" line and one "back"
+line; no failed or unresolvable mark is written (an error out of a handler, and a handler that marks
+failed itself) while a real failure with the drive up is still recorded; DLC keeps its model from
+the last copy, and with none waits instead of the setting error; startup waits, stops waiting on the
+flag, and still refuses a missing folder. Run against the previous code with only the new module
+added: 12 fail and 5 error (all of the above); the 16 tests of the module's own pieces pass.

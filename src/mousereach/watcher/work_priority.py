@@ -639,15 +639,28 @@ def compile_order(projects=None, cohorts=None, tray_types=None,
     return out
 
 
-def read_lab_priority(nas_root=None) -> Optional[dict]:
-    """The shared order file's contents, or None when absent/unreadable."""
+def read_lab_priority(nas_root=None, strict: bool = False) -> Optional[dict]:
+    """The shared order file's contents, or None when absent/unreadable.
+
+    The read has a time limit (shared_drive.read_text_bounded): on a drive that
+    does not answer it used to hang the watcher's pick step. With ``strict``, a
+    drive that is away raises SharedDriveUnavailable instead of reading as "no
+    file", so the caller can keep the order it already has."""
+    from mousereach.shared_drive import SharedDriveUnavailable, read_text_bounded
     path = lab_priority_path(nas_root)
     if not path:
         return None
     try:
-        if not path.is_file():
+        text = read_text_bounded(path, what="read %s" % LAB_PRIORITY_FILENAME)
+        if text is None:
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(text)
+    except SharedDriveUnavailable as e:
+        if strict:
+            raise
+        logger.warning("Lab priority file %s could not be read (%s); falling "
+                       "back to this machine's own setting", path, e)
+        return None
     except (OSError, ValueError) as e:
         logger.warning("Lab priority file %s could not be read (%s); falling "
                        "back to this machine's own setting", path, e)
@@ -779,7 +792,16 @@ def _cached_lab_raw(nas_root=None, max_age_s: Optional[float] = None):
     fresh = (_LAB_RAW_SEEN and ttl > 0
              and time.monotonic() - _LAB_RAW_AT <= ttl)
     if not fresh:
-        _LAB_RAW = read_lab_priority(nas_root)
+        from mousereach.shared_drive import SharedDriveUnavailable
+        try:
+            _LAB_RAW = read_lab_priority(nas_root, strict=True)
+        except SharedDriveUnavailable as e:
+            # Keep the order already in hand: a drive that is away says nothing
+            # about what the lab wants first. (Never read before: no file.)
+            logger.warning("Lab priority file could not be read (%s); keeping the "
+                           "order in use", e)
+            if not _LAB_RAW_SEEN:
+                _LAB_RAW = None
         _LAB_RAW_AT = time.monotonic()
         _LAB_RAW_SEEN = True
     return _LAB_RAW

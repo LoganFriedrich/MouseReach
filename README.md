@@ -280,6 +280,13 @@ hand-score check, kinematics and filing.
 | `mousereach-watch-recorders --add recorder.exe` | Pause the watcher whenever that program is open |
 | `mousereach-watch-info` | Diagnose drives and path accessibility |
 
+**If the shared drive drops, the watchers wait and resume on their own.** Nothing
+needs stopping, restarting or remapping: while the shared pipeline folder does not
+answer, a watcher does no shared-drive work, marks nothing failed, keeps what it
+holds, and still obeys its stop flag; `mousereach-watch-status` shows it as
+"waiting". A watcher started while the drive is away waits for it instead of
+exiting. Details: docs/PIPELINE_AS_BUILT.md, "a shared-drive outage is a pause".
+
 **Pausing while recording.** A PC that both records videos and runs the
 watcher can pause itself: list the recording program's name (as Task Manager's
 Details tab shows it) with `mousereach-watch-recorders --add <name>` or in the
