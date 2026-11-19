@@ -93,8 +93,10 @@ class TestExportsCarryTheLabId:
     def test_both_exporters_are_wired(self):
         import inspect
         from mousereach.export.core import exporter
-        from mousereach.export import features_csv
-        for mod in (exporter, features_csv):
+        # features_csv is retired (redirected to mousereach-results, whose
+        # module carries the decode now).
+        from mousereach.export import results
+        for mod in (exporter, results):
             src = inspect.getsource(mod)
             assert "_lab_ids" in src, mod.__name__
             assert '"animal_id"' in src or "'animal_id'" in src, mod.__name__

@@ -1568,11 +1568,14 @@ options:
 ```
 usage: mousereach-quick-summary [-h]
 
-Quick summary for PI - run this to generate a CSV and stats.
+Quick summary: the filed results per session, plus overall totals.
 
-Reads each video's _features.json in the local Processing folder: the result
-with every person's answer applied. A video without a features file (its
-kinematics have not run, or were held) is left out and named.
+Redirected 2026-11-19 to ``mousereach-results --level session``
+(export/results.py). WHY: this command read only the local Processing folder,
+which filing empties, so after filing it found nothing; and it counted a
+session's success rate over every segment, a segment with no pellet
+included. It now writes the session-level export of the FILED results
+(retrieved / pellets presented) and prints the overall totals from it.
 
 options:
   -h, --help  show this help message and exit
@@ -1583,7 +1586,8 @@ options:
 ```
 usage: mousereach-features-csv [-h]
 
-Convert grasp_features.json files to CSV for easy viewing
+Retired: runs 'mousereach-results --level reach' (the filed results, one row
+per reach). Extra options are passed on.
 
 options:
   -h, --help  show this help message and exit

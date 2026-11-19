@@ -1,97 +1,48 @@
 #!/usr/bin/env python3
-"""Quick summary for PI - run this to generate a CSV and stats.
+"""Quick summary: the filed results per session, plus overall totals.
 
-Reads each video's _features.json in the local Processing folder: the result
-with every person's answer applied. A video without a features file (its
-kinematics have not run, or were held) is left out and named.
+Redirected 2026-11-19 to ``mousereach-results --level session``
+(export/results.py). WHY: this command read only the local Processing folder,
+which filing empties, so after filing it found nothing; and it counted a
+session's success rate over every segment, a segment with no pellet
+included. It now writes the session-level export of the FILED results
+(retrieved / pellets presented) and prints the overall totals from it.
 """
-
-from collections import Counter
-import csv
-
-from mousereach.config import Paths
+import sys
 
 
-def main():
-    # --help answers before any work: generating the CLI reference runs every
-    # command with --help, and this one used to run instead (2026-10-22).
+def main(argv=None):
     import argparse
     argparse.ArgumentParser(description=__doc__,
-                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
-    from mousereach.export.resolved import load_resolved_videos, print_left_out
-    PROCESSING = Paths.PROCESSING
-    OUTPUT_CSV = PROCESSING.parent / "summary_for_PI.csv"
-
-    rows = []
-    total_reaches = 0
-    total_segments = 0
-    outcome_counts = Counter()
-
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args(argv)
+    from mousereach.export.results import export_results
+    try:
+        res = export_results("session")
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    for p in res["problems"]:
+        print(f"[!] {p}")
+    if not res["path"]:
+        print(f"No filed results under {res['root']}.")
+        return 1
+    import pandas as pd
+    df = pd.read_csv(res["path"])
+    pres = df["session_pellets_presented"].fillna(0).sum()
+    got = df["session_retrieved"].fillna(0).sum()
     print("=" * 60)
-    print("MOUSEREACH SUMMARY")
+    print("MOUSEREACH SUMMARY (filed results)")
     print("=" * 60)
-
-    # WHY the features files: the pellet-outcomes file is the algorithm's call
-    # before any person's answer, so a pellet a reviewer corrected was counted
-    # with the algorithm's call (export.resolved).
-    videos, left_out = load_resolved_videos(PROCESSING, pellets_only=True)
-    for data in videos:
-        video_name = data.get("video_name")
-        segments = data.get("segments", [])
-        # Reaches measured, plus those a person took out of the measurements
-        # (ignore window or exclusion) -- every reach that happened.
-        n_reaches = sum(len(s.get("reaches") or []) + int(s.get("n_reaches_left_out") or 0)
-                        for s in segments)
-
-        n_segments = len(segments)
-        outcomes = [s.get("outcome") or "unknown" for s in segments]
-
-        for o in outcomes:
-            outcome_counts[o] += 1
-
-        # Success rate for this video
-        retrieved = outcomes.count("retrieved")
-        success_rate = retrieved / n_segments * 100 if n_segments > 0 else 0
-
-        rows.append({
-            "video": video_name,
-            "segments": n_segments,
-            "reaches": n_reaches,
-            "retrieved": retrieved,
-            "displaced_sa": outcomes.count("displaced_sa"),
-            "displaced_outside": outcomes.count("displaced_outside"),
-            "untouched": outcomes.count("untouched"),
-            "success_rate": f"{success_rate:.1f}%"
-        })
-
-        total_reaches += n_reaches
-        total_segments += n_segments
-
-    print_left_out(left_out)
-    if not rows:
-        print("\nNo resolved results found.")
-        return
-
-    # Write CSV
-    with open(OUTPUT_CSV, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"\nProcessed {len(rows)} videos")
-    print(f"Total segments (trials): {total_segments}")
-    print(f"Total reaches: {total_reaches}")
-    print(f"\nOUTCOME BREAKDOWN:")
-    print("-" * 40)
-    for outcome, count in sorted(outcome_counts.items()):
-        pct = count / total_segments * 100 if total_segments > 0 else 0
-        print(f"  {outcome:20s}: {count:4d} ({pct:5.1f}%)")
-
-    overall_success = outcome_counts.get("retrieved", 0) / total_segments * 100 if total_segments > 0 else 0
-    print(f"\nOVERALL SUCCESS RATE: {overall_success:.1f}%")
-    print(f"\nCSV saved to: {OUTPUT_CSV}")
-    print("=" * 60)
+    print(f"Sessions (trays): {len(df)}")
+    print(f"Pellets presented: {int(pres)}")
+    print(f"Retrieved: {int(got)}")
+    print(f"Reaches: {int(df['session_n_reaches'].fillna(0).sum())}")
+    if pres:
+        print(f"OVERALL SUCCESS RATE: {100.0 * got / pres:.1f}% (retrieved / presented)")
+    print(f"Per-session CSV: {res['path']}")
+    print("Other levels: mousereach-results --level reach|pellet|day|animal")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

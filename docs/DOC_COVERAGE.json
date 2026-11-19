@@ -341,7 +341,9 @@
    "what": "Exporting the filed results at reach / pellet / session / day / animal level",
    "covers": [
     "src/mousereach/export/results.py",
-    "src/mousereach/export/results_widget.py"
+    "src/mousereach/export/results_widget.py",
+    "src/mousereach/export/quick_summary.py",
+    "src/mousereach/export/features_csv.py"
    ]
   }
  ]

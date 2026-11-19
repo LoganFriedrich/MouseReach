@@ -482,7 +482,7 @@ Six values are nevertheless missing, for a different and worse reason: **the row
 
 ### `mousereach-features-csv`
 
-`export/features_csv.py` globs `*_grasp_features.json` (`:16`). Nothing in the pipeline writes a file with that name — kinematics writes `{video}_features.json`. The command always prints "No *_grasp_features.json files found!" and exits (`:18-21`). Its row dictionary (`:38-77`) has 30 columns, of which 5 are the never-computed fields of §5.11; the other 25 are fields the extractor does populate.
+(Update 2026-11-19: `mousereach-features-csv` is retired and now runs `mousereach-results --level reach`, the per-reach export of the FILED results -- see docs/RESULTS_EXPORT.md. What follows describes the retired code.) `export/features_csv.py` globbed `*_grasp_features.json` (`:16`). Nothing in the pipeline writes a file with that name — kinematics writes `{video}_features.json`. The command always prints "No *_grasp_features.json files found!" and exits (`:18-21`). Its row dictionary (`:38-77`) has 30 columns, of which 5 are the never-computed fields of §5.11; the other 25 are fields the extractor does populate.
 
 ### `kinematics/analysis/odc_sci_exporter.py`
 

@@ -28,93 +28,25 @@ def _lab_ids(video_name):
 
 
 def main():
-    # --help answers before any work: generating the CLI reference runs every
-    # command with --help, and this one used to run instead (2026-10-22).
+    """Retired: redirected to ``mousereach-results --level reach``.
+
+    WHY: this command looked for ``*_grasp_features.json`` in the local
+    Processing folder -- a file name the pipeline no longer writes, in a
+    folder that filing empties -- so on current output it found nothing. The
+    per-reach export of the FILED results, with every person's answer applied
+    and level-first column names, is mousereach-results (export/results.py).
+    """
     import argparse
-    argparse.ArgumentParser(description=__doc__,
-                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
-    PROCESSING = Paths.PROCESSING
-    OUTPUT_CSV = PROCESSING.parent / "grasp_features.csv"
-
-    # Find feature files
-    feature_files = list(PROCESSING.glob("*_grasp_features.json"))
-
-    if not feature_files:
-        print("No *_grasp_features.json files found!")
-        print("Run: mousereach-grasp-analyze -i Processing/")
-        return
-
-    rows = []
-
-    for fpath in sorted(feature_files):
-        print(f"Processing {fpath.name}...")
-
-        with open(fpath) as f:
-            data = json.load(f)
-
-        video_name = data.get("video_name", fpath.stem.replace("_grasp_features", ""))
-
-        animal_id, session = _lab_ids(video_name)
-
-        for seg in data.get("segments", []):
-            seg_num = seg.get("segment_num")
-            outcome = seg.get("outcome")
-
-            for reach in seg.get("reaches", []):
-                row = {
-                    "video": video_name,
-                    "animal_id": animal_id,
-                    "session": session,
-                    "segment": seg_num,
-                    "reach_id": reach.get("reach_id"),
-                    "reach_num": reach.get("reach_num"),
-                    "outcome": outcome,
-                    "causal_reach": reach.get("causal_reach", False),
-                    "is_first_reach": reach.get("is_first_reach", False),
-                    "is_last_reach": reach.get("is_last_reach", False),
-                    # Temporal
-                    "start_frame": reach.get("start_frame"),
-                    "apex_frame": reach.get("apex_frame"),
-                    "end_frame": reach.get("end_frame"),
-                    "duration_frames": reach.get("duration_frames"),
-                    # Extent
-                    "max_extent_pixels": reach.get("max_extent_pixels"),
-                    "max_extent_ruler": reach.get("max_extent_ruler"),
-                    "max_extent_mm": reach.get("max_extent_mm"),
-                    # Velocity
-                    "velocity_at_apex_px_per_frame": reach.get("velocity_at_apex_px_per_frame"),
-                    "velocity_at_apex_mm_per_sec": reach.get("velocity_at_apex_mm_per_sec"),
-                    "peak_velocity_px_per_frame": reach.get("peak_velocity_px_per_frame"),
-                    "mean_velocity_px_per_frame": reach.get("mean_velocity_px_per_frame"),
-                    # Trajectory
-                    "trajectory_straightness": reach.get("trajectory_straightness"),
-                    "trajectory_smoothness": reach.get("trajectory_smoothness"),
-                    # Hand orientation
-                    "hand_angle_at_apex_deg": reach.get("hand_angle_at_apex_deg"),
-                    "hand_rotation_total_deg": reach.get("hand_rotation_total_deg"),
-                    # Grasp
-                    "grasp_aperture_max_mm": reach.get("grasp_aperture_max_mm"),
-                    "grasp_aperture_at_contact_mm": reach.get("grasp_aperture_at_contact_mm"),
-                    # Spatial
-                    "apex_distance_to_pellet_mm": reach.get("apex_distance_to_pellet_mm"),
-                    "lateral_deviation_mm": reach.get("lateral_deviation_mm"),
-                    "nose_to_slit_at_apex_mm": reach.get("nose_to_slit_at_apex_mm"),
-                    # Quality
-                    "mean_likelihood": reach.get("mean_likelihood"),
-                    "tracking_quality_score": reach.get("tracking_quality_score"),
-                }
-                rows.append(row)
-
-    if rows:
-        with open(OUTPUT_CSV, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-            writer.writeheader()
-            writer.writerows(rows)
-
-        print(f"\nExported {len(rows)} reaches to: {OUTPUT_CSV}")
-    else:
-        print("No reach data found in feature files!")
+    import sys
+    argparse.ArgumentParser(
+        description="Retired: runs 'mousereach-results --level reach' (the filed "
+                    "results, one row per reach). Extra options are passed on.",
+    ).parse_known_args()
+    print("mousereach-features-csv is retired (it read *_grasp_features.json, a file "
+          "the pipeline no longer writes). Running: mousereach-results --level reach")
+    from mousereach.export.results import main as results_main
+    return results_main(["--level", "reach"] + sys.argv[1:])
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
