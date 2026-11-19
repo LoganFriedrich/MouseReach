@@ -76,7 +76,7 @@ presented in that segment).
   session rows leave the pellet columns empty.
 
 **A reach's own outcome (`reach_outcome`) is not its pellet's.** Only the one
-reach credited with the pellet (`reach_is_causal` = True) carries the pellet's
+reach credited with the pellet (`reach_is_causal` = True: flagged as the causal reach, or named by its segment's `segment_causal_reach_id`) carries the pellet's
 outcome. Every other reach at that pellet is `missed`, and so is every reach at
 an untouched pellet or at a pellet moved by something other than a reach. If a pellet moved and no reach was credited, its reaches
 say `undetermined` -- never a guess. `segment_outcome` is the pellet's result

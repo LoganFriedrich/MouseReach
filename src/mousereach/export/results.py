@@ -399,7 +399,10 @@ def build_rows(videos: Iterable[Dict], level: str) -> List["OrderedDict"]:
                 row["segment_number"] = seg.get("segment_num")
                 row["reach_number"] = r.get("reach_num")
                 row["reach_id"] = r.get("reach_id")
-                is_causal = bool(r.get("causal_reach"))
+                # Credited by its own flag, or named by the segment (causal_reach_id):
+                # either is the pellet's answer.
+                is_causal = bool(r.get("causal_reach")) or (
+                    causal_id is not None and r.get("reach_id") == causal_id)
                 row["reach_outcome"] = (None if s["only"] else
                                         reach_outcome(seg_outcome, is_causal, has_causal))
                 row["reach_is_causal"] = is_causal

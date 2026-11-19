@@ -186,3 +186,12 @@ def test_a_pellet_moved_by_something_else_is_presented_and_its_reaches_missed(tm
     assert s["session_moved_not_by_reach"] == 1 and s["session_untouched"] == 1
     assert s["session_undetermined"] == 0 and s["session_success_rate"] == 0
     assert [r["reach_outcome"] for r in _rows(root, "reach")] == ["missed", "missed"]
+
+
+def test_the_reach_the_segment_names_is_credited_even_without_its_own_flag(tmp_path):
+    root = tmp_path / "Analyzed"
+    _write(root / "PRJ" / "PRJ_03", "20200104_ABC0301_P1",
+           [_seg(1, "retrieved", [_reach(1), _reach(2)], causal_id=2)])
+    rows = _rows(root, "reach")
+    assert [r["reach_outcome"] for r in rows] == ["missed", "retrieved"]
+    assert rows[1]["reach_is_causal"] is True
