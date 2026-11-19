@@ -591,7 +591,19 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
             spans[sn] = reach_file_segment_span(seg)
         except (TypeError, ValueError, KeyError):
             continue
+    # The first cut: a ground-truth reach that starts before it belongs to no
+    # pellet (owner decision D2-3, reach/core/before_first_cut.py). It goes to
+    # the file's reaches_before_first_cut list, never into segment 1 by the
+    # segment number the tool seeded it with.
+    _first_cut = min((a for a, _b in spans.values()), default=None)
+    _BEFORE = -2
+
     def _place(r, log=True):
+        try:
+            if _first_cut is not None and int(r.get("start_frame")) < _first_cut:
+                return _BEFORE
+        except (TypeError, ValueError):
+            pass
         sn = _segment_of_reach(r, spans)
         if sn is None:
             sn = r.get("segment_num")
@@ -606,6 +618,17 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
         by_seg.setdefault(_place(r), []).append(r)
     for lst in by_seg.values():
         lst.sort(key=lambda r: (r.get("start_frame") or 0))
+    if by_seg.get(_BEFORE):
+        from mousereach.reach.core.before_first_cut import BEFORE_FIRST_CUT_KEY
+        gt_before = by_seg.pop(_BEFORE)
+        kept = [a for a in (out.get(BEFORE_FIRST_CUT_KEY) or [])
+                if not any(_overlap((a.get("start_frame"), a.get("end_frame")),
+                                    (g.get("start_frame"), g.get("end_frame")))
+                           for g in gt_before if None not in (a.get("start_frame"),
+                                                              a.get("end_frame")))]
+        out[BEFORE_FIRST_CUT_KEY] = sorted(
+            kept + [_gt_reach_dict(g, 0) for g in gt_before],
+            key=lambda r: (r.get("start_frame") or 0))
     open_by_seg: Dict[int, int] = {}
     for r in open_reaches:
         sn = _place(r, log=False)

@@ -7291,3 +7291,36 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+## Update 2026-11-19 (a reach before the first cut belongs to no pellet)
+
+Owner decision D2-3: a reach that starts before the first cut belongs to NO pellet. Before, the reach
+step attached it to the nearest segment (always segment 1) and flagged that segment
+`reach_start_outside_all_segments` -- a flag nothing read -- so the reach was counted, measured,
+assigned and exported as one of pellet 1's.
+
+Now (`reach/core/before_first_cut.py`, the one rule: a reach whose START frame is before the first
+segment's first frame):
+
+* Reach detection (`reach/core/span_to_reaches.build_video_reaches`) writes such a reach into the
+  reaches file's top-level `reaches_before_first_cut` list (id, frames, apex; ids still run in time
+  order), into no segment, and flags nothing.
+* Outcome detection still receives it in its reach list, exactly as before (the cascade places reaches
+  by its own windows, which start at the first cut), so no outcome call changes.
+* Reach assignment (`assignment/cli._reaches_list`, `assignment/v2/assign.py`) writes it `unassigned`,
+  `segment_num: null`, `before_first_cut: true` -- also when an older reaches file put it in segment 1.
+* The ground-truth layering (`review/truth_resolver._apply_gt_reaches`) puts a ground-truth reach that
+  starts before the first cut into `reaches_before_first_cut`, never into segment 1 by the segment
+  number the tool seeded it with.
+* Kinematics (`kinematics/core/feature_extractor.extract`) reads an older reaches file with the reach
+  moved out of segment 1, measures it for no pellet, still uses its frames as a neighbour of the other
+  reaches (anchored path), and lists it in the features file's top-level `reaches_before_first_cut`.
+* The exports (`export/resolved.load_resolved_videos`, `kinematics/analysis/reach_export.py`) and
+  MouseReach's database sync (`sync/database.sync_features_file`) take such a reach out of segment 1
+  when they read a features file filed before this; the filed file is not changed.
+* A kinematics-only re-run of a filed video does not count the reach leaving segment 1 as a change of
+  a filed decision (`kinematics/core/filed_decisions.decisions_of_features`); none of them was ever a
+  causal reach.
+
+No version number changes: no algorithm's call changes (outcomes get the same input; the assignment's
+only difference is that such a reach is `unassigned` instead of a `miss`/`triaged` of pellet 1).

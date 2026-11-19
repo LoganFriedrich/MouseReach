@@ -114,17 +114,26 @@ def build_video_reaches(
 
     # ------------------------------------------------------------------
     # 1. Assign every span to a segment by reach-START containment.
-    #    Orphan spans (start not inside any segment) attach to the nearest
-    #    segment by frame distance and flag that segment for review. We never
-    #    drop a span.
+    #    A span that starts BEFORE THE FIRST CUT belongs to no pellet (owner
+    #    decision D2-3, before_first_cut.py): it goes into the file's own
+    #    ``reaches_before_first_cut`` list, never into segment 1. Any other
+    #    orphan (start not inside any segment -- not possible with segments
+    #    built by segments_from_boundaries, whose last segment runs to the end
+    #    of the video) attaches to the nearest segment by frame distance and
+    #    flags that segment for review. We never drop a span.
     # ------------------------------------------------------------------
     # Per-segment accumulator of (start, end) spans, keyed by list index so the
     # output order matches the input segment order exactly.
     seg_spans: List[List[Tuple[int, int]]] = [[] for _ in segments]
     seg_flagged: List[bool] = [False for _ in segments]
     seg_flag_reason: List[Optional[str]] = [None for _ in segments]
+    before_first: List[Tuple[int, int]] = []
+    first_cut = min((int(s[1]) for s in segments), default=None)
 
     for span_start, span_end in spans:
+        if first_cut is not None and int(span_start) < first_cut:
+            before_first.append((int(span_start), int(span_end)))
+            continue
         seg_idx = _segment_index_for_span_start(span_start, segments)
         if seg_idx is None:
             # Orphan: attach to nearest segment by frame distance, flag it.
@@ -145,6 +154,18 @@ def build_video_reaches(
     boxr_x = float(get_boxr_reference(dlc_df))
 
     global_reach_id = 0  # OLD detector pre-increments -> first reach_id == 1
+    # Reaches before the first cut are numbered first, so reach ids still run
+    # in time order through the video.
+    pre_cut: List[Reach] = []
+    for start_frame, end_frame in sorted(before_first):
+        global_reach_id += 1
+        pre_cut.append(Reach(
+            reach_id=global_reach_id, reach_num=0,
+            start_frame=int(start_frame),
+            apex_frame=int(compute_reach_apex(start_frame, end_frame, dlc_df)),
+            end_frame=int(end_frame), duration_frames=int(end_frame - start_frame + 1),
+            max_extent_pixels=None, max_extent_ruler=None,
+            source="algorithm", human_corrected=False, review_note=None))
     segment_results: List[SegmentReaches] = []
     total_reaches = 0
     all_durations: List[int] = []
@@ -225,6 +246,7 @@ def build_video_reaches(
         reaches_added=0,
         reaches_removed=0,
         segments_flagged=sum(1 for s in segment_results if s.flagged_for_review),
+        reaches_before_first_cut=pre_cut,
     )
 
 

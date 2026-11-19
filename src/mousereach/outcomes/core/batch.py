@@ -126,6 +126,17 @@ def _extract_reaches(reach_data):
         return (int(s), int(e)) if s is not None and e is not None else None
 
     reaches = []
+    # Reaches that start before the first cut sit in their own top-level list
+    # since 2026-11-19 (reach/core/before_first_cut.py). They are still handed
+    # to the cascade, exactly as when they sat inside segment 1: the cascade
+    # places reaches by its own segment windows, which start at the first cut,
+    # so it never counted them for pellet 1 -- and leaving them out would
+    # change the cascade's input, so its calls, for no reason.
+    from mousereach.reach.core.before_first_cut import BEFORE_FIRST_CUT_KEY
+    for r in (reach_data.get(BEFORE_FIRST_CUT_KEY) or []):
+        p = _pair(r)
+        if p is not None:
+            reaches.append(p)
     # Nested per-segment form (current, authoritative).
     if isinstance(reach_data.get("segments"), list):
         for seg in reach_data["segments"]:

@@ -93,7 +93,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import json
 from datetime import datetime
 
@@ -182,6 +182,9 @@ class VideoReaches:
     reaches_added: int = 0
     reaches_removed: int = 0
     segments_flagged: int = 0
+    # Reaches that start before the first cut: no pellet's (owner decision
+    # D2-3; reach/core/before_first_cut.py says why). Never inside a segment.
+    reaches_before_first_cut: List[Reach] = field(default_factory=list)
 
 
 class ReachDetector:
@@ -1200,7 +1203,15 @@ class ReachDetector:
             corrections_made=data.get('corrections_made', 0),
             reaches_added=data.get('reaches_added', 0),
             reaches_removed=data.get('reaches_removed', 0),
-            segments_flagged=data.get('segments_flagged', 0)
+            segments_flagged=data.get('segments_flagged', 0),
+            reaches_before_first_cut=[
+                Reach(reach_id=r['reach_id'], reach_num=r.get('reach_num', 0),
+                      start_frame=r['start_frame'], apex_frame=r.get('apex_frame'),
+                      end_frame=r['end_frame'], duration_frames=r.get('duration_frames', 0),
+                      max_extent_pixels=r.get('max_extent_pixels'),
+                      max_extent_ruler=r.get('max_extent_ruler'),
+                      source=r.get('source', 'algorithm'))
+                for r in data.get('reaches_before_first_cut') or []],
         )
 
 

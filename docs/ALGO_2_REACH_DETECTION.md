@@ -158,7 +158,7 @@ Limits worth writing down:
 
 A reach belongs to the segment containing its **start** frame (`_segment_index_for_span_start`, `:296-312`).
 
-**Frames before the first boundary belong to no segment.** In a typical file the first boundary comes some way into the recording, so the lead-in frames before it are outside every segment. A reach detected there is an orphan: it is attached to the nearest segment by frame distance and never dropped (`:126-138`), and that segment gets `flagged_for_review: true` with `flag_reason: "reach_start_outside_all_segments"`. Ties go to the earlier segment (`:315-337`).
+**Frames before the first boundary belong to no segment.** In a typical file the first boundary comes some way into the recording, so the lead-in frames before it are outside every segment. Since 2026-11-19 a reach that STARTS before the first cut belongs to no pellet (owner decision 2026-11-19): it is written into the reaches file's own top-level list `reaches_before_first_cut` (its id, frames and apex; no reach number, no segment) and into no segment, and no segment is flagged for it. Every reader that maps reaches to pellets -- outcome detection's input, reach assignment, the ground-truth layering, kinematics and the exports -- also takes such a reach out of segment 1 when it reads a file written before 2026-11-19 (`reach/core/before_first_cut.py`). Never dropped. (Before, it was attached to the nearest segment by frame distance -- always segment 1 -- and that segment got `flagged_for_review: true` with `flag_reason: "reach_start_outside_all_segments"`, a flag nothing read. Files written then still carry that flag; the readers named above handle them.)
 
 **Every reach in a flagged segment gets the review note, not just the orphan.** `:165-168` tests the segment's flag, not the individual span. So most reaches that carry the note can be ordinary reaches that happened to share a segment with an orphan.
 
@@ -234,7 +234,7 @@ Shipped files also carry a top-level `triage_reason`, added by that later triage
 | `n_reaches` | Real count. |
 | `reaches` | Array (below), sorted by start frame. |
 | `flagged_for_review` | `true` only when an orphan reach was attached here. |
-| `flag_reason` | `null`, or `"reach_start_outside_all_segments"` — the only value ever produced. |
+| `flag_reason` | `null`, or `"reach_start_outside_all_segments"` in files written before 2026-11-19 (no longer produced). |
 
 ### Per reach
 
@@ -250,7 +250,7 @@ Filled with real values:
 | `apex_frame` | Frame of maximum nose-to-`RightHand` distance within the reach. |
 | `source` | `"algorithm"` from the detector; `"human_added"` for a reach a person adds in the napari reach review screen (`review_widget.py:1849`). |
 | `human_corrected` | `false` from the detector; set `true` by the napari reach review screen when a person moves a boundary (`review_widget.py:1700`, `:1728`); written into this file when that screen saves. |
-| `review_note` | `null`, or `"reach_start_outside_all_segments"` for **every** reach in a flagged segment. |
+| `review_note` | `null`, or `"reach_start_outside_all_segments"` for **every** reach in a flagged segment (files written before 2026-11-19). |
 
 **Written and empty on every reach the current detector produces** — verified across every reach in the shipped `8.1.0` files, where each of these is `null` on every reach:
 

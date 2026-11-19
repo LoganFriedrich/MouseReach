@@ -115,7 +115,17 @@ def _reaches_list(reaches_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     if isinstance(reaches_doc.get("reaches"), list):
         return list(reaches_doc["reaches"])
-    flat: List[Dict[str, Any]] = []
+    # A reach that starts before the first cut belongs to no pellet (owner
+    # decision D2-3, reach/core/before_first_cut.py). Older reaches files
+    # carry it inside segment 1; it is taken out of the segment here and
+    # listed with no segment, marked ``before_first_cut``, so the assignment
+    # writes it as unassigned and never credits it to pellet 1.
+    from mousereach.reach.core.before_first_cut import (BEFORE_FIRST_CUT_KEY,
+                                                        split_before_first_cut)
+    reaches_doc = split_before_first_cut(reaches_doc) or {}
+    flat: List[Dict[str, Any]] = [
+        {**r, "segment_num": None, "before_first_cut": True}
+        for r in (reaches_doc.get(BEFORE_FIRST_CUT_KEY) or [])]
     for seg in reaches_doc.get("segments", []) or []:
         seg_reaches = seg.get("reaches") or []
         seg_num = seg.get("segment_num")

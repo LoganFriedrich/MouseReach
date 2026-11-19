@@ -359,3 +359,12 @@ anyone noticed. Both watcher paths now write a `db_sync` `failed` row to the
 step audit table and log a warning naming the video. The GPU node's local
 path, which never even checked the return value, checks it now. Feature
 extraction failures on that path also write a `failed` audit row.
+
+## Update 2026-11-19: a reach before the first cut is synced under no pellet
+
+A reach that starts before the first cut belongs to no pellet (owner decision D2-3). A features file
+written before 2026-11-19 lists such a reach under segment 1; `sync_features_file` now reads the file
+through `reach/core/before_first_cut.split_before_first_cut`, so the reach is not written as one of
+pellet 1's rows (and the rest of pellet 1's reaches are renumbered 1..n). Features files written
+since list it only at the top level (`reaches_before_first_cut`), which this sync does not write as a
+reach row. The features file on disk is never changed.
