@@ -298,7 +298,6 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     else:
         print(f"  DLC Config:      {config.dlc_config_path or '(not configured)'}")
         print(f"  DLC GPU:         {config.dlc_gpu_device}")
-    print(f"  Auto Archive:    {'Yes' if config.auto_archive_approved else 'No'}")
     print(f"  Quarantine:      {config.get_quarantine_dir()}")
     print(f"  Logs:            {log_dir}")
 

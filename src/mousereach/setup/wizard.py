@@ -826,7 +826,7 @@ def show_config():
         print(f"  GPU Device:      {watcher.get('dlc_gpu_device', 0)}")
         print(f"  Poll Interval:   {watcher.get('poll_interval_seconds', 30)}s")
         print(f"  Stability Wait:  {watcher.get('stability_wait_seconds', 60)}s")
-        print(f"  Auto Archive:    {watcher.get('auto_archive_approved', False)}")
+        print(f"  Role (mode):     {watcher.get('mode', 'dlc_pc')}")
         print(f"  Max Retries:     {watcher.get('max_retries', 3)}")
     else:
         print(f"\nWatcher:           Not configured")

@@ -479,7 +479,6 @@ class WatcherControlWidget(QWidget):
         self._f_retries = QSpinBox(); self._f_retries.setRange(0, 20)
         self._f_maxpending = QSpinBox(); self._f_maxpending.setRange(1, 100000)
         self._f_gpu = QSpinBox(); self._f_gpu.setRange(-1, 16)
-        self._f_autoarchive = QCheckBox()
         self._f_alsoprocess = QCheckBox()
         self._f_dlccfg = QLineEdit()
         self._f_quarantine = QLineEdit()
@@ -516,7 +515,6 @@ class WatcherControlWidget(QWidget):
         form.addRow("max_retries", self._f_retries)
         form.addRow("max_local_pending", self._f_maxpending)
         form.addRow("dlc_gpu_device", self._f_gpu)
-        form.addRow("auto_archive_approved", self._f_autoarchive)
         form.addRow("also_process", self._f_alsoprocess)
         form.addRow("dlc_config_path", self._f_dlccfg)
         form.addRow("quarantine_dir", self._f_quarantine)
@@ -1105,7 +1103,6 @@ class WatcherControlWidget(QWidget):
         self._f_retries.setValue(int(d.get("max_retries", 3)))
         self._f_maxpending.setValue(int(d.get("max_local_pending", 2)))
         self._f_gpu.setValue(int(d.get("dlc_gpu_device", 0)))
-        self._f_autoarchive.setChecked(bool(d.get("auto_archive_approved", False)))
         self._f_alsoprocess.setChecked(bool(d.get("also_process", False)))
         self._f_dlccfg.setText(str(d.get("dlc_config_path", "") or ""))
         self._f_quarantine.setText(str(d.get("quarantine_dir", "") or ""))
@@ -1130,7 +1127,7 @@ class WatcherControlWidget(QWidget):
     _FORM_MANAGED_KEYS = frozenset({
         "enabled", "mode", "poll_interval_seconds", "stability_wait_seconds",
         "max_retries", "max_local_pending", "dlc_gpu_device",
-        "auto_archive_approved", "also_process", "dlc_config_path",
+        "also_process", "dlc_config_path",
         "quarantine_dir", "log_dir", "db_path", "staging_path",
         "pause_while_running", "pause_resume_grace_seconds",
         "recording_days", "recording_hours",
@@ -1145,7 +1142,6 @@ class WatcherControlWidget(QWidget):
             "max_retries": self._f_retries.value(),
             "max_local_pending": self._f_maxpending.value(),
             "dlc_gpu_device": self._f_gpu.value(),
-            "auto_archive_approved": self._f_autoarchive.isChecked(),
             "also_process": self._f_alsoprocess.isChecked(),
             "pause_resume_grace_seconds": self._f_pause_grace.value(),
         }
