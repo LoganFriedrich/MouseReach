@@ -302,8 +302,10 @@ def test_a_held_video_stops_where_the_watcher_holds_it(env, monkeypatch):
 
 
 def test_the_tab_never_says_the_database_was_pushed_to():
-    pytest.importorskip("napari")
-    from mousereach.pipeline.run_all_widget import status_text
+    # The Run All Steps tab is retired (2026-11-19); its line per video is now
+    # run_one.chosen_summary_line, shown by "Run chosen videos..." and printed
+    # by mousereach-run-videos.
+    from mousereach.watcher.run_one import chosen_summary_line as status_text
     for res in ({"done": True}, {"held": "triage", "hold_reason": "x"},
                 {"refused": "why"}, {"error": "e"}):
         text = status_text(res)

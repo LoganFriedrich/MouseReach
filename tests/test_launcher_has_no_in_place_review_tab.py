@@ -20,7 +20,6 @@ ALWAYS_LOADED = [
     "mousereach.review.queue_launcher_widget",
     "mousereach.watcher.quarantine_widget",
     "mousereach.setup.setup_widget",
-    "mousereach.pipeline.run_all_widget",
     "mousereach.dlc_compare.widget",
     "mousereach.fpfn_review.widget",
 ]

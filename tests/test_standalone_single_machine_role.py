@@ -230,6 +230,12 @@ def test_run_all_steps_runs_on_a_single_machine(tmp_path, monkeypatch):
         seen["mode"] = cfg.mode
         return result
     monkeypatch.setattr(run_one, "_drive", _drive)
+    # Since the single machine poses a chosen video first (run_one.
+    # _pose_on_this_machine), that step is stood in here; it is pinned in
+    # test_run_chosen_videos.
+    monkeypatch.setattr(run_one, "_pose_on_this_machine",
+                        lambda vid, cfg, p: seen.setdefault("posed_first", vid) and None)
     res = run_one.run_one_video(tmp_path / "20200101_ABC9901_P1.mp4")
     assert not res.get("refused"), res
     assert seen["mode"] == "processing_server"     # the processing half's program
+    assert seen["posed_first"] == "20200101_ABC9901_P1"

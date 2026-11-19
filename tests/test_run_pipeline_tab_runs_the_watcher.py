@@ -128,15 +128,13 @@ def test_the_run_button_runs_the_watchers_own_pass(tab):
 
 def test_the_tab_leaves_a_persons_cuts_alone(tab):
     """No control on the tab deletes outputs in Processing: a hand-cut
-    segments file sitting there is untouched after a run, and the old
-    "Reprocess All" button, which deleted them, is there but switched off."""
+    segments file sitting there is untouched after a run. The old "Reprocess
+    All" button, which deleted them, is gone (2026-11-19)."""
     seg = tab.processing / "20990101_PRJ0101_P1_segments.json"
     seg.write_text(json.dumps({"boundaries": [10, 20], "boundary_source": "human"}),
                    encoding="utf-8")
     before = seg.read_bytes()
-    assert tab.widget.reprocess_btn.text().startswith("Reprocess All")
-    assert not tab.widget.reprocess_btn.isEnabled()
-    tab.widget.reprocess_btn.click()
+    assert not hasattr(tab.widget, "reprocess_btn")
     tab.widget.run_btn.setEnabled(True)
     tab.widget.run_btn.click()
     _wait(lambda: tab.ran or tab.legacy, tab.app)
@@ -171,27 +169,35 @@ def test_on_a_pose_only_pc_the_tab_says_it_poses_and_does_not_analyse(tab):
     assert "pose-only" in batch_widget.RUN_PIPELINE_INTRO
 
 
-def test_the_old_selection_controls_are_kept_switched_off_and_explained(tab):
-    """The old tab's "Select Specific Files...", "Clear Selection" and
-    "Reprocess All..." are not removed (a way of running videos by hand from a
-    window is never taken away): they stay on the tab, switched off until the
-    lab owner decides what they should do, each saying why, and the tab says
-    what to use instead."""
+def test_chosen_videos_run_through_the_watchers_own_steps(tab, monkeypatch):
+    """The owner's answer (2026-11-19, MRR-15a): chosen videos are run by hand
+    again, through the same code as the watcher (run_one.run_chosen_videos).
+    The greyed-out "Select Specific Files...", "Clear Selection" and
+    "Reprocess All..." are gone; the tab says what is not run and why."""
     from qtpy.QtWidgets import QLabel
     from mousereach.pipeline import batch_widget
+    from mousereach.watcher import run_one
+    got = []
+
+    def _run(files, progress=None):
+        got.append(list(files))
+        progress("pipeline", "running")
+        return [{"video": "A", "done": True}, {"video": "B", "refused": "filed"},
+                {"video": "C", "held": "triage", "hold_reason": "a pellet to decide"}]
+    monkeypatch.setattr(run_one, "run_chosen_videos", _run)
     w = tab.widget
-    for btn, text in ((w.select_btn, "Select Specific Files..."),
-                      (w.clear_btn, "Clear Selection"),
-                      (w.reprocess_btn, "Reprocess All...")):
-        assert btn.text() == text
-        assert not btn.isEnabled()
-        assert btn.toolTip() == batch_widget.OLD_CONTROL_TIP
+    for name in ("select_btn", "clear_btn", "reprocess_btn"):
+        assert not hasattr(w, name)
+    assert w.chosen_btn.text() == batch_widget.RUN_CHOSEN_BUTTON_TEXT
+    w.run_chosen(["x/A.mp4", "x/B.mp4", "x/C.mp4"])
+    assert _wait(lambda: "Done." in w._chosen_log.toPlainText(), tab.app)
+    log = w._chosen_log.toPlainText()
+    assert got == [["x/A.mp4", "x/B.mp4", "x/C.mp4"]]
+    assert "[OK] A: filed" in log and "[NOT RUN] B: filed" in log
+    assert "[HELD] C: a pellet to decide" in log
     labels = " ".join(l.text() for l in w.findChildren(QLabel))
-    assert "Select Specific Files" in labels and "Run All Steps" in labels, labels
-    assert "mousereach-watch-prioritize" in labels
-    assert "first" in labels
-    for text in (batch_widget.SELECTION_NOTE, batch_widget.OLD_CONTROL_TIP,
-                 batch_widget.PRIORITY_INTRO):
+    assert "Run chosen videos" in labels and "crystallized" in labels
+    for text in (batch_widget.SELECTION_NOTE, batch_widget.PRIORITY_INTRO):
         text.encode("ascii")
 
 
