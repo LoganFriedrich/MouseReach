@@ -365,6 +365,9 @@ def main(argv=None) -> int:
         print(f"[FAIL] {f}")
     print(f"\nReleased {n} of {len(complete) + len(fixed_release)} "
           f"releasable bundle(s).")
+    if n:
+        from mousereach.review.after_release import NEXT_STEP
+        print(NEXT_STEP)
     skipped = len(complete) + len(fixed_release) - n - len(failures)
     if skipped:
         print(f"  {skipped} not released: since the list was made they left the "
